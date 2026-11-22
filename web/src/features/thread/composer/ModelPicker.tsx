@@ -1,18 +1,23 @@
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, Loader2, Search } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { EngineStatus } from "../../../api/types";
 import { useCommand } from "../../../product/shell/shortcuts";
 import { useUi } from "../../../product/state/ui";
 import { EngineGlyph } from "../../../product/ui/badges";
-import { pickerGap, PickerGapRow, useEngineHosts, type Gap, type HostRow } from "../../enginehost";
+import {
+  chipFor, ClaudeHostActions, claudeHostDown, claudeHostSentence, claudeHostWaiting, engineGap, pickerGap, PickerGapRow, useEngineHosts,
+  type Gap, type HostRow,
+} from "../../enginehost";
+import { UnmanagedLabel } from "../../../product/engines/UnmanagedLabel";
+import { isUnmanaged } from "../../../product/engines/unmanaged";
+import { CLAUDE_CLI_NOTE, CLAUDE_SDK_NOTE, useClaudeEnginePath, type ClaudeEnginePath } from "../../../product/engines/claudePath";
 import { closingProps, Presence } from "../../../ui/Presence";
 import { usePopover } from "../../../ui/usePopover";
 import {
   arrangeModels,
   modelKey,
   resolveModel,
-  searchRows,
   shortModelName,
   useEngineModels,
   useModelStore,
@@ -102,20 +107,101 @@ interface Selection {
 
 const ALL = "all";
 
-/** The provider headings and rows, in display order; `index` is the row's place in the flat keyboard order. */
-interface Group {
-  engine: string;
-  rows: { row: PickerRow; index: number }[];
+interface PickerSection {
+  key: string;
+  engine: EngineStatus;
+  name: string;
+  path: ClaudeEnginePath | null;
+  note: string | null;
+  host: HostRow | null;
 }
 
-function groupRows(rows: readonly PickerRow[], engines: readonly EngineStatus[]): Group[] {
-  const groups: Group[] = [];
-  let index = 0;
-  for (const engine of engines) {
-    const own = rows.filter((row) => row.engine === engine.id);
-    if (own.length > 0) groups.push({ engine: engine.id, rows: own.map((row) => ({ row, index: index++ })) });
+interface SectionRow {
+  row: PickerRow;
+  section: PickerSection;
+}
+
+type SectionState =
+  | { kind: "gap"; gap: Gap; host: HostRow | null }
+  | { kind: "host"; host: HostRow; title: string; sentence: string; waiting: boolean };
+
+const CLAUDE_SDK_KEY = "claude:sdk";
+const CLAUDE_CLI_KEY = "claude:cli";
+
+const signedOut = (engine: EngineStatus): boolean =>
+  engine.auth === "logged_out" || engine.start_issue?.kind === "signed_out";
+
+/** The engine's own state word, the same on both Claude paths because both run the same installed claude. */
+function engineWord(engine: EngineStatus): "Ready" | "Not found" | "Signed out" {
+  if (!engine.installed) return "Not found";
+  if (signedOut(engine)) return "Signed out";
+  return "Ready";
+}
+
+/** What stops the engine itself, whatever path is chosen: not installed, or signed out in its own terminal. */
+function engineState(engine: EngineStatus, host: HostRow | null): Gap | null {
+  if (!engine.installed) return engineGap(engine, host);
+  if (signedOut(engine)) {
+    return {
+      kind: "expired",
+      title: "Signed out",
+      sentence: "Sign in to Claude Code in a terminal, then try again.",
+      chip: { label: "Signed out", tone: "plain" },
+      action: null,
+    };
   }
-  return groups;
+  return null;
+}
+
+/** The two Claude path sections, or one section for every other engine. */
+function sectionsOf(engines: readonly EngineStatus[], hosts: HostRow[] | null): PickerSection[] {
+  return engines.flatMap<PickerSection>((engine): PickerSection[] => {
+    const host = hosts?.find((row) => row.id === engine.id) ?? null;
+    if (engine.id === "claude" && !engine.instance_of) {
+      return [
+        { key: CLAUDE_SDK_KEY, engine, name: "Claude (SDK)", path: "sdk" as const, note: CLAUDE_SDK_NOTE, host },
+        { key: CLAUDE_CLI_KEY, engine, name: "Claude (CLI)", path: "cli" as const, note: CLAUDE_CLI_NOTE, host: null },
+      ];
+    }
+    return [{ key: engine.id, engine, name: engine.name, path: null, note: null, host }];
+  });
+}
+
+const hostTitle = (host: HostRow): string =>
+  claudeHostWaiting(host) ? "Restarting the engine host" : host.state === "version_mismatch" ? "Version mismatch" : "Can’t start";
+
+function sectionState(section: PickerSection): SectionState | null {
+  if (!section.path) {
+    const gap = pickerGap(section.engine, section.host);
+    return gap ? { kind: "gap", gap, host: section.host } : null;
+  }
+  const own = engineState(section.engine, section.host);
+  if (own) return { kind: "gap", gap: own, host: section.host };
+  // The SDK alone uses the host: the CLI path stays pickable while it is down.
+  if (section.path === "sdk" && section.host) {
+    const gap = engineGap(section.engine, section.host);
+    if (gap) return { kind: "gap", gap, host: section.host };
+    if (claudeHostDown(section.host)) {
+      const sentence = claudeHostSentence(section.host);
+      if (sentence) return { kind: "host", host: section.host, title: hostTitle(section.host), sentence, waiting: claudeHostWaiting(section.host) };
+    }
+  }
+  return null;
+}
+
+/** The engine's state word in the provider's heading, with its dot. */
+function StateWord({ word }: { word: "Ready" | "Not found" | "Signed out" }) {
+  return <span className={`model-state ${word === "Ready" ? "ok" : "plain"}`}>{word}</span>;
+}
+
+/** The engine host's own chip; the SDK row alone carries it. */
+function HostStateChip({ host }: { host: HostRow }) {
+  const chip = chipFor(host.state);
+  return (
+    <span className={`model-state ${chip.tone}`}>
+      {chip.spin ? <Loader2 size={11} className="spin" aria-hidden /> : null}{chip.label}
+    </span>
+  );
 }
 
 function ModelPopover({
@@ -142,11 +228,15 @@ function ModelPopover({
   const order = useUi((state) => state.modelOrder);
   const byEngine = useModelStore((state) => state.byEngine);
   const load = useModelStore((state) => state.load);
+  const { path, choose } = useClaudeEnginePath();
+  const { hosts } = useEngineHosts();
   const [chip, setChip] = useState(ALL);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(-1);
   const [more, setMore] = useState({ above: false, below: false });
   const [chipsMore, setChipsMore] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const pathPending = useRef(false);
   const listId = useId();
   const input = useRef<HTMLInputElement>(null);
   const chips = useRef<HTMLDivElement>(null);
@@ -173,46 +263,63 @@ function ModelPopover({
     for (const engine of engines) void load(engine.id);
   }, [engines, load]);
 
+  const sections = useMemo(() => sectionsOf(engines, hosts), [engines, hosts]);
   const searching = query.trim() !== "";
   // Typing searches every provider, so All is the chip that shows as chosen then.
   const shownChip = searching ? ALL : chip;
-  const allRows = useMemo(
+  const allRows = useMemo<SectionRow[]>(
     () =>
-      engines.flatMap((engine) =>
-        arrangeModels(engine.id, byEngine[engine.id]?.models ?? [], hidden, order).map((model) => ({
-          engine: engine.id,
-          model,
+      sections.flatMap((section) =>
+        arrangeModels(section.engine.id, byEngine[section.engine.id]?.models ?? [], hidden, order).map((model) => ({
+          row: { engine: section.engine.id, model },
+          section,
         })),
       ),
-    [engines, byEngine, hidden, order],
+    [sections, byEngine, hidden, order],
   );
-  const rows = searching
-    ? searchRows(allRows, query)
-    : chip === ALL
-      ? allRows
-      : allRows.filter((row) => row.engine === chip);
-  const groups = groupRows(rows, engines);
-  // An engine whose host is not ready shows one state row in place of its models. None while the service reports no host, and none
-  // while searching: the rows are not models, so there is nothing to find in them.
-  const { hosts } = useEngineHosts();
-  const gaps = useMemo(() => {
-    const found = new Map<string, { gap: Gap; host: HostRow | null }>();
-    if (!hosts) return found;
-    for (const engine of engines) {
-      const host = hosts.find((row) => row.id === engine.id) ?? null;
-      const gap = pickerGap(engine, host);
-      if (gap) found.set(engine.id, { gap, host });
+  const rows = useMemo<SectionRow[]>(() => {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (searching) {
+      return allRows.filter(({ row }) =>
+        words.every((word) => `${row.model.label} ${row.model.id} ${row.engine}`.toLowerCase().includes(word)));
     }
-    return found;
-  }, [engines, hosts]);
-  const gapIds = new Set(searching ? [] : [...gaps.keys()].filter((id) => chip === ALL || chip === id));
-  const ordered = groups.flatMap((group) => group.rows.map((entry) => entry.row));
-  const ids = [ALL, ...engines.map((engine) => engine.id)];
-  const pick = (row: PickerRow) => {
-    popover.dismiss("select");
-    onPick({ engine: row.engine, model: row.model.id });
+    return chip === ALL ? allRows : allRows.filter((entry) => entry.section.key === chip);
+  }, [searching, query, allRows, chip]);
+  // An engine whose host is not ready shows one state row in place of its models. None while searching: the rows are
+  // not models, so there is nothing to find in them.
+  const visible = useMemo(
+    () =>
+      sections
+        .filter((section) => searching || chip === ALL || section.key === chip)
+        .map((section) => ({
+          section,
+          rows: rows.filter((entry) => entry.section.key === section.key),
+          state: searching ? null : sectionState(section),
+        }))
+        .filter((entry) => entry.rows.length > 0 || entry.state !== null),
+    [sections, rows, searching, chip],
+  );
+  const ordered = visible.flatMap((entry) => (entry.state ? [] : entry.rows));
+  const indexOf = new Map(ordered.map((entry, at) => [entry, at]));
+  const ids = [ALL, ...sections.map((section) => section.key)];
+  const pathSection = sections.find((section) => section.key === chip);
+  const writePath = async (next: ClaudeEnginePath): Promise<boolean> => {
+    if (next === path) return true;
+    if (pathPending.current) return false;
+    pathPending.current = true;
+    setActionError(null);
+    const result = await choose(next);
+    pathPending.current = false;
+    if (result.saved) return true;
+    setActionError(`Nothing changed. ${result.error ?? "The Claude path setting is not available yet."}`);
+    return false;
   };
-  const choose = (id: string) => {
+  const pick = async (entry: SectionRow) => {
+    if (entry.section.path && !(await writePath(entry.section.path))) return;
+    popover.dismiss("select");
+    onPick({ engine: entry.section.engine.id, model: entry.row.model.id });
+  };
+  const chooseChip = (id: string) => {
     setChip(id);
     // A chip applies to the whole list, so it clears what was typed.
     setQuery("");
@@ -235,8 +342,8 @@ function ModelPopover({
       chips.current?.querySelector<HTMLButtonElement>('button[tabindex="0"]')?.focus();
     } else if (event.key === "Enter") {
       event.preventDefault();
-      const row = ordered[active];
-      if (row) pick(row);
+      const entry = ordered[active];
+      if (entry) void pick(entry);
     }
   };
 
@@ -271,13 +378,17 @@ function ModelPopover({
     list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: "nearest" });
   }, [ordered.length]);
 
-  const failure = chip !== ALL && !searching ? byEngine[chip]?.error : null;
+  const failure = !searching && pathSection ? byEngine[pathSection.engine.id]?.error ?? null : null;
   const loading = engines.some((engine) => byEngine[engine.id] === undefined) && ordered.length === 0;
-  const isSelected = (row: PickerRow) => row.engine === selected.engine && row.model.id === selected.model;
+  const isSelected = (entry: SectionRow) =>
+    entry.row.engine === selected.engine && entry.row.model.id === selected.model
+    && (entry.section.path === null || entry.section.path === path);
   const engineName = (id: string) => engines.find((engine) => engine.id === id)?.name ?? id;
+  // The two Claude paths carry a note and a state each, so their picker is wider, as the frames draw it.
+  const claudePaths = sections.some((section) => section.path !== null);
 
   return (
-    <FloatingPicker anchor={anchor} label="Choose a model" className="model-picker" container={portalContainer} closing={closing} panelRef={panel} onKeyDown={keepJumps}>
+    <FloatingPicker anchor={anchor} label="Choose a model" className={`model-picker${claudePaths ? " has-claude-paths" : ""}`} container={portalContainer} closing={closing} panelRef={panel} onKeyDown={keepJumps}>
       <div ref={search} className="model-search">
         <Search size={14} aria-hidden />
         <input
@@ -319,71 +430,96 @@ function ModelPopover({
             event.preventDefault();
             buttons[next]?.focus();
             const id = ids[next];
-            if (id) choose(id);
+            if (id) chooseChip(id);
           }}
         >
-          {ids.map((id) => (
-            <button
-              key={id}
-              type="button"
-              className="model-chip"
-              aria-label={id !== ALL && engines.find((engine) => engine.id === id)?.capabilities.managed === false ? `${engineName(id)} (Unmanaged)` : undefined}
-              aria-pressed={shownChip === id}
-              aria-controls={listId}
-              tabIndex={shownChip === id ? 0 : -1}
-              onClick={() => {
-                choose(id);
-                input.current?.focus();
-              }}
-            >
-              {id === ALL ? "All" : engineName(id)}
-            </button>
-          ))}
+          {ids.map((id) => {
+            const chipEngine = id === ALL ? null : (sections.find((section) => section.key === id)?.engine ?? null);
+            const label = id === ALL ? "All" : (sections.find((section) => section.key === id)?.name ?? engineName(id));
+            return (
+              <button
+                key={id}
+                type="button"
+                className="model-chip"
+                aria-label={isUnmanaged(chipEngine) ? `${label} (Unmanaged)` : undefined}
+                aria-pressed={shownChip === id}
+                aria-controls={listId}
+                tabIndex={shownChip === id ? 0 : -1}
+                onClick={() => {
+                  chooseChip(id);
+                  input.current?.focus();
+                }}
+              >
+                {label}
+                <UnmanagedLabel engine={chipEngine} variant="chip" />
+              </button>
+            );
+          })}
         </div>
       </div>
+      {actionError ? <p className="field-error model-path-error" role="alert">{actionError}</p> : null}
       <div className="model-list" data-above={more.above || undefined} data-below={more.below || undefined}>
         <div ref={list} id={listId} className="model-rows" role="listbox" aria-label="Models" onScroll={measure}>
-          {engines.filter((engine) => gapIds.has(engine.id) || groups.some((group) => group.engine === engine.id)).map((engine) => {
-            const state = gapIds.has(engine.id) ? gaps.get(engine.id) : undefined;
-            if (state) {
-              return (
-                <div key={engine.id} role="group" aria-label={engineName(engine.id)}>
-                  <div className="model-heading" aria-hidden>{engineName(engine.id)}</div>
-                  <PickerGapRow gap={state.gap} host={state.host} />
+          {visible.map(({ section, rows: groupRows, state }) => (
+            <div key={section.key} role="group" aria-label={section.name}>
+              {section.path ? (
+                <button
+                  type="button"
+                  className="model-path-head"
+                  aria-label={`${section.name} path`}
+                  data-selected={section.path === path || undefined}
+                  onClick={() => void writePath(section.path!)}
+                >
+                  <span className="model-path-name">{section.name}</span>
+                  <StateWord word={engineWord(section.engine)} />
+                  {section.path === "sdk" && section.host ? <HostStateChip host={section.host} /> : null}
+                </button>
+              ) : (
+                <div className="model-heading" aria-hidden>
+                  {section.name}
+                  <UnmanagedLabel engine={section.engine} />
                 </div>
-              );
-            }
-            const group = groups.find((entry) => entry.engine === engine.id);
-            return group ? (
-            <div key={group.engine} role="group" aria-label={engineName(group.engine)}>
-              <div className="model-heading" aria-hidden>
-                {engineName(group.engine)}
-              </div>
-              {group.rows.map(({ row, index }) => {
-                const on = isSelected(row);
+              )}
+              {section.note ? <div className="model-path-note">{section.note}</div> : null}
+              {state ? (
+                state.kind === "gap" ? (
+                  <PickerGapRow gap={state.gap} host={state.host} showChip={!section.path} />
+                ) : (
+                  <div className="model-state-row" data-state={state.waiting ? "waiting" : "failed"}>
+                    <span className="model-row-text">
+                      <b>{state.title}</b>
+                      <small>{state.sentence}</small>
+                    </span>
+                    <span className="model-state-actions">
+                      <ClaudeHostActions host={state.host} onError={setActionError} />
+                    </span>
+                  </div>
+                )
+              ) : groupRows.map((entry) => {
+                const at = indexOf.get(entry) ?? -1;
+                const on = isSelected(entry);
                 return (
                   <div
-                    key={modelKey(row.engine, row.model.id)}
-                    id={`${listId}-${index}`}
+                    key={`${section.key}:${modelKey(entry.row.engine, entry.row.model.id)}`}
+                    id={`${listId}-${at}`}
                     role="option"
                     aria-selected={on}
                     className="model-row"
-                    data-active={index === active || undefined}
-                    onPointerMove={() => setActive(index)}
-                    onClick={() => pick(row)}
+                    data-active={at === active || undefined}
+                    onPointerMove={() => setActive(at)}
+                    onClick={() => void pick(entry)}
                   >
                     <span className="model-row-text">
-                      <b>{row.model.label}</b>
-                      {row.model.description ? <small>{row.model.description}</small> : null}
+                      <b>{entry.row.model.label}</b>
+                      {entry.row.model.description ? <small>{entry.row.model.description}</small> : null}
                     </span>
                     {on ? <Check size={14} className="model-check" aria-hidden /> : null}
                   </div>
                 );
               })}
             </div>
-            ) : null;
-          })}
-          {ordered.length === 0 && gapIds.size === 0 ? (
+          ))}
+          {ordered.length === 0 && !visible.some((entry) => entry.state) ? (
             <p className="model-empty" role="status">
               {loading ? "Loading models…" : failure ? failure : searching ? "No models found" : "No models listed"}
             </p>
@@ -436,6 +572,7 @@ export function ModelPickerTrigger({
       >
         {engine ? <EngineGlyph name={engine.name} /> : null}
         <span>{name}</span>
+        <UnmanagedLabel engine={engine} />
         {engines.length === 0 ? <ChevronDown size={12} aria-hidden /> : null}
       </button>
       <Presence>

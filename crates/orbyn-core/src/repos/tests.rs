@@ -926,3 +926,168 @@ async fn an_untrusted_primary_folder_cannot_start_a_repo_thread_either() {
                 .is_none()
     );
 }
+
+fn pull_of(number: u64, title: &str, state: &str) -> orbyn_contracts::PullRequest {
+    orbyn_contracts::PullRequest {
+        number,
+        title: title.into(),
+        url: format!("https://example.test/pull/{number}"),
+        state: state.into(),
+        head: "feature/x".into(),
+        base: "main".into(),
+        author: None,
+        draft: false,
+        updated_at: None,
+        labels: Vec::new(),
+        review_state: None,
+        checks_state: None,
+        checks: None,
+    }
+}
+
+#[tokio::test]
+async fn each_repository_of_a_thread_shows_its_own_pull_request_even_with_the_same_number() {
+    let dir = TempDir::new();
+    let (core, project, other_id, _main, _other) = two_trusted(&dir).await;
+    let thread = core
+        .start_repo_thread(
+            &project,
+            start_input(&[(&project, "main"), (&other_id, "main")]),
+        )
+        .await
+        .unwrap();
+    assert!(
+        core.thread_repos(&thread.id)
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| r.pull_request.is_none())
+    );
+    core.store
+        .link_pull(&thread.id, &project, &pull_of(7, "In the app", "open"))
+        .unwrap();
+    core.store
+        .link_pull(&thread.id, &other_id, &pull_of(7, "In the library", "open"))
+        .unwrap();
+    core.store
+        .link_pull(
+            &thread.id,
+            &other_id,
+            &pull_of(3, "Older, merged", "merged"),
+        )
+        .unwrap();
+    let repos = core.thread_repos(&thread.id).await.unwrap();
+    let title = |id: &str| {
+        repos
+            .iter()
+            .find(|r| r.repo_id == id)
+            .and_then(|r| r.pull_request.as_ref())
+            .map(|p| p.title.clone())
+    };
+    assert_eq!(title(&project).as_deref(), Some("In the app"));
+    assert_eq!(title(&other_id).as_deref(), Some("In the library"));
+    // A call scoped to the second repository links and reads in that repository.
+    assert_eq!(
+        crate::in_repo(Some(other_id.clone()), async { core.pull_repo(&thread.id) })
+            .await
+            .unwrap(),
+        other_id
+    );
+    assert_eq!(core.pull_repo(&thread.id).unwrap(), project);
+    // A diff names the repository only for a multi-repository thread.
+    assert_eq!(
+        core.diff_repo(&thread.id, None).unwrap().as_deref(),
+        Some(project.as_str())
+    );
+    assert_eq!(
+        core.diff_repo(&thread.id, Some(&other_id))
+            .unwrap()
+            .as_deref(),
+        Some(other_id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn deleting_a_repo_thread_removes_clean_worktrees_keeps_branches_and_keeps_a_dirty_one() {
+    let dir = TempDir::new();
+    let (core, project, other_id, main, other) = two_trusted(&dir).await;
+    let thread = core
+        .start_repo_thread(
+            &project,
+            start_input(&[(&project, "main"), (&other_id, "main")]),
+        )
+        .await
+        .unwrap();
+    let folder = core.task_folder(&thread.id).await.unwrap();
+    let clean = Path::new(&thread.cwd).join(&folder.repos[0].name);
+    let dirty = Path::new(&thread.cwd).join(&folder.repos[1].name);
+    std::fs::write(dirty.join("notes.txt"), "mine\n").unwrap();
+    core.delete_thread_and_worktrees(&thread.id, "tester")
+        .await
+        .unwrap();
+    assert!(core.store.thread(&thread.id).is_err(), "the thread is gone");
+    assert!(!clean.exists(), "a clean worktree is removed");
+    assert!(
+        dirty.join("notes.txt").exists(),
+        "a dirty one is kept with its file"
+    );
+    assert!(
+        branches(&main).contains(&folder.branch) && branches(&other).contains(&folder.branch),
+        "branches stay, as for a single-repository thread"
+    );
+    assert!(
+        Path::new(&thread.cwd).exists(),
+        "the folder stays while a worktree is in it"
+    );
+}
+
+#[tokio::test]
+async fn a_repository_leaves_a_thread_only_when_it_is_not_primary_and_holds_nothing_to_lose() {
+    let dir = TempDir::new();
+    let (core, project, other_id, _main, other) = two_trusted(&dir).await;
+    let thread = core
+        .start_repo_thread(
+            &project,
+            start_input(&[(&project, "main"), (&other_id, "main")]),
+        )
+        .await
+        .unwrap();
+    let branch = core.task_folder(&thread.id).await.unwrap().branch;
+    assert!(core.remove_thread_repo(&thread.id, &project).await.is_err());
+    assert!(core.remove_thread_repo(&thread.id, "nope").await.is_err());
+    let worktree = core
+        .store
+        .thread_repos(&thread.id)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.repo_id == other_id)
+        .map(|r| PathBuf::from(r.worktree_path))
+        .unwrap();
+    std::fs::write(worktree.join("wip.txt"), "unsaved\n").unwrap();
+    let refused = core
+        .remove_thread_repo(&thread.id, &other_id)
+        .await
+        .unwrap_err();
+    assert!(
+        refused.public_message().contains("Commit or discard"),
+        "{refused:?}"
+    );
+    assert!(worktree.join("wip.txt").exists());
+    core.store
+        .link_pull(&thread.id, &other_id, &pull_of(9, "Linked", "open"))
+        .unwrap();
+    std::fs::remove_file(worktree.join("wip.txt")).unwrap();
+    core.remove_thread_repo(&thread.id, &other_id)
+        .await
+        .unwrap();
+    assert!(!worktree.exists());
+    assert!(branches(&other).contains(&branch), "the branch is kept");
+    let left = core.thread_repos(&thread.id).await.unwrap();
+    assert_eq!(left.len(), 1);
+    assert!(
+        core.store
+            .linked_pulls(&thread.id, &other_id)
+            .unwrap()
+            .is_empty()
+    );
+}

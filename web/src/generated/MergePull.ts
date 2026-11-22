@@ -14,6 +14,11 @@ auto: boolean, delete_branch: boolean, subject?: string, body?: string,
  */
 strip_credits: boolean, 
 /**
+ * This merge's own choice to remove agent credit lines. When present it wins over the account setting
+ * "Remove agent credits on merge", in both directions; absent, the setting (or `strip_credits`) applies.
+ */
+remove_agent_credits?: boolean, 
+/**
  * The head commit the person saw. The forge refuses the merge if the branch has moved on.
  * Only GitHub and GitLab (not a rebase) are fully guarded: the forge itself refuses a moved head.
  * For Azure, Forgejo, Bitbucket and a GitLab rebase the service reads the head just before the

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api } from "../../../api/client";
+import { ApiFailure, api } from "../../../api/client";
 import type { Run, Thread } from "../../../api/types";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { useUi } from "../../../product/state/ui";
@@ -16,6 +16,7 @@ const thread: Thread = {
 };
 
 beforeEach(() => {
+  setTranscriptsApi(null);
   useComposerChips.setState({ chips: {}, reviewDrafts: {} });
   useUi.setState({ drafts: {} });
   useWorkspace.setState({ approvals: { data: [], error: null, loading: false } });
@@ -92,6 +93,30 @@ it("keeps a HEIC photo's send held until it is converted, then sends the convert
   await userEvent.type(screen.getByRole("textbox"), "look{Enter}");
   expect(start).not.toHaveBeenCalled();
   finish({ id: "p1", name: "IMG_4021.jpg", size: 2_000_000, original_name: "IMG_4021.HEIC", original_size: 3_000_000, action: "converted" });
+  expect(await screen.findByText(/Converted to JPEG/)).toBeInTheDocument();
+  await userEvent.type(screen.getByRole("textbox"), "{Enter}");
+  await waitFor(() => expect(start).toHaveBeenCalledWith("t1", "look", ["p1"]));
+});
+
+it("shows the service's refusal on a red HEIC chip with Retry and Remove, and keeps send held until a retry works", async () => {
+  const message = "HEIC photos cannot be converted yet. Save it as JPEG or PNG first.";
+  const convert = vi.fn()
+    .mockRejectedValueOnce(new ApiFailure("unsupported_type", message, 415))
+    .mockResolvedValueOnce({
+      id: "p1", name: "IMG_4021.jpg", size: 2_000_000, original_name: "IMG_4021.HEIC", original_size: 3_000_000, action: "converted",
+    });
+  setPhotoConversionApi({ convert });
+  const start = vi.spyOn(api, "startRun").mockResolvedValue({ id: "r1" } as Run);
+  render(<Composer thread={thread} engine={null} showContext />);
+  const heic = new File(["x"], "IMG_4021.HEIC", { type: "image/heic" });
+  await userEvent.upload(screen.getByLabelText("Attach files", { selector: "input" }), heic);
+  expect(await screen.findByText(message)).toBeInTheDocument();
+  expect(screen.getByText(message).closest("li")).toHaveAttribute("data-conversion", "failed");
+  expect(screen.getByRole("button", { name: "Retry IMG_4021.HEIC" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Remove IMG_4021.HEIC" })).toBeInTheDocument();
+  await userEvent.type(screen.getByRole("textbox"), "look{Enter}");
+  expect(start).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Retry IMG_4021.HEIC" }));
   expect(await screen.findByText(/Converted to JPEG/)).toBeInTheDocument();
   await userEvent.type(screen.getByRole("textbox"), "{Enter}");
   await waitFor(() => expect(start).toHaveBeenCalledWith("t1", "look", ["p1"]));

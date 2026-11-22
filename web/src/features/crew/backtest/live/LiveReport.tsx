@@ -24,6 +24,7 @@ import {
   WHY,
 } from "./model";
 import { useBacktestReport } from "./useBacktest";
+import "./backtest-live.css";
 
 /** The read failed: nothing is shown, the exact answer is kept, and a retry reads again. */
 function ReportError({ failure, onRetry }: { failure: ApiFailure; onRetry: () => void }) {
@@ -63,7 +64,8 @@ function Stopped({ run }: { run: BacktestRun }) {
  * tokens, findings and score come from the read; a lane the escape log cannot score reads Not measured, never a zero, and a
  * stopped run reads Partial. Run again is Planned: the report serves each lane's name, engine and model and the run's
  * per-engine budgets, but not whether that lane replayed a review or a check, so a start body would have to guess that
- * field. Reads only: no load sends a write.
+ * field. Reads only: no load sends a write. Below its narrow breakpoint the run summary and the lane cells stack, and each
+ * stacked lane cell keeps the label its column header carried.
  */
 export function LiveReport({ id, projects, onPick }: { id: string; projects: readonly Project[]; onPick(id: string): void }) {
   const href = useCrewHref();
@@ -80,7 +82,7 @@ export function LiveReport({ id, projects, onPick }: { id: string; projects: rea
           <Ic n="right" sm />
           <b>Reviewer backtest</b>
         </div>
-        <div className="cx-t14pg">
+        <div className="cx-t14pg cx-bt-report">
           <div className="cx-t10hd">
             <b>Reviewer backtest</b>
             <span className="cx-rtag cx-lo">This device only</span>
@@ -155,9 +157,21 @@ export function LiveReport({ id, projects, onPick }: { id: string; projects: rea
                       <b>{laneTitle(lane)}</b>
                       <small>{laneStateText[lane.state]}{lane.state === "stopped" ? " · partial" : ""}</small>
                     </div>,
-                    <div key={`${lane.lane}:${lane.engine}:escapes`}><b>{escapes.value}</b><small>{escapes.note}</small></div>,
-                    <div key={`${lane.lane}:${lane.engine}:findings`}><b>{findings.value}</b>{findings.note ? <small>{findings.note}</small> : null}</div>,
-                    <div key={`${lane.lane}:${lane.engine}:matched`}><b>{matched.value}</b><small>{matched.note}</small></div>,
+                    <div key={`${lane.lane}:${lane.engine}:escapes`}>
+                      <b className="cx-bt-wide">{escapes.value}</b>
+                      <small className="cx-bt-wide">{escapes.note}</small>
+                      <small className="cx-bt-narrow">Escapes caught: {escapes.value}{escapes.note ? ` · ${escapes.note}` : ""}</small>
+                    </div>,
+                    <div key={`${lane.lane}:${lane.engine}:findings`}>
+                      <b className="cx-bt-wide">{findings.value}</b>
+                      {findings.note ? <small className="cx-bt-wide">{findings.note}</small> : null}
+                      <small className="cx-bt-narrow">Findings raised: {findings.value}{findings.note ? ` · ${findings.note}` : ""}</small>
+                    </div>,
+                    <div key={`${lane.lane}:${lane.engine}:matched`}>
+                      <b className="cx-bt-wide">{matched.value}</b>
+                      <small className="cx-bt-wide">{matched.note}</small>
+                      <small className="cx-bt-narrow">Matched an escape: {matched.value}{matched.note ? ` · ${matched.note}` : ""}</small>
+                    </div>,
                   ];
                 })}
               </div>

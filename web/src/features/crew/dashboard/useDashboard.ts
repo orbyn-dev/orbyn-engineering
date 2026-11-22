@@ -11,9 +11,18 @@ export const MAX_REPOS = 24;
 /** At most this many areas have their trail read for the changes of mode. */
 export const MAX_TRAILS = 6;
 
-/** One repository's figures: the history read when the service has it, else the trust record, which holds less. */
+/**
+ * One repository's figures: the history read when the service has it, else the trust record, which holds less. A service without the
+ * route answers `404` (so does Crew Preview off, which the page is behind anyway): the page then draws the trust record.
+ */
 export async function readModel(client: DashboardClient, project: string, days: Period, signal: AbortSignal): Promise<DashModel> {
-  if (client.history) return fromHistory(await client.history({ project, days }, signal), days);
+  if (client.history) {
+    try {
+      return fromHistory(await client.history({ project, days }, signal), days);
+    } catch (error) {
+      if (signal.aborted || toFailure(error).status !== 404) throw error;
+    }
+  }
   return fromTrust(await client.trust(project, signal));
 }
 

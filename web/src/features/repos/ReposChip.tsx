@@ -5,6 +5,8 @@ import { toFailure } from "../../lib/useAsync";
 import { useLayoutWidth } from "../../lib/useLayout";
 import { useUi } from "../../product/state/ui";
 import { IconButton, Pill } from "../../ui/controls";
+import { ActionDialog } from "./ActionDialog";
+import { chooseRepo } from "./choice";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { ToolbarPopover } from "../pulls";
@@ -44,6 +46,9 @@ function List({ thread, repos, reload }: { thread: Thread; repos: ThreadRepo[]; 
   const task = useTaskFolder(thread.id, added);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [leaving, setLeaving] = useState<ThreadRepo | null>(null);
+  // The project's own repository is the primary; when the list does not hold it, the first is.
+  const primaryId = (repos.find((entry) => entry.repo_id === thread.project_id) ?? repos[0])?.repo_id;
   const limit = view?.max_per_thread ?? 8;
   const candidates = (view?.repositories ?? []).filter((row) => canJoinThread(row) && !repos.some((entry) => entry.repo_id === row.id));
   const add = async (repoId: string) => {
@@ -70,6 +75,9 @@ function List({ thread, repos, reload }: { thread: Thread; repos: ThreadRepo[]; 
             <span className="repos-counts"><span aria-label={`${entry.added} added`}>+{entry.added}</span> <span aria-label={`${entry.deleted} deleted`}>−{entry.deleted}</span></span>
             <code className="repos-branch">{plain(entry.branch)}</code>
             <Pill tone={entry.trusted ? "accent" : "warn"}>{entry.trusted ? "Trusted" : "Not trusted"}</Pill>
+            {entry.repo_id === primaryId ? null : (
+              <IconButton label={`Remove ${plain(entry.name)} from this thread`} onClick={() => setLeaving(entry)}><X size={14} aria-hidden /></IconButton>
+            )}
           </li>
         ))}
       </ul>
@@ -79,6 +87,18 @@ function List({ thread, repos, reload }: { thread: Thread; repos: ThreadRepo[]; 
         <Plus size={14} aria-hidden />Add a repository to this thread…
       </button>
       <p className="field-hint">Each repository has its own branch for this thread</p>
+      {leaving ? (
+        <ActionDialog title={`Remove ${plain(leaving.name)} from this thread?`} confirmLabel="Remove" tone="danger" cancelFocus onClose={() => setLeaving(null)}
+          onConfirm={async () => {
+            await reposApi().removeThreadRepo(thread.id, leaving.repo_id);
+            chooseRepo(thread.id, null);
+            setAdded((count) => count + 1);
+            reload();
+          }}>
+          <p>The thread stops working in {plain(leaving.name)}. The repository stays in the project.</p>
+          <p className="field-hint">If it holds changes, commit or discard them first.</p>
+        </ActionDialog>
+      ) : null}
       <Presence>
         {menu ? <Menu x={menu.x} y={menu.y} origin="bottom left" label="Repositories" items={candidates.map((row) => ({ label: plain(row.name), onSelect: () => { void add(row.id); } }))} onClose={() => setMenu(null)} /> : null}
       </Presence>

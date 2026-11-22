@@ -36,6 +36,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/background/{id}/enable"),
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/delete"),
+    ("POST", "/api/crew/background/{id}/run-now"),
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
     ("POST", "/api/crew/tasks/{id}/cancel"),
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
@@ -62,6 +63,7 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/settings/engine-tiers"),
     ("GET", "/api/crew/review/{id}/controls"),
     ("GET", "/api/crew/backtest/estimate"),
+    ("GET", "/api/crew/backtest/start-view"),
     ("GET", "/api/crew/backtest/{id}/report"),
     ("GET", "/api/crew/capacity"),
     ("GET", "/api/crew/capacity/coverage"),
@@ -90,6 +92,7 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/guard/test"),
     ("GET", "/api/crew/classes"),
     ("GET", "/api/crew/classes/test"),
+    ("GET", "/api/crew/dashboard"),
     ("GET", "/api/crew/projects/{id}/pinned-ref"),
     ("GET", "/api/crew/projects/{id}/worker-provider"),
     ("GET", "/api/crew/route/{id}"),
@@ -104,6 +107,7 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/flow/messages"),
     ("GET", "/api/crew/flow/tasks"),
     ("GET", "/api/crew/flow/tasks/{id}"),
+    ("GET", "/api/crew/flow/tasks/{id}/run"),
 ];
 
 const PREFIX: &str = "/api/crew";

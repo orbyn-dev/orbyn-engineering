@@ -10,14 +10,33 @@ const CELL: Record<string, string> = { comments: "pull-comments-cell", reviewers
 
 describe("the narrow list", () => {
   const steps = [...css.matchAll(/@container pulls \(max-width: (\d+)px\) \{([\s\S]*?)\n\}\n/g)].map((one) => ({ width: Number(one[1]), body: one[2]! }));
-  it("has the four drawn steps", () => expect(steps.map((step) => step.width)).toEqual([759, 699, 639, 579]));
+  // The drawn steps are at list widths 820, 760, 710 and 590 px (queries at 819, 759, 709 and 589): the list reads
+  // its own width, the window minus 56 px and, from 900 up, the docked sidebar's 224 px.
+  it("has the four drawn steps", () => expect(steps.map((step) => step.width)).toEqual([819, 759, 709, 589]));
 
-  it("draws the 900 px list: Checks an icon, Reviewers 96 px, Your review 130 px, Updated and Comments gone", () => {
-    const step = steps.find((one) => one.width === 639)!;
-    expect(/--pulls-cols: ([^;]+);/.exec(step.body)![1]).toBe("24px minmax(0, 1fr) 36px var(--c-rev-n) var(--c-yours-n)");
+  it("draws the tracks in the width table: Checks 132, Reviewers 118, Your review 130, Comments and Updated 44", () => {
+    expect(css).toMatch(/--c-rev: 118px;\s*--c-yours: 130px;/);
+    expect(css).toMatch(/--pulls-cols: 24px minmax\(0, 1fr\) 132px var\(--c-rev\) var\(--c-yours\) 44px 44px;/);
+  });
+
+  it("drops Updated at 820, Comments at 760, and at 710 keeps the Checks icon 36 px with Reviewers 96 px", () => {
+    const at = (width: number) => /--pulls-cols: ([^;]+);/.exec(steps.find((one) => one.width === width)!.body)![1];
+    expect(at(819)).toBe("24px minmax(0, 1fr) 132px var(--c-rev) var(--c-yours) 44px");
+    expect(at(759)).toBe("24px minmax(0, 1fr) 132px var(--c-rev) var(--c-yours)");
+    expect(at(709)).toBe("24px minmax(0, 1fr) 36px var(--c-rev-n) var(--c-yours-n)");
+    expect(at(589)).toBe("24px minmax(0, 1fr) 36px var(--c-yours-n)");
     expect(css).toMatch(/--c-rev-n: 96px;\s*--c-yours-n: 130px;/);
-    expect(steps.find((one) => one.width === 699)!.body).toContain(".h-comments");
-    expect(steps.find((one) => one.width === 759)!.body).toContain(".h-age");
+    expect(steps.find((one) => one.width === 819)!.body).toContain(".h-age");
+    expect(steps.find((one) => one.width === 759)!.body).toContain(".h-comments");
+    expect(steps.find((one) => one.width === 709)!.body).toContain(".h-checks-icon");
+    expect(steps.find((one) => one.width === 589)!.body).toContain(".h-reviewers");
+  });
+
+  it("sends the last column step to the phone list under 600 px of window, where the boxes become cards", () => {
+    const phone = css.slice(css.indexOf("@media (max-width: 599px)"));
+    expect(phone).toMatch(/--pulls-cols: minmax\(0, 1fr\);/);
+    expect(phone).toContain(".pull-phone-line");
+    expect(phone).toContain(".pull-row-actions");
   });
 
   it("keeps one track per visible column at every step, and hides the header and the row cell together", () => {

@@ -32,6 +32,16 @@ There is no Apple Developer account, so no Developer ID and no notarization. Exp
 
 The updater reads `ORBYN_UPDATE_PUBKEY` and `ORBYN_UPDATE_ENDPOINT` at compile time. No endpoint or key is configured, so an unsigned build has no update channel ("Updates aren't set up for this build."). The release build turns on updater files only when both `ORBYN_UPDATE_PUBKEY` and `TAURI_SIGNING_PRIVATE_KEY` exist; otherwise it builds without them. UNVERIFIED: a run of that path.
 
+`tauri.conf.json` sets `plugins.updater.requireSignedVersion`, so the app only accepts a release
+whose artifact signature names the version the endpoint announced. The endpoint response is not
+signed, and without that binding a compromised endpoint could pair an older, validly signed
+artifact with a higher version and force a downgrade. Two consequences for releases:
+
+- Every release users can still update from must be signed by a Tauri CLI that records the version
+  in the signature's trusted comment. Re-sign and re-publish anything signed before that.
+- A release whose signature carries no version, or another version, is refused: the shell reports
+  `app_update_failed` and never offers the download as ready.
+
 ## Not yet verified on a real machine
 
 Each item is UNVERIFIED: only CI has run.

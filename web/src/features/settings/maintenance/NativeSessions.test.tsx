@@ -1,7 +1,8 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiFailure, request } from "../../../api/client";
 import type { EngineStatus } from "../../../api/types";
+import { useWorkspace } from "../../../product/state/workspace";
 import { NativeSessions } from "./NativeSessions";
 
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
@@ -68,4 +69,77 @@ it("does not ask again after a network failure", async () => {
     await vi.advanceTimersByTimeAsync(60_000);
   });
   expect(vi.mocked(request)).toHaveBeenCalledTimes(1);
+});
+
+it("cancels a list the person walks away from, so the next list is not refused as busy", async () => {
+  useWorkspace.setState({ projects: { data: [{ id: "p1", name: "Project" } as never], error: null, loading: false } });
+  const signals: AbortSignal[] = [];
+  vi.mocked(request).mockImplementation(((_method: string, path: string, _body?: unknown, signal?: AbortSignal) => {
+    if (path.endsWith("/native-sessions/capabilities")) return Promise.resolve(caps as never);
+    // The agent takes its time: the list is still open when the panel goes away.
+    if (signal) signals.push(signal);
+    return new Promise(() => undefined);
+  }) as never);
+  const view = render(<NativeSessions engine={engine} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  await act(async () => {
+    screen.getByRole("button", { name: "List sessions" }).click();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(signals.map((signal) => signal.aborted)).toEqual([false]);
+  view.unmount();
+  expect(signals.map((signal) => signal.aborted)).toEqual([true]);
+});
+
+/** The one held request a panel keeps open while the test walks away. */
+const held: AbortSignal[] = [];
+const oneSession = { sessions: [{ session_id: "s1", title: "First chat", imported_thread_id: null }], next_cursor: null };
+
+async function showedSessions() {
+  held.length = 0;
+  useWorkspace.setState({ projects: { data: [{ id: "p1", name: "Project" } as never], error: null, loading: false } });
+  vi.mocked(request).mockImplementation(((_method: string, path: string, _body?: unknown, signal?: AbortSignal) => {
+    if (path.endsWith("/native-sessions/capabilities")) return Promise.resolve(caps as never);
+    if (path.includes("/native-sessions?")) return Promise.resolve(oneSession as never);
+    // Import and delete take their time: the agent is still working when the panel goes away.
+    if (signal) held.push(signal);
+    return new Promise(() => undefined);
+  }) as never);
+  const view = render(<NativeSessions engine={engine} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  await act(async () => {
+    screen.getByRole("button", { name: "List sessions" }).click();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  return view;
+}
+
+it("cancels an import the person walks away from, so the agent is freed", async () => {
+  const view = await showedSessions();
+  await act(async () => {
+    screen.getByRole("button", { name: "Import" }).click();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(held.map((signal) => signal.aborted)).toEqual([false]);
+  view.unmount();
+  expect(held.map((signal) => signal.aborted)).toEqual([true]);
+});
+
+it("cancels a delete the person walks away from, so the agent is freed", async () => {
+  const view = await showedSessions();
+  await act(async () => {
+    screen.getByRole("button", { name: "Delete" }).click();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  await act(async () => {
+    within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }).click();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(held.map((signal) => signal.aborted)).toEqual([false]);
+  view.unmount();
+  expect(held.map((signal) => signal.aborted)).toEqual([true]);
 });

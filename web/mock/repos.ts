@@ -28,7 +28,7 @@ export function repoFixtures(): RepoRow[] {
 
 export interface ReposMock extends ReposApi {
   /** Every write the screens made, in order: `add:<path>`, `clone:<source>`, `publish:<repo>:<name>:<visibility>`, `trust:<repo>`,
-   * `git:<repo>`, `create:<name>`, `cancel-clone:<repo>`, `remove:<repo>`, `start:<repo>@<base>,...`, `thread-add:<thread>:<repo>`,
+   * `git:<repo>`, `create:<name>`, `cancel-clone:<repo>`, `remove:<repo>`, `start:<repo>@<base>,...`, `thread-add:<thread>:<repo>`, `thread-remove:<thread>:<repo>`,
    * `thread-git:<thread>:<repo or primary>:<kind>`. */
   writes: string[];
   /** The engine, model, permission and first message each `start` write carried, in order. */
@@ -40,9 +40,9 @@ export interface ReposMock extends ReposApi {
   /** Flips a repository to untrusted behind the screens' back, as if it were revoked elsewhere: their list is stale until they read again. */
   distrust(repoId: string): void;
   /** The next write of that kind fails with exactly this refusal (the service's own code, status and message). */
-  rejectNext(what: "start" | "thread-add", failure: ApiFailure): void;
+  rejectNext(what: "start" | "thread-add" | "thread-remove", failure: ApiFailure): void;
   /** Make the next write of that kind fail. */
-  failNext(what: "add" | "create" | "cancel-clone" | "clone" | "publish" | "trust" | "git" | "remove" | "start" | "thread-add" | "thread-git" | null): void;
+  failNext(what: "add" | "create" | "cancel-clone" | "clone" | "publish" | "trust" | "git" | "remove" | "start" | "thread-add" | "thread-remove" | "thread-git" | null): void;
 }
 
 export function createReposMock(init: {
@@ -223,6 +223,18 @@ export function createReposMock(init: {
       const added: ThreadRepo = { repo_id: one.id, name: one.name, branch, added: 0, deleted: 0, trusted: true };
       threads[threadId] = [...held, added];
       return added;
+    },
+    removeThreadRepo: async (threadId, repoId) => {
+      writes.push(`thread-remove:${threadId}:${repoId}`);
+      await wait();
+      take("thread-remove");
+      const held = threads[threadId] ?? [];
+      const entry = held.find((one) => one.repo_id === repoId);
+      if (!entry) throw new ApiFailure("not_found", "This thread does not work in that repository.", 404);
+      // The primary is the project's own repository, the thread's first here; it never leaves.
+      if (entry === held[0]) throw new ApiFailure("invalid", "The primary repository cannot be removed from a thread.", 400);
+      if (entry.added + entry.deleted > 0) throw new ApiFailure("invalid", "Commit or discard its changes first", 400);
+      threads[threadId] = held.filter((one) => one !== entry);
     },
     threadGit: async (threadId, repoId, action) => {
       writes.push(`thread-git:${threadId}:${repoId ?? "primary"}:${action.kind}`);

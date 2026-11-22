@@ -161,14 +161,19 @@ async fn thread_diff(
     Query(query): Query<DiffQuery>,
 ) -> ApiResult<impl IntoResponse> {
     let repo = query.repo_id.clone();
-    orbyn_core::in_repo(repo, thread_diff_in_repo(state, id, query)).await
+    let which = state.core.diff_repo(&id, repo.as_deref())?;
+    let Json(mut files) = orbyn_core::in_repo(repo, thread_diff_in_repo(state, id, query)).await?;
+    for file in &mut files {
+        file.repo_id.clone_from(&which);
+    }
+    Ok(Json(files))
 }
 
 async fn thread_diff_in_repo(
     state: AppState,
     id: String,
     query: DiffQuery,
-) -> ApiResult<impl IntoResponse> {
+) -> ApiResult<Json<Vec<orbyn_contracts::FileDiff>>> {
     let core = &state.core;
     let missing = |what: &str| CoreError::Invalid(format!("This diff needs {what}."));
     let files = match query.scope.as_deref() {

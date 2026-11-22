@@ -32,8 +32,8 @@ pub(crate) use merge::merge_tool_specs;
 pub use merge::{
     Answering, COMMENT_MAX, DIGEST_HOURS_MAX, DiffFacts, MERGE_TOOLS, MergeOperation, MergeOutcome,
     MergeRequest, MergeTarget, OFFSET_MAX, PAGE_DEFAULT, PAGE_MAX, Page, Rate, RecentTotals,
-    ReviewAnswer, ReviewItem, Risk, Scored, WatchOutcome, area_of, areas_of, check_words, lane_ran,
-    owed_lanes, review_window, score, sensitive, valid_id,
+    ReviewAnswer, ReviewItem, ReviewQueue, Risk, Scored, WatchOutcome, area_of, areas_of,
+    check_words, lane_ran, owed_lanes, review_window, score, sensitive, valid_id,
 };
 pub(crate) use review::GateReview;
 pub use review::{Autopilot, ModeScope};

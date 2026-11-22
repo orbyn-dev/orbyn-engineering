@@ -23,6 +23,8 @@ clap = { version = "4", features = ["derive", "env"] }
 ed25519-dalek = "3.0.0"
 futures-util = "0.3"
 getrandom = "0.3"
+# The JPEG and PNG codecs photo conversion writes with. WebP and HEIC are their own decision.
+image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png"] }
 libc = "0.2"
 portable-pty = "0.9"
 regex = "1"

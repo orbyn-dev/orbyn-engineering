@@ -15,15 +15,43 @@ export interface TerminalControls {
 
 const open = new Map<string, TerminalControls>();
 const watchers = new Map<string, Set<(controls: TerminalControls) => void | (() => void)>>();
+const registryListeners = new Set<() => void>();
 
 export const terminalKey = (threadId: string, terminalId: string | undefined) => `${threadId}:${terminalId ?? "main"}`;
+
+/** Calls back when a terminal opens or closes in this window. Returns a stop function. */
+export function onTerminalRegistryChange(listener: () => void): () => void {
+  registryListeners.add(listener);
+  return () => {
+    registryListeners.delete(listener);
+  };
+}
+
+/**
+ * The threads with a terminal open in this window, in the order their first terminal registered. Used to read that thread's
+ * waiting items once when the window opens; the terminal key starts with the thread id (`terminalKey`).
+ */
+export function openTerminalThreads(): string[] {
+  const threads = new Set<string>();
+  for (const key of open.keys()) {
+    const at = key.indexOf(":");
+    if (at > 0) threads.add(key.slice(0, at));
+  }
+  return [...threads];
+}
+
+const registryChanged = () => registryListeners.forEach((listener) => listener());
 
 /** Registers an open terminal; the returned function removes it if it is still the one registered. */
 export function registerTerminal(key: string, controls: TerminalControls): () => void {
   open.set(key, controls);
+  registryChanged();
   for (const watcher of watchers.get(key) ?? []) watcher(controls);
   return () => {
-    if (open.get(key) === controls) open.delete(key);
+    if (open.get(key) === controls) {
+      open.delete(key);
+      registryChanged();
+    }
   };
 }
 

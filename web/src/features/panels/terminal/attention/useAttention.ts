@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { navigate } from "../../../../product/state/route";
 import { useUi } from "../../../../product/state/ui";
 import { useWorkspace } from "../../../../product/state/workspace";
@@ -30,13 +30,15 @@ const threadTitleOf = (id: string): string => useWorkspace.getState().threads[id
 /**
  * Listens for waiting engine consoles and tells the person the way thread notices go: a toast (In-app notifications) and a system
  * notification (Thread notifications) only when the app is in the background and the permission is already granted. It asks for no
- * permission. With no client (the production default) it subscribes to nothing. `openId` is the thread on screen, whose item is
+ * permission. The client is the service client unless a test or the preview installed another. `openId` is the thread on screen, whose item is
  * already in front of the person.
  */
 export function useTerminalAttention(openId: string | null): void {
+  // The subscription outlives a change of the open thread: only what a notice does depends on it.
+  const open = useRef(openId);
+  open.current = openId;
   useEffect(() => {
     const api = attentionApi();
-    if (!api) return;
     const told = new Map<string, number>();
     const tell = (entry: AttentionEntry) => {
       if (entry.dismissed) return;
@@ -45,17 +47,18 @@ export function useTerminalAttention(openId: string | null): void {
       if (now - (told.get(key) ?? Number.NEGATIVE_INFINITY) < NOTICE_GAP_MS) return;
       told.set(key, now);
       const { inAppNotifications, threadNotifications, pushToast } = useUi.getState();
-      const open = () => void openAttentionTerminal(entry);
+      const show = () => void openAttentionTerminal(entry);
       const title = threadTitleOf(entry.threadId);
-      if (inAppNotifications && entry.threadId !== openId) pushToast(toastText(entry, title), "needs", { label: "Open", run: open });
+      if (inAppNotifications && entry.threadId !== open.current) pushToast(toastText(entry, title), "needs", { label: "Open", run: show });
       if (threadNotifications && (document.hidden || !document.hasFocus()) && "Notification" in window && Notification.permission === "granted") {
         const note = new Notification(title === "" ? "Orbyn" : title, { body: notificationText(entry, title) });
-        note.onclick = () => { window.focus(); open(); };
+        note.onclick = () => { window.focus(); show(); };
       }
     };
     return api.subscribe((delivery) => {
       const fresh = useAttention.getState().receive(delivery);
-      if (fresh) tell(fresh);
+      // A value read from the open-items route was already waiting: the dots and the thread's own item show it, but it is not news.
+      if (fresh && delivery.source !== "open") tell(fresh);
     });
-  }, [openId]);
+  }, []);
 }

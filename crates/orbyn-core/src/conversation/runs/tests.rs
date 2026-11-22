@@ -2,6 +2,7 @@
 //! Wire-format behavior is covered against the fake engine in `orbynd/tests`.
 
 mod follow_ups;
+mod snapshot;
 #[cfg(unix)]
 mod update;
 
@@ -641,6 +642,68 @@ async fn engine_exit_during_approval_fails_the_run_and_expires() {
         f.core.store.approval(&approval.id).unwrap().state,
         ApprovalState::Expired
     );
+}
+
+#[tokio::test]
+async fn a_stopped_host_fails_the_run_with_its_stable_code() {
+    let script: Script = Arc::new(|_, events, _| {
+        tokio::spawn(async move {
+            let _ = events
+                .send(EngineEvent::Finished(
+                    crate::agents::driver::host::host_stopped(),
+                ))
+                .await;
+        })
+    });
+    let f = fixture(script).await;
+    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Failed);
+    let stored = f.core.store.run(&run.id).unwrap();
+    assert_eq!(
+        stored.error.as_deref(),
+        Some(crate::agents::driver::host::HOST_STOPPED)
+    );
+    let events = f.core.store.events_after(&f.thread, 0, 100).unwrap();
+    let (message, code) = events
+        .iter()
+        .find_map(|event| match &event.event {
+            AgUiEvent::RunError { message, code } => Some((message, code)),
+            _ => None,
+        })
+        .expect("a run error event");
+    assert_eq!(message, crate::agents::driver::host::HOST_STOPPED);
+    assert_eq!(code.as_deref(), Some("engine_host_stopped"));
+    assert!(!events.iter().any(
+        |event| matches!(&event.event, AgUiEvent::Custom { name, .. } if name == "engine.sign_in_required")
+    ));
+}
+
+#[tokio::test]
+async fn a_plain_failure_keeps_the_plain_code() {
+    let script: Script = Arc::new(|_, events, _| {
+        tokio::spawn(async move {
+            // A plain failure that happens to use the host-stopped sentence is still
+            // not a host stop: the code comes from the outcome, never the words.
+            let _ = events
+                .send(EngineEvent::Finished(EngineOutcome::Failed(
+                    crate::agents::driver::host::HOST_STOPPED.into(),
+                )))
+                .await;
+        })
+    });
+    let f = fixture(script).await;
+    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Failed);
+    let events = f.core.store.events_after(&f.thread, 0, 100).unwrap();
+    let (message, code) = events
+        .iter()
+        .find_map(|event| match &event.event {
+            AgUiEvent::RunError { message, code } => Some((message, code)),
+            _ => None,
+        })
+        .expect("a run error event");
+    assert_eq!(message, crate::agents::driver::host::HOST_STOPPED);
+    assert_eq!(code.as_deref(), Some("engine_failed"));
 }
 
 #[tokio::test]
@@ -1393,4 +1456,66 @@ async fn when_the_redaction_settings_cannot_be_read_nothing_reaches_the_engine()
     }
     assert!(seen.lock().unwrap().is_empty(), "the engine was started");
     assert!(read.lock().unwrap().is_empty(), "the engine read a file");
+}
+
+#[tokio::test]
+async fn an_attached_transcript_reaches_the_engine_as_a_masked_copy_never_the_stored_file() {
+    let read: Read = Arc::default();
+    let f = fixture(reading(&read)).await;
+    let doc = serde_json::json!({
+        "format": "orbyn-transcript", "version": 1, "exported_at": "2026-11-22T10:00:00Z",
+        "thread": { "title": "Old", "engine": "claude", "model": "opus", "created_at": "2026-11-20T10:00:00Z" },
+        "messages": [{ "role": "user", "ts": "2026-11-20T10:00:00Z", "text": "the corp word is zebra-quartz-91" }],
+        "omitted_earlier": 0
+    });
+    let attached = f
+        .core
+        .attach_transcript(&f.thread, doc.to_string().as_bytes(), false)
+        .unwrap();
+    let attachment = attached.attachment.unwrap();
+    let stored = f.core.store.list_attachments(&f.thread).unwrap()[0]
+        .1
+        .clone();
+    // A pattern the person adds after the attach: the stored text holds the word, the send must still hide it.
+    f.core
+        .save_redaction_pattern(
+            "t",
+            None,
+            &orbyn_contracts::RedactionPatternInput {
+                name: "Corp word".into(),
+                pattern: "zebra-quartz-91".into(),
+                kind: orbyn_contracts::PatternKind::Text,
+                applies_to: orbyn_contracts::PatternScope::Anywhere,
+                accept_broad: None,
+            },
+        )
+        .unwrap();
+    let run = f
+        .core
+        .runs
+        .admit_with(
+            &f.thread,
+            "use it",
+            std::slice::from_ref(&attachment.id),
+            "t",
+        )
+        .unwrap();
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Completed);
+    assert!(
+        std::fs::read_to_string(&stored)
+            .unwrap()
+            .contains("zebra-quartz-91")
+    );
+    let got = read.lock().unwrap().clone();
+    assert_eq!(got.len(), 1);
+    assert_ne!(
+        got[0].0, stored,
+        "the engine gets a copy, not the stored file"
+    );
+    let text = String::from_utf8(got[0].1.clone()).unwrap();
+    assert!(!text.contains("zebra-quartz-91"), "{text}");
+    assert!(
+        text.contains("[hidden: Corp word]") && text.contains("Imported transcript"),
+        "{text}"
+    );
 }

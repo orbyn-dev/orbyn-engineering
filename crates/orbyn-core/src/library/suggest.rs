@@ -317,7 +317,7 @@ impl Core {
                 let row = self.store.create_library_env_set(&fields)?;
                 Ok(CopiedSuggestion {
                     kind: LibraryKind::EnvSet,
-                    entry: serde_json::to_value(self.env_set_view(row))?,
+                    entry: serde_json::to_value(self.env_set_view(row)?)?,
                 })
             }
         }

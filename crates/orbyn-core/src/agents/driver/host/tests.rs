@@ -2,14 +2,16 @@
 //! misbehaves on purpose) and the engine host's own `fake` family. They need `node`; without
 //! it a test says so loudly and returns, it never passes silently.
 
+mod acp;
 mod asks;
 mod control;
+mod cursor;
 mod pool;
 mod real;
 mod runs;
 mod secrets;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -80,11 +82,35 @@ pub(super) fn driver(pool: &Arc<Pool>) -> HostDriver {
     )
 }
 
+/// A host driver whose Claude program is `node`, so a test of the real `claude` family
+/// never needs the person's engine binary. The stand-in is the host either way.
+pub(super) fn driver_on_node(pool: &Arc<Pool>, node: &Path) -> HostDriver {
+    HostDriver::new(
+        Arc::new(ClaudeDriver::new("claude".into(), Duration::from_secs(1))),
+        pool.clone(),
+        node.to_string_lossy().into_owned(),
+    )
+}
+
 pub(super) fn standin(env: &[(&str, &str)], timings: Timings) -> Option<Rig> {
     standin_with(env, timings, None)
 }
 
 pub(super) fn standin_with(
+    env: &[(&str, &str)],
+    timings: Timings,
+    secrets: Option<SecretSource>,
+) -> Option<Rig> {
+    standin_family_with("fake", env, timings, secrets)
+}
+
+/// The stand-in as another family, so its script can be the family it stands in for.
+pub(super) fn standin_family(family: &str, env: &[(&str, &str)], timings: Timings) -> Option<Rig> {
+    standin_family_with(family, env, timings, None)
+}
+
+fn standin_family_with(
+    family: &str,
     env: &[(&str, &str)],
     timings: Timings,
     secrets: Option<SecretSource>,
@@ -97,6 +123,7 @@ pub(super) fn standin_with(
         .iter()
         .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
         .collect();
+    vars.push(("STANDIN_FAMILY".into(), family.to_owned()));
     vars.push((
         "STANDIN_LOG".into(),
         dir.path()
@@ -111,7 +138,7 @@ pub(super) fn standin_with(
         instance: "test".into(),
     };
     Some(Rig {
-        pool: Pool::new("fake", spec, timings, secrets),
+        pool: Pool::new(family, spec, timings, secrets),
         dir,
     })
 }

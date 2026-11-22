@@ -6,6 +6,7 @@ pub mod account;
 mod agent_mcp;
 mod auth;
 mod automations;
+mod blocks;
 mod checkpoints;
 mod classes;
 mod code_mode;
@@ -18,6 +19,7 @@ mod crew_capacity;
 mod crew_escapes;
 mod crew_map;
 mod crew_tasks;
+mod devices;
 mod engine_credentials;
 mod engines;
 mod explorer;
@@ -72,6 +74,8 @@ mod crew_capacity_tests;
 #[cfg(test)]
 mod crew_classes_tests;
 #[cfg(test)]
+mod crew_dashboard_tests;
+#[cfg(test)]
 mod crew_escapes_tests;
 #[cfg(test)]
 mod crew_forge_resolve_tests;
@@ -96,13 +100,21 @@ mod engine_credentials_tests;
 #[cfg(test)]
 mod engine_host_tests;
 #[cfg(test)]
+mod governance_tests;
+#[cfg(test)]
+mod json_refusal_tests;
+#[cfg(test)]
 mod library_tests;
 #[cfg(test)]
 mod never_asks_tests;
 #[cfg(test)]
+mod photo_conversion_tests;
+#[cfg(test)]
 mod profiles_tests;
 #[cfg(test)]
 mod secrets_tests;
+#[cfg(test)]
+mod snapshot_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -122,6 +134,7 @@ pub fn router(state: AppState) -> Router {
     let protected = Router::new()
         .merge(account::routes(state.clone()))
         .merge(crew::routes(state.clone()))
+        .merge(devices::routes())
         .merge(media::routes())
         .merge(settings::routes())
         .merge(secrets::routes(state.clone()))
@@ -148,6 +161,7 @@ pub fn router(state: AppState) -> Router {
         .merge(usage::routes())
         .merge(engines::routes(state.clone()))
         .merge(automations::routes())
+        .merge(blocks::routes())
         .merge(preview::routes())
         .merge(runs::routes(state.clone()))
         .merge(interactions::routes())

@@ -1,9 +1,9 @@
 import { CloudOff, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 
-/** The strip the settings frames draw for a failure or a state: a message, with actions at the end (.banner, .banner.err in the design). */
-export function SettingsBanner({ tone, icon, children, actions }: { tone?: "err" | "info"; icon?: ReactNode; children: ReactNode; actions?: ReactNode }) {
-  return <div className={tone ? `set-banner ${tone}` : "set-banner"} role={tone === "err" ? "alert" : "status"}>
+/** The strip the settings frames draw for a failure or a state: a message, with actions at the end (.banner, .banner.err in the design). A static line passes `role="note"` so it is not announced as a live status. */
+export function SettingsBanner({ tone, icon, children, actions, role }: { tone?: "err" | "info"; icon?: ReactNode; children: ReactNode; actions?: ReactNode; role?: "note" }) {
+  return <div className={tone ? `set-banner ${tone}` : "set-banner"} role={role ?? (tone === "err" ? "alert" : "status")}>
     {icon ?? (tone === "err" ? <TriangleAlert size={16} aria-hidden /> : <CloudOff size={16} aria-hidden />)}
     <div>{children}</div>
     {actions ? <div className="set-banner-end">{actions}</div> : null}

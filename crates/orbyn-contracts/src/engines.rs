@@ -195,6 +195,27 @@ pub enum AuthState {
 }
 
 wire_enum! {
+/// Why an engine's last start did not get going.
+pub enum EngineStartIssueKind {
+    /// The agent asked for a sign-in before it would serve the session.
+    SignedOut,
+    /// The program was found, but starting it failed in any other way.
+    Failed,
+}
+}
+
+wire! {
+/// The last reason an engine did not start, in Orbyn's own words. Never the agent's
+/// output: the core writes the sentence, so it is safe to show anywhere.
+pub struct EngineStartIssue {
+    pub kind: EngineStartIssueKind,
+    pub message: String,
+    /// When Orbyn recorded it, as an RFC 3339 UTC time.
+    pub at: String,
+}
+}
+
+wire_enum! {
 pub enum InstallerKind {
     Npm,
     Pnpm,
@@ -319,6 +340,10 @@ pub struct EngineStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub account: Option<String>,
+    /// The last start's failure, when one has been seen and nothing has started cleanly since.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub start_issue: Option<EngineStartIssue>,
     /// Which Crew roles this engine may take. `reviewer_only` engines never write.
     #[serde(default)]
     #[ts(optional, as = "Option<EngineCrewRole>")]
@@ -346,6 +371,10 @@ pub enum ProviderLabel {
     Planned,
     /// No program was found, or the program found is a different one with the same name.
     NotFound,
+    /// The agent said it is not signed in; sign in and try again.
+    SignedOut,
+    /// The program was found, but the last start failed.
+    StartFailed,
 }
 }
 

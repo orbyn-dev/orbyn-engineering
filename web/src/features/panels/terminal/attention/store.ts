@@ -1,5 +1,7 @@
+import { useMemo } from "react";
 import { create } from "zustand";
 import { ATTENTION_EVENT, type AttentionEntry, ATTENTION_KINDS, CLEAR_REASONS, LIMITS, type AttentionDelivery, type TerminalAttentionEvent } from "./contract";
+import { setWaitingThreads } from "../../../../product/state/waitingThreads";
 import { cleanExcerpt, oneLine } from "./text";
 
 export type { AttentionEntry };
@@ -62,7 +64,8 @@ export function applyAttention(state: AttentionState, delivery: AttentionDeliver
     return { state: { entries, cleared }, fresh: null };
   }
   if (before && delivery.seq <= before.seq) return { state, fresh: null };
-  if (delivery.seq <= (state.cleared.get(parsed.id) ?? 0)) return { state, fresh: null };
+  const clearedAt = state.cleared.get(parsed.id);
+  if (clearedAt !== undefined && delivery.seq <= clearedAt) return { state, fresh: null };
   const entry: AttentionEntry = {
     id: parsed.id, threadId: delivery.thread_id, terminalId: parsed.terminal_id, terminalTitle: parsed.terminal_title, engine: parsed.engine,
     kind: parsed.kind, since: parsed.since, toldAt: before?.toldAt ?? at, excerpt: parsed.excerpt, seq: delivery.seq,
@@ -70,7 +73,9 @@ export function applyAttention(state: AttentionState, delivery: AttentionDeliver
   };
   const entries = new Map(state.entries);
   entries.set(parsed.id, entry);
-  return { state: { entries: capped(entries), cleared: state.cleared }, fresh: before ? null : entry };
+  // A value read from the open-items route (seq 0) was already waiting before the window opened: it shows, but is not new, so it
+  // raises no toast or notification.
+  return { state: { entries: capped(entries), cleared: state.cleared }, fresh: before || delivery.seq <= 0 || delivery.source === "open" ? null : entry };
 }
 
 interface AttentionStore extends AttentionState {
@@ -94,3 +99,26 @@ export const useAttention = create<AttentionStore>((set, get) => ({
   },
   reset: () => set(emptyAttention()),
 }));
+
+const isWaiting = (entry: AttentionEntry): boolean => entry.cleared === null && !entry.dismissed;
+
+/** The terminals of one thread that wait for the person now: not cleared, not dismissed on this window. */
+export function waitingTerminalIds(entries: ReadonlyMap<string, AttentionEntry>, threadId: string): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const entry of entries.values()) if (entry.threadId === threadId && isWaiting(entry)) ids.add(entry.terminalId);
+  return ids;
+}
+
+/** The waiting terminals of the thread (the terminal tabs' dot). */
+export function useWaitingTerminals(threadId: string): ReadonlySet<string> {
+  const entries = useAttention((state) => state.entries);
+  return useMemo(() => waitingTerminalIds(entries, threadId), [entries, threadId]);
+}
+
+// The sidebar reads which threads wait through a neutral store, so it need not import this feature.
+useAttention.subscribe((state, before) => {
+  if (state.entries === before.entries) return;
+  const ids = new Set<string>();
+  for (const entry of state.entries.values()) if (isWaiting(entry)) ids.add(entry.threadId);
+  setWaitingThreads(ids);
+});
