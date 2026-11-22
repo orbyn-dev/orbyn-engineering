@@ -69,7 +69,7 @@ fn spec(confine: Option<Confinement>, base: &Path) -> RunSpec {
 
 #[test]
 fn the_gate_still_refuses_codex_but_the_confined_launch_path_does_not() {
-    assert!(!crate::host::confine::CODEX_WORKERS_ALLOWED);
+    const { assert!(!crate::host::confine::CODEX_WORKERS_ALLOWED) };
     let (_dir, base) = temp();
     let (_data, configured) = rules(&base);
     let mut spec = spec(Some(configured), &base);
