@@ -1082,7 +1082,7 @@ mod tests {
         let project_id = project(&core, &dir);
         let cwd = dir.path().join("work").to_str().unwrap().to_owned();
         let root = dir.path().join("history");
-        let (thread, _) = core
+        let thread = core
             .store
             .import_transcript_thread(
                 NewThread {
