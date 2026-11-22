@@ -1,8 +1,8 @@
 # Crew dashboard contract
 
 What the web Crew dashboard (W12 in [crew.md](crew.md), frames `dash-*` of Crew Designs "23. Dashboard") needs from the service. **The
-service side is served** (`GET /api/crew/dashboard`, this document); the web client is not wired to it yet, so the page still draws a
-Planned mark where only this read can answer. Eng 2 owns the service side. A name here changes only if the service PR says so. Row: G18
+service side is served** (`GET /api/crew/dashboard`, this document) and the web client is wired to it; a service without the route
+answers `404` and the page falls back to the trust record, drawing a Planned mark where only this read can answer. Eng 2 owns the service side. A name here changes only if the service PR says so. Row: G18
 in [parity](parity.md).
 
 ## What exists today and what the page draws from it
@@ -12,7 +12,7 @@ in [parity](parity.md).
 | Merges in the window, reverts, revert rate (a rate from 10 merges) | `GET /api/crew/trust?project=` | Live. Window is the service's own, 60 days (`window_days`); no `days` parameter. |
 | Merges and reverts by engine, by area | the same read | Live. At most 50 rows each, `truncated` says more exist. |
 | The mode each area is on, its record and the changes of mode | `GET /api/crew/autopilot/areas`, `.../areas/history`, `.../thresholds` | Live. Window 14 days. Escapes are not measured. |
-| Autonomy rate, cycle time, cost per engine, merges per week, who reverted, the merges of a small repo | `GET /api/crew/dashboard` below | **Served** by the service. The production client sends nothing yet, so the page still draws these as Planned tiles. |
+| Autonomy rate, cycle time, cost per engine, merges per week, who reverted, the merges of a small repo | `GET /api/crew/dashboard` below | **Served** by the service; the production client sends it (a `404` falls back to the trust record and Planned tiles). |
 
 Until that read exists the page draws Autonomy, Cycle time and Cost as Planned tiles (a dash, never a zero), the bars as a Planned "Over time" heading,
 the 30 and 90 day periods as disabled and Planned, and the Autonomy and Cost columns of the engine table as Planned. The revert rate, the engine and area
@@ -105,14 +105,14 @@ The service answers them from records it already keeps (`crates/orbyn-core/src/c
 
 ## As built (web)
 
-- Client: `web/src/features/crew/dashboard/contract.ts`. The default (production) client still has `history: null`, so nothing sends this request yet: the
-  service is served, the page is not wired to it. A test (`live.test.tsx`) asserts no `/api/crew/dashboard` call is made.
+- Client: `web/src/features/crew/dashboard/contract.ts`. The production client sends `GET /api/crew/dashboard?project=&days=&utc_offset_minutes=`
+  (the person's own offset, so weeks start on their Monday) and `fromService` makes the omitted fields explicit (`null`). A `404` (an older
+  service, or Crew Preview off) falls back to the trust record, which fixes the period to its own window and keeps Planned marks. A test
+  (`live.test.tsx`) asserts the request and the fallback.
 - Mock: `web/mock/crewDashboard.ts`, used by tests and the dev-only Preview frames (`#/preview/crew/dash-*`). Guard markers in
   `web/scripts/assert-no-previews.mjs` fail a production build that holds it.
 - Page: Settings › Crew › Dashboard at `#/settings/crew/dashboard?repo=<project>`, behind Crew Preview. The project and period are remembered per person
   in browser storage (`orbyn.crew-dashboard`), with a fallback when storage is off.
-- When the service serves the read: set `history` in `contract.ts` to the typed request and the Planned marks drop out by themselves; update this note's
-  "What exists today" table and the G18 row.
 
 ## Open questions for Eng 2
 
