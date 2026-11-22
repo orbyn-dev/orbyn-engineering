@@ -50,7 +50,7 @@ export function BacktestSettingsUnset() {
             <div>
               <b>Run budget</b>
               <small>
-                A backtest uses engines the way a real run does, so each engine needs a budget, in its own unit. Without one the backtest doesn’t start, and Crew never goes past a budget.
+                A backtest uses engines the way a real run does, so each engine needs a budget, in its own unit. Without one the backtest doesn’t start, and Crew stops at the budget.
               </small>
             </div>
             <span className="cx-sv">Not set</span>

@@ -51,6 +51,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A terminal waits for the person: the amber dot before the tab's title. */
+.ptab .ptab-attn {
+  margin-inline-end: 6px;
+  vertical-align: 1px;
+}
 .ptab[data-selected] {
   z-index: 1;
   flex: 0 1 128px;

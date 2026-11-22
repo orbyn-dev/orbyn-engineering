@@ -37,8 +37,12 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    person starts, never an engine spawn. They are in no SQLite row, log, audit row, answer or export, and a run's terminal
    output is masked for them by exact match.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
-3. Claude uses the CLI, never the Agent SDK. `--bare` is forbidden on subscription
-   sessions because it ignores OAuth login.
+3. Claude runs through the person's own installed `claude`. The default path is the engine host with the Claude Agent SDK
+   (a dependency used as shipped, never copied or modified); the CLI driver stays a path the person can choose. Both
+   run the unmodified `claude` binary, never collect, read or store Claude.ai credentials (the engine keeps its own
+   login), and never use `--bare`, which ignores subscription login. *Planned*: the SDK path is the default only after
+   the host bundles the SDK and its notices (docs/sdk-default-plan.md); until then the CLI is the only path and the host
+   is opt-in. A person's choice is never switched silently: when the host is down the person sees why and may pick the CLI.
 4. Orbyn writes nothing into target repositories or engine user config: no skills,
    instructions, excludes or context maps. The project file is read-only to Orbyn.
 5. A folder must be trusted before an engine, project script or terminal runs in
@@ -2195,8 +2199,8 @@ OpenCode 2.2.5, which ran real turns through `orbynd` on macOS.
 instance can still be edited or removed), an installed app such as Antigravity that holds no ACP server, a
 program refused for being another CLI (Grok), and the engines not built. Each row has a group (In use, Found,
 More engines, Can't start, Not found, Planned; the page puts a startable engine under In use when its per-project
-switch is on) and labels: Not verified (a known ACP engine that has not run on a real install; today only
-OpenCode 2.2.5 has), Unmanaged (the engine cannot be gated or cannot ask), Limited support (the signed manifest's
+switch is on) and labels: Not verified (a known ACP engine that has not run on a real install; today
+OpenCode 2.2.5 is the only one that has), Unmanaged (the engine cannot be gated or cannot ask), Limited support (the signed manifest's
 `Unsupported` or `Graceful` version), Can't start (a `Broken` version, or an app with no ACP server), Not found
 and Planned (Pi, Muse Code, ZCode, and Cline's effort flag). Not found, Unmanaged and a `Broken` Can't start come
 from the same `ProviderFacts` the crew router's hard filters read. The Windows and Linux places an app is looked
@@ -2221,6 +2225,11 @@ the method's arguments. The provider card shows it to copy, and a run that fails
 login names it. Orbyn never runs it, never calls `authenticate` or `logout`, and offers no
 `env_var` method, since that means collecting a key. A method that sets variables, or a word
 a Windows or Unix shell would read differently, gives no command.
+
+The provider status also keeps the last start's issue: the ACP driver records `signed_out` when
+a handshake or session open is refused with ACP's auth-required code, and `failed` when it
+fails any other way. A successful open or model handshake clears it, so a signed-out engine
+reports the login again only until it next starts cleanly.
 
 Skills come from the workspace, in place. Nothing is copied, packed or signed.
 

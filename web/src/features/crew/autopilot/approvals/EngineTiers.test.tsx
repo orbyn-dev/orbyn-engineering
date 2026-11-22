@@ -185,3 +185,32 @@ it("stacks the tier row at 640 px so the Reviewer only chip stays under the engi
   expect(css).toMatch(/@media\s*\(max-width:\s*640px\)[\s\S]*?\.et-row\s*\{[^}]*flex-direction:\s*column/);
   expect(css).toMatch(/@media\s*\(max-width:\s*640px\)[\s\S]*?\.et-side\s*\{[^}]*align-items:\s*flex-start/);
 });
+
+it("draws one Reviewer only chip with the same reason for each unmanaged ACP engine, and none for Kimi Code (frame acp-status-crew-tiers)", async () => {
+  const engines = [["kiro", "Kiro"], ["droid", "Factory Droid"], ["omp", "Oh My Pi"], ["mistral-vibe", "Mistral Vibe"], ["glm", "GLM"], ["kimi", "Kimi Code"]] as const;
+  const view = exampleTierView();
+  for (const [id, name] of engines) view.engines.push({ id, name, native: false, available: true, unavailable_reason: null, defaults: [`${id}-default`] });
+  vi.mocked(reviewControlApi.tiers).mockResolvedValue(view);
+  useWorkspace.setState({ engines: { data: engines.map(([id, name]) => ({ id, name, crew_role: id === "kimi" ? "any" : "reviewer_only",
+    crew_role_reason: id === "kimi" ? null : "Orbyn cannot ask before it acts" } as unknown as EngineStatus)), error: null, loading: false } });
+  render(<EngineTiers />);
+  expect(await screen.findAllByText("Reviewer only")).toHaveLength(5);
+  for (const chip of screen.getAllByText("Reviewer only")) expect(chip.closest("[title]")).toHaveAttribute("title", "Orbyn cannot ask before it acts");
+  expect(screen.queryByText("Unmanaged")).toBeNull();
+  expect(screen.queryByText("Not verified")).toBeNull();
+  expect(screen.queryByText("Orbyn cannot ask before it acts")).toBeNull();
+  expect(screen.getAllByRole("button", { name: "Map it" })).toHaveLength(6);
+  useWorkspace.setState({ engines: { data: [], error: null, loading: false } });
+});
+
+it("draws a small Map it on a Cursor row with no saved tier, as crew-cursor-reviewer-only asks", async () => {
+  const view = exampleTierView();
+  view.settings = { revision: 1, assignments: {} };
+  vi.mocked(reviewControlApi.tiers).mockResolvedValue(view);
+  useWorkspace.setState({ engines: { data: [{ id: "example-acp", name: "Example ACP", crew_role: "reviewer_only", crew_role_reason: "Not yet confined for writing work" } as unknown as EngineStatus], error: null, loading: false } });
+  render(<EngineTiers />);
+  const mapIt = await screen.findByRole("button", { name: "Map it" });
+  expect(mapIt).toHaveClass("btn-small");
+  expect(screen.getByText("Reviewer only").closest("[title]")).toHaveAttribute("title", "Not yet confined for writing work");
+  useWorkspace.setState({ engines: { data: [], error: null, loading: false } });
+});
