@@ -99,9 +99,9 @@ The service answers them from records it already keeps (`crates/orbyn-core/src/c
   the window's tasks are each read once, not once per merge. A store read that fails answers `500 history_unreadable`, as the contract says.
 - `merge_checks` and `not_verified` are not part of this read: it sends the task's own checks as `passed`, `failed` or `none`, and the proof itself stays
   in the Review queue reads.
-- Tests: `crates/orbyn-core/src/crew/tests/dashboard.rs` (window, project, weeks, cost units, reverts, checks, cycle, truncation, refusals, and that the
-  read writes nothing), unit tests beside the read, and `crates/orbynd/src/routes/crew_dashboard_tests.rs` (gate, local-only, token, request shape,
-  not-found, and the empty answer).
+- Tests: `crates/orbyn-core/src/crew/tests/dashboard.rs` (window, project, weeks, offsets, question scoping, answer-key and person-pattern scrubbing,
+  cost units, reverts and certainty, checks, cycle, truncation, refusals, and that the read writes nothing), unit tests beside the read, and
+  `crates/orbynd/src/routes/crew_dashboard_tests.rs` (gate, local-only, token, request shape, not-found, unreadable history, and the empty answer).
 
 ## As built (web)
 

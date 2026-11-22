@@ -433,12 +433,12 @@ impl Store {
         let mut args: Vec<rusqlite::types::Value> = task_ids
             .iter()
             .cloned()
-            .map(|id| rusqlite::types::Value::from(id))
+            .map(rusqlite::types::Value::Text)
             .collect();
         args.extend(
             kinds
                 .iter()
-                .map(|kind| rusqlite::types::Value::from((*kind).to_owned())),
+                .map(|kind| rusqlite::types::Value::Text((*kind).to_owned())),
         );
         let conn = self.reader();
         let mut statement = conn.prepare(&format!(

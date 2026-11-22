@@ -410,6 +410,14 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Makes the dashboard's window query fail, as a damaged table would. Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn break_crew_dashboard_for_test(&self) {
+        self.writer()
+            .execute_batch("ALTER TABLE crew_runs RENAME TO crew_runs_broken")
+            .unwrap();
+    }
+
     /// One page of merges, newest first, and the number of merges in all.
     pub fn crew_merges_page(&self, limit: u32, offset: u32) -> Result<(Vec<MergeRecord>, u32)> {
         let conn = self.reader();

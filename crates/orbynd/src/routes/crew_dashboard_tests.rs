@@ -126,11 +126,7 @@ async fn a_store_that_cannot_be_read_answers_history_unreadable() {
     let project = fixtures::add_project(&app.core, app.dir.join("project").to_str().unwrap());
     // A damaged database is what the page's "could not be read" state is for: the read fails at
     // the merge query, and the answer carries the document's code and status, not `internal`.
-    app.core
-        .store
-        .reader()
-        .execute_batch("ALTER TABLE crew_runs RENAME TO crew_runs_unreadable")
-        .unwrap();
+    app.core.store.break_crew_dashboard_for_test();
     let (status, body) = app
         .get(&format!("{DASHBOARD}?project={project}"), true)
         .await;

@@ -1,5 +1,7 @@
+import { useMemo } from "react";
 import { create } from "zustand";
 import { ATTENTION_EVENT, type AttentionEntry, ATTENTION_KINDS, CLEAR_REASONS, LIMITS, type AttentionDelivery, type TerminalAttentionEvent } from "./contract";
+import { setWaitingThreads } from "../../../../product/state/waitingThreads";
 import { cleanExcerpt, oneLine } from "./text";
 
 export type { AttentionEntry };
@@ -94,3 +96,26 @@ export const useAttention = create<AttentionStore>((set, get) => ({
   },
   reset: () => set(emptyAttention()),
 }));
+
+const isWaiting = (entry: AttentionEntry): boolean => entry.cleared === null && !entry.dismissed;
+
+/** The terminals of one thread that wait for the person now: not cleared, not dismissed on this window. */
+export function waitingTerminalIds(entries: ReadonlyMap<string, AttentionEntry>, threadId: string): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const entry of entries.values()) if (entry.threadId === threadId && isWaiting(entry)) ids.add(entry.terminalId);
+  return ids;
+}
+
+/** The waiting terminals of the thread (the terminal tabs' dot). */
+export function useWaitingTerminals(threadId: string): ReadonlySet<string> {
+  const entries = useAttention((state) => state.entries);
+  return useMemo(() => waitingTerminalIds(entries, threadId), [entries, threadId]);
+}
+
+// The sidebar reads which threads wait through a neutral store, so it need not import this feature.
+useAttention.subscribe((state, before) => {
+  if (state.entries === before.entries) return;
+  const ids = new Set<string>();
+  for (const entry of state.entries.values()) if (isWaiting(entry)) ids.add(entry.threadId);
+  setWaitingThreads(ids);
+});

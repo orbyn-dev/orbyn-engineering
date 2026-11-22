@@ -250,7 +250,7 @@ function Sub({ node, x, y, w }: { node: FlowNode; x: number; y: number; w: numbe
   );
 }
 
-const AFTER = "After the beta";
+const AFTER = "Planned";
 /** The map does not carry a task's cancel or re-run flags, so it does not guess them: those two are inert here, and the Board card has them. */
 const NOT_HERE = "Use the Board card";
 

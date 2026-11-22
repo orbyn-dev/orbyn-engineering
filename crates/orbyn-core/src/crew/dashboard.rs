@@ -6,7 +6,8 @@
 //! The read writes nothing, needs no person key, and is refused as not found while Crew Preview
 //! is off, like every Crew route. Nothing here decides anything and nothing is invented: a
 //! figure the records cannot measure is left out (`cycle`, `cost`) rather than sent as `0`, and
-//! free text is scrubbed and capped as the trust read does it.
+//! free text is redacted, stripped of the task's answer-key text, masked by the person's
+//! Settings › Secrets patterns, and capped. A store read that fails is `500 history_unreadable`.
 
 use std::collections::{BTreeMap, BTreeSet};
 

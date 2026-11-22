@@ -298,13 +298,13 @@ describe("Flow on the real routes", () => {
     expect(writes()).toHaveLength(0);
   }, 20_000);
 
-  it("draws Pause crew and Stop crew After the beta, inert", async () => {
+  it("draws Pause crew and Stop crew Planned, inert", async () => {
     await open("crew");
     await table();
     for (const name of ["Pause crew", "Stop crew"]) {
       const button = screen.getByRole("button", { name: new RegExp(`^${name}`) });
       expect(button).toBeDisabled();
-      expect(button).toHaveTextContent("After the beta");
+      expect(button).toHaveTextContent("Planned");
     }
   });
 

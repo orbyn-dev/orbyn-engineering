@@ -16,6 +16,7 @@ use crate::http::AppState;
 use crate::http::access::Access;
 
 const TOKEN: &str = "token";
+const KEY: &str = "person-key";
 
 struct Served {
     port: u16,
@@ -66,7 +67,7 @@ async fn serve(name: &str) -> Served {
         .unwrap();
     let app = router(AppState {
         core: core.clone(),
-        access: Arc::new(Access::new(TOKEN, vec![], None)),
+        access: Arc::new(Access::new(TOKEN, vec![], None).with_person_key(Some(KEY))),
         remote: false,
         ui_dir: None,
         images: Arc::new(orbyn_core::browser::remote_images::ImageProxy::default()),
@@ -84,16 +85,21 @@ async fn serve(name: &str) -> Served {
 
 impl Served {
     async fn put(&self, id: &str, body: Value) -> (u16, Value) {
-        let response = reqwest::Client::new()
+        self.put_as(id, body, true).await
+    }
+
+    async fn put_as(&self, id: &str, body: Value, person: bool) -> (u16, Value) {
+        let mut request = reqwest::Client::new()
             .put(format!(
                 "http://127.0.0.1:{}/api/attachments/{id}/source",
                 self.port
             ))
             .bearer_auth(TOKEN)
-            .json(&body)
-            .send()
-            .await
-            .unwrap();
+            .json(&body);
+        if person {
+            request = request.header("x-orbyn-person", KEY);
+        }
+        let response = request.send().await.unwrap();
         let status = response.status().as_u16();
         (status, response.json().await.unwrap_or(Value::Null))
     }
@@ -253,4 +259,18 @@ async fn deleting_the_attachment_removes_its_source() {
         served.core.store.attachment_source(&image.id).unwrap(),
         None
     );
+}
+
+#[tokio::test]
+async fn a_service_token_alone_gets_403_and_the_attachment_keeps_no_source() {
+    let served = serve("person-only").await;
+    let image = served.image();
+    let (status, answer) = served.put_as(&image.id, source("Notes"), false).await;
+    assert_eq!(status, 403, "{answer}");
+    assert_eq!(
+        served.core.store.attachment_source(&image.id).unwrap(),
+        None
+    );
+    let (status, _) = served.put(&image.id, source("Notes")).await;
+    assert_eq!(status, 200);
 }

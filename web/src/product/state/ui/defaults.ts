@@ -15,6 +15,7 @@ export const defaults: Prefs = {
   panelMaximized: false,
   panelWidth: null,
   sideChat: null,
+  devices: { open: [], active: null, names: {}, float: null },
   layouts: {},
   layoutKey: DRAFT_LAYOUT,
   sidebarCollapsed: false,
