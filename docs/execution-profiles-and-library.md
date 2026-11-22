@@ -352,6 +352,11 @@ A set is a name and a list of key names. The values are in the keychain.
 - A value is 1 to 8,192 bytes, no NUL. A line break is allowed.
 - `present` is `true` only when the keychain holds a non-empty value. When the keychain is unusable every key is
   `present: false` and `keychain` says why. No length, prefix or suffix is ever reported.
+- Presence is recorded beside each key name (`library_env_keys.is_set`, migration 72). `GET /api/library/env-sets` reads each
+  key's `present` from that record rather than from the keychain, so listing sets reads no value per key; a key saved before 72
+  is checked once and recorded.
+  `GET /api/library/env-sets/{id}` re-checks every key against the keychain and records what it finds, so a value removed
+  outside Orbyn shows up there. When the keychain is unusable the answer reads `present: false` and the record is left alone.
 - **Status values.** Every set read and every list item carries `status`: `stored` (macOS: values can be saved) or
   `planned` (Windows and Linux in the beta: names only, no values). The UI shows a **Planned** pill on a `planned` set. On
   those platforms `keychain` is `unavailable`, `PUT .../keys/{key}` answers `503 keychain_unavailable`, and a workflow that

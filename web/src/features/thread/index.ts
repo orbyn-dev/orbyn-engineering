@@ -2,3 +2,4 @@
 export { EffortTrigger, useTraitsMenu } from "./composer/ComposerTraits";
 export { ModelPickerTrigger } from "./composer/ModelPicker";
 export { ThreadView } from "./ThreadView";
+export { TranscriptImportHost } from "./transcriptFile/TranscriptImportHost";

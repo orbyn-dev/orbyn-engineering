@@ -69,7 +69,7 @@ export function LiveEstimate({ project, projects, onPick }: { project: Project; 
                 <div className="cx-cwbn" style={{ margin: "0" }}>
                   <Ic n="info" sm />
                   <span>
-                    <b>A backtest is running.</b> Only one runs at a time: it finishes by itself, or a person stops it on its report.
+                    <b>A backtest is running.</b> Only one runs at a time: it finishes by itself.
                   </span>
                   <span className="cx-acts">
                     <button type="button" className="cx-ghost" onClick={() => openRunning(estimate.running ?? "")}>Open the running backtest</button>
@@ -122,10 +122,10 @@ export function LiveEstimate({ project, projects, onPick }: { project: Project; 
             <div className="cx-t14opt">
               <Ic n="info" sm />
               <span>
-                <b>The lanes and the token estimate per engine are not served yet.</b>
+                <b>Choosing the lanes and the per-engine budgets for a new backtest is not built yet.</b>
                 <small>
-                  {" The app has no read of your lanes, their engines and models, or of the per-engine token budgets, so no estimate per lane is shown. "}
-                  <Planned why={`${WHY.lanes} and ${WHY.budgets}`} />
+                  {" The last backtest’s lanes and budgets are on the backtest page. No route sets a lane set or a budget before a first run, and no per-lane token estimate is served, so no estimate per lane is shown. "}
+                  <Planned why={`${WHY.firstLanes} and ${WHY.firstBudgets}`} />
                 </small>
               </span>
             </div>

@@ -1,0 +1,272 @@
+/* The transcript import sheet: one row of info per answer field, the dropped problems, and the engine select. */
+.transcript-import-sub {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12.5px;
+}
+
+.transcript-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-small);
+}
+
+.transcript-file > svg {
+  flex: none;
+  color: var(--color-muted);
+}
+
+.transcript-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-file-size {
+  margin-left: auto;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+
+.transcript-reading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--text-small);
+}
+
+.transcript-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.transcript-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+  font-size: var(--text-small);
+}
+
+.transcript-label {
+  color: var(--color-muted);
+}
+
+.transcript-value {
+  min-width: 0;
+  color: var(--color-text);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.transcript-problems {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.transcript-problems-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--color-text);
+  font-size: var(--text-small);
+}
+
+.transcript-dropped {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-warnSoft);
+  color: var(--color-warnText);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.transcript-problems-note {
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+
+.transcript-problem-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-10);
+  background: var(--color-sunken);
+  list-style: none;
+  font-size: var(--text-meta);
+}
+
+.transcript-problem-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.transcript-problem-list li > span {
+  color: var(--color-textSoft);
+}
+
+.transcript-problem-list code {
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.transcript-engine {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.transcript-engine-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+  font-size: var(--text-small);
+}
+
+.transcript-engine-picker {
+  position: relative;
+}
+
+.transcript-engine-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 30px;
+  min-width: 150px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--text-small);
+  cursor: pointer;
+}
+
+.transcript-engine-button:hover:not(:disabled) {
+  border-color: var(--color-borderHover);
+  background: var(--color-hover);
+}
+
+.transcript-engine-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.transcript-engine-button > svg {
+  flex: none;
+  color: var(--color-muted);
+}
+
+.transcript-engine-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 210px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-raised);
+  box-shadow: 0 8px 24px var(--color-shadow);
+}
+
+.transcript-engine-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-textSoft);
+  font-size: var(--text-small);
+  text-align: left;
+  cursor: pointer;
+}
+
+.transcript-engine-menu button:hover,
+.transcript-engine-menu button[aria-selected="true"] {
+  background: var(--color-selected);
+  color: var(--color-text);
+}
+
+.transcript-engine-check {
+  display: inline-flex;
+  flex: none;
+  justify-content: center;
+  width: 14px;
+}
+
+.transcript-engine-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-engine-default {
+  color: var(--color-muted);
+  font-size: var(--text-label);
+  white-space: nowrap;
+}
+
+.transcript-engine-note {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.transcript-refusal {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-dangerSoft);
+  color: var(--color-danger);
+  font-size: var(--text-small);
+}
+
+.transcript-refusal > svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.transcript-refusal p {
+  margin: 0;
+}
+
+.transcript-refusal-detail {
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}

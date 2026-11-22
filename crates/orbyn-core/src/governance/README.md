@@ -6,8 +6,10 @@ What may happen and who is told: every engine action passes here before it has a
 | --- | --- |
 | `policy` | Pure policy evaluation: deny beats ask beats allow |
 | `approvals` | The single gate every engine action passes: policy, then a person |
+| `audit` | The audit log as a person reads it: stored rows, each `detail` and `target` masked on the way out |
 | `computer` | The computer gateway: resolve, evaluate, audit, then act |
 | `network` | Every request Orbyn makes unasked, listed for a person to read |
+| `protected_files` | The data folder's account and service files, refused to writes, checkout reads and named actions |
 
 The crate's [group table](../../README.md#groups) lists every group.
 

@@ -1,3 +1,4 @@
+import { Info } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { EngineStatus } from "../../../api/types";
@@ -151,6 +152,9 @@ export function ProvidersSection() {
           </span>
         </div>
       ) : (<>
+        <SettingsBanner role="note" tone="info" icon={<Info size={16} aria-hidden />}>
+          Orbyn lists an engine when it finds its program on this computer. A label says what Orbyn has seen work on a real install and what it has not; “Not verified” is not a promise that a feature works.
+        </SettingsBanner>
         <NeedsAttentionGroup engines={base} onOpen={(id) => setView({ page: "detail", id })} />
         <ProviderTable engines={engines.data} catalog={catalog} store={store} onOpen={(id) => setView({ page: "detail", id })} onEdit={setEditing} />
         <ProviderListActions onAdd={() => setAdding(true)} onRecheck={() => void recheck()} checking={refreshing} />

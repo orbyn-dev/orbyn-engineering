@@ -72,6 +72,8 @@ mod crew_capacity_tests;
 #[cfg(test)]
 mod crew_classes_tests;
 #[cfg(test)]
+mod crew_dashboard_tests;
+#[cfg(test)]
 mod crew_escapes_tests;
 #[cfg(test)]
 mod crew_forge_resolve_tests;
@@ -96,13 +98,21 @@ mod engine_credentials_tests;
 #[cfg(test)]
 mod engine_host_tests;
 #[cfg(test)]
+mod governance_tests;
+#[cfg(test)]
+mod json_refusal_tests;
+#[cfg(test)]
 mod library_tests;
 #[cfg(test)]
 mod never_asks_tests;
 #[cfg(test)]
+mod photo_conversion_tests;
+#[cfg(test)]
 mod profiles_tests;
 #[cfg(test)]
 mod secrets_tests;
+#[cfg(test)]
+mod snapshot_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

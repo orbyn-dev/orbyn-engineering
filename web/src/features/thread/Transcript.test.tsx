@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { openRun } from "../codemode/openRun";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useUi } from "../../product/state/ui";
@@ -424,6 +425,41 @@ describe("Screen reader announcements", () => {
 });
 
 describe("Scroll targets", () => {
+  it("finds a run far outside the window and scrolls to it", async () => {
+    const run: ToolItem = {
+      kind: "tool",
+      key: "tool:far-run",
+      seq: 0,
+      ts: "2026-01-01T00:00:00Z",
+      runId: "r-mid",
+      callId: "call:far-run",
+      name: "mcp__orbyn_engineering__orbyn_code_run",
+      args: JSON.stringify({ code: "return 1" }),
+      output: "",
+      result: JSON.stringify({ status: "completed", runId: "run_far" }),
+      done: true,
+      exitCode: 0,
+    };
+    const items = turns(400);
+    items.splice(400, 0, run);
+    load("t-run-far", items);
+    render(<Transcript threadId="t-run-far" active activeRunId="r-mid" />);
+    scrollTo(0);
+    expect(document.getElementById("cm-run-run_far")).toBeNull();
+    const done = vi.fn();
+    const stop = openRun("t-run-far", "run_far", done);
+    await waitFor(() => expect(done).toHaveBeenCalledWith(true));
+    const block = document.getElementById("cm-run-run_far");
+    expect(block).not.toBeNull();
+    // The block sits inside the run call's card, which is closed by default; the row around it is what the timeline
+    // just brought into view. Focus on an open card is covered by the openRun tests.
+    const row = block!.closest<HTMLElement>(".transcript .item");
+    expect(row).not.toBeNull();
+    expect(row!.getBoundingClientRect().top).toBeGreaterThanOrEqual(0);
+    expect(row!.getBoundingClientRect().top).toBeLessThan(VIEW);
+    stop();
+  });
+
   it("aligns a far row once and then leaves the view alone while the thread streams", async () => {
     load("t-goal", turns(400));
     render(<Transcript threadId="t-goal" active />);

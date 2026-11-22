@@ -13,6 +13,7 @@ import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode
 import { useDraftStore } from "../../../product/state/draftStore";
 import { navigate, type Route } from "../../../product/state/route";
 import { useUi } from "../../../product/state/ui";
+import { useWaitingThreadIds } from "../../../product/state/waitingThreads";
 import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
 import { useNow } from "../../../lib/useNow";
 import { IconButton } from "../../../ui/controls";
@@ -69,6 +70,7 @@ interface MenuState {
 }
 
 export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
+  const waitingTerminals = useWaitingThreadIds();
   const jumpHeld = useJumpHeld();
   const projects = useWorkspace((state) => state.projects);
   const visibleProjects = useVisibleProjects();
@@ -135,8 +137,8 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
   const sectionClock = useNow(true, 30_000);
   // Ledger lists running threads in its own Running section, not on the Working shelf.
   const sections = useMemo(
-    () => arrangeThreads(scoped, sectionClock, workingSection && !ledger, ledger),
-    [scoped, sectionClock, workingSection, ledger],
+    () => arrangeThreads(scoped, sectionClock, workingSection && !ledger, ledger, waitingTerminals),
+    [scoped, sectionClock, workingSection, ledger, waitingTerminals],
   );
   const shown = drag?.target ? projectDrop(sections, drag.id, drag.target) : sections;
   // What the list draws, in order; set below, once the folders and groups are known.
@@ -224,10 +226,10 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
           // Ledger draws its sections by state, so a row can only be placed inside its own.
           if (ledger && target?.section === "active") {
             const rows = sectionsRef.current.active.filter((row) => row.id !== thread.id);
-            const key = ledgerKey(thread);
+            const key = ledgerKey(thread, waitingTerminals.has(thread.id));
             const near = [rows[target.index - 1], rows[target.index]];
-            const fits = near.some((row) => row !== undefined && ledgerKey(row) === key);
-            if (!fits && rows.some((row) => ledgerKey(row) === key)) target = null;
+            const fits = near.some((row) => row !== undefined && ledgerKey(row, waitingTerminals.has(row.id)) === key);
+            if (!fits && rows.some((row) => ledgerKey(row, waitingTerminals.has(row.id)) === key)) target = null;
           }
           setDrag((current) =>
             current && sameTarget(current.target, target) ? current : current && { ...current, target },
@@ -328,7 +330,7 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
 
   const foldersView = projectFolders && !ledger;
   const settledRows = shown.settled.slice(0, Math.max(settledVisible, 1));
-  const ledgerGroups = ledger ? ledgerGroupsOf(shown.active) : [];
+  const ledgerGroups = ledger ? ledgerGroupsOf(shown.active, waitingTerminals) : [];
   const folders = foldersView
     ? foldersOf(
         projectFilter.length > 0 ? list.filter((p) => projectFilter.includes(p.id)) : list,
@@ -348,8 +350,7 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
   const shelves = shown.working;
   const groupOpen = (id: "working" | "snoozed" | "settled") => closedGroups[id] ?? id !== "settled";
   const drawn = drawnOrder({
-    sections: shown,
-    ledger,
+    sections: shown, ledger, waiting: waitingTerminals,
     folders: foldersView ? folders : null,
     strays,
     folderOpen: (folder) => closedGroups[`folder:${folder.key}`] !== false,
@@ -532,7 +533,7 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
                           label={folder.label}
                           collapsed={collapsed}
                           count={folder.threads.length}
-                          needs={folder.threads.filter((thread) => attentionRank(thread) === 0).length}
+                          needs={folder.threads.filter((thread) => attentionRank(thread, waitingTerminals.has(thread.id)) === 0).length}
                           onToggle={() => toggleGroup(key, true)}
                           onMenu={(event) => folderMenu(event, folder)}
                         />,

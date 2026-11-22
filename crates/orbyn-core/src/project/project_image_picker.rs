@@ -325,7 +325,11 @@ impl Core {
         let ids = crate::project::project_scopes::selected_members(&catalog)?;
         let id = ids.first().ok_or(CoreError::SettingsScopeUnavailable)?;
         let project = self.store.project(id)?;
-        let mut scope = ImageScope::new(&project, &self.workspace.root()?)?;
+        let mut scope = ImageScope::new(
+            &project,
+            &self.workspace.root()?,
+            Some(&self.config.data_dir),
+        )?;
         let (entries, truncated) = enumerate(&mut scope).await?;
         let history = self.store.project_image_history(id)?;
         let (entries, ranked_truncated) = ranked(entries, &request.query, &history).await;
