@@ -178,6 +178,48 @@ function acpQuestion(sendId) {
   pending.set(requestId, { sendId, kind: "question" });
 }
 
+function cursorPlay(sendId, text) {
+  if (text.includes("[cursor-hang]")) return;
+  const emit = (update) => write({ type: "delta", sendId, update });
+  emit({ type: "thinking-delta", text: "Looking" });
+  emit({ type: "token-delta", tokens: 4 });
+  emit({ type: "thinking-completed", thinkingDurationMs: 1 });
+  emit({ type: "text-delta", text: "hello " });
+  emit({ type: "text-delta", text: "world" });
+  emit({ type: "token-delta", tokens: 3 });
+  emit({
+    type: "tool-call-started",
+    callId: "call-read",
+    toolCall: { type: "read", args: { path: "a.txt" } },
+  });
+  emit({
+    type: "tool-call-completed",
+    callId: "call-read",
+    toolCall: {
+      type: "read",
+      args: { path: "a.txt" },
+      result: { status: "success", value: { content: "file body", totalLines: 1, fileSize: 9 } },
+    },
+  });
+  const todos = [{ content: "one", status: "completed" }];
+  emit({
+    type: "tool-call-started",
+    callId: "call-todo",
+    toolCall: { type: "updateTodos", args: { todos } },
+  });
+  emit({
+    type: "tool-call-completed",
+    callId: "call-todo",
+    toolCall: { type: "updateTodos", args: { todos }, result: { status: "success", value: {} } },
+  });
+  emit({ type: "unknown-future-update", text: "must not show" });
+  emit({
+    type: "turn-ended",
+    usage: { inputTokens: 10, outputTokens: 2, cacheReadTokens: 1, cacheWriteTokens: 0 },
+  });
+  done(sendId);
+}
+
 function acpPlay(sendId, text) {
   if (text.includes("[acp-hang]")) return;
   if (text.includes("[acp-pre]")) return done(sendId);
@@ -252,6 +294,13 @@ const handlers = {
         write({ type: "delta", sendId: r.id, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "pre-accept" } } });
       }
       setImmediate(() => acpPlay(r.id, text));
+      return { runId: `run-${r.id}`, engineSessionId, messageId: r.messageId };
+    }
+    if (family === "cursor") {
+      const engineSessionId = `cursor-${r.sessionId}`;
+      runs.set(r.id, { cancelled: false, text, session: r.sessionId, engineSessionId, uuid: r.messageId });
+      setImmediate(() => cursorPlay(r.id, text));
+      // The Cursor host names no turn id at send time; the accepted session is enough.
       return { runId: `run-${r.id}`, engineSessionId, messageId: r.messageId };
     }
     runs.set(r.id, { cancelled: false, text, session: r.sessionId, uuid: r.messageId });
