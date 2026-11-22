@@ -207,7 +207,8 @@ pub struct EngineHostStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub stops_in_window: Option<u32>,
-    /// A Rust driver wraps the host for this family, so its runs have another path.
+    /// A Rust driver wraps the host for this family, so the person can run it by choosing the CLI path. Nothing
+    /// switches to it on its own: a down host under the SDK path still fails the run.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[ts(optional, as = "Option<bool>")]
     pub has_driver: bool,

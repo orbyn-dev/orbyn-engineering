@@ -60,7 +60,8 @@ restart?: EngineHostRestart,
  */
 stops_in_window?: number, 
 /**
- * A Rust driver wraps the host for this family, so its runs have another path.
+ * A Rust driver wraps the host for this family, so the person can run it by choosing the CLI path. Nothing
+ * switches to it on its own: a down host under the SDK path still fails the run.
  */
 has_driver?: boolean, 
 /**

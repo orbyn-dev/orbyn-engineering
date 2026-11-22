@@ -397,7 +397,7 @@ bookkeeping and its own checks. No entry carries an environment, arguments, a ke
 **Slice 3 (built).** Optional and ignorable, no host frame and no protocol bump; the pool already holds these:
 
 - `since?`: RFC 3339 time the live host started running, from the moment the pool adopted it. Absent while no host is live.
-- `sdk?`: `{name, version}` from the live host's `hello`. Absent when the hello names neither half, and while no host is live.
+- `sdk?`: `{name, version}` from the live host's `hello`. Absent unless the hello names both halves, and while no host is live.
 - `capabilities?`: the request names the live host's `hello` lists. Absent while no host is live; an empty list is a host that lists none.
 - `pooled?`: true, because one host process serves every thread of the family. Absent on a `not_used` family, which has no pool.
 - `restart?`: while the state is `restarting`, `{attempt, limit, next_try_seconds}`. `attempt` is the restart being waited for, `limit` is the pool's `max_restarts` (five by
@@ -421,7 +421,7 @@ bookkeeping and its own checks. No entry carries an environment, arguments, a ke
   `unsupported_platform`) covers `flag_off`; the host driver does not fall back to the CLI when a host is `cant_start` (the run is refused), so `unavailable` would be
   untrue today, and a build with no host has no entry to attach `not_installed` to.
 
-The web client reads this route with the generated types (`web/src/features/enginehost/hostStatus.ts`; a 404 means nothing is reported) and turns each entry into the `HostRow` the Settings screens draw (`contract.ts`). Slice 3's fields are mapped from the service. Only `running_threads` is still a mock-only guess; the screens draw a field only when the service sends it.
+The web client reads this route with the generated types (`web/src/features/enginehost/hostStatus.ts`; a 404 means nothing is reported) and turns each entry into the `HostRow` the Settings screens draw (`contract.ts`). Slice 3's fields are mapped from the service. `running_threads` and `failed_threads` are still mock-only guesses; the screens draw a field only when the service sends it.
 
 ## Crash and recovery
 

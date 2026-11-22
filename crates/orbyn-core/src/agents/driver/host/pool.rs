@@ -159,7 +159,7 @@ impl Pool {
         let inner = self.inner.lock().await;
         let state = self.state();
         let (since, sdk, capabilities) = match (&state, inner.current.as_ref()) {
-            (HostState::Ready, Some(connection)) => (
+            (HostState::Ready, Some(connection)) if !connection.is_closed() => (
                 Some(connection.started_at()),
                 connection.sdk.clone(),
                 Some(connection.capabilities.clone()),

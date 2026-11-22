@@ -321,6 +321,12 @@ impl EngineDriver for HostDriver {
                     self.pool.note_sdk_missing();
                 }
                 connection.fire("closeSession", json!({ "sessionId": spec.run_id }));
+                if error.sdk_missing() {
+                    // Say what is wrong: the SDK is not in this build, not that the run could not be restricted.
+                    return Err(CoreError::EngineUnavailable(
+                        "This build does not include the engine's SDK.".into(),
+                    ));
+                }
                 return Err(refused(error));
             }
         };
