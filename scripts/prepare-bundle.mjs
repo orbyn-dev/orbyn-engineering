@@ -69,6 +69,13 @@ if (target === "aarch64-apple-darwin" && process.platform === "darwin" && proces
   run("npm", ["run", "build:sea"], hostDir);
   cpSync(join(hostDir, "dist/orbyn-engine-host"), hostFile);
   chmodSync(hostFile, 0o755);
+  // The Claude and Cursor SDKs: a production node_modules the host loads from Contents/Resources/sdk, beside Contents/MacOS
+  // (engine-host/src/sdkLocation.mjs). Their native files cannot live inside the single executable.
+  run("npm", ["run", "prepare:sdks"], hostDir);
+  cpSync(join(hostDir, "dist/sdk"), join(build, "sdk"), { recursive: true });
 } else {
   writeFileSync(hostFile, "");
+  // Tauri needs every resource path to exist. Where there is no host there are no SDKs: an empty folder keeps the bundle shape.
+  mkdirSync(join(build, "sdk"), { recursive: true });
+  writeFileSync(join(build, "sdk", "README.txt"), "No engine host in this build, so no engine SDKs.\n");
 }

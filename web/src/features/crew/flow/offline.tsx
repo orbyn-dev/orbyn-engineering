@@ -17,7 +17,7 @@ export function FlowOffline() {
               <span style={{ color: "var(--color-muted)" }}>All tasks</span>
               <Ic n="right" sm />
               <b>Use next in the auth redirect</b>
-              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer<span className="cx-cwpv">After the beta</span></span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
+              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer<span className="cx-cwpv">Planned</span></span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
             </div>
             <div className="cx-fl" style={{ height: "322px", width: "1110px" }}>
               <span className="cx-cwpv" style={{ position: "absolute", left: "0", top: "0", margin: "0", zIndex: 1 }} title="The wide graph is Planned; the app’s zoom is the stage list">Planned</span>
@@ -175,7 +175,7 @@ export function FlowOffline() {
         <div className="cx-db">
           <div className="cx-fbx cx-amber">
             <h6>Codex isn’t signed in, and no engine besides Claude Code is signed in at the lead tier</h6>
-            <p>Security needs a different engine at the lead tier, and none is available. Nothing started, and Crew never falls back to the author’s engine without asking you.</p>
+            <p>Security needs a different engine at the lead tier, and none is available. Nothing started, and Crew does not fall back to the author’s engine without asking you.</p>
           </div>
           <div className="cx-fcol">
             <h5>Your options</h5>

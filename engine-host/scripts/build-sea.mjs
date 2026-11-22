@@ -17,7 +17,7 @@ await build({
   format: "cjs", // SEA main scripts are CommonJS
   target: "node22",
   outfile: join(out, "host.cjs"),
-  external: ["@anthropic-ai/claude-agent-sdk", "@cursor/sdk"], // never bundled: Anthropic terms gate; Cursor licence gate
+  external: ["@anthropic-ai/claude-agent-sdk", "@cursor/sdk"], // dependencies, not bundled: native files ship as a node_modules folder beside the host (docs/sdk-default-plan.md step 4)
   logLevel: "warning",
 });
 

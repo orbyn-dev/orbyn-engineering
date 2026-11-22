@@ -1,11 +1,13 @@
 use super::*;
 
 impl RunManager {
+    #[allow(clippy::too_many_arguments, reason = "a run is started from the values admission already holds; a struct would only rename them")]
     pub(super) async fn execute(
         self: Arc<Self>,
         thread: Thread,
         run_id: String,
         prompt: String,
+        title_prompt: String,
         files: Vec<PathBuf>,
         write_scope: WriteScope,
         stops: Stops,
@@ -48,7 +50,7 @@ impl RunManager {
                     Ok(false) => return EngineOutcome::Cancelled,
                     Err(error) => return EngineOutcome::Failed(error.public_message()),
                 }
-                self.title_new_thread(&thread, &prompt);
+                self.title_new_thread(&thread, &title_prompt);
                 self.drive(
                     &thread,
                     &scope,

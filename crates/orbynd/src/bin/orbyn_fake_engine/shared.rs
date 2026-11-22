@@ -1,5 +1,7 @@
 use std::io::{BufRead, Read, Write};
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream};
+use std::path::Path;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -155,12 +157,32 @@ pub(crate) fn http_post(url: &str, body: &Value) -> (u16, Value) {
     (status, serde_json::from_str(text).unwrap_or(Value::Null))
 }
 
+/// How long one attempt may take. A refusal is answered in milliseconds; a service busy under load
+/// may take longer, and one that never answers must reach the test as an error for that route, not
+/// as an engine that hangs and writes nothing.
+const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How much of the test's minute the whole sweep may use. It ends the sweep with a report that says
+/// what it reached, so the report always arrives before the test stops waiting for it: this, one
+/// more attempt, and the process exiting stay inside that minute.
+const PROBE_BUDGET: Duration = Duration::from_secs(40);
+
+/// Writes the report where the test reads it, whole: a reader never sees half a JSON document.
+fn write_report(path: &Path, report: &Value) {
+    let temporary = path.with_extension("json.tmp");
+    if std::fs::write(&temporary, serde_json::to_vec(report).expect("probe JSON")).is_ok() {
+        let _ = std::fs::rename(&temporary, path);
+    }
+}
+
 /// What a worker that runs as the person can do (#441): read `<data>/service.json` and call the routes that need the
 /// person key, with the service token alone. The routes come from `ORBYN_FAKE_PROBE_ROUTES`, a JSON array of
 /// `[method, path, body]` (the test fills the path parameters in); without it the probe calls the file-action, approval and
 /// AG-UI resume routes.
-/// Writes each status and error code, and this process's own argv and env, to `ORBYN_FAKE_PROBE_FILE`. Does nothing
-/// unless a test sets `ORBYN_FAKE_PROBE_FILE` and `ORBYN_FAKE_PROBE_DATA`.
+/// Writes each status and error code, and this process's own argv and env, to `ORBYN_FAKE_PROBE_FILE`. The report is
+/// written whole after every call with `complete: false` and the route it is on, then once with `complete: true`, so a
+/// sweep a slow service is still holding says how far it got instead of leaving the test a file that never appeared.
+/// Does nothing unless a test sets `ORBYN_FAKE_PROBE_FILE` and `ORBYN_FAKE_PROBE_DATA`.
 pub(crate) fn probe_service(args: &[String]) {
     let (Ok(out), Ok(_)) = (
         std::env::var("ORBYN_FAKE_PROBE_FILE"),
@@ -177,10 +199,15 @@ pub(crate) fn probe_service(args: &[String]) {
                 .cloned()
                 .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
                 .unwrap_or_else(|| "a panic with no message".to_owned());
-            json!({ "calls": [], "fatal": format!("the probe panicked: {message}"), "argv": args })
+            json!({
+                "calls": [],
+                "complete": true,
+                "fatal": format!("the probe panicked: {message}"),
+                "argv": args,
+            })
         }
     };
-    std::fs::write(&out, serde_json::to_vec(&report).expect("probe JSON")).expect("probe file");
+    write_report(Path::new(&out), &report);
 }
 
 /// Hides the token and any long token-looking run in text the probe reports.
@@ -209,13 +236,25 @@ fn probe_once(
     path: &str,
     body: &str,
 ) -> Result<(u16, String), String> {
-    let mut stream = TcpStream::connect(host).map_err(|e| format!("connect: {e}"))?;
+    // Every step is bounded: an answer that never comes is this route's error, retried like any
+    // other transport error, and never a wait with no end.
+    let address: SocketAddr = host
+        .parse()
+        .map_err(|error| format!("address {host}: {error}"))?;
+    let mut stream = TcpStream::connect_timeout(&address, ATTEMPT_TIMEOUT)
+        .map_err(|error| format!("connect: {error}"))?;
+    stream
+        .set_read_timeout(Some(ATTEMPT_TIMEOUT))
+        .map_err(|error| format!("read timeout: {error}"))?;
+    stream
+        .set_write_timeout(Some(ATTEMPT_TIMEOUT))
+        .map_err(|error| format!("write timeout: {error}"))?;
     write!(
         stream,
         "{method} {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )
-    .map_err(|e| format!("write: {e}"))?;
+    .map_err(|error| format!("write: {error}"))?;
     let mut response = String::new();
     stream
         .read_to_string(&mut response)
@@ -233,6 +272,8 @@ fn probe_once(
 
 fn probe_report(args: &[String]) -> Value {
     let data = std::env::var("ORBYN_FAKE_PROBE_DATA").expect("ORBYN_FAKE_PROBE_DATA");
+    let out = std::env::var("ORBYN_FAKE_PROBE_FILE").expect("ORBYN_FAKE_PROBE_FILE");
+    let out = Path::new(&out);
     let found: Value = serde_json::from_str(
         &std::fs::read_to_string(std::path::Path::new(&data).join("service.json"))
             .expect("service.json"),
@@ -261,42 +302,62 @@ fn probe_report(args: &[String]) -> Value {
         }
     };
     let host = url.strip_prefix("http://").expect("http url");
-    let calls: Vec<Value> = routes
-        .iter()
-        .map(|(method, path, body)| {
-            // A transport error (connect, write, read) is tried again, so a service busy under load is not a failure by
-            // itself; an answer of any status is never tried again. The headers are named, never valued.
-            let mut attempt = 0;
-            let outcome = loop {
-                attempt += 1;
-                match probe_once(host, token, method, path, body) {
-                    Ok(answer) => break Ok(answer),
-                    Err(error) if attempt >= 3 => break Err(error),
-                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(200)),
-                }
-            };
-            let request = format!(
-                "{method} {url}{path} (headers: authorization, content-type, content-length)"
-            );
-            match outcome {
-                Ok((status, text)) => {
-                    let parsed: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-                    json!({
-                        "method": method, "path": path, "status": status, "code": parsed["code"],
-                        "request": request, "attempt": attempt, "body": redact(&text, token),
-                    })
-                }
-                Err(error) => json!({
-                    "method": method, "path": path, "request": request, "attempt": attempt,
-                    "error": error,
-                }),
+    let began = Instant::now();
+    let mut calls: Vec<Value> = Vec::new();
+    let mut aborted = None;
+    for (method, path, body) in &routes {
+        // The test reads this while the sweep runs, so a probe a slow service still holds says which
+        // route it reached and which one it is on.
+        write_report(
+            out,
+            &json!({ "calls": calls, "in_flight": format!("{method} {path}"), "complete": false }),
+        );
+        // A transport error (connect, write, read) is tried again, so a service busy under load is not a failure by
+        // itself; an answer of any status is never tried again. The headers are named, never valued.
+        let mut attempt = 0;
+        let outcome = loop {
+            if began.elapsed() > PROBE_BUDGET {
+                break Err(format!(
+                    "no answer within the probe's {}s budget",
+                    PROBE_BUDGET.as_secs()
+                ));
             }
-        })
-        .collect();
+            attempt += 1;
+            match probe_once(host, token, method, path, body) {
+                Ok(answer) => break Ok(answer),
+                Err(error) if attempt >= 3 => break Err(error),
+                Err(_) => std::thread::sleep(Duration::from_millis(200)),
+            }
+        };
+        let request =
+            format!("{method} {url}{path} (headers: authorization, content-type, content-length)");
+        calls.push(match outcome {
+            Ok((status, text)) => {
+                let parsed: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+                json!({
+                    "method": method, "path": path, "status": status, "code": parsed["code"],
+                    "request": request, "attempt": attempt, "body": redact(&text, token),
+                })
+            }
+            Err(error) => json!({
+                "method": method, "path": path, "request": request, "attempt": attempt,
+                "error": error,
+            }),
+        });
+        if began.elapsed() > PROBE_BUDGET {
+            aborted = Some(format!(
+                "{} of {} calls done in {}s",
+                calls.len(),
+                routes.len(),
+                began.elapsed().as_secs()
+            ));
+            break;
+        }
+    }
     let env: Vec<String> = std::env::vars_os()
         .map(|(name, value)| format!("{}={}", name.to_string_lossy(), value.to_string_lossy()))
         .collect();
-    json!({ "calls": calls, "argv": args, "env": env })
+    json!({ "calls": calls, "argv": args, "env": env, "complete": true, "aborted": aborted })
 }
 
 pub(crate) fn mcp_call(url: &str, id: u64, method: &str, params: Value) -> (u16, Value) {
@@ -314,3 +375,43 @@ pub(crate) fn sibling_exists(name: &str) -> bool {
 
 pub(crate) const WORKFLOW_SCRIPT: &str =
     "export const meta = { name: 'probe', description: 'probe' }\nawait agent('look')\n";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The test reads the report while the sweep runs, so a write replaces the file whole: a reader
+    /// finds either the report before it or the one after, never half a JSON document.
+    #[test]
+    fn a_report_is_replaced_whole() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_nanos())
+            .unwrap_or_default();
+        let dir = std::env::temp_dir().join(format!("probe-report-{unique}"));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("probe.json");
+        let first = json!({ "calls": [], "in_flight": "POST /a", "complete": false });
+        let second = json!({
+            "calls": [{ "method": "POST", "path": "/a", "status": 403 }],
+            "complete": true,
+        });
+        write_report(&path, &first);
+        assert_eq!(
+            serde_json::from_str::<Value>(&std::fs::read_to_string(&path).expect("report"))
+                .expect("JSON"),
+            first
+        );
+        write_report(&path, &second);
+        assert_eq!(
+            serde_json::from_str::<Value>(&std::fs::read_to_string(&path).expect("report"))
+                .expect("JSON"),
+            second
+        );
+        assert!(
+            !dir.join("probe.json.tmp").exists(),
+            "the temporary file is renamed, not left behind"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
