@@ -22,6 +22,32 @@ body {
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
+/* Scrollbars, in every theme: the model-picker frames of Orbyn Engineer Designs draw a 4px thumb in --line2,
+   radius 2px, on a clear track. --color-borderStrong holds that value in Light (rgba(0, 0, 0, .12)) and in
+   Dark and Dim (rgba(255, 255, 255, .14)), so one rule follows the theme instead of the platform default.
+   Chromium and WebKit paint the thumb through these pseudo-elements; Firefox has none, and its standard pair
+   wins over them in Chromium, so the pair is scoped to the engines that cannot paint the thumb. A row that
+   scrolls sideways without a bar hides it on its own. */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  border-radius: 2px;
+  background: var(--color-borderStrong);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-borderStrong) transparent;
+  }
+}
 h1,
 h2,
 h3,

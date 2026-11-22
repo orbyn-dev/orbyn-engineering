@@ -243,8 +243,6 @@
   height: 100%;
   padding: 0 5px 8px;
   overflow-y: auto;
-  scrollbar-color: var(--color-borderStrong) transparent;
-  scrollbar-width: thin;
 }
 .model-heading {
   display: flex;

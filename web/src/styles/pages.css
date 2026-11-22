@@ -686,7 +686,8 @@ button.folder-row:hover {
     grid-template-rows: auto minmax(0, 1fr);
   }
   .settings-side {
-    max-height: 132px;
+    /* Room for the 28px chip row below the 44px title bar, so the row is not squeezed into a 23px box. */
+    max-height: 140px;
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
   }
@@ -695,7 +696,15 @@ button.folder-row:hover {
   }
   .settings-nav {
     flex-direction: row;
+    flex-shrink: 0;
     overflow-x: auto;
+    /* redact-settings-narrow draws the section list as one row that scrolls sideways with no bar, and under
+       600px a bar would paint over the 28px chips. */
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .settings-nav::-webkit-scrollbar {
+    display: none;
   }
   .settings-group-list {
     flex: none;
