@@ -349,6 +349,35 @@ mod tests {
     }
 
     #[test]
+    fn anchored_patterns_agree_with_the_unfiltered_path() {
+        let texts = [
+            "canary at the start".to_owned(),
+            "at the end canary".to_owned(),
+            "a line\nsecret here\ncanary".to_owned(),
+            "canary".to_owned(),
+            String::new(),
+            "xcanaryx".to_owned(),
+            // A text longer than one window, where a start anchor can only match at byte 0.
+            format!("canary{}", " filler".repeat(MAX_APPLY_BYTES / 7)),
+        ];
+        for source in ["^canary", "canary$", "(?m)^secret", r"\bcanary\b"] {
+            let set = Redactor::with(
+                &BTreeSet::new(),
+                vec![custom("anchored", source, PatternScope::Anywhere)],
+            );
+            for text in &texts {
+                same_output(&set, text);
+            }
+        }
+        // A start anchor still hides only the first word, not every one.
+        let start = Redactor::with(
+            &BTreeSet::new(),
+            vec![custom("anchored", "^canary", PatternScope::Anywhere)],
+        );
+        assert_eq!(start.labelled("canary canary"), "[hidden: anchored] canary");
+    }
+
+    #[test]
     fn an_environment_pattern_still_reads_only_assignments() {
         let env = Redactor::only(vec![custom(
             "Corp id",
