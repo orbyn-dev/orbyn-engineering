@@ -460,12 +460,11 @@ mod sandbox {
     fn codex_app_server_starts_under_the_profile_with_its_private_home() {
         use std::io::{BufRead, BufReader, Write};
         use std::process::Stdio;
-        if crate::host::confine::unavailable().is_some() {
-            return;
-        }
-        let Some(mut command) = crate::host::process::resolve("codex") else {
-            return;
-        };
+        assert!(
+            crate::host::confine::unavailable().is_none(),
+            "sandbox-exec is not available"
+        );
+        let mut command = crate::host::process::resolve("codex").expect("codex is on PATH");
         let f = fixture();
         let configured = rules(&f.data)
             .with_codex_worker_home_at(TASK, &f.real)
@@ -505,6 +504,7 @@ mod sandbox {
             text
         };
         let answer = answer.unwrap_or_else(|_| panic!("no answer from codex; stderr: {stderr}"));
+        eprintln!("probe answer: {}", answer.trim());
         assert!(answer.contains("\"result\""), "{answer} / {stderr}");
         // It may have written its own state in the private home, never in the real one.
         assert!(!f.real.join("state.sqlite3-wal").exists());
