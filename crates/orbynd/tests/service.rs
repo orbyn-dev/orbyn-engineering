@@ -1015,6 +1015,34 @@ async fn static_ui_has_csp_and_spa_fallback() {
 }
 
 #[tokio::test]
+async fn missing_spa_index_stays_not_found_when_encodings_are_unacceptable() {
+    let dir = TempDir::new();
+    let ui = dir.path().join("ui");
+    std::fs::create_dir_all(&ui).unwrap();
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            args: vec!["--ui-dir".into(), ui.to_string_lossy().into_owned()],
+            ..Options::default()
+        },
+    );
+    let client = reqwest::Client::new();
+    for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
+        let response = client
+            .request(method.clone(), format!("{}/threads/missing", service.url))
+            .header("accept-encoding", "gzip;q=0, identity;q=0")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 404, "{method}");
+        if method == reqwest::Method::GET {
+            let body: Value = response.json().await.unwrap();
+            assert_eq!(body["code"], "no_ui");
+        }
+    }
+}
+
+#[tokio::test]
 async fn static_compression_negotiates_and_keeps_representation_validators_separate() {
     use std::io::Read;
 

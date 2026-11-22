@@ -199,7 +199,14 @@ pub async fn serve(State(state): State<AppState>, request: Request) -> Response 
         None if is_asset_path(&path) => {
             return StatusCode::NOT_FOUND.into_response();
         }
-        None => root.join("index.html"),
+        None => {
+            let index = root.join("index.html");
+            if !index.is_file() {
+                return ApiFailure::new(StatusCode::NOT_FOUND, "no_ui", "No UI is installed.")
+                    .into_response();
+            }
+            index
+        }
     };
     let (gzip_quality, identity_quality) = encoding_qualities(request.headers());
     if gzip_quality == 0 && identity_quality == 0 {
