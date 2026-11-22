@@ -13,5 +13,5 @@ export { isBackgroundOpen } from "./hostControl";
 export type {
   EngineHostApi, HostCause, HostControlOptions, HostCrash, HostError, HostErrorKind, HostRow, HostState, KeyStorage, StorageChoice,
 } from "./contract";
-export { ClaudePathLine, ComposerHostLine, PickerGapRow, useAppUpdateOrbyn, useHostFor, useHostLine } from "./HostUi";
+export { ClaudeHostActions, ClaudePathLine, ComposerHostLine, PickerGapRow, claudeHostDown, claudeHostSentence, claudeHostWaiting, useAppUpdateOrbyn, useHostFor, useHostLine } from "./HostUi";
 export type { HostLine } from "./HostUi";
