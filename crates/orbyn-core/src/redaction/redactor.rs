@@ -227,7 +227,9 @@ impl Redactor {
     }
 
     /// The stretches to hide: empty matches dropped, overlaps merged under the lowest-numbered
-    /// detector that found them (in detector order, whatever order the passes ran in).
+    /// detector that found them. The detector index is the last key because the passes no longer
+    /// run in detector order: the assignment pass runs first, so without it a value found by two
+    /// detectors could take the later detector's label (`custom`'s name over a format's).
     ///
     /// Text over `MAX_APPLY_BYTES` is read in windows of that size, each seeing the text before it.
     /// The next window starts `WINDOW_OVERLAP` (64 KiB) before the end of the last, or at the start
@@ -256,6 +258,8 @@ impl Redactor {
             // A match as long as the window itself is cut here; its rest is found from this point on.
             start = if next > start { next } else { end };
         }
+        // Detector order decides a tie, as it did when every pass ran in detector order: the
+        // assignment pass now runs first, so the order the spans were pushed in would not.
         found.sort_by(|a, b| {
             a.start
                 .cmp(&b.start)
