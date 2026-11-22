@@ -452,6 +452,70 @@ mod sandbox {
         assert_eq!(out.stdout, b"mine\n");
     }
 
+    /// The macOS probe for Codex workers (`docs/crew.md`): the real `codex app-server` starts under
+    /// the worker profile with only its private home, answers `initialize`, and the real home stays
+    /// closed. Run by hand: `cargo test -p orbyn-core --lib codex_app_server_starts_under_the_profile -- --ignored`.
+    #[test]
+    #[ignore = "needs the real codex binary on this Mac"]
+    fn codex_app_server_starts_under_the_profile_with_its_private_home() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::process::Stdio;
+        if crate::host::confine::unavailable().is_some() {
+            return;
+        }
+        let Ok(codex_program) = crate::host::process::resolve("codex") else {
+            return;
+        };
+        let f = fixture();
+        let configured = rules(&f.data)
+            .with_codex_worker_home_at(TASK, &f.real)
+            .unwrap();
+        let home = configured.codex_home().unwrap().to_path_buf();
+        let checkout = std::fs::canonicalize(f.data.join("workspace/repo/p")).unwrap();
+        let mut command = codex_program;
+        command.args = vec!["app-server".into()];
+        configured.wrap(&mut command).expect("the tool is there");
+        let mut child = std::process::Command::new(&command.program)
+            .args(&command.prefix)
+            .args(&command.args)
+            .env("CODEX_HOME", &home)
+            .current_dir(&checkout)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("starts");
+        let mut stdin = child.stdin.take().unwrap();
+        writeln!(
+            stdin,
+            r#"{{"id":1,"method":"initialize","params":{{"clientInfo":{{"name":"orbyn-probe","version":"0"}}}}}}"#
+        )
+        .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut line = String::new();
+            let _ = BufReader::new(stdout).read_line(&mut line);
+            let _ = sender.send(line);
+        });
+        let answer = receiver.recv_timeout(std::time::Duration::from_secs(30));
+        let _ = child.kill();
+        let stderr = {
+            let mut text = String::new();
+            use std::io::Read;
+            let _ = child.stderr.take().unwrap().read_to_string(&mut text);
+            text
+        };
+        let answer = answer.unwrap_or_else(|_| panic!("no answer from codex; stderr: {stderr}"));
+        assert!(answer.contains("\"result\""), "{answer} / {stderr}");
+        // It may have written its own state in the private home, never in the real one.
+        assert!(!f.real.join("state.sqlite3-wal").exists());
+        assert_eq!(
+            std::fs::read_to_string(f.real.join("history.jsonl")).unwrap(),
+            "old prompt"
+        );
+    }
+
     #[test]
     fn the_proof_profile_writes_only_in_its_own_run_folder() {
         if crate::host::confine::unavailable().is_some()
