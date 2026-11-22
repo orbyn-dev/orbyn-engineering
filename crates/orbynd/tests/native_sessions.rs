@@ -479,3 +479,46 @@ async fn a_running_operation_excludes_changes_to_its_command_and_its_own_runs() 
     w.service.admit(&thread, "now").await;
     assert_eq!(w.service.finished(&thread).await, "completed");
 }
+
+#[tokio::test]
+async fn a_list_right_after_a_cancelled_one_succeeds_without_waiting() {
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpStream;
+    use tokio::time::{Duration, timeout};
+
+    let gates = TempDir::new();
+    let gate = gates.path().join("release");
+    let w = world(&[("ORBYN_FAKE_ACP_LIST_GATE", gate.to_str().unwrap())]).await;
+    let address = w.service.url.strip_prefix("http://").unwrap();
+    // A person who gives up on the list and asks again, as the settings page does.
+    for round in 0..8 {
+        let before = launches(&w.launch, "acp-list").len();
+        let mut connection = TcpStream::connect(address).await.unwrap();
+        connection
+            .write_all(
+                format!(
+                    "GET /api/engines/agent/native-sessions?project_id={}&cursor=blocked HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {}\r\n\r\n",
+                    w.project, w.service.token,
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(30), async {
+            while launches(&w.launch, "acp-list").len() == before {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the list must reach the agent");
+        // Abandoning the request closes its connection; the next list follows at once, without
+        // waiting for the service to notice.
+        connection.shutdown().await.unwrap();
+        drop(connection);
+        let (code, page) = w.list("agent", None).await;
+        assert_eq!(
+            code, 200,
+            "round {round}: a cancelled list must release the engine: {page}"
+        );
+    }
+}

@@ -2,6 +2,7 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiFailure, request } from "../../../api/client";
 import type { EngineStatus } from "../../../api/types";
+import { useWorkspace } from "../../../product/state/workspace";
 import { NativeSessions } from "./NativeSessions";
 
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
@@ -68,4 +69,27 @@ it("does not ask again after a network failure", async () => {
     await vi.advanceTimersByTimeAsync(60_000);
   });
   expect(vi.mocked(request)).toHaveBeenCalledTimes(1);
+});
+
+it("cancels a list the person walks away from, so the next list is not refused as busy", async () => {
+  useWorkspace.setState({ projects: { data: [{ id: "p1", name: "Project" } as never], error: null, loading: false } });
+  const signals: AbortSignal[] = [];
+  vi.mocked(request).mockImplementation(((_method: string, path: string, _body?: unknown, signal?: AbortSignal) => {
+    if (path.endsWith("/native-sessions/capabilities")) return Promise.resolve(caps as never);
+    // The agent takes its time: the list is still open when the panel goes away.
+    if (signal) signals.push(signal);
+    return new Promise(() => undefined);
+  }) as never);
+  const view = render(<NativeSessions engine={engine} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  await act(async () => {
+    screen.getByRole("button", { name: "List sessions" }).click();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(signals.map((signal) => signal.aborted)).toEqual([false]);
+  view.unmount();
+  expect(signals.map((signal) => signal.aborted)).toEqual([true]);
+  useWorkspace.setState({ projects: { data: [], error: null, loading: false } });
 });

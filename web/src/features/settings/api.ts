@@ -138,8 +138,8 @@ export function nativeSessionCapabilities(engineId: string, signal?: AbortSignal
   return request<AcpSessionCapabilities>("GET", `/api/engines/${q(engineId)}/native-sessions/capabilities`, undefined, signal);
 }
 
-export function listNativeSessions(engineId: string, query: string) {
-  return request<AcpNativeSessionPage>("GET", `/api/engines/${q(engineId)}/native-sessions${query}`);
+export function listNativeSessions(engineId: string, query: string, signal?: AbortSignal) {
+  return request<AcpNativeSessionPage>("GET", `/api/engines/${q(engineId)}/native-sessions${query}`, undefined, signal);
 }
 
 export function importNativeSession(engineId: string, body: unknown) {

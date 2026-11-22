@@ -28,6 +28,7 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
   const [again, setAgain] = useState(0);
   const [deleting, setDeleting] = useState<AcpNativeSession | null>(null);
   const epoch = useRef(0);
+  const listing = useRef<AbortController | null>(null);
   const active = engine.tier === "acp" && engine.installed;
   const project = projectId ?? projects[0]?.id ?? null;
 
@@ -56,6 +57,8 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
     return () => {
       abort.abort();
       clearTimeout(timer);
+      // A list nobody is waiting for would keep the agent's one operation, and the next ask would be refused as busy.
+      listing.current?.abort();
     };
   }, [engine.id, active, again]);
 
@@ -75,17 +78,22 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
   const load = async (cursor?: string) => {
     if (!project || busy) return;
     const mine = epoch.current;
+    // A newer list takes over from the one it replaces: the service frees the agent when the older response is dropped.
+    listing.current?.abort();
+    const abort = new AbortController();
+    listing.current = abort;
     setBusy("list");
     try {
       const query = `?project_id=${encodeURIComponent(project)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
-      const page = await listNativeSessions(engine.id, query);
-      if (mine !== epoch.current) return;
+      const page = await listNativeSessions(engine.id, query, abort.signal);
+      if (mine !== epoch.current || abort.signal.aborted) return;
       setSessions((current) => (cursor ? [...current, ...page.sessions] : page.sessions));
       setNext(page.next_cursor);
     } catch (failure) {
-      if (mine === epoch.current) fail("Could not list ACP sessions", failure);
+      if (!abort.signal.aborted && mine === epoch.current) fail("Could not list ACP sessions", failure);
     } finally {
-      if (mine === epoch.current) setBusy(null);
+      if (listing.current === abort) listing.current = null;
+      if (!abort.signal.aborted && mine === epoch.current) setBusy(null);
     }
   };
   const importSession = async (session: AcpNativeSession) => {

@@ -1374,7 +1374,9 @@ registered, trusted project, and only act on a session the agent lists for that 
 history without a run, then stores the thread, its events and the session id together; a
 second import returns the same thread. Delete refuses while any thread holds the session.
 One operation runs per instance: it excludes that instance's run admission, updates and
-edits to `provider_instances`. A later run resumes with `session/resume` when offered,
+edits to `provider_instances`. A cancelled request drops its operation's future, which
+stops that process and releases the instance, so the next request is admitted. A later
+run resumes with `session/resume` when offered,
 else `session/load` with its replay discarded; an unknown session ends the run as a lost
 session. The session link is the thread's engine session, so no table or migration exists.
 
