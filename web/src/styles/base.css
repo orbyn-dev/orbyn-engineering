@@ -348,6 +348,19 @@ input[type="checkbox"][role="switch"][aria-readonly="true"] {
   background: var(--color-infoSoft);
   color: var(--color-info);
 }
+/* Rule 8: the visible word beside an engine Orbyn cannot gate, wherever one is picked. */
+.unmanaged-label {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 4px;
+  white-space: nowrap;
+}
+.unmanaged-label-text {
+  color: var(--color-warnText);
+  font-size: var(--text-meta);
+  font-weight: 600;
+}
 .count {
   display: inline-grid;
   place-items: center;

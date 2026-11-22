@@ -1,7 +1,7 @@
 import { recordUserPrompt } from "../../workspace";
 import { useDraftModelDefaults } from "../useDraftModelDefaults";
 import { useDraftCheckout } from "../useDraftCheckout";
-import { ArrowUp, Bot, Folder, GitBranch, Paperclip, X } from "lucide-react";
+import { ArrowUp, Bot, Folder, GitBranch, Paperclip, ShieldOff, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useCommand } from "../../../product/shell/shortcuts";
@@ -20,6 +20,8 @@ import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { Loading, NarrowBack } from "../../../product/ui/states";
 import { ACCESS, shownAccess } from "../../../product/composer/access";
+import { UnmanagedLabel } from "../../../product/engines/UnmanagedLabel";
+import { isUnmanaged } from "../../../product/engines/unmanaged";
 import { ModelPickerTrigger } from "../../thread";
 import { DraftProjectPicker } from "../DraftProjectPicker";
 import { DRAFT_KEY, SCRATCH, useDraftStore, worktreePurpose } from "../../../product/state/draftStore";
@@ -95,7 +97,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
     setPrefs({ draftProject: chosenProject });
   }, [chosenProject, setPrefs]);
 
-  const unmanaged = engine !== null && !engine.capabilities.managed;
+  const unmanaged = isUnmanaged(engine);
   // A mode the chosen engine does not offer would run Supervised, so it starts that way.
   const access = shownAccess(engine, chosenAccess);
 
@@ -467,7 +469,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                     <span />
                   )}
                   {unmanaged ? (
-                    <span>Unmanaged</span>
+                    <UnmanagedLabel engine={engine} variant="text" icon={<ShieldOff size={12} aria-hidden />} />
                   ) : (
                     <button
                       type="button"

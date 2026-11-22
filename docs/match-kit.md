@@ -43,6 +43,8 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **The shell.** `shell-home`, `shell-new-thread`, `shell-ledger`, `shell-thread-row-actions`, `shell-project-controls`, `update-sources`
 
+**The engine picker.** `engine-picker-closed`, `engine-picker-new-thread`, `engine-picker-crew-tiers`, `engine-picker-crew-tiers-narrow`
+
 **Pull requests, the list and its states.** `pr-row-variants`, `pr-row-pending`, `pr-row-pending-failed`, `pr-list-none`, `pr-list-loading`, `pr-list-error`, `pr-list-signedout`, `pr-list-offline`, `pr-list-draft`, `pr-list-filtered`, `pr-list-narrow-900`, `pr-list-narrow-800`, `pr-list-narrow-700`, `pr-list-narrow-640`, `pr-list-narrow-580`, `pr-tb-filter-waiting`, `pr-tb-filter-failed`, `pr-tb-filter-rate-limited`, `pr-tb-filter-still-limited`, `pr-row-tooltips`, `pr-row-actions-hover`
 
 **Pull requests, the toolbar.** `pr-tb-default`, `pr-tb-search`, `pr-tb-filters`, `pr-tb-chips`, `pr-tb-sort`, `pr-tb-project`, `pr-tb-refreshing`, `pr-tb-loading`, `pr-tb-empty`, `pr-tb-author`, `pr-tb-author-none`, `pr-tb-narrow`, `pr-tb-phone`

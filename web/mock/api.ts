@@ -192,7 +192,7 @@ export function createMockApi(options: MockOptions = {}) {
     escapesMock.reset(next);
     backtestMock.reset(next);
     backgroundMock.reset(next);
-    reviewControlsMock.reset();
+    reviewControlsMock.reset(next);
     secretsMock.reset();
     signedIn = false;
     idCounter = 0;
@@ -254,6 +254,39 @@ export function createMockApi(options: MockOptions = {}) {
       preferenceValues = { ...preferenceValues, default_engine: "claude", default_model: "", default_effort: "", default_model_options: {}, disabled_engines: [] };
     }
     if (next === "transcript-import-no-default") preferenceValues = { ...preferenceValues, disabled_engines: [] };
+    // The engine picker's Unmanaged label, on an ACP engine the service says it cannot gate.
+    if (next === "crew-engine-picker") {
+      const cursor = engines.find((engine) => engine.id === "cursor");
+      if (cursor) {
+        engines.push({
+          ...structuredClone(cursor),
+          id: "kiro",
+          name: "Kiro",
+          tier: "acp",
+          capabilities: { ...cursor.capabilities, managed: false, approvals: false, permission_modes: ["supervised", "auto", "full_access"] },
+          path: "/usr/local/bin/kiro-cli",
+          version: null,
+          auth: "unknown",
+          installer: "unknown",
+          latest: null,
+          support: "unknown",
+          update_command: null,
+          manual_hint: null,
+          sign_in_command: "kiro-cli login",
+          updating: false,
+          problem: null,
+          crew_role: "reviewer_only",
+        });
+      }
+      preferenceValues = {
+        ...preferenceValues,
+        default_engine: "kiro",
+        default_model: "",
+        default_effort: "",
+        default_model_options: {},
+        disabled_engines: [],
+      };
+    }
     if (!blank) preferenceValues = { ...preferenceValues, provider_instances: structuredClone(providerInstances), custom_models: structuredClone(customModels) };
   }
   reset();
