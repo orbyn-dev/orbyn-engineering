@@ -55,7 +55,7 @@ const WARM_IDLE: Duration = Duration::from_secs(5 * 60);
 
 /// Where a thread's run may write: its checkout, and on a library thread never
 /// the nested projects. `engine_cwd` is where the engine's relative paths land.
-fn write_scope(root: &Path, checkout: &Path, from_checkout: bool) -> WriteScope {
+fn write_scope(data_dir: &Path, root: &Path, checkout: &Path, from_checkout: bool) -> WriteScope {
     WriteScope {
         checkout: checkout.to_path_buf(),
         engine_cwd: if from_checkout { checkout } else { root }.to_path_buf(),
@@ -64,6 +64,7 @@ fn write_scope(root: &Path, checkout: &Path, from_checkout: bool) -> WriteScope 
         } else {
             Vec::new()
         },
+        data_dir: Some(data_dir.to_path_buf()),
     }
 }
 
@@ -249,6 +250,8 @@ pub(crate) struct RunServices {
     pub explorer: Arc<crate::project::explorer::ExplorerReads>,
     pub mcp: Arc<McpService>,
     pub base_url: String,
+    /// The core's data folder, which owns the protected account files.
+    pub data_dir: PathBuf,
     pub runs_dir: PathBuf,
     /// Where published renders live, so an MCP App page joins its thread's renders.
     pub renders_dir: PathBuf,
@@ -267,6 +270,7 @@ pub struct RunManager {
     explorer: Arc<crate::project::explorer::ExplorerReads>,
     mcp: Arc<McpService>,
     base_url: String,
+    data_dir: PathBuf,
     runs_dir: PathBuf,
     renders_dir: PathBuf,
     setups: Arc<crate::project::project_setup::SetupManager>,
@@ -366,6 +370,7 @@ impl RunManager {
             explorer,
             mcp,
             base_url,
+            data_dir,
             runs_dir,
             renders_dir,
             setups,
@@ -382,6 +387,7 @@ impl RunManager {
             explorer,
             mcp,
             base_url,
+            data_dir,
             runs_dir,
             renders_dir,
             setups,
