@@ -7,7 +7,7 @@ import { useWorkspace } from "../../product/state/workspace";
 import { Button } from "../../ui/controls";
 import type { HostRow, HostState } from "./contract";
 import "./enginehost.css";
-import { cannotSend, sendsWithoutHost, type Gap, type GapAction } from "./gaps";
+import { cannotSend, type Gap, type GapAction } from "./gaps";
 import { engineHostApi, hostWritable, useEngineHosts } from "./hostApi";
 import { cantStartLead, mismatchLine, plain } from "./hostText";
 import { isClaudeEngine, useClaudeEnginePath } from "../../product/engines/claudePath";
@@ -179,13 +179,13 @@ export function useHostLine(engineId: string | null, engineName: string, instanc
   if (isClaudeEngine(engineId ?? "", instanceOf)) {
     if (!claudeHostDown(host)) return { line: null, sendBlocked: false };
     // Send is never redirected and the SDK path never falls back: the run fails with its own sentence instead.
-    return { line: { host, engineName: plain(engineName, 60), fallback: false, claude: true }, sendBlocked: false };
+    return { line: { host, engineName: plain(engineName, 60), claude: true }, sendBlocked: false };
   }
   if (host.state !== "cant_start") return { line: null, sendBlocked: false };
-  return { line: { host, engineName: plain(engineName, 60), fallback: sendsWithoutHost(host) }, sendBlocked: cannotSend(host) };
+  return { line: { host, engineName: plain(engineName, 60) }, sendBlocked: cannotSend(host) };
 }
 
-export interface HostLine { host: HostRow; engineName: string; fallback: boolean; claude?: boolean }
+export interface HostLine { host: HostRow; engineName: string; claude?: boolean }
 
 /** The host states where the SDK path can still run; anything else is not "fine" and gets no quiet switch. */
 const HEALTHY_HOST = new Set<HostState>(["not_started", "starting", "running", "stopped"]);
@@ -216,7 +216,7 @@ export function ClaudePathLine({ engineId, instanceOf }: { engineId: string; ins
 
 /**
  * The line above the composer while a host is down. For Claude under the SDK path it is the service's sentence with Use
- * Claude (CLI) and the state's own action; every other engine keeps the fallback wording and Restart engine host. Either way
+ * Claude (CLI) and the state's own action; every other engine says it can't send and offers Restart engine host. Either way
  * it stays until the host is back, and the message the person typed stays in the box.
  */
 export function ComposerHostLine({ line }: { line: HostLine }) {
@@ -240,19 +240,17 @@ function ClaudeComposerHostLine({ line }: { line: HostLine }) {
   );
 }
 
-/** Every other engine keeps the wording and action it had. */
+/** Every other engine: its run can't reach the host, and a wrapped driver is not a fallback, so Send stays off. */
 function EngineComposerHostLine({ line }: { line: HostLine }) {
-  const { host, engineName, fallback } = line;
+  const { host, engineName } = line;
   const once = useOnce(() => engineHostApi().retry(host.id));
   const last = host.last_error ? ` Last error: ${plain(host.last_error.message, 200).replace(/\.$/, "")}.` : "";
-  const text = fallback
-    ? `${engineName} can’t start: its engine host ${host.detail ? plain(host.detail, 200).replace(/\.$/, "") : `stopped ${host.stops_in_window ?? 5} times in 5 minutes`}.${last}`
-    : `${engineName} can’t send: its engine host is unavailable and ${engineName} has no other way to run here.${last}`;
+  const text = `${engineName} can’t send: its engine host is unavailable and ${engineName} has no other way to run here.${last}`;
   return (
-    <div className="eh-line" role="alert" data-send={fallback ? "falls-back" : "off"}>
+    <div className="eh-line" role="alert" data-send="off">
       <CircleAlert size={16} aria-hidden />
       <span>{text}{once.error ? ` ${once.error}` : ""}</span>
-      {hostWritable() ? <Button small busy={once.busy} onClick={once.click}>{fallback ? "Try again" : "Restart engine host"}</Button> : null}
+      {hostWritable() ? <Button small busy={once.busy} onClick={once.click}>Restart engine host</Button> : null}
     </div>
   );
 }

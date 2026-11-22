@@ -22,8 +22,9 @@ pub enum BlockEvent<'a> {
     Fullscreen(bool),
 }
 
-/// A sequence longer than this is not a mark or a working directory anyone
-/// reads, so its body is dropped instead of growing without a bound.
+/// A sequence body longer than this is not a mark or a working directory anyone
+/// reads, so it is dropped instead of growing without a bound; a DCS/SOS/PM/APC
+/// string also returns to Ground.
 const MAX_SEQUENCE: usize = 64 * 1024;
 /// A working directory is a label, not a document.
 const MAX_CWD_CHARS: usize = 4096;
@@ -46,6 +47,8 @@ pub struct BlockParser {
     state: State,
     payload: Vec<u8>,
     overflow: bool,
+    /// Body bytes read since `ESC P`/`X`/`^`/`_`; a string this long is abandoned.
+    dcs_len: usize,
     alternate_screen: bool,
     command: Option<String>,
     cwd: Option<String>,
@@ -86,6 +89,7 @@ impl BlockParser {
                             self.state = State::Csi;
                         }
                         b'P' | b'X' | b'^' | b'_' => {
+                            self.dcs_len = 0;
                             self.state = State::Dcs;
                         }
                         byte if (0x20..=0x2f).contains(&byte) => {
@@ -114,6 +118,13 @@ impl BlockParser {
                         self.state = State::OscEscape;
                         at += 1;
                     }
+                    0x18 | 0x1a => {
+                        // CAN/SUB cancels the string; the mark inside it never happens.
+                        self.payload.clear();
+                        self.overflow = false;
+                        self.state = State::Ground;
+                        at += 1;
+                    }
                     byte => {
                         self.keep(byte);
                         at += 1;
@@ -131,7 +142,16 @@ impl BlockParser {
                 State::Csi => {
                     let byte = chunk[at];
                     at += 1;
-                    if (0x40..=0x7e).contains(&byte) {
+                    if byte == 0x18 || byte == 0x1a {
+                        self.payload.clear();
+                        self.overflow = false;
+                        self.state = State::Ground;
+                    } else if byte == 0x1b {
+                        // ESC starts a new sequence; the unfinished CSI is dropped.
+                        self.payload.clear();
+                        self.overflow = false;
+                        self.state = State::Escape;
+                    } else if (0x40..=0x7e).contains(&byte) {
                         if !self.overflow {
                             self.finish_csi(byte, emit);
                         }
@@ -141,13 +161,26 @@ impl BlockParser {
                     }
                 }
                 State::Dcs => {
-                    if chunk[at] == 0x1b {
-                        self.state = State::DcsEscape;
-                    }
+                    let byte = chunk[at];
                     at += 1;
+                    if byte == 0x18 || byte == 0x1a {
+                        self.dcs_len = 0;
+                        self.state = State::Ground;
+                    } else if byte == 0x1b {
+                        self.state = State::DcsEscape;
+                    } else {
+                        self.dcs_len += 1;
+                        if self.dcs_len > MAX_SEQUENCE {
+                            // No one reads a string this long; abandon it so later
+                            // output is not lost.
+                            self.dcs_len = 0;
+                            self.state = State::Ground;
+                        }
+                    }
                 }
                 State::DcsEscape => {
                     if chunk[at] == b'\\' {
+                        self.dcs_len = 0;
                         self.state = State::Ground;
                         at += 1;
                     } else {
@@ -164,6 +197,7 @@ impl BlockParser {
         self.state = State::Ground;
         self.payload.clear();
         self.overflow = false;
+        self.dcs_len = 0;
         self.end(None, emit);
     }
 
@@ -515,5 +549,77 @@ mod tests {
                 Event::End(None)
             ]
         );
+    }
+
+    #[test]
+    fn a_csi_is_aborted_by_esc_can_or_sub() {
+        assert_eq!(run(&[b"a\x1b[31\x18b"]), vec![Event::Text("ab".into())]);
+        assert_eq!(run(&[b"a\x1b[31\x1ab"]), vec![Event::Text("ab".into())]);
+        assert_eq!(run(&[b"a\x1b[31\x1b[0mb"]), vec![Event::Text("ab".into())]);
+        assert_eq!(
+            run(&[b"\x1b[?1049\x18h"]),
+            vec![Event::Text("h".into())],
+            "a CAN cancels an alternate-screen switch"
+        );
+        assert_eq!(
+            run(&[b"\x1b]133;C\x07a\x1b[31\x1b]133;D;5\x07"]),
+            vec![
+                start(None, None),
+                Event::Text("a".into()),
+                Event::End(Some(5)),
+            ],
+            "ESC inside a CSI starts a new sequence"
+        );
+    }
+
+    #[test]
+    fn can_or_sub_returns_an_osc_dcs_sos_pm_or_apc_to_ground() {
+        for opener in *b"PX^_]" {
+            for cancel in [0x18, 0x1a] {
+                let mut chunk = vec![b'a', 0x1b, opener];
+                chunk.extend_from_slice(b"swallowed");
+                chunk.push(cancel);
+                chunk.push(b'b');
+                assert_eq!(
+                    run(&[&chunk]),
+                    vec![Event::Text("ab".into())],
+                    "opener {opener:?}, cancel {cancel:#04x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_cancel_inside_an_osc_133_mark_drops_that_mark() {
+        let events = run(&[b"\x1b]133;C\x07out\x1b]133;D;0\x18still\n\x1b]133;D;1\x07"]);
+        assert_eq!(
+            events,
+            vec![
+                start(None, None),
+                Event::Text("outstill\n".into()),
+                Event::End(Some(1)),
+            ]
+        );
+        let events = run(&[b"before\x1b]133;C\x1aafter"]);
+        assert_eq!(events, vec![Event::Text("beforeafter".into())]);
+    }
+
+    #[test]
+    fn a_string_body_over_64_kib_returns_to_ground() {
+        for opener in *b"PX^_" {
+            let mut chunk = vec![0x1b, opener];
+            chunk.resize(2 + MAX_SEQUENCE + 1, b'x');
+            chunk.extend_from_slice(b"after\n");
+            let events = run(&[b"\x1b]133;C\x07", &chunk, b"\x1b]133;D;0\x07"]);
+            assert_eq!(
+                events,
+                vec![
+                    start(None, None),
+                    Event::Text("after\n".into()),
+                    Event::End(Some(0)),
+                ],
+                "opener {opener:?}"
+            );
+        }
     }
 }

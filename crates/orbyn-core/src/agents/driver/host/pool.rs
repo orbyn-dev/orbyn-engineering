@@ -112,6 +112,10 @@ pub struct Pool {
     /// The resumable session of each open run, by engine and thread, for a catalog read
     /// that can use the live session instead of starting a throwaway agent.
     sessions: std::sync::Mutex<HashMap<(String, String), String>>,
+    /// The message a Claude rewind resumes at, by engine and its session id: `revert_session`
+    /// names the session, not the thread, and the store hands a point only for the thread's
+    /// current session. One next `open` takes it.
+    resume_at: std::sync::Mutex<HashMap<(String, String), String>>,
     shutdown: CancellationToken,
     connections: AtomicU64,
 }
@@ -143,6 +147,7 @@ impl Pool {
             wraps_driver: AtomicBool::new(false),
             sdk_missing: AtomicBool::new(false),
             sessions: std::sync::Mutex::new(HashMap::new()),
+            resume_at: std::sync::Mutex::new(HashMap::new()),
             shutdown: CancellationToken::new(),
             connections: AtomicU64::new(0),
         })
@@ -275,6 +280,29 @@ impl Pool {
                     None
                 }
             })
+    }
+
+    /// Keeps the message a Claude rewind resumes at. The next run that resumes this
+    /// engine session takes it once; a later run never sees it.
+    pub fn note_resume_at(&self, engine: &str, session: &str, at: &str) {
+        if session.is_empty() || at.is_empty() {
+            return;
+        }
+        if let Ok(mut resume_at) = self.resume_at.lock() {
+            resume_at.insert((engine.to_owned(), session.to_owned()), at.to_owned());
+        }
+    }
+
+    /// The rewind point for this engine session, if one is waiting. Taking it consumes it,
+    /// so an `open` that fails, or a run that reports its session, leaves it used.
+    pub fn take_resume_at(&self, engine: &str, session: &str) -> Option<String> {
+        if session.is_empty() {
+            return None;
+        }
+        self.resume_at
+            .lock()
+            .ok()?
+            .remove(&(engine.to_owned(), session.to_owned()))
     }
 
     fn set(&self, state: HostState) {

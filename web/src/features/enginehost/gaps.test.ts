@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import type { EngineStatus } from "../../api/types";
 import type { HostRow } from "./contract";
-import { cannotSend, engineGap, pickerGap, programOf, sendsWithoutHost } from "./gaps";
+import { cannotSend, engineGap, pickerGap, programOf } from "./gaps";
 
 const engine = (patch: Partial<EngineStatus> = {}) => ({ id: "claude", name: "Claude Code", installed: true, ...patch }) as EngineStatus;
 const host = (patch: Partial<HostRow> = {}): HostRow => ({ id: "claude", name: "Claude Code", state: "running", can_retry: false, ...patch });
@@ -11,13 +11,14 @@ it("says an engine that is not installed once, naming its program", () => {
   expect(gap).toMatchObject({ kind: "not_found", sentence: "cursor isn’t installed on this computer.", chip: { label: "Not found" }, action: "check_again" });
 });
 
-it("tells SDK missing with a driver from SDK missing with none", () => {
-  expect(engineGap(engine(), host({ sdk_missing: true, has_driver: true }))).toMatchObject({
-    kind: "sdk_missing", title: "SDK missing in this build", chip: { label: "SDK missing" }, action: "open",
-    sentence: "This build does not include the Claude Code SDK. Claude Code runs through its claude program.",
+it("says a missing SDK fails the run, and names the CLI path only for Claude", () => {
+  expect(engineGap(engine(), host({ sdk_missing: true }))).toMatchObject({
+    kind: "sdk_missing", title: "SDK missing in this build", chip: { label: "SDK missing", tone: "plain" }, action: "open",
+    sentence: "This build does not include the Claude Code SDK, so a run on Claude Code fails with that message. Choose Claude (CLI) in Claude path to run it.",
   });
-  expect(engineGap(engine({ id: "cursor", name: "Cursor" }), host({ id: "cursor", sdk_missing: true }))).toMatchObject({
-    kind: "unavailable", chip: { label: "Unavailable", tone: "err" }, action: null, sentence: "The Cursor SDK is not included in this build. Cursor can’t run here.",
+  expect(engineGap(engine({ id: "cursor", name: "Cursor" }), host({ id: "cursor", sdk_missing: true, has_driver: true }))).toMatchObject({
+    kind: "sdk_missing", title: "SDK missing in this build", chip: { label: "SDK missing", tone: "err" }, action: null,
+    sentence: "This build does not include the Cursor SDK, so a run on Cursor fails with that message.",
   });
 });
 
@@ -46,10 +47,9 @@ it("cuts what the service chose and never keeps a marker or a name uncut", () =>
   expect(programOf(engine({ id: `${"a".repeat(80)}:work` }))).toHaveLength(25);
 });
 
-it("knows when Send is off and when it falls back", () => {
+it("knows Send is off on a host that can’t start, whatever a wrapped driver says", () => {
   expect(cannotSend(host({ state: "cant_start" }))).toBe(true);
-  expect(cannotSend(host({ state: "cant_start", has_driver: true }))).toBe(false);
-  expect(sendsWithoutHost(host({ state: "cant_start", has_driver: true }))).toBe(true);
+  expect(cannotSend(host({ state: "cant_start", has_driver: true }))).toBe(true);
   expect(cannotSend(host({ state: "restarting" }))).toBe(false);
   expect(cannotSend(null)).toBe(false);
 });

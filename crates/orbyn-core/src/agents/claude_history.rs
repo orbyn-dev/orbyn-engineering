@@ -113,6 +113,110 @@ fn session_messages_in(root: &Path, session: &str, options: &HistoryOptions) -> 
     Ok(messages)
 }
 
+/// A UUID in the shape the engine and the host accept. Matching against the file is
+/// exact, as the host's is, so a rewritten value is never guessed at.
+pub(crate) fn valid_uuid(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
+
+/// A message a subagent wrote, or one answering a tool call, is not at the top level of
+/// the conversation and can never be the point a rewind resumes at.
+fn has_parent(entry: &Value) -> bool {
+    match entry.get("parent_tool_use_id") {
+        None | Some(Value::Null) => false,
+        Some(Value::String(id)) => !id.is_empty(),
+        Some(_) => true,
+    }
+}
+
+fn top_level(entry: &Value) -> bool {
+    !has_parent(entry) && entry.get("isSidechain").and_then(Value::as_bool) != Some(true)
+}
+
+/// The uuid to resume a Claude session at to undo the run whose prompt user message is
+/// `prompt_id`: the last top-level assistant message before that user message.
+pub(crate) fn resume_point(session: &str, prompt_id: &str, dir: Option<&Path>) -> Result<String> {
+    let root = history_root(Engine::Claude)
+        .ok_or_else(|| CoreError::Unsupported("No home folder, so no Claude history.".into()))?;
+    resume_point_in(&root, session, prompt_id, dir)
+}
+
+pub(crate) fn resume_point_in(
+    root: &Path,
+    session: &str,
+    prompt_id: &str,
+    dir: Option<&Path>,
+) -> Result<String> {
+    if !valid_id(session) {
+        return Err(CoreError::Invalid(
+            "That is not a Claude session id.".into(),
+        ));
+    }
+    if !valid_uuid(prompt_id) {
+        return Err(CoreError::Invalid("That is not a Claude prompt id.".into()));
+    }
+    // The path comes from the stored session id, never from a request value. The thread's
+    // folder is only the first hint: a native Claude thread starts in the library when its
+    // session lives there, while the thread keeps the checkout folder. If the hint holds no
+    // file, the session id is looked up across the history root, as the console's
+    // `session_cwd` does. The host, sent the session and its own folder, validates the uuid
+    // against the same file before it resumes.
+    let dir = dir.map(|dir| dir.to_string_lossy());
+    let path = match find_transcript(root, session, dir.as_deref()) {
+        Some(path) => path,
+        None if dir.is_some() => find_transcript(root, session, None)
+            .ok_or_else(|| CoreError::NotFound("Claude session".into()))?,
+        None => return Err(CoreError::NotFound("Claude session".into())),
+    };
+    let file = std::fs::File::open(&path)?;
+    if file.metadata()?.len() > MAX_FILE_BYTES {
+        return Err(CoreError::Invalid(
+            "This Claude session is too large to read here.".into(),
+        ));
+    }
+    let mut earlier: Option<String> = None;
+    let mut found_prompt = false;
+    for line in BufReader::new(file).lines() {
+        let line = line?;
+        // A line cut off by a crash is skipped, as Claude itself does. A file that lost
+        // the prompt this way cannot name a point, and the rewind falls back.
+        let Ok(entry) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if !top_level(&entry) {
+            continue;
+        }
+        match entry.get("type").and_then(Value::as_str) {
+            Some("user") if entry.get("uuid").and_then(Value::as_str) == Some(prompt_id) => {
+                found_prompt = true;
+                break;
+            }
+            Some("assistant") => {
+                if let Some(uuid) = entry
+                    .get("uuid")
+                    .and_then(Value::as_str)
+                    .filter(|uuid| valid_uuid(uuid))
+                {
+                    earlier = Some(uuid.to_owned());
+                }
+            }
+            _ => {}
+        }
+    }
+    if !found_prompt {
+        return Err(CoreError::NotFound("the run's Claude prompt".into()));
+    }
+    earlier.ok_or_else(|| CoreError::NotFound("an earlier Claude assistant message".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,6 +228,40 @@ mod tests {
         let mut text: String = lines.iter().map(|line| format!("{line}\n")).collect();
         text.push_str("{\"type\":\"user\",\"cut");
         std::fs::write(dir.join(format!("{session}.jsonl")), text).unwrap();
+    }
+
+    fn write_whole(root: &Path, folder: &str, session: &str, lines: &[Value]) {
+        let dir = root.join(folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        let text: String = lines.iter().map(|line| format!("{line}\n")).collect();
+        std::fs::write(dir.join(format!("{session}.jsonl")), text).unwrap();
+    }
+
+    fn write_raw(root: &Path, folder: &str, session: &str, text: &str) {
+        let dir = root.join(folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{session}.jsonl")), text).unwrap();
+    }
+
+    const SESSION: &str = "0f3c2b1a-1111-4222-8333-444455556666";
+    const PROMPT: &str = "a1a1a1a1-1111-4222-8333-444455556666";
+    const BEFORE: &str = "b2b2b2b2-1111-4222-8333-444455556666";
+
+    fn user(uuid: &str) -> Value {
+        json!({"type":"user","uuid":uuid,"sessionId":SESSION,"message":{"role":"user","content":"hi"}})
+    }
+
+    fn tool_result(uuid: &str) -> Value {
+        json!({
+            "type":"user",
+            "uuid":uuid,
+            "sessionId":SESSION,
+            "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}
+        })
+    }
+
+    fn assistant(uuid: &str) -> Value {
+        json!({"type":"assistant","uuid":uuid,"sessionId":SESSION,"message":{"role":"assistant","content":"answer"}})
     }
 
     #[test]
@@ -186,5 +324,140 @@ mod tests {
                 Err(CoreError::Invalid(_))
             ));
         }
+    }
+
+    #[test]
+    fn a_rewind_point_is_the_last_top_level_assistant_before_the_prompt() {
+        let dir = TempDir::new();
+        let cwd = r"C:\work\app";
+        let folder = project_folder_name(cwd);
+        write_whole(
+            dir.path(),
+            &folder,
+            SESSION,
+            &[
+                json!({"type":"summary","summary":"x"}),
+                user("u0"),
+                assistant("old"),
+                json!({"type":"assistant","uuid":"sub-1","sessionId":SESSION,"isSidechain":true,"message":{}}),
+                json!({"type":"assistant","uuid":"sub-2","sessionId":SESSION,"parent_tool_use_id":"toolu_1","message":{}}),
+                tool_result("tool-1"),
+                assistant(BEFORE),
+                // A subagent that speaks after the last top-level message must not be the point.
+                json!({"type":"assistant","uuid":"sub-3","sessionId":SESSION,"isSidechain":true,"message":{}}),
+                json!({"type":"assistant","uuid":"sub-4","sessionId":SESSION,"parent_tool_use_id":"toolu_2","message":{}}),
+                user(PROMPT),
+                assistant("after"),
+            ],
+        );
+        assert_eq!(
+            resume_point_in(dir.path(), SESSION, PROMPT, Some(Path::new(cwd))).unwrap(),
+            BEFORE
+        );
+    }
+
+    #[test]
+    fn a_wrong_folder_hint_still_finds_the_session_by_id() {
+        let dir = TempDir::new();
+        let actual = project_folder_name("/library");
+        write_whole(
+            dir.path(),
+            &actual,
+            SESSION,
+            &[assistant(BEFORE), user(PROMPT)],
+        );
+        assert_eq!(
+            resume_point_in(dir.path(), SESSION, PROMPT, Some(Path::new("/checkout"))).unwrap(),
+            BEFORE,
+            "a library thread keeps the checkout folder"
+        );
+    }
+
+    #[test]
+    fn a_rewind_point_needs_the_prompt_and_an_earlier_top_level_assistant() {
+        let dir = TempDir::new();
+        let folder = project_folder_name("/one");
+        write_whole(dir.path(), &folder, SESSION, &[user(PROMPT)]);
+        assert!(matches!(
+            resume_point_in(dir.path(), SESSION, PROMPT, Some(Path::new("/one"))),
+            Err(CoreError::NotFound(_))
+        ));
+
+        let dir = TempDir::new();
+        write_whole(
+            dir.path(),
+            &folder,
+            SESSION,
+            &[
+                json!({"type":"assistant","uuid":"sub","sessionId":SESSION,"isSidechain":true,"message":{}}),
+                user(PROMPT),
+            ],
+        );
+        assert!(matches!(
+            resume_point_in(dir.path(), SESSION, PROMPT, Some(Path::new("/one"))),
+            Err(CoreError::NotFound(_))
+        ));
+
+        let dir = TempDir::new();
+        write_whole(
+            dir.path(),
+            &folder,
+            SESSION,
+            &[assistant(BEFORE), user("another-prompt")],
+        );
+        assert!(matches!(
+            resume_point_in(dir.path(), SESSION, PROMPT, Some(Path::new("/one"))),
+            Err(CoreError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn a_rewind_point_refuses_an_invalid_session_or_prompt_id_and_a_missing_file() {
+        let dir = TempDir::new();
+        for session in ["../secret", r"..\secret", "", "a/b"] {
+            assert!(matches!(
+                resume_point_in(dir.path(), session, PROMPT, None),
+                Err(CoreError::Invalid(_))
+            ));
+        }
+        for prompt in ["not-a-uuid", "../secret", "", "a1a1a1a1-1111-4222-8333"] {
+            assert!(matches!(
+                resume_point_in(dir.path(), SESSION, prompt, None),
+                Err(CoreError::Invalid(_))
+            ));
+        }
+        assert!(matches!(
+            resume_point_in(dir.path(), SESSION, PROMPT, None),
+            Err(CoreError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn a_truncated_or_rewritten_file_never_yields_a_guess() {
+        let dir = TempDir::new();
+        let folder = project_folder_name("/one");
+        write_raw(
+            dir.path(),
+            &folder,
+            SESSION,
+            "{\"type\":\"assistant\",\"uuid\":\"cut",
+        );
+        assert!(matches!(
+            resume_point_in(dir.path(), SESSION, PROMPT, Some(Path::new("/one"))),
+            Err(CoreError::NotFound(_))
+        ));
+
+        // The prompt is gone, as after a rewrite: the assistant before it is not guessed at.
+        let dir = TempDir::new();
+        write_whole(
+            dir.path(),
+            &folder,
+            SESSION,
+            &[assistant(BEFORE), user("rewritten")],
+        );
+        assert!(matches!(
+            resume_point_in(dir.path(), SESSION, PROMPT, Some(Path::new("/one"))),
+            Err(CoreError::NotFound(_))
+        ));
     }
 }
