@@ -460,7 +460,7 @@ now and does not wait for them.
      afterwards opens in this device's own mode. **Unverified:** the test uses one stand-in engine; it does not start each
      real engine to check the mode it runs under.
 8. The Engine reviewer approves these documents once more, this time against the built code.
-   - *Status: pending.* The Engine reviewer's second approval has not been given.
+   - *Status: packet ready, waiting on the Engine reviewer.* [account-review-packet.md](account-review-packet.md) maps each claim here to its code and test and lists what no test covers. The Engine reviewer's second approval has not been given.
 
 **Distributed builds are unsigned for now, so the gate stays `Off`.** There is no Apple Developer account, so no build we
 distribute is signed with a Developer ID or notarized. Item 5 is therefore not met and stays a hard condition: real
