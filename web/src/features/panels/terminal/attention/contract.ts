@@ -1,6 +1,6 @@
 /**
- * CLI-agent attention (parity G14 extended, W10), built hidden. The service does not detect a waiting engine console yet; the event it
- * will send is written in docs/cli-agent-attention.md. `attentionApi()` answers `null` in a production build, so nothing subscribes,
+ * CLI-agent attention (parity G14 extended, W10), built hidden. The service detects a waiting engine console (on by default,
+ * `terminal_attention_enabled`, 20 s quiet time) and sends the event written in docs/cli-agent-attention.md; the web is not wired to it. `attentionApi()` answers `null` in a production build, so nothing subscribes,
  * no Needs you item is drawn and no notification is raised. The mock lives in web/mock/attention.ts and is installed only by the
  * dev-only preview page (`#/preview/attention`).
  */
@@ -23,8 +23,8 @@ export interface AttentionWaiting {
   /** Engine family id, such as `claude` or `codex`. */
   engine: string;
   kind: AttentionKind;
-  /** When the terminal last printed (epoch milliseconds, parsed from RFC 3339). */
-  since: number;
+  /** When the terminal last printed: RFC 3339, UTC, as on the wire. The entry keeps it as epoch milliseconds. */
+  since: string;
   /** The last lines, cleaned and capped. For a secret, only the prompt's label. Text, never markup. */
   excerpt: string[];
 }
