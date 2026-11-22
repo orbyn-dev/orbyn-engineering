@@ -63,7 +63,7 @@ it("cues an openable Providers row with the designed row hover and a trailing ch
   // `.tcr .chev { color: var(--t4) }` sits at the end of the row.
   expect(rule(providers, ".set-tr-open")).toMatch(/cursor:\s*pointer/);
   expect(rule(providers, ".set-tr-open:hover")).toMatch(/background:\s*var\(--color-hover\)/);
-  expect(rule(providers, ".set-row-open .set-chev")).toMatch(/color:\s*var\(--color-faint\)/);
+  expect(rule(providers, ".set-row-open > svg")).toMatch(/color:\s*var\(--color-faint\)/);
   // The name button is the row's real control: it keeps its own ring when tabbed to.
   expect(rule(providers, ".set-row-open:focus-visible")).toMatch(/outline:\s*2px solid var\(--color-focus\)/);
 });

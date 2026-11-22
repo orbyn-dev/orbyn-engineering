@@ -130,7 +130,7 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
         <span role="cell"><span className="set-mark" style={engine.accent ? { background: engine.accent, color: "#fff" } : undefined}>{engine.name.charAt(0).toUpperCase()}</span></span>
         <span role="cell">
           {openable
-            ? <button type="button" className="set-row-open name" aria-label={accessibleName} onClick={(event) => { event.stopPropagation(); onOpen(engine.id); }}>{title}<ChevronRight className="set-chev" size={12} aria-hidden /></button>
+            ? <button type="button" className="set-row-open name" aria-label={accessibleName} onClick={(event) => { event.stopPropagation(); onOpen(engine.id); }}>{title}<ChevronRight size={12} aria-hidden /></button>
             : <span className="name">{title}</span>}
           {note ? <><br /><span className="sub">{note}</span></> : null}
           {variant && !isChosenPath ? (

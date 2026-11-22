@@ -32,7 +32,7 @@
 .set-tr-open { cursor: pointer; }
 .set-tr-open:hover { background: var(--color-hover); }
 .set-row-open { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.set-row-open .set-chev { color: var(--color-faint); }
+.set-row-open > svg { color: var(--color-faint); }
 .set-row-open:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .set-back-end { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; }
 .set-tools-end { justify-content: flex-end; }
