@@ -283,6 +283,7 @@
     ["POST","/api/clones","local"],
     ["POST","/api/clones/{id}/cancel","local"],
     ["POST","/api/clones/{id}/retry","local"],
+    ["POST","/api/code-runs/{id}/cancel","person"],
     ["POST","/api/crew/approvals/second-engine/{id}/dismiss","person"],
     ["POST","/api/crew/approvals/{id}/approve-once","person"],
     ["POST","/api/crew/approvals/{id}/deny","person"],
