@@ -113,7 +113,7 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
       </label>
       <label>
         <input type="radio" name="unsynced" checked={discard} onChange={() => setDiscard(true)} />
-        <span><b>Discard them</b><small>They are deleted from this device and never reach your other devices.</small></span>
+        <span><b>Discard them</b><small>They are deleted from this device and are not synced to your other devices.</small></span>
       </label>
     </fieldset>
   );

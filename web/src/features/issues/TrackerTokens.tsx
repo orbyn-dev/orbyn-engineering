@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { Loader2, TriangleAlert } from "lucide-react";
 import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Button } from "../../ui/controls";
 import { ConfirmDialog, Dialog } from "../../ui/Dialog";
@@ -55,7 +55,7 @@ function TokenDialog({ tracker, replacing, address: saved, busy, error, onCancel
   // Two fields have no implicit submit without a submit button, so Enter in either one saves, once.
   const enter = (event: KeyboardEvent<HTMLInputElement>) => { if (event.key === "Enter") { event.preventDefault(); save(); } };
   return (
-    <Dialog title={where ? where.title : `${name} API token`} busy={busy} onClose={onCancel}
+    <Dialog title={where ? where.title : `${name} API token`} busy={busy} onClose={onCancel} className={where ? "trk-dialog-address" : undefined}
       footer={<>
         <Button disabled={busy} onClick={onCancel}>Cancel</Button>
         <Button tone="primary" busy={busy} disabled={!filled || !addressed} onClick={save}>Save token</Button>
@@ -85,6 +85,19 @@ function TokenDialog({ tracker, replacing, address: saved, busy, error, onCancel
 }
 
 type Step = "enter" | "remove";
+
+/** The service's words for a stored connection that no longer works, above the group as the frame draws it. */
+function TrackerBanner({ row, refresh }: { row: TrackerRow; refresh(): void }) {
+  const name = TRACKER_NAMES[row.tracker];
+  const words = trackerDetail(row) || `${name} is not working. Replace the token or remove it.`;
+  return (
+    <div className="set-banner err" role="alert">
+      <TriangleAlert size={14} aria-hidden />
+      <div>{words}</div>
+      <div className="set-banner-end"><Button small tone="quiet" onClick={refresh}>Try again</Button></div>
+    </div>
+  );
+}
 
 function TrackerRowView({ row, replace, refresh }: { row: TrackerRow; replace(next: TrackerRow): void; refresh(): void }) {
   const name = TRACKER_NAMES[row.tracker];
@@ -124,17 +137,9 @@ function TrackerRowView({ row, replace, refresh }: { row: TrackerRow; replace(ne
   const retry = () => { refresh(); };
   const close = () => { if (!pending.current) { setStep(null); setError(null); } };
 
-  // The service says why a stored connection does not work, in its own words; they are drawn as text, capped.
-  const banner = status === "attention" ? (trackerDetail(row) || `${name} is not working. Replace the token or remove it.`) : null;
   const idle = busy === null;
   return (
     <>
-      {banner ? (
-        <div role="row" className="trk-banner-row"><span role="cell" className="trk-banner-cell">
-          <div className="set-banner err" role="alert"><div>{banner.length > 200 ? `${banner.slice(0, 199)}…` : banner}</div>
-            <div className="set-banner-end"><Button small onClick={retry}>Try again</Button></div></div>
-        </span></div>
-      ) : null}
       <div role="row" className="set-tr trk-row" data-tracker={row.tracker}>
         <span role="cell"><span className="set-mark">{trackerMark(row.tracker)}</span></span>
         <span role="cell"><span className="name">{name}</span><br /><span className="sub">{trackerLine(row)}</span></span>
@@ -160,12 +165,14 @@ function TrackerRowView({ row, replace, refresh }: { row: TrackerRow; replace(ne
 export function IssueTrackersSettings() {
   const { rows, replace, refresh } = useTrackers();
   if (rows === null) return null;
+  const trackers = knownTrackers(rows);
   return (
     <section aria-labelledby="trk-head">
+      {trackers.filter((row) => trackerStatus(row) === "attention").map((row) => <TrackerBanner key={row.tracker} row={row} refresh={refresh} />)}
       <div className="set-grp" id="trk-head">Issue trackers <span className="set-pill">Beta</span></div>
       <p className="setting-line-desc">GitHub uses your gh sign-in. Tokens you add for other trackers are kept in your keychain and never shown again.</p>
       <div className="set-tbl trk-table" role="table" aria-label="Issue trackers">
-        {knownTrackers(rows).map((row) => <TrackerRowView key={row.tracker} row={row} replace={replace} refresh={refresh} />)}
+        {trackers.map((row) => <TrackerRowView key={row.tracker} row={row} replace={replace} refresh={refresh} />)}
       </div>
     </section>
   );

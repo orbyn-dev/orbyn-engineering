@@ -57,7 +57,7 @@ async fn audit(
     State(state): State<AppState>,
     Query(query): Query<AuditQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.store.list_audit(
+    Ok(Json(state.core.audit_events(
         query.thread_id.as_deref(),
         query.limit.unwrap_or(200),
     )?))

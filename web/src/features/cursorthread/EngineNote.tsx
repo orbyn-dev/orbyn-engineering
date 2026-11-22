@@ -9,6 +9,6 @@ import { noticeText } from "./NoticeCard";
  */
 export function EngineNote({ projectId, engine, engineName, modelName }: { projectId: string; engine: string; engineName: string; modelName?: string | null }) {
   const notice = useEngineNotice(projectId, engine);
-  const sub = notice?.acknowledged ? noticeText(engineName) : (modelName ?? null);
-  return <DRow icon={<Cpu size={16} aria-hidden />} label="Engine" value={engineName} sub={sub} />;
+  const sub = notice?.acknowledged ? noticeText(engine, engineName) : (modelName ?? null);
+  return <DRow icon={<Cpu size={16} aria-hidden />} label="Engine" value={engineName} sub={sub} subWrap={notice?.acknowledged === true} />;
 }

@@ -2,11 +2,12 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Approval } from "../../api/types";
+import type { ToolItem } from "../../product/timeline/types";
 import { codeRun } from "../../../mock/codemode";
 import { installMockFetch } from "../../test-support";
 import { useWorkspace } from "../../product/state/workspace";
 import { ApprovalCard } from "../thread/ApprovalCard";
-import { isRunId, runAnchorId } from "./model";
+import { isRunId, runAnchorId, runIdOf } from "./model";
 import { resetCodeRuns } from "./useCodeRun";
 
 const base: Approval = {
@@ -67,6 +68,18 @@ describe("run anchors", () => {
     for (const bad of ["", "a b", "a/b", "a\"b", "a<b>", "../x", "é"]) expect(isRunId(bad)).toBe(false);
     expect(runAnchorId("run_7c41e2")).toBe("cm-run-run_7c41e2");
     expect(runAnchorId("a b")).toBeNull();
+  });
+
+  it("finds a run call's own run id from its reply or its resume argument", () => {
+    const item = (args: unknown, result: unknown, name = "mcp__orbyn_engineering__orbyn_code_run"): ToolItem => ({
+      kind: "tool", key: "t", seq: 0, ts: "", runId: "r", callId: "c", name,
+      args: JSON.stringify(args), output: "", result: result === null ? null : JSON.stringify(result), done: true, exitCode: 0,
+    });
+    expect(runIdOf(item({ code: "return 1" }, { status: "paused", runId: "run_reply" }))).toBe("run_reply");
+    expect(runIdOf(item({ run_id: "run_args" }, { status: "paused" }))).toBe("run_args");
+    expect(runIdOf(item({ code: "x" }, { status: "completed", runId: "bad id" }))).toBeNull();
+    expect(runIdOf(item({ code: "x" }, null))).toBeNull();
+    expect(runIdOf(item({ run_id: "run_x" }, null, "mcp__orbyn_engineering__orbyn_code_search"))).toBeNull();
   });
 });
 

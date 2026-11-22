@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCursorThreadMock } from "../../../mock/cursorThread";
 import { CREW_ROLE_TOOLTIP, CrewRoleNote, crewRoleLabel } from "./CrewRole";
-import { cursorThreadApi, setCursorThreadApi } from "./api";
+import { setCursorThreadApi } from "./api";
 import { EngineNote } from "./EngineNote";
 
 afterEach(() => setCursorThreadApi(null));
@@ -42,18 +42,24 @@ describe("the Engine row of Details", () => {
     expect(screen.queryByText(/does not ask/)).toBeNull();
   });
 
+  it("uses Orbyn's own reason for another engine the service has a notice for", async () => {
+    setCursorThreadApi(createCursorThreadMock({ acknowledged: true, engines: ["kiro"] }));
+    render(<EngineNote projectId="p" engine="kiro" engineName="Kiro" />);
+    expect(await screen.findByText("Orbyn cannot ask before Kiro acts.")).toBeVisible();
+    expect(screen.queryByText(/sandbox/i)).toBeNull();
+  });
+
+  it("lets the safety sentence wrap and keeps its full text as the title", async () => {
+    setCursorThreadApi(createCursorThreadMock({ acknowledged: true, engines: ["kiro"] }));
+    render(<EngineNote projectId="p" engine="kiro" engineName="Kiro" />);
+    const note = await screen.findByText("Orbyn cannot ask before Kiro acts.");
+    expect(note).toHaveClass("wrap");
+    expect(note).toHaveAttribute("title", "Orbyn cannot ask before Kiro acts.");
+  });
+
   it("draws an engine's name as plain text", () => {
     render(<EngineNote projectId="p" engine="x" engineName="<b>Bold</b>" modelName="<i>m</i>" />);
     expect(document.querySelector("b, i")).toBeNull();
-  });
-});
-
-describe("the default client", () => {
-  it("sends nothing for the unmerged routes: the notice reads none and each write says it is not offered", async () => {
-    const api = cursorThreadApi();
-    expect(await api.notice("p", "cursor")).toBeNull();
-    await expect(api.acknowledge("p", "cursor")).rejects.toThrow("does not offer");
-    await expect(api.sendWithoutApprovals("t1", { prompt: "x" })).rejects.toThrow("does not offer");
   });
 });
 
@@ -71,8 +77,9 @@ describe("Reviewer only", () => {
   });
 
   it("falls back to Crew's own words when the service sends no reason", () => {
+    expect(CREW_ROLE_TOOLTIP).toBe("Orbyn cannot ask before it acts");
     render(<CrewRoleNote engine={{ crew_role: "reviewer_only", crew_role_reason: null }} />);
-    expect(screen.getByText("Reviewer only").closest(".ct-role")).toHaveAttribute("title", CREW_ROLE_TOOLTIP);
+    expect(screen.getByText("Reviewer only").closest(".ct-role")).toHaveAttribute("title", "Orbyn cannot ask before it acts");
   });
 
   it("draws nothing for any, and the reason is plain text", () => {

@@ -12,7 +12,7 @@ export function CapacitySettingsUnset() {
           <span className="cx-cwpv">Preview</span>
         </h3>
         <p style={{ margin: "0", color: "var(--color-muted)", fontSize: "12.5px", lineHeight: 1.5 }}>
-          Agents can merge faster than a person can read. Say how many changes you can review, and Crew slows the work it starts on its own before the queue gets ahead of you. It never stops a merge, and nothing here changes what you can review.
+          Agents can merge faster than a person can read. Say how many changes you can review, and Crew slows the work it starts on its own before the queue gets ahead of you. It does not stop a merge, and nothing here changes what you can review.
         </p>
         <div className="cx-cwbn" style={{ margin: "0" }}>
           <Ic n="info" sm />
@@ -24,7 +24,7 @@ export function CapacitySettingsUnset() {
             <div>
               <b>How many changes you can review</b>
               <small>
-                Not set. Until you set it, Crew never pauses a start because of your review queue. Crew counts the High and Medium changes that merged and are waiting for you; Low-risk changes don’t count.
+                Not set. Until you set it, Crew does not pause a start because of your review queue. Crew counts the High and Medium changes that merged and are waiting for you; Low-risk changes don’t count.
               </small>
             </div>
             <span className="cx-sv">Not set</span>
