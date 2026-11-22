@@ -10,6 +10,9 @@ import { ArchivedBanner } from "./ThreadStates";
 import { emptyLog } from "../../product/timeline/projection";
 import { familyOf, ThreadHeaderMenu } from "./ThreadHeaderMenu";
 import { useThreadLogs } from "../../product/state/threadLogs";
+import * as transcriptExport from "./transcriptFile/exportAction";
+
+vi.mock("./transcriptFile/exportAction", () => ({ startTranscriptExport: vi.fn() }));
 
 vi.mock("../workspace/sidebar/threadActions", async (original) => ({
   ...(await original<typeof import("../workspace/sidebar/threadActions")>()),
@@ -44,6 +47,7 @@ beforeEach(() => {
   vi.mocked(actions.archiveThreads).mockClear();
   vi.mocked(actions.unarchiveThread).mockClear();
   vi.mocked(clipboard.copyText).mockClear();
+  vi.mocked(transcriptExport.startTranscriptExport).mockClear();
   vi.mocked(actions.deleteThreadNow).mockReset();
   useWorkspace.setState({ threads: { t: base } });
 });
@@ -65,7 +69,7 @@ describe("the thread header menu", () => {
   it("starts with Settle and Snooze…, then a divider, then the existing items, and no other actions", async () => {
     const { menu } = await open(base);
     const names = within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim());
-    expect(names).toEqual(["Settle", "Snooze…", "Rename", "Copy folder path", "Archive", "Delete thread"]);
+    expect(names).toEqual(["Settle", "Snooze…", "Rename", "Copy folder path", "Export transcript", "Archive", "Delete thread"]);
     for (const absent of ["Copy link", "Open in new window", "Pin", "Fork", "Move to worktree", "Open in terminal"]) {
       expect(within(menu).queryByRole("menuitem", { name: absent })).toBeNull();
     }
@@ -103,6 +107,14 @@ describe("the thread header menu", () => {
     const [threads, until] = vi.mocked(actions.snoozeThreads).mock.calls[0]!;
     expect(threads).toEqual([base]);
     expect((until as Date).getTime() - Date.now()).toBeGreaterThan(239 * 60_000);
+  });
+
+  it("exports the transcript between Copy folder path and Archive", async () => {
+    const { user, menu } = await open(base);
+    const exportItem = within(menu).getByRole("menuitem", { name: "Export transcript" });
+    expect(exportItem).toBeEnabled();
+    await user.click(exportItem);
+    expect(transcriptExport.startTranscriptExport).toHaveBeenCalledWith(base);
   });
 
   it("copies the folder path", async () => {
