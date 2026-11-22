@@ -30,6 +30,7 @@
   color: var(--color-muted);
 }
 .settings-search > svg {
+  flex-shrink: 0;
   color: var(--color-faint);
 }
 .settings-search input {
