@@ -33,7 +33,9 @@ A family is one file in `src/families/` that exports `{ name, sdk: {name, versio
 5. Apply `open.confinement` (argv prefix, env allowlist) to every process the family starts; a family that cannot must
    fail `open` with `kind: "unsupported"`. Log env keys you add before the engine starts.
 6. Register the family in `src/main.mjs` (behind an env flag if a licence or terms gate applies; never bundle an SDK
-   that is not MIT or approved: mark it `external` in `scripts/build-sea.mjs`).
+   that is not MIT or approved: mark it `external` in `scripts/build-sea.mjs`). The Claude and Cursor SDK gates were lifted
+   on 2026-11-22 on the condition that Orbyn Engineering is open source for public use; both are used as dependencies only
+   and ship with the notices their licences ask for. Neither is bundled yet (Planned, docs/sdk-default-plan.md).
 7. Test by replaying recorded transcripts: copy them unmodified into `test/fixtures/<family>/` with their licence notice in
    `test/fixtures/NOTICE`, drive the family through `runHost` with in-process streams (see `claude.test.mjs`, `replay.mjs`),
    and write each test so it fails before the code. State in the PR what has not run against the real engine.

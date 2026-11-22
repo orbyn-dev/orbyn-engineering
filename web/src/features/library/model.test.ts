@@ -80,11 +80,40 @@ it("cuts text for display", () => {
   expect(plain("y".repeat(10), 3)).toBe("yyy…");
 });
 
-it("reads a confirm_required detail: the grants exactly as listed, set names only, never a key or a value", () => {
-  expect(confirmFromFailure({ grants: ["env_values", "untrusted_source"], env_sets: [{ name: "Staging", keys: ["API_TOKEN"] }, "Prod"] })).toEqual({ grants: ["env_values", "untrusted_source"], envSets: ["Staging", "Prod"] });
+it("reads a confirm_required detail: the grants exactly as listed, and each set's name with its key names, never a value", () => {
+  expect(confirmFromFailure({ grants: ["env_values", "untrusted_source"], env_sets: [{ name: "Staging", keys: ["API_TOKEN"] }, "Prod"] })).toEqual({
+    grants: ["env_values", "untrusted_source"],
+    envSets: [{ name: "Staging", keys: ["API_TOKEN"] }, { name: "Prod", keys: [] }],
+  });
+  expect(confirmFromFailure({ grants: ["env_values"], env_sets: [{ name: "Staging", keys: ["API_TOKEN"], values: ["secret-value"], value: "secret-value" }] })).toEqual({
+    grants: ["env_values"],
+    envSets: [{ name: "Staging", keys: ["API_TOKEN"] }],
+  });
   expect(confirmFromFailure({ grants: ["untrusted_source", "untrusted_source"] })).toEqual({ grants: ["untrusted_source"], envSets: [] });
   expect(confirmFromFailure({ grants: ["some_new_grant"] })?.grants).toEqual(["some_new_grant"]);
   expect(runGrantText("some_new_grant")).toMatch(/Another permission/);
+});
+
+it("keeps set names under the existing limits and keys only when usable: once each, at most 20, at most 80 characters", () => {
+  const longName = "Set ".repeat(40);
+  const detail = {
+    grants: ["env_values"],
+    env_sets: [
+      { name: longName, keys: ["API_TOKEN", "API_TOKEN", "", 7, "X".repeat(81), "Y".repeat(80), "API_BASE"] },
+      { name: longName, keys: ["OTHER"] },
+      "Bare",
+      ...Array.from({ length: 10 }, (_, at) => ({ name: `Set ${at}`, keys: [] })),
+    ],
+  };
+  const read = confirmFromFailure(detail)!;
+  expect(read.envSets).toHaveLength(8);
+  expect(read.envSets[0]).toEqual({ name: longName, keys: ["API_TOKEN", "Y".repeat(80), "API_BASE"] });
+  expect(read.envSets[1]).toEqual({ name: "Bare", keys: [] });
+  expect(read.envSets.map((set) => set.name)).toEqual([longName, "Bare", "Set 0", "Set 1", "Set 2", "Set 3", "Set 4", "Set 5"]);
+  const twenty = confirmFromFailure({ grants: ["env_values"], env_sets: [{ name: "Many", keys: Array.from({ length: 25 }, (_, at) => `KEY_${at}`) }] })!;
+  expect(twenty.envSets[0]!.keys).toHaveLength(20);
+  expect(twenty.envSets[0]!.keys).not.toContain("KEY_20");
+  expect(confirmFromFailure({ grants: ["env_values"], env_sets: [{ name: "Odd", keys: "API_TOKEN" }] })?.envSets).toEqual([{ name: "Odd", keys: [] }]);
 });
 
 it("reads a malformed confirm_required detail as nothing to confirm, never as an empty ack", () => {

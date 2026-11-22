@@ -37,8 +37,12 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    person starts, never an engine spawn. They are in no SQLite row, log, audit row, answer or export, and a run's terminal
    output is masked for them by exact match.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
-3. Claude uses the CLI, never the Agent SDK. `--bare` is forbidden on subscription
-   sessions because it ignores OAuth login.
+3. Claude runs through the person's own installed `claude`. The default path is the engine host with the Claude Agent SDK
+   (a dependency used as shipped, never copied or modified); the CLI driver stays a path the person can choose. Both
+   run the unmodified `claude` binary, never collect, read or store Claude.ai credentials (the engine keeps its own
+   login), and never use `--bare`, which ignores subscription login. *Planned*: the SDK path is the default only after
+   the host bundles the SDK and its notices (docs/sdk-default-plan.md); until then the CLI is the only path and the host
+   is opt-in. A person's choice is never switched silently: when the host is down the person sees why and may pick the CLI.
 4. Orbyn writes nothing into target repositories or engine user config: no skills,
    instructions, excludes or context maps. The project file is read-only to Orbyn.
 5. A folder must be trusted before an engine, project script or terminal runs in

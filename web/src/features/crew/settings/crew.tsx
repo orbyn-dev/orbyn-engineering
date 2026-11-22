@@ -28,7 +28,7 @@ export function SettingsCrew() {
             <div>
               <b>Review on the same engine</b>
               <small>
-                When no engine but the author’s is signed in, Crew asks you first. This lets it go ahead without asking; the review is always labelled “Same engine as author”.
+                When no engine but the author’s is signed in, Crew asks you first. This lets it go ahead without asking; the review is labelled “Same engine as author”.
               </small>
             </div>
             <span className="cx-sv">Ask me before it runs</span>
@@ -104,7 +104,7 @@ export function SettingsCrew() {
             <div>
               <b>Engine tiers</b>
               <small>
-                The tier each engine fills when Crew routes work: Lead, Builder or Scout. Claude Code and Codex fill the tiers their own models give. For an engine that connects over ACP, you map the tier here. Crew never guesses a tier from a model name; an engine you haven’t mapped shows “Builder · not mapped” until you do.
+                The tier each engine fills when Crew routes work: Lead, Builder or Scout. Claude Code and Codex fill the tiers their own models give. For an engine that connects over ACP, you map the tier here. Crew does not guess a tier from a model name; an engine you haven’t mapped shows “Builder · not mapped” until you do.
               </small>
             </div>
             <span className="cx-sv">3 engines</span>
