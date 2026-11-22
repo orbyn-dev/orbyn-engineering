@@ -40,7 +40,7 @@ Answer:
 | `reverted_auto`, `reverted_by_person` | integers | The split of `reverted`; the two add up to it. |
 | `cycle` | object or `null` | `{median_s, p90_s, fastest_s, slowest_s}`, each seconds or `null`. Brief given to merge. `null` while no merge has both times. The page shows a median only from `min_median_sample` merges. |
 | `weeks` | array, at most 14, oldest first | `{start, merges, unaided, reverted}`; `start` is unix seconds of the week's first day (the device's local Monday). Empty when `merges` is 0. |
-| `engines` | array, at most 12 | `{name, model, merges, unaided, reverted, cost}`. `cost` is `{unit, amount}` in the engine's own unit (`tokens`, `credits`, `requests`; an unknown unit is shown as given) or `null` when the engine reports none. |
+| `engines` | array, at most 12 | `{name, model, merges, unaided, reverted, cost}`. `cost` is `{unit, amount}` in the engine's own unit, as the merge reported it: `tokens` when an engine reports tokens, `micros` for the billing unit's millionths, or the raw unit string when it is neither - never added across different units, so an engine that reported two units gets `cost: null`. `null` when the engine reports none. |
 | `areas` | array, at most 50 | `{name, merges, unaided, reverted}`. The first two folders of a path, as in Autopilot by area. No cost: one area's work can use engines counted in different units. |
 | `reverts` | array, at most 20, newest first | `{title, at, by, certain}`; `by` is `person` or `auto`; `certain` is a boolean or `null`. |
 | `recent` | array, at most 20, newest first | `{title, engine, at, needed, checks}`; `needed` is `nothing`, `answer`, `approval` or `other`; `checks` is `passed`, `failed` or `none`. The page lists these only for a repository under `min_rate_sample` merges. |
@@ -58,11 +58,11 @@ Errors (the usual `{code, message}` body):
 
 | Status | Code | When |
 | --- | --- | --- |
-| 400 | `invalid_request` | `days` is not 30, 60 or 90, `project` is missing or not a valid id, or `utc_offset_minutes` is not a whole number between -840 and 840. |
+| 400 | `invalid_input` | `days` is not 30, 60 or 90, `project` is missing or not a valid id, or `utc_offset_minutes` is not a whole number between -840 and 840. |
 | 404 | `not_found` | Crew Preview is off, or the project is unknown. |
 | 500 | `history_unreadable` | The Crew records on this device could not be read. The page says nothing was changed and offers Try again. |
 
-Limits: one repository per request; the answer is at most about 40 KiB; the read is cheap enough to repeat on a refresh and is not cached by the page.
+Limits: one repository per request; the answer is at most about 40 KiB. The merge read is bounded to the window in SQL, so a refresh re-reads only the window's merges and the page does not cache the answer.
 
 ## Answers to the four open questions
 

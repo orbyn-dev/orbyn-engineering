@@ -243,7 +243,7 @@ impl Core {
         let since = now - i64::from(days) * DAY_SECS;
         let window = self
             .store
-            .crew_merges_of_project(project)?
+            .crew_merges_of_project_since(project, since)?
             .into_iter()
             .filter(|merge| merge.merged_unix >= since)
             .map(|record| self.merge_facts(record))
@@ -459,13 +459,17 @@ fn figures(
 /// The window's weeks, oldest first: one row for every week from the first week with a merge to
 /// the week of `now`, so a quiet week is a zero bar and never a missing one. At most
 /// [`WEEKS_MAX`], newest kept.
+///
+/// No merges at all means no weeks: an empty window is empty, not one zero bar.
 fn week_rows(
     mut weeks: BTreeMap<i64, wire::CrewDashboardWeek>,
     now: i64,
     offset_minutes: i32,
 ) -> Vec<wire::CrewDashboardWeek> {
+    let Some(first) = weeks.keys().next().copied() else {
+        return Vec::new();
+    };
     let last = local_week_start(now, offset_minutes);
-    let first = weeks.keys().next().copied().unwrap_or(last);
     let mut rows = Vec::new();
     let mut start = first;
     while start <= last {
@@ -509,7 +513,7 @@ mod tests {
     use super::*;
 
     /// 2026-11-22T00:00:00Z, a Sunday.
-    const SUNDAY: i64 = 1_763_769_600;
+    const SUNDAY: i64 = 1_795_305_600;
 
     #[test]
     fn a_local_week_starts_on_the_monday_the_person_sees() {
@@ -588,7 +592,7 @@ mod tests {
     fn a_long_or_hostile_title_is_capped_and_scrubbed() {
         let long = "x".repeat(TEXT_MAX + 50);
         assert_eq!(shown(&long).chars().count(), TEXT_MAX);
-        assert!(!shown("token ghp_1234567890123456789012345678901234").contains("ghp_1"));
+        assert!(!shown("token ghp_1234567890123456789012345678901234567890").contains("ghp_1"));
     }
 
     #[test]

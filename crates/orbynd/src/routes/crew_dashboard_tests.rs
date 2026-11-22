@@ -135,7 +135,7 @@ async fn the_request_shape_is_checked_before_anything_is_read() {
         let (status, body) = app.get(&path, true).await;
         assert_eq!(
             (status, &body["code"]),
-            (400, &json!("invalid_request")),
+            (400, &json!("invalid_input")),
             "{path}"
         );
     }

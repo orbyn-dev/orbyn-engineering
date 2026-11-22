@@ -132,8 +132,10 @@ async fn the_read_counts_one_projects_merges_inside_the_window_only() {
     let mut r = rig().await;
     let now = crate::util::unix_now();
     r.merge("src/a/**", now - 2 * DAY, "alpha", json!({})).await;
-    r.merge("src/a/**", now - 40 * DAY, "alpha", json!({})).await; // inside 60, outside 30
-    r.merge("src/a/**", now - 100 * DAY, "alpha", json!({})).await; // outside every window
+    r.merge("src/a/**", now - 40 * DAY, "alpha", json!({}))
+        .await; // inside 60, outside 30
+    r.merge("src/a/**", now - 100 * DAY, "alpha", json!({}))
+        .await; // outside every window
 
     assert_eq!(r.read(Some(30), 0, now).merges, 1);
     assert_eq!(r.read(Some(60), 0, now).merges, 2);
@@ -149,18 +151,17 @@ async fn another_projects_merges_are_not_in_this_ones_answer() {
     r.merge("src/a/**", now - DAY, "alpha", json!({})).await;
     let folder = r.w.repo.parent().unwrap().join("elsewhere");
     std::fs::create_dir_all(&folder).unwrap();
-    let other = r
-        .w
-        .core
-        .store
-        .add_project(crate::store::NewProject {
-            path: folder.to_str().unwrap(),
-            name: "elsewhere",
-            is_git: false,
-            managed: false,
-            scratch: false,
-        })
-        .unwrap();
+    let other =
+        r.w.core
+            .store
+            .add_project(crate::store::NewProject {
+                path: folder.to_str().unwrap(),
+                name: "elsewhere",
+                is_git: false,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
     let empty = r.w.core.crew_dashboard(&other.id, None, 0, now).unwrap();
     assert_eq!(empty.merges, 0, "a project with no Crew use answers zero");
     assert_eq!(empty.unaided, 0);
@@ -193,7 +194,8 @@ async fn the_weeks_are_the_persons_local_mondays_and_a_quiet_week_is_a_zero_bar(
         .await;
     r.merge("src/a/**", monday - 21 * DAY + 7_200, "alpha", json!({}))
         .await;
-    r.merge("src/a/**", monday + 3_600, "alpha", json!({})).await;
+    r.merge("src/a/**", monday + 3_600, "alpha", json!({}))
+        .await;
 
     let answer = r.read(Some(30), 600, now);
     assert_eq!(answer.weeks.len(), 4);
@@ -214,15 +216,35 @@ async fn the_weeks_are_the_persons_local_mondays_and_a_quiet_week_is_a_zero_bar(
 async fn an_engine_and_an_area_carry_their_own_record_and_a_cost_in_one_unit() {
     let mut r = rig().await;
     let now = crate::util::unix_now();
-    r.merge("src/a/**", now - 3 * DAY, "alpha", with_usage(Some(100), Some(50), None))
-        .await;
-    r.merge("src/a/**", now - 2 * DAY, "alpha", with_usage(Some(10), Some(5), None))
-        .await;
-    r.merge("src/b/**", now - DAY, "bravo", with_usage(None, None, Some(2_500)))
-        .await;
+    r.merge(
+        "src/a/**",
+        now - 3 * DAY,
+        "alpha",
+        with_usage(Some(100), Some(50), None),
+    )
+    .await;
+    r.merge(
+        "src/a/**",
+        now - 2 * DAY,
+        "alpha",
+        with_usage(Some(10), Some(5), None),
+    )
+    .await;
+    r.merge(
+        "src/b/**",
+        now - DAY,
+        "bravo",
+        with_usage(None, None, Some(2_500)),
+    )
+    .await;
     // One engine that reported two units is never summed across them.
-    r.merge("src/b/**", now, "charlie", with_usage(Some(5), Some(0), None))
-        .await;
+    r.merge(
+        "src/b/**",
+        now,
+        "charlie",
+        with_usage(Some(5), Some(0), None),
+    )
+    .await;
     r.merge("src/b/**", now, "charlie", with_usage(None, None, Some(9)))
         .await;
 
@@ -280,7 +302,10 @@ async fn a_revert_says_who_reverted_it_and_the_list_is_newest_first() {
     );
     assert_eq!(answer.reverts.len(), 2);
     assert!(
-        answer.reverts.windows(2).all(|pair| pair[0].at >= pair[1].at),
+        answer
+            .reverts
+            .windows(2)
+            .all(|pair| pair[0].at >= pair[1].at),
         "newest first"
     );
     let auto_row = answer
@@ -310,7 +335,11 @@ async fn recent_lists_the_newest_merges_with_their_checks() {
 
     let answer = r.read(Some(30), 0, now);
     assert_eq!(answer.recent.len(), 3);
-    assert_eq!(answer.recent[0].checks, wire::CrewChecks::None_, "the newest");
+    assert_eq!(
+        answer.recent[0].checks,
+        wire::CrewChecks::None_,
+        "the newest"
+    );
     assert_eq!(answer.recent[1].checks, wire::CrewChecks::Failed);
     assert_eq!(answer.recent[2].checks, wire::CrewChecks::Passed);
     assert!(
@@ -407,7 +436,10 @@ async fn an_unknown_project_is_not_found() {
     let refused =
         r.w.core
             .crew_dashboard("project-that-is-not-here", None, 0, crate::util::unix_now());
-    assert!(matches!(refused, Err(CoreError::NotFound(_))), "{refused:?}");
+    assert!(
+        matches!(refused, Err(CoreError::NotFound(_))),
+        "{refused:?}"
+    );
 }
 
 #[tokio::test]
@@ -417,7 +449,10 @@ async fn the_read_is_not_found_while_crew_preview_is_off() {
     let refused = w
         .core
         .crew_dashboard(&project, None, 0, crate::util::unix_now());
-    assert!(matches!(refused, Err(CoreError::NotFound(_))), "{refused:?}");
+    assert!(
+        matches!(refused, Err(CoreError::NotFound(_))),
+        "{refused:?}"
+    );
 }
 
 /// The Monday of the week `unix` falls in, in the person's own zone.
