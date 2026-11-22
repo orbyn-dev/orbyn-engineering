@@ -5,39 +5,27 @@
 //!
 //! It is a filter, never a decision. `RegexSet::matches` answers for each pattern exactly what
 //! `Regex::is_match` answers about the same text, so a detector the set leaves out could not have
-//! found anything in it: the spans are the ones the unfiltered path finds. A set that cannot be
-//! compiled under the size limit is dropped, and every detector runs its own pass again.
+//! found anything in it: the spans are the ones the unfiltered path finds. Two things are left out
+//! of the set, and both keep their own pass on every text: a pattern whose compiled program is too
+//! big to sit in a set (the private-key format's 8 KiB bounded repeat is one), and patterns whose
+//! set could not be built at all. So a large pattern costs its own pass, never every text's.
 
 use regex::{RegexSet, RegexSetBuilder};
 
 /// The program one set may take. A set sits beside the detectors' own compiled patterns in a
-/// cached redactor, so keep it small: a set that needs more is dropped, not made bigger.
+/// cached redactor, so keep it small: a pattern that needs more keeps its own pass instead.
 const SET_BYTES: usize = 1 << 20;
 /// The lazily built DFA of a set, bounded the way `custom` bounds a person's pattern.
 const SET_DFA_BYTES: usize = 1 << 20;
 
 /// The detectors' patterns, split by what each reads: the text itself, or only the value of a
-/// `NAME=value` assignment. Each keeps its detector index, so a match names the detector again.
+/// `NAME=value` assignment.
+#[derive(Default)]
 pub(crate) struct Prefilter {
-    /// The detectors whose pattern reads the whole text, in detector order.
-    anywhere_at: Vec<usize>,
-    /// Which of them can match a given text; `None` when the set is not compiled.
-    anywhere: Option<RegexSet>,
-    /// The detectors whose pattern reads only an assignment's value, in detector order.
-    values_at: Vec<usize>,
-    /// Which of them can match a given value; `None` when the set is not compiled.
-    values: Option<RegexSet>,
-}
-
-impl Default for Prefilter {
-    fn default() -> Self {
-        Self {
-            anywhere_at: Vec::new(),
-            anywhere: None,
-            values_at: Vec::new(),
-            values: None,
-        }
-    }
+    /// The patterns that read the whole text.
+    anywhere: Compiled,
+    /// The patterns that read only an assignment's value.
+    values: Compiled,
 }
 
 impl Prefilter {
@@ -47,10 +35,8 @@ impl Prefilter {
     pub(crate) fn new<'a>(detectors: impl IntoIterator<Item = (usize, &'a str, bool)>) -> Self {
         let split = Split::of(detectors);
         Self {
-            anywhere: set(&split.anywhere_sources),
-            anywhere_at: split.anywhere_at,
-            values: set(&split.values_sources),
-            values_at: split.values_at,
+            anywhere: Compiled::of(&split.anywhere_at, &split.anywhere_sources),
+            values: Compiled::of(&split.values_at, &split.values_sources),
         }
     }
 
@@ -58,49 +44,119 @@ impl Prefilter {
     /// to prove the filter is live rather than silently falling back.
     #[cfg(test)]
     pub(crate) fn is_compiled(&self) -> bool {
-        (self.anywhere_at.is_empty() || self.anywhere.is_some())
-            && (self.values_at.is_empty() || self.values.is_some())
+        self.anywhere.set.is_some() || self.values.set.is_some()
+    }
+
+    /// How many patterns the text set holds, and which ones it could not hold. A test uses these
+    /// to prove the filter is live and that only a pattern too big for a set is left out.
+    #[cfg(test)]
+    pub(crate) fn held_and_apart(&self) -> (usize, Vec<usize>) {
+        (self.anywhere.set_at.len(), self.anywhere.apart.clone())
     }
 
     /// The same detectors with no set compiled, the shape a set that cannot compile falls back to.
     #[cfg(test)]
     pub(crate) fn uncompiled(&self) -> Self {
         Self {
-            anywhere_at: self.anywhere_at.clone(),
-            anywhere: None,
-            values_at: self.values_at.clone(),
-            values: None,
+            anywhere: Compiled::all(self.anywhere.every()),
+            values: Compiled::all(self.values.every()),
         }
     }
 
     /// Whether any pattern reads only an assignment's value, so the scan knows to read them.
     pub(crate) fn reads_values(&self) -> bool {
-        !self.values_at.is_empty()
+        self.values.any()
     }
 
     /// The detectors that can match `hay` anywhere, in detector order: every one of them when the
-    /// set is not compiled, none when `hay` holds nothing a pattern matches.
+    /// set is not compiled, and the always-run ones plus those the set names otherwise.
     pub(crate) fn anywhere(&self, hay: &str) -> Vec<usize> {
-        match &self.anywhere {
-            Some(set) => set
-                .matches(hay)
-                .iter()
-                .map(|at| self.anywhere_at[at])
-                .collect(),
-            None => self.anywhere_at.clone(),
-        }
+        self.anywhere.matching(hay)
     }
 
     /// The detectors that can match inside one assignment's `value`, in detector order.
     pub(crate) fn values(&self, value: &str) -> Vec<usize> {
-        match &self.values {
-            Some(set) => set
-                .matches(value)
-                .iter()
-                .map(|at| self.values_at[at])
-                .collect(),
-            None => self.values_at.clone(),
+        self.values.matching(value)
+    }
+}
+
+/// One set and the detectors around it: the ones it holds, and the ones that keep their own pass.
+#[derive(Default)]
+struct Compiled {
+    /// The set, when one was compiled.
+    set: Option<RegexSet>,
+    /// Detector indices of the set's patterns, in the set's own order.
+    set_at: Vec<usize>,
+    /// Detector indices the set could not hold: they run their own pass on every text.
+    apart: Vec<usize>,
+}
+
+impl Compiled {
+    /// The set for `sources`, whose detector indices are `at`. A pattern too big to join it is
+    /// left apart, and so is every pattern when the rest still will not fit together.
+    fn of(at: &[usize], sources: &[&str]) -> Self {
+        if sources.is_empty() {
+            return Self::default();
         }
+        if let Ok(set) = build(sources) {
+            return Self {
+                set: Some(set),
+                set_at: at.to_vec(),
+                apart: Vec::new(),
+            };
+        }
+        let mut joined_at = Vec::new();
+        let mut joined = Vec::new();
+        let mut apart = Vec::new();
+        for (slot, source) in sources.iter().enumerate() {
+            if build(&[*source]).is_ok() {
+                joined_at.push(at[slot]);
+                joined.push(*source);
+            } else {
+                apart.push(at[slot]);
+            }
+        }
+        if joined.is_empty() {
+            return Self::all(at.to_vec());
+        }
+        match build(&joined) {
+            Ok(set) => Self {
+                set: Some(set),
+                set_at: joined_at,
+                apart,
+            },
+            Err(_) => Self::all(at.to_vec()),
+        }
+    }
+
+    /// Every pattern apart: no set, so every detector runs its own pass.
+    fn all(at: Vec<usize>) -> Self {
+        Self {
+            set: None,
+            set_at: Vec::new(),
+            apart: at,
+        }
+    }
+
+    /// Every detector index this holds or leaves apart.
+    fn every(&self) -> Vec<usize> {
+        let mut every = self.set_at.clone();
+        every.extend_from_slice(&self.apart);
+        every.sort_unstable();
+        every
+    }
+
+    fn any(&self) -> bool {
+        self.set.is_some() || !self.apart.is_empty()
+    }
+
+    fn matching(&self, hay: &str) -> Vec<usize> {
+        let mut found = self.apart.clone();
+        if let Some(set) = &self.set {
+            found.extend(set.matches(hay).iter().map(|at| self.set_at[at]));
+        }
+        found.sort_unstable();
+        found
     }
 }
 
@@ -133,15 +189,11 @@ impl<'a> Split<'a> {
     }
 }
 
-fn set(sources: &[&str]) -> Option<RegexSet> {
-    if sources.is_empty() {
-        return None;
-    }
+fn build(sources: &[&str]) -> Result<RegexSet, regex::Error> {
     RegexSetBuilder::new(sources.iter().copied())
         .size_limit(SET_BYTES)
         .dfa_size_limit(SET_DFA_BYTES)
         .build()
-        .ok()
 }
 
 #[cfg(test)]
@@ -189,21 +241,36 @@ mod tests {
     }
 
     #[test]
-    fn the_prefilter_is_live_and_names_fewer_detectors_than_it_filters() {
+    fn the_prefilter_is_live_and_only_a_too_big_pattern_keeps_its_own_pass() {
         let redactor = Redactor::locked();
         assert!(
             redactor.prefilter().is_compiled(),
             "the set fell back, so nothing was filtered"
         );
+        let (held, apart) = redactor.prefilter().held_and_apart();
+        assert!(held > 0, "the set holds no pattern");
         assert!(
-            redactor
-                .prefilter()
-                .anywhere("ordinary prose, a path and 12 numbers")
-                .is_empty(),
-            "the set named a detector for text that hides nothing"
+            !apart.is_empty(),
+            "the private-key pattern should not fit a 1 MiB set"
         );
         assert!(
-            !redactor.prefilter().anywhere(&key()).is_empty(),
+            held > apart.len(),
+            "most recognised formats should fit the set"
+        );
+        // Ordinary text names only the patterns that keep their own pass.
+        assert_eq!(
+            redactor
+                .prefilter()
+                .anywhere("ordinary prose, a path and 12 numbers"),
+            {
+                let mut apart = apart.clone();
+                apart.sort_unstable();
+                apart
+            },
+        );
+        // A value the set can recognise adds a detector the set holds.
+        assert!(
+            redactor.prefilter().anywhere(&key()).len() > apart.len(),
             "the set named no detector for a value it must hide"
         );
     }
@@ -229,7 +296,7 @@ mod tests {
             format!("HOST={} and id={}", key(), github()),
             // Case-insensitive formats, and a header that hides the rest.
             format!("{} {}", "bearer", "a".repeat(24)),
-            format!("-----BEGIN RSA PRIVATE KEY-----\nMIIEvQ\n"),
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEvQ\n".to_owned(),
             // An empty match, which hides nothing and may not litter the text.
             "axxbxxc".to_owned(),
         ];
@@ -306,7 +373,7 @@ mod tests {
     #[test]
     fn a_text_longer_than_one_window_masks_the_same_at_its_edges() {
         let secret = key();
-        // A secret at the start, one straddling the first window's end, and one past it.
+        // A secret at the start, and one past the first window's end.
         let mut text = String::with_capacity(MAX_APPLY_BYTES + 4096);
         text.push_str(&secret);
         text.push_str(&"filler line\n".repeat(MAX_APPLY_BYTES / 12));
