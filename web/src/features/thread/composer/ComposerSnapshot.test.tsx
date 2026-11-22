@@ -235,9 +235,7 @@ describe("test capture", () => {
     vi.spyOn(api, "attachmentSource").mockResolvedValue();
     const user = userEvent.setup();
     view();
-    useSnapshot.getState().openSetup();
-    const dialog = await screen.findByRole("dialog", { name: "Set up Snap Shot" });
-    await user.click(within(dialog).getByRole("button", { name: "Test capture" }));
+    await useSnapshot.getState().testCapture();
     await waitFor(() => expect(mock.calls).toContainEqual({ command: "snapshot_setup", args: { action: "test_capture" } }));
     mock.emit("snapshot://started", { id: "test-9" });
     mock.emit("snapshot://ready", { id: "test-9" });

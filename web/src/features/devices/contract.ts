@@ -1,7 +1,7 @@
 /**
- * The device contract of docs/devices.md (PROVISIONAL: Eng 4's contract, not yet run against adb or simctl, and no service
- * answers it yet). Hand-written because no generated types exist for these routes. Field names are the doc's; anything the
- * doc leaves open is marked "guess" and listed in the pull request.
+ * The device contract of docs/devices.md, answered by the service (#1250; not yet run against a real adb or simctl by the web).
+ * Hand-written so the frames' extra states (`frozen`, `crashed`) can sit beside the service's two; `generatedContract.test.ts`
+ * holds every other field to the generated types in web/src/generated/Device*.ts.
  */
 
 export type Platform = "android" | "ios";
@@ -69,7 +69,7 @@ export interface DeviceDetail extends Device {
   actions: ActionType[];
 }
 
-/** `{ok: true, device}` with the state read back; a screenshot also answers `image`, a PNG as base64 (guess: the field name is the doc's). */
+/** `{ok: true, device}` with the state read back; a screenshot also answers `image`, a PNG as base64. */
 export interface ActionResult {
   ok: true;
   device: Device;
@@ -84,6 +84,6 @@ export interface DevicesApi {
   /** The device list, or `null` when the service has no devices route (`404`): the feature is hidden, with no error. */
   list(signal?: AbortSignal): Promise<DeviceList | null>;
   detail(id: string, signal?: AbortSignal): Promise<DeviceDetail>;
-  /** A write. Person-class (`PENDING_PERSON_ROUTES`). */
+  /** A write. Person-class (`PERSON_ROUTES`): a key-less client is answered 403 `person_required`, a shell-less service 403 `desktop_required`. */
   act(id: string, action: DeviceAction): Promise<ActionResult>;
 }

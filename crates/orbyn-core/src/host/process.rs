@@ -281,6 +281,36 @@ impl ManagedChild {
         }
     }
 
+    /// [`Self::output`] with a bound on each stream. A stream over its bound ends
+    /// the whole tree and returns [`CappedOutputError::TooLarge`], so a tool cannot
+    /// make the service buffer without limit. Cancellation drops this owner too.
+    pub async fn output_capped(
+        mut self,
+        stdout_limit: usize,
+        stderr_limit: usize,
+    ) -> std::result::Result<CappedOutput, CappedOutputError> {
+        let stdout = self.child.stdout.take();
+        let stderr = self.child.stderr.take();
+        drop(self.child.stdin.take());
+        let wait = async {
+            let status = self.child.wait().await.map_err(CappedOutputError::Io)?;
+            // A descendant may retain an output pipe after the leader exits. End
+            // the owned tree now so collecting that pipe cannot wait forever.
+            self.tree.kill_owned(self.child.id().is_some());
+            Ok::<_, CappedOutputError>(status)
+        };
+        let (status, stdout, stderr) = tokio::try_join!(
+            wait,
+            read_capped(stdout, stdout_limit),
+            read_capped(stderr, stderr_limit)
+        )?;
+        Ok(CappedOutput {
+            status,
+            stdout,
+            stderr,
+        })
+    }
+
     /// Captures a helper's output without surrendering its process-tree owner.
     /// Cancellation drops this owner and stops descendants as well as the leader.
     pub async fn output(mut self) -> Result<std::process::Output> {
@@ -312,6 +342,49 @@ impl ManagedChild {
             stdout,
             stderr,
         })
+    }
+}
+
+/// What one capped collection produced.
+pub struct CappedOutput {
+    pub status: std::process::ExitStatus,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+/// Why a capped collection ended before the tool did.
+#[derive(Debug)]
+pub enum CappedOutputError {
+    /// One stream passed its limit. The tree was ended.
+    TooLarge,
+    Io(std::io::Error),
+}
+
+/// Reads at most `limit` bytes, then stops the child by returning an error: the
+/// owner drops every future here, and [`ManagedChild`]'s `Drop` ends the tree.
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
+    stream: Option<R>,
+    limit: usize,
+) -> std::result::Result<Vec<u8>, CappedOutputError> {
+    use tokio::io::AsyncReadExt;
+
+    let mut bytes = Vec::new();
+    let Some(mut stream) = stream else {
+        return Ok(bytes);
+    };
+    let mut buffer = [0u8; 8192];
+    loop {
+        let read = stream
+            .read(&mut buffer)
+            .await
+            .map_err(CappedOutputError::Io)?;
+        if read == 0 {
+            return Ok(bytes);
+        }
+        if bytes.len().saturating_add(read) > limit {
+            return Err(CappedOutputError::TooLarge);
+        }
+        bytes.extend_from_slice(&buffer[..read]);
     }
 }
 
