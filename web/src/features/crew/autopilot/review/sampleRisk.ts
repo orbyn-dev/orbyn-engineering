@@ -18,10 +18,10 @@ export const mediumReport: RiskReport = {
   tier: "medium",
   title: "Use next in the auth redirect",
   reasons: [
-    { icon: "paths", label: "Paths", value: "auth/redirect.ts (an auth path)", effect: "raises" },
+    { icon: "paths", label: "Paths", value: "web/nav/redirect.ts", effect: "none" },
     { icon: "size", label: "Size", value: "2 files · +18 −4", effect: "none" },
     { icon: "coverage", label: "Coverage", value: "84% of touched lines", effect: "lowers" },
-    { icon: "revert-rate", label: "Revert rate", value: "auth/ · 2 of 14 · last 60 days", effect: "raises" },
+    { icon: "revert-rate", label: "Revert rate", value: "web/nav · 2 of 14 · last 60 days", effect: "none" },
     { icon: "area-mode", label: "Area mode", value: "Planned: after the autonomy-by-area slice", effect: "none", muted: true },
   ],
   outcome: { heading: "Merges by itself · review within 24 hours", text: "It reaches your Review queue after the merge, with its proof." },
@@ -70,7 +70,7 @@ export const raisedReport: RiskReport = {
   raisedFrom: "medium",
   reasons: [
     { icon: "security", label: "Security review", value: "Same engine as author · lead tier", effect: "raises" },
-    { icon: "paths", label: "Paths", value: "auth/redirect.ts (an auth path)", effect: "raises" },
+    { icon: "paths", label: "Paths", value: "web/nav/redirect.ts", effect: "none" },
     { icon: "size", label: "Size", value: "2 files · +18 −4", effect: "none" },
     { icon: "coverage", label: "Coverage", value: "84% of touched lines", effect: "lowers" },
     { icon: "area-mode", label: "Area mode", value: "Planned: after the autonomy-by-area slice", effect: "none", muted: true },
@@ -109,9 +109,9 @@ export const demotedLow: RiskReport = {
 
 /** The popover's rows are shorter than the card's: each reason and how it moved the tier. */
 export const popoverRows: { label: string; value: string }[] = [
-  { label: "Paths", value: "auth/redirect.ts: auth paths count as higher" },
+  { label: "Paths", value: "web/nav/redirect.ts: ordinary source, no effect" },
   { label: "Size", value: "2 files · +18 −4: small" },
   { label: "Coverage", value: "84% of touched lines: good" },
-  { label: "Revert rate", value: "auth/ 2 of 14 · Sonnet 5.5 in auth/ 1 of 9" },
+  { label: "Revert rate", value: "web/nav 2 of 14 · Sonnet 5.5 1 of 9: not counted" },
   { label: "Area mode", value: "Planned: after the autonomy-by-area slice" },
 ];

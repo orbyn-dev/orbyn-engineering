@@ -8,8 +8,8 @@ const SCENARIOS = ["default", "failed", "running", "long", "fullscreen", "many",
 
 /**
  * Dev-only page for the command blocks (`#/preview/command-blocks`, with `?failed`, `?running`, `?long`, `?fullscreen`, `?many`,
- * `?empty` or `?error`, and `&narrow` for a narrow drawer). It runs against the mock client and has no terminal: Run again and Stop
- * show what they would have written. Nothing here is in a production build.
+ * `?empty` or `?error`, and `&narrow` for a narrow drawer). It runs against the mock client rather than the service and has no terminal:
+ * Run again and Stop show what they would have written. Nothing here is in a production build.
  */
 export default function CommandBlocksPreview() {
   const hash = window.location.hash;

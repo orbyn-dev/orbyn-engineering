@@ -8,7 +8,7 @@ import { cantStartLead, plain, restartLine, type Chip } from "./hostText";
  * text; nothing here reads a credential.
  */
 export type GapKind =
-  | "starting" | "restarting" | "cant_start" | "mismatch" | "sdk_missing" | "unavailable" | "expired" | "not_found";
+  | "starting" | "restarting" | "cant_start" | "mismatch" | "sdk_missing" | "expired" | "not_found";
 
 export type GapAction = "try_again" | "update" | "sign_in_again" | "check_again" | "open";
 
@@ -36,9 +36,14 @@ export function engineGap(engine: EngineStatus, host: HostRow | null): Gap | nul
     return { kind: "not_found", title: "Not installed", sentence: `${program} isn’t installed on this computer.`, chip: { label: "Not found", tone: "plain" }, action: "check_again" };
   }
   if (host?.sdk_missing) {
-    return host.has_driver
-      ? { kind: "sdk_missing", title: "SDK missing in this build", sentence: `This build does not include the ${name} SDK. ${name} runs through its ${program} program.`, chip: { label: "SDK missing", tone: "plain" }, action: "open" }
-      : { kind: "unavailable", title: "SDK missing in this build", sentence: `The ${name} SDK is not included in this build. ${name} can’t run here.`, chip: { label: "Unavailable", tone: "err" }, action: null };
+    const claude = engine.id === "claude";
+    return {
+      kind: "sdk_missing",
+      title: "SDK missing in this build",
+      sentence: `This build does not include the ${name} SDK, so a run on ${name} fails with that message.${claude ? " Choose Claude (CLI) in Claude path to run it." : ""}`,
+      chip: { label: "SDK missing", tone: claude ? "plain" : "err" },
+      action: claude ? "open" : null,
+    };
   }
   if (host?.last_error?.kind === "auth") {
     return { kind: "expired", title: "Sign in again", sentence: `Your sign-in expired. Sign in with ${program}.`, chip: { label: "Expired", tone: "err" }, action: "sign_in_again" };
@@ -66,8 +71,5 @@ export function pickerGap(engine: EngineStatus, host: HostRow | null): Gap | nul
   }
 }
 
-/** True when sending on this engine has nowhere to go: its host is unavailable and nothing else can run it. */
-export const cannotSend = (host: HostRow | null): boolean => host?.state === "cant_start" && host.has_driver !== true;
-
-/** True when the host is unavailable but a Rust driver keeps Send working. */
-export const sendsWithoutHost = (host: HostRow | null): boolean => host?.state === "cant_start" && host.has_driver === true;
+/** True when sending on this engine has nowhere to go: its host can't start, whatever driver is wrapped for the family. */
+export const cannotSend = (host: HostRow | null): boolean => host?.state === "cant_start";

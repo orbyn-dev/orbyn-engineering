@@ -136,7 +136,7 @@ it("Try again appears for a host that can't start, once per click, and not for a
 it("the composer line's button restarts the host", async () => {
   const stub = service([]);
   const host = toHostRow({ family: "acp", state: "cant_start", restart_count: 5 })!;
-  render(<ComposerHostLine line={{ host, engineName: "ACP", fallback: false }} />);
+  render(<ComposerHostLine line={{ host, engineName: "ACP" }} />);
   fireEvent.click(screen.getByRole("button", { name: "Restart engine host" }));
   await waitFor(() => expect(stub.writes()).toHaveLength(1));
   expect(stub.writes()[0]).toMatchObject({ path: "/api/engine-host/acp/restart" });
