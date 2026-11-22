@@ -4,6 +4,7 @@ import { pullsApi } from "../../../api/pulls";
 import type { PullDetailsResponse, PullListEntry } from "../../../api/types";
 import { MOTION } from "../../../lib/motion";
 import { PullsPage } from "./PullsPage";
+import { setViewportWidth } from "../../../test-support";
 
 const entry = (number: number, over: Partial<PullListEntry["pull"]> = {}, state = "open"): PullListEntry => ({
   project_id: "p",
@@ -344,5 +345,50 @@ describe("one details chunk failing", () => {
     render(<PullsPage />);
     await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
     expect(document.querySelector(".pull-state-word")).toHaveTextContent("Ready to merge");
+  });
+});
+
+describe("the phone row's checks line", () => {
+  const line = () => document.querySelector(".pull-rows > li .pull-phone-line") as HTMLElement | null;
+  const settleDetails = async (value: Record<string, unknown>) => {
+    render(<PullsPage />);
+    await settle();
+    await act(async () => answer({ details: [details(1, value)], paused: [] }));
+    await settle();
+  };
+
+  it("carries the checks word, the neutral Changes requested label and the amber Review asked marker", async () => {
+    setViewportWidth(390);
+    vi.mocked(pullsApi.list).mockResolvedValue({
+      pulls: [entry(1, { review_state: "changes_requested", checks: { total: 2, passing: 0, failing: 2, running: 0, failing_names: ["e2e", "lint"] } })],
+      failed: [],
+    });
+    await settleDetails({ viewer_review_state: "none", requested_reviewers: [{ kind: "user", name: "me" }] });
+    const text = line()!.textContent ?? "";
+    expect(text).toContain("Failing \u00b7 e2e +1");
+    expect(text).toContain("Changes requested");
+    expect(text).toContain("Review asked");
+    // Neutral for a change on someone else's pull request; amber only when it needs the person.
+    expect(line()!.querySelector(".pull-phone-changes")?.getAttribute("data-tone")).toBeNull();
+  });
+
+  it("marks changes on the person's own pull request amber", async () => {
+    setViewportWidth(390);
+    vi.mocked(pullsApi.list).mockResolvedValue({ pulls: [entry(1, { author: "me", review_state: "changes_requested" })], failed: [] });
+    await settleDetails({ viewer_review_state: "none", requested_reviewers: [] });
+    expect(line()!.querySelector(".pull-phone-changes")?.getAttribute("data-tone")).toBe("act");
+  });
+
+  it("leaves the Review asked marker off when the review is not asked of the person", async () => {
+    setViewportWidth(390);
+    await settleDetails({ viewer_review_state: "none", requested_reviewers: [{ kind: "user", name: "sam" }] });
+    expect(line()!.textContent ?? "").not.toContain("Review asked");
+  });
+
+  it("keeps Review requested in the Your review column at 640, where the row has no marker", async () => {
+    setViewportWidth(640);
+    await settleDetails({ viewer_review_state: "none", requested_reviewers: [{ kind: "user", name: "me" }] });
+    expect(line()).toBeNull();
+    expect(document.querySelector(".pull-yours-cell")).toHaveTextContent("Review requested");
   });
 });
