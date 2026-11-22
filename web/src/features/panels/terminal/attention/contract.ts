@@ -1,17 +1,16 @@
 /**
  * CLI-agent attention (parity G14 extended, W10). The service detects an engine console that waits for the person and writes a `CUSTOM`
  * event on the thread's log (docs/cli-agent-attention.md). In the app `attentionApi()` is the service client (`client.ts`), which
- * follows a thread's log only after the shell stream announced it. The mock lives in web/mock/attention.ts and is installed only by the
- * dev-only preview page (`#/preview/attention`) and by tests.
+ * reads the open items once for the threads with a terminal open in this window and once before following a thread after the shell
+ * stream announced it. The mock lives in web/mock/attention.ts and is installed only by the dev-only preview page
+ * (`#/preview/attention`) and by tests.
  */
 
 import { createServiceAttentionApi } from "./client";
-import type { AttentionApi } from "./types";
+import { ATTENTION_EVENT, MAX_OPEN_ITEMS, type AttentionApi } from "./types";
 
 export type { AttentionApi, AttentionDelivery } from "./types";
-
-/** The AG-UI `CUSTOM` event name the service uses on the thread's event log. */
-export const ATTENTION_EVENT = "orbyn.terminal_attention";
+export { ATTENTION_EVENT };
 
 export const ATTENTION_KINDS = ["question", "yes_no", "secret"] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
@@ -43,7 +42,7 @@ export interface AttentionClear {
 export type TerminalAttentionEvent = AttentionWaiting | AttentionClear;
 
 /** Limits, in step with docs/cli-agent-attention.md. */
-export const LIMITS = { idChars: 64, titleChars: 80, engineChars: 40, lines: 6, lineChars: 200, excerptChars: 1000, labelChars: 80, entries: 64 } as const;
+export const LIMITS = { idChars: 64, titleChars: 80, engineChars: 40, lines: 6, lineChars: 200, excerptChars: 1000, labelChars: 80, entries: 64, openItems: MAX_OPEN_ITEMS } as const;
 
 /** One waiting episode of one terminal, as the web keeps it. */
 export interface AttentionEntry {

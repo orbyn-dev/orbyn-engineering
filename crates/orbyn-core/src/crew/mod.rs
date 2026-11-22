@@ -14,6 +14,7 @@ pub(crate) mod capacity;
 pub mod changes;
 mod checks;
 mod classes;
+mod codex_homes;
 mod dashboard;
 mod draft;
 pub mod escapes;
