@@ -1846,6 +1846,14 @@ and processes a worker leaves running. A worker can learn which project folder n
 whole is not claimed safe. Codex workers stay refused (`CODEX_WORKERS_ALLOWED` is false) until the real-Mac
 probe passes; the design above is built and tested behind that one line.
 
+**Codex probe, macOS (2026-11-22, codex-cli 0.166.0, Mac OS 27.2.1 arm64).** Run by hand:
+`cargo test -p orbyn-core --lib codex_app_server_starts_under_the_profile -- --ignored --nocapture`. Observed: the real
+`codex app-server`, started under the worker profile with only its private `CODEX_HOME`, answers `initialize` and reports
+that private folder as its `codexHome`; the real home and its files are untouched; the sandbox-exec tests show the real home,
+another task's home and the data folder unreadable from inside the profile while the worker's own home is readable and
+writable. **Not observed:** a model turn that runs a command with Codex's own sandbox off (needs an API key and the network),
+so that Codex starts no nested Seatbelt of its own is still unproven, and no Linux or Windows run exists.
+
 ## As built (cancel)
 
 The person's stop button for a Crew task (Preview). Backend only: the card action that calls it is Engineering 1's.
