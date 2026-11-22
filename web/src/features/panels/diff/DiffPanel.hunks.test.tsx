@@ -148,6 +148,28 @@ it("a write the service refuses as stale reads the same", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("The file has changed since this diff was read. Nothing was changed.");
 });
 
+it.each([
+  ["MacIntel", "⌘↵"],
+  ["Win32", "Ctrl+↵"],
+])("labels line-save shortcut for %s", async (platform, shortcut) => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+  const user = userEvent.setup();
+  setup();
+  await open();
+  await user.click(screen.getAllByRole("button", { name: "Edit this line" })[2]!);
+  expect(screen.getByText(`Esc cancels · ${shortcut} saves to the file`)).toBeInTheDocument();
+});
+
+it("uses the Mac user agent for the line-save hint when platform is empty", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("");
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X)");
+  const user = userEvent.setup();
+  setup();
+  await open();
+  await user.click(screen.getAllByRole("button", { name: "Edit this line" })[2]!);
+  expect(screen.getByText("Esc cancels · ⌘↵ saves to the file")).toBeInTheDocument();
+});
+
 // hunk-edit, hunk-edit-error
 it("the pencil turns the line into a field; ⌘↵ writes only that line, Esc cancels", async () => {
   const user = userEvent.setup();
@@ -157,7 +179,7 @@ it("the pencil turns the line into a field; ⌘↵ writes only that line, Esc ca
   await user.click(pens[2]!);
   const field = screen.getByRole("textbox", { name: "Edit line 16" });
   expect(field).toHaveValue("  return inside(next) ? next : \"/\"");
-  expect(screen.getByText(/Esc cancels · ⌘↵ saves to the file/)).toBeInTheDocument();
+  expect(screen.getByText(/Esc cancels · (?:⌘|Ctrl\+)↵ saves to the file/)).toBeInTheDocument();
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("textbox", { name: "Edit line 16" })).toBeNull();
   await user.dblClick(within(screen.getByRole("group", { name: "Patch" })).getByText(/return inside/));

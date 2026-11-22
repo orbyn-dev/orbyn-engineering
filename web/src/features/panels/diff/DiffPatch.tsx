@@ -1,3 +1,4 @@
+import { formatShortcut } from "../../../product/shell/shortcuts";
 import { ArrowUp, Copy, MessageSquare, MoreHorizontal, SquarePen, Undo2 } from "lucide-react";
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useWorkspace } from "../../../product/state/workspace";
@@ -368,7 +369,7 @@ export function Patch({ lines, path, threadId, origin, needle, current, full, sp
       <>
         {editBar ? (
           <div className="pd-ebar">
-            Esc cancels · ⌘↵ saves to the file
+            Esc cancels · {formatShortcut("mod+↵", navigator.platform || navigator.userAgent)} saves to the file
             <span className="end">
               <Button small tone="quiet" onClick={() => setEditing(null)}>Cancel</Button>
               <Button small tone="primary" disabled={saving} onClick={() => void save(editBar)}>Save line</Button>

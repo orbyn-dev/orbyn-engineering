@@ -59,15 +59,16 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 it.each([
-  ["MacIntel", "⌘F", "⌘G"],
-  ["Win32", "Ctrl+F", "Ctrl+G"],
-])("labels editor shortcuts for %s", async (platform, find, goToLine) => {
+  ["MacIntel", "⌘F", "⌘G", "⌘S"],
+  ["Win32", "Ctrl+F", "Ctrl+G", "Ctrl+S"],
+])("labels editor shortcuts for %s", async (platform, find, goToLine, save) => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
   serve();
   open();
   await editor();
   expect(screen.getByRole("button", { name: `Find ${find}` })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: `Go to line ${goToLine}` })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("title", `Save ${save}`);
 });
 
 it("uses the Mac user agent when platform is empty for labels and keyboard handling", async () => {
@@ -78,6 +79,7 @@ it("uses the Mac user agent when platform is empty for labels and keyboard handl
   const box = await editor();
   expect(screen.getByRole("button", { name: "Find ⌘F" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Go to line ⌘G" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("title", "Save ⌘S");
   fireEvent.keyDown(box, { key: "f", metaKey: true });
   expect(await screen.findByRole("textbox", { name: "Find in file" })).toBeInTheDocument();
 });

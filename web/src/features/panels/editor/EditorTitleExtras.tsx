@@ -1,3 +1,5 @@
+import { formatShortcut } from "../../../product/shell/shortcuts";
+import { editorPlatform } from "./editorPlatform";
 import { Check, Lock } from "lucide-react";
 import { Button } from "../../../ui/controls";
 import { useWorkspace } from "../../../product/state/workspace";
@@ -29,7 +31,7 @@ export function EditorTitleExtras({ threadId, tabId, onSave }: { /** Null with n
   return (
     <span className="ed-title-end">
       {dirty ? <span className="ed-unsaved">Unsaved</span> : null}
-      <Button className="ed-save" small tone={dirty ? "primary" : "quiet"} disabled={!dirty || session.saving} title="Save ⌘S" aria-label="Save" onClick={() => void Promise.resolve(onSave()).then(backToCode)}>
+      <Button className="ed-save" small tone={dirty ? "primary" : "quiet"} disabled={!dirty || session.saving} title={`Save ${formatShortcut("mod+s", editorPlatform())}`} aria-label="Save" onClick={() => void Promise.resolve(onSave()).then(backToCode)}>
         <span className="ed-save-text">Save</span>
         <Check className="ed-save-check" size={14} aria-hidden />
       </Button>
