@@ -15,7 +15,8 @@ use crate::crew::http_probe::probe;
 
 const OK: &str = "HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
 const NOT_FOUND: &str = "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
-const MOVED: &str = "HTTP/1.1 302 Found\r\nlocation: /probe\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+const MOVED: &str =
+    "HTTP/1.1 302 Found\r\nlocation: /probe\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
 
 fn check(url: &str, expect_status: u16) -> CrewCheck {
     serde_json::from_value(json!({
@@ -85,7 +86,7 @@ async fn another_status_is_a_finding_that_names_the_one_observed() {
     let dir = crate::testing::TempDir::new();
     let ran = run_check(&check(&url, 200), &site_of(dir.path())).await;
     assert_eq!(ran.outcome, CheckOutcome::Fail, "{ran:?}");
-    let reason = ran.reason.unwrap_or_default();
+    let reason = ran.reason.clone().unwrap_or_default();
     assert!(reason.contains("expected status 200"), "{reason}");
     assert!(reason.contains("answered 404"), "{reason}");
     assert_eq!(ran.names, ["status: 404"], "{ran:?}");
@@ -113,7 +114,7 @@ async fn a_probe_with_no_answer_is_an_error_never_a_pass() {
     let ran = run_check(&check(&url, 200), &site_of(dir.path())).await;
     assert_eq!(ran.outcome, CheckOutcome::Error, "{ran:?}");
     assert!(ran.log.contains("refused"), "{ran:?}");
-    let reason = ran.reason.unwrap_or_default();
+    let reason = ran.reason.clone().unwrap_or_default();
     assert!(reason.contains("could not reach the URL"), "{reason}");
     assert!(!reason.contains(&url), "the key's URL reached a worker");
 }
@@ -141,7 +142,7 @@ async fn a_probe_that_never_answers_times_out_as_an_error() {
     )
     .await;
     assert_eq!(ran.outcome, CheckOutcome::Error, "{ran:?}");
-    let reason = ran.reason.unwrap_or_default();
+    let reason = ran.reason.clone().unwrap_or_default();
     assert!(reason.contains("ran out of time"), "{reason}");
     assert!(started.elapsed() < Duration::from_secs(10), "{ran:?}");
 }

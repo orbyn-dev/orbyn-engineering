@@ -37,7 +37,7 @@ pub(super) async fn probe(
         Ok(client) => client,
         Err(why) => {
             let reason = "The probe's HTTP client could not be built.".to_owned();
-            return unobserved(description, reason, why.to_string(), started);
+            return unobserved(description, reason, causes(&why), started);
         }
     };
     let url = params.url.as_str();
@@ -49,7 +49,7 @@ pub(super) async fn probe(
             } else {
                 "The probe could not reach the URL."
             };
-            return unobserved(description, reason.to_owned(), why.to_string(), started);
+            return unobserved(description, reason.to_owned(), causes(&why), started);
         }
     };
     let status = response.status().as_u16();
@@ -73,4 +73,17 @@ fn unobserved(description: String, reason: String, log: String, started: Instant
     let mut result = ran(CheckOutcome::Error, description, log, started);
     result.reason = Some(reason);
     result
+}
+
+/// The error and every cause under it. `reqwest`'s own words are only "error sending request
+/// for url (...)"; without the cause a log cannot tell a refused connection from a broken one.
+fn causes(error: &reqwest::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
 }
