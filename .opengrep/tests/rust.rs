@@ -27,8 +27,9 @@ fn serve(request: &Request, root: &Path) {
     // ok: orbyn-rust-request-path-to-fs
     let confined = resolve(root, &path).unwrap_or_default();
     // ok: orbyn-rust-request-path-to-fs
-    let _ = std::fs::read(root.join("index.html"));
     let _ = std::fs::read(&confined);
+    // ok: orbyn-rust-request-path-to-fs
+    let _ = std::fs::read(root.join("index.html"));
     // ok: orbyn-rust-request-path-to-fs
     let _ = std::fs::read("static/index.html");
 }
