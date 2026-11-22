@@ -234,7 +234,7 @@ file. A record exists only once its bytes are in place, and a message naming an
 attachment that is not ready is refused before anything is admitted. Before its engine
 starts, a run logs `CUSTOM user.attachments` with each record's id, name, media type
 and size, so a transcript shows what the message carried without asking the engine.
-`GET /api/attachments/:id/content` returns those bytes while the record lives.
+`GET /api/attachments/:id/content` returns those bytes while the record lives. `PUT /api/attachments/:id/source` keeps a Snap Shot's app name, title, app id and accessible text beside an image before it is sent; it answers `404` for an unknown or already sent attachment, `422 unsupported_type` for a non-image and `413 source_too_large` past a character limit.
 
 A photo can be converted before it is stored: `POST /api/threads/:id/attachments/convert?name=`
 takes the photo as its body and answers `ConvertedPhoto`, the stored attachment the run
@@ -3699,6 +3699,7 @@ every method, path and which routes need a credential.
 | `POST /api/threads/:id/attachments/convert?name=` | Raw photo body; `ConvertedPhoto`: the stored attachment, its size and what was done (`converted`, `shrunk` or `none`); `415 unsupported_type`, `422 unreadable_image` or `still_too_large`, `413 file_too_large` |
 | `DELETE /api/attachments/:id` | Remove an attachment |
 | `GET /api/attachments/:id/content` | The stored bytes with their recorded `Content-Type`; `404` once gone |
+| `PUT /api/attachments/:id/source` | `AttachmentSource`: keeps a Snap Shot's app name, title, app id and accessible text beside an image attachment; `404` unknown or already sent, `422 unsupported_type` when it is not an image, `413 source_too_large` over a character limit |
 | `GET /api/threads/:id/mentions?q=` | `Mentions`: profile skills, ranked unignored files, this project's threads |
 | `GET /api/search/messages?q=&project_id=&thread_id=&archived=&limit=` | `MessageSearch`: `MessageHit[]`, newest first, each with `seq` and `message_id` to open at |
 | `GET /api/search/messages/events?q=&project_id=&thread_id=&archived=&limit=` | `MessageSearchEvent[]`: `hit` frames in the read's order, then `done` (`words`, `too_short`, `truncated`) or `failed` |
