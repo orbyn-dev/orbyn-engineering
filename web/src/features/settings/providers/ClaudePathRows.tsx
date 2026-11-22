@@ -1,17 +1,21 @@
 import type { ReactElement, ReactNode } from "react";
 import type { EngineStatus } from "../../../api/types";
 import type { ProviderEntry } from "../../../generated/ProviderEntry";
+import type { ClaudeEnginePath } from "../../../product/engines/claudePath";
 import { useHostFor } from "../../enginehost";
 import { HostChip } from "../engineHost/HostParts";
 
-/** The helper line under each Claude row: what that path is, in the provider list. */
-const CLAUDE_SDK_NOTE = "Runs through Orbyn’s engine host with the Claude Agent SDK, using your own Claude Code. Default.";
-const CLAUDE_CLI_NOTE = "Runs your Claude Code directly, without the engine host.";
+import { CLAUDE_CLI_NOTE, CLAUDE_SDK_NOTE } from "../../../product/engines/claudePath";
+
+/** The helper line under each Claude row: what that path is, in the provider list and the engine picker. */
+export { CLAUDE_CLI_NOTE, CLAUDE_SDK_NOTE };
 
 export interface ClaudePathRow {
   key: string;
   name: string;
   note: string;
+  /** The path this row stands for: only its row carries the In use switch. */
+  path: ClaudeEnginePath;
   /** The SDK row's host state; the CLI row has none. */
   chip?: ReactNode;
 }
@@ -28,9 +32,10 @@ export function claudePathRows(
       key: "claude-sdk",
       name: "Claude (SDK)",
       note: CLAUDE_SDK_NOTE,
+      path: "sdk",
       chip: <ClaudeHostChip engineId={engine.id} />,
     }),
-    render(engine, entry, { key: "claude-cli", name: "Claude (CLI)", note: CLAUDE_CLI_NOTE }),
+    render(engine, entry, { key: "claude-cli", name: "Claude (CLI)", note: CLAUDE_CLI_NOTE, path: "cli" }),
   ];
 }
 

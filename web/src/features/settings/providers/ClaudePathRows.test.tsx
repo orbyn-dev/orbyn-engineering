@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { request } from "../../../api/client";
@@ -15,8 +15,36 @@ const claude = { id: "claude", name: "Claude Code", tier: "native", installed: t
   auth: "logged_in", latest: null, support: "tested", update_command: null, sign_in_command: null, updating: false, problem: null } as EngineStatus;
 const entry: ProviderEntry = { id: "claude", name: "Claude Code", group: "in_use", labels: [], registered: true, openable: true };
 
-function show(open = vi.fn(), engine: EngineStatus = claude, provider: ProviderEntry = entry) {
-  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
+type Path = "sdk" | "cli";
+
+const pathRow = (value: Path) => ({
+  key: "claude_engine_path", value, mixed: false, default: "sdk", project_scoped: false, revision: `rev-${value}`,
+  environment: { key: "claude_engine_path", value, default: "sdk", source: "global", project_scoped: false }, members: [], overrides: [],
+});
+
+const inUseRow = () => ({
+  key: "disabled_engines", value: [], mixed: false, default: [], project_scoped: true, revision: "rev-in-use",
+  environment: { key: "disabled_engines", value: [], default: [], source: "global", project_scoped: true }, members: [], overrides: [],
+});
+
+const result = (rows: unknown[]) => ({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows }) as never;
+
+/** The In use writes the table sent, so a test can see that navigation alone writes nothing. */
+const putBodies = () => vi.mocked(request).mock.calls
+  .filter(([method, path]) => method === "PUT" && path === "/api/settings/preferences")
+  .map(([, , body]) => body);
+
+function show(path: Path = "sdk", open = vi.fn(), engine: EngineStatus = claude, provider: ProviderEntry = entry) {
+  vi.mocked(request).mockReset();
+  vi.mocked(request).mockImplementation(async (method, url, body) => {
+    if (method === "POST" && url === "/api/settings/preferences/query") {
+      const keys = ((body ?? {}) as { keys?: string[] }).keys ?? [];
+      return result(keys.map((key) => key === "claude_engine_path" ? pathRow(path) : key === "disabled_engines" ? inUseRow() : null)
+        .filter((row) => row !== null));
+    }
+    if (method === "PUT" && url === "/api/settings/preferences") return result([inUseRow()]);
+    throw new Error(`Unexpected request ${method} ${url}`);
+  });
   render(<ProviderTable store={store} onOpen={open} onEdit={() => undefined} engines={[engine]} catalog={{ providers: [provider] }} />);
   return open;
 }
@@ -39,12 +67,14 @@ it("draws Claude (SDK) and Claude (CLI), each with the engine's version and stat
   // The SDK row carries the engine host's own state; the CLI row does not.
   expect(await within(sdk).findByText("Running")).toBeVisible();
   expect(within(cli).queryByText("Running")).toBeNull();
-  // The path is the setting, not a row chip: neither row labels itself as selected.
-  expect(screen.queryByText("Selected")).toBeNull();
+  // The chosen path alone carries the setting's switch; the other row says it is not the choice.
+  expect(await within(sdk).findByRole("switch", { name: "Use Claude (SDK)" })).toBeVisible();
+  expect(within(cli).queryByRole("switch")).toBeNull();
+  expect(within(cli).getByText("Not selected")).toBeVisible();
 });
 
 it("reads the one engine's signed-out state on both rows", async () => {
-  show(vi.fn(), { ...claude, auth: "logged_out", account: undefined }, { ...entry, labels: ["signed_out"] });
+  show("sdk", vi.fn(), { ...claude, auth: "logged_out", account: undefined }, { ...entry, labels: ["signed_out"] });
   const sdk = rowOf("Claude (SDK)");
   const cli = rowOf("Claude (CLI)");
   for (const row of [sdk, cli]) {
@@ -59,4 +89,47 @@ it("opens the one Claude Code page from either row", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Claude (SDK)" }));
   await userEvent.click(screen.getByRole("button", { name: "Claude (CLI)" }));
   expect(open.mock.calls).toEqual([["claude"], ["claude"]]);
+});
+
+it("keeps the switch on the SDK row when the SDK is chosen, and says Not selected on the CLI row", async () => {
+  show("sdk");
+  const sdk = rowOf("Claude (SDK)");
+  const cli = rowOf("Claude (CLI)");
+  expect(await within(sdk).findByRole("switch", { name: "Use Claude (SDK)" })).toBeVisible();
+  expect(within(cli).queryByRole("switch")).toBeNull();
+  expect(within(cli).getByText("Not selected")).toBeVisible();
+  expect(within(cli).getByRole("button", { name: "Choose in Claude path for Claude (CLI)" })).toBeVisible();
+  expect(within(sdk).queryByRole("button", { name: /Choose in Claude path/ })).toBeNull();
+  expect(await screen.findAllByRole("switch")).toHaveLength(1);
+});
+
+it("keeps the switch on the CLI row when the CLI is chosen, and says Not selected on the SDK row", async () => {
+  show("cli");
+  const sdk = rowOf("Claude (SDK)");
+  const cli = rowOf("Claude (CLI)");
+  expect(await within(cli).findByRole("switch", { name: "Use Claude (CLI)" })).toBeVisible();
+  expect(within(sdk).queryByRole("switch")).toBeNull();
+  expect(within(sdk).getByText("Not selected")).toBeVisible();
+  expect(within(sdk).getByRole("button", { name: "Choose in Claude path for Claude (SDK)" })).toBeVisible();
+  expect(within(cli).queryByRole("button", { name: /Choose in Claude path/ })).toBeNull();
+  expect(await screen.findAllByRole("switch")).toHaveLength(1);
+});
+
+it("opens the Claude page from the other row's link without writing a preference", async () => {
+  const user = userEvent.setup();
+  const open = show("sdk");
+  const link = await screen.findByRole("button", { name: "Choose in Claude path for Claude (CLI)" });
+  await user.click(link);
+  expect(open).toHaveBeenCalledExactlyOnceWith("claude");
+  expect(putBodies()).toHaveLength(0);
+});
+
+it("still turns the Claude engine off from the chosen row's switch", async () => {
+  const user = userEvent.setup();
+  show("sdk");
+  const toggle = await screen.findByRole("switch", { name: "Use Claude (SDK)" });
+  await waitFor(() => expect(toggle).toBeEnabled());
+  await user.click(toggle);
+  await waitFor(() => expect(putBodies()).toHaveLength(1));
+  expect(putBodies()[0]).toMatchObject({ edits: { disabled_engines: { op: "set", value: ["claude"] } } });
 });
