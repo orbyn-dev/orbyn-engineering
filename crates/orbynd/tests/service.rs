@@ -933,6 +933,73 @@ async fn static_ui_has_csp_and_spa_fallback() {
 }
 
 #[tokio::test]
+async fn static_assets_cache_by_content_hash_and_never_pin_the_shell() {
+    const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+    const REVALIDATE: &str = "no-cache";
+    let dir = TempDir::new();
+    let ui = dir.path().join("ui");
+    write(&ui.join("index.html"), "<!doctype html><title>app</title>");
+    write(&ui.join("assets/index-B4xQ1k9t.js"), "console.log(1)");
+    write(&ui.join("assets/index-B4xQ1k9t.css"), "body{color:red}");
+    // No content hash in the name, so the body may change under the same URL.
+    write(&ui.join("assets/app.js"), "console.log(2)");
+    write(&ui.join("favicon.ico"), "icon");
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            args: vec!["--ui-dir".into(), ui.to_string_lossy().into_owned()],
+            ..Options::default()
+        },
+    );
+    let client = reqwest::Client::new();
+    for (path, pinned) in [
+        ("/assets/index-B4xQ1k9t.js", true),
+        ("/assets/index-B4xQ1k9t.css", true),
+        ("/assets/app.js", false),
+        ("/", false),
+        ("/threads/abc", false),
+        ("/favicon.ico", false),
+    ] {
+        let response = client
+            .get(format!("{}{path}", service.url))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{path}");
+        assert_eq!(
+            response.headers()["cache-control"],
+            if pinned { IMMUTABLE } else { REVALIDATE },
+            "{path}"
+        );
+        // HEAD carries the same policy, since a browser may probe before a GET.
+        let head = client
+            .head(format!("{}{path}", service.url))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            head.headers()["cache-control"],
+            if pinned { IMMUTABLE } else { REVALIDATE },
+            "HEAD {path}"
+        );
+    }
+    // A miss may be the shell today or a 404 tomorrow, but a name we never served
+    // must never be pinned: a stale tab would keep the wrong bytes for a year.
+    let missing = client
+        .get(format!("{}/assets/missing-B4xQ1k9t.js", service.url))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(
+        missing
+            .headers()
+            .get("cache-control")
+            .and_then(|value| value.to_str().ok()),
+        Some(IMMUTABLE)
+    );
+}
+
+#[tokio::test]
 async fn remote_images_require_auth_and_refuse_local_destinations() {
     let dir = TempDir::new();
     let service = Service::start(&dir.path().join("data"), Options::default());

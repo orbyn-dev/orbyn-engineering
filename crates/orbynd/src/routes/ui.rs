@@ -40,6 +40,41 @@ fn resolve(root: &Path, url_path: &str) -> Option<PathBuf> {
         .then(|| root.join(relative))
 }
 
+/// Build output whose name carries its content hash can never change under that
+/// URL, so a client may keep it for a year without asking again.
+const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+
+/// `index.html` and every other file keep their URL across a deploy, so a client
+/// must revalidate them; otherwise a new shell would never reach a stale tab.
+const REVALIDATE: &str = "no-cache";
+
+/// Vite writes build output as `assets/<name>-<hash>.<ext>`; only a hashed name
+/// under `assets/` is safe to pin, because anything else can change in place.
+fn cache_control(relative: &Path) -> &'static str {
+    let under_assets = relative
+        .components()
+        .next()
+        .is_some_and(|part| part.as_os_str() == "assets");
+    let hashed = relative
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| stem.rsplit_once('-'))
+        .is_some_and(|(_, token)| is_content_hash(token));
+    if under_assets && hashed {
+        IMMUTABLE
+    } else {
+        REVALIDATE
+    }
+}
+
+/// Vite's default content hash is eight base64url characters; it may be longer.
+fn is_content_hash(token: &str) -> bool {
+    (8..=32).contains(&token.len())
+        && token.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == '_'
+        })
+}
+
 fn percent_decode(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -78,8 +113,13 @@ pub async fn serve(State(state): State<AppState>, request: Request) -> Response 
         .unwrap_or_else(|| root.join("index.html"));
     match tokio::fs::read(&target).await {
         Ok(bytes) => {
+            let relative = target.strip_prefix(root).unwrap_or(&target);
             let mut response = bytes.into_response();
             let headers = response.headers_mut();
+            headers.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static(cache_control(relative)),
+            );
             headers.insert(
                 header::CONTENT_TYPE,
                 HeaderValue::from_static(content_type(&target)),
@@ -118,5 +158,43 @@ mod tests {
         assert_eq!(resolve(root, "/../secret"), None);
         assert_eq!(resolve(root, "/a/%2e%2e/%2e%2e/secret"), None);
         assert_eq!(resolve(root, "/%ff"), None);
+    }
+
+    #[test]
+    fn only_hashed_build_output_is_cached_forever() {
+        for pinned in [
+            "assets/index-B4xQ1k9t.js",
+            "assets/index-B4xQ1k9t.css",
+            "assets/fonts/inter-B4xQ1k9t.woff2",
+            "assets/logo_2-a1b2c3d4.svg",
+        ] {
+            assert_eq!(cache_control(Path::new(pinned)), IMMUTABLE, "{pinned}");
+        }
+    }
+
+    #[test]
+    fn anything_that_can_change_in_place_must_revalidate() {
+        for revalidated in [
+            // No content hash: the name survives a deploy, so the body may change.
+            "assets/app.js",
+            "assets/index-main.js",
+            "assets/style.css",
+            // The shell points at the current hashes and must never be reused.
+            "index.html",
+            "favicon.ico",
+            // A hash is only trustworthy inside the build-output directory.
+            "index-B4xQ1k9t.js",
+            "assets-B4xQ1k9t/index.js",
+            // Too short or not a base64url token, so it is a name, not a hash.
+            "assets/chunk-abc.js",
+            "assets/chunk-abcdefghijklmnopqrstuvwxyz0123456.js",
+            "assets/chunk-abc.def.gh.js",
+        ] {
+            assert_eq!(
+                cache_control(Path::new(revalidated)),
+                REVALIDATE,
+                "{revalidated}"
+            );
+        }
     }
 }
