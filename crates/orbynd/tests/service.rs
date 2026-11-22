@@ -971,6 +971,9 @@ async fn static_precompressed_assets_are_served_in_the_encoding_the_client_accep
     let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
     write_bytes(&ui.join("assets/logo-abc123.png"), png);
     write_bytes(&ui.join("assets/logo-abc123.png.br"), b"not a png");
+    // A file whose only sibling is brotli, for a client that accepts only gzip.
+    write(&ui.join("assets/only-br-abc.js"), &identity);
+    write_bytes(&ui.join("assets/only-br-abc.js.br"), &brotli);
     write(&ui.join("index.html"), "<!doctype html><title>app</title>");
     let service = Service::start(
         &dir.path().join("data"),
@@ -1036,6 +1039,19 @@ async fn static_precompressed_assets_are_served_in_the_encoding_the_client_accep
     assert!(response.headers().get("content-encoding").is_none());
     assert!(response.headers().get("vary").is_none());
     assert_eq!(response.bytes().await.unwrap().as_ref(), png.as_slice());
+
+    // A client that accepts only gzip must never receive brotli, even when brotli is
+    // the only sibling this file has.
+    let response = static_get(&client, &url("/assets/only-br-abc.js"), Some("gzip")).await;
+    assert_eq!(response.status(), 200);
+    assert_ne!(
+        response
+            .headers()
+            .get("content-encoding")
+            .and_then(|value| value.to_str().ok()),
+        Some("br"),
+        "an encoding the client did not accept must never be sent"
+    );
 
     // HEAD carries the representation's headers without a body.
     let head = client
