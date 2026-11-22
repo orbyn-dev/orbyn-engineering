@@ -39,7 +39,7 @@ A frame over 8 MiB is a protocol error. Large payloads (file contents, diffs) tr
 The core starts the host as `orbyn-engine-host <family> [flags]` and the host speaks first:
 
 ```json
-{"type":"hello","protocol":1,"host":"0.1.0","family":"claude","sdk":{"name":"@anthropic-ai/claude-agent-sdk","version":"0.3.321"},"capabilities":["steer","fork","background","rollback","models","usage"]}
+{"type":"hello","protocol":1,"host":"0.1.0","family":"claude","sdk":{"name":"@anthropic-ai/claude-agent-sdk","version":"0.3.321"},"capabilities":["steer","fork","models","usage","readHistory","readSubagent","rollback","stopTask","background"]}
 ```
 
 The core answers with the one request it may send before `ready`:
@@ -76,6 +76,7 @@ one `response` frame with the same `id`, except `send`, whose response comes whe
 | `rollback` | `sessionId`, `toTurn` (a `turnId` the host reported) | `{ok: bool}` |
 | `fork` | `sessionId`, `atTurn?` | `{engineSessionId}` |
 | `readHistory` | `sessionId` | list of messages (family-shaped, mapped by the core) |
+| `readSubagent` | `sessionId`, `agentId`, `limit?` (1 to 5000) | list of one subagent's messages (family-shaped, mapped by the core) |
 | `usage` | `sessionId` (optional for the Cursor and Muse families, which also answer account-wide) | context and cost counters. Cursor and Muse: `{usage, limits}`, see below |
 | `models` | none (host-wide; Muse takes optional `cwd`, `musePath`, `confinement` for its throwaway process; ACP takes optional `agent`, `cwd`, `confinement`, or an open `sessionId` for that session's catalog) | model list with efforts and capabilities. Cursor and Muse: `{models, account?}`, see below. ACP: `{models}`, see the ACP family below |
 | `closeSession` | `sessionId` | `null` |
@@ -205,6 +206,27 @@ process per open session. Capabilities: `steer` and `models`.
   `confinement`, starts a throwaway agent, reads `session/new`, and stops it.
 - **Not supported by this family** (no capability): `fork` as a request, `stopTask`, `background`, `rollback`,
   `readHistory`, a `usage` request, `probe`, and ACP `session/resume` for agents without `loadSession`.
+
+## Claude family
+
+Family `claude` (`src/families/claude.mjs`) runs `query()` of `@anthropic-ai/claude-agent-sdk` over the person's own
+`claude`. Capabilities: `steer`, `fork`, `models`, `usage`, `readHistory`, `readSubagent`, `rollback`, `stopTask` and
+`background`.
+
+- **`rollback`** is allowed only when no run is open. The host closes the live query, sets `resume` to the current engine
+  session id and `resumeSessionAt` to the uuid of the last top-level `assistant` message (one with no
+  `parent_tool_use_id`) of the target turn; the next `send` builds a query with `resumeSessionAt`, so the engine resumes
+  after that message. An unknown turn, or a session with no engine session yet, answers `{ok:false}`. The engine session
+  id may change on the resumed query and is reported by a `session` frame as today.
+- **`readHistory`** calls the SDK's `getSessionMessages(engineSessionId, {dir: cwd})` and returns its messages unchanged.
+  A session with no engine session yet is `NoEngineSession`; an SDK without the function is `UnsupportedRequest`.
+- **`readSubagent`** calls `getSubagentMessages(engineSessionId, agentId, {dir: cwd, limit?})` and returns its messages
+  unchanged. `agentId` must be 1 to 128 letters, digits, underscores or hyphens; `limit` must be a positive integer no
+  greater than 5000; anything else is `InvalidRequest` (`kind: "invalid_request"`).
+- Both readers fail with `HistoryTooLarge` (`kind: "host"`, "This conversation is too large to read in one piece.")
+  when the messages' JSON exceeds the same 6 MiB budget as the OpenCode family's `readHistory`.
+
+None of these three requests has run against the real SDK or a real `claude`; they are tested against a fake SDK only.
 
 ## Errors
 
