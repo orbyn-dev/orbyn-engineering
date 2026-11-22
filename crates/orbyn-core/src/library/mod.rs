@@ -377,17 +377,43 @@ impl Core {
 
     // ---- environment sets ----
 
-    /// The sets as a read answers them: names and `present`, one keychain probe for the whole list. When the keychain cannot be
-    /// used every key is `present: false` and `keychain` says why; a set then reads `planned` where there is no keychain at all.
-    fn env_set_views(&self, rows: Vec<EnvSetRow>) -> Vec<EnvSet> {
+    /// The sets as the list answers them: names and `present`, read from the stored record. Only a key whose record is unknown
+    /// (`is_set` NULL, a row from before migration 72, or a check that did not answer) is read from the keychain, once, and the
+    /// answer is recorded. When the keychain cannot be used every key is `present: false` and `keychain` says why; a set then
+    /// reads `planned` where there is no keychain at all. The stored flags are left alone in that case.
+    fn env_set_views(&self, rows: Vec<EnvSetRow>) -> Result<Vec<EnvSet>> {
+        self.env_set_views_with(rows, false)
+    }
+
+    /// The one-set read: every key is read from the keychain and the answers are recorded, whatever the record said. That is
+    /// what makes a value removed outside Orbyn show up.
+    fn env_set_views_verify(&self, rows: Vec<EnvSetRow>) -> Result<Vec<EnvSet>> {
+        self.env_set_views_with(rows, true)
+    }
+
+    fn env_set_views_with(&self, rows: Vec<EnvSetRow>, verify: bool) -> Result<Vec<EnvSet>> {
         let mut state = self.env_sets.state();
-        rows.into_iter()
+        let mut probed: Vec<(String, String, bool)> = Vec::new();
+        let views = rows
+            .into_iter()
             .map(|row| {
                 let mut keys = Vec::with_capacity(row.fields.keys.len());
-                for name in &row.fields.keys {
-                    let present = if state == EnvKeychain::Ok {
+                for (index, name) in row.fields.keys.iter().enumerate() {
+                    let recorded = if verify {
+                        None
+                    } else {
+                        row.is_set.get(index).copied().flatten()
+                    };
+                    let present = if state != EnvKeychain::Ok {
+                        false
+                    } else if let Some(present) = recorded {
+                        present
+                    } else {
                         match self.env_sets.present(&row.id, name) {
-                            Ok(present) => present,
+                            Ok(present) => {
+                                probed.push((row.id.clone(), name.clone(), present));
+                                present
+                            }
                             Err(EnvError::Unavailable) => {
                                 state = EnvKeychain::Unavailable;
                                 false
@@ -396,10 +422,9 @@ impl Core {
                                 state = EnvKeychain::Blocked;
                                 false
                             }
+                            // The check did not answer, so nothing is recorded and the next read tries again.
                             Err(_) => false,
                         }
-                    } else {
-                        false
                     };
                     keys.push(EnvKey {
                         name: name.clone(),
@@ -422,24 +447,31 @@ impl Core {
                     updated_at: row.updated_at,
                 }
             })
-            .collect()
+            .collect();
+        self.store.library_mark_keys(&probed)?;
+        Ok(views)
     }
 
-    pub(crate) fn env_set_view(&self, row: EnvSetRow) -> EnvSet {
-        self.env_set_views(vec![row]).remove(0)
+    pub(crate) fn env_set_view(&self, row: EnvSetRow) -> Result<EnvSet> {
+        Ok(self.env_set_views(vec![row])?.remove(0))
     }
 
+    /// `GET /api/library/env-sets`: the app's own record, so a listing does not read a value per key. Only a key saved before
+    /// migration 72 is checked, once; [`Core::get_env_set`] is the read that re-checks every key.
     pub fn list_env_sets(&self) -> Result<Vec<EnvSet>> {
-        Ok(self.env_set_views(self.store.library_env_sets()?))
+        self.env_set_views(self.store.library_env_sets()?)
     }
 
+    /// `GET /api/library/env-sets/{id}`: re-checks every key against the keychain and records what it finds, so a value removed
+    /// outside Orbyn shows up here.
     pub fn get_env_set(&self, id: &str) -> Result<EnvSet> {
-        Ok(self.env_set_view(self.store.library_env_set(id)?))
+        let row = self.store.library_env_set(id)?;
+        Ok(self.env_set_views_verify(vec![row])?.remove(0))
     }
 
     pub fn create_env_set(&self, draft: &EnvSetDraft) -> Result<EnvSet> {
         let fields = env_set_fields(&draft.name, &draft.description, &draft.keys)?;
-        Ok(self.env_set_view(self.store.create_library_env_set(&fields)?))
+        self.env_set_view(self.store.create_library_env_set(&fields)?)
     }
 
     /// Renames, describes, adds or removes key names. A removed name loses its keychain item first; if that cannot be done the set is
@@ -470,11 +502,10 @@ impl Core {
             .cloned()
             .collect();
         self.remove_items(id, &gone)?;
-        Ok(self.env_set_view(self.store.update_library_env_set(
-            id,
-            patch.seen_revision,
-            &fields,
-        )?))
+        self.env_set_view(
+            self.store
+                .update_library_env_set(id, patch.seen_revision, &fields)?,
+        )
     }
 
     /// Removes a set: every keychain item first, then the rows. A failure leaves the set whole.
@@ -504,6 +535,7 @@ impl Core {
         self.store
             .library_key_event("library.env_set.key_set", id, key)?;
         self.env_sets.save(id, key, value).map_err(keychain_error)?;
+        self.store.library_mark_key(id, key, Some(true))?;
         Ok(EnvKey {
             name: key.to_owned(),
             present: true,
@@ -518,6 +550,8 @@ impl Core {
             Ok(()) | Err(EnvError::Unavailable) => {}
             Err(error) => return Err(keychain_error(error)),
         }
+        // With no usable keychain there is nothing stored, so the name reads false either way.
+        self.store.library_mark_key(id, key, Some(false))?;
         Ok(EnvKey {
             name: key.to_owned(),
             present: false,

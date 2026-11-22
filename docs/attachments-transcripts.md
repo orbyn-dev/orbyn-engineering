@@ -1,9 +1,10 @@
 # Photo conversion, transcript import and earlier messages
 
-What the web composer and thread need from the service for three Beta frame groups. **Partly built**: the photo
-conversion route exists (below); transcript import and export and the earlier-messages read are still planned. In a
-production build the web has no client for any of them and sends nothing; a dev-only preview
-(`#/preview/attachments`, `#/preview/earlier`) installs the mocks in `web/mock/attachments.ts` and `web/mock/earlier.ts`. A name here
+What the web composer and thread need from the service for three Beta frame groups. Transcript export and import, the two routes
+under B43, are built and wired in the web (`web/src/features/thread/transcriptFile/`); the composer's transcript drop still uses
+its hidden client and the mock, and a file dropped there is an ordinary attachment. The photo conversion route exists (below) and
+the earlier-messages read stays planned. A dev-only preview (`#/preview/attachments`, `#/preview/earlier`) installs the hidden
+clients from `web/mock/attachments.ts` and `web/mock/earlier.ts`; the transcript export and import mock lives in `web/mock/api.ts`. A name here
 changes only if the service pull request says so. Rows: B8, B43, K36 in [parity](parity.md).
 
 | Group | Frames | Owner of the service side |
@@ -66,17 +67,18 @@ Built: `POST /api/threads/{id}/attachments/convert?name=<label>` with the photo 
 
 ## Transcript export and import (B43)
 
-Three routes and one file, built by Eng 3. The web replaces the two placeholder constants below; a transcript dropped on the composer
-calls the attach route, and the import route creates a thread from one.
+Three routes and one file, built by Eng 3. The web's export and import are built on the two routes: Export transcript sits in the
+thread header menu and the sidebar thread row menu, and Import transcript… sits in the project folder menu and on a transcript
+dropped on a project row. The composer's transcript drop still uses the hidden client and the mock until the attach route is wired.
+The ending and media type below are the constants the web uses.
 
 ### The file
 
 Plain JSON, one object. T3 Code has no transcript file (its drag of a thread is a link, B43 above), so this format is ours.
 
 - **Ending** `.orbyn.json`, **media type** `application/vnd.orbyn.transcript+json`. These are THE constants (in the service:
-  `TRANSCRIPT_FILE_ENDING`, `TRANSCRIPT_MEDIA_TYPE` in `orbyn-contracts`; the web's two in
-  `web/src/features/thread/composer/transcriptDrop.ts` replace the placeholders `.transcript` and `application/x-orbyn-transcript`).
-  The service decides from the bytes, never from the ending or the type.
+  `TRANSCRIPT_FILE_ENDING`, `TRANSCRIPT_MEDIA_TYPE` in `orbyn-contracts`; the web's two in `web/src/lib/transcript.ts`, re-exported by
+  `web/src/features/thread/composer/transcriptDrop.ts`). The service decides from the bytes, never from the ending or the type.
 - Shape (`TranscriptDocument`, generated as `web/src/generated/TranscriptDocument.ts`):
 
   ```json
@@ -187,5 +189,7 @@ creates an attachment**, as `POST /api/threads/{id}/attachments` does, and answe
 
 ## What the web does without these routes
 
-Nothing changes: a HEIC photo or an oversized image is uploaded as today (and refused above 10 MiB by the service), a transcript file
-dropped on the composer is an ordinary attachment (before the attach route is wired), and an imported thread opens empty.
+The export and import routes are wired in production: the two menus save a file under the thread title plus `.orbyn.json`, and the
+sheet creates the thread and opens it. Still on the mock: a transcript file dropped on the composer is an ordinary attachment (the
+attach route is not wired), photo conversion is not offered, and the earlier messages of an imported thread are not read. An imported
+thread still carries its `source` and `imported_at`, so its marker shows and its history keeps the imported messages.

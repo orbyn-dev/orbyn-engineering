@@ -51,6 +51,8 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **Threads.** `thread-approval`, `thread-done`, `thread-failed`, `thread-interrupted`, `thread-empty`, `thread-tools`, `thread-tools-live`, `summary-work-group`, `summary-outcomes`, `thread-details`, `details-popover`, `thread-run-no-reply`, `thread-run-session-lost`, `thread-background-stopped`, `thread-background-stopped-many`, `thread-background-stopped-narrow`
 
+**Transcripts.** `transcript-export-menu`, `transcript-export-menu-sidebar`, `transcript-export-exporting`, `transcript-export-saved`, `transcript-export-failed`, `transcript-import-project-menu`, `transcript-import-drop`, `transcript-import-reading`, `transcript-import-preview`, `transcript-import-preview-dropped`, `transcript-import-importing`, `transcript-import-engine-menu`, `transcript-import-preview-no-engine`, `transcript-import-error-too-large`, `transcript-import-error-too-new`, `transcript-import-error-unreadable`, `transcript-import-error-key-missing`, `transcript-imported-thread`
+
 **The side panel.** `panel-empty`, `panel-launcher-menu`, `panel-tab-menu`, `panel-tabs-single`, `panel-browser`, `panel-activity`, `panel-side`
 
 **Changes, in the side panel.** `changes-default`, `changes-empty`, `changes-error`, `changes-loading`, `changes-view-menu`, `changes-compare-menu`, `changes-find`, `changes-file-menu`, `changes-more-files`, `changes-turn-picker`, `changes-commit-picker`, `comment-select`, `comment-pending`

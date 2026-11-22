@@ -2179,13 +2179,13 @@ and its `EngineDriver` impl and keeps the public paths: `claude/` (`args`, `sett
 `terminal`, `diagnostics`) stay beside them.
 
 `engines/known.rs` lists CLIs that speak ACP from their own binary, with what each needs
-to start: Antigravity, Cline, Command Code, GitHub Copilot, Cursor, DeepSeek, Devin, fx, Grok
-Build, Hermes, Kilo, Kimi and OpenCode. One is listed only when its program is found, and
+to start: Antigravity, Cline, Command Code, GitHub Copilot, Cursor, DeepSeek, Devin, Factory Droid, fx, GLM,
+Grok Build, Hermes, Kilo, Kimi, Kiro, Mistral Vibe, Oh My Pi and OpenCode. One is listed only when its program is found, and
 a custom engine of the same id wins. A program that resolves into a package known to put a
 different CLI under the same name is not that engine: `@vibe-kit/grok-cli` installs a `grok`
 with no ACP mode. Grok is started with `--permission-mode default` and
 OpenCode with `{"permission":{"*":"ask"}}`, since either can otherwise act without asking.
-DeepSeek cannot ask before an edit, so it is labelled unmanaged under rule 8, and so is fx
+Kiro's arguments are T3 Code's. The commands for Droid (`droid exec --output-format acp`), GLM (`glm-acp-agent`), Mistral Vibe (`vibe-acp`) and Oh My Pi (`omp acp`) come from the vendors' and Zed's guides, are unverified, and a program that rejects them is a failed start. Droid, GLM, Kiro (which starts in autopilot), Mistral Vibe and Oh My Pi are unobserved, so they are labelled unmanaged under rule 8 until a run shows they ask. DeepSeek cannot ask before an edit, so it is labelled unmanaged under rule 8, and so is fx
 until a run shows the mode it starts in, since its automatic mode writes without asking. The
 `fx` JSON viewer from npm or Homebrew is not fx. Each keeps its
 own login, and only the launch has been tested, with the fake agent under those names, except
