@@ -352,6 +352,8 @@ impl Inner {
         let command = command
             .and_then(|raw| clean_command(&raw))
             .map(|line| redact(redactor, &line));
+        // The working directory is program-controlled text too (OSC 7, OSC 633;P): redacted like the command.
+        let cwd = cwd.map(|dir| redact(redactor, &dir));
         let block = Block {
             seq: self.next_seq,
             id: util::new_id(),
@@ -789,6 +791,20 @@ mod tests {
             .unwrap();
         assert!(!output.text.contains(&secret));
         assert!(output.text.contains('\u{2022}'));
+    }
+
+    #[test]
+    fn a_secret_in_the_working_directory_is_redacted() {
+        let blocks = redacting();
+        let secret = format!("sk-{}", "a1".repeat(12));
+        let mut chunk = Vec::new();
+        chunk.extend_from_slice(format!("\x1b]7;file:///tmp/{secret}\x07").as_bytes());
+        chunk.extend_from_slice(b"\x1b]133;C\x07out\n\x1b]133;D;0\x07");
+        blocks.push(&chunk);
+        let list = blocks.list(None, 10).unwrap();
+        let cwd = list.blocks[0].cwd.as_deref().unwrap_or_default().to_owned();
+        assert!(!cwd.contains(&secret), "{cwd}");
+        assert!(!cwd.is_empty(), "the cwd was dropped, not redacted");
     }
 
     #[test]

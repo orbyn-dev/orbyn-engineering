@@ -99,6 +99,14 @@ Products Research, not something the web invents.
   frames) over both `command` and the output text **before** it stores them and again before it answers, so a secret printed by a
   command is never in the list or the output. The hook is a single function in the block store, `redact(text) -> text`, so the rule set
   can change without touching the routes. If the rules cannot be read, that terminal keeps nothing and the list answers empty.
+- **Marks are not verified.** A block's boundaries, `exit_code` and `command` come from marks (OSC 133, OSC 633;E, OSC 7) in the
+  terminal's own output, so any program or `cat file` can forge them: a failing build can show exit 0 and a Run again line can be
+  chosen by a file's content. The web shows the command before Run again and never sends Enter; treat `exit_code` as advisory until
+  the shell integration passes a nonce (not built). A flood of forged `C` marks can fill the 500-block cap and evict real history.
+- **Live output lags one line.** The last line of a running block is held back until its newline or the block's end, so a command that
+  prints "Compiling..." and waits shows it only with the next line; `output_bytes` does not count it either. A prompt with no newline
+  does not show in the block until the command ends.
+- The working directory (`cwd`) is redacted like the command.
 - **A terminal that carries a workflow run's env values keeps no blocks.** Those values are masked on the output stream after the block
   parser reads it, so the parser never records such a terminal (tested: `a_terminal_with_run_secrets_keeps_no_command_blocks`).
 - Redaction applies to what the web copies too: the web copies what the service sent. A copy therefore never holds more than the drawer
