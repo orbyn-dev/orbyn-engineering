@@ -1,7 +1,10 @@
 //! The person's stop and restart of a family's host, and the rule that a host with background work
 //! open is not stopped unless the person's stop says so.
 
+use serde_json::{Value, json};
+
 use super::*;
+use crate::agents::claude_history::project_folder_name;
 use crate::agents::driver::host::connection::ClosedReason;
 
 #[tokio::test]
@@ -241,18 +244,265 @@ async fn a_stop_while_the_host_waits_to_restart_ends_the_restarts() {
     rig.pool.shutdown().await;
 }
 
+const SESSION: &str = "0f3c2b1a-1111-4222-8333-444455556666";
+const PROMPT: &str = "a1a1a1a1-1111-4222-8333-444455556666";
+const HEAD: &str = "b2b2b2b2-1111-4222-8333-444455556666";
+
+fn user(uuid: &str) -> Value {
+    json!({"type":"user","uuid":uuid,"sessionId":SESSION,"message":{"role":"user","content":"hi"}})
+}
+
+fn assistant(uuid: &str) -> Value {
+    json!({"type":"assistant","uuid":uuid,"sessionId":SESSION,"message":{"role":"assistant","content":"answer"}})
+}
+
+fn transcript(projects: &Path, cwd: &str, lines: &[Value]) {
+    let folder = projects.join(project_folder_name(cwd));
+    std::fs::create_dir_all(&folder).unwrap();
+    let text: String = lines.iter().map(|line| format!("{line}\n")).collect();
+    std::fs::write(folder.join(format!("{SESSION}.jsonl")), text).unwrap();
+}
+
+fn write_raw(projects: &Path, cwd: &str, text: &str) {
+    let folder = projects.join(project_folder_name(cwd));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join(format!("{SESSION}.jsonl")), text).unwrap();
+}
+
+fn opens(rig: &Rig) -> Vec<Value> {
+    rig.raw()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|frame| frame["type"] == "open")
+        .collect()
+}
+
 #[tokio::test]
-async fn the_claude_host_keeps_native_rewind_unsupported_so_a_rewind_leaves_a_handoff() {
-    let Some(rig) = standin(&[], fast()) else {
+async fn a_claude_rewind_reads_the_session_file_and_resumes_once_at_the_previous_assistant() {
+    let Some(node) = node() else {
         return;
     };
-    let driver = rig.driver();
-    let refusal = driver
-        .revert_session(std::path::Path::new("."), "engine-session", "turn-1")
+    let Some(rig) = standin_family("claude", &[], fast()) else {
+        return;
+    };
+    let history = TempDir::new();
+    let projects = history.path().join("projects");
+    let library = history
+        .path()
+        .join("library")
+        .to_string_lossy()
+        .into_owned();
+    let checkout = history.path().join("repo").to_string_lossy().into_owned();
+    // A native Claude thread starts in the library; the thread keeps the checkout folder.
+    transcript(
+        &projects,
+        &library,
+        &[
+            user("u0"),
+            assistant("old"),
+            json!({"type":"assistant","uuid":"sub-1","sessionId":SESSION,"isSidechain":true,"message":{}}),
+            json!({"type":"assistant","uuid":"sub-2","sessionId":SESSION,"parent_tool_use_id":"toolu_1","message":{}}),
+            json!({"type":"user","uuid":"tool-1","sessionId":SESSION,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}}),
+            assistant(HEAD),
+            json!({"type":"assistant","uuid":"sub-3","sessionId":SESSION,"isSidechain":true,"message":{}}),
+            user(PROMPT),
+        ],
+    );
+    let driver = driver_on_node(&rig.pool, &node).with_history_root(projects);
+    driver
+        .revert_session(Path::new(&checkout), SESSION, PROMPT)
         .await
-        .unwrap_err();
-    assert!(matches!(refusal, crate::error::CoreError::Unsupported(_)));
-    // Nothing was asked of the host: its own `rollback` only works inside one live host session.
-    assert!(rig.log().iter().all(|frame| frame["type"] != "rollback"));
+        .unwrap();
+    assert!(
+        rig.log().is_empty(),
+        "a rewind reads the file and asks the host nothing: {:?}",
+        rig.log()
+    );
+
+    let mut next = spec("after the rewind");
+    next.resume = Some(SESSION.into());
+    next.cwd = PathBuf::from(&library);
+    next.checkout = PathBuf::from(&checkout);
+    let (events, outcome) = start(&driver, next).await.unwrap().outcome().await;
+    assert_eq!(outcome, EngineOutcome::Completed);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, EngineEvent::Session(id) if id == "eng-run-1")),
+        "the host named its session: {events:?}"
+    );
+    // The open consumed the point; the session frame leaves nothing for a later run.
+    assert_eq!(rig.pool.take_resume_at("claude", SESSION), None);
+    let first = opens(&rig);
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert_eq!(first[0]["operation"], "resume");
+    assert_eq!(first[0]["engineSessionId"], SESSION);
+    assert_eq!(first[0]["resumeAt"], HEAD);
+
+    let mut again = spec("again");
+    again.resume = Some(SESSION.into());
+    again.cwd = PathBuf::from(&library);
+    again.checkout = PathBuf::from(&checkout);
+    let (_, outcome) = start(&driver, again).await.unwrap().outcome().await;
+    assert_eq!(outcome, EngineOutcome::Completed);
+    let both = opens(&rig);
+    assert_eq!(both.len(), 2, "{both:?}");
+    assert!(
+        both[1].get("resumeAt").is_none(),
+        "one shot, not every resume: {:?}",
+        both[1]
+    );
     rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_claude_rewind_without_a_usable_point_is_refused_so_the_handoff_stays() {
+    let Some(node) = node() else {
+        return;
+    };
+    let Some(rig) = standin_family("claude", &[], fast()) else {
+        return;
+    };
+    let history = TempDir::new();
+    let projects = history.path().join("projects");
+    let cwd = history.path().join("repo").to_string_lossy().into_owned();
+    let driver = driver_on_node(&rig.pool, &node)
+        .with_history_root(projects.clone())
+        .with_path(Arc::new(|| Ok(EnginePath::Sdk)));
+
+    // A missing file.
+    assert!(
+        driver
+            .revert_session(Path::new(&cwd), SESSION, PROMPT)
+            .await
+            .is_err()
+    );
+
+    // No assistant before the prompt.
+    transcript(&projects, &cwd, &[user(PROMPT)]);
+    assert!(
+        driver
+            .revert_session(Path::new(&cwd), SESSION, PROMPT)
+            .await
+            .is_err()
+    );
+
+    // Only a subagent assistant before it.
+    transcript(
+        &projects,
+        &cwd,
+        &[
+            json!({"type":"assistant","uuid":"sub","sessionId":SESSION,"isSidechain":true,"message":{}}),
+            user(PROMPT),
+        ],
+    );
+    assert!(
+        driver
+            .revert_session(Path::new(&cwd), SESSION, PROMPT)
+            .await
+            .is_err()
+    );
+
+    // A prompt uuid the file does not hold.
+    transcript(&projects, &cwd, &[assistant(HEAD), user("another-prompt")]);
+    assert!(
+        driver
+            .revert_session(Path::new(&cwd), SESSION, PROMPT)
+            .await
+            .is_err()
+    );
+
+    // The host's synthetic turn id is not a prompt uuid.
+    transcript(&projects, &cwd, &[assistant(HEAD), user(PROMPT)]);
+    assert!(
+        driver
+            .revert_session(Path::new(&cwd), SESSION, "turn-1")
+            .await
+            .is_err()
+    );
+
+    // A changed or truncated file.
+    write_raw(&projects, &cwd, "{\"type\":\"assistant\",\"uuid\":\"cut");
+    assert!(
+        driver
+            .revert_session(Path::new(&cwd), SESSION, PROMPT)
+            .await
+            .is_err()
+    );
+
+    assert_eq!(rig.pool.take_resume_at("claude", SESSION), None);
+    assert!(rig.log().is_empty(), "nothing was asked of the host");
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_claude_rewind_on_the_cli_path_is_refused() {
+    let Some(node) = node() else {
+        return;
+    };
+    let Some(rig) = standin_family("claude", &[], fast()) else {
+        return;
+    };
+    let history = TempDir::new();
+    let projects = history.path().join("projects");
+    let cwd = history.path().join("repo").to_string_lossy().into_owned();
+    transcript(&projects, &cwd, &[assistant(HEAD), user(PROMPT)]);
+    let driver = driver_on_node(&rig.pool, &node)
+        .with_history_root(projects)
+        .with_path(Arc::new(|| Ok(EnginePath::Cli)));
+    assert!(
+        driver
+            .revert_session(Path::new(&cwd), SESSION, PROMPT)
+            .await
+            .is_err(),
+        "the CLI path has no resumeAt"
+    );
+    assert_eq!(rig.pool.take_resume_at("claude", SESSION), None);
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn resume_at_is_never_sent_on_create_or_for_another_family() {
+    let Some(node) = node() else {
+        return;
+    };
+    let Some(rig) = standin_family("claude", &[], fast()) else {
+        return;
+    };
+    let driver = driver_on_node(&rig.pool, &node);
+    rig.pool.note_resume_at("claude", "session-1", HEAD);
+    let (_, outcome) = start(&driver, spec("create"))
+        .await
+        .unwrap()
+        .outcome()
+        .await;
+    assert_eq!(outcome, EngineOutcome::Completed);
+    let created = opens(&rig);
+    assert_eq!(created[0]["operation"], "create");
+    assert!(created[0].get("resumeAt").is_none());
+    assert_eq!(
+        rig.pool.take_resume_at("claude", "session-1"),
+        Some(HEAD.to_owned()),
+        "a create did not consume it"
+    );
+    rig.pool.shutdown().await;
+
+    let Some(other) = standin(&[], fast()) else {
+        return;
+    };
+    let other_driver = driver_on_node(&other.pool, &node);
+    other.pool.note_resume_at("claude", "eng-run-1", HEAD);
+    let mut resumed = spec("resume");
+    resumed.resume = Some("eng-run-1".into());
+    let (_, outcome) = start(&other_driver, resumed).await.unwrap().outcome().await;
+    assert_eq!(outcome, EngineOutcome::Completed);
+    let open = opens(&other);
+    assert_eq!(open[0]["operation"], "resume");
+    assert!(open[0].get("resumeAt").is_none());
+    assert_eq!(
+        other.pool.take_resume_at("claude", "eng-run-1"),
+        Some(HEAD.to_owned()),
+        "another family did not consume it"
+    );
+    other.pool.shutdown().await;
 }

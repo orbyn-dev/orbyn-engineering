@@ -63,6 +63,9 @@ pub struct HostDriver {
     /// The ACP agent this driver starts; `None` for every other family.
     acp: Option<HostAcpAgent>,
     path: PathSetting,
+    /// Tests read the Claude history from a fixture root instead of the person's folder.
+    #[cfg(test)]
+    history_root: Option<PathBuf>,
 }
 
 impl HostDriver {
@@ -87,6 +90,8 @@ impl HostDriver {
             program,
             acp,
             path: always_sdk(),
+            #[cfg(test)]
+            history_root: None,
         }
     }
 
@@ -98,6 +103,8 @@ impl HostDriver {
             program: String::new(),
             acp: Some(agent),
             path: always_sdk(),
+            #[cfg(test)]
+            history_root: None,
         }
     }
 
@@ -105,6 +112,14 @@ impl HostDriver {
     #[must_use]
     pub fn with_path(mut self, path: PathSetting) -> Self {
         self.path = path;
+        self
+    }
+
+    /// Reads Claude history from `root` instead of the person's folder, for a test fixture.
+    #[cfg(test)]
+    #[must_use]
+    pub fn with_history_root(mut self, root: PathBuf) -> Self {
+        self.history_root = Some(root);
         self
     }
 
@@ -180,6 +195,7 @@ async fn begin(
     confinement: Option<Value>,
     send_id: u64,
     message_id: &str,
+    resume_at: Option<&str>,
 ) -> std::result::Result<(Value, Value), RequestError> {
     let operation = if spec.resume.is_some() {
         "resume"
@@ -194,6 +210,13 @@ async fn begin(
     });
     if let Some(resume) = &spec.resume {
         open["engineSessionId"] = json!(resume);
+    }
+    // Only a resume can rewind, and only the Claude family has this field. A create or
+    // another family never carries a stale point.
+    if operation == "resume"
+        && let Some(resume_at) = resume_at
+    {
+        open["resumeAt"] = json!(resume_at);
     }
     if let Some(confinement) = confinement {
         open["confinement"] = confinement;
@@ -348,6 +371,17 @@ impl EngineDriver for HostDriver {
             })?;
         let engine = self.inner.descriptor().id;
         let message_id = crate::agents::driver::claude::prompt_uuid();
+        // A rewind is one open, on the Claude family and a resume only. Taking it here
+        // consumes it, so a failed open or a later run never sends it again.
+        let resume_at = if family == "claude" {
+            spec.resume.as_deref().and_then(|session| {
+                self.pool
+                    .take_resume_at(&engine, session)
+                    .filter(|at| crate::agents::claude_history::valid_uuid(at))
+            })
+        } else {
+            None
+        };
         let options = match family.as_str() {
             "claude" => options::claude(&spec, claude_path.as_deref()),
             "acp" => match self.acp.as_ref() {
@@ -367,6 +401,7 @@ impl EngineDriver for HostDriver {
             confinement,
             send_id,
             &message_id,
+            resume_at.as_deref(),
         )
         .await
         {
@@ -489,7 +524,31 @@ impl EngineDriver for HostDriver {
     }
 
     async fn revert_session(&self, cwd: &Path, session: &str, before_turn: &str) -> Result<()> {
-        self.inner.revert_session(cwd, session, before_turn).await
+        if self.pool.family != "claude" {
+            return self.inner.revert_session(cwd, session, before_turn).await;
+        }
+        // The CLI path resumes the same file but has no `resumeAt`; a rewind there must
+        // leave the handoff rather than claim a native rollback it cannot apply.
+        if (self.path)()? == EnginePath::Cli {
+            return Err(CoreError::Unsupported(
+                "The Claude CLI path cannot rewind its saved session natively.".into(),
+            ));
+        }
+        let engine = self.inner.descriptor().id;
+        #[cfg(test)]
+        if let Some(root) = self.history_root.as_deref() {
+            let at = crate::agents::claude_history::resume_point_in(
+                root,
+                session,
+                before_turn,
+                Some(cwd),
+            )?;
+            self.pool.note_resume_at(&engine, session, &at);
+            return Ok(());
+        }
+        let at = crate::agents::claude_history::resume_point(session, before_turn, Some(cwd))?;
+        self.pool.note_resume_at(&engine, session, &at);
+        Ok(())
     }
 
     async fn catalog_key(&self) -> Option<String> {

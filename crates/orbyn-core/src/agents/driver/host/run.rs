@@ -152,7 +152,12 @@ impl Run {
         if let Some(id) = session {
             events.push(EngineEvent::Session(id.to_owned()));
         }
-        if let Some(id) = self.accepted.get("turnId").and_then(Value::as_str) {
+        if self.family == "claude" {
+            // The Claude host's turn id is its own counter (`turn-<sendId>`), not an id in
+            // the session file. The prompt's message id is what the file records, so that
+            // is the point a native rewind names and stores.
+            events.push(EngineEvent::Turn(self.message_id.clone()));
+        } else if let Some(id) = self.accepted.get("turnId").and_then(Value::as_str) {
             events.push(EngineEvent::Turn(id.to_owned()));
         }
         events
@@ -334,6 +339,14 @@ impl Run {
                         self.prompt_accepted = true;
                     }
                     Some(RunFrame::Session { engine_session_id, turn_id }) => {
+                        // A changed session clears the run's stored turn; for Claude the
+                        // prompt's message id is still the point inside the (new) session,
+                        // and the host validates it against that file before resuming.
+                        let turn_id = if self.family == "claude" {
+                            Some(self.message_id.clone())
+                        } else {
+                            turn_id
+                        };
                         let events = engine_session_id
                             .map(EngineEvent::Session)
                             .into_iter()

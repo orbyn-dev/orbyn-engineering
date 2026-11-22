@@ -321,6 +321,54 @@ fn claude_uses_the_host_by_default_and_only_a_zero_flag_or_a_missing_host_keeps_
 }
 
 #[test]
+fn a_rewind_point_is_remembered_once_for_the_engine_session_it_was_noted_for() {
+    let pool = Pool::new(
+        "claude",
+        HostSpec {
+            program: "/nonexistent/orbyn-engine-host".into(),
+            args: Vec::new(),
+            env: Vec::new(),
+            instance: "test".into(),
+        },
+        Timings::default(),
+        None,
+    );
+    let head = "b2b2b2b2-1111-4222-8333-444455556666";
+    pool.note_resume_at("claude", "session-1", head);
+    assert_eq!(
+        pool.take_resume_at("claude", "session-1"),
+        Some(head.to_owned())
+    );
+    assert_eq!(
+        pool.take_resume_at("claude", "session-1"),
+        None,
+        "an open consumes it"
+    );
+
+    pool.note_resume_at("claude", "session-1", head);
+    assert_eq!(
+        pool.take_resume_at("claude", "session-2"),
+        None,
+        "another session never takes it"
+    );
+    assert_eq!(
+        pool.take_resume_at("another-engine", "session-1"),
+        None,
+        "another engine never takes it"
+    );
+    assert_eq!(
+        pool.take_resume_at("claude", "session-1"),
+        Some(head.to_owned())
+    );
+
+    // An empty id is not a rewind point.
+    pool.note_resume_at("claude", "", head);
+    pool.note_resume_at("claude", "session-1", "");
+    assert_eq!(pool.take_resume_at("claude", ""), None);
+    assert_eq!(pool.take_resume_at("claude", "session-1"), None);
+}
+
+#[test]
 fn cursor_runs_on_the_host_only_behind_its_own_flag_and_offers_one_mode() {
     use crate::agents::driver::acp::AcpDriver;
     use crate::agents::engines::known::known_engine;

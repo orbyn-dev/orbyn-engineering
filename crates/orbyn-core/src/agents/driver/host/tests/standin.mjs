@@ -329,8 +329,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     taskId: request.taskId,
     text: request.text,
     messageId: request.messageId,
+    operation: request.operation,
+    engineSessionId: request.engineSessionId,
+    resumeAt: request.resumeAt,
     confinement: Boolean(request.confinement),
-    ...(family === "acp" ? { operation: request.operation, options: request.options, sessionId: request.sessionId, agent: request.agent, cwd: request.cwd } : {}),
+    ...(family === "acp" ? { options: request.options, sessionId: request.sessionId, agent: request.agent, cwd: request.cwd } : {}),
   });
   const handler = handlers[request.type];
   try {

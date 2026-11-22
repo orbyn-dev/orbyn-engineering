@@ -332,11 +332,20 @@ turn heads, and the core opens a new host session for every run), so the core do
   {dir: cwd})` and checks the uuid is there; it then passes it as `resumeSessionAt` on the first query of that host session only.
 - `resumeAt` with any other operation, a value that is not a uuid, a uuid the session does not hold or one that belongs to a
   sub-agent fails `open` with `kind: "invalid_request"`; an SDK without `getSessionMessages` answers `UnsupportedRequest`.
-- The core chooses the uuid (the last top-level assistant message before the user message whose uuid is the prompt's
-  `messageId`), remembers it for the thread, sends `resumeAt` on the next run's `open` once, and clears it when the host reports
-  the `session` frame. With no earlier assistant message the rewind falls back to a handoff, as before.
+- The core chooses the uuid itself. The host's `turnId` is its own counter (`turn-<sendId>`), not a value in the session
+  file, so the core keeps the prompt's `messageId` as the run's engine turn on this path. `HostDriver::revert_session`
+  reads the session JSONL from the Claude history root by the session id the store holds (`CLAUDE_CONFIG_DIR`, else
+  `~/.claude`), finds the top-level user message whose uuid is that prompt id, and takes the last top-level assistant
+  message before it. Subagent messages (`isSidechain` or a parent tool use) and tool-result user messages are skipped.
+  It remembers the uuid in the host pool for that engine session; the next run's `open` takes it once, for
+  `operation: "resume"` only, and a create or another family never carries it. A failed `open` or the run's `session`
+  frame leaves nothing for a later run.
+- With no earlier top-level assistant message, a missing, unreadable or changed session file, an unknown prompt uuid, or
+  any error, `revert_session` fails and the rewind leaves the handoff as before. Runs stored before this change (their
+  engine turn is the synthetic host id) fall back the same way.
 
-Tested against a fake SDK only; not yet against a real `claude`. The core side is Engineering 2's.
+Tested against a fake SDK only; not yet against a real `claude`. The core side is built and tested against the stand-in
+host; a real provider rewind is unverified.
 
 `readSubagent` is announced and gated in the core (`GATED`), but the core has no method that sends it yet. It gets one after the
 beta, with a subagent transcript panel.
