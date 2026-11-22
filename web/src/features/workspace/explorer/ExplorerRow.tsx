@@ -2,14 +2,16 @@ import { ChevronDown, ChevronRight, CircleDashed, File, Folder, GitBranch, MoreH
 import { memo, type CSSProperties, type KeyboardEvent, type MouseEvent } from "react";
 import { compactAge } from "../../../lib/format";
 import { useWaited } from "../../../lib/motion";
+import { useThreadWaiting } from "../../../product/state/waitingThreads";
 import { attentionRank } from "../sidebar/groups";
 import { CHANGE, MAX_DEPTH, crumb, type Row } from "./model";
 import { ChangeLetter, MiddleName } from "./ChangeLetter";
 import { FILE_MENTION_TYPE } from "../../../product/composer/skillMention";
 import { Button } from "../../../ui/controls";
 
-function ThreadStatus({ thread }: { thread: NonNullable<Row["thread"]> }) {
-  if (attentionRank(thread) === 0) return <span className="n"><span className="status-dot tone-warn" role="img" aria-label="Needs you" /></span>;
+export function ThreadStatus({ thread }: { thread: NonNullable<Row["thread"]> }) {
+  const waiting = useThreadWaiting(thread.id);
+  if (attentionRank(thread, waiting) === 0) return <span className="n"><span className="status-dot tone-warn" role="img" aria-label="Needs you" /></span>;
   if (thread.active_run) return <span className="n"><CircleDashed size={12} className="spin" role="img" aria-label="Working" /></span>;
   if (thread.last_run_state === "failed") return <span className="n x2failed">failed</span>;
   return <span className="n">{compactAge(thread.updated_at)}</span>;

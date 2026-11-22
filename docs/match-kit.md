@@ -43,6 +43,10 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **The shell.** `shell-home`, `shell-new-thread`, `shell-ledger`, `shell-thread-row-actions`, `shell-project-controls`, `update-sources`
 
+**The engine picker.** `engine-picker-closed`, `engine-picker-new-thread`, `engine-picker-crew-tiers`, `engine-picker-crew-tiers-narrow`
+
+**Unmanaged threads.** `unmanaged-thread-open`, `unmanaged-thread-open-narrow`, `unmanaged-thread-first-run`, `unmanaged-thread-first-run-narrow` (the mock's Kiro, a `managed: false` non-Cursor engine; the notice and labels only, because the non-Cursor mode refusal is planned until the service sends it)
+
 **Pull requests, the list and its states.** `pr-row-variants`, `pr-row-pending`, `pr-row-pending-failed`, `pr-list-none`, `pr-list-loading`, `pr-list-error`, `pr-list-signedout`, `pr-list-offline`, `pr-list-draft`, `pr-list-filtered`, `pr-list-narrow-900`, `pr-list-narrow-800`, `pr-list-narrow-700`, `pr-list-narrow-640`, `pr-list-narrow-580`, `pr-tb-filter-waiting`, `pr-tb-filter-failed`, `pr-tb-filter-rate-limited`, `pr-tb-filter-still-limited`, `pr-row-tooltips`, `pr-row-actions-hover`
 
 **Pull requests, the toolbar.** `pr-tb-default`, `pr-tb-search`, `pr-tb-filters`, `pr-tb-chips`, `pr-tb-sort`, `pr-tb-project`, `pr-tb-refreshing`, `pr-tb-loading`, `pr-tb-empty`, `pr-tb-author`, `pr-tb-author-none`, `pr-tb-narrow`, `pr-tb-phone`
@@ -60,6 +64,8 @@ or fail on the network, and what to click first. Use the design's frame id for a
 **The file editor.** `editor-default`, `editor-unsaved`, `editor-find`, `editor-goto`, `editor-tab-menu`, `editor-close-confirm`, `editor-loading`
 
 **Settings, one page for each section.** `s-general`, `s-appearance`, `s-chat`, `s-diffs`, `s-keybindings`, `s-providers`, `s-threads`, `s-tasks`, `s-projects`, `s-source-control`, `s-worktrees`, `s-maintenance`, `s-labs`, `s-about`, `s-archive`
+
+**Snap Shot, settings and the draft flow** (K49, docs/snapshots.md), drawn on the dev-only mock at `#/preview/snapshot?frame=<id>`. Settings: `snapshot-settings-off`, `snapshot-settings`, `snapshot-settings-shortcut`, `snapshot-settings-conflict`, `snapshot-settings-excluded`, `snapshot-settings-accessibility`, `snapshot-settings-windows`, `snapshot-settings-linux`, `snapshot-settings-off-narrow`, `snapshot-settings-narrow`, `snapshot-settings-excluded-narrow`. The composer and the draft: `snapshot-composer-button`, `snapshot-composer-button-narrow`, `snapshot-draft`, `snapshot-details`, `snapshot-capturing`, `snapshot-captured`, `snapshot-no-thread`, `snapshot-excluded`, `snapshot-excluded-narrow`, `snapshot-failed`, `snapshot-failed-no-window`, `snapshot-failed-too-large`, `snapshot-failed-timeout`, `snapshot-failed-error`, `snapshot-failed-narrow`, `snapshot-narrow`. Setup: `snapshot-setup-mac`, `snapshot-setup-asked`, `snapshot-setup-denied`, `snapshot-setup-accessibility`, `snapshot-setup-granted`, `snapshot-setup-windows`, `snapshot-setup-narrow`.
 
 **Usage, the Limits tab.** `usage-claude-windows`, `usage-claude-windows-unavailable`, `usage-claude-windows-loading`, `usage-claude-windows-narrow`, `usage-claude-windows-near`, `usage-claude-windows-reached`, `usage-claude-windows-signedout`, `usage-providers`, `usage-providers-error`
 
@@ -85,7 +91,7 @@ Crew, the escape log and its check frames (Crew Designs v79), on the real escape
 
 Crew, Settings › Review capacity (Crew Designs v77), on the real capacity and settings routes: the editor that Change the limit and Set a limit open, that editor in a 640 px window, and a save the service refused for want of the person key — `capacity-settings-editor`, `capacity-settings-editor-narrow`, `capacity-settings-editor-error`.
 
-Crew, the reviewer backtest (Crew Designs v23), on the real 4n routes and the mock's `crew-backtest` scenarios: `backtest-estimate`, `backtest-report` (the run named in the hash: `?id=run-4n`) and `backtest-stopped` (`?id=run-stopped`). The settings, over-budget, running, vendors, escapes, unmatched, lane-failed, empty, low-history, lane-picker and narrow frames stay drawn sample data until their own pull requests.
+Crew, the reviewer backtest (Crew Designs v23), on the real 4n routes and the mock's `crew-backtest` scenarios: `backtest-estimate`, `backtest-report` (the run named in the hash: `?id=run-4n`) and `backtest-stopped` (`?id=run-stopped`). The backtest page reads start-view: `entry-crew-backtest-page` (the project never ran one), `entry-crew-backtest-page-last-finished`, `entry-crew-backtest-page-last-stopped`, `entry-crew-backtest-page-running`, `entry-crew-backtest-page-narrow-window`, `backtest-lanes-reading`, `backtest-lanes-error` (Try again), `backtest-lanes-kind-not-recorded`, `backtest-lanes-budget-not-set`, `backtest-lanes-last-failed` and `backtest-lanes-narrow-window`; `backtest-lanes-data-map` is the contract drawing rather than a screen, so it has no catalog entry. The settings, over-budget, running, vendors, escapes, unmatched, lane-failed, empty, low-history, lane-picker and narrow frames stay drawn sample data until their own pull requests.
 
 1. If the screen needs data the mock does not have, add a scenario to `web/mock/api.ts` (and its fixtures to `web/mock/fixtures.ts`).
 2. Add an entry to `catalog.mjs`: `route`, `scenario`, `pre` (requests to hold or fail before the page opens), `steps` (click, fill, press, route, offline) and `wait` for states that show only after a delay.

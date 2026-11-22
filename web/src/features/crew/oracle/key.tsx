@@ -79,7 +79,7 @@ export function OracleKey() {
               <div>
                 <span className="cx-t">13:02</span>
                 <Ic n="git" sm />
-                <span><b>Builder finished</b><small>Codex · GPT-5.5 · commit 5d2e1a8 · 3 files · +96 −4. The builder never saw the key.</small></span>
+                <span><b>Builder finished</b><small>Codex · GPT-5.5 · commit 5d2e1a8 · 3 files · +96 −4. The builder did not see the key.</small></span>
               </div>
               <div>
                 <span className="cx-t">13:10</span>

@@ -7,6 +7,11 @@ import type { TranscriptEntry } from "./useTranscripts";
 const file = (name: string) => new File(["x"], name);
 const ready = (title: string, messageCount: number): TranscriptEntry => ({ key: title, file: file("a.orbyn.json"), state: "ready", id: "i", title, messageCount });
 
+it("says a kept transcript rides on the next message only", () => {
+  render(<TranscriptShelf entries={[ready("Tiny", 1)]} remove={vi.fn()} addAsFile={vi.fn()} />);
+  expect(screen.getByText("Attached to your next message only.")).toBeTruthy();
+});
+
 it("draws nothing for an empty shelf", () => {
   const { container } = render(<TranscriptShelf entries={[]} remove={vi.fn()} addAsFile={vi.fn()} />);
   expect(container).toBeEmptyDOMElement();

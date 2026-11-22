@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 
 use orbyn_contracts::PatternScope;
 use regex::Regex;
+use serde_json::Value;
 
 use super::builtin::BUILTINS;
 use super::custom;
@@ -295,6 +296,25 @@ impl Redactor {
     /// What a terminal block shows: one dot per hidden character.
     pub fn dotted(&self, text: &str) -> String {
         self.replace_spans(text, |_, _, hidden| "•".repeat(hidden.chars().count()))
+    }
+
+    /// A stored JSON value as a person reads it: every string value and every object key has the
+    /// set's patterns hidden, so a secret carried in either is not shown. A key has no room for a
+    /// marker of its own, so it becomes the same `[hidden: <label>]` text a value does. Other
+    /// scalars (numbers, booleans, null) are shown as they are.
+    pub fn mask_json(&self, value: &Value) -> Value {
+        match value {
+            Value::String(text) => Value::String(self.labelled(text)),
+            Value::Array(items) => {
+                Value::Array(items.iter().map(|item| self.mask_json(item)).collect())
+            }
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(key, item)| (self.labelled(key), self.mask_json(item)))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
     }
 
     /// `text` with each format replaced by `mask`, one format after the other, as Crew has always

@@ -81,6 +81,8 @@ describe("the reviewer backtest on the real 4n routes", () => {
     answers.estimate = { status: 200, body: estimate({ running: "run-live" }) };
     render(<LiveBacktest view="estimate" />);
     expect(await screen.findByText(/A backtest is running/)).toBeInTheDocument();
+    expect(screen.getByText(/Only one runs at a time: it finishes by itself\./)).toBeVisible();
+    expect(screen.queryByText(/stops it on its report/i)).toBeNull();
     expect(screen.getByRole("button", { name: "Open the running backtest" })).toBeEnabled();
   });
 
@@ -104,6 +106,22 @@ describe("the reviewer backtest on the real 4n routes", () => {
     expect(screen.getByText("2 unresolved")).toBeInTheDocument();
     expect(screen.getByText("1.28M tokens")).toBeInTheDocument();
     expect(calls.some(({ url }) => url === "/api/crew/backtest/run-4n/report")).toBe(true);
+  });
+
+  it("labels the stacked narrow report: the run card first, then a card per lane", async () => {
+    openReport();
+    expect(await screen.findByText("Outcomes")).toBeInTheDocument();
+    expect(screen.getByText("Lanes that scored")).toBeInTheDocument();
+    expect(screen.getByText("What it used")).toBeInTheDocument();
+    expect(screen.getByText("Escapes caught: 6 of 9 · recall 66%")).toBeInTheDocument();
+    expect(screen.getByText("Findings raised: 21 · 2 unresolved")).toBeInTheDocument();
+    expect(screen.getByText("Matched an escape: 6 of 21 · precision 28%")).toBeInTheDocument();
+  });
+
+  it("keeps the replay count Planned, never a number", async () => {
+    openReport();
+    expect(await screen.findByText("The report route does not serve how many pull requests each lane replayed.")).toBeInTheDocument();
+    expect(screen.queryByText(/pull requests replayed/i)).toBeNull();
   });
 
   it("shows Not measured where the escape log cannot score a lane, never a zero rate", async () => {

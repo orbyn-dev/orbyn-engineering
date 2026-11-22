@@ -16,6 +16,7 @@ export function DRow({
   value,
   sub,
   subLines,
+  subWrap,
   onClick,
   disabled,
   loading,
@@ -35,6 +36,8 @@ export function DRow({
   sub?: ReactNode;
   /** Several quiet lines under the value, such as one address each. */
   subLines?: ReactNode[];
+  /** The quiet line is a sentence the person must read whole: it wraps (up to 3 lines) and carries the full text as its title. */
+  subWrap?: boolean;
   onClick?(): void;
   disabled?: boolean;
   /** Still waiting for data; nothing shows for the first 400 ms, then a still bar. */
@@ -58,7 +61,7 @@ export function DRow({
       <span className="dl">{label}</span>
       <span className="dv">
         {loading ? (waited ? <ValueSkeleton width={skeleton} /> : null) : <span className="row1">{value}</span>}
-        {!loading && sub ? <small>{sub}</small> : null}
+        {!loading && sub ? subWrap ? <small className="wrap" title={typeof sub === "string" ? sub : undefined}>{sub}</small> : <small>{sub}</small> : null}
         {!loading && subLines ? subLines.map((line, at) => <small key={at}>{line}</small>) : null}
       </span>
       {expanded === undefined ? (chevron ? <ChevronRight size={14} aria-hidden /> : null) : expanded ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}

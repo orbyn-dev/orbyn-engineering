@@ -50,3 +50,4 @@
 @container lib (min-width: 676px) { .lib-body { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); } .lib-detail { border-top: 0; padding-top: 0; } }
 
 .lib-grants { margin: 4px 0 10px; padding-left: 18px; display: grid; gap: 4px; }
+.lib-grant-keys { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 10px; }

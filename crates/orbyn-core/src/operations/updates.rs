@@ -422,14 +422,23 @@ impl UpdateCenter {
     }
 
     async fn check_parts(&self, app: bool, providers: bool) -> UpdateStatus {
-        let mut errors = Vec::new();
-        if app
-            && self.workspace.root().is_ok()
-            && let Err(error) = self.workspace.fetch().await
-        {
-            errors.push(format!("Library: {}", error.public_message()));
-        }
-        if providers {
+        // Three independent reads. A slow or stuck one (a library fetch waiting on the library lock, an engine
+        // lookup) must not hold back the others, so the app's release manifest is asked for at once.
+        let library = async {
+            if app && self.workspace.root().is_ok() {
+                self.workspace
+                    .fetch()
+                    .await
+                    .err()
+                    .map(|error| format!("Library: {}", error.public_message()))
+            } else {
+                None
+            }
+        };
+        let engines = async {
+            if !providers {
+                return None;
+            }
             match self.engines.statuses(true).await {
                 Ok(statuses) => {
                     let mut known = lock(&self.known);
@@ -438,17 +447,30 @@ impl UpdateCenter {
                             known.engine_latest.insert(status.id, latest);
                         }
                     }
+                    None
                 }
-                Err(error) => errors.push(format!("Engines: {}", error.public_message())),
+                Err(error) => Some(format!("Engines: {}", error.public_message())),
             }
-        }
-        if app {
+        };
+        let app_release = async {
+            if !app {
+                return None;
+            }
             if self.mode() == AppMode::Desktop {
                 self.to_shell(json!({ "type": "check_app_update" }));
-            } else if let Err(message) = self.check_manifest().await {
-                errors.push(format!("App: {message}"));
+                None
+            } else {
+                self.check_manifest()
+                    .await
+                    .err()
+                    .map(|message| format!("App: {message}"))
             }
-        }
+        };
+        let (library, engines, app_release) = tokio::join!(library, engines, app_release);
+        let errors: Vec<String> = [library, engines, app_release]
+            .into_iter()
+            .flatten()
+            .collect();
         {
             let mut known = lock(&self.known);
             if errors.is_empty() {

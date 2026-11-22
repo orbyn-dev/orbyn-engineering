@@ -1,5 +1,7 @@
 import type { BacktestLaneRun } from "../../../../generated/BacktestLaneRun";
 import type { BacktestRun } from "../../../../generated/BacktestRun";
+import type { BacktestStartLane } from "../../../../generated/BacktestStartLane";
+import type { BacktestStartRun } from "../../../../generated/BacktestStartRun";
 import type { BacktestState } from "../../../../generated/BacktestState";
 import type { LaneScore } from "../../../../generated/LaneScore";
 
@@ -9,8 +11,8 @@ import type { LaneScore } from "../../../../generated/LaneScore";
  * engine. A start is also refused by the service until a live replay engine is connected (A5).
  */
 export const WHY = {
-  lanes: "the app has no read of the reviewer-backtest lanes, their engines or their models",
-  budgets: "the app has no read of the per-engine token budgets: the Settings rows are drawn and the values are Proposed",
+  firstLanes: "choosing the lanes of a first backtest is not built: nothing stores a lane set before a run",
+  firstBudgets: "setting a budget for a first backtest is not built: nothing stores a budget before a run, and no route sets or edits one",
   tokens:
     "the per-engine token estimate is not in the estimate route yet (4n PR 3 / A5), so no estimate per lane is shown",
   start:
@@ -45,6 +47,35 @@ export const rateText = (rate: { numerator: number; denominator: number; permill
 
 /** The lane as the read names it: no display name for an engine or model is served, so its own id is shown. */
 export const laneTitle = (lane: BacktestLaneRun) => `${lane.lane} · ${lane.engine} · ${lane.model}`;
+
+/** The start input's lane as the read names it, with the same ids a run's report serves. */
+export const startLaneTitle = (lane: BacktestStartLane) => `${lane.lane} · ${lane.engine} · ${lane.model}`;
+
+/** A lane's kind: a null kind is a run recorded before kinds were kept, so it is never read as a review. */
+export function startLaneKindText(kind: BacktestStartLane["kind"]): string {
+  if (kind === "review") return "Review";
+  if (kind === "check") return "Check";
+  return "Kind not recorded";
+}
+
+/** The last backtest row's wording: the state the service records, never a guessed date or token count. */
+export const startStateText: Record<BacktestState, string> = {
+  estimated: "Estimated",
+  running: "Running",
+  stopped: "Stopped, a partial result",
+  finished: "Finished",
+  failed: "Failed",
+};
+
+/**
+ * One line per engine, in the order the lanes first name them and then any budget-only engine. An engine with no budget
+ * entry reads `null`, so the screen can say Not set instead of a zero; the amounts are never summed.
+ */
+export function startBudgetEntries(run: BacktestStartRun): { engine: string; tokens: number | null }[] {
+  const budgets = new Map(run.budgets.map((entry) => [entry.engine, entry.tokens]));
+  const engines = [...new Set([...run.lanes.map((lane) => lane.engine), ...run.budgets.map((entry) => entry.engine)])];
+  return engines.map((engine) => ({ engine, tokens: budgets.get(engine) ?? null }));
+}
 
 export const laneStateText: Record<BacktestLaneRun["state"], string> = {
   pending: "Not started",
