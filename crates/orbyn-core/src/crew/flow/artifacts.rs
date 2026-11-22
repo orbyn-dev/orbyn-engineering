@@ -12,9 +12,11 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 use orbyn_contracts as wire;
 use orbyn_contracts::Evidence;
+use tokio::time::timeout;
 
 use super::facts::Facts;
 use super::scrub::Scrub;
@@ -26,6 +28,9 @@ use crate::error::{CoreError, Result};
 pub const CHECKS_MAX: usize = 64;
 /// The most files the diff summary lists. A change with more is cut and says so.
 pub const DIFF_FILES_MAX: usize = 200;
+/// How long the change may spend in git before the read gives up and says it could not read it. A checkout held by another
+/// process, such as a long `git gc` or a lock a worker left, must not hold this GET open: the caller asks again.
+const GIT_READ_MAX: Duration = Duration::from_secs(10);
 /// The longest path, and the longest artifact name, the read shows in characters.
 const PATH_MAX: usize = 400;
 const NAME_MAX: usize = 120;
@@ -168,11 +173,15 @@ async fn changed_since(root: &Path, base: &str, scrub: &Scrub) -> Result<Change>
     let mut statuses_args = vec!["diff"];
     statuses_args.extend(flags);
     statuses_args.extend(["--name-status", "-z", base]);
-    let statuses = git(root, &statuses_args).await?;
+    let statuses = timeout(GIT_READ_MAX, git(root, &statuses_args))
+        .await
+        .map_err(|_| CoreError::Git("The change took too long to read.".into()))??;
     let mut counts_args = vec!["diff"];
     counts_args.extend(flags);
     counts_args.extend(["--numstat", "-z", base]);
-    let counts = git(root, &counts_args).await?;
+    let counts = timeout(GIT_READ_MAX, git(root, &counts_args))
+        .await
+        .map_err(|_| CoreError::Git("The change took too long to read.".into()))??;
     let counts = line_counts(&counts);
     let mut change = Change {
         files: Vec::new(),

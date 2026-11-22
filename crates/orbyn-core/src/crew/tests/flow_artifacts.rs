@@ -156,6 +156,60 @@ async fn a_task_with_no_run_answers_no_checks_and_no_checkout() {
 }
 
 #[tokio::test]
+async fn the_diff_lists_the_cap_of_a_larger_change_and_leaves_untracked_files_out() {
+    let w = world(true, arc(|_, root| built(root))).await;
+    let subject = w.built_work().await;
+    // 205 tracked files, more than the 200 the list holds, and one more file left untracked.
+    let bulk = w.repo.join("src").join("bulk");
+    std::fs::create_dir_all(&bulk).unwrap();
+    for n in 0..205u32 {
+        std::fs::write(bulk.join(format!("{n:03}.txt")), "bulk\n").unwrap();
+    }
+    commit_all(&w.repo, "the bulk of the change");
+    std::fs::write(w.repo.join("src").join("untracked.txt"), "not added\n").unwrap();
+
+    let view = w.core.crew_flow_task_artifacts(&subject).await.unwrap();
+    let diff = view.diff.expect("the change the checks read");
+    assert_eq!(diff.files.len(), 200, "the list is cut at its cap");
+    assert!(diff.truncated, "the cut is said");
+    assert!(diff.files_total > 200, "the total counts every file");
+    assert_eq!(
+        diff.files_total as usize, 206,
+        "205 files and the builder's"
+    );
+    assert!(
+        !diff
+            .files
+            .iter()
+            .any(|file| file.path.ends_with("untracked.txt")),
+        "a file the task left untracked is not one git tracks, so it is not listed"
+    );
+}
+
+#[tokio::test]
+async fn a_build_with_more_checks_than_the_cap_shows_the_cap() {
+    // 66 checks: two more than the 64 rows the read holds.
+    let checks: Vec<Value> = (0..66u32)
+        .map(|n| {
+            json!({
+                "id": format!("chk-{n:02}"),
+                "kind": "command",
+                "params": { "run": format!("echo check-{n}") },
+                "proves": format!("Check {n} runs.")
+            })
+        })
+        .collect();
+    let (mut key, _, _) = artifact_key();
+    key["checks"] = Value::Array(checks);
+    let w = world(true, arc(|_, root| built(root))).await;
+    let subject = w.built_with(key).await;
+
+    let view = w.core.crew_flow_task_artifacts(&subject).await.unwrap();
+    assert_eq!(view.checks.len(), 64, "the rows are cut at their cap");
+    assert!(view.truncated, "the cut is said");
+}
+
+#[tokio::test]
 async fn with_the_flag_off_the_read_is_not_found() {
     let w = world(false, arc(|_, _| Turn::Silent)).await;
     assert!(matches!(
