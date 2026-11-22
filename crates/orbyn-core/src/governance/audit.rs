@@ -9,14 +9,16 @@ use crate::app::Core;
 use crate::error::Result;
 
 impl Core {
-    /// The newest rows. Only `detail` is masked: its values and its keys both go through the
-    /// person's patterns (`Core::display_redactor`), because a secret can sit in either. The fields
-    /// a screen reads — actor, action, target, decision, source, thread and run — are as stored.
+    /// The newest rows. `detail` (its values and its keys) and `target` go through the person's
+    /// patterns (`Core::display_redactor`), because a secret can sit in any of them: a
+    /// `permission.ask` row's target is the command line. The other fields a screen reads — actor,
+    /// action, decision, source, thread and run — are as stored.
     pub fn audit_events(&self, thread_id: Option<&str>, limit: u32) -> Result<Vec<AuditEvent>> {
         let person = self.display_redactor()?;
         let mut rows = self.store.list_audit(thread_id, limit)?;
         for row in &mut rows {
             row.detail = person.mask_json(&row.detail);
+            row.target = person.labelled(&row.target);
         }
         Ok(rows)
     }
@@ -109,6 +111,28 @@ mod tests {
         }
         // The read never rewrites what is stored.
         assert_eq!(stored(&core), before);
+    }
+
+    #[test]
+    fn a_secret_in_a_stored_target_is_masked_on_read_and_stays_stored() {
+        let dir = TempDir::new();
+        let core = core(&dir);
+        let canary = format!("{}-{}", "zebra", "target");
+        let mut record = row("permission.ask", json!({ "note": "plain" }));
+        record.target = format!("curl -H 'x: {canary}' https://example.test");
+        core.store.append_audit(&record).unwrap();
+        pattern(&core, "Canary", canary.clone());
+
+        let shown = core.audit_events(None, 200).unwrap();
+        let event = shown
+            .iter()
+            .find(|event| event.action == "permission.ask")
+            .unwrap();
+        assert!(!event.target.contains(&canary), "the target was shown");
+        assert!(event.target.contains("[hidden: Canary]"));
+        assert!(event.target.starts_with("curl -H 'x: "));
+        let stored = core.store.list_audit(None, 50).unwrap();
+        assert!(stored.iter().any(|event| event.target.contains(&canary)));
     }
 
     #[test]
