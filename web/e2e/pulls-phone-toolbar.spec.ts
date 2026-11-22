@@ -17,5 +17,13 @@ for (const width of [320, 375]) test(`pull request toolbar stays within the ${wi
   expect(box!.x + box!.width).toBeLessThanOrEqual(width);
   const selectors = page.locator(".pulls-sels");
   await selectors.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
-  await expect(page.getByRole("button", { name: /^Sort:/ })).toBeInViewport();
+  const sort = page.getByRole("button", { name: /^Sort:/ });
+  const rowBox = await selectors.boundingBox();
+  const sortBox = await sort.boundingBox();
+  expect(rowBox).not.toBeNull();
+  expect(sortBox).not.toBeNull();
+  expect(sortBox!.x).toBeGreaterThanOrEqual(rowBox!.x);
+  expect(sortBox!.x + sortBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width);
+  await sort.click();
+  await expect(sort).toHaveAttribute("aria-expanded", "true");
 });
