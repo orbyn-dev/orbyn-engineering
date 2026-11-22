@@ -26,7 +26,7 @@ const floatPlace = { x: 24, y: 80, width: 360 };
  * web never types one. Every action is one Person-class write, one at a time. The live screen, typing and the tools
  * drawer are Planned (phase 2/4) and drawn as pills.
  */
-export function DevicesPanel({ threadId = "" }: { threadId?: string }) {
+export function DevicesPanel({ threadId = "", initialTabMenu = false }: { threadId?: string; initialTabMenu?: boolean }) {
   const seen = useApiVersion();
   const { list, error: listError, settled, reload } = useDevices();
   const stored = useUi((state) => state.devices);
@@ -174,6 +174,7 @@ export function DevicesPanel({ threadId = "" }: { threadId?: string }) {
                 active={active}
                 names={stored.names}
                 busy={busy}
+                initialMenu={initialTabMenu}
                 onSelect={openDevice}
                 onClose={closeDevice}
                 onRename={rename}
