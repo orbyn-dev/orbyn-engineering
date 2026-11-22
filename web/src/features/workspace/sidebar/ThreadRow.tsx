@@ -14,6 +14,7 @@ import { IssueMark } from "../../issues";
 import { createLongPress } from "./longPress";
 import { createSwipeReveal } from "./swipeReveal";
 import { threadRunState } from "./RunState";
+import { useThreadWaiting } from "../../../product/state/waitingThreads";
 
 const DONE_WINDOW_MS = 5 * 60_000;
 const HOVER_DELAY_MS = 150;
@@ -33,7 +34,7 @@ interface RowStatus {
   /** Trailing text: a short status word, or the relative age. */
   text: ReactNode;
   /** Why the person is needed, for lists that show only that: lower case, or null. */
-  reason: "approval" | "question" | "limit" | null;
+  reason: "approval" | "question" | "limit" | "terminal" | null;
   running: boolean;
 }
 
@@ -41,6 +42,16 @@ function useRowStatus(thread: Thread): RowStatus {
   const active = thread.active_run;
   const now = useNow(active !== null);
   const approvals = useWorkspace((state) => state.approvals.data);
+  const terminalWaits = useThreadWaiting(thread.id);
+  if (terminalWaits && active?.state !== "awaiting_approval") {
+    // An engine console in a terminal of this thread waits for the person (docs/cli-agent-attention.md).
+    return {
+      glyph: <span className="status-dot tone-warn" aria-hidden />,
+      text: <span className="row-status tone-warn">Terminal</span>,
+      reason: "terminal",
+      running: false,
+    };
+  }
   if (active) {
     if (active.state === "awaiting_approval") {
       const asking = approvals && !approvals.some((approval) => approval.thread_id === thread.id);

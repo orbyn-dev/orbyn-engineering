@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { onDataChanged } from "../api/shell";
+import { onDataChanged, onThreadNotice } from "../api/shell";
 import { useUi } from "../product/state/ui";
 import { onShellEvent } from "./shell";
 
@@ -25,5 +25,14 @@ describe("onShellEvent", () => {
     stop();
     onShellEvent({ type: "data_changed", what: "models:claude" });
     expect(heard).toEqual(["pulls"]);
+  });
+
+  it("tells listeners which thread logged something worth following", () => {
+    const heard: [string, number][] = [];
+    const stop = onThreadNotice((thread, seq) => heard.push([thread, seq]));
+    onShellEvent({ type: "thread_event", thread_id: "t1", seq: 412 });
+    stop();
+    onShellEvent({ type: "thread_event", thread_id: "t1", seq: 413 });
+    expect(heard).toEqual([["t1", 412]]);
   });
 });

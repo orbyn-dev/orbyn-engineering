@@ -33,7 +33,19 @@ impl RunManager {
         attachments: &[String],
         actor: &str,
     ) -> Result<Run> {
-        self.admit_asked(thread_id, prompt, attachments, actor, false)
+        self.admit_asked(thread_id, prompt, attachments, actor, false, None)
+    }
+
+    /// `admit_with`, for a send that asks for a typed result (M20).
+    pub fn admit_with_result(
+        self: &Arc<Self>,
+        thread_id: &str,
+        prompt: &str,
+        attachments: &[String],
+        actor: &str,
+        result: Option<result::ResultRequest>,
+    ) -> Result<Run> {
+        self.admit_asked(thread_id, prompt, attachments, actor, false, result)
     }
 
     /// The person's one turn without approvals on an engine that never asks: the thread's saved mode is not read and not
@@ -65,7 +77,7 @@ impl RunManager {
             run_id: None,
             detail: json!({ "engine": thread.engine, "project_id": thread.project_id }),
         })?;
-        self.admit_asked(thread_id, prompt, attachments, actor, true)
+        self.admit_asked(thread_id, prompt, attachments, actor, true, None)
     }
 
     /// The refusals of an engine that never asks (docs/cursor-thread-contract.md), at run start only. The notice comes
@@ -117,6 +129,7 @@ impl RunManager {
         attachments: &[String],
         actor: &str,
         once_without_approvals: bool,
+        result: Option<result::ResultRequest>,
     ) -> Result<Run> {
         check_prompt(prompt)?;
         self.refuse_background_lead(thread_id)?;
@@ -140,14 +153,26 @@ impl RunManager {
                 )
             })
         })?;
-        self.launch(
+        if let Some(request) = result {
+            self.results
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(run.id.clone(), request);
+        }
+        if let Err(error) = self.launch(
             thread,
             run.clone(),
             prompt.to_owned(),
             attachments,
             &root,
             actor,
-        )?;
+        ) {
+            self.results
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&run.id);
+            return Err(error);
+        }
         Ok(run)
     }
 

@@ -301,10 +301,14 @@ async fn shutting_down_closes_the_host() {
 }
 
 #[test]
-fn the_flag_off_and_an_empty_host_path_keep_the_rust_drivers() {
+fn claude_uses_the_host_by_default_and_only_a_zero_flag_or_a_missing_host_keeps_the_rust_driver() {
     assert!(HostConfig::from_env(None, Some("1")).is_none());
     assert!(HostConfig::from_env(Some("".into()), Some("1")).is_none());
-    let config = HostConfig::from_env(Some("/x/orbyn-engine-host".into()), None).unwrap();
+    for on in [None, Some(""), Some("1"), Some("true")] {
+        let config = HostConfig::from_env(Some("/x/orbyn-engine-host".into()), on).unwrap();
+        assert!(config.claude, "flag {on:?} is on");
+    }
+    let config = HostConfig::from_env(Some("/x/orbyn-engine-host".into()), Some("0")).unwrap();
     assert!(!config.claude);
     let hub = HostHub::new(&config);
     let inner: Arc<dyn crate::agents::driver::EngineDriver> =
@@ -314,8 +318,6 @@ fn the_flag_off_and_an_empty_host_path_keep_the_rust_drivers() {
         Arc::ptr_eq(&wrapped, &inner),
         "a flag-off family is not wrapped"
     );
-    let flag = HostConfig::from_env(Some("/x/h".into()), Some("true")).unwrap();
-    assert!(!flag.claude, "the host wants exactly 1");
 }
 
 #[test]
@@ -327,7 +329,7 @@ fn cursor_runs_on_the_host_only_behind_its_own_flag_and_offers_one_mode() {
     let known = known_engine("cursor").unwrap();
     let rust: Arc<dyn crate::agents::driver::EngineDriver> =
         Arc::new(AcpDriver::known(known.as_custom(), known));
-    // The Claude flag alone leaves Cursor exactly as it was.
+    // The Claude flag alone (on by default) leaves Cursor exactly as it was.
     let claude_only = HostConfig::from_env(Some("/x/h".into()), Some("1")).unwrap();
     assert!(!claude_only.cursor);
     let hub = HostHub::new(&claude_only);
@@ -343,7 +345,7 @@ fn cursor_runs_on_the_host_only_behind_its_own_flag_and_offers_one_mode() {
             .with_cursor(Some("true"))
             .cursor
     );
-    let on = HostConfig::from_env(Some("/x/h".into()), None)
+    let on = HostConfig::from_env(Some("/x/h".into()), Some("0"))
         .unwrap()
         .with_cursor(Some("1"));
     assert!(on.cursor && !on.claude);

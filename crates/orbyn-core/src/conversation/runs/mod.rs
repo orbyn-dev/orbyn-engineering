@@ -286,6 +286,8 @@ pub struct RunManager {
     /// The latest note an MCP App page left for the model, per thread, until the
     /// thread's next turn takes it. Kept in memory: a restart forgets an unsent note.
     app_notes: Mutex<HashMap<String, crate::tools::mcp_apps::AppNote>>,
+    /// What a run was asked to return (M20), by run id, from admission until its turn is read.
+    results: Mutex<HashMap<String, result::ResultRequest>>,
     /// A taken note's timeline record, per run, written once the run is active.
     notes_sent: Mutex<HashMap<String, AgUiEvent>>,
     /// Threads being rewound. An engine rollback rewrites the session a run would
@@ -397,6 +399,7 @@ impl RunManager {
             stopped_with_parent: Mutex::new(HashSet::new()),
             limit_signals: Mutex::new(HashMap::new()),
             app_notes: Mutex::new(HashMap::new()),
+            results: Mutex::new(HashMap::new()),
             notes_sent: Mutex::new(HashMap::new()),
             rewinding: Mutex::new(HashSet::new()),
             crew: OnceLock::new(),
@@ -429,6 +432,7 @@ mod checkpoints;
 mod confine;
 mod execute;
 mod masked_files;
+pub mod result;
 mod stops;
 mod turn;
 

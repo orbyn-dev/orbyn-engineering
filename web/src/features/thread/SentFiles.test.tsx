@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/types";
+import type { SentAttachment } from "../../product/timeline/types";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
 import { TimelineThread } from "./timelineThread";
@@ -12,7 +13,7 @@ const thread: Thread = { id: "t", project_id: "p", title: "Thread", engine: "cod
   last_run_state: null, created_at: "", updated_at: "" };
 
 const answer = (body: Blob) => vi.fn(async () => ({ ok: true, status: 200, blob: async () => body }));
-const view = (text: string, attachments = [{ id: "a1", name: "notes.txt", mime: "text/plain", size: 5 }]) =>
+const view = (text: string, attachments: readonly SentAttachment[] = [{ id: "a1", name: "notes.txt", mime: "text/plain", size: 5 }]) =>
   render(
     <TimelineThread value="t">
       <SentFiles text={text} attachments={attachments} />
@@ -70,6 +71,20 @@ it("draws a sent image as a thumbnail in its message's gallery and releases the 
   expect(screen.queryByText("1 of 1")).toBeNull();
   mounted.unmount();
   await waitFor(() => expect(revoke).toHaveBeenCalledWith("blob:shot1"));
+});
+
+it("says where a sent Snap Shot came from, as text", async () => {
+  URL.createObjectURL = vi.fn(() => "blob:snap");
+  URL.revokeObjectURL = vi.fn();
+  vi.stubGlobal("fetch", png());
+  view("look", [{
+    id: "a9",
+    name: "Snap Shot · Safari.png",
+    mime: "image/png",
+    size: 1,
+    source: { kind: "snap_shot", captured_at: "2026-11-22T14:32:08Z", app_name: "Safari", window_title: "Acme · Sign in" },
+  }]);
+  expect(await screen.findByText("Snap Shot · Safari · Acme · Sign in")).toBeVisible();
 });
 
 it("pages through the message's images and leaves a file that is not a picture as a chip", async () => {

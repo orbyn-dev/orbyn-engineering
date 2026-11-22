@@ -11,6 +11,9 @@ export const useFlowCrews = () => useAsync("flow-crews", (signal) => flowApi.cre
 
 export const useFlowTask = (id: string) => useAsync(`flow-task:${id}`, (signal) => flowApi.task(id, signal));
 
+/** One work task's Run page read. A 404 means this service has no run read; the page keeps its Flow-based records. */
+export const useRunPage = (id: string) => useAsync(`flow-run:${id}`, (signal) => flowApi.run(id, signal));
+
 /** Reads again on a timer while the window is shown. Nothing is written. */
 export function useRefresh(reload: () => Promise<void>, paused: boolean) {
   useEffect(() => {

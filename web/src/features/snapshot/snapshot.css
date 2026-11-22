@@ -1,0 +1,301 @@
+/* Snap Shot (K49 and the draft flow, docs/snapshots.md). Values follow the snapshot-* design frames. */
+.snapshot-button {
+  position: relative;
+}
+
+.snapshot-button.on {
+  color: var(--t1);
+  background: var(--raise);
+}
+
+.snapshot-button-hint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--btn);
+  color: var(--btnt);
+  font: 11px var(--mono);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 8;
+}
+
+.snapshot-button:hover .snapshot-button-hint,
+.snapshot-button:focus-visible .snapshot-button-hint {
+  display: inline-flex;
+}
+
+.snapshot-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: #fff;
+  opacity: 0.35;
+  pointer-events: none;
+  animation: snapshot-flash 120ms ease-out both;
+}
+
+@keyframes snapshot-flash {
+  from { opacity: 0.55; }
+  to { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snapshot-flash { animation: none; opacity: 0.2; }
+}
+
+.snapshot-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 12px 8px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  min-width: 0;
+}
+
+.snapshot-thumb,
+.snapshot-detail-thumb {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 38px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--raise);
+  border: 1px solid var(--line);
+}
+
+.snapshot-thumb img,
+.snapshot-detail-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.snapshot-thumb-empty {
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(135deg, var(--raise) 0 6px, var(--bg) 6px 12px);
+}
+
+.snapshot-chip-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.snapshot-chip-text b {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 550;
+  min-width: 0;
+}
+
+.snapshot-chip-title {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-chip-text small {
+  color: var(--t3);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-chip-remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--t3);
+}
+
+.snapshot-chip-remove:hover { background: var(--raise); color: var(--t1); }
+
+.snapshot-capturing .snapshot-thumb { position: relative; }
+.snapshot-spin { width: 14px; height: 14px; border-color: var(--t3); border-top-color: var(--t1); }
+
+.snapshot-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.snapshot-detail-thumb { width: 120px; height: 78px; }
+.snapshot-detail-head > span:last-child { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.snapshot-detail-head small { color: var(--t3); font-size: 11.5px; }
+
+.snapshot-detail-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.snapshot-detail-rows > div {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.snapshot-detail-rows dt { color: var(--t3); }
+.snapshot-detail-rows dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
+.snapshot-accessibility {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.snapshot-accessibility-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.snapshot-accessibility pre {
+  margin: 0;
+  padding: 7px 10px;
+  max-height: 180px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--raise);
+  color: var(--t2);
+  font: 11.5px var(--mono);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.snapshot-accessibility small { color: var(--t3); font-size: 11.5px; line-height: 1.4; }
+
+.snapshot-recorder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 8px;
+  outline: none;
+}
+.snapshot-recorder:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.snapshot-recorder-line { color: var(--t3); font-size: 12px; }
+.snapshot-recorder-error { flex-basis: 100%; margin: 0; color: var(--red); font-size: 11.5px; }
+
+.pb-keys { display: inline-flex; gap: 3px; }
+.pb-keys kbd {
+  min-width: 20px;
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--raise);
+  color: var(--t1);
+  font: 11px var(--mono);
+  text-align: center;
+}
+.pb-keys.rec kbd { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+
+.snapshot-setup-intro { margin: 0 0 10px; color: var(--t3); font-size: 12.5px; line-height: 1.5; }
+.snapshot-setup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+}
+.snapshot-setup-row > div:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.snapshot-setup-row b { font-size: 12.5px; font-weight: 550; }
+.snapshot-setup-row small { color: var(--t3); font-size: 11.5px; line-height: 1.45; }
+.snapshot-setup-control { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.snapshot-setup-note { margin: 8px 0 0; color: var(--t3); font-size: 11.5px; }
+.snapshot-waiting { display: inline-flex; align-items: center; gap: 6px; color: var(--t3); font-size: 12px; white-space: nowrap; }
+.snapshot-works { display: inline-flex; align-items: center; gap: 5px; color: var(--green, var(--t1)); font-size: 12px; }
+
+.snapshot-excluded-intro { margin: 0 0 8px; color: var(--t3); font-size: 12.5px; }
+.snapshot-excluded-list { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.snapshot-excluded-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.snapshot-excluded-list li > span:first-child { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.snapshot-excluded-list b { font-weight: 500; font-size: 12px; overflow-wrap: anywhere; }
+.snapshot-excluded-list small { color: var(--t3); font-size: 11px; }
+.snapshot-excluded-added { margin-top: 12px; color: var(--t3); font-size: 12px; }
+.snapshot-excluded-empty { margin: 4px 0 8px; color: var(--t3); font-size: 11.5px; }
+.snapshot-excluded-add { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.snapshot-excluded-add input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--t1);
+  font: inherit;
+  font-size: 12px;
+}
+.snapshot-excluded-count { margin: 8px 0 0; color: var(--t3); font-size: 11.5px; }
+.snapshot-excluded-error { margin: 6px 0 0; color: var(--red); font-size: 11.5px; }
+.snapshot-added-count { color: var(--t3); font-size: 12px; white-space: nowrap; }
+.snapshot-note { margin: 2px 0 0; color: var(--t3); font-size: 11.5px; line-height: 1.45; }
+
+.snapshot-error {
+  align-items: center;
+  border-color: color-mix(in srgb, var(--red) 45%, var(--line));
+  color: var(--red);
+}
+
+.snapshot-warn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border-color: color-mix(in srgb, var(--amber, var(--t3)) 45%, var(--line));
+}
+
+@media (max-width: 700px) {
+  .snapshot-chip { margin: 0 8px 8px; }
+  .snapshot-setup-row { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .snapshot-setup-control { justify-content: flex-start; }
+}
+
+/* The draft chip takes the strip's width, over the rows of ordinary files. */
+.attachment-strip li.attachment-snapshot { flex: 1 0 100%; }
+.attachment-strip li.attachment-snapshot .snapshot-chip { margin: 0 0 4px; }
+
+.pb-snap { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.snapshot-preview-settings { padding-top: 0; }

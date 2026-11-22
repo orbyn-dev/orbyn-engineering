@@ -208,6 +208,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/threads/{id}/vcs/refs/switch"),
     ("POST", "/api/threads/import"),
     ("POST", "/api/threads/{id}/transcripts"),
+    ("PUT", "/api/attachments/{id}/source"),
     ("POST", "/api/issues/trackers/{tracker}/connect"),
     ("POST", "/api/issues/trackers/{tracker}/disconnect"),
     ("POST", "/api/issues/start-thread"),
@@ -920,6 +921,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/threads/{id}/transcripts",
         "attaches a file the person picked as untrusted context for the thread's next message",
+    ),
+    (
+        "PUT",
+        "/api/attachments/{id}/source",
+        "sets the app name, title and window text that go into the next prompt as untrusted text, so a service-token agent cannot rewrite a Snap Shot the person has already reviewed",
     ),
     (
         "POST",

@@ -37,8 +37,13 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    person starts, never an engine spawn. They are in no SQLite row, log, audit row, answer or export, and a run's terminal
    output is masked for them by exact match.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
-3. Claude uses the CLI, never the Agent SDK. `--bare` is forbidden on subscription
-   sessions because it ignores OAuth login.
+3. Claude runs through the person's own installed `claude`. The default path is the engine host with the Claude Agent SDK
+   (a dependency used as shipped, never copied or modified); the CLI driver stays a path the person can choose. Both
+   run the unmodified `claude` binary, never collect, read or store Claude.ai credentials (the engine keeps its own
+   login), and never use `--bare`, which ignores subscription login. The person's `claude_engine_path` setting (`sdk`,
+   the default, or `cli`, a device-local preference) is read at the start of each run; `ORBYN_ENGINE_HOST_CLAUDE` is opt-out
+   (only `0` turns the host off). The core default is on; the settings picker for `claude_engine_path` is *Planned* (Engineering 1), and a packaged turn on the SDK path is not yet observed
+   (docs/sdk-default-plan.md). A person's choice is never switched silently: when the host is down the person sees why and may pick the CLI.
 4. Orbyn writes nothing into target repositories or engine user config: no skills,
    instructions, excludes or context maps. The project file is read-only to Orbyn.
 5. A folder must be trusted before an engine, project script or terminal runs in
@@ -2195,8 +2200,8 @@ OpenCode 2.2.5, which ran real turns through `orbynd` on macOS.
 instance can still be edited or removed), an installed app such as Antigravity that holds no ACP server, a
 program refused for being another CLI (Grok), and the engines not built. Each row has a group (In use, Found,
 More engines, Can't start, Not found, Planned; the page puts a startable engine under In use when its per-project
-switch is on) and labels: Not verified (a known ACP engine that has not run on a real install; today only
-OpenCode 2.2.5 has), Unmanaged (the engine cannot be gated or cannot ask), Limited support (the signed manifest's
+switch is on) and labels: Not verified (a known ACP engine that has not run on a real install; today
+OpenCode 2.2.5 is the only one that has), Unmanaged (the engine cannot be gated or cannot ask), Limited support (the signed manifest's
 `Unsupported` or `Graceful` version), Can't start (a `Broken` version, or an app with no ACP server), Not found
 and Planned (Pi, Muse Code, ZCode, and Cline's effort flag). Not found, Unmanaged and a `Broken` Can't start come
 from the same `ProviderFacts` the crew router's hard filters read. The Windows and Linux places an app is looked
@@ -2221,6 +2226,11 @@ the method's arguments. The provider card shows it to copy, and a run that fails
 login names it. Orbyn never runs it, never calls `authenticate` or `logout`, and offers no
 `env_var` method, since that means collecting a key. A method that sets variables, or a word
 a Windows or Unix shell would read differently, gives no command.
+
+The provider status also keeps the last start's issue: the ACP driver records `signed_out` when
+a handshake or session open is refused with ACP's auth-required code, and `failed` when it
+fails any other way. A successful open or model handshake clears it, so a signed-out engine
+reports the login again only until it next starts cleanly.
 
 Skills come from the workspace, in place. Nothing is copied, packed or signed.
 
@@ -3601,7 +3611,9 @@ for older shells. Environment: `ORBYN_DATA_DIR`, `ORBYN_ACP_REGISTRY_URL`, `ORBY
 
 All bodies are JSON and errors are `ApiError` with a stable `code`. A body that cannot be
 read as the route's JSON is `400 invalid_input`; its message names the field that refused and never
-the value that was sent (an account body can carry a password or a sign-in code). Auth is
+the value that was sent (an account body can carry a password or a sign-in code). A wrong-typed
+value under a key in a map field names that field and never repeats the caller's key, which the
+path library renders like a field. Auth is
 `Authorization: Bearer <token>`, or the session cookie. SSE, WebSocket and
 `files/raw` and the exact GET/HEAD `/api/media/image` route also accept `?token=`
 because browsers cannot set headers on them.
@@ -3802,7 +3814,7 @@ every method, path and which routes need a credential.
 | `GET /api/engines/:id/limits?force=`, `GET /api/threads/:id/limits?force=` | `EngineLimits`; `422 unsupported` if the engine reports none |
 | `GET /api/engines/:id/models?refresh=` | `EngineModels`: models with their options, engine-wide options, agents, output styles, `remembered` |
 | `GET, POST /api/policy/rules`, `DELETE /api/policy/rules/:id` | Internal: diagnostics only, no client uses these |
-| `GET /api/audit?thread_id=&limit=` | Internal: diagnostics only, no client uses this |
+| `GET /api/audit?thread_id=&limit=` | Internal: diagnostics only, no client uses this. Each row's stored `detail` and `target` are masked with the person's redaction patterns on the read, values and keys alike; the actor, action, target, decision, source, thread and run fields are as stored |
 | `GET /api/computer`, `POST /api/threads/:id/computer` | Status, and a governed action |
 | `GET /api/account` | `AccountView`: `available` (the sign-in gate is on and a backend answers; false means the window shows nothing of the account), the session's email and device name, the sync line, `confirmed` and `deletion_scheduled`. The only account route that answers under the `Off` gate |
 | `POST /api/account/sign-up/{invite,start,resend,code}` | Sign-up in five steps (invite, email, password, emailed code, done); only the invite check, the password step, the resend and the code send anything. The email step sends nothing. `start` is the password step: it carries the invite, the email and the password once, creates the account and emails the code (the device check and the retry limit are here; a password under twelve characters is `422 weak_password`). `code` signs in; five wrong codes in a row refuse every code (`422 invalid_code`, the same answer) until `resend`. The invite and emailed code normalise case, hyphens and spaces. There is no `register` route |
@@ -3817,3 +3829,16 @@ every method, path and which routes need a credential.
 | `POST /auth/session` | Exchange a remote access key for a cookie (`204`) |
 | `POST /agui/threads/:id` | External AG-UI endpoint (`RunAgentInput` in, SSE out) |
 | `POST /mcp/:thread_token` | Per-run MCP server |
+
+## Typed turn result
+
+A send (`POST /api/threads/{id}/runs`) may carry `result_schema`, a JSON Schema object (draft 2020-12, at most 16 KiB, nesting at
+most 32, local `#/` references only, no `$dynamicRef`; otherwise `400 invalid`, "The result schema is not valid."), or
+`purpose: "terminal_proposal"` where Orbyn supplies the schema; the two are exclusive, and a send without approvals takes neither.
+The core adds one fixed instruction after the person's text asking the engine to end its final message with a fenced `json` block. When
+the run completes it takes the last such block of the final assistant message (or the whole message if it is JSON), checks it against
+the schema with no network loader (so nothing is ever fetched) and records one run event `orbyn.turn_result` (`CUSTOM`):
+`{ok: true, value}` (value at most 256 KiB) or `{ok: false, reason}` with `reason` one of `no_json`, `not_valid_json`,
+`schema_mismatch`, `too_large`. No retry or repair turn; a cancelled or failed run records none. The event is stored with the run like
+any other and reads back from the thread history. Log lines carry the run id and sizes only. **Planned**: each engine's own structured
+output; today every engine gets the instruction. Not verified on a real engine.

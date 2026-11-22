@@ -51,12 +51,13 @@ const ENGINE_NEVER_SYNC: [&str; 28] = [
 
 /// The catalog keys outside the allowlist that the Engine would accept but the app keeps on the
 /// device anyway. A new catalog key lands in neither list until someone decides which it is.
-const APP_ONLY: [&str; 25] = [
+const APP_ONLY: [&str; 28] = [
     "auto_pull",
     "auto_resume_limited_threads",
     "auto_settle_after_days",
     "auto_settle_keep_pull_requests",
     "auto_settle_on_merge",
+    "claude_engine_path",
     "compact_idle_threads",
     "continue_threads_after_update",
     "crew_digest",
@@ -75,6 +76,8 @@ const APP_ONLY: [&str; 25] = [
     "snooze_limited_threads",
     "source_control_writing_style",
     "task_skip_near_limit",
+    "terminal_attention_enabled",
+    "terminal_attention_quiet_seconds",
     "warm_next_turn",
     "worktree_submodules",
 ];
@@ -118,8 +121,8 @@ fn every_allowlisted_key_is_one_the_engine_accepts() {
 fn the_non_allowlisted_keys_are_the_named_engine_list_plus_the_named_others() {
     let all: BTreeSet<&str> = not_allowlisted().into_iter().collect();
     let named: BTreeSet<&str> = ENGINE_NEVER_SYNC.into_iter().chain(APP_ONLY).collect();
-    assert_eq!(all.len(), 53);
-    assert_eq!(named.len(), 53, "a key is named twice");
+    assert_eq!(all.len(), 56);
+    assert_eq!(named.len(), 56, "a key is named twice");
     assert_eq!(
         all, named,
         "a new catalog key needs a decision: allowlist, Engine list or app-only"

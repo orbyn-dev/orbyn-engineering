@@ -97,7 +97,7 @@ export function OracleReport() {
             <div className="cx-nvc">
               <h6><Ic n="eye" sm />{"Model reviews "}<span className="cx-rtag">Advisory</span></h6>
               <div className="cx-prf"><span>Claude Code</span><b>Correctness · 0 findings</b><span>OpenCode</span><b>Performance · 1 unconfirmed finding</b></div>
-              <span className="cx-cmn">A review by a model is a finding to look at. It never passes or fails a task: checks and your decision do.</span>
+              <span className="cx-cmn">A review by a model is a finding to look at. It does not pass or fail a task: checks and your decision do.</span>
             </div>
             <div className="cx-nvc">
               <h6><Ic n="shield" sm />{"Answer key "}<span className="cx-rtag">Independent</span></h6>
