@@ -139,6 +139,7 @@ impl Compiled {
     }
 
     /// Every detector index this holds or leaves apart.
+    #[cfg(test)]
     fn every(&self) -> Vec<usize> {
         let mut every = self.set_at.clone();
         every.extend_from_slice(&self.apart);
@@ -291,7 +292,7 @@ mod tests {
             format!("{}{}", github(), key()),
             format!("{}\n{}", github(), key()),
             // A value a built-in and a person's pattern both read.
-            format!("the key {key} is here"),
+            format!("the key {} is here", key()),
             // Formats next to each other, one inside an assignment.
             format!("HOST={} and id={}", key(), github()),
             // Case-insensitive formats, and a header that hides the rest.
@@ -373,11 +374,12 @@ mod tests {
     #[test]
     fn a_text_longer_than_one_window_masks_the_same_at_its_edges() {
         let secret = key();
-        // A secret at the start, and one past the first window's end.
+        // A secret at the start, and one past the first window's end. Each sits on its own line:
+        // a key run into a word character has no `\b` and is not a match.
         let mut text = String::with_capacity(MAX_APPLY_BYTES + 4096);
-        text.push_str(&secret);
+        text.push_str(&format!("\n{secret}\n"));
         text.push_str(&"filler line\n".repeat(MAX_APPLY_BYTES / 12));
-        text.push_str(&secret);
+        text.push_str(&format!("\n{secret}\n"));
         text.push_str("tail\n");
         assert!(text.len() > MAX_APPLY_BYTES, "the text fits one window");
         let redactor = Redactor::locked();
