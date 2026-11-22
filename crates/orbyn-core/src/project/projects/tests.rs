@@ -85,7 +85,10 @@ async fn a_project_name_the_folder_cannot_hold_is_refused_before_anything_is_mad
             "bad:name*?<x",
             "A project name cannot contain / \\ : * ? \" < > |.",
         ),
-        ("../x|y", "A project name cannot contain / \\ : * ? \" < > |."),
+        (
+            "../x|y",
+            "A project name cannot contain / \\ : * ? \" < > |.",
+        ),
         (r"a\b", "A project name cannot contain / \\ : * ? \" < > |."),
         ("a/b", "A project name cannot contain / \\ : * ? \" < > |."),
         (".hidden", "A project name cannot start with a dot."),
@@ -128,7 +131,11 @@ async fn a_chosen_base_directory_keeps_the_new_project_inside_it() {
         .new_project("Notes", false, chosen.to_str())
         .await
         .unwrap();
-    assert_eq!(PathBuf::from(&project.path), chosen, "the name is the folder");
+    assert_eq!(
+        PathBuf::from(&project.path),
+        chosen,
+        "the name is the folder"
+    );
 }
 
 #[tokio::test]

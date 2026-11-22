@@ -259,7 +259,12 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
             ));
         }
     }
-    if fits && BACKGROUND_INTERVALS.contains(&definition.key) && value.as_f64().is_some_and(|minutes| minutes < INTERVAL_MIN_MINUTES) {
+    if fits
+        && BACKGROUND_INTERVALS.contains(&definition.key)
+        && value
+            .as_f64()
+            .is_some_and(|minutes| minutes < INTERVAL_MIN_MINUTES)
+    {
         // The rows in Settings show `min: 1` on their fields; a client that sends 0
         // would be stored and read back as a pause the field cannot show.
         return Err(CoreError::Invalid(format!(
@@ -631,8 +636,14 @@ mod tests {
             let interval = definition(key).unwrap();
             assert!(check(interval, &json!(0)).is_err(), "{key} accepted 0");
             assert!(check(interval, &json!(-5)).is_err(), "{key} accepted -5");
-            assert!(check(interval, &json!(1)).is_ok(), "{key} refused its own min");
-            assert!(check(interval, &json!(5)).is_ok(), "{key} refused a normal value");
+            assert!(
+                check(interval, &json!(1)).is_ok(),
+                "{key} refused its own min"
+            );
+            assert!(
+                check(interval, &json!(5)).is_ok(),
+                "{key} refused a normal value"
+            );
         }
     }
 
