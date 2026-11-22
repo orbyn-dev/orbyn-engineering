@@ -9,7 +9,7 @@ export function FlowNarrowWindow() {
     <Frame width={640} height={1200}>
       <div className="cx-cwpg">
             <FlowHead sub="Login redirect crew · 5 runs" />
-            <div className="cx-cwtabs" style={{ padding: "8px 14px", overflow: "hidden" }}><Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox · 4", "Report"]} on={0} /></div>
+            <div className="cx-cwtabs" style={{ padding: "8px 14px", overflow: "hidden" }}><Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox", "Report"]} on={0} /></div>
             <div style={{ padding: "8px 14px 0", display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", flex: "none" }}>
               <Btn className="cx-ghost" style={{ height: "26px", padding: "0 10px" }}>All tasks</Btn>
               <b style={{ fontWeight: 500, color: "var(--color-text)", fontSize: "15px" }}>Use next in the auth redirect</b>

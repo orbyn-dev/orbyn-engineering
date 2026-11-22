@@ -1,4 +1,4 @@
-import { describeFrames } from "../shared/test-support";
+import { describeFrames, describeInboxLabel } from "../shared/test-support";
 import { ORACLE_FRAMES } from "./names";
 
 /** What each frame must show: text taken from its design. */
@@ -24,3 +24,4 @@ const SHOWS: Record<string, string[]> = {
 };
 
 describeFrames("Independent oracle frames (Crew Designs v22)", ORACLE_FRAMES, SHOWS);
+describeInboxLabel(ORACLE_FRAMES);
