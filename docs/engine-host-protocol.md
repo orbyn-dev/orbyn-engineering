@@ -349,7 +349,7 @@ turn heads, and the core opens a new host session for every run), so the core do
   handoff as before. Runs stored before this change (their engine turn is the synthetic host id) fall back the same way.
 
 Tested against a fake SDK only; not yet against a real `claude`. The core side is built and tested against the stand-in
-host; a real provider rewind is unverified.
+host, and a real rewind was observed on 22 November 2026 on the packaged service (build 2be1fb834, SDK path, signed-in `claude`, no tools): after a rewind through the second run, a third run knew only the first run's code word, twice. Not checked: `restore_files`, a rewind to the first run, threads older than the host.
 
 `readSubagent` is announced and gated in the core (`GATED`), but the core has no method that sends it yet. It gets one after the
 beta, with a subagent transcript panel.
