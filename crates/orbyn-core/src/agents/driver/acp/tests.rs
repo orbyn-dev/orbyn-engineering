@@ -384,7 +384,7 @@ fn a_launch_names_the_other_cli_it_refuses() {
         path: path.clone(),
     };
     let driver = grok_driver("grok");
-    let text = driver.refusal(&other).unwrap().to_string();
+    let text = super::refusal(driver.known, &other).unwrap().to_string();
     assert!(text.contains("grok-cli/dist/index.js"), "{text}");
     assert!(text.contains("another program"), "{text}");
     let real = ResolvedCommand {
@@ -392,13 +392,13 @@ fn a_launch_names_the_other_cli_it_refuses() {
         prefix: Vec::new(),
         path: "/usr/local/bin/grok".into(),
     };
-    assert!(driver.refusal(&real).is_none());
+    assert!(super::refusal(driver.known, &real).is_none());
     let own = AcpDriver::new(
         crate::agents::engines::known::known_engine("grok")
             .unwrap()
             .as_custom(),
     );
-    assert!(own.refusal(&other).is_none());
+    assert!(super::refusal(own.known, &other).is_none());
 }
 
 #[test]

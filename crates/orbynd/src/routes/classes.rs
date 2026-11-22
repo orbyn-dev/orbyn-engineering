@@ -111,6 +111,8 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/merge"),
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
+    // Devices: every action is a Person write (docs/devices.md).
+    ("POST", "/api/devices/{id}/actions"),
     // Engines, updates, workspace and the shell.
     ("POST", "/api/acp/registry/{id}"),
     ("POST", "/api/engine-host/{family}/restart"),
@@ -1209,6 +1211,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "DELETE",
         "/api/threads/{id}/repos/{repo_id}",
         "the person removes a repository from a thread, which removes its worktree",
+    ),
+    (
+        "POST",
+        "/api/devices/{id}/actions",
+        "controls a local device and can expose its screen; every action is a Person write (docs/devices.md)",
     ),
 ];
 

@@ -38,6 +38,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/threads/{id}/family", get(thread_family))
         .route("/api/threads/{id}/items", get(list_items))
         .route("/api/threads/{id}/messages", get(thread_messages))
+        .route("/api/threads/{id}/earlier", get(earlier_messages))
         .route("/api/threads/{id}/export", get(export_transcript))
         .route("/api/threads/import", post(import_transcript))
         .route("/api/threads/{id}/transcripts", post(attach_transcript))
@@ -408,6 +409,23 @@ async fn switch_engine(
     ApiJson(body): ApiJson<SwitchEngine>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.switch_engine(&id, &body, LOCAL_USER)?))
+}
+
+#[derive(Deserialize)]
+struct EarlierQuery {
+    before: Option<String>,
+}
+
+/// The messages an imported thread had before it was imported, read from the engine's own
+/// session file. Read only: no thread event, no provider write and no path from the request.
+async fn earlier_messages(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<EarlierQuery>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state.core.earlier_messages(&id, query.before.as_deref())?,
+    ))
 }
 
 #[derive(Deserialize)]

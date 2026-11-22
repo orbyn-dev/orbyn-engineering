@@ -44,3 +44,27 @@ pub struct HistorySessionImported {
     pub imported: bool,
 }
 }
+
+wire! {
+/// One message an imported thread had before it was imported. `text` is plain text and never markup.
+pub struct EarlierMessage {
+    /// `user`, `assistant` or `tool`.
+    pub role: String,
+    pub text: String,
+}
+}
+
+wire! {
+/// One page of an imported thread's earlier messages, oldest first for the page.
+pub struct EarlierPage {
+    /// The provider the history came from, `Claude Code` or `Codex`.
+    pub source: String,
+    /// How many messages the history holds in all.
+    pub total: u32,
+    /// When the thread was imported.
+    pub imported_at: String,
+    /// The cursor for the page before this one, or `null` at the start of the history.
+    pub next_before: Option<String>,
+    pub messages: Vec<EarlierMessage>,
+}
+}

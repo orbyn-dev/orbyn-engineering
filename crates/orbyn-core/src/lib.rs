@@ -8,6 +8,7 @@ pub mod browser;
 pub mod conversation;
 pub mod credentials;
 pub mod crew;
+pub mod devices;
 pub mod error;
 pub mod governance;
 pub mod host;
