@@ -17,7 +17,7 @@ fn without_markers(text: &str) -> String {
     out
 }
 
-fn cut(text: &str, limit: usize) -> &str {
+pub(super) fn cut(text: &str, limit: usize) -> &str {
     if text.len() <= limit {
         return text;
     }

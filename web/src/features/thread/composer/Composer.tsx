@@ -26,7 +26,8 @@ import { ComposerBar } from "./ComposerBar";
 import { ComposerField } from "./ComposerField";
 import { useCommand as useSharedCommand } from "../../../product/shell/shortcuts";
 import { useQueueReload } from "./useQueueReload";
-import { ComposerHostLine, useHostLine } from "../../enginehost";
+import { ComposerHostLine, ClaudePathLine, useHostLine } from "../../enginehost";
+import { isClaudeEngine } from "../../../product/engines/claudePath";
 import { cursorThreadApi, overrideRun } from "../../cursorthread";
 import { useEngineGate } from "./useEngineGate";
 import { useStopRun } from "./useStopRun";
@@ -463,6 +464,7 @@ export function Composer({
       {stashOpen ? (
         <StashDrawer entries={stashes} onRestore={restoreStash} onDelete={dropStash} onClose={() => setStashOpen(false)} />
       ) : null}
+      {isClaudeEngine(thread.engine, engine?.instance_of) ? <ClaudePathLine engineId={thread.engine} instanceOf={engine?.instance_of} /> : null}
       <div
         className="composer-box"
         {...boxProps}

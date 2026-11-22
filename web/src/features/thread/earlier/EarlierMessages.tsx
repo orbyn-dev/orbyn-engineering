@@ -16,22 +16,21 @@ const importedOn = (iso: string) => {
 
 /**
  * What an imported thread said before it was imported, above a line saying where it came from. Read only: no buttons on the
- * messages, which cannot be edited or rewound. Draws nothing without a client, for a thread that was not imported, and on a
- * failure that is not about the history.
+ * messages, which cannot be edited or rewound. The read is skipped for a thread the record says was not imported, and the screen
+ * draws nothing for one that was not imported, and on a failure that is not about the history.
  */
-export function EarlierMessages({ threadId }: { threadId: string }) {
+export function EarlierMessages({ threadId, imported }: { threadId: string; imported: boolean }) {
   const [read, setRead] = useState<Read>({ state: "idle" });
   const live = useRef<AbortController | null>(null);
 
   const load = useCallback(
     (before?: string) => {
-      const client = earlierApi();
-      if (!client) return;
+      if (!imported) return;
       live.current?.abort();
       const control = new AbortController();
       live.current = control;
       if (before === undefined) setRead({ state: "loading" });
-      client.read(threadId, before === undefined ? {} : { before }, control.signal).then(
+      earlierApi().read(threadId, before === undefined ? {} : { before }, control.signal).then(
         (page) => {
           if (control.signal.aborted) return;
           if (page === null) return setRead({ state: "idle" });
@@ -42,11 +41,12 @@ export function EarlierMessages({ threadId }: { threadId: string }) {
         },
         (failure: unknown) => {
           if (control.signal.aborted) return;
-          setRead(failure instanceof ApiFailure && failure.code === "history_unreadable" ? { state: "unreadable" } : { state: "idle" });
+          const changed = failure instanceof ApiFailure && (failure.code === "history_unreadable" || failure.code === "bad_cursor");
+          setRead(changed ? { state: "unreadable" } : { state: "idle" });
         },
       );
     },
-    [threadId],
+    [imported, threadId],
   );
 
   useEffect(() => {
