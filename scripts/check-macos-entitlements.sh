@@ -9,6 +9,7 @@
 #     get-task-allow or disable-library-validation, which would let a same-user process read orbynd's memory.
 #   get-task-allow: never, on any binary.
 #
+# It also verifies the bundle's signature as a whole (control 7).
 # --release also requires the hardened runtime flag ("runtime") on every binary. Without it, hardened runtime is
 # reported as skipped: an ad hoc build (signingIdentity "-", hardenedRuntime false) has none. Signing itself is blocked
 # until there is an Apple Developer ID, so today this can only run against an ad hoc build; a Developer ID build must
@@ -58,10 +59,16 @@ while IFS= read -r -d '' file; do
     fi
   done < <(entitlement_keys "$file")
   if [ "$release" = 1 ]; then
-    codesign -dv "$file" 2>&1 | grep -Eq 'flags=0x[0-9a-f]+\(([a-z,]*,)?runtime(,[a-z,]*)?\)' \
+    # Captured first: grep -q closing a pipe early would make codesign fail under pipefail.
+    details="$(codesign -dv "$file" 2>&1 || true)"
+    grep -Eq 'flags=0x[0-9a-f]+\(([a-z,]*,)?runtime(,[a-z,]*)?\)' <<<"$details" \
       || fail "$name has no hardened runtime flag"
   fi
 done < <(find "$app/Contents/MacOS" "$app/Contents/Frameworks" -type f -print0 2>/dev/null)
+
+# Control 7: the bundle's signature must verify as a whole, so a replaced or edited binary fails. Where the app sits
+# (not a folder a process of the same user can rewrite) is the OS's rule, App Management, and is not checked here.
+codesign --verify --deep --strict "$app" 2>/dev/null || fail "the app's signature does not verify (codesign --verify --deep --strict)"
 
 [ "$checked" -gt 0 ] || { echo "FAIL: no Mach-O binary found in $app" >&2; exit 1; }
 if [ "$release" = 0 ]; then echo "Hardened runtime: not checked (no --release; an ad hoc build has none)."; fi
