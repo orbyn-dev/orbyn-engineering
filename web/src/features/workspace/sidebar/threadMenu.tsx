@@ -3,6 +3,7 @@ import {
   CircleCheck,
   Clock,
   Copy,
+  Download,
   Folder,
   FolderInput,
   FolderTree,
@@ -30,6 +31,7 @@ import { Button, Field } from "../../../ui/controls";
 import { Dialog } from "../../../ui/Dialog";
 import type { MenuItem } from "../../../ui/Menu";
 import { copyText } from "../../../product/ui/copyText";
+import { exportThreadTranscript } from "../../../product/state/transcriptExport";
 import {
   archiveThreads,
   copyReference,
@@ -177,6 +179,7 @@ export function threadMenuItems(input: ThreadMenuInput): MenuItem[] {
         { label: "Thread ID", icon: icon(Hash), onSelect: () => void copyText(thread.id, "Copied thread ID") },
       ],
     },
+    { label: "Export transcript", icon: icon(Download), onSelect: () => exportThreadTranscript(thread) },
     ...(thread.scratch
       ? []
       : [

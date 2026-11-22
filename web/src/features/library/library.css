@@ -1,5 +1,5 @@
 /* The Library panel (frames workflow-*): tabs, search, grouped lists, an item page, the forms and the dialogs. */
-.lib { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-width: 0; overflow: auto; }
+.lib { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-width: 0; overflow: auto; container: lib / inline-size; }
 .lib-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .lib-tab { border: 0; background: none; color: var(--color-muted); font: inherit; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 .lib-tab[aria-selected="true"] { color: var(--color-text); background: var(--color-rowHover); }
@@ -46,6 +46,7 @@
 .lib-dialog-wide { width: min(640px, calc(100vw - 32px)); }
 .lib-lists { min-width: 0; }
 .lib-group { min-width: 0; }
-@media (min-width: 700px) { .lib-body { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); } .lib-detail { border-top: 0; padding-top: 0; } }
+/* Two columns by the panel's own width, not the window's: a 380 px panel in a wide window keeps one column. 676 px of content is a 700 px panel with its 12 px padding. */
+@container lib (min-width: 676px) { .lib-body { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); } .lib-detail { border-top: 0; padding-top: 0; } }
 
 .lib-grants { margin: 4px 0 10px; padding-left: 18px; display: grid; gap: 4px; }

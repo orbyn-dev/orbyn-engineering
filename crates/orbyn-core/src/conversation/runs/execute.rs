@@ -188,7 +188,12 @@ impl RunManager {
             engine: thread.engine.clone(),
             family: driver.family(),
             // The same limit the thread's runs get, while this token is live unadopted.
-            write_scope: Some(write_scope(&root, Path::new(&thread.cwd), warm_start.1)),
+            write_scope: Some(write_scope(
+                &self.data_dir,
+                &root,
+                Path::new(&thread.cwd),
+                warm_start.1,
+            )),
             mode,
             plan,
         };

@@ -289,6 +289,19 @@ mod tests {
         assert_eq!(home_from(os(""), os("/p")), Some(PathBuf::new()));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn private_files_are_written_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::testing::TempDir::new();
+        let path = dir.path().join("account-keys-default.store");
+        write_private_atomic(&path, b"owner only").unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
     #[test]
     fn published_private_files_are_never_partial() {
         use std::sync::{

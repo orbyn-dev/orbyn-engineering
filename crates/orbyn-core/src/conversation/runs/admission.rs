@@ -285,7 +285,7 @@ impl RunManager {
             Path::new(&thread.cwd),
             self.store.engine_session(&thread.id)?.as_deref(),
         );
-        let scope = write_scope(root, Path::new(&thread.cwd), from_checkout);
+        let scope = write_scope(&self.data_dir, root, Path::new(&thread.cwd), from_checkout);
         let preparation_retry = self.store.is_preparation_retry(&run.id)?;
         let stops = Stops::default();
         // Registered before the task starts, so a cancel cannot miss it.

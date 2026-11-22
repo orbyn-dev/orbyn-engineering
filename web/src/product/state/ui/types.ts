@@ -7,6 +7,8 @@ export type ThemeChoice = "system" | "light" | "dark";
 export type ToastKind = "needs" | "done" | "failed" | "copied";
 /** A button on a toast, such as View. Using it closes the toast. */
 export interface ToastAction { label: string; run(): void }
+/** A toast that is still working shows a spinner and has no timer; the caller dismisses it. */
+export interface ToastOptions { busy?: boolean }
 
 export type LayoutChoice = "console" | "ledger" | "reading";
 export const LAYOUT_CHOICES: readonly LayoutChoice[] = ["console", "ledger", "reading"];

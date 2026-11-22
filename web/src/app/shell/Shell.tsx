@@ -3,6 +3,7 @@ import { CloneJobs, CommandPalette, FoldersNotice, GitHubStarPrompt, QuitConfirm
 import { ChevronLeft } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { SettingsPage } from "../../features/settings";
+import { TranscriptImportHost } from "../../features/thread";
 import { Toasts } from "../../product/ui/Toasts";
 import { usePanelMotionRoot } from "../../product/panels/panelAnimations";
 import { useTaskRunNotifications } from "../taskNotifications";
@@ -155,6 +156,7 @@ export function Shell() {
       ) : null}
       <BackgroundAnnouncer />
       <QuitConfirmation />
+      <TranscriptImportHost />
       <PreviewFloat threadId={route.name === "thread" ? route.id : null} />
       <Toasts
         lead={
