@@ -34,3 +34,9 @@
 .skills-placeholder { min-height: 104px; border-radius: var(--radius-lg); background: var(--color-sunken); }
 @media (max-width: 800px) { .skills-grid, .skills-loading { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 500px) { .skills-grid, .skills-loading, .skills-detail { grid-template-columns: minmax(0, 1fr); } .skills-search { margin-left: 0; } .skills-heading { flex-wrap: wrap; } }
+
+@media (max-width: 599px) {
+  .skills-heading { align-items: center; padding: 8px 8px 6px; }
+  .skills-filters { padding-left: 16px; padding-right: 16px; }
+  .skills-content, .skills-detail { padding-left: 16px; padding-right: 16px; }
+}

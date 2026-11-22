@@ -6,7 +6,7 @@ import { DRAFT_KEY } from "../../product/state/draftStore";
 import { navigate, routeHref } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
 import { Button } from "../../ui/controls";
-import { ErrorState } from "../../product/ui/states";
+import { ErrorState, NarrowBack } from "../../product/ui/states";
 import { useSkills } from "./skillsStore";
 import "./skills.css";
 
@@ -83,6 +83,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
     return (
       <section className="skills-page" aria-label="Skill">
         <header className="skills-heading">
+          <NarrowBack to={{ name: "skills" }} />
           <h1 ref={heading} tabIndex={-1} data-page-title>
             {selected.name}
           </h1>
@@ -112,6 +113,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
     return (
       <section className="skills-page" aria-label="Skills">
         <header className="skills-heading">
+          <NarrowBack />
           <h1 ref={heading} tabIndex={-1} data-page-title>
             Skills
           </h1>
@@ -129,6 +131,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
   return (
     <section className="skills-page" aria-label="Skills">
       <header className="skills-heading">
+        <NarrowBack />
         <h1 ref={heading} tabIndex={-1} data-page-title>
           Skills
         </h1>
