@@ -174,17 +174,17 @@ describe("the Taskboard on the board route", () => {
     expect(writes()).toHaveLength(0);
   });
 
-  it("draws the card menu with Cancel as a choice for a running task and the rest After the beta and inert", async () => {
+  it("draws the card menu with Cancel as a choice for a running task and the rest Planned and inert", async () => {
     const user = await open("crew");
     await user.click(within(column(/^Running/)).getByRole("button", { name: /^Actions for Use next/ }));
     const menu = await screen.findByRole("menu", { name: "Task actions" });
     const items = within(menu).getAllByRole("menuitem");
     expect(items.map((item) => item.textContent)).toEqual([
       "Cancel",
-      "Reassign engine After the beta",
-      "Message into a lane After the beta",
-      "Add reviewer lane After the beta",
-      "Propose a check After the beta",
+      "Reassign engine Planned",
+      "Message into a lane Planned",
+      "Add reviewer lane Planned",
+      "Propose a check Planned",
     ]);
     expect(items[0]).toBeEnabled();
     for (const item of items.slice(1)) expect(item).toBeDisabled();

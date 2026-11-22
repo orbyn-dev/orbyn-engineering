@@ -118,7 +118,7 @@ pub(crate) struct PreparedWriting {
 }
 
 impl PreparedWriting {
-    pub async fn check(&self, cwd: &Path) -> Result<()> {
+    pub async fn check(&self, cwd: &Path, data_dir: Option<&Path>) -> Result<()> {
         if let Some(head) = &self.head
             && utf8(read_git(cwd, &["rev-parse", "--verify", "HEAD"]).await?)? != *head
         {
@@ -134,7 +134,7 @@ impl PreparedWriting {
             ));
         }
         if let Some(expected) = &self.candidate
-            && candidate(cwd).await?.identity != expected.identity
+            && candidate(cwd, data_dir).await?.identity != expected.identity
         {
             return Err(invalid(
                 "The change changed while generating text. Review it and try again.",
@@ -256,7 +256,7 @@ impl Core {
         let style = style::parse(
             &self.preference("source_control_writing_style", Some(&thread.project_id))?,
         )?;
-        let instructions = style.instructions(cwd).await?;
+        let instructions = style.instructions(cwd, Some(&self.config.data_dir)).await?;
         let head = if pull {
             Some(utf8(
                 read_git(cwd, &["rev-parse", "--verify", "HEAD"]).await?,
@@ -270,7 +270,7 @@ impl Core {
             None
         };
         let snapshot = if action.commit_message.is_some() {
-            Some(candidate(cwd).await?)
+            Some(candidate(cwd, Some(&self.config.data_dir)).await?)
         } else {
             None
         };

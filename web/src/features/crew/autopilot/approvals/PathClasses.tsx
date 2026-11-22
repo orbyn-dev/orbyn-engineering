@@ -24,7 +24,7 @@ import { GUARD_WORKERS } from "./copy";
 import { Chip } from "./parts";
 
 const INTRO =
-  "Path classes sort files by sensitivity and list the engines allowed for each. They are blocking rules: Crew applies them before it scores any engine, and every routing decision is in the ledger. A task that touches two classes can use the engines both classes allow. They are stored in .orbyn/crew.json in this repo, and that file is the authority. Orbyn reads it and never writes it: a change is made in the file’s editor and is a normal reviewed change to the repo, with no separate owner role. Agents can never edit the file (it is on the always-denied list).";
+  "Path classes sort files by sensitivity and list the engines allowed for each. They are blocking rules: Crew applies them before it scores any engine, and every routing decision is in the ledger. A task that touches two classes can use the engines both classes allow. They are stored in .orbyn/crew.json in this repo, and that file is the authority. Orbyn reads it and does not write it: a change is made in the file’s editor and is a normal reviewed change to the repo, with no separate owner role. Agents can never edit the file (it is on the always-denied list).";
 
 /** The most paths one test takes (the service refuses more). */
 export const TEST_PATHS = 10;
@@ -118,7 +118,7 @@ function Detail({ rule, at, onClose, pinBlocked }: { rule: CrewClassRule; at: nu
           <div><dt>Allowed engines</dt><dd>{engines}</dd></div>
           <div><dt>Reason</dt><dd>{rule.reason}</dd></div>
         </dl>
-        <p className="ap-muted">Orbyn reads this file and never writes it. To change the class, open the file in the editor: the change is a normal reviewed change to the repo, and Orbyn reads it again when it is saved.</p>
+        <p className="ap-muted">Orbyn reads this file and does not write it. To change the class, open the file in the editor: the change is a normal reviewed change to the repo, and Orbyn reads it again when it is saved.</p>
       </div>
       <footer className="ap-drawer-foot"><Button small tone="quiet" onClick={onClose}>Close</Button></footer>
     </aside>
@@ -136,7 +136,7 @@ function Problems({ problems, onCheck }: { problems: string[]; onCheck(): void }
         <div className="ap-destroy-row ap-head" role="row"><span role="columnheader">What is wrong</span></div>
         {problems.map((problem, at) => <div key={`${at}-${problem}`} className="ap-class-problem" role="row"><span role="cell">{problem}</span></div>)}
       </div>
-      <p className="ap-muted">Orbyn reads the file and never writes it. Fix the rules in the editor, then Check again; nothing is changed until the file is valid, and a mistake never silently becomes a rule.</p>
+      <p className="ap-muted">Orbyn reads the file and does not write it. Fix the rules in the editor, then Check again; nothing is changed until the file is valid, and a mistake is shown, not turned silently into a rule.</p>
     </>
   );
 }

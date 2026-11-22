@@ -6,9 +6,16 @@
 //! One reviewer lane can also be read on its own: the row the zoom shows, what it was given (the work's purpose, the
 //! commit it read, the checks its brief named) and the findings it filed, with the reviewer's own evidence.
 //!
-//! What it never returns: the answer key or any part of a check (command, output, what it proves), a repro, a thread
-//! id, a path on this machine, a bus message. A text is redacted, the key's text withheld and the length cut
-//! ([`scrub`]). A gate's reason is read only once the task is final, so a running task shows no check text at all (H1).
+//! What every view but the Run page never returns: the answer key, or any part of a check (command, output, what it
+//! proves), a repro, a thread id, a path on this machine, a bus message. A text is redacted, the key's text withheld and
+//! the length cut ([`scrub`]). A gate's reason is read only once the task is final, so a running task shows no check text at
+//! all (H1). One read here parts from that rule and says why: the Run page (`run_page`), which names a check's command and
+//! what it proves only once the task is final, never a repro or a finding's comparison, and never a key of another task of
+//! the crew that is still running; a command may carry a path (`docs/crew-run-page.md`).
+//!
+//! A finding's evidence is the reviewer's own text and keeps a claim's boundaries, no more: it is redacted and capped, and
+//! a key the crew holds is withheld from it, but a command shorter than the eight characters `withhold` matches and an
+//! absolute path are not stripped from it (neither are they from a claim or a gate's reason).
 
 mod board;
 mod cells;
@@ -16,6 +23,7 @@ mod facts;
 mod map;
 mod messages;
 mod review_controls;
+mod run_page;
 mod scrub;
 
 use orbyn_contracts as wire;
@@ -191,11 +199,12 @@ impl Core {
     pub fn crew_flow_task(&self, id: &str) -> Result<wire::FlowTaskDetail> {
         self.crew_preview_only()?;
         valid_id(id)?;
-        let task = self
-            .store
-            .crew_task(id)?
-            .filter(|_| self.store.crew_task_is_work(id).unwrap_or(false))
-            .ok_or_else(|| CoreError::NotFound("task".into()))?;
+        let Some(task) = self.store.crew_task(id)? else {
+            return Err(CoreError::NotFound("task".into()));
+        };
+        if !self.store.crew_task_is_work(id)? {
+            return Err(CoreError::NotFound("task".into()));
+        }
         let finished = is_final(&task.state);
         let person = self.display_redactor()?;
         let facts = self.flow_facts(task)?;

@@ -1,7 +1,9 @@
 /**
- * The mock's Flow reads (`/api/crew/flow/*`): the crews that have work, a crew's tasks with the ten cells of each, and one task
- * zoomed. They answer in the Crew scenarios (`crew`, `crew-<state>`) and nowhere else, so the default scenario keeps every Crew route
- * at 404 as the service does with Crew Preview off. The sample tasks exercise every state the real data can have: running, needs
+ * The mock's Flow reads (`/api/crew/flow/*`): the crews that have work, a crew's tasks with the ten cells of each, one task
+ * zoomed, and one task's Run page read. They answer in the Crew scenarios (`crew`, `crew-<state>`) and nowhere else, so the
+ * default scenario keeps every Crew route at 404 as the service does with Crew Preview off. A sample with a `run` answers the
+ * Run page route; one without it keeps the older service's 404, so the page falls back to its Flow-based Planned marks. The
+ * sample tasks exercise every state the real data can have: running, needs
  * you, failed after loops, merged and waiting for review, skipped stages, queued and stopped. Reads only.
  *
  * The person's two writes (`POST /api/crew/tasks/{id}/cancel` and `/rerun-checks`) are answered by `board.ts`, for the zoom as well.
@@ -15,6 +17,7 @@ import type { FlowCellState } from "../src/generated/FlowCellState.ts";
 import type { FlowCrewList } from "../src/generated/FlowCrewList.ts";
 import type { FlowCounts } from "../src/generated/FlowCounts.ts";
 import type { FlowFilter } from "../src/generated/FlowFilter.ts";
+import type { FlowRunPage } from "../src/generated/FlowRunPage.ts";
 import type { FlowStage } from "../src/generated/FlowStage.ts";
 import type { FlowTaskDetail } from "../src/generated/FlowTaskDetail.ts";
 import type { FlowTaskList } from "../src/generated/FlowTaskList.ts";
@@ -39,7 +42,11 @@ function line(states: Partial<Record<FlowStage, FlowCellState | [FlowCellState, 
 interface Sample {
   row: FlowTaskRow;
   detail: Omit<FlowTaskDetail, "row" | "truncated" | "crew">;
+  /** The Run page read answers for this task. A sample without one keeps the older service's 404. */
+  run?: FlowRunPage;
 }
+
+const RUN_COMMIT = "a41c9e2c0ffee0123456789abcdef0123456789a";
 
 const row = (id: string, name: string, kind: string, engine: string | null, state: string, round: number, cells: FlowCell[], at: string): FlowTaskRow => ({
   id,
@@ -77,6 +84,16 @@ function samples(): Sample[] {
         watch: null,
         you: null,
       },
+      // Not final: the service withholds a check's command and proves line, so the page must say so.
+      run: {
+        task: "task-redirect", crew: MOCK_CREW, state: "verifying", finished: false,
+        prompt: { text: "Use next when it points inside the app.", hidden: true, truncated: false },
+        checks: [
+          { label: "", outcome: "pass", exit_code: 0, duration_ms: 4000, proves: "", commit: RUN_COMMIT },
+          { label: "", outcome: "fail", exit_code: 1, duration_ms: 22000, proves: "", commit: RUN_COMMIT },
+        ],
+        not_verified: [], commit: RUN_COMMIT, pull: null, truncated: false,
+      },
     },
     {
       row: row("task-needs", "Project icon picker", "implement", "codex", "needs_person", 1, line({ brief: "done", route: "done", build: "needs_you" }), "13:40"),
@@ -85,6 +102,17 @@ function samples(): Sample[] {
     {
       row: row("task-failed", "Rename the legacy returnTo helper", "implement", "claude", "failed", 3, line({ brief: "done", route: "done", build: "failed", checks: ["failed", { passed: 2, of: 3 }] }), "13:10"),
       detail: { brief, route: { engine: "claude", model: "Sonnet 5.5", tier: "builder" }, lanes: [], findings: [], gates: [{ stage: "checks", decision: "failed", decided_by: "code", lane: null, reason: null, at: "2026-11-07T13:20:00Z" }], rounds: [{ n: 1, task: "task-failed", state: "failed" }, { n: 2, task: "task-failed-fix1", state: "failed" }, { n: 3, task: "task-failed-fix2", state: "failed" }], merge: null, watch: null, you: null },
+      // Final: the service now carries each check's command and proves line.
+      run: {
+        task: "task-failed", crew: MOCK_CREW, state: "failed", finished: true,
+        prompt: { text: "Rename the helper without changing its callers.", hidden: false, truncated: false },
+        checks: [
+          { label: "pnpm lint", outcome: "pass", exit_code: 0, duration_ms: 4000, proves: "The changed files follow the style rules.", commit: RUN_COMMIT },
+          { label: "pnpm test auth", outcome: "fail", exit_code: 1, duration_ms: 22000, proves: "The old name still resolves.", commit: RUN_COMMIT },
+          { label: "pnpm test:types", outcome: "skipped", exit_code: null, duration_ms: 0, proves: "Every caller uses the new name.", commit: RUN_COMMIT },
+        ],
+        not_verified: ["The mobile app's callers: no check covers them."], commit: RUN_COMMIT, pull: null, truncated: false,
+      },
     },
     {
       row: row("task-merged", "Update the login docs", "docs", "codex", "passed", 1, line({ brief: "done", route: "done", build: "done", checks: ["done", { passed: 2, of: 2 }], code: ["done", { lanes: 2 }], security: "skipped", finding: "done", merge: "done", main: "done", you: "review_waiting" }), "12:30"),
@@ -101,6 +129,17 @@ function samples(): Sample[] {
         merge: { state: "merged", risk: "low", reasons: ["docs only"], mode: "full" },
         watch: "green",
         you: { review_state: "waiting", due_unix: Date.parse("2026-11-08T12:50:00Z") / 1000, needs_person: null },
+      },
+      // Final, with the forge's number and what the run published.
+      run: {
+        task: "task-merged", crew: MOCK_CREW, state: "passed", finished: true,
+        prompt: { text: "Say how the redirect works.", hidden: false, truncated: false },
+        checks: [
+          { label: "pnpm lint", outcome: "pass", exit_code: 0, duration_ms: 4000, proves: "The changed files follow the style rules.", commit: RUN_COMMIT },
+          { label: "pnpm test docs", outcome: "pass", exit_code: 0, duration_ms: 22000, proves: "The example shows the redirect.", commit: RUN_COMMIT },
+        ],
+        not_verified: ["The mobile app's redirect: no check covers it."], commit: RUN_COMMIT,
+        pull: { number: 142, branch: "crew/login-docs", commit: RUN_COMMIT }, truncated: false,
       },
     },
     {
@@ -157,6 +196,19 @@ export function flowMock(scenario: string, method: string, path: string, query: 
       sample.row.state = "passed";
       if (scenario === "crew-review-remove") sample.row.name = "Review dependency licences";
       sample.row.cells = line({ brief:"done",route:"done",build:"done",checks:["done",{passed:3,of:3}],code:"done",security:scenario === "crew-review-consent" ? "needs_you" : "running" });
+      // The sample row ends here, so its Run page read is final and carries the texts the service withholds while it runs.
+      if (sample.run) {
+        sample.run = {
+          ...sample.run,
+          state: sample.row.state,
+          finished: true,
+          checks: sample.run.checks.map((check, at) => ({
+            ...check,
+            label: at === 0 ? "pnpm lint" : "pnpm test auth",
+            proves: at === 0 ? "The changed files follow the style rules." : "next=//evil.com is rejected.",
+          })),
+        };
+      }
       sample.detail.lanes = sample.detail.lanes.filter((l) => l.group !== "security");
       if (scenario === "crew-review-consent") {
         sample.detail.review_consents = [{ id:"consent-preview",task:sample.row.id,lane:"security",commit:"a41c9e2c0ffee0123456789abcdef0123456789a",round:1,engine:"claude",model:"Opus 5.5",state:"waiting",expires_unix:4102444800,can_answer:true }];
@@ -200,6 +252,12 @@ export function flowMock(scenario: string, method: string, path: string, query: 
     const end = Math.min(offset + limit, matched.length);
     const body: FlowTaskList = { crew, counts, tasks: matched.slice(offset, end), total: matched.length, next_offset: end < matched.length ? end : null, truncated };
     return { status: 200, body };
+  }
+  const runId = /^\/api\/crew\/flow\/tasks\/([^/]+)\/run$/.exec(path)?.[1];
+  if (runId) {
+    const found = [...all, ...many()].find((one) => one.row.id === decodeURIComponent(runId));
+    if (!found) return missing("task");
+    return found.run ? { status: 200, body: found.run } : missing("run");
   }
   const id = /^\/api\/crew\/flow\/tasks\/([^/]+)$/.exec(path)?.[1];
   if (id) {

@@ -1,9 +1,10 @@
 import type { EngineStatus } from "../../api/types";
+import { isUnmanaged } from "./unmanaged";
 
 /** Managed engines first, then in the service's order. */
 const byManaged = (engines: readonly EngineStatus[]) => [
-  ...engines.filter((engine) => engine.capabilities.managed),
-  ...engines.filter((engine) => !engine.capabilities.managed),
+  ...engines.filter((engine) => !isUnmanaged(engine)),
+  ...engines.filter((engine) => isUnmanaged(engine)),
 ];
 
 /**

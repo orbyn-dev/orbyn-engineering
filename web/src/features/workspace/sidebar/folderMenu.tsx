@@ -1,8 +1,9 @@
-import { Copy, Layers, Settings, SquarePen } from "lucide-react";
+import { Copy, FileText, Layers, Settings, SquarePen } from "lucide-react";
 import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode";
 import { navigate } from "../../../product/state/route";
 import type { MenuItem } from "../../../ui/Menu";
 import { copyText } from "../../../product/ui/copyText";
+import { pickTranscript } from "../../../product/state/transcriptImport";
 import type { ProjectFolder } from "./groups";
 
 const GROUPING_LABELS: Record<ProjectGroupingMode, string> = {
@@ -44,6 +45,11 @@ export function folderMenuItems(
       label: "New thread",
       icon: <SquarePen size={14} aria-hidden />,
       onSelect: () => navigate({ name: "new", projectId: project.id }),
+    },
+    {
+      label: "Import transcript…",
+      icon: <FileText size={14} aria-hidden />,
+      onSelect: () => pickTranscript(project),
     },
     {
       label: "Copy path",

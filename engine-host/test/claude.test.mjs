@@ -463,3 +463,56 @@ test("readSubagent fails with HistoryTooLarge and needs an engine session", asyn
   assert.equal(tooLarge.error.cause.name, "HistoryTooLarge");
   assert.equal(tooLarge.error.cause.kind, "host");
 });
+
+const HEAD = "d513887e-fb2d-47a1-adbb-e8678b42ad9a";
+
+async function resumeAtOpen(h, extra) {
+  await h.next((f) => f.type === "hello");
+  h.send({ id: 1, type: "init", protocol: 1 });
+  await h.next((f) => f.id === 1);
+  h.send({ id: 2, type: "open", operation: "resume", engineSessionId: NATIVE_SESSION, sessionId: "s", cwd: "/tmp/x", options: { sdk: {} }, ...extra });
+  return h.next((f) => f.id === 2);
+}
+
+test("open with resumeAt passes it as resumeSessionAt on the first query", async () => {
+  const seen = [];
+  const query = ({ options }) => {
+    seen.push(options);
+    return { [Symbol.asyncIterator]: () => ({ next: async () => ({ done: true }) }), close() {} };
+  };
+  const h = boot("multi_turn", { query, history: [{ type: "user", uuid: "u1" }, { type: "assistant", uuid: HEAD }, { type: "assistant", uuid: "9e1d0f55-0000-4000-8000-000000000001", parent_tool_use_id: "toolu_1" }] });
+  assert.equal((await resumeAtOpen(h, { resumeAt: HEAD })).ok, true);
+  assert.deepEqual(h.calls.sessionMessages, [[NATIVE_SESSION, { dir: "/tmp/x" }]]);
+  h.send({ id: 3, type: "send", sessionId: "s", message: FIRST_PROMPT });
+  assert.equal((await h.next((f) => f.id === 3)).ok, true);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].resume, NATIVE_SESSION);
+  assert.equal(seen[0].resumeSessionAt, HEAD);
+});
+
+test("open with resumeAt is refused for an unknown uuid, a sub-agent message, a bad shape or a create", async () => {
+  const history = [{ type: "assistant", uuid: HEAD }, { type: "assistant", uuid: "9e1d0f55-0000-4000-8000-000000000001", parent_tool_use_id: "toolu_1" }];
+  for (const resumeAt of ["9e1d0f55-0000-4000-8000-0000000000ff", "9e1d0f55-0000-4000-8000-000000000001", "not-a-uuid", 7]) {
+    const h = boot("multi_turn", { history });
+    const res = await resumeAtOpen(h, { resumeAt });
+    assert.equal(res.ok, false, String(resumeAt));
+    assert.equal(res.error.cause.kind, "invalid_request");
+  }
+  const h = boot("multi_turn", { history });
+  const res = await resumeAtOpen(h, { operation: "create", engineSessionId: undefined, resumeAt: HEAD });
+  assert.equal(res.ok, false);
+  assert.equal(res.error.cause.kind, "invalid_request");
+});
+
+test("open with resumeAt needs getSessionMessages in the SDK", async () => {
+  const h = boot("multi_turn", { withSessionMessages: false });
+  const res = await resumeAtOpen(h, { resumeAt: HEAD });
+  assert.equal(res.ok, false);
+  assert.equal(res.error.cause.name, "UnsupportedRequest");
+});
+
+test("open without resumeAt does not read the history", async () => {
+  const h = boot("multi_turn");
+  assert.equal((await resumeAtOpen(h, {})).ok, true);
+  assert.deepEqual(h.calls.sessionMessages, []);
+});

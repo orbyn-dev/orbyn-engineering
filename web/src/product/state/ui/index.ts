@@ -25,6 +25,7 @@ export {
   type ThreadLayout,
   type ThreadNavigationOrigin,
   type ToastAction,
+  type ToastOptions,
   type ToastKind,
   type Typography,
 } from "./types";

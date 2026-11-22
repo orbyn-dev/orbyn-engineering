@@ -5,7 +5,8 @@
 use std::path::PathBuf;
 
 use orbyn_contracts::{
-    EngineStatus, EngineTier, ProviderEntry, ProviderGroup, ProviderLabel, ProviderList,
+    EngineStartIssueKind, EngineStatus, EngineTier, ProviderEntry, ProviderGroup, ProviderLabel,
+    ProviderList,
 };
 
 use super::engines::known::known_engine;
@@ -114,7 +115,22 @@ fn not_verified(status: &EngineStatus) -> bool {
         && !SEEN_ON_REAL_INSTALL.contains(&family)
 }
 
+/// The label the last start issue adds, for an engine that can otherwise start.
+fn start_issue_label(status: &EngineStatus) -> Option<ProviderLabel> {
+    match status.start_issue.as_ref()?.kind {
+        EngineStartIssueKind::SignedOut => Some(ProviderLabel::SignedOut),
+        EngineStartIssueKind::Failed => Some(ProviderLabel::StartFailed),
+    }
+}
+
 fn note(status: &EngineStatus, facts: &ProviderFacts, labels: &[ProviderLabel]) -> Option<String> {
+    // The last start is the most useful line, and it replaces the program-name note.
+    if facts.installed()
+        && !labels.contains(&ProviderLabel::CantStart)
+        && let Some(issue) = &status.start_issue
+    {
+        return Some(issue.message.clone());
+    }
     if labels.contains(&ProviderLabel::CantStart) || labels.contains(&ProviderLabel::LimitedSupport)
     {
         return facts
@@ -148,6 +164,9 @@ fn entry_of(status: &EngineStatus) -> ProviderEntry {
     let mut labels = facts.labels();
     // Only an engine that can start is verified or not; a missing or broken one says that alone.
     if facts.installed() && !labels.contains(&ProviderLabel::CantStart) {
+        if let Some(label) = start_issue_label(status) {
+            labels.push(label);
+        }
         if not_verified(status) {
             labels.push(ProviderLabel::NotVerified);
         }

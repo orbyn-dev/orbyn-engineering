@@ -122,6 +122,7 @@ export function stateLine(row: HostRow, today = new Date()): string {
 
 const CAPABILITY_WORDS = new Map<string, string>(Object.entries({
   steer: "Steer a run", fork: "fork", background: "background work", rollback: "roll back", models: "list models", usage: "report usage",
+  readHistory: "read earlier messages", readSubagent: "read a sub-agent's messages", stopTask: "stop a background task", probe: "check the engine",
 }));
 
 /** What the host said it can do, in its own order. A word this app does not know is shown as it came. */

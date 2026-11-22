@@ -3,6 +3,7 @@ import { CloneJobs, CommandPalette, FoldersNotice, GitHubStarPrompt, QuitConfirm
 import { ChevronLeft } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { SettingsPage } from "../../features/settings";
+import { TranscriptImportHost } from "../../features/thread";
 import { Toasts } from "../../product/ui/Toasts";
 import { usePanelMotionRoot } from "../../product/panels/panelAnimations";
 import { useTaskRunNotifications } from "../taskNotifications";
@@ -17,6 +18,7 @@ import { tabbables } from "../../ui/focusReturn";
 import { Button } from "../../ui/controls";
 import { useEscapeClose } from "../../ui/useEscapeClose";
 import { PreviewFloat, useTerminalAttention } from "../../features/panels";
+import { DevicesFloat } from "../../features/devices";
 import { startAppDataRefresh } from "./dataRefresh";
 import { HIDDEN_POLL_EVERY, lastFull, loadAll, loadEngines } from "./loading";
 import { POLL_MS, quickFocus, quickTick } from "../pollSchedule";
@@ -155,7 +157,9 @@ export function Shell() {
       ) : null}
       <BackgroundAnnouncer />
       <QuitConfirmation />
+      <TranscriptImportHost />
       <PreviewFloat threadId={route.name === "thread" ? route.id : null} />
+      <DevicesFloat threadId={route.name === "thread" ? route.id : null} />
       <Toasts
         lead={
           <>
