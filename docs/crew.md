@@ -381,12 +381,15 @@ retries with the reason. The same failure twice means one change of approach, an
       worker's edit to that file cannot lower the bar. Every task that writes inherits one such check at its start
       (`chk-repo-required`, named `inherited` in the log), so a lead need not declare it and a worker cannot remove
       it: a key that already runs the repository's checks keeps its own, a review task runs none because it writes
-      nothing, a repository that declares no check adds none, and a file that cannot be read refuses the start. The
+      nothing, a repository that declares no check adds none (a checkout with no commit has nothing declared), and a
+      file that cannot be read refuses the start. The
       commands still run in the checkout the worker left, so the scripts
       and tests they call are guarded only by the key's `protected_paths`. A task with no recorded starting commit is an
       error. `name` and `note` are labels for the log. No declared
       checks is a pass with that fact in the log; a failing check is a finding that names the check, and a check
-      that cannot run is an error. `when` is not read, as the merge queue does not read it.
+      that cannot run is an error. `when` is not implemented: a check that declares one is refused with that reason,
+      by the verifier and by the merge queue alike, so an unread condition can never pass for a condition that was
+      met.
   - **Check kinds this version does not run** (`http_probe`, `preview`, `visual_compare`, `manual`,
     `screenshot_only`, `accessibility_audit`, `performance_budget`, `licence_scan`) report `skipped` and are listed as
     not verified. `http_probe` and the page kinds need a live loopback page or the app's browser; `manual` needs a
@@ -590,7 +593,7 @@ stay in the [review README](../crates/orbyn-core/src/crew/review/README.md#decis
   - Agents never remove lanes.
 - **Rules:**
   - `.orbyn/crew.json` in the repository (`required`, `lanes` with `when` and `locked`, `checks` with `run` and
-    `when`).
+    `when`; a check's `when` is refused until it is read, so it never passes unenforced).
   - Repository rules can only add or tighten.
   - Personal defaults live in Settings.
 - **Replay** keeps the full hash-chained event log per task. Large artifacts can be pruned after 30 days with their

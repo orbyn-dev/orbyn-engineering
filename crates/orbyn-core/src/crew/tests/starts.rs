@@ -773,3 +773,25 @@ async fn a_repository_check_file_that_cannot_be_read_refuses_the_start() {
     assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
     w.core.shutdown().await;
 }
+
+/// Issue #795: a check that declares the `when` this version does not read refuses the start, so a condition is
+/// never silently dropped and its check never runs unconditionally.
+#[tokio::test]
+async fn a_repository_that_declares_a_check_condition_refuses_the_start() {
+    let w = quiet().await;
+    crew_json(
+        &w,
+        r#"{"checks":[{"run":"echo repository-check","when":{"paths":["src/**"]}}]}"#,
+    );
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(error, "{answer}");
+    assert!(
+        answer["message"]
+            .as_str()
+            .unwrap()
+            .contains("checks[].when"),
+        "{answer}"
+    );
+    assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
+    w.core.shutdown().await;
+}

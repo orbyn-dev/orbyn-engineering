@@ -94,8 +94,10 @@ async fn inherit_repo_checks(
     if !needs_repo_checks(brief, key) {
         return Ok(());
     }
-    // No starting commit is no copy the worker cannot edit, so there is nothing to inherit. An explicit
-    // `repo_required` check reports that missing commit as an error when it runs.
+    // No starting commit is nothing to inherit, by decision rather than by omission: with no commit there is no
+    // committed `.orbyn/crew.json`, so the checkout has declared no check and nothing is dropped. (An explicit
+    // `repo_required` check reports that missing commit as an error when it runs.) A checkout that is not a Git
+    // repository never reaches here, because the index check refuses that start.
     let Some(base) = base else {
         return Ok(());
     };
