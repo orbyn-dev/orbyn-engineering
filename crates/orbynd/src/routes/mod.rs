@@ -18,6 +18,7 @@ mod crew_capacity;
 mod crew_escapes;
 mod crew_map;
 mod crew_tasks;
+mod devices;
 mod engine_credentials;
 mod engines;
 mod explorer;
@@ -132,6 +133,7 @@ pub fn router(state: AppState) -> Router {
     let protected = Router::new()
         .merge(account::routes(state.clone()))
         .merge(crew::routes(state.clone()))
+        .merge(devices::routes())
         .merge(media::routes())
         .merge(settings::routes())
         .merge(secrets::routes(state.clone()))
