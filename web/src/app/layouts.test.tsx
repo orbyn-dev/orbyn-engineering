@@ -1,6 +1,6 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installMockFetch, setViewportWidth } from "../test-support";
 import { useUi } from "../product/state/ui";
 import { navigate } from "../product/state/route";
@@ -20,6 +20,23 @@ const sidebar = () => screen.queryByRole("navigation", { name: "Workspace" });
 const thread = () => document.querySelector(".thread-main") as HTMLElement | null;
 // The first render of the whole app can take longer than the default wait on a busy machine.
 const showPanel = () => screen.findByRole("button", { name: "Show side panel" }, { timeout: 8000 });
+
+/**
+ * The mock's saved-shortcuts sample is short, and the shell uses its rules instead of the fallbacks;
+ * the service saves the sidebar key by default, so serve it for the keys these tests press.
+ */
+function withSidebarShortcut() {
+  const real = globalThis.fetch;
+  vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+    const response = await real(input, init);
+    if (String(input) !== "/api/keybindings") return response;
+    const view = (await response.json()) as { rules: unknown[] };
+    return new Response(
+      JSON.stringify({ ...view, rules: [...view.rules, { key: "mod+b", command: "sidebar.toggle", when: null, remove: false }] }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
+}
 
 describe("layouts by window width", () => {
   it("docks the sidebar, the thread and the panel from 1160 px", async () => {
@@ -201,5 +218,56 @@ describe("the phone's sidebar", () => {
     // Leaving the sidebar's page closes it: the composer takes the page over.
     await waitFor(() => expect(sidebar()).not.toBeInTheDocument());
     await screen.findByRole("button", { name: "Show sidebar" }, { timeout: 8000 });
+  });
+
+  it("opens and closes the sheet with the sidebar shortcut", async () => {
+    setViewportWidth(375);
+    withSidebarShortcut();
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    await screen.findByRole("button", { name: "Show sidebar" }, { timeout: 8000 });
+    await user.keyboard("{Control>}b{/Control}");
+    // The key does what the title bar button does: the sheet takes the page's place.
+    expect(sidebar()).toBeInTheDocument();
+    expect(container.querySelector(".sidebar-sheet")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard("{Control>}b{/Control}");
+    await waitFor(() => expect(sidebar()).not.toBeInTheDocument());
+    expect(container.querySelector(".sidebar-sheet")).toBeNull();
+    expect(screen.getByRole("button", { name: "Show sidebar" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps the shortcut on the docked sidebar on a desktop window, where no sheet exists", async () => {
+    setViewportWidth(1200);
+    withSidebarShortcut();
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    await screen.findByRole("button", { name: "Hide sidebar" }, { timeout: 8000 });
+    expect(sidebar()).toBeInTheDocument();
+    await user.keyboard("{Control>}b{/Control}");
+    // The window folds its docked sidebar; nothing opens over the page, because a desktop window has no sheet.
+    await waitFor(() => expect(useUi.getState().sidebarCollapsed).toBe(true));
+    expect(container.querySelector(".sidebar-sheet")).toBeNull();
+    expect(useSidebarDrawer.getState().open).toBe(false);
+    expect(container.querySelector(".shell")).not.toHaveAttribute("data-drawer");
+  });
+
+  it("lands focus on the new page's heading when a button in the sheet navigates", async () => {
+    setViewportWidth(375);
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Show sidebar" }, { timeout: 8000 }));
+    // The open thread's own row menu is a button, not a link: settling it leaves for the next thread.
+    const row = (await within(sidebar()!).findByText("Explain how the event log resumes")).closest("a") as HTMLElement;
+    fireEvent.contextMenu(row);
+    await user.click(await screen.findByRole("menuitem", { name: "Settle thread" }));
+    await waitFor(() => expect(sidebar()).not.toBeInTheDocument());
+    await waitFor(() => expect(window.location.hash).not.toBe("#/threads/t-done"));
+    // Focus follows the new page to its own title, and not to a node the sheet took with it.
+    const title = container.querySelector("main [data-page-title]");
+    expect(title).not.toBeNull();
+    await waitFor(() => expect(title).toHaveFocus());
+    expect(screen.getByRole("button", { name: "Show sidebar" })).not.toHaveFocus();
+    expect(document.body).not.toHaveFocus();
   });
 });
