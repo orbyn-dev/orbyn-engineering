@@ -405,8 +405,10 @@ bookkeeping and its own checks. No entry carries an environment, arguments, a ke
 - `restart?`: while the state is `restarting`, `{attempt, limit, next_try_seconds}`. `attempt` is the restart being waited for, `limit` is the pool's `max_restarts` (five by
   default), and `next_try_seconds` counts to the next try (at least 1). Absent in every other state.
 - `stops_in_window?`: for a `cant_start` family, the restarts inside the pool's restart window: the count that reaches the five-in-five rule. Absent in every other state.
-- `has_driver?`: true when the family's host wraps a Rust driver, so a run has another path. Claude is wrapped today; Cursor is when its flag is on. Absent when nothing is
-  wrapped.
+- `has_driver?`: true when a CLI driver is wrapped for the family, not that it is reachable. Nothing falls back to it: a run on a
+  wrapped family (Claude, Cursor or ACP) whose host cannot start fails with `engine_unavailable` and the host's reason, and the CLI
+  driver runs only when the person chose the Claude CLI path (`claude_engine_path` is `cli`) or the family is not host-wrapped
+  (Codex and OpenCode). Claude is wrapped today; Cursor and ACP are when their flags are on. Absent when nothing is wrapped.
 - `sdk_missing?`: true when the host answered a run with its fixed sentence that the family's SDK is not available in this build. The pool keeps it until a later turn gets
   past the SDK load, which clears it. It is the only SDK-availability source the core has: it does not read the SDK folder, so a build whose folder is empty but where no run
   has tried yet shows no flag. That build-time check remains Planned.

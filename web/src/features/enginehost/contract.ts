@@ -84,7 +84,7 @@ export interface HostRow {
   stops_in_window?: number | null;
   /** GUESSED SHAPE: threads running on this host now, for the Stop question in Maintenance. */
   running_threads?: number;
-  /** The app has a Rust driver this family's runs can use when the host cannot start. */
+  /** A CLI driver is wrapped for this family. Nothing switches to it on its own: a run on a wrapped family whose host can't start fails. */
   has_driver?: boolean;
   /** The host answered that this build carries no SDK for the family. */
   sdk_missing?: boolean;
