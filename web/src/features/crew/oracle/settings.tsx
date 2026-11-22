@@ -27,7 +27,7 @@ export function OracleSettings() {
             <div>
               <b>What the author is given</b>
               <small>
-                The brief and the contract facts. Not given to the author: the diff, the builder’s notes and messages, its worktree. The builder is never given the key, as in every Crew task.
+                The brief and the contract facts. Not given to the author: the diff, the builder’s notes and messages, its worktree. The builder is not given the key, as in every Crew task.
               </small>
             </div>
             <span className="cx-sv cx-ro">Brief and contract facts</span>

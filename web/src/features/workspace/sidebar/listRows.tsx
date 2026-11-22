@@ -9,6 +9,7 @@ import { deriveProjectIdentity } from "../../../product/projects/projectIdentity
 import { Collapsible } from "../../../ui/Collapsible";
 import type { DropSection } from "./groups";
 import { pushUndo } from "./threadUndo";
+import { TranscriptDropHint, useProjectFileDrop } from "./projectFileDrop";
 
 /** A project with no threads yet still needs a way in, and its trust state shown. */
 export function EmptyProjectRow({ project }: { project: Project }) {
@@ -156,8 +157,14 @@ export function FolderHeader({
   onToggle(): void;
   onMenu(event: React.MouseEvent): void;
 }) {
+  const drop = useProjectFileDrop(project);
   return (
-    <li className="folder-head" data-count={needs > 0 || (collapsed && count > 0) ? "" : undefined}>
+    <li
+      className="folder-head"
+      data-count={needs > 0 || (collapsed && count > 0) ? "" : undefined}
+      data-file-over={drop.over || undefined}
+      {...drop.handlers}
+    >
       <button
         type="button"
         className="folder-toggle"
@@ -191,6 +198,7 @@ export function FolderHeader({
       >
         <Plus size={14} aria-hidden />
       </a>
+      {drop.hint ? <TranscriptDropHint hint={drop.hint} /> : null}
     </li>
   );
 }

@@ -124,7 +124,7 @@ impl Core {
             ));
         }
         let cwd = Path::new(&thread.cwd);
-        prepared.check(cwd).await?;
+        prepared.check(cwd, Some(&self.config.data_dir)).await?;
         let action = &prepared.action;
         let mut phases = Vec::new();
         if let Some(message) = &action.commit_message {
@@ -135,7 +135,7 @@ impl Core {
             let outcome = async {
                 self.scm_idle(id)?;
                 git_user(cwd, &["add", "-A"], FORGE_TIMEOUT).await?;
-                prepared.check(cwd).await?;
+                prepared.check(cwd, Some(&self.config.data_dir)).await?;
                 self.scm_idle(id)?;
                 git_user(cwd, &["commit", "-q", "-m", message], FORGE_TIMEOUT).await?;
                 Ok(None)

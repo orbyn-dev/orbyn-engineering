@@ -98,7 +98,7 @@ export function SignedInPage({
       <div className="ac-row">
         <div>
           <b>Execution profiles</b>
-          <small>Stay on each device: a profile sets a permission mode, tier and Autopilot mode, so another device never applies one automatically.</small>
+          <small>Stay on each device: a profile sets a permission mode, tier and Autopilot mode, so no other device applies one.</small>
         </div>
         <span className="ac-aside">This device only</span>
       </div>

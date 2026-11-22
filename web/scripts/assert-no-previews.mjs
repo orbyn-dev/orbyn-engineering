@@ -61,6 +61,9 @@ const markers = [
   // Personal library design preview (features/library): the dev-only hash route and its mock. The real panel ships hidden behind a client that answers 404.
   "preview/library",
   "createLibraryMock",
+  // Snap Shot design preview (features/snapshot): the dev-only hash route and its shell mock. The real feature is absent until the shell answers.
+  "preview/snapshot",
+  "createSnapshotMock",
   // Terminal-agent attention design preview (features/panels/terminal/attention): the dev-only hash route (plain and as a regex source), its mock and its page class.
   "preview/attention",
   "preview\\/attention",
