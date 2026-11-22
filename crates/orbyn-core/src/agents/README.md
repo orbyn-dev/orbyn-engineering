@@ -18,6 +18,7 @@ Everything about the coding engines Orbyn runs: which exist, how to talk to each
 | `provider_facts` | One provider's state facts (installed, signed in, broken, managed, approvals), read by the crew router's filters and the Providers list alike |
 | `provider_list` | The grouped Providers list: labels, found apps and engines not built |
 | `selection` | Model, effort and options a turn asks of its engine |
+| `text_models` | The one-shot model for thread titles and source-control writing: per engine, legacy, small, then thread, and the text-generators read |
 | `usage` | Usage from each engine's local session history |
 | `triage` | A fresh native support session outside governed runs |
 | `sse` | An incremental `text/event-stream` parser |

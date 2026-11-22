@@ -167,7 +167,7 @@ export function Composer({
   const serviceDown = useConnectionKind() === "service-down";
   const compacting = useCompacting(thread);
   const ready = outbound !== "" && !sending && !uploading && !transcripts.reading && overBy === 0 && !serviceDown && !compacting;
-  const hostLine = useHostLine(thread.engine, engine?.name ?? thread.engine);
+  const hostLine = useHostLine(thread.engine, engine?.name ?? thread.engine, engine?.instance_of);
   const canSend = ready && !gate.noticeOpen && !gate.refused && !hostLine.sendBlocked;
   const queue = useAsync(`queue:${thread.id}`, (signal) => api.queue(thread.id, signal));
   const reloadQueue = queue.reload;

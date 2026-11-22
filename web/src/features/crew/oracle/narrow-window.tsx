@@ -8,7 +8,7 @@ export function OracleNarrowWindow() {
       <div className="cx-cwpg">
         <PageHead sub="Login redirect crew" />
         <div className="cx-cwtabs" style={{ padding: "8px 14px", overflow: "hidden" }}>
-          <Seg kind="segx" on={6} items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox · 4", "Report"]} />
+          <Seg kind="segx" on={6} items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox", "Report"]} />
         </div>
         <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: "10px", overflow: "hidden", minHeight: "0" }}>
           <div className="cx-t10hd"><b>Answer key</b><span className="cx-rtag cx-lo">Sample data</span></div>

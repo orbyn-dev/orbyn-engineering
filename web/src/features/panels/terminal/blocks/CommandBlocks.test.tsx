@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure } from "../../../../api/client";
 import { useUi } from "../../../../product/state/ui";
 import { blocksApi, setBlocksApi, type BlockList, type BlockOutputPage, type CommandBlock, type CommandBlocksApi } from "./blocksContract";
+import { realBlocksApi } from "./blocksClient";
 import { CommandBlocks } from "./CommandBlocks";
 
 const T0 = Date.UTC(2026, 10, 22, 14, 0, 0);
@@ -40,14 +41,38 @@ beforeEach(() => useUi.setState({ toasts: [] }));
 afterEach(() => {
   setBlocksApi(null);
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
-describe("hidden by default", () => {
-  it("draws nothing and sends nothing while no client is installed", () => {
-    expect(blocksApi()).toBeNull();
+describe("the production client", () => {
+  const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+  it("draws nothing and says nothing when its first list is empty", async () => {
+    const limits = { max_blocks: 500, max_block_bytes: 1_048_576, max_total_bytes: 8_388_608 };
+    const fetching = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ blocks: [], next_before: null, limits }), { status: 200 }));
+    vi.stubGlobal("fetch", fetching);
+    setBlocksApi(null);
+    expect(blocksApi()).toBe(realBlocksApi);
     const { container } = mount();
+    await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
+    expect(String(fetching.mock.calls[0]?.[0])).toBe("/api/threads/th/terminals/main/blocks");
+    await settle();
     expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText("Commands you run here appear as blocks")).not.toBeInTheDocument();
+    expect(useUi.getState().toasts).toEqual([]);
+  });
+
+  it("draws nothing and says nothing when its list fails", async () => {
+    const fetching = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ code: "internal", message: "No." }), { status: 500 }));
+    vi.stubGlobal("fetch", fetching);
+    setBlocksApi(null);
+    const { container } = mount();
+    await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText("Couldn't read this terminal's blocks.")).not.toBeInTheDocument();
+    expect(useUi.getState().toasts).toEqual([]);
   });
 });
 
@@ -101,7 +126,7 @@ describe("the blocks", () => {
   it("says what blocks are when there are none", async () => {
     install([]);
     mount();
-    expect(await screen.findByText("Commands Orbyn runs appear here as blocks")).toBeInTheDocument();
+    expect(await screen.findByText("Commands you run here appear as blocks")).toBeInTheDocument();
   });
 
   it("says it could not read the blocks and tries again on the person's click only", async () => {
@@ -340,5 +365,209 @@ describe("long output", () => {
     install([block({ truncated: true, dropped_lines: 300 })], { b1: page(long, { total_lines: 20, dropped_lines: 300 }) });
     mount();
     expect(await screen.findByText("Showing the last 6 of 20 lines · 300 earlier lines were dropped")).toBeInTheDocument();
+  });
+});
+
+describe("filter output", () => {
+  const seven = "FAIL here\nline two\nline three\nline four\nline five\nline six\nline seven";
+
+  it("keeps the lines with the typed text, ignores case, says 1 of 7 lines and draws no line numbers", async () => {
+    install([block({ command: "npm test" })], { b1: page(seven) });
+    const user = userEvent.setup();
+    mount();
+    const card = await screen.findByRole("group", { name: "Command npm test" });
+    expect(await within(card).findByText(/line seven/)).toBeInTheDocument();
+    // The matching line is the first of seven, hidden by the default six-line tail.
+    expect(within(card).queryByText(/FAIL here/)).not.toBeInTheDocument();
+
+    const control = within(card).getByRole("button", { name: "Filter output" });
+    await user.click(control);
+    const field = within(card).getByRole("textbox", { name: "Filter output" });
+    expect(field).toHaveFocus();
+    await user.type(field, "fail");
+
+    expect(within(card).getByText("1 of 7 lines")).toBeInTheDocument();
+    expect(card.querySelector(".cb-out")?.textContent).toBe("FAIL here");
+    expect(within(card).queryByText("line seven")).not.toBeInTheDocument();
+    expect(control).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("clears with Show all and returns focus to the control", async () => {
+    install([block({ command: "npm test" })], { b1: page(seven) });
+    const user = userEvent.setup();
+    mount();
+    const card = await screen.findByRole("group", { name: "Command npm test" });
+    const control = within(card).getByRole("button", { name: "Filter output" });
+    await user.click(control);
+    await user.type(within(card).getByRole("textbox", { name: "Filter output" }), "fail");
+    await user.click(within(card).getByRole("button", { name: "Show all" }));
+
+    expect(within(card).queryByRole("textbox", { name: "Filter output" })).not.toBeInTheDocument();
+    expect(control).toHaveFocus();
+    expect(card.querySelector(".cb-out")?.textContent).toBe(seven.split("\n").slice(-6).join("\n"));
+  });
+
+  it("clears with Esc and returns focus to the control", async () => {
+    install([block({ command: "npm test" })], { b1: page(seven) });
+    const user = userEvent.setup();
+    mount();
+    const card = await screen.findByRole("group", { name: "Command npm test" });
+    const control = within(card).getByRole("button", { name: "Filter output" });
+    await user.click(control);
+    const field = within(card).getByRole("textbox", { name: "Filter output" });
+    await user.type(field, "fail");
+    await user.keyboard("{Escape}");
+
+    expect(within(card).queryByRole("textbox", { name: "Filter output" })).not.toBeInTheDocument();
+    expect(control).toHaveFocus();
+    expect(card.querySelector(".cb-out")?.textContent).toBe(seven.split("\n").slice(-6).join("\n"));
+  });
+
+  it("is dropped when the block is collapsed and is not restored on expand", async () => {
+    install([block({ command: "npm test" })], { b1: page(seven) });
+    const user = userEvent.setup();
+    mount();
+    const card = await screen.findByRole("group", { name: "Command npm test" });
+    await user.click(within(card).getByRole("button", { name: "Filter output" }));
+    await user.type(within(card).getByRole("textbox", { name: "Filter output" }), "fail");
+    await user.click(within(card).getByRole("button", { name: "Collapse" }));
+    expect(within(card).queryByRole("textbox", { name: "Filter output" })).not.toBeInTheDocument();
+    await user.click(within(card).getByRole("button", { name: "Expand" }));
+
+    expect(within(card).queryByRole("textbox", { name: "Filter output" })).not.toBeInTheDocument();
+    expect(card.querySelector(".cb-out")?.textContent).toBe(seven.split("\n").slice(-6).join("\n"));
+  });
+
+  it("applies to its own block only", async () => {
+    install([block({ command: "one" }), block({ id: "b2", command: "two" })], { b1: page("alpha fail\nbeta"), b2: page("gamma fail\ndelta") });
+    const user = userEvent.setup();
+    mount();
+    const first = await screen.findByRole("group", { name: "Command one" });
+    const second = group("two");
+    await user.click(within(first).getByRole("button", { name: "Filter output" }));
+    await user.type(within(first).getByRole("textbox", { name: "Filter output" }), "fail");
+
+    expect(within(first).getByText("1 of 2 lines")).toBeInTheDocument();
+    expect(within(second).queryByRole("textbox", { name: "Filter output" })).not.toBeInTheDocument();
+    expect(within(second).getByText(/gamma fail/)).toBeInTheDocument();
+  });
+
+  it("filters only the live text a running block holds", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(T0 + 42_000);
+    const running = block({ id: "r", command: "npm run dev", ended_at: null, exit_code: null });
+    const api = install([running], { r: page("first chunk", { total_lines: null }) });
+    mount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    const card = group("npm run dev");
+    fireEvent.click(within(card).getByRole("button", { name: "Filter output" }));
+    fireEvent.change(within(card).getByRole("textbox", { name: "Filter output" }), { target: { value: "second" } });
+    expect(within(card).getByText("0 of 1 line")).toBeInTheDocument();
+
+    api.output.mockResolvedValue(page("first chunk\nsecond chunk", { total_lines: null }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
+
+    expect(within(card).getByText("1 of 2 lines")).toBeInTheDocument();
+    expect(within(card).getByText("second chunk")).toBeInTheDocument();
+  });
+});
+
+describe("find in output", () => {
+  const seven = "sign-in one\nline two\nline three\nline four\nline five\nline six\nsign-in seven\nsign-in again";
+
+  it("marks every match with the current one filled, counts them and steps with Enter and Shift+Enter", async () => {
+    install([block({ command: "npm test" })], { b1: page(seven) });
+    const user = userEvent.setup();
+    mount();
+    const card = await screen.findByRole("group", { name: "Command npm test" });
+    expect(await within(card).findByText(/sign-in again/)).toBeInTheDocument();
+    expect(within(card).queryByText(/sign-in one/)).not.toBeInTheDocument();
+
+    const control = within(card).getByRole("button", { name: "Find in output" });
+    await user.click(control);
+    const field = within(card).getByRole("textbox", { name: "Find in output" });
+    expect(field).toHaveFocus();
+    await user.type(field, "sign-in");
+
+    expect(within(card).getByText("1 of 3")).toBeInTheDocument();
+    expect(card.querySelector(".cb-out")?.textContent).toBe(seven);
+    expect(card.querySelectorAll("mark")).toHaveLength(3);
+    expect(card.querySelectorAll("mark")[0]).toHaveAttribute("data-current");
+    expect(control).toHaveAttribute("aria-pressed", "true");
+
+    await user.keyboard("{Enter}");
+    expect(within(card).getByText("2 of 3")).toBeInTheDocument();
+    expect(card.querySelectorAll("mark")[1]).toHaveAttribute("data-current");
+
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(within(card).getByText("1 of 3")).toBeInTheDocument();
+    expect(card.querySelectorAll("mark")[0]).toHaveAttribute("data-current");
+
+    await user.click(within(card).getByRole("button", { name: "Next match" }));
+    expect(within(card).getByText("2 of 3")).toBeInTheDocument();
+    await user.click(within(card).getByRole("button", { name: "Previous match" }));
+    expect(within(card).getByText("1 of 3")).toBeInTheDocument();
+  });
+
+  it("says No matches, keeps the field's text and closes with Esc or Close find, returning focus", async () => {
+    install([block({ command: "npm test" })], { b1: page(seven) });
+    const user = userEvent.setup();
+    mount();
+    const card = await screen.findByRole("group", { name: "Command npm test" });
+    const control = within(card).getByRole("button", { name: "Find in output" });
+    await user.click(control);
+    const field = within(card).getByRole("textbox", { name: "Find in output" });
+    await user.type(field, "absent");
+
+    expect(within(card).getByText("No matches")).toBeInTheDocument();
+    expect(field).toHaveValue("absent");
+    expect(within(card).getByRole("button", { name: "Next match" })).toBeDisabled();
+    expect(within(card).getByRole("button", { name: "Previous match" })).toBeDisabled();
+
+    await user.keyboard("{Escape}");
+    expect(within(card).queryByRole("textbox", { name: "Find in output" })).not.toBeInTheDocument();
+    expect(control).toHaveFocus();
+
+    await user.click(control);
+    await user.type(within(card).getByRole("textbox", { name: "Find in output" }), "sign-in");
+    await user.click(within(card).getByRole("button", { name: "Close find" }));
+    expect(within(card).queryByRole("textbox", { name: "Find in output" })).not.toBeInTheDocument();
+    expect(control).toHaveFocus();
+    expect(card.querySelectorAll("mark")).toHaveLength(0);
+  });
+
+  it("draws the output's markup as text while marks are drawn around a match", async () => {
+    install([block({ command: "echo" })], { b1: page('<img src=x onerror=alert(1)>\nsign-in <script>alert(2)</script>') });
+    const user = userEvent.setup();
+    const { container } = mount();
+    const card = await screen.findByRole("group", { name: "Command echo" });
+    await user.click(within(card).getByRole("button", { name: "Find in output" }));
+    await user.type(within(card).getByRole("textbox", { name: "Find in output" }), "sign-in");
+
+    expect(container.querySelector("img, script")).toBeNull();
+    expect(card.querySelector(".cb-out")?.textContent).toContain("<img src=x onerror=alert(1)>");
+    expect(card.querySelectorAll("mark")).toHaveLength(1);
+    expect(card.querySelector("mark")?.textContent).toBe("sign-in");
+  });
+});
+
+describe("filter and find controls", () => {
+  it("are not offered on a full-screen program's block", async () => {
+    install([block({ command: "vim notes.md", fullscreen: true, output_bytes: 0 })]);
+    mount();
+    const card = await screen.findByRole("group", { name: "Command vim notes.md" });
+    expect(within(card).queryByRole("button", { name: "Filter output" })).not.toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "Find in output" })).not.toBeInTheDocument();
+  });
+
+  it("opens and expands a collapsed block from its header control", async () => {
+    install([block({ command: "npm test" })], { b1: page("one\ntwo") });
+    const user = userEvent.setup();
+    mount();
+    const card = await screen.findByRole("group", { name: "Command npm test" });
+    await user.click(within(card).getByRole("button", { name: "Collapse" }));
+    await user.click(within(card).getByRole("button", { name: "Filter output" }));
+    expect(within(card).getByRole("textbox", { name: "Filter output" })).toHaveFocus();
+    expect(card.querySelector(".cb-out")).toBeInTheDocument();
   });
 });

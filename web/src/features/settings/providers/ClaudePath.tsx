@@ -1,7 +1,7 @@
 import { Info } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import {
-  cantStartLead, engineHostApi, mismatchLine, plain, useAppUpdateOrbyn, useEngineHosts, type HostRow,
+  claudeHostSentence, engineHostApi, useAppUpdateOrbyn, useEngineHosts,
 } from "../../enginehost";
 import { toFailure } from "../../../lib/useAsync";
 import { useClaudeEnginePath, type ClaudeEnginePath } from "../../../product/engines/claudePath";
@@ -106,18 +106,6 @@ export function ClaudePathSettings() {
   );
 }
 
-/** The states whose host stops the SDK path; one that is only idle or starting says nothing here. */
-const BANNER_STATES = new Set<HostRow["state"]>(["crashed", "restarting", "cant_start", "version_mismatch"]);
-
-/** The service's sentence for a host that stops the SDK path; the built host lines speak when an older service sends no detail. */
-function hostBannerText(host: HostRow): string | null {
-  if (!BANNER_STATES.has(host.state)) return null;
-  if (host.detail) return host.detail;
-  if (host.state === "crashed" || host.state === "restarting") return "The engine host stopped and is restarting.";
-  if (host.state === "version_mismatch") return mismatchLine(host);
-  return `${cantStartLead(host)}${host.last_error ? ` Last error: ${plain(host.last_error.message, 200).replace(/\.$/, "")}.` : ""}`;
-}
-
 /**
  * The service's own sentence for a host that stops the SDK path, with the one action that keeps the person moving
  * (Use Claude (CLI)); Try again only where the host gave up, Update Orbyn only when an update is ready. Nothing switches
@@ -130,7 +118,7 @@ export function ClaudePathBanner() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ text: string; prefix: string } | null>(null);
   const host = hosts?.find((row) => row.id === "claude") ?? null;
-  const line = host ? hostBannerText(host) : null;
+  const line = host ? claudeHostSentence(host) : null;
   if (!loaded || path !== "sdk" || !host || !line) return null;
   const waiting = host.state === "restarting" || host.state === "crashed";
 
