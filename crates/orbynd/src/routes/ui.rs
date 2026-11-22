@@ -9,6 +9,8 @@ use axum::response::{IntoResponse, Response};
 
 use crate::http::{ApiFailure, AppState};
 
+use super::precompressed;
+
 const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
     img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; \
     base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
@@ -74,34 +76,51 @@ pub async fn serve(State(state): State<AppState>, request: Request) -> Response 
             .into_response();
     };
     let target = resolve(root, &path)
-        .filter(|candidate| candidate.is_file())
+        // A compressed sibling is a transport artifact, never a resource, so a request
+        // naming one falls through like any other name this directory does not serve.
+        .filter(|candidate| candidate.is_file() && !precompressed::is_sibling(candidate))
         .unwrap_or_else(|| root.join("index.html"));
-    match tokio::fs::read(&target).await {
-        Ok(bytes) => {
-            let mut response = bytes.into_response();
-            let headers = response.headers_mut();
-            headers.insert(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static(content_type(&target)),
-            );
-            headers.insert(
-                header::CONTENT_SECURITY_POLICY,
-                HeaderValue::from_static(CSP),
-            );
-            headers.insert(
-                header::X_CONTENT_TYPE_OPTIONS,
-                HeaderValue::from_static("nosniff"),
-            );
-            headers.insert(
-                header::REFERRER_POLICY,
-                HeaderValue::from_static("no-referrer"),
-            );
-            response
-        }
-        Err(_) => {
-            ApiFailure::new(StatusCode::NOT_FOUND, "no_ui", "No UI is installed.").into_response()
-        }
+    // A sibling the UI build pre-compressed is served as it is: no per-request CPU,
+    // and a better ratio than compressing this request's bytes could reach.
+    match precompressed::negotiate(&target, request.headers()).await {
+        Some(served) => static_response(served.bytes, &target, Some(served.encoding)),
+        None => match tokio::fs::read(&target).await {
+            Ok(bytes) => static_response(bytes, &target, None),
+            Err(_) => ApiFailure::new(StatusCode::NOT_FOUND, "no_ui", "No UI is installed.")
+                .into_response(),
+        },
     }
+}
+
+/// The response every static file shares. `encoding` is set when the bytes came from a
+/// pre-compressed sibling rather than from the file itself.
+fn static_response(bytes: Vec<u8>, target: &Path, encoding: Option<&'static str>) -> Response {
+    let mut response = bytes.into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(content_type(target)),
+    );
+    if let Some(encoding) = encoding {
+        headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static(encoding));
+    }
+    if precompressed::compressible(target) {
+        // Even the identity response depends on `Accept-Encoding` for this resource.
+        headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+    }
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CSP),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    response
 }
 
 #[cfg(test)]

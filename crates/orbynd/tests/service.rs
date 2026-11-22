@@ -4,6 +4,7 @@ mod support;
 
 use std::time::Duration;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use serde_json::{Value, json};
 use support::{Options, Service, TempDir, setup, text_of, types_of};
 
@@ -716,6 +717,11 @@ fn write(path: &std::path::Path, text: &str) {
     std::fs::write(path, text).unwrap();
 }
 
+fn write_bytes(path: &std::path::Path, bytes: &[u8]) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, bytes).unwrap();
+}
+
 #[tokio::test]
 async fn profiles_keep_the_builtin_default_and_skills_show_the_revision() {
     let dir = TempDir::new();
@@ -930,6 +936,117 @@ async fn static_ui_has_csp_and_spa_fallback() {
     assert_eq!(missing_api.status(), 404);
     let body: Value = missing_api.json().await.unwrap();
     assert_eq!(body["code"], "not_found");
+}
+
+/// What `web/scripts/precompress.mjs` writes for the body below: brotli and gzip of the
+/// same 600 bytes. The service must serve these bytes untouched.
+const BROTLI_FIXTURE: &str = "G1cC+I3DuJlbxJtmd5T0ZKm+dNOCmWSwkwoxeEFhoPD8eIcPn75HGTMIRQI=";
+const GZIP_FIXTURE: &str =
+    "H4sIAAAAAAACCkutKMgvKlFIzs8rLlHITSzKTi1SsFUwtOZKHZUYlSBfAgDjy5AIWAIAAA==";
+
+async fn static_get(
+    client: &reqwest::Client,
+    url: &str,
+    accept: Option<&str>,
+) -> reqwest::Response {
+    let mut request = client.get(url);
+    if let Some(accept) = accept {
+        request = request.header("accept-encoding", accept);
+    }
+    request.send().await.unwrap()
+}
+
+#[tokio::test]
+async fn static_precompressed_assets_are_served_in_the_encoding_the_client_accepts() {
+    let dir = TempDir::new();
+    let ui = dir.path().join("ui");
+    let identity = "export const marker = 1;\n".repeat(24);
+    let brotli = B64.decode(BROTLI_FIXTURE).unwrap();
+    let gzip = B64.decode(GZIP_FIXTURE).unwrap();
+    write(&ui.join("assets/app-abc123.js"), &identity);
+    write_bytes(&ui.join("assets/app-abc123.js.br"), &brotli);
+    write_bytes(&ui.join("assets/app-abc123.js.gz"), &gzip);
+    // An image is already compressed: a sibling is never written for one, and one that
+    // is there must not be served either.
+    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+    write_bytes(&ui.join("assets/logo-abc123.png"), png);
+    write_bytes(&ui.join("assets/logo-abc123.png.br"), b"not a png");
+    write(&ui.join("index.html"), "<!doctype html><title>app</title>");
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            args: vec!["--ui-dir".into(), ui.to_string_lossy().into_owned()],
+            ..Options::default()
+        },
+    );
+    let client = reqwest::Client::new();
+    let url = |path: &str| format!("{}{path}", service.url);
+
+    // A client that accepts brotli gets the bytes the build compressed, not a body the
+    // service compressed for this one request.
+    let response = static_get(&client, &url("/assets/app-abc123.js"), Some("gzip, br")).await;
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["content-encoding"], "br");
+    assert_eq!(response.headers()["vary"], "Accept-Encoding");
+    assert_eq!(response.content_length(), Some(brotli.len() as u64));
+    // The whole point: fewer bytes on the wire than the file it replaces.
+    assert!(
+        brotli.len() < identity.len(),
+        "brotli {} vs identity {}",
+        brotli.len(),
+        identity.len()
+    );
+    assert_eq!(response.bytes().await.unwrap().as_ref(), brotli.as_slice());
+
+    // A client that accepts gzip only gets the gzip sibling, unchanged.
+    let response = static_get(&client, &url("/assets/app-abc123.js"), Some("gzip")).await;
+    assert_eq!(response.headers()["content-encoding"], "gzip");
+    assert_eq!(response.headers()["vary"], "Accept-Encoding");
+    assert_eq!(response.bytes().await.unwrap().as_ref(), gzip.as_slice());
+
+    // A client that sends no `Accept-Encoding` still gets the file itself.
+    let response = static_get(&client, &url("/assets/app-abc123.js"), None).await;
+    assert_eq!(response.status(), 200);
+    assert!(response.headers().get("content-encoding").is_none());
+    assert_eq!(response.headers()["vary"], "Accept-Encoding");
+    assert_eq!(response.content_length(), Some(identity.len() as u64));
+    assert_eq!(response.text().await.unwrap(), identity);
+
+    // The shell is served through the same fallback route, and a file with no sibling
+    // (a shell this small never gets one) still answers with its own bytes.
+    let response = static_get(&client, &url("/threads/abc"), Some("br")).await;
+    assert_eq!(response.status(), 200);
+    assert!(response.headers().get("content-encoding").is_none());
+    assert_eq!(response.headers()["vary"], "Accept-Encoding");
+
+    // A compressed sibling is not a resource: naming one must not hand back coded bytes
+    // as a download.
+    let response = static_get(&client, &url("/assets/app-abc123.js.br"), Some("br")).await;
+    assert!(response.headers().get("content-encoding").is_none());
+    assert_ne!(
+        response.headers()["content-type"],
+        "application/octet-stream",
+        "the sibling must never be served as a file"
+    );
+
+    // A type that is already compressed is never encoded, even with a sibling present.
+    let response = static_get(&client, &url("/assets/logo-abc123.png"), Some("br")).await;
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["content-type"], "image/png");
+    assert!(response.headers().get("content-encoding").is_none());
+    assert!(response.headers().get("vary").is_none());
+    assert_eq!(response.bytes().await.unwrap().as_ref(), png.as_slice());
+
+    // HEAD carries the representation's headers without a body.
+    let head = client
+        .head(url("/assets/app-abc123.js"))
+        .header("accept-encoding", "br")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(head.status(), 200);
+    assert_eq!(head.headers()["content-encoding"], "br");
+    assert_eq!(head.headers()["vary"], "Accept-Encoding");
 }
 
 #[tokio::test]
