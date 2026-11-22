@@ -35,6 +35,8 @@ pub struct Failure {
     pub message: String,
     pub retry: Option<RetryInfo>,
     pub disposition: ThreadDisposition,
+    /// A stable code for the client, so it never has to match `message`.
+    pub code: Option<&'static str>,
 }
 
 impl Failure {
@@ -44,6 +46,7 @@ impl Failure {
             message: message.into(),
             retry: None,
             disposition: ThreadDisposition::Unknown,
+            code: None,
         }
     }
 }

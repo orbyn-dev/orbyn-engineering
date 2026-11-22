@@ -140,7 +140,11 @@ const DEFINITIONS: &[Definition] = defs![
     "provider_instances" Kind::List, [], false;
     "crew_digest" Kind::Object, {"time": "17:00"}, false;
     "crew_turn_budget" Kind::Number, 0, false;
+    "claude_engine_path" Kind::OneOf(&["sdk", "cli"]), "sdk", false;
 ];
+
+/// Which path Claude runs take: `sdk` (the engine host, the default) or `cli`. Read at each run's start.
+pub(crate) const CLAUDE_ENGINE_PATH: &str = "claude_engine_path";
 
 /// The daily digest's send time (issue #806): a Person route stores it, and the Crew watch reads it.
 pub(crate) const CREW_DIGEST: &str = "crew_digest";
@@ -519,7 +523,8 @@ impl Core {
             .is_some_and(|list| list.iter().any(|item| item.as_str() == Some(engine)));
         if off {
             return Err(CoreError::Invalid(format!(
-                "{engine} is turned off for this project."
+                "{} is turned off for this project.",
+                self.engines.display_name(engine)
             )));
         }
         Ok(())
@@ -613,6 +618,18 @@ mod tests {
                 .filter(|d| d.key == definition.key)
                 .count();
             assert_eq!(same, 1, "{}", definition.key);
+        }
+    }
+
+    #[test]
+    fn the_claude_engine_path_defaults_to_sdk_and_takes_only_sdk_or_cli() {
+        let path = definition(CLAUDE_ENGINE_PATH).unwrap();
+        assert_eq!((path.default)(), json!("sdk"));
+        assert!(!path.project, "one choice for the whole computer");
+        assert!(check(path, &json!("cli")).is_ok());
+        assert!(check(path, &json!("sdk")).is_ok());
+        for bad in [json!("auto"), json!(""), json!(true), json!(null)] {
+            assert!(check(path, &bad).is_err(), "{bad}");
         }
     }
 

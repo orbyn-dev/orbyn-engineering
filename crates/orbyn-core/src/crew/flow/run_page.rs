@@ -135,7 +135,7 @@ impl Core {
                         && evidence.proves.as_str() == proves.as_str()
                 })
         };
-        cited.retain(|evidence| !is_repro_or_finding(*evidence));
+        cited.retain(|evidence| !is_repro_or_finding(evidence));
         let skip = cited.len().saturating_sub(CHECKS_MAX);
         truncated |= skip > 0;
 

@@ -1,6 +1,6 @@
 import { Btn, Ic } from "../shared/parts";
 
-const PLANNED_NOTE = "Planned: no route yet. The beta has a Cancel on each task, when it is wired.";
+const PLANNED_NOTE = "Planned: no route yet. A task’s Cancel and Re-run checks are built, and each asks first.";
 
 /** The Crew page title as the Flow frames draw it: Pause crew and Stop crew are Planned, since no Flow route pauses or stops a crew. */
 export function FlowHead({ sub, acts }: { sub: string; acts?: boolean }) {

@@ -10,7 +10,7 @@ export function FlowArtifactPruned() {
       <div className="cx-cwpg">
             <FlowHead sub="Login redirect crew · Task: Use next in the auth redirect · 5 runs" acts />
             <div className="cx-cwtabs">
-              <Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox · 4", "Report"]} on={0} />
+              <Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox", "Report"]} on={0} />
               <span className="cx-end">Claude Code 412k of 1M tokens · Codex 62% of its weekly limit · 2h 14m<span className="cx-cwpv" title="Planned: no Flow route reports usage yet">Planned</span></span>
             </div>
             <div className="cx-flcr">
@@ -33,7 +33,7 @@ export function FlowArtifactPruned() {
               <span className="cx-fh" style={{ left: "904px", top: "22px", width: "93px" }}><Ic n="git" sm />Main</span>
               <span className="cx-fh" style={{ left: "1017px", top: "22px", width: "93px" }}><Ic n="user" sm />You</span>
               <span className="cx-fg" style={{ left: "113px", top: "0", width: "206px" }}>Build</span>
-              <span className="cx-fg" style={{ left: "339px", top: "0", width: "432px" }}>Prove: separate runs, no limit</span>
+              <span className="cx-fg" style={{ left: "339px", top: "0", width: "432px" }}>Prove: separate runs</span>
               <span className="cx-fg" style={{ left: "791px", top: "0", width: "206px" }}>Land: no human wait</span>
               <span className="cx-fg" style={{ left: "1017px", top: "0", width: "93px" }}>You</span>
               <svg className="cx-fe" width="1110" height="322" aria-hidden="true">
@@ -180,8 +180,8 @@ export function FlowArtifactPruned() {
                 <b>Passed · commit a41c9e2</b>
               </div>
               <p style={{ margin: "0", color: "var(--color-muted)", fontSize: "11.5px" }}>Large artifacts (logs, screenshots) can be pruned once a retention window exists; v1 has none yet. The hash is kept in the ledger, so the log can be checked if you still have a copy. Replay keeps every event.</p>
-              <div className="cx-ra"><Btn className="cx-ghost">Verify a copy…</Btn><Btn className="cx-ghost">Re-run the check</Btn></div>
-              <div style={{ marginTop: "6px" }}><span className="cx-cwpv" style={{ marginLeft: "0" }}>Re-run the check: Available when the write route ships</span></div>
+              <div className="cx-ra"><Btn className="cx-ghost">Verify a copy…</Btn><Btn className="cx-ghost">Re-run the check<span className="cx-cwpv">Planned</span></Btn></div>
+              <div style={{ marginTop: "6px", color: "var(--color-muted)", fontSize: "11.5px" }}>The app has no Report page or artifact view yet; a task’s Re-run checks is built and asks first.</div>
             </div>
       </div>
     </Frame>
