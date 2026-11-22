@@ -1113,7 +1113,7 @@ impl EngineDriver for StartIssueDriver {
             id: self.id.into(),
             name: "Start Issue".into(),
             tier: EngineTier::Acp,
-            capabilities: EngineCapabilities {
+            capabilities: orbyn_contracts::EngineCapabilities {
                 streaming: true,
                 approvals: true,
                 resume: true,
