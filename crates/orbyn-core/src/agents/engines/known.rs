@@ -93,7 +93,7 @@ pub const KNOWN_ENGINES: &[KnownEngine] = &[
         programs: &["droid"],
         args: &["exec", "--output-format", "acp"],
         env: &[],
-        // Its autonomy level is unobserved, so it stays labelled until a run shows it asks. The flag is in Factory's own editor guides; `droid exec --help` is the check.
+        // UNVERIFIED command: T3 Code's registry data is fetched at run time, so its source has no Droid line; `exec --output-format acp` is from Factory's and Zed's guides, not in Factory's exec reference. A failed start shows. Its autonomy level is unobserved, so it stays labelled until a run shows it asks.
         asks: false,
         not_from: &[],
     },
@@ -115,7 +115,7 @@ pub const KNOWN_ENGINES: &[KnownEngine] = &[
         programs: &["glm-acp-agent"],
         args: &[],
         env: &[],
-        // The GLM ACP agent (npm `glm-acp-agent`) for the Z.AI GLM Coding Plan. Whether it asks before an edit is unobserved.
+        // UNVERIFIED command: the registry's `glm-acp-agent` (T3 knows the id, not the command) is the npm package of that name, for the Z.AI GLM Coding Plan. Whether it asks before an edit is unobserved.
         asks: false,
         not_from: &[],
     },
@@ -169,7 +169,7 @@ pub const KNOWN_ENGINES: &[KnownEngine] = &[
         programs: &["kiro-cli"],
         args: &["acp", "--agent-engine=v3", "--auth-method=cli"],
         env: &[],
-        // Kiro starts a session in autopilot, which acts without asking, until a client turns it off; Orbyn's ACP driver does not yet, so it stays labelled. `--auth-method=cli` keeps tokens inside Kiro; V3 is the engine T3 Code speaks.
+        // Kiro starts a session in autopilot, which acts without asking, until a client turns it off; Orbyn's ACP driver does not yet, so it stays labelled. The arguments are T3 Code's (packages/provider-kiro, commit 9168ca73d). `--auth-method=cli` keeps tokens inside Kiro; V3 is the engine T3 Code speaks.
         asks: false,
         not_from: &[],
     },
@@ -179,7 +179,7 @@ pub const KNOWN_ENGINES: &[KnownEngine] = &[
         programs: &["vibe-acp"],
         args: &[],
         env: &[],
-        // Installed with the `mistral-vibe` package next to `vibe`. Whether it asks before an edit is unobserved.
+        // UNVERIFIED command: `vibe-acp` is what Mistral's and Zed's guides name; installed with the `mistral-vibe` package next to `vibe`. Whether it asks before an edit is unobserved.
         asks: false,
         not_from: &[],
     },
@@ -189,7 +189,7 @@ pub const KNOWN_ENGINES: &[KnownEngine] = &[
         programs: &["omp"],
         args: &["acp"],
         env: &[],
-        // Oh My Pi's own ACP command; Zed-style guides also show `--mode acp`. Unobserved, so it stays labelled.
+        // UNVERIFIED command: `omp acp` is the subcommand the package ships; guides also show `--mode acp`. If the program rejects it the start fails and says so. Unobserved, so it stays labelled.
         asks: false,
         not_from: &[],
     },
