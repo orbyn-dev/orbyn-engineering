@@ -21,6 +21,18 @@ it("finds a specific label regardless of word order and excludes desktop control
   expect(new Set(SETTINGS.map((item) => item.id)).size).toBe(SETTINGS.length);
 });
 
+it.each([
+  ["MacIntel", "fixture", true],
+  ["Win32", "fixture", false],
+  ["Linux x86_64", "fixture", false],
+  ["", "Macintosh", true],
+])("only searches font smoothing on macOS clients (%s)", (platform, userAgent, visible) => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue(userAgent);
+  expect(searchSettings("Font smoothing", true).some((item) => item.id === "appearance-font-smoothing")).toBe(visible);
+  vi.restoreAllMocks();
+});
+
 it("navigates from an exact result to an asynchronously loaded row", async () => {
   const user = userEvent.setup();
   vi.mocked(request).mockImplementation(async (_method, path) => {

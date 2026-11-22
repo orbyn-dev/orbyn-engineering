@@ -123,6 +123,20 @@ it("turns whitespace-only changes out of the diff from Settings, the same switch
   useUi.getState().setPrefs({ diffIgnoreWhitespace: false });
 });
 
+it.each([
+  ["MacIntel", "fixture", true],
+  ["Win32", "fixture", false],
+  ["Linux x86_64", "fixture", false],
+  ["", "Macintosh", true],
+])("shows font smoothing only on macOS clients (%s)", (platform, userAgent, visible) => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue(userAgent);
+  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
+  render(<AppearanceSection />);
+  expect(Boolean(screen.queryByRole("switch", { name: "Font smoothing" }))).toBe(visible);
+  vi.restoreAllMocks();
+});
+
 it("describes the Ledger layout and the two font fields in the design's words", async () => {
   vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
   render(<AppearanceSection />);
