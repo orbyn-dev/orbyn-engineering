@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use axum::extract::{Request, State};
 use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use sha2::{Digest, Sha256};
 
 use crate::http::{ApiFailure, AppState};
 
@@ -117,8 +118,39 @@ pub async fn serve(State(state): State<AppState>, request: Request) -> Response 
     };
     match tokio::fs::read(&target).await {
         Ok(bytes) => {
-            let mut response = bytes.into_response();
+            let digest = Sha256::digest(&bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            let etag = format!("\"{digest}\"");
+            let matches = request
+                .headers()
+                .get_all(header::IF_NONE_MATCH)
+                .iter()
+                .filter_map(|value| value.to_str().ok())
+                .flat_map(|value| value.split(','))
+                .map(str::trim)
+                .any(|value| value == "*" || value.strip_prefix("W/").unwrap_or(value) == etag);
+            let mut response = if matches {
+                StatusCode::NOT_MODIFIED.into_response()
+            } else if request.method() == Method::HEAD {
+                let mut response = StatusCode::OK.into_response();
+                if let Ok(length) = HeaderValue::from_str(&bytes.len().to_string()) {
+                    response
+                        .headers_mut()
+                        .insert(header::CONTENT_LENGTH, length);
+                }
+                response
+            } else {
+                bytes.into_response()
+            };
             let headers = response.headers_mut();
+            // UI directories can contain files whose names only look content-hashed.
+            // Revalidate every response until a build manifest can identify immutable assets.
+            headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+            if let Ok(value) = HeaderValue::from_str(&etag) {
+                headers.insert(header::ETAG, value);
+            }
             headers.insert(
                 header::CONTENT_TYPE,
                 HeaderValue::from_static(content_type(&target)),

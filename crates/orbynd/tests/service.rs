@@ -914,7 +914,33 @@ async fn static_ui_has_csp_and_spa_fallback() {
     assert_eq!(directive("connect-src"), "connect-src 'self'");
     assert_eq!(directive("script-src"), "script-src 'self'");
     assert_eq!(page.headers()["referrer-policy"], "no-referrer");
+    assert_eq!(page.headers()["cache-control"], "no-cache");
+    let page_etag = page.headers()["etag"].to_str().unwrap().to_owned();
     assert!(page.text().await.unwrap().contains("<title>app</title>"));
+    let not_modified = client
+        .get(format!("{}/threads/abc", service.url))
+        .header("if-none-match", format!("\"other\", W/{page_etag}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(not_modified.status(), 304);
+    assert_eq!(not_modified.headers()["etag"], page_etag);
+    assert_eq!(not_modified.headers()["cache-control"], "no-cache");
+    assert!(
+        not_modified
+            .headers()
+            .contains_key("content-security-policy")
+    );
+    assert_eq!(not_modified.headers()["referrer-policy"], "no-referrer");
+    assert_eq!(not_modified.headers()["x-content-type-options"], "nosniff");
+    assert!(not_modified.bytes().await.unwrap().is_empty());
+    let wildcard = client
+        .get(format!("{}/threads/abc", service.url))
+        .header("if-none-match", "*")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wildcard.status(), 304);
     let script = client
         .get(format!("{}/assets/app.js", service.url))
         .send()
@@ -926,6 +952,45 @@ async fn static_ui_has_csp_and_spa_fallback() {
             .unwrap()
             .contains("javascript")
     );
+    assert_eq!(script.headers()["cache-control"], "no-cache");
+    let script_etag = script.headers()["etag"].to_str().unwrap().to_owned();
+    let plain_head = client
+        .head(format!("{}/assets/app.js", service.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(plain_head.status(), 200);
+    assert_eq!(plain_head.headers()["content-length"], "14");
+    assert!(plain_head.bytes().await.unwrap().is_empty());
+    let head = client
+        .head(format!("{}/assets/app.js", service.url))
+        .header("if-none-match", &script_etag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(head.status(), 304);
+    assert_eq!(head.headers()["etag"], script_etag);
+    assert_eq!(head.headers()["cache-control"], "no-cache");
+    assert!(head.headers().contains_key("content-security-policy"));
+    assert!(head.bytes().await.unwrap().is_empty());
+    let unmatched = client
+        .get(format!("{}/assets/app.js", service.url))
+        .header("if-none-match", "\"not-the-etag\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unmatched.status(), 200);
+    assert_eq!(unmatched.text().await.unwrap(), "console.log(1)");
+    write(&ui.join("assets/app.js"), "console.log(2)");
+    let changed = client
+        .get(format!("{}/assets/app.js", service.url))
+        .header("if-none-match", &script_etag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(changed.status(), 200);
+    assert_ne!(changed.headers()["etag"], script_etag);
+    assert_eq!(changed.text().await.unwrap(), "console.log(2)");
     for path in [
         "/assets/missing.js",
         "/assets/missing.css",
@@ -944,6 +1009,7 @@ async fn static_ui_has_csp_and_spa_fallback() {
     }
     let missing_api = service.get("/api/nothing").send().await.unwrap();
     assert_eq!(missing_api.status(), 404);
+    assert!(!missing_api.headers().contains_key("etag"));
     let body: Value = missing_api.json().await.unwrap();
     assert_eq!(body["code"], "not_found");
 }
