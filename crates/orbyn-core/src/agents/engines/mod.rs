@@ -807,6 +807,12 @@ impl EngineManager {
         }
     }
 
+    /// The last good list an engine gave, without waiting on it. `None` means it has
+    /// not answered yet, so a check that cannot wait learns nothing and must accept.
+    pub(crate) fn known_models(&self, engine: &str) -> Option<EngineModels> {
+        lock(&self.known_models).get(engine).cloned()
+    }
+
     pub async fn status(&self, id: &str) -> Result<EngineStatus> {
         let driver = self.driver(id)?;
         Ok(self
