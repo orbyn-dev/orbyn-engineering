@@ -7,6 +7,7 @@ mod flow;
 mod macos;
 mod pending;
 mod settings;
+mod setup;
 mod shortcut;
 mod state;
 #[cfg(not(target_os = "macos"))]
@@ -35,14 +36,16 @@ pub use state::SnapShotState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter};
 
 use flow::{Events, Flow, Gate};
 use pending::Pending;
+use setup::{ScreenRecordingSetup, SetupPlatform};
 use shortcut::Registration;
+use state::PlatformFacts;
 
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -51,6 +54,7 @@ pub struct SnapShot {
     pub(crate) pending: Arc<Mutex<Pending>>,
     pub(crate) gate: Arc<Gate>,
     registration: Mutex<Registration>,
+    screen_recording_setup: Mutex<ScreenRecordingSetup>,
     stop: Arc<AtomicBool>,
     reaper: Option<JoinHandle<()>>,
     reaper_thread: thread::Thread,
@@ -79,6 +83,7 @@ impl Default for SnapShot {
             pending,
             gate: Arc::new(Gate::default()),
             registration: Mutex::new(Registration::default()),
+            screen_recording_setup: Mutex::new(ScreenRecordingSetup::default()),
             stop,
             reaper: Some(reaper),
             reaper_thread,
@@ -98,6 +103,10 @@ impl Drop for SnapShot {
 
 impl SnapShot {
     pub fn state(&self) -> SnapShotState {
+        self.state_with(platform::facts())
+    }
+
+    fn state_with(&self, facts: PlatformFacts) -> SnapShotState {
         let settings = match self.settings.lock() {
             Ok(settings) => settings.clone(),
             Err(_) => Settings::default(),
@@ -106,7 +115,28 @@ impl SnapShot {
             Ok(registration) => (registration.registered, registration.message.clone()),
             Err(_) => (false, None),
         };
-        state::compute(&settings, registered, message, &platform::facts())
+        state::compute(&settings, registered, message, &facts)
+    }
+
+    pub(crate) fn allow_screen_recording(&self) -> Result<SnapShotState, &'static str> {
+        let platform = platform::setup_platform();
+        self.allow_screen_recording_with(&platform, platform::facts, Instant::now())
+    }
+
+    pub(crate) fn allow_screen_recording_with(
+        &self,
+        platform: &dyn SetupPlatform,
+        facts: impl FnOnce() -> PlatformFacts,
+        now: Instant,
+    ) -> Result<SnapShotState, &'static str> {
+        {
+            let mut setup = self
+                .screen_recording_setup
+                .lock()
+                .map_err(|_| "unavailable")?;
+            setup.attempt(platform, now);
+        }
+        Ok(self.state_with(facts()))
     }
 
     pub fn enabled(&self) -> bool {
