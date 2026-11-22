@@ -49,6 +49,14 @@ describe("the Engine row of Details", () => {
     expect(screen.queryByText(/sandbox/i)).toBeNull();
   });
 
+  it("lets the safety sentence wrap and keeps its full text as the title", async () => {
+    setCursorThreadApi(createCursorThreadMock({ acknowledged: true, engines: ["kiro"] }));
+    render(<EngineNote projectId="p" engine="kiro" engineName="Kiro" />);
+    const note = await screen.findByText("Orbyn cannot ask before Kiro acts.");
+    expect(note).toHaveClass("wrap");
+    expect(note).toHaveAttribute("title", "Orbyn cannot ask before Kiro acts.");
+  });
+
   it("draws an engine's name as plain text", () => {
     render(<EngineNote projectId="p" engine="x" engineName="<b>Bold</b>" modelName="<i>m</i>" />);
     expect(document.querySelector("b, i")).toBeNull();
