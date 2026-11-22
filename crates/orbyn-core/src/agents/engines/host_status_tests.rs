@@ -204,6 +204,7 @@ async fn a_wrapped_rust_driver_is_reported_and_a_bare_pool_is_not() {
         program: "/nonexistent/orbyn-engine-host".into(),
         claude: true,
         cursor: false,
+        acp: false,
         timings: Timings::default(),
     };
     let hub = HostHub::new(&config);
