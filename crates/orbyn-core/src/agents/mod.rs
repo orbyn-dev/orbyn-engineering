@@ -16,6 +16,7 @@ pub mod provider_facts;
 pub mod provider_list;
 pub mod selection;
 pub mod sse;
+pub mod text_models;
 pub mod titles;
 pub(crate) mod tools_report;
 pub mod triage;

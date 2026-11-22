@@ -180,6 +180,7 @@
     ["GET","/api/tasks/{id}/deliveries","local"],
     ["GET","/api/tasks/{id}/runs","local"],
     ["GET","/api/tasks/{id}/webhook","local"],
+    ["GET","/api/text-generators","local"],
     ["GET","/api/threads","local"],
     ["GET","/api/threads/{id}","local"],
     ["GET","/api/threads/{id}/attachments","local"],
