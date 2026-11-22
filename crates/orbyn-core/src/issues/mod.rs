@@ -58,6 +58,9 @@ pub(crate) struct IssueDesk {
     credentials: Mutex<Credentials>,
     sources: Mutex<HashMap<TrackerKind, Arc<dyn IssueSource>>>,
     cache: Mutex<HashMap<String, (Instant, ScopeList)>>,
+    /// Tests send the reader GitLab builds to a local fake server instead of the stored host.
+    #[cfg(test)]
+    gitlab_test_base: Mutex<Option<String>>,
 }
 
 impl IssueDesk {
@@ -66,6 +69,8 @@ impl IssueDesk {
             credentials: Mutex::new(credentials),
             sources: Mutex::new(HashMap::new()),
             cache: Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            gitlab_test_base: Mutex::new(None),
         }
     }
 
@@ -90,6 +95,23 @@ impl IssueDesk {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(kind, source);
+    }
+
+    /// A local plain-http server the GitLab source built by `gitlab_source` talks to, in tests only.
+    #[cfg(test)]
+    pub(crate) fn set_gitlab_test_base(&self, base: &str) {
+        *self
+            .gitlab_test_base
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(base.trim_end_matches('/').to_owned());
+    }
+
+    #[cfg(test)]
+    fn gitlab_test_base(&self) -> Option<String> {
+        self.gitlab_test_base
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -153,7 +175,7 @@ impl Core {
     }
 
     /// The GitLab reader of the stored connection: its https host and the token from the keychain.
-    fn gitlab_source(&self) -> Result<Arc<dyn IssueSource>> {
+    pub(crate) fn gitlab_source(&self) -> Result<Arc<dyn IssueSource>> {
         let not_connected = |why: &str| CoreError::TrackerNotConnected(why.to_owned());
         let connection = self
             .store
@@ -174,6 +196,15 @@ impl Core {
             })?
             .ok_or_else(|| not_connected("No token is saved"))?;
         let host = connection.host.as_deref().unwrap_or(GITLAB_DEFAULT_HOST);
+        #[cfg(test)]
+        if let Some(base) = self.issues.gitlab_test_base() {
+            validate_host(host)?;
+            return Ok(Arc::new(gitlab::GitLab::for_test(
+                &base,
+                token.as_str(),
+                Duration::from_secs(10),
+            )));
+        }
         Ok(Arc::new(gitlab::GitLab::new(host, token)?))
     }
 
@@ -437,6 +468,9 @@ impl Core {
                         list.issues.extend(page.issues);
                     }
                     Err(error) => {
+                        if matches!(&error, CoreError::Invalid(_)) {
+                            return Err(error);
+                        }
                         counted = false;
                         failed = Some(error.public_message());
                     }
@@ -454,6 +488,7 @@ impl Core {
             open: totals.0,
             closed: totals.1,
         });
+        list.next_cursors = query::capped_cursors(std::mem::take(&mut list.next_cursors));
         Ok(list)
     }
 

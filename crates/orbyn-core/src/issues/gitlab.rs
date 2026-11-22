@@ -35,6 +35,7 @@ const MAX_ASSIGNEES: usize = 50;
 /// The issue body kept (the same as a body the person may write, docs/issues.md). Comments keep the draft's 16 KiB.
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const MAX_COMMENTS: usize = 50;
+const MAX_NOTE_PAGES: u32 = 5;
 const MAX_SEGMENTS: usize = 20;
 
 pub(crate) struct GitLab {
@@ -435,14 +436,12 @@ fn summary(host: &str, scope: &str, value: &Value) -> Option<IssueSummary> {
     })
 }
 
-/// The people's comments, oldest first. GitLab's system notes are events, not comments.
-fn comments(notes: &Value) -> Vec<IssueComment> {
+/// The people's comments from these notes, oldest first. GitLab's system notes are events, not comments.
+fn user_comments(notes: &[Value], at_most: usize) -> Vec<IssueComment> {
     notes
-        .as_array()
-        .into_iter()
-        .flatten()
+        .iter()
         .filter(|n| n.get("system").and_then(Value::as_bool) != Some(true))
-        .take(MAX_COMMENTS)
+        .take(at_most)
         .map(|n| IssueComment {
             id: n
                 .get("id")
@@ -534,21 +533,45 @@ impl IssueSource for GitLab {
         let value = parse(&issue.body)?;
         let summary = summary(&self.host, scope, &value)
             .ok_or_else(|| CoreError::NotFound("issue".into()))?;
-        let notes = self
-            .fetch(
-                &format!("{issue_path}/notes"),
-                &[
-                    ("per_page", "100".to_owned()),
-                    ("order_by", "created_at".to_owned()),
-                    ("sort", "asc".to_owned()),
-                ],
-                "issue",
-            )
-            .await?;
+        let mut comments = Vec::new();
+        let mut page = 1u32;
+        while page <= MAX_NOTE_PAGES {
+            let notes = self
+                .fetch(
+                    &format!("{issue_path}/notes"),
+                    &[
+                        ("per_page", "100".to_owned()),
+                        ("order_by", "created_at".to_owned()),
+                        ("sort", "asc".to_owned()),
+                        ("page", page.to_string()),
+                    ],
+                    "issue",
+                )
+                .await?;
+            let parsed = parse(&notes.body)?;
+            let rows = parsed.as_array().ok_or_else(unreadable)?;
+            comments.extend(user_comments(rows, MAX_COMMENTS - comments.len()));
+            if comments.len() >= MAX_COMMENTS {
+                break;
+            }
+            let advertised = notes
+                .headers
+                .get("x-next-page")
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim);
+            let next = match advertised {
+                Some(text) => text.parse::<u32>().ok(),
+                None => (rows.len() >= 100).then_some(page + 1),
+            };
+            match next {
+                Some(next) if next > page => page = next,
+                _ => break,
+            }
+        }
         Ok(IssueDetail {
             summary,
             body: cut(&text(&value, "description"), MAX_BODY_BYTES).to_owned(),
-            comments: comments(&parse(&notes.body)?),
+            comments,
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
         })

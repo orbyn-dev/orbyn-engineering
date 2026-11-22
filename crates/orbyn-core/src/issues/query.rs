@@ -11,6 +11,22 @@ const MAX_LABELS: usize = 20;
 const MAX_CURSORS_BYTES: usize = 4096;
 const MAX_CURSORS: usize = 50;
 
+/// What a listing may emit: at most [`MAX_CURSORS`] and [`MAX_CURSORS_BYTES`] as the JSON the page sends,
+/// keeping the first in key order and dropping the rest.
+pub(crate) fn capped_cursors(cursors: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let mut kept = BTreeMap::new();
+    for (key, value) in cursors {
+        kept.insert(key, value);
+        let fits = kept.len() <= MAX_CURSORS
+            && serde_json::to_string(&kept).is_ok_and(|json| json.len() <= MAX_CURSORS_BYTES);
+        if !fits {
+            kept.pop_last();
+            break;
+        }
+    }
+    kept
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StateFilter {
     Open,

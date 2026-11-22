@@ -267,6 +267,58 @@ async fn a_cursor_carries_to_the_next_page_and_only_for_its_own_scope_and_filter
     );
 }
 
+#[tokio::test]
+async fn a_full_page_without_x_next_page_infers_the_next_cursor() {
+    let server = Server::start(|req| {
+        let base = base_of(req);
+        if req.path().ends_with("/issues_statistics") {
+            return Reply::status(500);
+        }
+        let page = req
+            .param("page")
+            .and_then(|p| p.parse::<u64>().ok())
+            .unwrap_or(1);
+        let items: Vec<u64> = if page == 1 {
+            (1..=50).collect()
+        } else {
+            vec![51]
+        };
+        Reply::json(&Value::Array(
+            items.iter().map(|i| issue(&base, *i)).collect(),
+        ))
+    })
+    .await;
+    let gitlab = reader(&server);
+    let first = gitlab
+        .list("grp/proj", &IssueQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(first.issues.len(), 50);
+    let cursor = first
+        .next
+        .expect("a full page with no x-next-page header infers page 2");
+    assert!(cursor.starts_with("2."), "{cursor}");
+    let second = gitlab
+        .list(
+            "grp/proj",
+            &IssueQuery {
+                cursors: BTreeMap::from([("gitlab grp/proj".to_owned(), cursor)]),
+                ..IssueQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.issues.len(), 1);
+    assert_eq!(second.next, None, "a short page is the end");
+    assert!(
+        server
+            .seen()
+            .iter()
+            .any(|r| r.path().ends_with("/issues") && r.param("page").as_deref() == Some("2")),
+        "the inferred cursor was followed"
+    );
+}
+
 #[test]
 fn a_host_that_is_not_https_is_refused_before_anything_is_sent() {
     for bad in [
@@ -552,6 +604,118 @@ async fn tracker_text_is_cut_to_its_limits() {
             .iter()
             .all(|c| c.body != "changed the description"),
         "system notes are events, not comments"
+    );
+}
+
+#[tokio::test]
+async fn system_notes_do_not_hide_user_comments_on_later_note_pages() {
+    let server = Server::start(|req| {
+        let base = base_of(req);
+        if req.path().ends_with("/notes") {
+            let page = req
+                .param("page")
+                .and_then(|p| p.parse::<u64>().ok())
+                .unwrap_or(1);
+            let notes = if page == 1 {
+                Value::Array(
+                    (0..100)
+                        .map(|i| {
+                            json!({ "id": i, "body": "changed the description", "system": true })
+                        })
+                        .collect(),
+                )
+            } else {
+                json!([
+                    { "id": 101, "body": "first", "system": false,
+                      "author": { "username": "bo" }, "created_at": "2026-11-03T00:00:00Z" },
+                    { "id": 102, "body": "second", "system": false,
+                      "author": { "username": "cy" }, "created_at": "2026-11-04T00:00:00Z" }
+                ])
+            };
+            return Reply::json(&notes);
+        }
+        Reply::json(&issue(&base, 5))
+    })
+    .await;
+    let detail = reader(&server).get("grp/proj", "5").await.unwrap();
+    assert_eq!(
+        detail
+            .comments
+            .iter()
+            .map(|c| c.body.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "second"],
+        "system notes on the first page do not hide comments on the next"
+    );
+    let seen = server.seen();
+    let first_page = seen
+        .iter()
+        .find(|r| r.path().ends_with("/notes"))
+        .expect("a notes page");
+    assert_eq!(first_page.param("per_page").as_deref(), Some("100"));
+    let pages: Vec<String> = seen
+        .into_iter()
+        .filter(|r| r.path().ends_with("/notes"))
+        .map(|r| r.param("page").unwrap_or_else(|| "1".to_owned()))
+        .collect();
+    assert_eq!(pages, ["1", "2"]);
+}
+
+#[tokio::test]
+async fn note_pages_stop_at_fifty_comments() {
+    let server = Server::start(|req| {
+        let base = base_of(req);
+        if req.path().ends_with("/notes") {
+            let mut notes: Vec<Value> = (0..50)
+                .map(|i| {
+                    json!({ "id": i, "body": format!("comment {i}"), "system": false,
+                            "author": { "username": "ann" }, "created_at": "2026-11-01T00:00:00Z" })
+                })
+                .collect();
+            notes
+                .extend((50..100).map(
+                    |i| json!({ "id": i, "body": "changed the description", "system": true }),
+                ));
+            return Reply::json(&Value::Array(notes));
+        }
+        Reply::json(&issue(&base, 5))
+    })
+    .await;
+    let detail = reader(&server).get("grp/proj", "5").await.unwrap();
+    assert_eq!(detail.comments.len(), MAX_COMMENTS);
+    assert_eq!(
+        server
+            .seen()
+            .iter()
+            .filter(|r| r.path().ends_with("/notes"))
+            .count(),
+        1,
+        "the reader stops once it has fifty comments"
+    );
+}
+
+#[tokio::test]
+async fn note_pages_are_bounded_to_five() {
+    let server = Server::start(|req| {
+        if req.path().ends_with("/notes") {
+            let notes: Vec<Value> = (0..100)
+                .map(|i| json!({ "id": i, "body": "changed the description", "system": true }))
+                .collect();
+            return Reply::json(&Value::Array(notes));
+        }
+        Reply::json(&issue(&base_of(req), 5))
+    })
+    .await;
+    let detail = reader(&server).get("grp/proj", "5").await.unwrap();
+    assert!(detail.comments.is_empty());
+    assert_eq!(
+        server
+            .seen()
+            .iter()
+            .filter(|r| r.path().ends_with("/notes"))
+            .count(),
+        5,
+        "at most five notes pages are read"
     );
 }
 

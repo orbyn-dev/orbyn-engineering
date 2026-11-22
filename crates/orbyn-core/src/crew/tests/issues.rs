@@ -5,6 +5,7 @@ use super::harness::{Turn, world};
 use crate::credentials::{Credentials, Failure, SecretBackend};
 use crate::error::{CoreError, Result};
 use crate::issues::{IssueQuery, IssueSource, ScopeList};
+use crate::store::TrackerConnection;
 use async_trait::async_trait;
 use orbyn_contracts::{
     ConnectTracker, IssueCounts, IssueDetail, IssueKey, IssueState, IssueStateCategory,
@@ -124,6 +125,31 @@ fn connect(host: Option<&str>, token: Option<&str>) -> ConnectTracker {
         host: host.map(str::to_owned),
         scope: Some("team/app".into()),
         token: token.map(str::to_owned),
+    }
+}
+
+/// A source that has another page in every scope, to exercise the cap on emitted cursors.
+struct EveryScope;
+
+#[async_trait]
+impl IssueSource for EveryScope {
+    async fn list(&self, _scope: &str, _query: &IssueQuery) -> Result<ScopeList> {
+        Ok(ScopeList {
+            issues: vec![],
+            counts: None,
+            next: Some("2.cursor".into()),
+        })
+    }
+    async fn get(&self, _scope: &str, _key: &str) -> Result<IssueDetail> {
+        Err(CoreError::NotFound("issue".into()))
+    }
+}
+
+fn many_scopes(scopes: Vec<String>) -> TrackerConnection {
+    TrackerConnection {
+        tracker: TrackerKind::Gitlab,
+        host: Some("https://gitlab.example.test".into()),
+        scopes,
     }
 }
 
@@ -247,6 +273,68 @@ async fn a_listing_merges_trackers_newest_first_and_reads_each_scope_once_in_thi
         .await
         .unwrap();
     assert_eq!(only.issues.len(), 1);
+}
+
+#[tokio::test]
+async fn next_cursors_are_capped_to_fifty_and_four_kibibytes() {
+    let (w, _, _) = ready().await;
+    w.core
+        .issues
+        .set_source(TrackerKind::Gitlab, Arc::new(EveryScope));
+    let short: Vec<String> = (0..60).map(|i| format!("grp/p{i:02}")).collect();
+    w.core
+        .store
+        .put_tracker(&many_scopes(short.clone()), "2026-11-01T00:00:00Z")
+        .unwrap();
+    let list = w
+        .core
+        .list_issues(&IssueQuery {
+            tracker: Some(TrackerKind::Gitlab),
+            ..IssueQuery::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(list.next_cursors.len(), 50, "at most fifty cursors");
+    let expected: Vec<String> = short
+        .iter()
+        .take(50)
+        .map(|scope| format!("gitlab {scope}"))
+        .collect();
+    assert_eq!(
+        list.next_cursors.keys().cloned().collect::<Vec<_>>(),
+        expected,
+        "the kept cursors are the first in key order"
+    );
+
+    let long: Vec<String> = (0..60)
+        .map(|i| format!("grp/{i:02}{}", "x".repeat(150)))
+        .collect();
+    w.core
+        .store
+        .put_tracker(&many_scopes(long.clone()), "2026-11-01T00:00:00Z")
+        .unwrap();
+    let list = w
+        .core
+        .list_issues(&IssueQuery {
+            tracker: Some(TrackerKind::Gitlab),
+            ..IssueQuery::default()
+        })
+        .await
+        .unwrap();
+    let json = serde_json::to_string(&list.next_cursors).unwrap();
+    let kept = list.next_cursors.len();
+    assert!(json.len() <= 4096, "{} bytes of cursors", json.len());
+    assert!(kept < 50, "the bytes cap bites before the count cap");
+    let expected: Vec<String> = long
+        .iter()
+        .take(kept)
+        .map(|scope| format!("gitlab {scope}"))
+        .collect();
+    assert_eq!(
+        list.next_cursors.keys().cloned().collect::<Vec<_>>(),
+        expected,
+        "the kept cursors are the first in key order"
+    );
 }
 
 #[tokio::test]
@@ -551,13 +639,93 @@ mod gitlab {
                 .into(),
                 ..IssueQuery::default()
             })
-            .await
-            .unwrap();
-        assert_eq!(
-            forged.failed.len(),
-            1,
-            "a cursor we did not issue is refused"
+            .await;
+        assert!(
+            matches!(&forged, Err(CoreError::Invalid(_))),
+            "a cursor we did not issue is a 400, not a failed tracker: {forged:?}"
         );
         assert_eq!(server.seen().len(), before);
+    }
+
+    #[tokio::test]
+    async fn a_comma_in_a_gitlab_label_is_a_listing_error_and_not_a_failed_tracker() {
+        let server = Server::start(|_| Reply::json(&json!([]))).await;
+        let w = connected(&server).await;
+        let before = server.seen().len();
+        let list = w
+            .core
+            .list_issues(&IssueQuery {
+                tracker: Some(TrackerKind::Gitlab),
+                labels: vec!["a,b".into()],
+                ..IssueQuery::default()
+            })
+            .await;
+        assert!(
+            matches!(&list, Err(CoreError::Invalid(_))),
+            "GitLab's comma-label refusal is a 400: {list:?}"
+        );
+        assert_eq!(server.seen().len(), before, "refused before any request");
+    }
+
+    #[tokio::test]
+    async fn gitlab_source_needs_a_connection_and_refuses_a_stored_plain_http_host() {
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        let missing = w.core.gitlab_source().err().expect("no connection");
+        assert!(
+            matches!(missing, CoreError::TrackerNotConnected(_)),
+            "{missing:?}"
+        );
+        w.core
+            .connect_issue_tracker(
+                TrackerKind::Gitlab,
+                connect(Some("https://gitlab.example.test"), Some("glpat-secret123")),
+            )
+            .await
+            .unwrap();
+        w.core
+            .store
+            .put_tracker(
+                &TrackerConnection {
+                    tracker: TrackerKind::Gitlab,
+                    host: Some("http://gitlab.example.test".into()),
+                    scopes: vec!["team/app".into()],
+                },
+                "2026-11-01T00:00:00Z",
+            )
+            .unwrap();
+        let plain = w.core.gitlab_source().err().expect("a plain http host");
+        assert!(matches!(plain, CoreError::Invalid(_)), "{plain:?}");
+    }
+
+    #[tokio::test]
+    async fn gitlab_source_sends_the_keychain_token_to_the_stored_connection_host() {
+        let server = Server::start(|_| Reply::json(&json!([]))).await;
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        w.core
+            .connect_issue_tracker(
+                TrackerKind::Gitlab,
+                connect(Some("https://gitlab.example.test"), Some("glpat-secret123")),
+            )
+            .await
+            .unwrap();
+        w.core.issues.set_gitlab_test_base(&server.base);
+        let source = w.core.gitlab_source().expect("a GitLab source");
+        source
+            .list("team/app", &IssueQuery::default())
+            .await
+            .unwrap();
+        let seen = server.seen();
+        assert!(!seen.is_empty(), "the source sent a request");
+        assert!(
+            seen.iter()
+                .all(|r| r.header("private-token") == Some("glpat-secret123")),
+            "{seen:?}"
+        );
     }
 }

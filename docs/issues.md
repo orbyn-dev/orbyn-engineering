@@ -80,16 +80,19 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
   or a login) and `q` (text the tracker itself matches). Nothing else; no sort option (newest update first).
 - **Paging.** `next_cursors` maps `"<tracker> <scope>"` to an opaque cursor (one per tracker and scope that has
   more). To carry on, send `cursors` once, as that same object encoded as JSON and then URL-encoded
-  (`cursors=%7B%22github%20o%2Fr%22%3A%22abc%22%7D`), at most 4 KiB, with the same filters. Only the scopes named
-  in `cursors` are read, one page each, and the answer holds just those pages and their next cursors. The
-  cursor is opaque: the page never builds or edits one, and the service refuses one it did not issue for that
-  scope and filter (`400 invalid`). Built for GitLab only; GitHub gives one page and no cursor. The beta UI may
-  leave paging out.
+  (`cursors=%7B%22github%20o%2Fr%22%3A%22abc%22%7D`), at most 4 KiB, with the same filters. The service applies the
+  same limit to what it emits: at most 50 cursors and 4 KiB of them as that JSON, with any further scopes dropped in
+  key order. Only the scopes named in `cursors` are read, one page each, and the answer holds just those pages and
+  their next cursors. The cursor is opaque: the page never builds or edits one, and the service refuses one it did
+  not issue for that scope and filter (`400 invalid`). Built for GitLab only; GitHub gives one page and no cursor.
+  The beta UI may leave paging out.
 - **"Not planned"** is `close_reason: "not_planned"` when the tracker says so (GitHub, GitLab "won't fix"
   labels are not guessed at). A tracker that does not say reports `null`.
 - `counts` are the tracker's totals before label, assignee and text filters; `null` when it cannot say.
-- A tracker that fails while others answer goes in `failed`, with the service's own message (never the raw
-  tracker response). A listing is up to 100 issues per tracker and scope; results are cached 30 seconds.
+- A tracker that fails for any other reason while others answer goes in `failed`, with the service's own message
+  (never the raw tracker response). An invalid request, such as a paging cursor the service did not issue, is
+  `400 invalid` instead and fails the whole listing. A listing is up to 100 issues per tracker and scope; results are
+  cached 30 seconds.
 - `linked_pull_requests` is what the tracker reports of its own accord, read-only. A tracker that does not
   report them gives `[]`.
 - A link keeps an `IssueRef` snapshot beside the thread (table `issue_links`; the migration takes the next
@@ -106,14 +109,15 @@ The service's usual error body `{ code, message }`. Codes for issues, with the s
 | `forbidden` | 403 | the tracker refused the token or the repository |
 | `not_found` | 404 | no such issue; a link to one is refused the same way |
 | `tracker_unavailable` | 502 | the tracker did not answer or answered nonsense |
-| `invalid` | 400 | a host that is not `https://`, a scope outside the connection, a bad filter |
+| `invalid` | 400 | a host that is not `https://`, a scope outside the connection, a bad filter, or a paging cursor the service did not issue |
 
 A message never contains a token or a raw tracker body.
 
 ## GitLab as built
 
 `gitlab` reads issues in `crates/orbyn-core/src/issues/gitlab.rs`, behind the same `ORBYN_ISSUES` flag. List and
-detail only; everything else below is Planned.
+detail are built, and the thread link, start-thread, draft and find paths use them; of the T3 issue work only the
+`update` and `state` writes and the `candidates` read are missing for GitLab (Planned).
 
 - **Requests.** `GET {host}/api/v4/projects/{path}/issues` (`state` `opened|closed|all`, `labels`, `search`,
   `assignee_username`, `assignee_id=None`, `scope=assigned_to_me`, `order_by=updated_at`, `per_page` up to 100,
@@ -132,9 +136,10 @@ detail only; everything else below is Planned.
 - **Mapping.** `key` is the project's `iid` as text, `display_key` is `#<iid>`, `author` and `assignees` are
   usernames, labels are names, `url` is `web_url` when it stays on the connection's host (otherwise
   `{host}/{path}/-/issues/{iid}`), `comment_count` is `user_notes_count`. State `opened` is category `open`, name
-  `Open`; `closed` is `closed`, `Closed`. GitLab's system notes are events and are not comments; the first 50 comments
-  come back oldest first.
-- **Paging.** The listing carries `next_cursors["gitlab <path>"]` while GitLab advertises a next page. A cursor is
+  `Open`; `closed` is `closed`, `Closed`. GitLab's system notes are events and are not comments; notes are read 100 a
+  page (at most five pages) until 50 comments or the end, and come back oldest first.
+- **Paging.** The listing carries `next_cursors["gitlab <path>"]` while GitLab advertises a next page, and infers
+  the next page from a full page when GitLab sends no `x-next-page` header. A cursor is
   the page number and a tag bound to the scope and the filters; one that does not verify is `400 invalid` and
   nothing is sent. The tag is not signed with a secret, so it proves "made for these filters", not "made by this
   service". With `cursors` present only the scopes it names are read (this applies to every tracker; GitHub issues no
@@ -142,14 +147,17 @@ detail only; everything else below is Planned.
 - **Failures.** `401` is `tracker_not_connected` ("GitLab did not accept the saved token"), `403` is `forbidden`,
   `404` is `not_found`, `429` is `rate_limited` with the wait from `Retry-After` or `RateLimit-Reset` when GitLab gave
   one, and everything else (a `5xx`, a timeout, a refused redirect, an unreadable or oversized answer) is
-  `tracker_unavailable`. The message is always the service's sentence, never GitLab's reply. A list that fails goes in
-  `IssueList.failed` while other trackers answer; there is no separate rate-limited screen.
+  `tracker_unavailable`. The message is always the service's sentence, never GitLab's reply. A list that fails for
+  any other reason goes in `IssueList.failed` while other trackers answer; an invalid cursor or a comma in a label
+  filter is the usual `400 invalid` and no list at all. There is no separate rate-limited screen.
 - **Untrusted text.** Titles are cut to 256 characters, labels to 200 and at most 100 of them, user names to 100
   and at most 50 assignees, an issue body to 64 KiB and a comment to 16 KiB. Text is never read for instructions
   and the draft framing above is unchanged.
 - **Planned, not built.** Linked merge requests (`linked_pull_requests` stays empty), "won't fix" and other close
-  reasons (`close_reason` stays `null`), a tracker state name other than Open and Closed, `candidates` and every
-  write for GitLab. Searching by number or a pasted GitLab link in `find` uses the number path only.
+  reasons (`close_reason` stays `null`), a tracker state name other than Open and Closed, the T3 writes `update` and
+  `state`, and the `candidates` read. Thread link, start-thread, draft and find already work through list and detail.
+  `find` parses only `https://github.com/.../issues/<n>` links: a pasted GitLab link is not parsed as one and goes
+  to the tracker as search text. A bare number is looked up as the `iid` in every connected scope.
 - **Not verified.** No real GitLab (gitlab.com or self-managed) was contacted. The reader is tested against a
   local fake server; the field names, header names, `issues_statistics` shape, `x-next-page` and `RateLimit-Reset`
   behavior are from GitLab's documentation as understood, and a self-managed version or a proxy may differ.
@@ -216,7 +224,7 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
 ## What T3 has that this does not (Planned)
 
 Creating and commenting on issues, reactions, issue templates, the event timeline, "involved/mentioned"
-filters and more than one page of comments. None is in the beta; each is a later row.
+filters and more than the first 50 comments. None is in the beta; each is a later row.
 
 ## Differences from the web side's guessed contract
 
