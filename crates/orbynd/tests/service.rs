@@ -1015,6 +1015,127 @@ async fn static_ui_has_csp_and_spa_fallback() {
 }
 
 #[tokio::test]
+async fn static_compression_negotiates_and_keeps_representation_validators_separate() {
+    use std::io::Read;
+
+    let dir = TempDir::new();
+    let ui = dir.path().join("ui");
+    let original = "const data = 'repeated content';\n".repeat(4096);
+    write(&ui.join("index.html"), "<title>app</title>");
+    write(&ui.join("assets/app.js"), &original);
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            args: vec!["--ui-dir".into(), ui.to_string_lossy().into_owned()],
+            ..Options::default()
+        },
+    );
+    let client = reqwest::Client::new();
+    let url = format!("{}/assets/app.js", service.url);
+    let identity_started = std::time::Instant::now();
+    let identity = client.get(&url).send().await.unwrap();
+    assert_eq!(identity.status(), 200);
+    assert_eq!(identity.headers()["vary"], "Accept-Encoding");
+    assert!(!identity.headers().contains_key("content-encoding"));
+    let identity_tag = identity.headers()["etag"].to_str().unwrap().to_owned();
+    assert_eq!(identity.bytes().await.unwrap().len(), original.len());
+    let identity_elapsed = identity_started.elapsed();
+    let started = std::time::Instant::now();
+    let encoded = client
+        .get(&url)
+        .header("accept-encoding", "gzip")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(encoded.status(), 200);
+    assert_eq!(encoded.headers()["vary"], "Accept-Encoding");
+    assert_eq!(encoded.headers()["content-encoding"], "gzip");
+    let gzip_tag = encoded.headers()["etag"].to_str().unwrap().to_owned();
+    assert_ne!(gzip_tag, identity_tag);
+    let wire = encoded.bytes().await.unwrap();
+    println!(
+        "static gzip fixture: identity={} bytes gzip={} bytes identity request={} us gzip request={} us",
+        original.len(),
+        wire.len(),
+        identity_elapsed.as_micros(),
+        started.elapsed().as_micros()
+    );
+    assert!(wire.len() < original.len());
+    let mut decoded = String::new();
+    flate2::read::GzDecoder::new(&wire[..])
+        .read_to_string(&mut decoded)
+        .unwrap();
+    assert_eq!(decoded, original);
+    let head = client
+        .head(&url)
+        .header("accept-encoding", "gzip")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(head.headers()["content-encoding"], "gzip");
+    assert_eq!(head.headers()["etag"], gzip_tag);
+    assert_eq!(head.headers()["content-length"], wire.len().to_string());
+    assert!(head.bytes().await.unwrap().is_empty());
+    for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
+        let response = client
+            .request(method, &url)
+            .header("accept-encoding", "gzip")
+            .header("if-none-match", &gzip_tag)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 304);
+        assert_eq!(response.headers()["vary"], "Accept-Encoding");
+        assert_eq!(response.headers()["etag"], gzip_tag);
+        assert_eq!(response.headers()["content-encoding"], "gzip");
+        assert_eq!(response.headers()["cache-control"], "no-cache");
+        assert!(response.headers().contains_key("content-security-policy"));
+        assert!(response.bytes().await.unwrap().is_empty());
+    }
+    let other_representation = client
+        .get(&url)
+        .header("accept-encoding", "gzip")
+        .header("if-none-match", &identity_tag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(other_representation.status(), 200);
+    for value in [
+        "gzip;q=0",
+        "gzip;q=0, *;q=1",
+        "gzip;q=0.0, identity;q=1",
+        "gzip;q=0.5, identity;q=1",
+    ] {
+        let response = client
+            .get(&url)
+            .header("accept-encoding", value)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{value}");
+        assert!(
+            !response.headers().contains_key("content-encoding"),
+            "{value}"
+        );
+    }
+    let refused = client
+        .get(&url)
+        .header("accept-encoding", "gzip;q=0, identity;q=0")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 406);
+    let missing_api = service
+        .get("/api/nothing")
+        .header("accept-encoding", "gzip")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_api.status(), 404);
+    assert!(!missing_api.headers().contains_key("content-encoding"));
+}
+
+#[tokio::test]
 async fn remote_images_require_auth_and_refuse_local_destinations() {
     let dir = TempDir::new();
     let service = Service::start(&dir.path().join("data"), Options::default());
