@@ -38,6 +38,6 @@ describe("the preview page", () => {
   it("shows the empty and the failed states by scenario", async () => {
     window.location.hash = "#/preview/command-blocks?empty";
     render(<CommandBlocksPreview />);
-    expect(await screen.findByText("Commands Orbyn runs appear here as blocks")).toBeInTheDocument();
+    expect(await screen.findByText("Commands you run here appear as blocks")).toBeInTheDocument();
   });
 });

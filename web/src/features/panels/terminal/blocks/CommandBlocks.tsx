@@ -119,8 +119,8 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
     return (
       <div className="cb-list">
         <div className="cb-empty">
-          <b>Commands Orbyn runs appear here as blocks</b>
-          <span>Each block has the command's exit code and how long it took, and can be copied, run again or sent to the agent.</span>
+          <b>Commands you run here appear as blocks</b>
+          <span>Each block shows the command, its exit code and how long it took, and can be copied or run again. A shell that does not mark its commands shows none.</span>
         </div>
       </div>
     );
