@@ -249,12 +249,15 @@ fn a_new_episode_needs_a_clear_and_ten_seconds() {
     assert_ne!(second_id, first_id, "an id is never reused");
 }
 
+/// One clear reason and the registry method that reports it.
+type Clear = (
+    fn(&mut Registry, &str, &str) -> Vec<Notice>,
+    TerminalAttentionClearReason,
+);
+
 #[test]
 fn every_clear_reason_is_reported_once() {
-    let clears: [(
-        fn(&mut Registry, &str, &str) -> Vec<Notice>,
-        TerminalAttentionClearReason,
-    ); 3] = [
+    let clears: [Clear; 3] = [
         (Registry::input, TerminalAttentionClearReason::Input),
         (Registry::output, TerminalAttentionClearReason::Output),
         (Registry::closed, TerminalAttentionClearReason::Closed),
