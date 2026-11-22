@@ -180,7 +180,7 @@ const STEPS = {
 function iosTools(missing = false): DeviceTool[] {
   return [
     { id: "xcode", name: "Xcode command line tools", required: true, state: missing ? "missing" : "ready", version: missing ? null : "16.2", latest: missing ? null : "16.2", note: missing ? "Not found on this computer" : "Version 16.2 · found at /Library/Developer", steps: STEPS.xcode },
-    { id: "ios-runtime", name: "iOS Simulator runtime", required: true, state: "ready", version: "18.2", latest: "18.2", note: missing ? "Needs Xcode first" : "iOS 18.2 · 7.9 GB", steps: STEPS.runtime },
+    { id: "ios-runtime", name: "iOS Simulator runtime", required: true, state: missing ? "missing" : "ready", version: missing ? null : "18.2", latest: "18.2", note: missing ? "Needs Xcode first" : "iOS 18.2 · 7.9 GB", steps: STEPS.runtime },
     { id: "agent-device", name: "agent-device", required: false, state: "missing", version: null, latest: "0.9.3", note: "Installs into Orbyn’s own folder", steps: STEPS.agent },
   ];
 }
