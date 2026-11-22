@@ -143,10 +143,13 @@ Body: `{code, message, ...}`. The web acts on `code` and shows `message`.
 
 ## Planned service pieces
 
-The frames also draw tool inspection and install, a version check, an agent-access toggle and restarting a frozen or crashed device.
-This document does not define those routes, so `web/src/features/devices/planned.ts` declares them as a clearly marked typed client
-(`DevicesPlannedApi`: status, tools, check, install, setAccess, restart, versions). **There is no production implementation**: every
-method answers `null` and sends nothing, so the UI draws the frame's Planned or unavailable state. The dev-only mock
+The frames also draw tool inspection and install, a version check, an agent-access toggle, restarting a frozen or crashed device,
+the live screen and its input, and the agent that may be driving a device. This document does not define those routes, so
+`web/src/features/devices/planned.ts` declares them as clearly marked typed clients. `DevicesPlannedApi` holds status, tools, check,
+install, setAccess, restart and versions. Its phase-2 surface is additive at the end of the file: `DevicesLivePlannedApi` holds
+`stream` (PNG frames and the agent's cursor), `pointer` (tap, swipe and scroll in normalized screen coordinates), `typeText` (text,
+with `\n` for Return) and `agentState` (read, `take_over`, `hand_back`). **There is no production implementation**: every method
+answers `null` and sends nothing, so the UI draws the frame's Planned or unavailable state. The dev-only mock
 (`web/mock/devices.ts`, `createDevicesPlannedMock`) answers for tests and the preview. No service route exists for any of them, and
 Eng 4 has not built them. `frozen` and `crashed` are likewise target states of the frames; the service contract has `booted` and
 `shutdown` only.
@@ -156,9 +159,9 @@ Eng 4 has not built them. `frozen` and `crashed` are likewise target states of t
 **Web (Beta, hidden until the service reports devices; built against the mock and not run against a real service).**
 `web/src/features/devices` holds the typed client interface (`contract.ts`), the real HTTP client (`api.ts`), the planned client
 (`planned.ts`), the panel (`DevicesPanel.tsx`), the per-device view (`DeviceView.tsx`), tabs (`DeviceTabs.tsx`), the float
-(`FloatingDevice.tsx`) and the setup pages (`setup/`). The mock is `web/mock/devices.ts` (`createDevicesMock`,
-`createDevicesPlannedMock`); the dev-only route `#/preview/devices?frame=<id>` installs it, and
-`scripts/assert-no-previews.mjs` fails a build that ships the route, the mock or the Planned preview screen.
+(`FloatingDevice.tsx`), the setup pages (`setup/`) and the dev-only live frames (`DevicesLivePreview.tsx`). The mock is
+`web/mock/devices.ts` (`createDevicesMock`, `createDevicesPlannedMock`); the dev-only route `#/preview/devices?frame=<id>`
+installs it, and `scripts/assert-no-previews.mjs` fails a build that ships the route, the mock or the Planned preview screens.
 
 - **Launcher (device-launcher, device-launcher-disabled).** Devices sits after Review and comments with a Beta pill and opens the
   Devices tab. A phone does not draw the row. When `GET /api/devices` answers `404`, the row is drawn disabled with the reason ("Devices
@@ -174,7 +177,7 @@ Eng 4 has not built them. `frozen` and `crashed` are likewise target states of t
   clears its tab, shows the service's sentence and reads the list again. Running, Not responding, Stopped and Shut down get the bar
   and stage the frames draw; any other state word, including `booting`, is shown as Unknown and gets no Starting stage. The frozen
   and crashed overlays call the Planned restart method (no production implementation). The live screen, Record, Type text and Device
-  tools stay Planned pills.
+  tools stay Planned pills until the live client answers; Record and Device tools always do.
 - **Per-device tabs and float (device-tabs, device-tab-rename, device-float, device-float-docked-hint).** Each open device is a tab
   inside the Devices tab; closing a tab never shuts the device down. `+` lists the other devices from the service and opens one. A tab
   menu holds Float over chat, Rename, Device tools (Planned), Setup and tools…, Agent access… (Planned) and Shut down. Double click or
@@ -200,6 +203,15 @@ Eng 4 has not built them. `frozen` and `crashed` are likewise target states of t
   to 179 with a Set angle button, and the presets Closed, Half open and Open (`hinge_preset`, never a raw number). The panel shows the
   posture and angle the service answered (`Open · 180°`), whatever the request was, and never assumes `half_opened` at 130. The
   fold frames (`device-fold-*`) stay for phase 3.
+- **Live screen and input (device-input-touch, -text, -android, device-agent-driving, -tools, -paused; H22, H23, H27; Planned).**
+  `DeviceView` asks `devicesLivePlannedApi()` for a stream when a device is booted. In production that client answers `null` and sends
+  nothing, so the stage keeps "No screenshot yet. The live screen is Planned." while Screenshot, Rotate, the Android buttons, Power off
+  and the fold controls keep working. The dev mock answers with PNG frames: the stage draws the frame, a tap/swipe/scroll sends
+  normalized pointer coordinates, `Type text` opens a field under the device (Send, or Return sends `\n`), and a driving agent shows its
+  cursor and a chip with Take over; touching the screen or taking over pauses it and Hand back returns control. The rail is dimmed while
+  an agent drives. `initialTyping`/`initialText` are the dev preview's only entrance to the typing frame; the app never passes them. The
+  preview frames are `DevicesLivePreview.tsx` behind `#/preview/devices?frame=<id>`: touch, text, Android controls, agent driving, the
+  agent's four thread tools and paused. Record, the tools drawer and agent permission stay Planned.
 - **One click, one write.** A ref guards every write, the controls are disabled while one runs, and a failure shows the app's own
   sentence plus the service's message, capped, with Try again. `404 device_not_found` drops the device, clears its tab, shows the
   service's sentence and reads the list again. All writes go through the pending Person route
@@ -212,25 +224,29 @@ Eng 4 has not built them. `frozen` and `crashed` are likewise target states of t
   -push-android, -platforms).** The Device tools Planned pill under the device opens a drawer over the panel. It has the six tabs
   the frames draw (Appearance, Text, Accessibility, Location, Permissions, Push) and an info action with the "Device tools by
   platform" table. Every control is labelled Not verified; Push on Android says "Not available on Android" and offers nothing to send,
-  while the rest of the tabs keep working. Appearance, text size, show elements, location, permissions and the push payload are typed
-  changes on the Planned client (`DeviceToolsPlannedApi`): there is no service route, so the production client answers `null` and the
-  drawer draws one Planned note with no controls. The mock (`createDevicesPlannedMock`) supplies the frame state for tests and the
-  preview. Nothing here changes Orbyn's own appearance, and the payload is kept per device.
+  while the rest of the tabs keep working. Appearance, text size, location, permissions and the push payload are typed changes on the
+  Planned client (`DeviceToolsPlannedApi`), and show elements is one too while the live screen runs: there is no service route, so the
+  production client answers `null` and the drawer draws one Planned note with no controls. The mock (`createDevicesPlannedMock`) supplies
+  the frame state for tests and the preview. Show elements stays in place but is disabled until the device's live stream runs, with
+  "Outlines need a live screen." as its row line and switch tooltip and "No screen is live." in place of the element rows; when the stream
+  goes away while it is on, the drawer turns it off once through the Planned client. Nothing here changes Orbyn's own appearance, and the
+  payload is kept per device.
 - **Agent permission (H27; device-agent-permission, -lead, -granted, -revoked, -off).** Agent access is off by default and only the
   person's switch turns it on; reading the Planned client never grants anything. One request waits with Deny, Allow once and Allow for
   this thread; the lead answer, the running-as Device chip ("Claude Code · this thread") and the revoked and off messages are drawn from
   the same typed state. The production Planned client answers `null`, so access always resolves off and the permission flow cannot
   happen until the agent-device CLI exists (H42). The frames are preview-only; the setup hub keeps its access step.
 
-**Planned.** The live screen stream and typed input (phase 2), the fold and hinge frames (phase 3; the existing 2D controls stay), the
-Devices settings frames, and the service side of tool install, version check, agent access, restart and the H26 tools route. The
-tools drawer and agent permission frames are built against the Planned client and are still Planned; their controls only work through
-the dev mock. The service (Eng 4) has not started; nothing here is verified against `adb`, `xcrun` or a real service.
+**Planned.** The service side of the live screen stream, pointer and typing (phase 2), the Devices settings frames, and the service side
+of tool install, version check, agent access, restart and the H26 tools route. The web draws the live frames, the tools drawer and the
+agent permission frames only against the Planned client and its dev mock; production shows their Planned state. The service (Eng 4)
+has not started; nothing here is verified against `adb`, `xcrun` or a real service.
 
 Guessed where the doc is silent: the screenshot answer is `{ok, device, image}` (the doc says `{ok, image}`; the web reads `image` and
 keeps the `device`); the unfold step uses the `unfold` action, not `hinge_preset: open`; the hinge slider starts at the reported angle or 90.
 For the Planned H26/H27 client there is no route at all: its state shape, the 12 text-size steps (Default is step 3), the short place list,
 Ask/Allow/Deny as reset/grant/deny, the 4000-character push cap, the once/thread agent scopes and the lead answer are the preview's own
-stand-ins. The accessibility element outlines need the live screen (phase 2), so the drawer lists the tree but cannot draw the outlines yet.
+stand-ins. The accessibility element outlines need the live screen (phase 2): Show elements stays disabled with "Outlines need a live screen."
+until that stream runs, the element rows read "No screen is live." instead, and a stream that goes away turns the switch off once.
 Not verified: every route and field against a real service, `adb` and `simctl` behavior, the hinge preset values (0, 130, 180) and the
 1 to 179 bound.

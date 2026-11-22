@@ -1,5 +1,5 @@
 import { Bell, Eye, Info, MapPin, Shield, Sun, Type, X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useAsync } from "../../../lib/useAsync";
 import { IconButton, Pill } from "../../../ui/controls";
@@ -29,7 +29,7 @@ const labelOf = (tab: ToolTab): string => TABS.find((one) => one.id === tab)?.la
  * device panel. The drawer reads the Planned client; in production that answers `null`, so it draws the Planned note
  * and no control. Nothing here touches Orbyn's own appearance.
  */
-export function DeviceToolsButton({ device }: { device: Device }) {
+export function DeviceToolsButton({ device, live }: { device: Device; live: boolean }) {
   const [open, setOpen] = useState(false);
   const [host, setHost] = useState<HTMLElement | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -42,7 +42,7 @@ export function DeviceToolsButton({ device }: { device: Device }) {
     setHost(panel instanceof HTMLElement ? panel : document.body);
   }, [open]);
 
-  const drawer = open && host ? <DeviceToolsDrawer device={device} onClose={close} floating={host === document.body} /> : null;
+  const drawer = open && host ? <DeviceToolsDrawer device={device} live={live} onClose={close} floating={host === document.body} /> : null;
 
   return (
     <>
@@ -66,12 +66,14 @@ export function DeviceToolsButton({ device }: { device: Device }) {
  * Engineering checks it against simctl and adb; a control a platform cannot do says so. With no Planned client the
  * body is one Planned note. The drawer never sends anything in production.
  */
-export function DeviceToolsDrawer({ device, initialTab = "appearance", onClose, floating = false }: {
+export function DeviceToolsDrawer({ device, initialTab = "appearance", onClose, floating = false, live = false }: {
   device: Device;
   initialTab?: ToolTab;
   onClose(): void;
   /** The preview and a standalone DeviceView have no `.dev` panel to sit in; the drawer then floats. */
   floating?: boolean;
+  /** The device's live stream is running. Without it, the accessibility outlines stay disabled. */
+  live?: boolean;
 }) {
   const seen = usePlannedApiVersion();
   const [tab, setTab] = useState<ToolTab>(initialTab);
@@ -79,14 +81,16 @@ export function DeviceToolsDrawer({ device, initialTab = "appearance", onClose, 
   const [busy, setBusy] = useState(false);
   const [writeError, setWriteError] = useState("");
   const writing = useRef(false);
+  const wasLive = useRef(live);
   const read = useAsync(`device-tools:${seen}:${device.id}`, (signal) => devicesPlannedApi().deviceTools(device.id, signal));
   const state = read.status === "ready" ? read.data : null;
   const planned = read.status === "ready" && state === null;
   const reading = read.status === "loading";
+  const setData = read.setData;
 
   useEffect(() => { setTab(initialTab); }, [initialTab, device.id]);
 
-  const apply = async (change: DeviceToolChange) => {
+  const apply = useCallback(async (change: DeviceToolChange) => {
     if (writing.current || !state) return;
     writing.current = true;
     setBusy(true);
@@ -94,14 +98,22 @@ export function DeviceToolsDrawer({ device, initialTab = "appearance", onClose, 
     try {
       const next = await devicesPlannedApi().setDeviceTool(device.id, change);
       if (next === null) setWriteError("Changing the device’s tools is Planned. The service has no such route yet.");
-      else read.setData(next);
+      else setData(next);
     } catch (error) {
       setWriteError(error instanceof Error ? plain(error.message, 200) : "Couldn’t change that setting.");
     } finally {
       writing.current = false;
       setBusy(false);
     }
-  };
+  }, [device.id, setData, state]);
+
+  // Outlines belong to the live screen: when the stream goes away, the reader's switch goes off once.
+  useEffect(() => {
+    if (live) { wasLive.current = true; return; }
+    if (!wasLive.current || !state) return;
+    wasLive.current = false;
+    if (state.accessibility.showElements) void apply({ type: "show_elements", on: false });
+  }, [live, state, apply]);
 
   const sendPush = async (payload: string): Promise<PushOutcome | null> => {
     try {
@@ -115,7 +127,7 @@ export function DeviceToolsDrawer({ device, initialTab = "appearance", onClose, 
   const panes = state ? (
     tab === "appearance" ? <AppearancePane state={state} busy={busy} onChange={(change) => void apply(change)} onSendPush={sendPush} />
     : tab === "text" ? <TextPane state={state} busy={busy} onChange={(change) => void apply(change)} onSendPush={sendPush} />
-    : tab === "accessibility" ? <AccessibilityPane state={state} busy={busy} onChange={(change) => void apply(change)} onSendPush={sendPush} />
+    : tab === "accessibility" ? <AccessibilityPane state={state} busy={busy} live={live} onChange={(change) => void apply(change)} onSendPush={sendPush} />
     : tab === "location" ? <LocationPane state={state} busy={busy} onChange={(change) => void apply(change)} onSendPush={sendPush} />
     : tab === "permissions" ? <PermissionsPane state={state} busy={busy} onChange={(change) => void apply(change)} onSendPush={sendPush} />
     : <PushPaneFor platform={device.platform} state={state} busy={busy} onChange={(change) => void apply(change)} onSendPush={sendPush} />

@@ -64,7 +64,8 @@ export function applyAttention(state: AttentionState, delivery: AttentionDeliver
     return { state: { entries, cleared }, fresh: null };
   }
   if (before && delivery.seq <= before.seq) return { state, fresh: null };
-  if (delivery.seq <= (state.cleared.get(parsed.id) ?? 0)) return { state, fresh: null };
+  const clearedAt = state.cleared.get(parsed.id);
+  if (clearedAt !== undefined && delivery.seq <= clearedAt) return { state, fresh: null };
   const entry: AttentionEntry = {
     id: parsed.id, threadId: delivery.thread_id, terminalId: parsed.terminal_id, terminalTitle: parsed.terminal_title, engine: parsed.engine,
     kind: parsed.kind, since: parsed.since, toldAt: before?.toldAt ?? at, excerpt: parsed.excerpt, seq: delivery.seq,
@@ -72,7 +73,9 @@ export function applyAttention(state: AttentionState, delivery: AttentionDeliver
   };
   const entries = new Map(state.entries);
   entries.set(parsed.id, entry);
-  return { state: { entries: capped(entries), cleared: state.cleared }, fresh: before ? null : entry };
+  // A value read from the open-items route (seq 0) was already waiting before the window opened: it shows, but is not new, so it
+  // raises no toast or notification.
+  return { state: { entries: capped(entries), cleared: state.cleared }, fresh: before || delivery.seq <= 0 || delivery.source === "open" ? null : entry };
 }
 
 interface AttentionStore extends AttentionState {

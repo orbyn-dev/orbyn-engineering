@@ -243,6 +243,18 @@ it("cancels a rename on Escape", async () => {
   expect(useUi.getState().devices.names[device.id]).toBeUndefined();
 });
 
+it("opens the tab menu for the dev-only device-float-docked-hint frame", async () => {
+  const device = stateFixture("booted");
+  setDevicesApi(createDevicesMock({ devices: [device] }));
+  setDevicesPlannedApi(createDevicesPlannedMock());
+  prefs([device.id]);
+  render(<DevicesPanel initialTabMenu />);
+  const menu = await screen.findByRole("menu", { name: "Device tab menu" });
+  expect(within(menu).getByRole("menuitem", { name: "Float over chat" })).toBeVisible();
+  expect(within(menu).getByRole("menuitem", { name: "Rename" })).toBeVisible();
+  expect(within(menu).getByRole("menuitem", { name: "Shut down" })).toBeVisible();
+});
+
 it("floats the active device over the chat and docks it back in the panel", async () => {
   const device = deviceFixtures()[1]!;
   setDevicesApi(createDevicesMock({ devices: [device] }));

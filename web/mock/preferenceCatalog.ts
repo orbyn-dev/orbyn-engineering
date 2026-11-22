@@ -66,6 +66,7 @@ export const preferenceCatalog: Record<string, JsonValue> = {
   disabled_engines: [],
   provider_instances: [],
   crew_turn_budget: 0,
+  claude_engine_path: "sdk",
 };
 
 export const projectPreferenceKeys: ReadonlySet<string> = new Set([

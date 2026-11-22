@@ -61,3 +61,38 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+/* The quiet Claude path line: the person chose the CLI and the host is fine, so this is not a warning. */
+.eh-cli-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: var(--color-muted);
+  font-size: var(--text-nav);
+}
+.eh-cli-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-7);
+  background: transparent;
+  color: var(--color-textSoft);
+  font: inherit;
+  cursor: pointer;
+}
+.eh-cli-switch:hover {
+  color: var(--color-text);
+}
+.eh-cli-switch:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+/* The host is coming back by itself: the same line, in the blue the frames use for a wait. */
+.eh-line.info {
+  background: var(--color-blueSoft);
+  color: var(--color-blue);
+}
