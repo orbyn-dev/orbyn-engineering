@@ -280,3 +280,11 @@ Checked by hand on macOS arm64: a stand-in app bundle signed ad hoc in Tauri's o
 hardened runtime) verifies, and the host launched from inside it answers the handshake. With the same signing but
 without the entitlements the host crashes (SIGTRAP), so the entitlements are required. Not checked: a full `tauri build`
 (the app was not built), notarization, other platforms. The entitlements apply to the whole app, not only the host.
+
+**Why the host needs them.** The host is a Node single executable application: it embeds Node, whose V8 engine compiles
+JavaScript at run time. Under the hardened runtime that needs `allow-jit` and `allow-unsigned-executable-memory`, and
+`disable-library-validation` lets the injected Node runtime load code that was not signed by the same team. Without them the
+host crashes at start (SIGTRAP, checked by hand). Nothing else in the app needs them. They are a risk for `orbynd`
+(docs/account-threat-model.md control 6), so a release must carry them on `orbyn-engine-host` only;
+`scripts/check-macos-entitlements.sh --release` enforces that. Signing a release that way (one entitlement file per
+binary, not the single `bundle.macOS.entitlements` Tauri applies to everything) is Planned with Developer ID signing.
