@@ -878,4 +878,39 @@ describe("App against the mock API", () => {
     expect(localStorage.getItem("orbyn.prefs.v1")).toContain('"workspaceLayout":"reading"');
     expect(localStorage.getItem("orbyn.prefs.v1")).toContain('"sidebarCollapsed":true');
   });
+
+  it("says an address names no screen instead of drawing another page", async () => {
+    go("#/nonsense/deeper");
+    render(<App />);
+    expect(await screen.findByText("Page not found")).toBeInTheDocument();
+    // The address is kept, so the page can say what was asked for.
+    expect(window.location.hash).toBe("#/nonsense/deeper");
+    // The negative: the generic fallback (the draft home) is not drawn in its place.
+    expect(screen.queryByRole("heading", { name: /What should we build in/ })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Back to workspace" })).toBeInTheDocument();
+  });
+
+  it("closes Settings back to the page it covered, adding no history entry", async () => {
+    const user = userEvent.setup();
+    go("#/threads/t-done");
+    render(<App />);
+    await screen.findByRole("button", { name: "Show side panel" });
+    const length = window.history.length;
+    const nav = screen.getByRole("navigation", { name: "Workspace" });
+    await user.click(nav.querySelector<HTMLAnchorElement>('a[href="#/settings"]')!);
+    expect(await screen.findByRole("region", { name: "Settings" })).toBeInTheDocument();
+    // Opening Settings is a new place, so it has its own entry — and it is Settings' own entry, marked,
+    // not one the browser pushed behind the router's back.
+    expect(window.history.length).toBe(length + 1);
+    expect(window.history.state).toMatchObject({ orbynSettings: true });
+
+    await user.click(screen.getByRole("button", { name: "Close settings" }));
+    await waitFor(() => expect(window.location.hash).toBe("#/threads/t-done"));
+    expect(screen.queryByRole("region", { name: "Settings" })).toBeNull();
+    // Closing added nothing: one entry for the visit and no second one to back out of.
+    expect(window.history.length).toBe(length + 1);
+    expect(window.history.length).not.toBe(length + 2);
+    expect(window.history.state).not.toMatchObject({ orbynSettings: true });
+  });
 });

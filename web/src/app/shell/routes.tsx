@@ -8,7 +8,9 @@ import { SkillsPage } from "../../features/skills";
 import { ThreadView } from "../../features/thread";
 import { UsagePage } from "../../features/usage";
 import { useUi } from "../../product/state/ui";
-import type { Route } from "../../product/state/route";
+import { Empty } from "../../product/ui/states";
+import { LinkButton } from "../../ui/controls";
+import { routeHref, type Route } from "../../product/state/route";
 
 export type PageRoute = Exclude<Route, { name: "settings" }>;
 
@@ -61,5 +63,16 @@ export function RouteView({ route, needsProject }: { route: PageRoute; needsProj
       );
     case "trust":
       return <TrustFolder projectId={route.projectId} threadId={route.threadId} />;
+    case "not-found":
+      // An address that names no screen says so, in the same empty state every page already uses for a
+      // subject that is not there (Engineer Designs, "Loading, empty and error": a plain empty state with
+      // one action). No not-found frame exists in the designs, so nothing new is drawn here.
+      return (
+        <div className="page">
+          <Empty title="Page not found">
+            <LinkButton href={routeHref({ name: "home" })}>Back to workspace</LinkButton>
+          </Empty>
+        </div>
+      );
   }
 }
