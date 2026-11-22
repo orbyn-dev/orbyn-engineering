@@ -236,6 +236,15 @@ starts, a run logs `CUSTOM user.attachments` with each record's id, name, media 
 and size, so a transcript shows what the message carried without asking the engine.
 `GET /api/attachments/:id/content` returns those bytes while the record lives.
 
+A photo can be converted before it is stored: `POST /api/threads/:id/attachments/convert?name=`
+takes the photo as its body and answers `ConvertedPhoto`, the stored attachment the run
+sends instead. A PNG or JPEG over 10 MiB is written smaller until it fits, and one within
+the limit is written again at its own size, so the stored bytes never carry the original's
+EXIF location. The input is capped at 50 MiB, refused from the declared length before the
+body is read, and at 100 megapixels with a 512 MiB decoder allocation, checked from the
+header before a decoder allocates. A HEIC, HEIF or WebP is refused as `415 unsupported_type`
+until a decoder this build can carry is chosen, and the route reads no path from the request.
+
 The composer edits a fenced code block as plain text: Tab and Shift+Tab move the
 selected block's lines by two spaces, Enter from the block's empty last line closes
 the fence and puts the caret past it, any other Enter adds a line and only Mod+Enter
@@ -3682,6 +3691,7 @@ every method, path and which routes need a credential.
 | `POST /api/queue/:id/send-now` | Send next, stopping a running turn for it |
 | `POST /api/threads/:id/steer` | `SteerRun` with an optional `message_id`: add text to the running turn (`422` if unsupported); `SteerResult` echoes the id and says `delivered` or `queued`, the latter with its queue row; a selection applies from the next turn |
 | `GET, POST /api/threads/:id/attachments?name=` | Raw upload body; `Content-Type` is the kind |
+| `POST /api/threads/:id/attachments/convert?name=` | Raw photo body; `ConvertedPhoto`: the stored attachment, its size and what was done (`converted`, `shrunk` or `none`); `415 unsupported_type`, `422 unreadable_image` or `still_too_large`, `413 file_too_large` |
 | `DELETE /api/attachments/:id` | Remove an attachment |
 | `GET /api/attachments/:id/content` | The stored bytes with their recorded `Content-Type`; `404` once gone |
 | `GET /api/threads/:id/mentions?q=` | `Mentions`: profile skills, ranked unignored files, this project's threads |
