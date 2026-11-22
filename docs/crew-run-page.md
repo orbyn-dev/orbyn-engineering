@@ -7,13 +7,13 @@ device; nothing is uploaded; the signed proof and its verify step stay Planned.
 
 | Piece | Where | Behaviour |
 | --- | --- | --- |
-| Static page and PR comment | `web/src/features/crew/runpage/runExport.ts` | Pure functions from one `FlowTaskDetail`. HTML: one inline style, a `default-src 'none'` policy, no script, no link, no remote resource, every value escaped. Markdown: every punctuation mark, mention, issue reference, link and HTML escaped, at most 4000 characters, findings cut with an "and N more" line. |
-| Redaction | `cleanText` in the same file | Control and bidi characters, key-shaped words, `key=value` pairs and any path on the person's machine are hidden before escaping; each text is capped. |
-| Run view | `runpage/RunPage.tsx` | Opened from the Flow task zoom ("Run page"). Save as file is a Blob and an anchor (object URL revoked after 1 s) with the "Download started" toast. Copy PR comment writes the Markdown once and shows a clipboard failure. One click, one action; no request is made. |
+| Static page and PR comment | `web/src/features/crew/runpage/runExport.ts` | Pure functions from one `FlowTaskDetail` and, when the service answers it, the task's `FlowRunPage`. HTML: one inline style, a `default-src 'none'` policy, no script, no link, no remote resource, every value escaped. Markdown: every punctuation mark, mention, issue reference, link and HTML escaped, at most 4000 characters, findings cut with an "and N more" line. |
+| Redaction | `cleanText` in the same file | Control and bidi characters, key-shaped words, `key=value` pairs and any path on the person's machine are hidden before escaping; each text is capped. The run read's prompt, check command, proves line, branch and commit pass it again after the service's own redaction. |
+| Run view | `runpage/RunPage.tsx` | Opened from the Flow task zoom ("Run page"). It reads `GET /api/crew/flow/tasks/{id}/run` through `useRunPage`; a 404 (an older service, or no run read) keeps today's Flow-based Planned marks, and any other failure shows the existing error with Retry beside the Flow page rather than losing it. When the read answers it fills the prompt (with the hidden and truncated notes), each check's outcome, exit code, duration, command and proves, the not-verified lines, the commit and the pull request number, branch and commit. A check's command and proves say "Withheld until the run finishes." until the task is final, never a blank or a made-up value. Save as file is a Blob and an anchor (object URL revoked after 1 s) with the "Download started" toast. Copy PR comment writes the Markdown once and shows a clipboard failure. One click, one action; neither action requests anything. |
 | Run tab on a pull request | `pulls/detail/PullDetail.tsx` | Drawn only when `runLinkClient().forPull()` returns a task. The production client returns none, so the tab is absent. No match by branch or title. |
 
 Planned and shown as such: signed proof, Verify (frame `runpage-verify`), opening the page from another device (frame
-`runpage-other-device`).
+`runpage-other-device`), the plan steps and the pull request URL and head.
 
 ## The read (built)
 
@@ -41,6 +41,10 @@ Every other text passes the core's own redaction first: the crew's answer keys a
 built-in format, then the person's patterns; a text that still holds the key is replaced, never shown. The web cleans it
 again.
 
+Web: the page shows each check's row from the read. While the task is not final the service sends `label` and `proves` empty; the page
+says "Withheld until the run finishes." in their place and treats `finished` as the signal itself, so an older service that still sent a
+running check's text is not drawn as final. A final task's empty string becomes "Not recorded.", never a blank.
+
 | Field | Shape | Cap | State |
 | --- | --- | --- | --- |
 | Prompt | `{ text, hidden, truncated }`: the brief's outcome as redacted, `hidden` when a value was hidden | 2000 characters | Built |
@@ -52,8 +56,13 @@ again.
 | Pull request URL and head | the forge's own `url`, and the pull request's current `head` for the Stale frame | one URL, two hashes | Missing: a Crew pull request's publish records neither, so the page cannot say the proof is stale |
 
 Rules: reads only, behind Crew Preview like every Crew route; the core redacts, the web never trusts it (it cleans again).
+The web work is covered by component and unit tests against fixtures and the mock, not by a run against a real service.
 
 ## Not built yet
+
+The page now uses the read for the prompt, each check (outcome, exit code, duration and, once final, command and proves),
+the not-verified lines, the commit and the pull request number, branch and commit. The list below is what it still does not
+have.
 
 - Plan (`runpage-plan-long`) and the per-check detail frame (`runpage-findings`) need the plan rows above; nothing stores
   them, so the page does not invent them.
@@ -63,4 +72,3 @@ Rules: reads only, behind Crew Preview like every Crew route; the core redacts, 
   shape (`runpage-loading`) and failing-check-first ordering are web work on the read above.
 - The Run tab on a pull request is still hidden: `RunLinkClient` has no client that can say which task made a pull request,
   which needs a read by project and number.
-
