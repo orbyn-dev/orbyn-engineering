@@ -5,7 +5,7 @@
  * refresh control (`force`) goes out at once. There is no timer here: the window is a timestamp compared on each
  * read, so a screen unmounting has nothing to clear.
  */
-import { registerRefresh, under } from "./dataRefresh";
+import { AWAKE, registerRefresh, under } from "./dataRefresh";
 
 export const LIMITS_STALE_MS = 5 * 60_000;
 /** After a failed check, automatic reads wait this long before asking again. */
@@ -35,13 +35,27 @@ const entryOf = (key: string): Entry => {
 };
 
 /** The engine instance a read belongs to; a thread with no known engine keeps its own window. */
-export const limitsKey = (engine: string, threadId: string) => (engine ? `engine:${engine}` : `thread:${threadId}`);
+export const engineLimitsKey = (engine: string) => `engine:${engine}`;
+export const limitsKey = (engine: string, threadId: string) => (engine ? engineLimitsKey(engine) : `thread:${threadId}`);
 
 /** Milliseconds since the last good answer for this engine instance, or null when there is none. */
 export function limitsAge(key: string): number | null {
   const at = entries.get(key)?.at;
   return at === undefined ? null : Date.now() - at;
 }
+
+/** Whether asking again would leave the five-minute window: no answer yet counts as old. */
+export function limitsStale(key: string): boolean {
+  const age = limitsAge(key);
+  return age === null || age >= LIMITS_STALE_MS;
+}
+
+/**
+ * What makes a read run again: a service `limits` event at once, and the app coming back into view only when the
+ * shared answer is older than the window. A wake therefore never blanks and re-asks a figure that is still fresh.
+ */
+export const limitsRefreshOn = (matches: (what: string) => boolean, key: () => string) =>
+  (what: string) => (what === AWAKE ? limitsStale(key()) : matches(what));
 
 /** When the last good answer for this key arrived (epoch ms), or null when there is none: the label's "Checked …". */
 export function limitsAnsweredAt(key: string): number | null {

@@ -339,9 +339,10 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
         .map_err(|error| error.to_string())?
         .port();
     let base_url = format!("http://127.0.0.1:{port}");
-    let core = Arc::new(
-        Core::open(core_config(&args, base_url.clone())?).map_err(|error| error.to_string())?,
-    );
+    let config = core_config(&args, base_url.clone())?;
+    // The login shell can take its time; ask it once without holding up start-up.
+    std::thread::spawn(orbyn_core::host::child_env::warm_login_path);
+    let core = Arc::new(Core::open(config).map_err(|error| error.to_string())?);
     core.mcp.bind_host(&core);
     core.engines.bind_host_core(&core);
     core.set_crew_engine_approvers();

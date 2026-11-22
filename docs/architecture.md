@@ -236,6 +236,15 @@ starts, a run logs `CUSTOM user.attachments` with each record's id, name, media 
 and size, so a transcript shows what the message carried without asking the engine.
 `GET /api/attachments/:id/content` returns those bytes while the record lives.
 
+A photo can be converted before it is stored: `POST /api/threads/:id/attachments/convert?name=`
+takes the photo as its body and answers `ConvertedPhoto`, the stored attachment the run
+sends instead. A PNG or JPEG over 10 MiB is written smaller until it fits, and one within
+the limit is written again at its own size, so the stored bytes never carry the original's
+EXIF location. The input is capped at 50 MiB, refused from the declared length before the
+body is read, and at 100 megapixels with a 512 MiB decoder allocation, checked from the
+header before a decoder allocates. A HEIC, HEIF or WebP is refused as `415 unsupported_type`
+until a decoder this build can carry is chosen, and the route reads no path from the request.
+
 The composer edits a fenced code block as plain text: Tab and Shift+Tab move the
 selected block's lines by two spaces, Enter from the block's empty last line closes
 the fence and puts the caret past it, any other Enter adds a line and only Mod+Enter
@@ -1377,6 +1386,7 @@ One operation runs per instance: it excludes that instance's run admission, upda
 edits to `provider_instances`. A later run resumes with `session/resume` when offered,
 else `session/load` with its replay discarded; an unknown session ends the run as a lost
 session. The session link is the thread's engine session, so no table or migration exists.
+A cancelled request stops that process and releases the instance for the next request.
 
 A new worktree uses `branch_name_prefix`, `base_branch` or the origin's head when
 `new_worktrees_start_from_origin` is on, falling back to HEAD, and
@@ -3308,12 +3318,16 @@ engines; a plain shell terminal does not. `EngineStatus` reports inherited crede
 variable name and an endpoint by origin, never a value. No value is read for any other
 purpose, which keeps this inside rule 1.
 
-`PATH` for lookups and for children is the inherited one, then usual install folders
-that exist: Homebrew, `~/.local/bin`, cargo, bun, Volta, asdf, mise, pnpm, fnm's default,
-the newest nvm or `n` Node, and the npm prefix from `NPM_CONFIG_PREFIX` or `~/.npmrc`.
-Nothing runs a shell or npm to learn these. On Windows a `.cmd` is followed to the script
-it wraps, including pnpm's store and a same-named sibling, a `node.exe` beside the shim
-wins, and a shim that points at a shell is refused.
+`PATH` for lookups and for children is the inherited one, then the person's login-shell
+`PATH`, then usual install folders that exist: Homebrew, `~/.local/bin`, cargo, bun,
+Volta, asdf, mise, pnpm, fnm's default, the newest nvm or `n` Node, and the npm prefix
+from `NPM_CONFIG_PREFIX` or `~/.npmrc`. The service runs the person's login shell once,
+interactive login (`$SHELL -ilc`), with one fixed command that contains no user input; it
+reads back only `PATH`, runs with a cleared environment and a 3 second limit, falls back
+silently on any failure, and can be switched off with `ORBYN_NO_LOGIN_SHELL=1`. On Windows
+the login shell is not asked. npm is never run to learn these. A `.cmd` is followed to the
+script it wraps, including pnpm's store and a same-named sibling, a `node.exe` beside the
+shim wins, and a shim that points at a shell is refused.
 
 ## Escape log capacity
 
@@ -3677,6 +3691,7 @@ every method, path and which routes need a credential.
 | `POST /api/queue/:id/send-now` | Send next, stopping a running turn for it |
 | `POST /api/threads/:id/steer` | `SteerRun` with an optional `message_id`: add text to the running turn (`422` if unsupported); `SteerResult` echoes the id and says `delivered` or `queued`, the latter with its queue row; a selection applies from the next turn |
 | `GET, POST /api/threads/:id/attachments?name=` | Raw upload body; `Content-Type` is the kind |
+| `POST /api/threads/:id/attachments/convert?name=` | Raw photo body; `ConvertedPhoto`: the stored attachment, its size and what was done (`converted`, `shrunk` or `none`); `415 unsupported_type`, `422 unreadable_image` or `still_too_large`, `413 file_too_large` |
 | `DELETE /api/attachments/:id` | Remove an attachment |
 | `GET /api/attachments/:id/content` | The stored bytes with their recorded `Content-Type`; `404` once gone |
 | `GET /api/threads/:id/mentions?q=` | `Mentions`: profile skills, ranked unignored files, this project's threads |

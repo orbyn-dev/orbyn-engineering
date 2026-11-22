@@ -1,11 +1,13 @@
-The claude/*.ndjson, codex/*.ndjson, cursor/*.ndjson, opencode/*.ndjson and muse/*.ndjson transcripts are adapted from T3 Code (https://github.com/pingdotgg/t3code, commit
+The claude/*.ndjson, codex/*.ndjson, cursor/*.ndjson, opencode/*.ndjson, muse/*.ndjson and acp/*.ndjson transcripts are adapted from T3 Code (https://github.com/pingdotgg/t3code, commit
 9168ca73d02003557725430b515b44e1551544af, apps/server/src/orchestration-v2/testkit/fixtures/*/claude_transcript.ndjson and
 opencode2_{permission,interrupt,inbox,fork,question,background,nested_background,subagent,resume_after_restart}/opencode_transcript.ndjson (recorded OpenCode 2.0.18 HTTP/SSE sessions) and
 muse_{permission,subagent_approval,subagent_interrupt,workflow}/muse_transcript.ndjson (recorded Muse Code 1.4.3 to 1.4.6 JSON-RPC sessions) and
 {simple,multi_turn,message_steering,queued_turn,turn_interrupt,turn_interrupt_mid_tool,tool_call_read_only_on_request,tool_call_restricted_granular,tool_call_workspace_never,command_output_streaming,plan_questions,proposed_plan,todo_list,web_search,provider_thread_resume,thread_fork_native_prior_turn,thread_rollback,thread_rollback_after_restart,thread_rollback_to_stopped_turn,subagent,subagent_continue,subagent_v2,subagent_v2_approval,subagent_v2_nested,subagent_v2_nested_approval,thread_merge_back_siblings,delegated_task_status,codex_model_reroute}/codex_transcript.ndjson
 (recorded `codex app-server` JSON-RPC sessions, app-server 0.156.1; copied unmodified under codex/ with the scenario as the file name) and
 {simple,multi_turn,provider_thread_resume,message_steering,turn_interrupt_mid_tool,tool_call_read_only,proposed_plan,queued_turn,skill_invocation,subagent,todo_list}/cursor_transcript.ndjson (recorded @cursor/sdk
-public-surface calls, protocol "cursor-agent-sdk.local", model composer-2.5; copied under cursor/ with a shorter file name)),
+public-surface calls, protocol "cursor-agent-sdk.local", model composer-2.5; copied under cursor/ with a shorter file name) and
+{simple,multi_turn,queued_turn,message_steering,tool_call_read_only,tool_call_read_only_on_request,turn_interrupt,todo_list,acp_elicitation,acp_titled_multiselect,malformed_session_update,stop_background_work_after_failed_turn}/registry_transcript.ndjson
+(recorded ACP JSON-RPC sessions, protocol "acp.ndjson-jsonrpc"; copied under acp/ with a shorter file name)),
 MIT License, Copyright (c) 2026 T3 Tools Inc. Unmodified copies.
 
 No OpenAI source code is copied: the codex recordings are the wire of the person's own `codex app-server`, recorded by T3 Code.
@@ -32,3 +34,9 @@ The read-only readers (src/families/cursorReaders.mjs and the usage/models parts
 (same commit, MIT, same notice): packages/provider-cursor/src/server/{CursorSdkCatalog,usageLimits,apiKey}.ts and
 packages/provider-muse/src/server/{modelCatalog,usageLimits}.ts, protocol.ts (MuseSubscriptionUsage). Their tests use synthetic data shaped like T3's
 usageLimits.test.ts and modelCatalog.test.ts examples (no recorded transcript); nothing from the Cursor SDK is copied.
+
+src/families/acp.mjs and src/families/acpAgents.mjs port, in plain JavaScript, the behaviour of T3 Code's ACP client and provider (same commit, MIT,
+same notice): packages/effect-acp/src/{client,protocol,agent}.ts (JSON-RPC framing, initialize, session setup, prompt and cancel), and
+packages/provider-acp/src/server/{AcpSessionRuntime,adapter,runtimeModel,sessionConfig,elicitationForm,stderr}.ts (session runtime, model and
+config-option shaping, elicitation forms, stderr redaction) plus packages/provider-acp-registry/src/server/mcpTransport.ts for MCP transport
+selection. No ACP SDK code is copied and no ACP package is added: the client is written here against the recorded wire.
