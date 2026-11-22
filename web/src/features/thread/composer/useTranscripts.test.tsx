@@ -61,12 +61,15 @@ it.each([
   expect(result.current.ids).toEqual([]);
 });
 
-it.each(["person_required", "desktop_required"])("says %s the way the import sheet does", async (code) => {
+it.each([
+  ["desktop_required", "This action is only available in the desktop app."],
+  ["person_required", "Sign in on this computer to add a transcript."],
+])("says %s in its own words, and offers no plain file", async (code, reason) => {
   setTranscriptsApi({ read: vi.fn().mockRejectedValue(new ApiFailure(code, "person key", 403)) });
   const { result } = renderHook(() => useTranscripts(thread));
   act(() => { result.current.take([file("a.orbyn.json")]); });
   await waitFor(() => expect(result.current.entries[0]?.state).toBe("refused"));
-  expect(result.current.entries[0]).toMatchObject({ reason: "This action is only available in the desktop app.", canAddAsFile: false });
+  expect(result.current.entries[0]).toMatchObject({ reason, canAddAsFile: false });
 });
 
 it("removes a chip on its own, and drops the ones that were sent", async () => {
