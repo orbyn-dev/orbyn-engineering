@@ -251,10 +251,8 @@ fn a_new_episode_needs_a_clear_and_ten_seconds() {
 
 #[test]
 fn every_clear_reason_is_reported_once() {
-    let clears: [(
-        fn(&mut Registry, &str, &str) -> Vec<Notice>,
-        TerminalAttentionClearReason,
-    ); 3] = [
+    type Clear = fn(&mut Registry, &str, &str) -> Vec<Notice>;
+    let clears: [(Clear, TerminalAttentionClearReason); 3] = [
         (Registry::input, TerminalAttentionClearReason::Input),
         (Registry::output, TerminalAttentionClearReason::Output),
         (Registry::closed, TerminalAttentionClearReason::Closed),
