@@ -287,18 +287,18 @@ it("restores the last valid interval when editing clears or enters a fractional 
   expect(interval).toHaveValue(15);
   fireEvent.change(interval, { target: { value: "4294967296" } });
   fireEvent.blur(interval);
-  expect(interval).toHaveValue(4294967295);
+  expect(interval).toHaveValue(15);
   fireEvent.change(interval, { target: { value: "" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
   await waitFor(() => {
     const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).endsWith("/api/tasks/task-review") && init?.method === "PUT");
     expect(call).toBeDefined();
     const body = JSON.parse(String(call![1]?.body));
-    expect(body.schedule.every_minutes).toBe(4294967295);
+    expect(body.schedule.every_minutes).toBe(15);
   });
 });
 
-it.each([["", 30], ["1.5", 30], ["4294967296", 4294967295]])(
+it.each([["", 30], ["1.5", 30], ["4294967296", 30]])(
   "saves a safe interval for %s without relying on blur",
   async (value, expected) => {
     ready();

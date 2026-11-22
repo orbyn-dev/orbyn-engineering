@@ -27,7 +27,7 @@ function intervalMinutes(value: string, fallback: number) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   if (number < 1) return 1;
-  if (number > MAX_INTERVAL) return MAX_INTERVAL;
+  if (number > MAX_INTERVAL) return fallback;
   return Number.isInteger(number) ? number : fallback;
 }
 
