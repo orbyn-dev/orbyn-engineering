@@ -673,6 +673,7 @@ fn production(w: &super::harness::World, id: &str) -> crate::governance::approva
             checkout: w.repo.clone(),
             engine_cwd: w.repo.clone(),
             excluded: Vec::new(),
+            data_dir: None,
         }),
         ..scope(w, id)
     }

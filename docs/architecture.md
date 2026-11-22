@@ -37,8 +37,13 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    person starts, never an engine spawn. They are in no SQLite row, log, audit row, answer or export, and a run's terminal
    output is masked for them by exact match.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
-3. Claude uses the CLI, never the Agent SDK. `--bare` is forbidden on subscription
-   sessions because it ignores OAuth login.
+3. Claude runs through the person's own installed `claude`. The default path is the engine host with the Claude Agent SDK
+   (a dependency used as shipped, never copied or modified); the CLI driver stays a path the person can choose. Both
+   run the unmodified `claude` binary, never collect, read or store Claude.ai credentials (the engine keeps its own
+   login), and never use `--bare`, which ignores subscription login. The person's `claude_engine_path` setting (`sdk`,
+   the default, or `cli`, a device-local preference) is read at the start of each run; `ORBYN_ENGINE_HOST_CLAUDE` is opt-out
+   (only `0` turns the host off). The core default is on; the settings picker for `claude_engine_path` is *Planned* (Engineering 1), and a packaged turn on the SDK path is not yet observed
+   (docs/sdk-default-plan.md). A person's choice is never switched silently: when the host is down the person sees why and may pick the CLI.
 4. Orbyn writes nothing into target repositories or engine user config: no skills,
    instructions, excludes or context maps. The project file is read-only to Orbyn.
 5. A folder must be trusted before an engine, project script or terminal runs in
@@ -234,7 +239,7 @@ file. A record exists only once its bytes are in place, and a message naming an
 attachment that is not ready is refused before anything is admitted. Before its engine
 starts, a run logs `CUSTOM user.attachments` with each record's id, name, media type
 and size, so a transcript shows what the message carried without asking the engine.
-`GET /api/attachments/:id/content` returns those bytes while the record lives.
+`GET /api/attachments/:id/content` returns those bytes while the record lives. `PUT /api/attachments/:id/source` keeps a Snap Shot's app name, title, app id and accessible text beside an image before it is sent; it answers `404` for an unknown or already sent attachment, `422 unsupported_type` for a non-image and `413 source_too_large` past a character limit.
 
 A photo can be converted before it is stored: `POST /api/threads/:id/attachments/convert?name=`
 takes the photo as its body and answers `ConvertedPhoto`, the stored attachment the run
@@ -429,8 +434,11 @@ Failure text is cleaned before anyone sees it: terminal codes go, and a line tha
 like a credential, by key name, vendor prefix or shape, is dropped whole. A run that
 failed for want of a login says so and names the vendor's command, such as `claude auth
 login`, and logs `CUSTOM engine.sign_in_required`. Orbyn only names the command, under
-rule 1. Status commands are bounded by time and to 256 KiB, and `claude auth status` is
-read for its logged-in flag alone.
+rule 1. A run that failed because its engine host stopped carries the stable `RUN_ERROR`
+code `engine_host_stopped` beside its unchanged message, so a client can show the
+host-stopped banner from the code rather than matching the words. Status commands are
+bounded by time and to 256 KiB, and `claude auth status` is read for its logged-in flag
+alone.
 
 Mode is stated on every launch: Claude's `--permission-mode`, and Codex's approval policy
 and sandbox on `thread/start`, `thread/resume` and `turn/start`, because a saved session
@@ -1520,13 +1528,24 @@ project at exactly its folder and whether that project is trusted.
 
 `POST /api/history/import` takes only an engine and a session id; the service rescans
 and finds the file itself. It needs the session's project registered and trusted and
-the engine enabled there, then creates a thread whose engine session is that id, with
-no copied messages, so the next run resumes the engine's own conversation. A second
-import returns the same thread. Claude's `subagents` folders and `isSidechain`
+the engine enabled there, then creates a thread whose engine session is that id,
+marked with `imported_at`, with no copied messages, so the next run resumes the
+engine's own conversation. A second import returns the same thread. Claude's `subagents` folders and `isSidechain`
 transcripts are skipped, and a session listed by several files appears once, from its
 newest file. A session whose folder is not a project offers Add folder, which registers
 it untrusted through the ordinary add path; trusting it is the ordinary trust page. Pi is not an engine Orbyn runs, so its history is not
 scanned.
+
+`GET /api/threads/{id}/earlier?before=<cursor>` reads an imported thread's earlier
+messages from that same session file: the service resolves the recorded session id
+through the import's scan and head parser, then reads the whole file within a bounded
+size and line count and maps user, assistant and tool entries (never arguments,
+tool output, reasoning or meta entries) through the export redactor. It writes no row
+and nothing in the provider's folder. A page is 50 messages, oldest first; the cursor
+is bound to the file's size and mtime. A thread with no engine session is
+`404 not_imported`; a missing, changed, oversized, malformed or newer session file is
+`422 history_unreadable`, and a malformed cursor is `422 bad_cursor`. The production
+web client is still pending.
 
 ## Message search
 
@@ -2195,8 +2214,8 @@ OpenCode 2.2.5, which ran real turns through `orbynd` on macOS.
 instance can still be edited or removed), an installed app such as Antigravity that holds no ACP server, a
 program refused for being another CLI (Grok), and the engines not built. Each row has a group (In use, Found,
 More engines, Can't start, Not found, Planned; the page puts a startable engine under In use when its per-project
-switch is on) and labels: Not verified (a known ACP engine that has not run on a real install; today only
-OpenCode 2.2.5 has), Unmanaged (the engine cannot be gated or cannot ask), Limited support (the signed manifest's
+switch is on) and labels: Not verified (a known ACP engine that has not run on a real install; today
+OpenCode 2.2.5 is the only one that has), Unmanaged (the engine cannot be gated or cannot ask), Limited support (the signed manifest's
 `Unsupported` or `Graceful` version), Can't start (a `Broken` version, or an app with no ACP server), Not found
 and Planned (Pi, Muse Code, ZCode, and Cline's effort flag). Not found, Unmanaged and a `Broken` Can't start come
 from the same `ProviderFacts` the crew router's hard filters read. The Windows and Linux places an app is looked
@@ -2221,6 +2240,11 @@ the method's arguments. The provider card shows it to copy, and a run that fails
 login names it. Orbyn never runs it, never calls `authenticate` or `logout`, and offers no
 `env_var` method, since that means collecting a key. A method that sets variables, or a word
 a Windows or Unix shell would read differently, gives no command.
+
+The provider status also keeps the last start's issue: the ACP driver records `signed_out` when
+a handshake or session open is refused with ACP's auth-required code, and `failed` when it
+fails any other way. A successful open or model handshake clears it, so a signed-out engine
+reports the login again only until it next starts cleanly.
 
 Skills come from the workspace, in place. Nothing is copied, packed or signed.
 
@@ -3380,12 +3404,38 @@ make. A configuration folder that goes through a link (itself or a folder above 
 that is itself a link is not followed: the worker is refused, because a rule by path cannot follow a link that is swapped
 later. A Claude folder that does not resolve, is relative, overlaps the data folder, or a session id
 outside letters, digits, `-` and `_` also refuses the worker with a plain line. Auto memory (`projects/<folder>/memory`) is
-closed with the rest, so a worker starts without it. A worker on any other engine (an ACP agent; Codex is refused) gets
+closed with the rest, so a worker starts without it. A worker on any other engine (an ACP agent) gets
 `projects` and `history.jsonl` closed with no allowance, so an ACP adapter that wraps Claude Code and writes its sessions
 there cannot run as a worker until it can take a `--session-id`; a Claude folder that does not exist yet is named as given.
 The child's `ORBYN_DATA_DIR` is removed. `RunSpec.confine` carries the rules from the run manager
-to the claude and acp drivers; a driver that cannot apply them does not start the run. A process
+to the claude, acp and codex drivers; a driver that cannot apply them does not start the run. A process
 started ahead of a turn (warm) is not used for a worker.
+
+A Codex worker is confined by Orbyn's profile, so Codex's own sandbox is turned off rather than
+nested: `thread/start` carries `sandbox: "danger-full-access"` and each `turn/start` carries
+`sandboxPolicy {type:"dangerFullAccess"}`. Codex starts a Seatbelt per command, and a profile
+cannot start inside another. The saved approval policy is kept (a Supervised or Auto worker still
+asks), so Codex's command and file approvals reach Orbyn's ApprovalGate and the crew write-scope
+rule. Each crew task gets a private Codex home at
+`<data>/crew/codex-homes/<task id>`, made before launch with mode 0700 (parent folders too, no
+link followed, and a path that is a link or not a directory owned by the person is refused). It
+contains only `auth.json` at launch, copied with mode 0600 from the real Codex home; no
+`config.toml`, history, sessions or SQLite file is copied. The engine gets `CODEX_HOME` pointing at it and the
+profile opens it for writing inside the denied data folder; another task's home lies under
+the same data folder and stays denied. Later turns of the same task reuse the
+home, so its own Codex session continues. The home is removed when the task ends (passed, stopped
+or cancelled) and at core start every home whose task is no longer live is swept. The real Codex
+home (`CODEX_HOME` if the core has it, else `~/.codex`, plus the account's home from the user
+database when that differs) is resolved and denied as a closed folder; a worker's `CODEX_HOME`
+that equals or sits inside it, or that resolves outside the private folder, refuses the worker
+instead of running.
+
+The beta allows Codex workers only when the real login is an API key. The core reads only
+`auth_mode` and the presence of the API-key field from the real `auth.json`, never logging a
+value. A ChatGPT sign-in (or an unknown or malformed document) refuses the worker with the exact
+line "Codex workers need an API key; your ChatGPT sign-in would be shared with the worker.", and
+no private home is made. A missing or unreadable auth file, or a linked one, refuses with a plain
+line and is never followed. A separate worker login is post-beta.
 
 Hard rule 7 applies: where the restriction cannot be applied, the worker is refused before it exists,
 with a plain line in the task's "refused by the app" item. That item is "Could not start", not an approval: a task in
@@ -3394,9 +3444,9 @@ data, so tasks stored before this derive the same way. It offers Retry on anothe
 person only; another engine must be allowed, then the person's cancel and a message to the lead to start it again) and Dismiss (the
 person's cancel). That covers Windows and Linux ("Crew runs on
 macOS in the beta; Windows later."), a missing `sandbox-exec`, a core that itself runs under a macOS
-restriction (`sandbox-exec` cannot nest), Codex (it starts its own profile per command, so the core
-refuses it until that is checked; one constant, `CODEX_WORKERS_ALLOWED`) and terminal engines (not
-managed, so not restrictable). Tests on macOS run the real tool: the store, the service handle and another
+restriction (`sandbox-exec` cannot nest), Codex while the beta gate is off (one constant,
+`CODEX_WORKERS_ALLOWED`; it stays false until the real-Mac probe passes, so flipping it is one
+line) and terminal engines (not managed, so not restrictable). Tests on macOS run the real tool: the store, the service handle and another
 run's `mcp.json` cannot be read through a symlinked data path, the worker's own run folder and its
 checkout can, a program the worker wrote cannot be started through `open`, a signal to another process fails,
 the spawn path drops `ORBYN_DATA_DIR`, a confined `orbyn status` cannot find a service that an unrestricted one
@@ -3409,7 +3459,13 @@ by a link or linked to reach a transcript, a tree prepared outside with a link i
 project name, over or under the prepared folder, from inside the worker's own folder, or into a missing `projects` (which the
 core makes), nothing but the worker's own session can be created there, a linked configuration folder, `projects` or
 `history.jsonl` refuses the worker, an uncertain start folder name refuses it, and a worker of another engine reads none of it.
-Each of those tests fails if the create allowance is put back. By hand, with the real Claude 2.1.318 and an empty configuration folder (not signed in, so no model turn):
+Each of those tests fails if the create allowance is put back. For Codex, a table test covers the auth
+documents (API key, ChatGPT, missing, empty, malformed), the private home is checked for 0700/0600,
+only `auth.json`, no link followed, reuse across turns and the sweep, and the profile is checked to
+deny the real home and open the private one by parameter. Sandbox-exec tests read the real home and
+another task's home (both denied), read and write the worker's own home (allowed), and write outside
+the proof's run folder (denied). The thread and turn parameters for a confined worker are checked to
+carry `danger-full-access` with the saved approval policy. None of this flips the beta gate. By hand, with the real Claude 2.1.318 and an empty configuration folder (not signed in, so no model turn):
 `--session-id` writes its own session, `--resume` of its own session works, and `--resume` of another session in the same
 folder answers "No conversation found", with the folders made beforehand and no create allowed. What that proves: a worker's own file access to
 Orbyn's data folder (store, `service.json`, other runs' files) is denied, and the Claude lead's transcript is denied to
@@ -3429,10 +3485,12 @@ real-service test shows a warm-started Claude process's token file under `runs/`
 That covers the endpoint token of ACP stdio and Claude launches; it does not show that no other value in any
 process is secret. Also not covered: the network, the loopback service (its token is the guard),
 the OS keychain, the engine's own login files (`~/.claude.json`, which Claude must read), other files of the same user,
-and a process a worker leaves running after its turn. The saved conversations of other engines are not covered. Codex's own session files (`~/.codex/sessions` and the state and logs SQLite files under `~/.codex`) are not covered, which is acceptable only because Codex workers stay refused on macOS (`CODEX_WORKERS_ALLOWED` is false) and stay refused until a separate probe is done. Codex keeps
-them in rollout files and in SQLite files under its home, and an ACP agent keeps its own history wherever it chooses, so
-an ACP agent's conversation, including an ACP adapter that writes Claude's folder, is open, and a Claude lead's transcript
-stays closed only for a Claude worker. Claude's other per-session files, which Orbyn does not name and did not observe
+and a process a worker leaves running after its turn. The saved conversations of other engines are not covered. Codex's
+real home (`~/.codex` or `CODEX_HOME`, including its sessions and SQLite files) is closed to a Codex worker, and the
+worker's own home is private to its task and removed when the task ends; another task's home sits under the data folder
+and is denied. A Codex worker can read and write its own home, so its own session is its own, not the lead's. An ACP agent
+keeps its own history wherever it chooses, so an ACP agent's conversation, including an ACP adapter that writes Claude's
+folder, is open, and a Claude lead's transcript stays closed only for a Claude worker. Claude's other per-session files, which Orbyn does not name and did not observe
 in this change (`plans/`, which can hold the lead's plan text, `paste-cache/`, `session-env/`, to-do lists, file history,
 debug logs, shell snapshots, the live-session registry `sessions/`), are open to a worker. A worker can learn which project
 folder names exist under `projects` (their metadata may be read), not what is in them. A confined Claude worker can create its own `<own id>.jsonl` and `<own id>/` in any existing project folder, not only its own project's, so a session the worker wrote can appear in another project's resume list. A worker that makes Claude create a session under another id (for example `/clear` inside a turn)
@@ -3601,7 +3659,9 @@ for older shells. Environment: `ORBYN_DATA_DIR`, `ORBYN_ACP_REGISTRY_URL`, `ORBY
 
 All bodies are JSON and errors are `ApiError` with a stable `code`. A body that cannot be
 read as the route's JSON is `400 invalid_input`; its message names the field that refused and never
-the value that was sent (an account body can carry a password or a sign-in code). Auth is
+the value that was sent (an account body can carry a password or a sign-in code). A wrong-typed
+value under a key in a map field names that field and never repeats the caller's key, which the
+path library renders like a field. Auth is
 `Authorization: Bearer <token>`, or the session cookie. SSE, WebSocket and
 `files/raw` and the exact GET/HEAD `/api/media/image` route also accept `?token=`
 because browsers cannot set headers on them.
@@ -3694,6 +3754,7 @@ every method, path and which routes need a credential.
 | `POST /api/threads/:id/attachments/convert?name=` | Raw photo body; `ConvertedPhoto`: the stored attachment, its size and what was done (`converted`, `shrunk` or `none`); `415 unsupported_type`, `422 unreadable_image` or `still_too_large`, `413 file_too_large` |
 | `DELETE /api/attachments/:id` | Remove an attachment |
 | `GET /api/attachments/:id/content` | The stored bytes with their recorded `Content-Type`; `404` once gone |
+| `PUT /api/attachments/:id/source` | `AttachmentSource`: keeps a Snap Shot's app name, title, app id and accessible text beside an image attachment; `404` unknown or already sent, `422 unsupported_type` when it is not an image, `413 source_too_large` over a character limit |
 | `GET /api/threads/:id/mentions?q=` | `Mentions`: profile skills, ranked unignored files, this project's threads |
 | `GET /api/search/messages?q=&project_id=&thread_id=&archived=&limit=` | `MessageSearch`: `MessageHit[]`, newest first, each with `seq` and `message_id` to open at |
 | `GET /api/search/messages/events?q=&project_id=&thread_id=&archived=&limit=` | `MessageSearchEvent[]`: `hit` frames in the read's order, then `done` (`words`, `too_short`, `truncated`) or `failed` |
@@ -3801,7 +3862,7 @@ every method, path and which routes need a credential.
 | `GET /api/engines/:id/limits?force=`, `GET /api/threads/:id/limits?force=` | `EngineLimits`; `422 unsupported` if the engine reports none |
 | `GET /api/engines/:id/models?refresh=` | `EngineModels`: models with their options, engine-wide options, agents, output styles, `remembered` |
 | `GET, POST /api/policy/rules`, `DELETE /api/policy/rules/:id` | Internal: diagnostics only, no client uses these |
-| `GET /api/audit?thread_id=&limit=` | Internal: diagnostics only, no client uses this |
+| `GET /api/audit?thread_id=&limit=` | Internal: diagnostics only, no client uses this. Each row's stored `detail` and `target` are masked with the person's redaction patterns on the read, values and keys alike; the actor, action, target, decision, source, thread and run fields are as stored |
 | `GET /api/computer`, `POST /api/threads/:id/computer` | Status, and a governed action |
 | `GET /api/account` | `AccountView`: `available` (the sign-in gate is on and a backend answers; false means the window shows nothing of the account), the session's email and device name, the sync line, `confirmed` and `deletion_scheduled`. The only account route that answers under the `Off` gate |
 | `POST /api/account/sign-up/{invite,start,resend,code}` | Sign-up in five steps (invite, email, password, emailed code, done); only the invite check, the password step, the resend and the code send anything. The email step sends nothing. `start` is the password step: it carries the invite, the email and the password once, creates the account and emails the code (the device check and the retry limit are here; a password under twelve characters is `422 weak_password`). `code` signs in; five wrong codes in a row refuse every code (`422 invalid_code`, the same answer) until `resend`. The invite and emailed code normalise case, hyphens and spaces. There is no `register` route |
@@ -3816,3 +3877,16 @@ every method, path and which routes need a credential.
 | `POST /auth/session` | Exchange a remote access key for a cookie (`204`) |
 | `POST /agui/threads/:id` | External AG-UI endpoint (`RunAgentInput` in, SSE out) |
 | `POST /mcp/:thread_token` | Per-run MCP server |
+
+## Typed turn result
+
+A send (`POST /api/threads/{id}/runs`) may carry `result_schema`, a JSON Schema object (draft 2020-12, at most 16 KiB, nesting at
+most 32, local `#/` references only, no `$dynamicRef`; otherwise `400 invalid`, "The result schema is not valid."), or
+`purpose: "terminal_proposal"` where Orbyn supplies the schema; the two are exclusive, and a send without approvals takes neither.
+The core adds one fixed instruction after the person's text asking the engine to end its final message with a fenced `json` block. When
+the run completes it takes the last such block of the final assistant message (or the whole message if it is JSON), checks it against
+the schema with no network loader (so nothing is ever fetched) and records one run event `orbyn.turn_result` (`CUSTOM`):
+`{ok: true, value}` (value at most 256 KiB) or `{ok: false, reason}` with `reason` one of `no_json`, `not_valid_json`,
+`schema_mismatch`, `too_large`. No retry or repair turn; a cancelled or failed run records none. The event is stored with the run like
+any other and reads back from the thread history. Log lines carry the run id and sizes only. **Planned**: each engine's own structured
+output; today every engine gets the instruction. Not verified on a real engine.

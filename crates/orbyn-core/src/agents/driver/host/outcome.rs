@@ -9,6 +9,9 @@ use crate::agents::driver::{
 pub const HOST_STOPPED: &str =
     "The engine host stopped. Your work in the project is kept; send your message again.";
 
+/// The stable code a stopped host gives the run, so a client never has to match the sentence.
+pub const HOST_STOPPED_CODE: &str = "engine_host_stopped";
+
 fn disposition(text: Option<&str>) -> ThreadDisposition {
     match text {
         Some("reusable") => ThreadDisposition::Reusable,
@@ -36,6 +39,7 @@ pub fn host_stopped() -> EngineOutcome {
         message: HOST_STOPPED.into(),
         retry: None,
         disposition: ThreadDisposition::Unknown,
+        code: Some(HOST_STOPPED_CODE),
     })
 }
 
@@ -74,6 +78,7 @@ pub fn map(done: &RunDone) -> (EngineOutcome, Vec<EngineEvent>) {
             message: sentence(reason, done.error.as_ref()),
             retry: hint.and_then(retry),
             disposition: disposition(done.disposition.as_deref()),
+            code: None,
         })
     };
     let outcome = if kind == ErrorKind::SessionLost {

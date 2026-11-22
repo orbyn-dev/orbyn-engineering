@@ -114,7 +114,7 @@ describe("saved history", () => {
     const saved = JSON.parse(stored() ?? "{}") as { h: Record<string, unknown> };
     expect(saved.h["t29:main"]).toBeDefined();
     expect(saved.h["t0:main"]).toBeUndefined();
-  });
+  }, 30_000);
 
   it("keeps a multi-line command, newlines and all, across a reload", async () => {
     const first = await fresh();

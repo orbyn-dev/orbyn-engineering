@@ -173,8 +173,11 @@ impl Fixture {
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
-    /// Waits for the fake engine's report of what it did with the token alone. Gives up after a minute and says why:
-    /// whether the file never appeared or could not be read as JSON, and what the data dir holds.
+    /// Waits for the fake engine's report of what it did with the token alone. The engine writes it whole after
+    /// every call (`complete: false`, naming the route it is on) and once more when the sweep is done, so a probe a
+    /// slow service is still holding says how far it got instead of leaving nothing. Gives up after a minute and
+    /// says why: whether the file never appeared or could not be read as JSON, how far the sweep got and the route it
+    /// was on, the run's own state, and what the test dir holds.
     async fn probe(&self) -> Value {
         let path = self.dir.path().join("probe.json");
         let mut last = "the file never appeared".to_owned();
@@ -187,7 +190,10 @@ impl Fixture {
                                 "the fake engine's probe failed before any call finished: {fatal}"
                             );
                         }
-                        return report;
+                        if report["complete"] == json!(true) {
+                            return report;
+                        }
+                        last = progress(&report);
                     }
                     Err(error) => last = format!("the file is not JSON yet: {error}"),
                 },
@@ -195,6 +201,7 @@ impl Fixture {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        let state = self.run_state_naming_errors().await;
         let listing: Vec<String> = std::fs::read_dir(self.dir.path())
             .map(|dir| {
                 dir.flatten()
@@ -203,11 +210,44 @@ impl Fixture {
             })
             .unwrap_or_default();
         panic!(
-            "the fake engine wrote no probe report in 60s ({last}); the test dir holds {listing:?}. The engine was \
-             admitted with a thread, so it started or it did not: a service that is down or a run that never spawned \
-             the engine looks the same from here"
+            "the fake engine wrote no complete probe report in 60s ({last}); the run is {state}; the test dir holds \
+             {listing:?}. The engine was admitted with a thread, so it started or it did not: a service that is down, a \
+             run that never spawned the engine, and a request the service never answered look the same from here"
         );
     }
+
+    /// The thread's last run state for a failure message, or why it could not be read. Never panics: the service may
+    /// be the thing that is wrong.
+    async fn run_state_naming_errors(&self) -> String {
+        let path = format!("/api/threads/{}", self.thread);
+        match tokio::time::timeout(Duration::from_secs(2), self.service.get(&path).send()).await {
+            Ok(Ok(response)) => match response.json::<Value>().await {
+                Ok(thread) => thread["last_run_state"]
+                    .as_str()
+                    .unwrap_or("unreadable")
+                    .to_owned(),
+                Err(error) => format!("unreadable: {error}"),
+            },
+            Ok(Err(error)) => format!("unknown, the service did not answer: {error}"),
+            Err(_) => "unknown, the service did not answer in 2s".to_owned(),
+        }
+    }
+}
+
+/// How far a sweep that has not finished got, and the route it was on when the report was last written.
+fn progress(report: &Value) -> String {
+    let calls = report["calls"].as_array();
+    let finished = calls.map_or(0, Vec::len);
+    let failed = calls.map_or(0, |calls| {
+        calls
+            .iter()
+            .filter(|call| call["status"] != 403 || call["code"] != "person_required")
+            .count()
+    });
+    format!(
+        "the engine had finished {finished} calls, {failed} of them not a refusal, and was on {}",
+        report["in_flight"].as_str().unwrap_or("an unknown route"),
+    )
 }
 
 /// Replaces the secrets and any long token-looking run in text a failure message shows, and cuts it to 500 chars.
@@ -238,8 +278,12 @@ fn probe_failures(report: &Value, expected: usize) -> Vec<String> {
     let mut failures = Vec::new();
     if calls.len() != expected {
         failures.push(format!(
-            "the engine reported {} calls, not {expected}; the report holds fatal={}, error calls={}",
+            "the engine reported {} calls, not {expected}{}; the report holds fatal={}, error calls={}",
             calls.len(),
+            report["aborted"]
+                .as_str()
+                .map(|why| format!(" (it stopped after {why})"))
+                .unwrap_or_default(),
             report["fatal"],
             calls.iter().filter(|c| c.get("error").is_some()).count()
         ));

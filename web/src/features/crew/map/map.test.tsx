@@ -96,20 +96,20 @@ describe("the Crew map on the map route", () => {
     expect(lines.some((line) => /failed$/.test(line))).toBe(true);
   });
 
-  it("draws the member menu: Cancel and Re-run checks inert (the map carries no flags) and the rest After the beta", async () => {
+  it("draws the member menu: Cancel and Re-run checks inert (the map carries no flags) and the rest Planned", async () => {
     const user = await openMap();
     await user.click(row(/Use next in the auth redirect/));
     await user.click(await screen.findByRole("button", { name: "Actions for this member" }));
     const menu = await screen.findByRole("menu", { name: "Member actions" });
     const items = within(menu).getAllByRole("menuitem");
     expect(items.map((item) => item.textContent)).toEqual([
-      "Open thread After the beta",
+      "Open thread Planned",
       "Cancel Use the Board card",
       "Re-run checks Use the Board card",
-      "Reassign engine After the beta",
-      "Message into a lane After the beta",
-      "Add reviewer lane After the beta",
-      "Propose a check After the beta",
+      "Reassign engine Planned",
+      "Message into a lane Planned",
+      "Add reviewer lane Planned",
+      "Propose a check Planned",
     ]);
     for (const item of items) expect(item).toBeDisabled();
     await user.click(items[1]!);

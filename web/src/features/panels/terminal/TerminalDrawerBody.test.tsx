@@ -9,6 +9,7 @@ import { useComposerChips } from "../../../product/state/composerChipStore";
 import { TerminalBar, TerminalDrawerBody } from "./TerminalDrawerBody";
 import { runHandlers } from "../../../product/shell/shortcuts";
 import { registerTerminal, terminalKey } from "./terminalControls";
+import { useAttention } from "./attention/store";
 
 vi.mock("./TerminalPanel", () => ({ TerminalPanel: ({ terminalId, autoFocus }: { terminalId?: string; autoFocus?: boolean }) => <div data-autofocus={autoFocus ? "yes" : "no"}>Output of {terminalId ?? "main"}<textarea className="xterm-helper-textarea" aria-label="xterm" /></div> }));
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
@@ -39,6 +40,7 @@ function serve(terminals: TerminalInfo[]) {
 }
 
 beforeEach(() => {
+  useAttention.getState().reset();
   mock.mockReset();
   useComposerChips.setState({ chips: {} });
   useUi.setState({ terminalOpen: true, toasts: [] });
@@ -55,6 +57,22 @@ const show = async (terminals: TerminalInfo[]) => {
 };
 
 describe("terminal drawer", () => {
+  it("puts an amber dot on the tab of a terminal that waits for the person, and takes it away when it is answered or dismissed", async () => {
+    await show([terminal({ id: "t2", group: "g2" }), terminal({ id: "t3", group: "g3", title: "build" })]);
+    const at = (seq: number, value: unknown) => ({ seq, ts: "2026-11-22T14:12:03Z", thread_id: "th", event: { type: "CUSTOM", name: "orbyn.terminal_attention", value } });
+    const waiting = { v: 1, op: "waiting", id: "a1", terminal_id: "t3", terminal_title: "build", engine: "claude", kind: "question", since: "2026-11-22T14:12:00Z", excerpt: ["Continue?"] };
+    expect(document.querySelector(".ptab .ptab-attn")).toBeNull();
+    act(() => { useAttention.getState().receive(at(1, waiting)); });
+    expect(screen.getByRole("tab", { name: "build, waiting for you" }).querySelector(".ptab-attn")).not.toBeNull();
+    expect(screen.getByRole("tab", { name: /npm test/ }).querySelector(".ptab-attn")).toBeNull();
+    act(() => { useAttention.getState().dismiss("a1"); });
+    expect(document.querySelector(".ptab-attn")).toBeNull();
+    act(() => { useAttention.getState().reset(); useAttention.getState().receive(at(2, { ...waiting, id: "a2" })); });
+    expect(document.querySelector(".ptab-attn")).not.toBeNull();
+    act(() => { useAttention.getState().receive(at(3, { v: 1, op: "clear", id: "a2", reason: "input" })); });
+    expect(document.querySelector(".ptab-attn")).toBeNull();
+  });
+
   it("marks a tab by how its process is doing and closes it from its own button", async () => {
     const user = await show([terminal({}), terminal({ id: "t3", group: "g3", title: "build", alive: false, exit_code: 0 }), terminal({ id: "t4", group: "g4", title: "lint", alive: false, exit_code: 2 })]);
     expect(screen.getAllByLabelText("Working")).not.toHaveLength(0);

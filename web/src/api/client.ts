@@ -32,7 +32,8 @@ import type {
   KeybindingsView,
   ApplyAllResult,
   Approval,
-  Attachment,
+  AttachmentSource,
+  AttachmentWithSource,
   Checkpoint,
   CloneJob,
   CreateThread,
@@ -310,6 +311,14 @@ export const api = {
     request<KeybindingsView>("GET", "/api/keybindings", undefined, signal),
   threadItem: (threadId: string, itemId: string, signal?: AbortSignal) =>
     request<unknown>("GET", `/api/threads/${q(threadId)}/items/${q(itemId)}`, undefined, signal),
+  /** The engine consoles waiting for the person in one thread now (docs/cli-agent-attention.md). Local, read-only. */
+  terminalAttention: (threadId: string, signal?: AbortSignal) =>
+    request<import("../generated/TerminalAttentionOpen").TerminalAttentionOpen>(
+      "GET",
+      `/api/threads/${q(threadId)}/terminal-attention`,
+      undefined,
+      signal,
+    ),
   regenerateTitle: (id: string) => request<Thread>("POST", `/api/threads/${q(id)}/title`),
   reorderThreads: (ids: string[]) => request<void>("POST", "/api/threads/order", { ids }),
   /** Every archived thread, including those of a project that was removed. */
@@ -321,7 +330,7 @@ export const api = {
     request<JsonValue | null>("GET", `/api/threads/${q(threadId)}/usage`, undefined, signal),
   commands: (threadId: string, signal?: AbortSignal) =>
     request<SlashCommand[]>("GET", `/api/threads/${q(threadId)}/commands`, undefined, signal),
-  uploadAttachment: async (threadId: string, file: File): Promise<Attachment> => {
+  uploadAttachment: async (threadId: string, file: File): Promise<AttachmentWithSource> => {
     let response: Response;
     try {
       response = await fetch(serviceUrl(`/api/threads/${q(threadId)}/attachments?name=${q(file.name)}`), {
@@ -334,8 +343,16 @@ export const api = {
       throw new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0);
     }
     if (!response.ok) throw await failureFrom(response);
-    return (await response.json()) as Attachment;
+    return (await response.json()) as AttachmentWithSource;
   },
+
+  /**
+   * Where a kept attachment came from (docs/snapshots.md, "What the page sends to the service"). The route answers 404 for
+   * another thread's attachment or one already sent, `source_too_large` over a limit, and `unsupported_type` for a file
+   * that is not an image.
+   */
+  attachmentSource: (id: string, source: AttachmentSource) =>
+    request<void>("PUT", `/api/attachments/${q(id)}/source`, source),
 
   usage: (days: number, signal?: AbortSignal) =>
     request<UsageReport>("GET", `/api/usage?days=${days}`, undefined, signal),

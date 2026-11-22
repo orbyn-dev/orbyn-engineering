@@ -161,7 +161,47 @@ async fn a_persons_denial_does_not_let_the_task_complete() {
 }
 
 #[tokio::test]
-async fn a_decision_on_a_task_that_is_not_waiting_is_refused() {
+async fn a_decision_whose_gate_and_resume_were_lost_is_finished_by_the_repeat() {
+    let w = crew(arc(|_, root| built(root))).await;
+    let id = started(&w).await;
+    assert_eq!(w.task(&id).state, "needs_person");
+    // The stored half of a crash between the steps: the check is decided, and neither its gate nor the resume happened.
+    w.core
+        .store
+        .decide_manual_check(&id, "chk-manual", true, Some("looked"), crate::util::unix_now())
+        .unwrap();
+    assert!(
+        w.core
+            .store
+            .crew_gates(&id)
+            .unwrap()
+            .iter()
+            .all(|gate| gate.decided_by != GateDecider::Person),
+        "no person gate yet"
+    );
+    assert_eq!(w.task(&id).state, "needs_person");
+    // The person's own call again finishes it: the gate is written and the task carries on, not refused and not stuck.
+    let waiting = w
+        .core
+        .crew_decide_manual_check(&id, "chk-manual", true, Some("looked"), "user")
+        .await
+        .unwrap();
+    assert!(waiting.is_empty(), "{waiting:?}");
+    w.until_state(&id, "passed").await;
+    assert_eq!(
+        w.core
+            .store
+            .crew_gates(&id)
+            .unwrap()
+            .iter()
+            .filter(|gate| gate.decided_by == GateDecider::Person)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_repeat_answer_finishes_a_decision_and_other_answers_are_refused() {
     let w = crew(arc(|_, root| built(root))).await;
     let id = started(&w).await;
     // A check the core runs is never the person's to decide.
@@ -183,11 +223,28 @@ async fn a_decision_on_a_task_that_is_not_waiting_is_refused() {
         .await
         .unwrap();
     w.until_state(&id, "passed").await;
-    // A task that already ended has no check waiting: the same act again is refused, and writes nothing.
-    let refused = w
+    // The same answer again is not a second decision: it answers with what still waits (nothing) and writes no second gate, so a
+    // decision a crash interrupted is finished by repeating it rather than left stuck.
+    let waiting = w
         .core
         .crew_decide_manual_check(&id, "chk-manual", true, None, "user")
         .await
+        .unwrap();
+    assert!(waiting.is_empty(), "{waiting:?}");
+    let person_gates = w
+        .core
+        .store
+        .crew_gates(&id)
+        .unwrap()
+        .into_iter()
+        .filter(|gate| gate.decided_by == GateDecider::Person)
+        .count();
+    assert_eq!(person_gates, 1, "one decision, one gate");
+    // The opposite answer on a decided check is still refused.
+    let refused = w
+        .core
+        .crew_decide_manual_check(&id, "chk-manual", false, None, "user")
+        .await
         .unwrap_err();
-    assert!(refused.to_string().contains("not waiting"), "{refused}");
+    assert!(refused.to_string().contains("already"), "{refused}");
 }

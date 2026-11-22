@@ -4,7 +4,7 @@ The Node host that runs engine SDKs (Claude, Cursor, OpenCode, Muse, ACP and Cod
 Rust core over newline-JSON on stdio. The wire contract is [docs/engine-host-protocol.md](../docs/engine-host-protocol.md);
 change that document in the same PR as any frame change.
 
-Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` and `cursor` (each behind a flag), `opencode`, `muse`, `acp` and `codex` are the real ones. Not part of the Rust
+Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` and `cursor` (each behind a flag), `opencode`, `muse`, `codex` and `acp` (with per-agent entries for droid, omp, kimi, kiro, mistral-vibe and glm) are the real ones. Not part of the Rust
 workspace or the web lint scope; it has its own `package.json`.
 
 ```bash
@@ -33,7 +33,9 @@ A family is one file in `src/families/` that exports `{ name, sdk: {name, versio
 5. Apply `open.confinement` (argv prefix, env allowlist) to every process the family starts; a family that cannot must
    fail `open` with `kind: "unsupported"`. Log env keys you add before the engine starts.
 6. Register the family in `src/main.mjs` (behind an env flag if a licence or terms gate applies; never bundle an SDK
-   that is not MIT or approved: mark it `external` in `scripts/build-sea.mjs`).
+   that is not MIT or approved: mark it `external` in `scripts/build-sea.mjs`). The Claude and Cursor SDK gates were lifted
+   on 2026-11-22 on the condition that Orbyn Engineering is open source for public use; both are used as dependencies only
+   and ship with the notices their licences ask for. Both are exact-pinned dependencies in `package.json` (`@anthropic-ai/claude-agent-sdk` 0.3.321, `@cursor/sdk` 1.4.2) with their licence texts in `THIRD_PARTY_NOTICES.md`; neither is bundled into the single executable: both ship as a `node_modules` folder beside it (see Single executable below).
 7. Test by replaying recorded transcripts: copy them unmodified into `test/fixtures/<family>/` with their licence notice in
    `test/fixtures/NOTICE`, drive the family through `runHost` with in-process streams (see `claude.test.mjs`, `replay.mjs`),
    and write each test so it fails before the code. State in the PR what has not run against the real engine.
@@ -53,13 +55,34 @@ Not checked: launching the ad hoc signed host from inside the ad hoc signed app 
 Linux, Intel macOS (T3 found SEA crashes there, so Intel keeps the Rust drivers).
 The Tauri `externalBin` wiring and `scripts/check-desktop-assets.mjs` entry come with the first real family.
 
+### SDK folder
+
+The two SDKs cannot live in the single file (native files, webpack chunks), so `npm run prepare:sdks`
+(`scripts/prepare-sdks.mjs`) builds `dist/sdk/`: a production `node_modules` with only `@anthropic-ai/claude-agent-sdk`,
+`@cursor/sdk` and what they need at run time, at the versions `package-lock.json` records (a trimmed lockfile, `npm ci --omit=dev
+--ignore-scripts`, so no install script runs), plus `THIRD_PARTY_NOTICES.md`. Anthropic's `@anthropic-ai/claude-agent-sdk-<platform>`
+packages (the `claude` binary) are left out, because the host runs the person's own `claude`; the Cursor SDK's package for the build
+platform is in. `scripts/prepare-bundle.mjs` copies it to `build/sdk`, which `tauri.conf.json` ships as `Contents/Resources/sdk`
+(macOS arm64 only, like the host; other targets get an empty folder).
+
+`src/sdkLocation.mjs` picks where the host imports an SDK from: `ORBYN_CLAUDE_SDK_MODULE` / `ORBYN_CURSOR_SDK_MODULE` first, then
+`<dir of the executable>/sdk/node_modules/<pkg>`, then `<dir>/../Resources/sdk/node_modules/<pkg>`, else the bare package name
+(development; note that a built executable also resolves it from the `node_modules` it was built next to). The entry is read from the
+package's `exports`/`main` and imported by file URL. `scripts/sign-adhoc-macos.sh` signs the Mach-O files in `Resources/sdk` with no
+entitlements and `scripts/check-macos-entitlements.sh` walks them. Checked: the SEA built on macOS arm64 loads the Cursor SDK and the
+Claude SDK from a `sdk/` folder beside it and from `../Resources/sdk` in a `Contents/MacOS` layout, and reports the plain message with
+neither. Not checked: a real `tauri build` bundle, a real SDK turn, a Developer ID signed bundle (Tauri does not sign `Resources` files
+itself, so a `--release` check would flag them), other platforms.
+
 ## Claude family (behind a flag)
 
 `src/families/claude.mjs` runs `query()` from `@anthropic-ai/claude-agent-sdk` over the person's own
-`claude` (`options.claudePath`). It starts only with `ORBYN_ENGINE_HOST_CLAUDE=1`, and the Rust side keeps
-the CLI driver as the default for subscription sign-in until Anthropic approves the SDK path in writing.
-The SDK is **not bundled** (esbuild `external`, no dependency in `package.json`): in development it loads from
-`node_modules`, in the single executable it is absent and the family fails with a plain message.
+`claude` (`options.claudePath`). The host itself starts the family only with `ORBYN_ENGINE_HOST_CLAUDE=1`, which the Rust side sets in the host's environment.
+On the service the flag is opt-out: a missing or empty `ORBYN_ENGINE_HOST_CLAUDE` means on and only `0` turns it off (`1` stays valid).
+The person's `claude_engine_path` setting (`sdk`, the default, or `cli`) is read at the start of each run; `cli` runs through the Rust CLI driver and
+the host is not touched. Nothing falls back on its own. Both paths resume the same transcript files.
+The SDK is **not bundled into the executable** (esbuild `external`); it is an exact-pinned dependency. In development it loads from
+`node_modules`; in the app it loads from the `sdk` folder beside the host (see Single executable below); with neither, the family fails with a plain message.
 
 Done and tested against replayed transcripts (T3 Code, MIT, `test/fixtures/NOTICE`): multi-turn session on
 one query, permission frames with once-only allow and deny, cancel through `interrupt()`, session and turn
@@ -88,9 +111,10 @@ for the prompt's uuid before the result. A leftover turn has not been seen on a 
 
 `src/families/cursor.mjs` runs the public surface of `@cursor/sdk` (`Agent.create`/`Agent.resume`, `agent.send` with `onDelta`,
 `run.wait`/`steer`/`cancel`, `agent.close`). It starts only with `ORBYN_ENGINE_HOST_CURSOR=1`; without it `cursor` is an unknown
-family (exit 2). The SDK (licence "SEE LICENSE IN LICENSE.md", about 20 MB with native binaries) is **not bundled and not a
-dependency** (not even optional): esbuild `external`, loaded with a dynamic import that fails with "The Cursor SDK is not
-available in this build." (`kind: "unsupported"`). In the single executable it is therefore absent.
+family (exit 2). The SDK (licence "SEE LICENSE IN LICENSE.md", about 20 MB with native binaries) is an exact-pinned **dependency**, not
+bundled into the single executable (esbuild `external`). The host loads it with a dynamic import, or from the file named by
+`ORBYN_CURSOR_SDK_MODULE`; if it cannot, `open` fails with "The Cursor SDK is not available in this build." (`kind: "unsupported"`).
+The app bundle ships it in the `sdk` folder beside the host (see Single executable).
 
 - **Pooled.** One host process serves every Cursor session (T3's single worker, keyed by `sessionId`). A pooled host cannot take a
   per-run argv prefix, so `open` with `confinement.argvPrefix` fails with `kind: "unsupported"` and starts nothing; the core
@@ -275,8 +299,19 @@ no T3 thread names or recorder `config/read`, and no T3 orchestration child thre
 newline JSON-RPC 2.0 on stdio. It starts with `orbyn-engine-host acp`; no flag. The core resolves which agent to run and
 where its binary is, in `open.options.agent = {command, args, env, id}`; this host never downloads, installs or resolves a
 registry and never fetches the network. `options.agent.id` selects a per-agent quirks entry from
-`src/families/acpAgents.mjs` (`default` only in this task; droid, omp, kimi, kiro and vibe come later).
+`src/families/acpAgents.mjs`: `default`, `droid` and `omp` (their complete elicitation forms), `kimi` (bare tool names
+with streamed JSON arguments), `kiro` (V3 launch, exact config ids and the autopilot rule), `mistral-vibe` (its
+`thinking` levels belong to the current model) and `glm` (bare model names). An unknown id gets `default`. The
+per-agent rules are a plain-JavaScript port of T3 Code (MIT, Copyright (c) 2026 T3 Tools Inc., commit
+`9168ca73d02003557725430b515b44e1551544af`).
 
+- **Kiro.** With `agent.id = "kiro"` and empty args the process runs `kiro-cli acp --agent-engine=v3 --auth-method=cli`
+  (T3's `KIRO_ACP_ARGS`). Session options use Kiro's ids `model`, `effortLevel` and `mode` (agents); a model is written even
+  when Kiro has not listed it, and `effortLevel` only after Kiro advertises it for the written model. **`autopilot` is
+  always written as `off` (Supervised) when Kiro offers it and never as `on`**: the host never lets Kiro auto-approve
+  tools, because policy stays in Rust; if Kiro offers no supervised value the session fails. `/compact` uses Kiro's
+  advertised `_kiro/session/compact`, `steer` uses `_session/steer` (`queued`, no cancel), and `open` operation `fork`
+  forks at a turn with `options.atTurn` as `_meta.kiro.messageId`.
 - **Initialize.** ACP protocol version 2, `clientInfo` "Orbyn", `clientCapabilities` advertising only form elicitation:
   **no `fs` and no `terminal`**, so the agent keeps using its own tools under the core's confinement. An agent that sends
   `fs/*` or `terminal/*` anyway gets JSON-RPC method-not-found and a `log` frame naming the method only (T3 advertises
@@ -293,32 +328,40 @@ registry and never fetches the network. `options.agent.id` selects a per-agent q
   received) answered once by `respond`. Allow is only `allow_once`; deny is `reject_once`; an agent offering only an
   always-allow option is denied. There is no host timeout. Cancel, run end and a crash refuse pending asks. Elicitation
   forms become `question` frames answered by `respond` `{answers}` (multi-selections comma-joined) or `{behavior:"deny"}`
-  (sent as `action: "cancel"`).
+  (sent as `action: "cancel"`); Droid's and OMP's complete forms use their own parser and leave other schemas to the
+  generic one.
 - **Turns.** `send` writes `session/prompt` with the person's text, plus image or resource blocks only when the agent's
   `promptCapabilities` allow them, answers when the prompt is on the wire, streams each `session/update`'s `update`
   object untouched as a `delta`, and ends with exactly one `runDone` from the prompt response (`end_turn` completed,
   `cancelled` cancelled, `max_tokens`/`max_turn_requests` maxTurns, `refusal` refused, an error failed with a `kind`).
-  A malformed `session/update` is dropped and logged by method only. `steer` cancels the running prompt and sends the new
-  text as the run's next prompt; `cancel` sends `session/cancel` and ends the run cancelled; `closeSession` cancels and
-  stops the process.
+  A malformed `session/update` is dropped and logged by method only. Kiro's `/compact` is its advertised extension, not a
+  prompt. `steer` cancels the running prompt and sends the new text as the run's next prompt (Kiro instead queues it
+  through `_session/steer` and does not cancel); `cancel` sends `session/cancel` and ends the run cancelled; `closeSession`
+  cancels and stops the process.
 - **Models.** `models` with an open `sessionId` returns the session's catalog; without one it takes `agent`, `cwd` and
   optional `confinement`, starts a throwaway agent, reads `session/new`, and stops it. The shape is Muse's
   `{models: [{id, name, isDefault, efforts: [{id, label, description?, isDefault?}], defaultEffort?}]}`, built from
   ACP `configOptions` (`model`, `thought_level`/`reasoning`, the Mistral Vibe `thinking` quirk, `mode`) with `_meta.reasoningEfforts`
-  winning per model. `options.model`, `options.effort` and `options.mode` at `open` or `send` go through
+  winning per model. Vibe's levels apply to its current model only; Kiro's `_meta.kiro.effortLevels`/`defaultEffortLevel`
+  shape its efforts; bare model ids are their names. `options.model`, `options.effort` and `options.mode` at `open` or `send` go through
   `session/set_config_option`, or `session/set_model` when only a model state is advertised.
   Capabilities: `steer` and `models`.
 
 Done and tested against replayed T3 Code transcripts of generic ACP agents (MIT, `test/fixtures/NOTICE`):
 simple, multi-turn, queued turn, message steering, a read-only tool call, a permission ask answered once, turn
-interrupt, a todo list, two elicitation forms, a malformed session update and a failed prompt. Nothing here has run
-against a real agent yet.
+interrupt, a todo list, two elicitation forms, a malformed session update and a failed prompt. Also replayed: fifteen
+Kiro 2.32.0 to 2.33.1 sessions (simple, multi-turn, queued turn, a read-only tool ask, turn interrupt with and without a
+tool, subagents, cloud config, compaction, effort, fork from a turn, steering, model switch, subagent interrupt and an
+unknown model) through the real family with `agent.id = "kiro"`. `test/acpAgents.test.mjs` covers the synthetic
+Droid/OMP forms, Kimi tool titles, Mistral Vibe levels, GLM/Kimi bare names, Kiro launch/config/autopilot, `/compact` and
+native steer. Nothing here has run against a real agent or model yet.
 
-Not done, so Planned: any run against a real agent or model; per-agent quirk entries; background work, `stopTask`,
-`background`, `rollback`, `readHistory` and a `usage` request (ACP has no background event; usage rides the update
-stream); `session/resume` for agents that do not advertise `loadSession`; `additionalDirectories`; T3's per-agent MCP
-transport preference (mcpTransport.ts) and its fs/terminal/URL-elicitation client policy (never ported); attachments
-against a real agent; Windows.
+Not done, so Planned: any run against a real agent or model; Kiro's cloud-config and `[STEERING ...]` note filters
+(the host streams the engine's updates untouched), its native session list/delete and `_session/steer` note handling;
+background work, `stopTask`, `background`, `rollback`, `readHistory` and a `usage` request (ACP has no background event;
+usage rides the update stream); `session/resume` for agents that do not advertise `loadSession`; `additionalDirectories`;
+T3's per-agent MCP transport preference (mcpTransport.ts) and its fs/terminal/URL-elicitation client policy (never
+ported); attachments against a real agent; Windows.
 
 ## Differences from T3 Code on purpose (Muse, Cursor and Codex)
 
@@ -326,7 +369,7 @@ Compared with T3 `packages/provider-muse` (`sdk.ts`, `adapter.ts`), `packages/pr
 `CursorAgentSdkWorker.ts`, `adapter.ts`) and `packages/effect-codex-app-server` plus the Codex adapter files named in the section above,
 commit 9168ca7. Kept different: policy stays in Rust, so Muse always starts asking (`promptUnmatched`, `:ask-me`) where T3 maps full
 access to `allowAll` and `:unrestricted`; Muse requests no `sessionMcp` capability (no session MCP yet); Cursor has no approvals; the pooled
-Cursor host takes no `argvPrefix`; the Cursor SDK is not bundled and is behind `ORBYN_ENGINE_HOST_CURSOR=1`; the API key is only
+Cursor host takes no `argvPrefix`; the Cursor SDK is not bundled into the executable (it ships in the `sdk` folder) and is behind `ORBYN_ENGINE_HOST_CURSOR=1`; the API key is only
 `CURSOR_API_KEY` at spawn and is redacted; no keychain or stored key. Codex keeps T3's asking shape (`on-request`, read-only or
 workspace-write), never T3's full-access `never`/`dangerFullAccess`, and one app-server per confinement group rather than one per provider.
 

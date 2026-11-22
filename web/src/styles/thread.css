@@ -653,6 +653,16 @@
 .sent-gallery li {
   display: block;
 }
+.sent-snapshot-source {
+  display: block;
+  max-width: 132px;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .sent-gallery button,
 .sent-gallery-wait {
   display: block;
@@ -756,4 +766,24 @@
 .earlier-banner > span {
   flex: 1;
   min-width: 240px;
+}
+
+/* A thread made from a transcript file: the header pill and the line after its imported history. */
+.transcript-imported-pill {
+  min-height: 20px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--color-infoSoft);
+  color: var(--color-info);
+  font-weight: 600;
+}
+
+.imported-marker {
+  width: min(var(--reading-w), calc(100% - 32px));
+  margin: 8px auto 0;
+  flex: none;
+  transform: translateX(calc(var(--details-reserve, 0px) / -2));
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  text-align: center;
 }

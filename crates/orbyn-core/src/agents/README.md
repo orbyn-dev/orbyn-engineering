@@ -11,7 +11,9 @@ Everything about the coding engines Orbyn runs: which exist, how to talk to each
 | `native_sessions` | An engine's own saved conversations: list, import, delete |
 | `claude_history` | One Claude conversation read from Claude's history folder |
 | `history_import` | Claude and Codex conversations imported as threads |
+| `earlier` | An imported thread's earlier messages read from its recorded session file |
 | `console` | The engine's own console resumed in an Orbyn terminal |
+| `attention` | A quiet engine console waiting for the person: the heuristic, excerpt cleaning, and the `CUSTOM orbyn.terminal_attention` event |
 | `permission_modes` | Which permission modes each provider offers |
 | `provider_facts` | One provider's state facts (installed, signed in, broken, managed, approvals), read by the crew router's filters and the Providers list alike |
 | `provider_list` | The grouped Providers list: labels, found apps and engines not built |

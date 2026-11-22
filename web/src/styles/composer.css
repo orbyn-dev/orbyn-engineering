@@ -541,6 +541,12 @@
   flex: none;
   color: var(--color-muted);
 }
+.transcript-note {
+  margin: 0;
+  padding: 0 16px;
+  font-size: var(--text-label);
+  color: var(--color-muted);
+}
 /* What a file dragged over the composer will do, said in the middle of the box (B43). */
 .composer-drop {
   position: absolute;
