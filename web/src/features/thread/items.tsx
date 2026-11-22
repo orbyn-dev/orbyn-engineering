@@ -39,6 +39,8 @@ import { workSegments } from "./toolCalls";
 import { PlanRow } from "./trail/PlanRow";
 import { TrailRun, trailKeys } from "./trail/ToolTrail";
 import { useThreadOfTimeline } from "./timelineThread";
+import { ClaudeHostActions, useHostFor } from "../enginehost";
+import { isClaudeEngine, useClaudeEnginePath } from "../../product/engines/claudePath";
 import type { ActivityItem, ApprovalItem, DiffSummaryItem, MessageItem, NoticeItem, ReasoningItem, StoppedItem, StoppedTask, ToolItem } from "../../product/timeline/types";
 
 const STEER_MARKS = {
@@ -188,12 +190,35 @@ function Activity({ item }: { item: ActivityItem }) {
   );
 }
 
+/** The two run failures a Claude host owns: one that could not start, and one the host cut mid-run. */
+const CLAUDE_HOST_FAILURES = new Set(["engine_unavailable", "engine_host_stopped"]);
+
+/** The Claude host's two ways out, with the failed run itself and without sending anything. */
+function ClaudeHostFailureActions({ threadId, code }: { threadId: string; code: string | null }) {
+  const thread = useWorkspace((state) => state.threads[threadId]);
+  const engine = useWorkspace((state) => (thread ? state.engines.data?.find((entry) => entry.id === thread.engine) : undefined));
+  const { path } = useClaudeEnginePath();
+  const hostFor = engine?.instance_of ?? thread?.engine ?? null;
+  const host = useHostFor(hostFor);
+  const [error, setError] = useState<string | null>(null);
+  if (!thread || !isClaudeEngine(thread.engine, engine?.instance_of) || path !== "sdk" || !CLAUDE_HOST_FAILURES.has(code ?? "")) return null;
+  return (
+    <div className="notice-actions">
+      <ClaudeHostActions host={host} hostId={host?.id ?? hostFor} onError={setError} showUpdate={false} alwaysRetry />
+      {error ? <span className="field-error" role="alert">{error}</span> : null}
+    </div>
+  );
+}
+
 function Notice({ item }: { item: NoticeItem }) {
   const threadId = useThreadOfTimeline();
   const timestampFormat = useUi((state) => state.timestampFormat);
+  const thread = useWorkspace((state) => (threadId ? state.threads[threadId] : undefined));
+  const engine = useWorkspace((state) => (thread ? state.engines.data?.find((entry) => entry.id === thread.engine) : undefined));
   const preparation = item.code === "workspace_preparation_failed" || item.code === "workspace_preparation_unavailable";
   // A failure with nothing to retry sends the message again instead.
   const resendable = failureWantsResend(item.text);
+  const hostFailure = !!threadId && CLAUDE_HOST_FAILURES.has(item.code ?? "") && !!thread && isClaudeEngine(thread.engine, engine?.instance_of);
   if (item.code === "run_stopped") {
     return (
       <div className="stop-mark" data-minimap={item.key}>
@@ -216,12 +241,13 @@ function Notice({ item }: { item: NoticeItem }) {
       <div>
         <strong>Run failed</strong>
         <p>{item.text}</p>
-        {item.code && !preparation && !resendable ? <Pill>{item.code}</Pill> : null}
+        {item.code && !preparation && !resendable && !hostFailure ? <Pill>{item.code}</Pill> : null}
         {resendable && threadId ? (
           <div className="notice-actions">
             <ResendButton threadId={threadId} seq={item.seq} />
           </div>
         ) : null}
+        {hostFailure && threadId ? <ClaudeHostFailureActions threadId={threadId} code={item.code} /> : null}
         {threadId && item.runId && item.code === "workspace_preparation_failed"
           ? <PreparationRetryButton threadId={threadId} runId={item.runId} /> : null}
       </div>
