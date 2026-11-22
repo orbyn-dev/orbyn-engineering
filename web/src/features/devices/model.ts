@@ -6,7 +6,14 @@ export const plain = (text: unknown, max = 80): string => {
   return whole.length > max ? `${whole.slice(0, max)}…` : whole;
 };
 
-const STATES = new Map<string, string>([["shutdown", "Shut down"], ["booting", "Starting"], ["booted", "Running"]]);
+const STATES = new Map<string, string>([
+  ["shutdown", "Shut down"],
+  ["booting", "Starting"],
+  ["booted", "Running"],
+  // Planned words the frames draw (device-frozen, device-crashed); the service contract has neither yet.
+  ["frozen", "Not responding"],
+  ["crashed", "Stopped"],
+]);
 export const stateLabel = (state: DeviceState | string): string => STATES.get(state) ?? "Unknown";
 
 const PLATFORMS = new Map<string, string>([["android", "Android"], ["ios", "iOS"]]);
@@ -71,3 +78,22 @@ export const clampAngle = (value: number): number => Math.min(HINGE_MAX, Math.ma
 
 /** The detail the panel shows: the one the service read back after a write replaces the list's copy. */
 export const merged = (detail: DeviceDetail | null, device: Device): DeviceDetail | null => (detail && detail.id === device.id ? { ...detail, ...device } : detail);
+
+/** A tab name is the person's own label: one line, cut, and never a device id or any markup. */
+export const tabName = (name: unknown, fallback: string): string => {
+  const label = typeof name === "string" ? name.trim() : "";
+  const chosen = label === "" ? fallback : label;
+  return plain(chosen, 60);
+};
+
+/** A vendor URL the tool steps may link to. Only http(s) is ever used as an href. */
+export function safeHref(url: unknown): string | null {
+  const text = typeof url === "string" ? url.trim() : "";
+  return /^https?:\/\/[^\s<>"']+$/i.test(text) ? text : null;
+}
+
+/** A count of bytes for an install line, when the client sent one. */
+export function installPercent(done: number, total: number): number {
+  if (!Number.isFinite(done) || !Number.isFinite(total) || total <= 0) return 0;
+  return Math.min(100, Math.max(0, Math.round((done / total) * 100)));
+}

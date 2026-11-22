@@ -5,8 +5,12 @@
  */
 
 export type Platform = "android" | "ios";
-/** Eng 4's ruling: the state is one of these three. A word the service adds later is shown as Unknown. */
-export type DeviceState = "shutdown" | "booting" | "booted";
+/**
+ * Eng 4's ruling: the service answers `booted` or `shutdown`. `booting`, `frozen` and `crashed` are the target
+ * states the frames draw (device-booting, device-frozen, device-crashed); the mock sends them for those frames,
+ * and a word the service adds later is shown as Unknown.
+ */
+export type DeviceState = "shutdown" | "booting" | "booted" | "frozen" | "crashed";
 /** `flipped` and `tent` are read only. The web renders whatever posture the service returns and never assumes one. */
 export type Posture = "closed" | "half_opened" | "opened" | "flipped" | "tent";
 

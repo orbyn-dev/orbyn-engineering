@@ -18,15 +18,16 @@ import { useAsync } from "../../lib/useAsync";
 import { commandShortcut, formatShortcut } from "../../product/shell/shortcuts";
 import { usePanelShortcuts } from "./usePanelShortcuts";
 import { PanelEmpty } from "./strip/PanelEmpty";
-import { crewViewsItem } from "./strip/launcher";
+import { crewViewsItem, deviceLauncherItem } from "./strip/launcher";
 import { moveIndex, slotShift, useTabDrag } from "./strip/tabDrag";
 import { repoLabel, useThreadRepos } from "../repos";
 import { RIGHT_TABS, SLOT_PITCH, orderChanged, tabOf, tabSlots, visibleTabs } from "./strip/tabs";
 import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./strip/panelWidth";
 import { useConnectionKind } from "../../product/state/connection";
+import { useLayoutWidth } from "../../lib/useLayout";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { useDevicesOffered } from "../devices";
+import { useDevicesEntry } from "../devices";
 import { useLibraryOffered } from "../library";
 import { setPageResizing, type PanelDrag } from "./strip/panelDrag";
 /** The launcher entries that already have a shortcut, by the command it runs. The rest show none. */
@@ -193,9 +194,11 @@ export function PanelHost({
 }) {
   const order = useUi((state) => state.panelTabOrder);
   const closedTabs = useUi((state) => state.panelTabsClosed);
-  const devicesOffered = useDevicesOffered();
+  const devices = useDevicesEntry();
+  const phone = useLayoutWidth() === "phone";
   const libraryOffered = useLibraryOffered();
-  const rowIds = order.filter((id) => isFileTab(id) || (!closedTabs.includes(id) && (id !== "devices" || devicesOffered) && (id !== "library" || libraryOffered)));
+  const devicesShown = devices.state === "ready" && devices.enabled;
+  const rowIds = order.filter((id) => isFileTab(id) || (!closedTabs.includes(id) && (id !== "devices" || devicesShown) && (id !== "library" || libraryOffered)));
   // With no surface chosen yet, or the chosen one closed, the panel shows the first in the row; with none open, it is empty.
   const chosen = useUi((state) => state.panelTab);
   const tab: RightTab | null = chosen && rowIds.includes(chosen) ? chosen : (rowIds[0] ?? null);
@@ -295,11 +298,16 @@ export function PanelHost({
     };
   });
   // The "+" lists everything that can be opened; choosing one already open shows it. Reset tab order shows once the order has changed.
+  // A phone does not show the Devices row; a missing route or no tools draws it disabled, a failure leaves it out.
+  const devicesItem: MenuItem[] = phone || devices.state === "loading" || devices.state === "failed" ? [] : [{
+    ...deviceLauncherItem(devices.enabled, devices.reason),
+    onSelect: () => reopenTab("devices"),
+  }];
   const launcher: MenuItem[] = [
-    ...RIGHT_TABS.filter(({ id }) => (id !== "devices" || devicesOffered) && (id !== "library" || libraryOffered)).map(({ id, label, icon: Icon }) => {
+    ...RIGHT_TABS.filter(({ id }) => id !== "devices" && (id !== "library" || libraryOffered)).map(({ id, label, icon: Icon }) => {
       const key = LAUNCHER_COMMANDS[id] ? commandShortcut(keymap.data?.rules, LAUNCHER_COMMANDS[id]!) : null;
       return { label, icon: <Icon size={14} aria-hidden />, shortcut: key ? formatShortcut(key) : undefined, disabled: gitless && id === "diff", onSelect: () => reopenTab(id) };
-    }),
+    }).flatMap((item) => item.label === "Review and comments" ? [item, ...devicesItem] : [item]),
     // Crew views is drawn in the launcher as Planned: its submenu lists the open thread's crew views, and nothing reads a thread's crew yet.
     crewViewsItem(),
     { label: "Open file…", icon: <File size={14} aria-hidden />, separatorBefore: true, shortcut: formatShortcut(commandShortcut(keymap.data?.rules, "filePicker.toggle") ?? ""), onSelect: () => useUi.getState().setPalette("files") },

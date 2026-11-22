@@ -13,6 +13,7 @@ import { AttentionPreview, attentionPreviewRoute, CommandBlocksPreview, commandB
 import { CrewPreview, crewPreviewRoute } from "../features/crew";
 import { PreviewScreen, previewScreenRoute } from "../features/platform";
 import { SnapshotPreview, SnapshotRuntime, snapshotPreviewRoute } from "../features/snapshot";
+import { DevicesPreview, devicesPreviewRoute } from "../features/devices";
 
 type Boot =
   | { state: "loading" }
@@ -32,6 +33,7 @@ export function App() {
   const screen = previewScreenRoute(hash);
   const crewScreen = crewPreviewRoute(hash);
   const snapshotScreen = snapshotPreviewRoute(hash);
+  const devicesScreen = devicesPreviewRoute(hash);
   if (snapshotScreen && SnapshotPreview) {
     return (
       <Suspense fallback={null}>
@@ -43,6 +45,13 @@ export function App() {
     return (
       <Suspense fallback={null}>
         <CrewPreview name={crewScreen} />
+      </Suspense>
+    );
+  }
+  if (devicesScreen && DevicesPreview) {
+    return (
+      <Suspense fallback={null}>
+        <DevicesPreview />
       </Suspense>
     );
   }
