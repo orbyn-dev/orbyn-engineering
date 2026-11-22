@@ -1101,6 +1101,82 @@ impl EngineDriver for LatestDriver {
     }
 }
 
+/// An engine whose probe is fixed, for the status a start issue is overlaid on.
+struct StartIssueDriver {
+    id: &'static str,
+}
+
+#[async_trait::async_trait]
+impl EngineDriver for StartIssueDriver {
+    fn descriptor(&self) -> crate::agents::driver::EngineDescriptor {
+        crate::agents::driver::EngineDescriptor {
+            id: self.id.into(),
+            name: "Start Issue".into(),
+            tier: EngineTier::Acp,
+            capabilities: EngineCapabilities {
+                streaming: true,
+                approvals: true,
+                resume: true,
+                mcp: true,
+                sandbox: false,
+                managed: true,
+                skill_delivery: Vec::new(),
+                goal_control: false,
+                decline_feedback: false,
+                permission_modes: Vec::new(),
+            },
+        }
+    }
+
+    async fn probe(&self) -> crate::agents::driver::EngineProbe {
+        crate::agents::driver::EngineProbe {
+            path: Some("/bin/start-issue".into()),
+            auth: Some(AuthState::NotApplicable),
+            sign_in_command: Some("start-issue login".into()),
+            ..Default::default()
+        }
+    }
+
+    async fn start_run(
+        &self,
+        _spec: crate::agents::driver::RunSpec,
+        _events: tokio::sync::mpsc::Sender<crate::agents::driver::EngineEvent>,
+    ) -> Result<crate::agents::driver::RunHandle> {
+        Err(CoreError::Unsupported("no run".into()))
+    }
+}
+
+#[tokio::test]
+async fn a_signed_out_start_issue_logs_out_the_status_and_keeps_its_sign_in() {
+    use orbyn_contracts::EngineStartIssueKind;
+    let dir = TempDir::new();
+    let engines = manager(&dir);
+    let id = "start-issue-status";
+    engines.register(Arc::new(StartIssueDriver { id }));
+    let message =
+        "Start Issue says it is not signed in. Sign in with its own command, then try again.";
+    super::start_issue::note_start_issue(id, EngineStartIssueKind::SignedOut, message);
+
+    let status = engines.status(id).await.unwrap();
+    assert_eq!(status.auth, AuthState::LoggedOut);
+    assert_eq!(status.sign_in_command.as_deref(), Some("start-issue login"));
+    assert_eq!(status.problem.as_deref(), Some(message));
+    let issue = status.start_issue.expect("the issue is on the status");
+    assert_eq!(issue.kind, EngineStartIssueKind::SignedOut);
+    assert_eq!(issue.message, message);
+
+    super::start_issue::clear_start_issue(id);
+    let clean = engines.status(id).await.unwrap();
+    assert_eq!(clean.auth, AuthState::NotApplicable);
+    assert!(clean.start_issue.is_none());
+    assert!(
+        serde_json::to_value(&clean)
+            .unwrap()
+            .get("start_issue")
+            .is_none()
+    );
+}
+
 #[tokio::test]
 async fn provider_checks_off_skips_the_latest_lookup_until_a_refresh() {
     use std::sync::atomic::Ordering::SeqCst;
