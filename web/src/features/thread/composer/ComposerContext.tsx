@@ -60,7 +60,7 @@ export function ComposerContext({
           <dt className="sr-only">Access</dt>
           <dd className={unmanaged ? "tone-warn" : undefined}>
             {unmanaged ? (
-              <UnmanagedLabel engine={engine} variant="text" icon={<ShieldOff size={12} aria-hidden />} />
+              <UnmanagedLabel engine={engine} variant="text" icon={<ShieldOff size={12} aria-hidden />} note />
             ) : (
               <button
                 type="button"

@@ -93,3 +93,17 @@ it("shows the visible Unmanaged word in the repository dialog's permission slot 
   expect(within(dialog).getByText("Unmanaged", { selector: ".unmanaged-label" })).toBeVisible();
   expect(within(dialog).queryByRole("button", { name: /^Permissions:/ })).toBeNull();
 });
+
+it("says Orbyn cannot ask for a non-Cursor engine in the repository dialog", async () => {
+  const kiro = {
+    id: "kiro", name: "Kiro", installed: true,
+    capabilities: { managed: false, permission_modes: ["no_approvals", "auto", "full_access"], approvals: false, skill_delivery: [] },
+  } as unknown as EngineStatus;
+  setReposApi(createReposMock());
+  draw(kiro);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Repositories: 4" }));
+  const dialog = await screen.findByRole("dialog", { name: /New thread in orbyn/ });
+  expect(within(dialog).getByText("Orbyn cannot ask before Kiro acts. Supervised and Auto-accept edits are not available here.")).toBeVisible();
+  expect(within(dialog).queryByText(/sandbox/i)).toBeNull();
+});

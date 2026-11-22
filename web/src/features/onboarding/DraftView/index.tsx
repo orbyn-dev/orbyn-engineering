@@ -469,7 +469,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                     <span />
                   )}
                   {unmanaged ? (
-                    <UnmanagedLabel engine={engine} variant="text" icon={<ShieldOff size={12} aria-hidden />} />
+                    <UnmanagedLabel engine={engine} variant="text" icon={<ShieldOff size={12} aria-hidden />} note />
                   ) : (
                     <button
                       type="button"

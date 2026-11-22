@@ -98,6 +98,8 @@ export type Scenario =
   | "browser-profiles-empty"
   /** The first thread on Cursor: the first send answers 409 engine_notice_required, every later one 409 engine_mode_refused (use with #/preview/cursor-thread). */
   | "cursor-thread"
+  /** A thread on Kiro, an engine the service says Orbyn cannot gate, for the unmanaged-thread screens: the one mode, the notice and its labels. */
+  | "unmanaged-thread"
   /** Transcript import: a project default engine, so the sheet can preview; `transcript-imported` adds a thread made from a file. */
   | "transcript-import"
   | "transcript-import-no-default"
@@ -181,6 +183,31 @@ export function createMockApi(options: MockOptions = {}) {
   const reviewControlsMock = createReviewControlsMock();
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
+  /** Kiro, an ACP engine the service says Orbyn cannot gate, for the engine picker and unmanaged-thread screens. */
+  const addKiro = (permission_modes: EngineStatus["capabilities"]["permission_modes"]) => {
+    const cursor = engines.find((engine) => engine.id === "cursor");
+    if (!cursor) return;
+    engines.push({
+      ...structuredClone(cursor),
+      id: "kiro",
+      name: "Kiro",
+      tier: "acp",
+      capabilities: { ...cursor.capabilities, managed: false, approvals: false, permission_modes },
+      path: "/usr/local/bin/kiro-cli",
+      version: null,
+      auth: "unknown",
+      installer: "unknown",
+      latest: null,
+      support: "unknown",
+      update_command: null,
+      manual_hint: null,
+      sign_in_command: "kiro-cli login",
+      updating: false,
+      problem: null,
+      crew_role: "reviewer_only",
+    });
+  };
+
   function reset(next: Scenario = "default") {
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
@@ -256,28 +283,7 @@ export function createMockApi(options: MockOptions = {}) {
     if (next === "transcript-import-no-default") preferenceValues = { ...preferenceValues, disabled_engines: [] };
     // The engine picker's Unmanaged label, on an ACP engine the service says it cannot gate.
     if (next === "crew-engine-picker") {
-      const cursor = engines.find((engine) => engine.id === "cursor");
-      if (cursor) {
-        engines.push({
-          ...structuredClone(cursor),
-          id: "kiro",
-          name: "Kiro",
-          tier: "acp",
-          capabilities: { ...cursor.capabilities, managed: false, approvals: false, permission_modes: ["supervised", "auto", "full_access"] },
-          path: "/usr/local/bin/kiro-cli",
-          version: null,
-          auth: "unknown",
-          installer: "unknown",
-          latest: null,
-          support: "unknown",
-          update_command: null,
-          manual_hint: null,
-          sign_in_command: "kiro-cli login",
-          updating: false,
-          problem: null,
-          crew_role: "reviewer_only",
-        });
-      }
+      addKiro(["supervised", "auto", "full_access"]);
       preferenceValues = {
         ...preferenceValues,
         default_engine: "kiro",
@@ -286,6 +292,13 @@ export function createMockApi(options: MockOptions = {}) {
         default_model_options: {},
         disabled_engines: [],
       };
+    }
+    // The unmanaged thread's one mode, notice and labels, on a thread the service says Orbyn cannot gate.
+    if (next === "unmanaged-thread") {
+      addKiro(["no_approvals"]);
+      threads = threads.map((thread) => thread.id === "t-empty"
+        ? { ...thread, project_id: "p-app", engine: "kiro", model: "sonnet", lifecycle: { ...(thread.lifecycle ?? fixtures.lifecycle()), permission_mode: "auto" } }
+        : thread);
     }
     if (!blank) preferenceValues = { ...preferenceValues, provider_instances: structuredClone(providerInstances), custom_models: structuredClone(customModels) };
   }
@@ -336,6 +349,10 @@ export function createMockApi(options: MockOptions = {}) {
       return cursorSends === 1
         ? err(409, "engine_notice_required", "Cursor does not ask before acting.")
         : err(409, "engine_mode_refused", "Cursor cannot run in Supervised mode.");
+    }
+    // The notice is the only unmanaged-thread state the service sends for a non-Cursor engine today; the mode refusal is planned.
+    if (scenario === "unmanaged-thread" && thread.engine === "kiro") {
+      return err(409, "engine_notice_required", "Orbyn cannot ask before Kiro acts.");
     }
     const runId = nextId("run");
     const run = {
