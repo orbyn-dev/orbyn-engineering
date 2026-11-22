@@ -514,6 +514,117 @@ mod sandbox {
         );
     }
 
+    /// The one-turn probe (`docs/crew.md`): one real model turn of a confined Codex worker, with
+    /// Codex's own sandbox off, runs a command inside Orbyn's profile and cannot read the real
+    /// home. Needs a throwaway OpenAI API key in `ORBYN_PROBE_OPENAI_API_KEY` (never printed or
+    /// stored in the repo; it goes only into the private home's `auth.json`) and the network.
+    /// `cargo test -p orbyn-core --lib codex_one_turn_runs_a_command_under_the_profile -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs ORBYN_PROBE_OPENAI_API_KEY and the network"]
+    fn codex_one_turn_runs_a_command_under_the_profile() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::process::Stdio;
+        use std::time::{Duration, Instant};
+        assert!(
+            crate::host::confine::unavailable().is_none(),
+            "sandbox-exec is not available"
+        );
+        let key = std::env::var("ORBYN_PROBE_OPENAI_API_KEY")
+            .expect("set ORBYN_PROBE_OPENAI_API_KEY to a throwaway key");
+        let mut command = crate::host::process::resolve("codex").expect("codex is on PATH");
+        let f = fixture();
+        std::fs::write(
+            f.real.join("auth.json"),
+            r#"{"auth_mode":"apikey","OPENAI_API_KEY":"sk-fake-api-key"}"#,
+        )
+        .unwrap();
+        let configured = rules(&f.data)
+            .with_codex_worker_home_at(TASK, &f.real)
+            .unwrap();
+        let home = configured.codex_home().unwrap().to_path_buf();
+        // The probe's own key replaces the fixture's fake one in the private home only.
+        std::fs::write(
+            home.join("auth.json"),
+            serde_json::to_vec(&serde_json::json!({"auth_mode": "apikey", "OPENAI_API_KEY": key}))
+                .unwrap(),
+        )
+        .unwrap();
+        let checkout = std::fs::canonicalize(f.data.join("workspace/repo/p")).unwrap();
+        configured.wrap(&mut command).expect("the tool is there");
+        let mut child = std::process::Command::new(&command.program)
+            .args(&command.prefix)
+            .arg("app-server")
+            .env("CODEX_HOME", &home)
+            .current_dir(&checkout)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("starts");
+        let mut stdin = child.stdin.take().unwrap();
+        let real_auth = f.real.join("auth.json");
+        let prompt = format!(
+            "Run exactly these two shell commands, then stop: `echo orbyn-probe-ok` and `cat {}`. Report what each printed.",
+            real_auth.display()
+        );
+        let send = |stdin: &mut std::process::ChildStdin, value: serde_json::Value| {
+            writeln!(stdin, "{value}").unwrap();
+        };
+        send(
+            &mut stdin,
+            serde_json::json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"orbyn-probe","version":"0"}}}),
+        );
+        send(&mut stdin, serde_json::json!({"method":"initialized"}));
+        send(
+            &mut stdin,
+            serde_json::json!({"id":2,"method":"thread/start","params":{
+                "cwd": checkout, "approvalPolicy": "never", "sandbox": "danger-full-access"}}),
+        );
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let stdout = child.stdout.take().unwrap();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if sender.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(180);
+        let (mut started, mut echoed, mut leaked, mut done) = (false, false, false, false);
+        while Instant::now() < deadline && !done {
+            let Ok(line) = receiver.recv_timeout(Duration::from_secs(5)) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if value["id"] == 2 && !started {
+                let thread = value["result"]["thread"]["id"].as_str().unwrap_or_default();
+                assert!(!thread.is_empty(), "thread/start failed (no key printed)");
+                started = true;
+                send(
+                    &mut stdin,
+                    serde_json::json!({"id":3,"method":"turn/start","params":{
+                        "threadId": thread,
+                        "input": [{"type":"text","text": prompt, "text_elements": []}],
+                        "cwd": checkout, "approvalPolicy": "never",
+                        "sandboxPolicy": {"type": "dangerFullAccess"}}}),
+                );
+            }
+            let text = line.as_str();
+            echoed |= text.contains("orbyn-probe-ok");
+            leaked |= text.contains("sk-fake-api-key");
+            done |= value["method"] == "turn/completed";
+        }
+        let _ = child.kill();
+        eprintln!(
+            "probe: thread started={started} command output seen={echoed} real auth leaked={leaked} turn completed={done}"
+        );
+        assert!(started && done, "the turn did not complete in time");
+        assert!(echoed, "the command did not run under the profile");
+        assert!(!leaked, "the worker read the real Codex home");
+    }
+
     #[test]
     fn the_proof_profile_writes_only_in_its_own_run_folder() {
         if crate::host::confine::unavailable().is_some()
