@@ -22,7 +22,7 @@ async function openEditor() {
   const user = userEvent.setup();
   render(<Host />);
   await user.click(await screen.findByRole("button", { name: "Edit…" }));
-  await screen.findByRole("heading", { name: "Theme editor" });
+  await screen.findByRole("button", { name: "Import…" });
   return user;
 }
 

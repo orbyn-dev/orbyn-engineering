@@ -74,6 +74,7 @@ export type Scenario =
   | `crew${"" | `-${string}`}`
   /** The Pull requests page with its rows in every data state, and the variants a screen needs. */
   | "pulls"
+  | "pulls-credits-on"
   | "pulls-details-failed"
   | "pulls-rate-limited"
   /** The first details read is answered in full, then the service pauses every detail field (as it does when GitHub's limit is spent) and names when it resumes, so a filter set on the details is already on when the pause comes (press Refresh): "pulls-limited" in ten minutes (pr-tb-filter-rate-limited), "pulls-limited-still" two seconds from every read, so the check at that time finds the limit still on (pr-tb-filter-still-limited). */
@@ -661,7 +662,12 @@ export function createMockApi(options: MockOptions = {}) {
         const scope: ProjectScopesQuery = projectId ? { selection: { kind: "checkout", group_key: `mock:${projectId}`, project_id: projectId } } : {};
         const result = scopedPreferences(scope, Object.keys(preferenceDefaults));
         if (result.catalog.selection.kind === "unavailable") return err(404, "not_found", "Project not found.");
-        return { status: 200, body: result.rows.map((row) => row.members[0]?.view ?? row.environment) };
+        const rows = result.rows.map((row) => row.members[0]?.view ?? row.environment);
+        // The credits setting on, for the read-only merge dialog frame (pr-detail-merge-dialog-credits-readonly-on).
+        if (scenario === "pulls-credits-on") {
+          return { status: 200, body: rows.map((view) => (view.key === "remove_agent_credits_on_merge" ? { ...view, value: true } : view)) };
+        }
+        return { status: 200, body: rows };
       }
       case "POST /api/settings":
         if (seg[2] === "project-scopes") return { status: 200, body: scopeCatalog(data as ProjectScopesQuery) };
