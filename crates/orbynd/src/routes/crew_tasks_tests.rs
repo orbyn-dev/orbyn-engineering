@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use orbyn_contracts as wire;
+use orbyn_contracts::{CrewObject, object_id};
 use orbyn_core::crew::Stamper;
 use orbyn_core::{Core, CoreConfig};
 use serde_json::{Value, json};
@@ -191,6 +192,124 @@ async fn a_stored_task_is_listed_and_zoomed_without_its_key() {
         !run.to_string().contains(key_id.as_str()),
         "the Run page holds the key's id"
     );
+}
+
+#[tokio::test]
+async fn a_worker_token_reads_a_running_task_without_its_check_text_and_gets_it_once_final() {
+    // The service token alone, no person key and no development override: the route is Local, as it must stay.
+    let app = serve_with(
+        "worker-run",
+        true,
+        false,
+        Access::new("token", vec![], None),
+    )
+    .await;
+    let (task, key_text) = seed_task(&app.core, "worker-run");
+    let row = app.core.store.crew_task(&task).unwrap().unwrap();
+    let hash = |byte: &str| format!("sha256:{}", byte.repeat(64));
+    let commit = "a".repeat(40);
+
+    let mut evidence = json!({
+        "v": 0, "type": "evidence", "id": "",
+        "crew_id": row.crew_id.clone(),
+        "author": { "role": "core", "engine": "orbyn" },
+        "created_at": "2026-11-12T10:00:00Z",
+        "run_id": row.run_id.clone(),
+        "check": "chk-run",
+        "command": key_text.clone(),
+        "outcome": "pass",
+        "exit_code": 0,
+        "duration_ms": 5,
+        "commit": commit.clone(),
+        "log_hash": hash("b"),
+        "excerpt": "",
+        "artifacts": [],
+        "proves": "It runs.",
+        "does_not_prove": "Anything else."
+    });
+    evidence["id"] = json!(object_id(&evidence).unwrap());
+    let evidence_id = evidence["id"].as_str().unwrap().to_owned();
+    app.core
+        .store
+        .add_crew_object(&task, &CrewObject::parse(&evidence).unwrap())
+        .unwrap();
+
+    let mut gate = json!({
+        "v": 0, "type": "gate", "id": "",
+        "crew_id": row.crew_id.clone(),
+        "author": { "role": "core", "engine": "orbyn" },
+        "created_at": "2026-11-12T10:00:01Z",
+        "run_id": row.run_id.clone(),
+        "stage": "checks",
+        "subject": task.clone(),
+        "decision": "pass",
+        "decided_by": "code",
+        "evidence": [evidence_id.clone()],
+        "reason": "All checks passed."
+    });
+    gate["id"] = json!(object_id(&gate).unwrap());
+    app.core
+        .store
+        .add_crew_object(&task, &CrewObject::parse(&gate).unwrap())
+        .unwrap();
+
+    let mut result = json!({
+        "v": 0, "type": "result", "id": "",
+        "crew_id": row.crew_id.clone(),
+        "author": { "role": "core", "engine": "orbyn" },
+        "created_at": "2026-11-12T10:00:02Z",
+        "run_id": row.run_id.clone(),
+        "brief": task.clone(),
+        "state": "passed",
+        "final": true,
+        "summary": "1 check passed.",
+        "branch": Value::Null,
+        "commit": commit.clone(),
+        "checks": [{ "check": "chk-run", "evidence": evidence_id.clone(), "outcome": "pass" }],
+        "not_verified": [],
+        "attempts": 1,
+        "usage": {},
+        "route": Value::Null,
+        "report": Value::Null
+    });
+    result["id"] = json!(object_id(&result).unwrap());
+    app.core
+        .store
+        .add_crew_object(&task, &CrewObject::parse(&result).unwrap())
+        .unwrap();
+
+    app.core
+        .store
+        .move_crew_task(&task, "routed", None)
+        .unwrap();
+    app.core
+        .store
+        .move_crew_task(&task, "running", None)
+        .unwrap();
+    let (status, running) = app.get(&format!("/api/crew/flow/tasks/{task}/run")).await;
+    assert_eq!(status, 200);
+    assert_eq!(running["finished"], false);
+    assert_eq!(running["checks"].as_array().unwrap().len(), 1);
+    assert_eq!(running["checks"][0]["label"], "");
+    assert_eq!(running["checks"][0]["proves"], "");
+    assert!(
+        !running.to_string().contains(&key_text),
+        "a worker token read a running task's check text"
+    );
+
+    app.core
+        .store
+        .move_crew_task(&task, "verifying", None)
+        .unwrap();
+    app.core
+        .store
+        .pass_crew_task(&task, &[evidence_id])
+        .unwrap();
+    let (status, finished) = app.get(&format!("/api/crew/flow/tasks/{task}/run")).await;
+    assert_eq!(status, 200);
+    assert_eq!(finished["finished"], true);
+    assert_eq!(finished["checks"][0]["label"], key_text.as_str());
+    assert_eq!(finished["checks"][0]["proves"], "It runs.");
 }
 
 #[tokio::test]

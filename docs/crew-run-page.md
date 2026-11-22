@@ -18,25 +18,36 @@ Planned and shown as such: signed proof, Verify (frame `runpage-verify`), openin
 ## The read (built)
 
 `GET /api/crew/flow/tasks/{id}/run` (`Core::crew_flow_run`) answers one work task's page. A Local read behind Crew Preview
-like every Crew route, listed in `orbyn_core::crew::changes::READS`: no store write, no process, no file. Every other text
-passes the core's own redaction first: the crew's answer keys are withheld, then the secret scan of every built-in format,
-then the person's patterns; a text that still holds the key is replaced, never shown. The web cleans it again.
+like every Crew route, listed in `orbyn_core::crew::changes::READS`: no store write, no process, no file. A Local route
+needs only the service token, so a worker that can read `service.json` can call it. That is why its check text is withheld
+until the task is final.
 
-A check's command and its `proves` line are the answer key's own words, so they are the one place Crew does not withhold the
-key's text: the page exists to name the command that ran, and this route is the person's, never a worker's. The key's id and
-its expectations are still never in it. A not-verified line that is a skipped check's command is withheld for that same
-reason: it is the key's own text, so it becomes "Withheld.".
+A check's command and its `proves` line are the answer key's own words. Until the task is final (`passed`, `stopped` or
+`cancelled`; the same `is_final` rule the Flow task read uses, H1), the page shows each check's row (outcome, exit code,
+duration, commit and count) with an empty `label` and `proves`, no not-verified lines and no repro text. Once the task is
+final, the row names the command and what it proves, unless that text is the key of another task of the same crew that is
+not final: a finished task's page never shows a running sibling's key. The key's id and its expectations are never in it.
 
-A check's command and what it proves are the one place this read parts from the Flow task read, which withholds all check
-text: the Run page is the person's own record of their own run and the checks are what it is for. The answer key's id and
-its expectations are never in it.
+The checks are the task's latest verification round: the newest checks gate of the build now under way (the latest fix
+when it has one, else the task), or a result that names a newer round, and only the evidence that round cites. A retry
+shows the newest round only. Repro and finding evidence is not a check on the page, whether the review wrote it under the
+task or a fix ran it as part of its key.
+
+The round's `CrewResult` supplies the page's commit and not-verified lines too, so after a fix round the checks, commit and
+not-verified text are the fix's, not the original task's. At most 50 checks and 20 not-verified lines are shown; the newest
+checks are kept, and a cut sets `truncated`.
+
+Every other text passes the core's own redaction first: the crew's answer keys are withheld, then the secret scan of every
+built-in format, then the person's patterns; a text that still holds the key is replaced, never shown. The web cleans it
+again.
 
 | Field | Shape | Cap | State |
 | --- | --- | --- | --- |
 | Prompt | `{ text, hidden, truncated }`: the brief's outcome as redacted, `hidden` when a value was hidden | 2000 characters | Built |
-| Checks | list of `{ label, outcome, exit_code, duration_ms, proves, commit }`, `label` the command as written in the check, not a full environment | 50 checks, 200 characters per text | Built |
-| Not verified | `CrewResult.not_verified` | 20 lines, 200 characters | Built || Commit | the commit the checks ran on | one hash | Built |
-| Pull request | `{ number, branch, commit }`: the forge's number from the task's forge intent, and the branch and commit the run published | one per task | Built |
+| Checks | list of `{ label, outcome, exit_code, duration_ms, proves, commit }`, `label` the command as written in the check and empty until the task is final, not a full environment | 50 checks, 200 characters per text | Built |
+| Not verified | `CrewResult.not_verified`, empty until the task is final | 20 lines, 200 characters | Built |
+| Commit | the commit the same round's checks ran on | one hash | Built |
+| Pull request | `{ number, branch, commit }`: the forge's number from the task's forge intent, and the branch and commit the run published; the forge intent's source when the run named no branch | one per task | Built |
 | Plan | list of `{ step, engine }` | 30 steps, 200 characters each | Missing: no table, object or read stores a task's plan steps |
 | Pull request URL and head | the forge's own `url`, and the pull request's current `head` for the Stale frame | one URL, two hashes | Missing: a Crew pull request's publish records neither, so the page cannot say the proof is stale |
 

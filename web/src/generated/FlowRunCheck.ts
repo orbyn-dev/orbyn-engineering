@@ -2,7 +2,8 @@
 
 /**
  * One check the verifier ran for the run: the command as written, how it ended, how long it took, the commit it ran on
- * and what it proves. No output excerpt, no answer key and no path outside the repository.
+ * and what it proves. `label` and `proves` are empty until the task is final; a repro or a finding's comparison is never
+ * a check here. No output excerpt and no answer key.
  */
 export type FlowRunCheck = { label: string, 
 /**

@@ -10,7 +10,7 @@ export type FlowRunPull = {
  */
 number?: number | null, 
 /**
- * The branch the run published.
+ * The branch the run published, or the forge intent's source when the run named none.
  */
 branch?: string | null, 
 /**

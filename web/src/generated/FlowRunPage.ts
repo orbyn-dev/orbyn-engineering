@@ -17,11 +17,11 @@ state: string,
  */
 finished: boolean, prompt?: FlowRunPrompt | null, 
 /**
- * The checks that decided the task's latest round.
+ * The checks of the task's latest verification round.
  */
 checks: Array<FlowRunCheck>, 
 /**
- * What no check covered, so a pass never implies more than was checked.
+ * What no check covered, so a pass never implies more than was checked. Empty until the task is final.
  */
 not_verified: Array<string>, 
 /**
@@ -29,6 +29,6 @@ not_verified: Array<string>,
  */
 commit?: string | null, pull?: FlowRunPull | null, 
 /**
- * A list was cut at its cap.
+ * A list or a check's text was cut at its cap.
  */
 truncated: boolean, };
