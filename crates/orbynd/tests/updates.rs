@@ -198,7 +198,6 @@ async fn server_compares_a_release_manifest_and_keeps_it_when_it_disappears() {
             // The harness runs every service offline, and an offline service makes no automatic update
             // request at all (05324e5b4); this test is about the one request it does make.
             env: vec![("ORBYN_OFFLINE".into(), "0".into())],
-            ..Options::default()
         },
     );
     tokio::time::timeout(Duration::from_secs(10), server)

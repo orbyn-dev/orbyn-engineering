@@ -160,6 +160,44 @@
   gap: 6px;
 }
 
+/* The Providers table owns its grid: Version is the first column to go when the table is narrow. */
+.set-tbl.prov {
+  container-type: inline-size;
+  --prov-columns: 28px minmax(120px, 1fr) 90px minmax(130px, auto) 60px 72px;
+}
+.set-tbl.prov .set-tr {
+  grid-template-columns: var(--prov-columns);
+}
+/* Budget at 528, 628, 852px: 28 mark + 60 Edit + 72 In use = 160px fixed, four 12px gaps = 48px,
+   and 8px row padding. Status keeps 130px. At 528px the name gets 182px; at 628px 282px; at 852px
+   506px. Both the name (min 120px) and Status keep at least 120px at 528px.
+   Version's 90px shows from 800px up: the settings body is at most 864px wide (920px minus 28px
+   padding each side), so the table is never wider, and the 800px threshold keeps Version on every
+   wide window. With Version the fixed tracks are 28 + 90 + 60 + 72 = 250px, Status min 130px, five
+   12px gaps = 60px and 8px padding = 448px, which leaves the name 352px at 800px, enough for a
+   provider name beside its row without wrapping next to a pill even when Status grows by ~120px
+   for a Signed out line with its sign-in command. */
+@container (max-width: 799px) {
+  .set-tbl.prov .set-tr {
+    --prov-columns: 28px minmax(120px, 1fr) minmax(130px, auto) 60px 72px;
+  }
+  .set-tbl.prov .set-tr > :nth-child(3) {
+    display: none;
+  }
+}
+/* Status is safety text: it wraps in its track rather than clipping to nothing. */
+.set-tbl.prov .set-states {
+  min-width: 0;
+  white-space: normal;
+}
+.set-tbl.prov .set-states > * {
+  min-width: 0;
+}
+.set-tbl.prov .set-states .set-pill {
+  max-width: 100%;
+  white-space: normal;
+}
+
 /* Key caps */
 .kc {
   display: inline-flex;
@@ -834,6 +872,37 @@
 }
 .set-track .set-pill {
   margin-left: auto;
+}
+/* The Claude path choices: the frame draws two setting rows, the SDK one carrying Default. */
+.claude-path-choices {
+  display: flex;
+  flex-direction: column;
+}
+.claude-path-choice {
+  justify-content: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+.claude-path-choice .set-radio {
+  margin-top: 0;
+}
+.claude-path-choice[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+.claude-path-label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.claude-path-help,
+.claude-path-next {
+  padding: 0 0 8px;
+}
+.claude-path-host {
+  margin-top: 12px;
 }
 .set-radio {
   display: inline-block;

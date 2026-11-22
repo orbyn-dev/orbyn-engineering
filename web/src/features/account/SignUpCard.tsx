@@ -236,7 +236,7 @@ export function SignUpCard({ inviteRequired, connectNext, onSignIn, onFinished }
           </Field>
           <Field
             label="Confirm password"
-            hint={throttled ? "What you typed stays in the fields. The button turns on when the time is up." : `Your password never leaves this device. Orbyn checks it without ever seeing it. We email a code to ${email.trim()} next to confirm your address.`}
+            hint={throttled ? "What you typed stays in the fields. The button turns on when the time is up." : `Your password stays on this computer. Orbyn checks it without ever seeing it. We email a code to ${email.trim()} next to confirm your address.`}
             error={mismatch ? "The two passwords don’t match." : null}
           >
             {(props) => (

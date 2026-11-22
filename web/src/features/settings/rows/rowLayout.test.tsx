@@ -33,11 +33,16 @@ describe("a setting row in a narrow settings pane", () => {
     for (const [, body = ""] of settings.matchAll(/@media[^{]+\{([\s\S]*?)\n\}/g)) expect(body).not.toContain(".setting-line");
   });
 
-  it("keeps the fixed inheritance popover on the window, which a container query would re-anchor", () => {
+  it("keeps the fixed inheritance popover on the window, and only the Providers table may query its width", () => {
     // The popover is inline in the row and places itself from getBoundingClientRect(); containment would make
     // that box the containing block for the fixed element and shift it.
     expect(pages).toMatch(/\.setting-inheritance-popup \{\s*position: fixed;/);
-    expect(settings).not.toMatch(/@container|container(-type)?:/);
+    // The Providers table is the one container; its inheritance popup is portaled to the body so containment
+    // cannot re-anchor it. A container on a setting row or the page would still shift every other popover.
+    expect([...settings.matchAll(/container-type:\s*[^;]+/g)]).toHaveLength(1);
+    expect(rule(settings, ".set-tbl.prov")).toMatch(/container-type:\s*inline-size/);
+    expect([...settings.matchAll(/@container/g)]).toHaveLength(1);
+    expect(settings).toMatch(/@container \(max-width: 799px\)/);
   });
 
   it("wraps a segmented control's choices inside the width it has, instead of under the description", () => {

@@ -224,10 +224,13 @@ installs it, and `scripts/assert-no-previews.mjs` fails a build that ships the r
   -push-android, -platforms).** The Device tools Planned pill under the device opens a drawer over the panel. It has the six tabs
   the frames draw (Appearance, Text, Accessibility, Location, Permissions, Push) and an info action with the "Device tools by
   platform" table. Every control is labelled Not verified; Push on Android says "Not available on Android" and offers nothing to send,
-  while the rest of the tabs keep working. Appearance, text size, show elements, location, permissions and the push payload are typed
-  changes on the Planned client (`DeviceToolsPlannedApi`): there is no service route, so the production client answers `null` and the
-  drawer draws one Planned note with no controls. The mock (`createDevicesPlannedMock`) supplies the frame state for tests and the
-  preview. Nothing here changes Orbyn's own appearance, and the payload is kept per device.
+  while the rest of the tabs keep working. Appearance, text size, location, permissions and the push payload are typed changes on the
+  Planned client (`DeviceToolsPlannedApi`), and show elements is one too while the live screen runs: there is no service route, so the
+  production client answers `null` and the drawer draws one Planned note with no controls. The mock (`createDevicesPlannedMock`) supplies
+  the frame state for tests and the preview. Show elements stays in place but is disabled until the device's live stream runs, with
+  "Outlines need a live screen." as its row line and switch tooltip and "No screen is live." in place of the element rows; when the stream
+  goes away while it is on, the drawer turns it off once through the Planned client. Nothing here changes Orbyn's own appearance, and the
+  payload is kept per device.
 - **Agent permission (H27; device-agent-permission, -lead, -granted, -revoked, -off).** Agent access is off by default and only the
   person's switch turns it on; reading the Planned client never grants anything. One request waits with Deny, Allow once and Allow for
   this thread; the lead answer, the running-as Device chip ("Claude Code · this thread") and the revoked and off messages are drawn from
@@ -243,6 +246,7 @@ Guessed where the doc is silent: the screenshot answer is `{ok, device, image}` 
 keeps the `device`); the unfold step uses the `unfold` action, not `hinge_preset: open`; the hinge slider starts at the reported angle or 90.
 For the Planned H26/H27 client there is no route at all: its state shape, the 12 text-size steps (Default is step 3), the short place list,
 Ask/Allow/Deny as reset/grant/deny, the 4000-character push cap, the once/thread agent scopes and the lead answer are the preview's own
-stand-ins. The accessibility element outlines need the live screen (phase 2), so the drawer lists the tree but cannot draw the outlines yet.
+stand-ins. The accessibility element outlines need the live screen (phase 2): Show elements stays disabled with "Outlines need a live screen."
+until that stream runs, the element rows read "No screen is live." instead, and a stream that goes away turns the switch off once.
 Not verified: every route and field against a real service, `adb` and `simctl` behavior, the hinge preset values (0, 130, 180) and the
 1 to 179 bound.
