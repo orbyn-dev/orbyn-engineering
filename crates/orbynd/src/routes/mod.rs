@@ -72,6 +72,8 @@ mod crew_capacity_tests;
 #[cfg(test)]
 mod crew_classes_tests;
 #[cfg(test)]
+mod crew_dashboard_tests;
+#[cfg(test)]
 mod crew_escapes_tests;
 #[cfg(test)]
 mod crew_forge_resolve_tests;

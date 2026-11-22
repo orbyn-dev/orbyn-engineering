@@ -1,8 +1,9 @@
 # Crew dashboard contract
 
-What the web Crew dashboard (W12 in [crew.md](crew.md), frames `dash-*` of Crew Designs "23. Dashboard") needs from the service. **Planned**: the web page is
-built and draws the live parts today; the one read written here is not served, so the page shows a Planned mark where only that read can answer. Eng 2 owns
-the service side. A name here changes only if the service PR says so. Row: G18 in [parity](parity.md).
+What the web Crew dashboard (W12 in [crew.md](crew.md), frames `dash-*` of Crew Designs "23. Dashboard") needs from the service. **The
+service side is served** (`GET /api/crew/dashboard`, this document); the web client is not wired to it yet, so the page still draws a
+Planned mark where only this read can answer. Eng 2 owns the service side. A name here changes only if the service PR says so. Row: G18
+in [parity](parity.md).
 
 ## What exists today and what the page draws from it
 
@@ -11,17 +12,18 @@ the service side. A name here changes only if the service PR says so. Row: G18 i
 | Merges in the window, reverts, revert rate (a rate from 10 merges) | `GET /api/crew/trust?project=` | Live. Window is the service's own, 60 days (`window_days`); no `days` parameter. |
 | Merges and reverts by engine, by area | the same read | Live. At most 50 rows each, `truncated` says more exist. |
 | The mode each area is on, its record and the changes of mode | `GET /api/crew/autopilot/areas`, `.../areas/history`, `.../thresholds` | Live. Window 14 days. Escapes are not measured. |
-| Autonomy rate, cycle time, cost per engine, merges per week, who reverted, the merges of a small repo | none | **Planned**: `GET /api/crew/dashboard` below. |
+| Autonomy rate, cycle time, cost per engine, merges per week, who reverted, the merges of a small repo | `GET /api/crew/dashboard` below | **Served** by the service. The production client sends nothing yet, so the page still draws these as Planned tiles. |
 
 Until that read exists the page draws Autonomy, Cycle time and Cost as Planned tiles (a dash, never a zero), the bars as a Planned "Over time" heading,
 the 30 and 90 day periods as disabled and Planned, and the Autonomy and Cost columns of the engine table as Planned. The revert rate, the engine and area
 rows and Autopilot by area are real. All projects reads `trust` once per repository (at most 24) and says in the row of one it could not read.
 
-## `GET /api/crew/dashboard?project=<id>&days=<30|60|90>`
+## `GET /api/crew/dashboard?project=<id>&days=<30|60|90>&utc_offset_minutes=<n>`
 
 Local read: reads this device's Crew records, writes nothing, needs no person key, and is refused with `404` while Crew Preview is off (like every Crew route).
-`project` is required and is a project id the service lists; `days` defaults to `60`. A repository the person has never used Crew in answers `merges: 0` and
-empty lists, not an error. One request answers one repository; the page makes one request per repository for All projects.
+`project` is required and is a project id the service lists; `days` defaults to `60`. `utc_offset_minutes` is the person's own offset, as the daily digest takes
+it, and defaults to `0` (UTC): it decides which Monday a week starts on. A repository the person has never used Crew in answers `merges: 0` and empty lists, not
+an error. One request answers one repository; the page makes one request per repository for All projects.
 
 Answer:
 
@@ -56,16 +58,47 @@ Errors (the usual `{code, message}` body):
 
 | Status | Code | When |
 | --- | --- | --- |
-| 400 | `invalid_request` | `days` is not 30, 60 or 90, or `project` is missing or not a valid id. |
+| 400 | `invalid_request` | `days` is not 30, 60 or 90, `project` is missing or not a valid id, or `utc_offset_minutes` is not a whole number between -840 and 840. |
 | 404 | `not_found` | Crew Preview is off, or the project is unknown. |
 | 500 | `history_unreadable` | The Crew records on this device could not be read. The page says nothing was changed and offers Try again. |
 
 Limits: one repository per request; the answer is at most about 40 KiB; the read is cheap enough to repeat on a refresh and is not cached by the page.
 
+## Answers to the four open questions
+
+The service answers them from records it already keeps (`crates/orbyn-core/src/crew/dashboard.rs`); none needed a new table or column.
+
+1. **"Needed nothing from the person"** is: no row in the approval ledger for the task of the kinds `held`, `approved_once`, `denied_by_person`,
+   `dismissed_by_person` or `hold_used`; no engine question in the task's lead or worker thread left `answered`; and no row of the kinds `person`
+   (a request that needs a person), `main_broken` (a broken main it asked about) or `merge_waiting`. `needed` and `unaided` are both read from that.
+   An answered lead question inside a Crew task is an engine question (`question_requests`), not a crew message, so that is the record read.
+2. **Where the brief moment lives:** `crew_tasks.created_at`, the row written when the brief was accepted. A task that began as a thread or from a
+   background crew trigger has the same row, so cycle time never needs a second source. A task whose stored stamp cannot be read, or whose merge
+   predates it, contributes no cycle figure rather than a negative one. Each cycle runs from that moment to `crew_merges.merged_unix`.
+3. **Which engines report a cost, in which unit:** the merge's own proof (`crew_merges.proof.cost`, taken from the passed result's `usage`). Tokens are
+   `tokens_in + tokens_out` under the unit `tokens`; failing that, `cost_micros` under the unit `micros`. An engine that reported nothing has
+   `cost: null`, and an engine whose merges reported two different units also has `cost: null`: a cost is never added across units. Nothing here
+   assumes `claude`, `codex` or `opencode`; whatever an engine reports is shown in its own unit.
+4. **Local or UTC weeks:** local, as the designs show. The service cannot read the machine's zone on its own (the `time` crate is built without
+   `local-offset`), so the request carries `utc_offset_minutes`, the same value the daily digest already takes, and the service counts each week from
+   the local Monday it names. Absent, weeks are UTC.
+
+## As built (service)
+
+- Route: `GET /api/crew/dashboard` in `crates/orbynd/src/routes/crew.rs`, listed in `crates/orbynd/tests/routes.json`. Read: `Core::crew_dashboard`
+  in `crates/orbyn-core/src/crew/dashboard.rs`. Types: `crates/orbyn-contracts/src/crew_dashboard.rs` (`CrewDashboard` and its rows).
+- Weeks: one row per week from the first week with a merge to the week of `as_of`, at most 14 (newest kept), so a quiet week is a zero bar and never
+  a missing one. `title`, `name` and `model` are redacted as `trust` redacts and capped at 200 characters; the page caps again at 60.
+- `merge_checks` and `not_verified` are not part of this read: it sends the task's own checks as `passed`, `failed` or `none`, and the proof itself stays
+  in the Review queue reads.
+- Tests: `crates/orbyn-core/src/crew/tests/dashboard.rs` (window, project, weeks, cost units, reverts, checks, cycle, truncation, refusals, and that the
+  read writes nothing), unit tests beside the read, and `crates/orbynd/src/routes/crew_dashboard_tests.rs` (gate, local-only, token, request shape,
+  not-found, and the empty answer).
+
 ## As built (web)
 
-- Client: `web/src/features/crew/dashboard/contract.ts`. The default (production) client has `history: null`, so it never sends this request. A test
-  (`live.test.tsx`) asserts no `/api/crew/dashboard` call is made.
+- Client: `web/src/features/crew/dashboard/contract.ts`. The default (production) client still has `history: null`, so nothing sends this request yet: the
+  service is served, the page is not wired to it. A test (`live.test.tsx`) asserts no `/api/crew/dashboard` call is made.
 - Mock: `web/mock/crewDashboard.ts`, used by tests and the dev-only Preview frames (`#/preview/crew/dash-*`). Guard markers in
   `web/scripts/assert-no-previews.mjs` fail a production build that holds it.
 - Page: Settings › Crew › Dashboard at `#/settings/crew/dashboard?repo=<project>`, behind Crew Preview. The project and period are remembered per person

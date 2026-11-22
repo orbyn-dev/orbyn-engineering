@@ -63,6 +63,7 @@
     ["GET","/api/crew/capacity/coverage","local"],
     ["GET","/api/crew/classes","local"],
     ["GET","/api/crew/classes/test","local"],
+    ["GET","/api/crew/dashboard","local"],
     ["GET","/api/crew/escapes","local"],
     ["GET","/api/crew/escapes/possible","local"],
     ["GET","/api/crew/escapes/thresholds","local"],
