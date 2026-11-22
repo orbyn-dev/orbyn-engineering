@@ -412,7 +412,8 @@ The web client reads this route with the generated types (`web/src/features/engi
 
 - **Host exits or closes stdout.** The core fails every open run on that host with
   "The engine host stopped. Your work in the project is kept; send your message again." (outcome
-  `engine_error`, `threadDisposition` unknown), answers pending `permission` frames as refused (they
+  `engine_error`, `threadDisposition` unknown, and the run's `RUN_ERROR` code
+  `engine_host_stopped`), answers pending `permission` frames as refused (they
   are already unanswerable), and restarts the host with exponential backoff (1 s, doubling, cap 30 s,
   reset after 60 s of uptime). After five restarts inside five minutes the family is marked
   unavailable with the last error and no further restarts until the person asks.

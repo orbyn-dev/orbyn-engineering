@@ -523,7 +523,8 @@ impl Core {
             .is_some_and(|list| list.iter().any(|item| item.as_str() == Some(engine)));
         if off {
             return Err(CoreError::Invalid(format!(
-                "{engine} is turned off for this project."
+                "{} is turned off for this project.",
+                self.engines.display_name(engine)
             )));
         }
         Ok(())

@@ -6,6 +6,7 @@ pub(crate) mod attention;
 pub mod claude_history;
 pub mod console;
 pub mod driver;
+pub mod earlier;
 pub(crate) mod engine_tools;
 pub mod engines;
 pub mod history_import;
