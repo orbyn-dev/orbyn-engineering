@@ -8,16 +8,20 @@ export type TranscriptEntry =
   | { key: string; file: File; state: "ready"; id: string; title: string; messageCount: number }
   | { key: string; file: File; state: "refused"; reason: string; canAddAsFile: boolean };
 
-const TOO_BIG = "Files can be up to 50 MiB.";
+const DESKTOP_ONLY = "This action is only available in the desktop app.";
+const TOO_BIG = "Transcripts can be up to 2 MiB.";
 const REASONS: Record<string, { reason: string; canAddAsFile: boolean }> = {
   transcript_too_new: { reason: "Made by a newer Orbyn. Update Orbyn to read it.", canAddAsFile: false },
   transcript_unreadable: { reason: "This isn’t a transcript Orbyn can read.", canAddAsFile: true },
   file_too_large: { reason: TOO_BIG, canAddAsFile: false },
+  // The same sentence as the import sheet, for a request that carries no person key.
+  desktop_required: { reason: DESKTOP_ONLY, canAddAsFile: false },
+  person_required: { reason: DESKTOP_ONLY, canAddAsFile: false },
 };
 
 /**
- * The transcripts waiting above one composer (B43, hidden until core can export one). With no client installed `take` keeps nothing
- * and every file goes to the attachment strip, as before.
+ * The transcripts waiting above one composer (B43). With no client installed `take` keeps nothing and every file goes to the
+ * attachment strip, as before.
  */
 export function useTranscripts(thread: { id: string }) {
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);

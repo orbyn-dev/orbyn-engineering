@@ -460,7 +460,7 @@ now and does not wait for them.
      afterwards opens in this device's own mode. **Unverified:** the test uses one stand-in engine; it does not start each
      real engine to check the mode it runs under.
 8. The Engine reviewer approves these documents once more, this time against the built code.
-   - *Status: pending.* The Engine reviewer's second approval has not been given.
+   - *Status: packet ready, waiting on the Engine reviewer.* [account-review-packet.md](account-review-packet.md) maps each claim here to its code and test and lists what no test covers. The Engine reviewer's second approval has not been given.
 
 **Distributed builds are unsigned for now, so the gate stays `Off`.** There is no Apple Developer account, so no build we
 distribute is signed with a Developer ID or notarized. Item 5 is therefore not met and stays a hard condition: real
@@ -524,6 +524,7 @@ use a real password with the local stack**.
 
 Decision D12 (the Engine side is orbyn-engine#120): removing a device, signing out every session, turning two-factor
 off and changing protection need the password typed again within the last 10 minutes, as account deletion already does.
+**Planned in this app: turning two-factor off and changing protection.** The app has no route for either today (two-factor is managed on orbyn.dev, and Advanced protection is out of scope for the beta), so there is nothing to guard yet; the guard applies the day a route for either is added, and the route-table test fails a new account-changing route that skips it.
 The app asks with a "Confirm it's you" password prompt on every platform, enforced in `orbynd`. In the app a
 confirmation is **for one action** (and one device when it removes a device), is **used up by its first use**, lasts at most
 10 minutes, is kept in memory only and is cleared by sign-out, sign out everywhere and a restart. **Signing in is not a

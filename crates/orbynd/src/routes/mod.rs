@@ -100,9 +100,13 @@ mod library_tests;
 #[cfg(test)]
 mod never_asks_tests;
 #[cfg(test)]
+mod photo_conversion_tests;
+#[cfg(test)]
 mod profiles_tests;
 #[cfg(test)]
 mod secrets_tests;
+#[cfg(test)]
+mod snapshot_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

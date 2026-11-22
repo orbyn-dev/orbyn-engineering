@@ -352,9 +352,9 @@ p.settings-scope {
   gap: 2px;
 }
 .setting-inheritance-actions .icon-btn {
-  width: 20px;
-  height: 20px;
-  min-height: 20px;
+  width: var(--hit);
+  height: var(--hit);
+  min-height: var(--hit);
   color: var(--color-muted);
 }
 .setting-inheritance-actions .icon-btn[data-overridden] {

@@ -609,6 +609,29 @@ const longToolOutput = Array.from(
   (_, at) => `test approvals::tests::case_${String(at).padStart(3, "0")}_expires_open_approvals_when_the_driver_exits ... ok`,
 ).join("\n");
 
+/** The mock's imported thread, for the transcript-imported scenario and its frame. */
+export function importedThread(): Thread {
+  return baseThread("t-imported", "p-app", "Redirect loop on logout", "claude", -240, {
+    model: "claude-opus-5-5",
+    source: "orbyn-transcript",
+    imported_at: "2026-11-22T10:00:00Z",
+  });
+}
+
+/** The imported history as ordinary log events, with no tool calls or reasoning. */
+export function importedLog(): WireThreadEvent[] {
+  return sequence([
+    ...logOf("t-imported", "r-imported", -240, [
+      { type: "RUN_STARTED", threadId: "t-imported", runId: "r-imported" },
+      ...user("u1", "The logout page redirects back to itself in a loop."),
+      ...assistant("a1", "The cookie is cleared after the redirect has already fired, so the next request still looks signed in. I would clear it first."),
+      ...user("u2", "Do that, then check the sign-in page does the same."),
+      ...assistant("a2", "Done: the cookie is cleared before the redirect, and the sign-in page already did it in that order."),
+      { type: "RUN_FINISHED", threadId: "t-imported", runId: "r-imported", outcome: { type: "success" } },
+    ]),
+  ]);
+}
+
 export function logs(): Record<string, WireThreadEvent[]> {
   const pending = pendingApprovals();
   const [ap1, ap2, ap3] = pending as [Approval, Approval, Approval];
@@ -1230,6 +1253,27 @@ export const pageFiles = () => [
   { path: "auth/redirect.ts", previous_path: null, status: "modified", additions: 2, deletions: 1, patch: "@@ -14,4 +14,4 @@\n export function after(req) {\n-  return \"/home\"\n+  return inside(next) ? next : \"/\"\n }", viewed: false },
   { path: "auth/redirect.test.ts", previous_path: null, status: "modified", additions: 2, deletions: 2, patch: "@@ -1,2 +1,2 @@\n-old\n+new", viewed: false },
 ];
+
+/** The linked pull request's forge comments: one unresolved review thread and one resolved. */
+export const pullConversation = () => ({
+  comments: [],
+  threads: [
+    {
+      id: "th-redirect", resolved: false, path: "auth/redirect.ts", line: 15,
+      comments: [{
+        id: "c-redirect", kind: "review", author: "sam-reyes", body: "Does inside() reject //evil.com?",
+        created_at: iso(-420), path: "auth/redirect.ts", line: 15,
+      }],
+    },
+    {
+      id: "th-test", resolved: true, path: "auth/redirect.test.ts", line: 8,
+      comments: [{
+        id: "c-test", kind: "review", author: "riley-chen", body: "Added the case for a protocol-relative next value.",
+        created_at: iso(-360), path: "auth/redirect.test.ts", line: 8,
+      }],
+    },
+  ],
+});
 
 export const pullList = () => [
   listed(142, "Return to the page people came from", {

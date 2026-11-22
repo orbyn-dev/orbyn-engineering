@@ -411,7 +411,6 @@ function ProjectSelection() {
 export function ProjectsSection() {
   const scope = useSettingsScope();
   return <>
-    <div className="section-bar"><h1 className="sr-only" tabIndex={-1} data-page-title>Projects</h1></div>
     <ProjectSelection key={JSON.stringify(scope?.query ?? {})} />
   </>;
 }

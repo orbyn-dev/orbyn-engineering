@@ -34,7 +34,7 @@ use models::{
     delete_probe_session, parse_models, parse_session_options, probe_model_options,
     require_offered, select_model,
 };
-use permissions::{answer_request, stop_outcome};
+use permissions::{answer_request, stop_outcome_after};
 use replay::resume_without_replay;
 use sign_in::SignInSlot;
 pub use sign_in::known_sign_in;
@@ -260,7 +260,15 @@ impl EngineDriver for AcpDriver {
             spawn_engine_confined(&command, &args, &spec.cwd, &env, spec.confine.as_ref())?;
         let cancel = CancellationToken::new();
         let slot = self.sign_in_slot();
-        let task = tokio::spawn(run_protocol(process, spec, events, cancel.clone(), slot));
+        let path = command.path.display().to_string();
+        let task = tokio::spawn(run_protocol(
+            process,
+            spec,
+            events,
+            cancel.clone(),
+            slot,
+            path,
+        ));
         Ok(RunHandle {
             cancel,
             task,
@@ -276,15 +284,18 @@ async fn run_protocol(
     events: mpsc::Sender<EngineEvent>,
     cancel: CancellationToken,
     slot: SignInSlot,
+    path: String,
 ) {
     let (rpc, mut inbound) = RpcClient::start(process.stdin, process.stdout, true);
+    let agent_label;
     let opened = tokio::select! {
         biased;
         () = cancel.cancelled() => Err(CoreError::RunClosed),
         result = open_session(&rpc, &mut inbound, &spec, &slot) => result,
     };
     let session = match opened {
-        Ok((session, persistent)) => {
+        Ok((session, persistent, agent)) => {
+            agent_label = agent_label_for(&agent, &path);
             if persistent
                 && events
                     .send(EngineEvent::Session(session.clone()))
@@ -314,6 +325,7 @@ async fn run_protocol(
     );
     tokio::pin!(prompt_call);
     let mut mapper = UpdateMapper::default();
+    let mut sent = 0usize;
     let mut cancel_sent = false;
     let outcome = loop {
         tokio::select! {
@@ -335,6 +347,7 @@ async fn run_protocol(
                                 if events.send(event).await.is_err() {
                                     return;
                                 }
+                                sent += 1;
                             }
                         }
                     }
@@ -360,11 +373,12 @@ async fn run_protocol(
                     {
                         for event in mapper.on_update(params.get("update").unwrap_or(&Value::Null)) {
                             let _ = events.send(event).await;
+                            sent += 1;
                         }
                     }
                 }
                 break match result {
-                    Ok(reply) => stop_outcome(&reply),
+                    Ok(reply) => stop_outcome_after(&reply, sent, &agent_label),
                     Err(error) => EngineOutcome::Failed(error.to_string()),
                 };
             }
@@ -396,7 +410,7 @@ async fn open_session(
     inbound: &mut mpsc::UnboundedReceiver<Inbound>,
     spec: &RunSpec,
     slot: &SignInSlot,
-) -> Result<(String, bool)> {
+) -> Result<(String, bool, (String, String))> {
     if spec
         .resume
         .as_deref()
@@ -462,7 +476,7 @@ async fn open_session(
             session = reply;
         }
     }
-    Ok((id, persistent))
+    Ok((id, persistent, agent_info(&init)))
 }
 
 /// Initializes and opens a session, returning its id and the agent's whole reply.
@@ -489,6 +503,28 @@ async fn open_raw(
         .map(str::to_owned)
         .ok_or_else(|| CoreError::EngineUnavailable("The agent returned no session id.".into()))?;
     Ok((id, session, init))
+}
+
+/// What the agent calls itself and its version, from `initialize`.
+fn agent_info(init: &Value) -> (String, String) {
+    let text = |key: &str| {
+        init.pointer(&format!("/agentInfo/{key}"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    (text("name"), text("version"))
+}
+
+/// "OpenCode (/opt/homebrew/bin/opencode 1.15.10)": which program, and which version of it, ran.
+fn agent_label_for((name, version): &(String, String), path: &str) -> String {
+    let name = if name.is_empty() { "The agent" } else { name };
+    let version = if version.is_empty() {
+        String::new()
+    } else {
+        format!(" {version}")
+    };
+    format!("{name} ({path}{version})")
 }
 
 async fn initialize(rpc: &RpcClient) -> Result<Value> {

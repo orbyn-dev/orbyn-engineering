@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, CircleCheck, Clock, Copy, Ellipsis, Pencil, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, CircleCheck, Clock, Copy, Download, Ellipsis, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { SnoozePreset } from "../../generated/SnoozePreset";
@@ -11,6 +11,7 @@ import { Presence } from "../../ui/Presence";
 import { archiveThreads, deleteThreadNow, settleThreads, unarchiveThread, unsettleThreads, wakeThreads } from "../workspace";
 import { copyText } from "../../product/ui/copyText";
 import { RenameThreadDialog, snoozeChildren } from "../workspace";
+import { startTranscriptExport } from "./transcriptFile/exportAction";
 
 /** Every thread below this one (side chats, children) and the thread itself. */
 export function familyOf(thread: Thread, threads: Readonly<Record<string, Thread>>): Thread[] {
@@ -26,7 +27,7 @@ export function familyOf(thread: Thread, threads: Readonly<Record<string, Thread
 
 const MENU_WIDTH = 220;
 
-/** The thread's own menu at the right of its header: Settle and Snooze first, then Rename, Copy folder path, Archive (or Unarchive) and Delete thread. */
+/** The thread's own menu at the right of its header: Settle and Snooze first, then Rename, Copy folder path, Export transcript, Archive (or Unarchive) and Delete thread. */
 export function ThreadHeaderMenu({ thread }: { thread: Thread }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -55,6 +56,7 @@ export function ThreadHeaderMenu({ thread }: { thread: Thread }) {
       : { label: "Snooze…", icon: icon(Clock), children: snoozeChildren([thread], presets) },
     { label: "Rename", icon: icon(Pencil), separatorBefore: true, onSelect: () => setRenaming(true) },
     { label: "Copy folder path", icon: icon(Copy), onSelect: () => void copyText(thread.cwd, "Folder path copied") },
+    { label: "Export transcript", icon: icon(Download), onSelect: () => startTranscriptExport(thread) },
     archived
       ? {
           label: "Unarchive",

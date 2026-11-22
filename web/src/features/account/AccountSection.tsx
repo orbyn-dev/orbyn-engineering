@@ -98,7 +98,6 @@ export function AccountSection() {
           <p className="ac-sub">Orbyn cleared this device’s keys and its sync copy from this computer. Your threads, projects and settings are still here, and Orbyn keeps working without an account. Sign in again to sync your settings.</p>
         </Dialog>
       ) : null}
-      <h1 className="sr-only" tabIndex={-1} data-page-title>Account</h1>
       {view && !view.session && (mode === "sign-in" || mode === "sign-up") && !asking && !codeStep && !view.approval ? (
         <BackLink onClick={() => setMode("home")} />
       ) : null}

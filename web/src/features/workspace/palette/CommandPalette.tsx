@@ -146,6 +146,8 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
         key: `settings:${section}`,
         group: "Settings",
         label: title(section),
+        // The group's own word finds these, so "sett" and "settings" list the Settings pages.
+        search: "settings preferences",
         icon: <Settings size={16} aria-hidden />,
         route: { name: "settings", section } as Route,
       })),
