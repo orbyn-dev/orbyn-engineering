@@ -3,7 +3,7 @@
 //! pick is refused and never swapped, which is also how a Crew saved with such a worker is refused at start), and a
 //! reviewer lane may still use it.
 
-use orbyn_contracts::{EngineCrewRole, RejectionWhy, RouteRole};
+use orbyn_contracts::{EngineCrewRole, RejectionWhy};
 use serde_json::json;
 
 use super::fake::*;
