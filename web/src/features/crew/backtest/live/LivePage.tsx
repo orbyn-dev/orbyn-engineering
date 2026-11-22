@@ -64,7 +64,7 @@ function Bars({ widths }: { widths: readonly [string, string] }) {
   return (
     <div aria-hidden="true" style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "4px 0", width: "320px", maxWidth: "100%" }}>
       {widths.map((width) => (
-        <span key={width} className="cx-skelbar" style={{ display: "block", height: "14px", width, borderRadius: "6px", background: "var(--color-sunken)" }} />
+        <span key={width} data-skeleton style={{ display: "block", height: "14px", width, borderRadius: "6px", background: "var(--color-sunken)" }} />
       ))}
     </div>
   );

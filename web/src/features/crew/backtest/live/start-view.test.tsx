@@ -139,7 +139,7 @@ describe("the reviewer backtest page on the start-view read", () => {
     const { container } = page();
     expect(await screen.findByRole("status", { name: "Reading the lanes and budgets" })).toBeInTheDocument();
     expect(await screen.findByText("Reading the lanes of the last backtest.")).toBeVisible();
-    await waitFor(() => expect(container.querySelectorAll(".cx-skelbar")).toHaveLength(6), { timeout: 1500 });
+    await waitFor(() => expect(container.querySelectorAll("[data-skeleton]")).toHaveLength(6), { timeout: 1500 });
   });
 
   it("keeps a slow older answer from replacing a newer project's rows", async () => {
