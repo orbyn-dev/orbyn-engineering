@@ -873,6 +873,37 @@
 .set-track .set-pill {
   margin-left: auto;
 }
+/* The Claude path choices: the frame draws two setting rows, the SDK one carrying Default. */
+.claude-path-choices {
+  display: flex;
+  flex-direction: column;
+}
+.claude-path-choice {
+  justify-content: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+.claude-path-choice .set-radio {
+  margin-top: 0;
+}
+.claude-path-choice[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+.claude-path-label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.claude-path-help,
+.claude-path-next {
+  padding: 0 0 8px;
+}
+.claude-path-host {
+  margin-top: 12px;
+}
 .set-radio {
   display: inline-block;
   position: relative;
