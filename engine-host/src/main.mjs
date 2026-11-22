@@ -1,5 +1,7 @@
 import { runHost } from "./host.mjs";
+import { acpFamily } from "./families/acp.mjs";
 import { claudeFamily } from "./families/claude.mjs";
+import { codexFamily } from "./families/codex.mjs";
 import { cursorFamily, isBenignSdkRejection } from "./families/cursor.mjs";
 import { fake } from "./families/fake.mjs";
 import { museFamily } from "./families/muse.mjs";
@@ -7,10 +9,15 @@ import { opencodeFamily } from "./families/opencode.mjs";
 
 const families = {
   fake,
+  // The person's own `codex app-server`, over its documented JSON-RPC. No SDK or binary is bundled.
+  codex: codexFamily(),
   // MIT SDK, bundled. It drives the person's own `opencode serve`; no binary is shipped.
   opencode: opencodeFamily({ loadSdk: () => import("@opencode/client") }),
   // MIT SDK, bundled. It drives the person's own `muse serve`; no binary is shipped.
   muse: museFamily({ loadSdk: () => import("@muse-code/sdk") }),
+  // The person's own ACP agent. The core resolves the agent and its binary (`open.options.agent`);
+  // the host neither ships nor fetches one, and speaks the protocol in src/families/acp.mjs.
+  acp: acpFamily(),
 };
 // Gated: the Claude SDK path stays off until Anthropic approves in writing. The SDK is not bundled;
 // it loads from node_modules in development and is missing in the single executable.
