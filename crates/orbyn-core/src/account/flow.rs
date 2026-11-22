@@ -79,6 +79,9 @@ pub(super) struct Inner {
     sync: Option<SyncHandle>,
     paused: bool,
     deletion_scheduled: bool,
+    /// A late answer for an older request left a session in the Engine while a newer request
+    /// still needed its state: that session is ended once the newer request ends unsigned.
+    owed_sign_out: bool,
 }
 
 fn invalid(code: &'static str, message: &str) -> CoreError {
@@ -474,8 +477,14 @@ impl AccountCenter {
             inner.approval = None;
             inner.second_factor = None;
         }
+        // The request this cancel ended was the last that needed the Engine's state: a session a
+        // late answer left there is ended now.
+        let owed = cleared && std::mem::take(&mut inner.owed_sign_out);
         let signed_out = cleared && inner.session.is_none();
         drop(inner);
+        if owed {
+            let _ = backend.account.sign_out().await;
+        }
         if signed_out {
             self.status
                 .update(|s| s.state = SyncState::SignedOut { reason: None });
@@ -523,6 +532,7 @@ impl AccountCenter {
         inner.session = Some(session);
         inner.second_factor = None;
         inner.approval = None;
+        inner.owed_sign_out = false;
         inner.paused = false;
         inner.deletion_scheduled = false;
         if ask {
@@ -569,10 +579,15 @@ impl AccountCenter {
         Ok(())
     }
 
-    /// Signs out of this computer only. It never waits for the network: the server is
-    /// told once, and a failure changes nothing here.
+    /// Signs out of this computer only. The session ends here first, so a failure changes nothing
+    /// on this computer; the server is told once, under the same one-at-a-time gate as a cancel,
+    /// so this can wait behind one. With no session there is nothing to wait for.
     pub async fn sign_out(&self, discard_unsynced: bool) -> Result<()> {
         let backend = self.backend()?.clone();
+        // Nothing to end: answering at once keeps a stuck cancel from holding the person up.
+        if self.inner.lock().await.session.is_none() {
+            return Ok(());
+        }
         let _one_at_a_time = self.cancelling.lock().await;
         let mut inner = self.inner.lock().await;
         if inner.session.is_none() {

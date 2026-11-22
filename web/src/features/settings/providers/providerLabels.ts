@@ -8,6 +8,8 @@ export const LABEL_TEXT: Record<ProviderLabel, string> = {
   cant_start: "Can’t start",
   planned: "Planned",
   not_found: "Not found",
+  signed_out: "Signed out",
+  start_failed: "Start failed",
 };
 
 /** The groups the page draws, in order (provider-list, provider-list-more, provider-extras). "In use" is the

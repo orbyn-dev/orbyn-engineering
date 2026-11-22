@@ -103,9 +103,9 @@ describe("Flow frames (Crew Designs)", () => {
   it.each([
     "flow-task", "flow-task-loop", "flow-check-failed", "flow-artifact-diff", "flow-replay", "flow-running", "flow-lanes-many", "flow-long-loop", "flow-skipped",
     "flow-offline", "flow-pr-review", "flow-you-ready", "flow-you-rule", "flow-you-blocked", "flow-you-waiting-on", "flow-you-off", "flow-artifact-pruned",
-  ])("#/preview/crew/%s follows Crew Designs v41: Add reviewer is After the beta", async (name) => {
+  ])("#/preview/crew/%s follows Crew Designs v41: Add reviewer is Planned", async (name) => {
     const { container } = await openFrame(name);
-    expect(container.textContent).toContain("Add reviewerAfter the beta");
+    expect(container.textContent).toContain("Add reviewerPlanned");
   });
 
   it("follows Crew Designs v41: the PR parts are Planned and the re-run buttons say when the write route ships", async () => {
@@ -124,10 +124,10 @@ describe("Flow frames (Crew Designs)", () => {
     expect(pruned.container.textContent).toContain("Re-run the check: Available when the write route ships");
   });
 
-  it("follows Crew Designs v43: Pause crew and Stop crew are After the beta, the usage line and the wide graph are Planned", async () => {
+  it("follows Crew Designs v43: Pause crew and Stop crew are Planned, the usage line and the wide graph are Planned", async () => {
     for (const name of ["flow-all", "flow-task", "flow-gates", "flow-empty-tasks", "flow-truncated"]) {
       const view = await openFrame(name);
-      expect(view.container.textContent, name).toContain("Pause crewAfter the betaStop crewAfter the beta");
+      expect(view.container.textContent, name).toContain("Pause crewPlannedStop crewPlanned");
       view.unmount();
     }
     const task = await openFrame("flow-task");

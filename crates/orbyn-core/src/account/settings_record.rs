@@ -245,7 +245,7 @@ mod tests {
         let unique: BTreeSet<_> = SYNCED_KEYS.iter().collect();
         assert_eq!(unique.len(), 11);
         let catalog: BTreeSet<_> = crate::settings::preferences::catalog_keys().collect();
-        assert_eq!(catalog.len(), 66);
+        assert_eq!(catalog.len(), 67);
         assert!(SYNCED_KEYS.iter().all(|key| catalog.contains(key)));
         // The four that escalate, and the stamp, are never staged.
         for never in [

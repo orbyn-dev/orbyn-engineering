@@ -617,3 +617,103 @@ async fn the_redactor_runs_before_the_event_is_appended() {
         }
     );
 }
+
+/// Where no echo mode can be read (Windows ConPTY), a `Password:` line is a plain question and
+/// its last lines are shown. They are redacted first, so a secret printed above it never leaves.
+#[test]
+fn a_password_line_read_as_a_question_still_hides_secret_text() {
+    let redactor = Redactor::only(vec![Custom {
+        name: "token",
+        regex: Regex::new("hunter2").unwrap(),
+        applies_to: PatternScope::Anywhere,
+    }]);
+    let reading = evaluate(
+        &redactor,
+        "token is hunter2\nhunter2 again\nPassword:",
+        false,
+    )
+    .unwrap();
+    assert_eq!(reading.kind, TerminalAttentionKind::Question);
+    let text = reading.excerpt.join("\n");
+    assert!(!text.contains("hunter2"), "{text}");
+    assert!(text.contains("[hidden: token]"), "{text}");
+}
+
+#[test]
+fn open_items_list_what_waits_in_one_thread() {
+    let mut registry = Registry::default();
+    let open = waiting_id(&quiet(
+        &mut registry,
+        "t1",
+        "a",
+        T0,
+        evaluation(TerminalAttentionKind::YesNo, &["Apply? (y/N)"]),
+    ));
+    let cleared = waiting_id(&quiet(
+        &mut registry,
+        "t1",
+        "b",
+        T0 + 1,
+        evaluation(TerminalAttentionKind::Question, &["Which one?"]),
+    ));
+    quiet(
+        &mut registry,
+        "t2",
+        "c",
+        T0 + 2,
+        evaluation(TerminalAttentionKind::Question, &["Other thread?"]),
+    );
+    quiet(
+        &mut registry,
+        "t1",
+        "d",
+        T0 + 3,
+        evaluation(TerminalAttentionKind::Secret, &["Password:"]),
+    );
+    registry.output("t1", "b");
+
+    let items = registry.open_items("t1");
+    let ids: Vec<&str> = items
+        .iter()
+        .map(|notice| match notice {
+            Notice::Waiting { id, .. } => id.as_str(),
+            Notice::Clear { .. } => panic!("a clear is never an open item"),
+        })
+        .collect();
+    assert_eq!(ids.len(), 2, "{items:?}");
+    assert_eq!(ids[0], open, "oldest first");
+    assert!(!ids.contains(&cleared.as_str()));
+    assert!(registry.open_items("t3").is_empty());
+    // A secret carries only the label it was stored with.
+    assert!(matches!(
+        &items[1],
+        Notice::Waiting { kind: TerminalAttentionKind::Secret, excerpt, .. }
+            if excerpt == &["Password:".to_owned()]
+    ));
+}
+
+#[tokio::test]
+async fn the_open_read_names_the_terminal_and_engine_and_refuses_an_unknown_thread() {
+    let dir = TempDir::new();
+    let (core, thread_id) = core_with_thread(&dir);
+    let reading = evaluation(TerminalAttentionKind::YesNo, &["Delete it? (y/N)"]);
+    let notices = core
+        .attention
+        .quiet(&thread_id, "engine-console", T0, SINCE.to_owned(), reading);
+    let id = waiting_id(&notices);
+    let items = core.terminal_attention(&thread_id).unwrap();
+    assert_eq!(items.len(), 1);
+    assert!(matches!(
+        &items[0],
+        TerminalAttentionEvent::Waiting { v: 1, id: got, terminal_id, engine, kind, since, excerpt, .. }
+            if *got == id
+                && terminal_id == "engine-console"
+                && engine == "claude"
+                && *kind == TerminalAttentionKind::YesNo
+                && since == SINCE
+                && excerpt == &["Delete it? (y/N)".to_owned()]
+    ));
+    core.attention.closed(&thread_id, "engine-console");
+    assert!(core.terminal_attention(&thread_id).unwrap().is_empty());
+    assert!(core.terminal_attention("no-such-thread").is_err());
+}
