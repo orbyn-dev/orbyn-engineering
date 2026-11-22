@@ -45,6 +45,7 @@ mod skills;
 mod source_control;
 mod stream;
 mod terminal;
+mod text_generators;
 mod threads;
 mod ui;
 mod updates;
@@ -169,6 +170,7 @@ pub fn router(state: AppState) -> Router {
         .merge(governance::routes())
         .merge(stream::routes())
         .merge(terminal::routes())
+        .merge(text_generators::routes())
         .route_layer(from_fn_with_state(state.clone(), note_activity))
         .route_layer(from_fn_with_state(access.clone(), classes::require_person))
         .route_layer(from_fn_with_state(access.clone(), access::require_auth));
