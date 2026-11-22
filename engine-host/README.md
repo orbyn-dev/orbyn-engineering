@@ -4,7 +4,7 @@ The Node host that runs engine SDKs (Claude, Cursor, OpenCode, Muse, ACP, later 
 core over newline-JSON on stdio. The wire contract is [docs/engine-host-protocol.md](../docs/engine-host-protocol.md);
 change that document in the same PR as any frame change.
 
-Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` and `cursor` (each behind a flag), `opencode`, `muse` and `acp` are the real ones. Not part of the Rust
+Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` and `cursor` (each behind a flag), `opencode`, `muse` and `acp` (with per-agent entries for droid, omp, kimi, kiro, mistral-vibe and glm) are the real ones. Not part of the Rust
 workspace or the web lint scope; it has its own `package.json`.
 
 ```bash
@@ -198,8 +198,19 @@ with injected platform and file checks only; no Windows run.
 newline JSON-RPC 2.0 on stdio. It starts with `orbyn-engine-host acp`; no flag. The core resolves which agent to run and
 where its binary is, in `open.options.agent = {command, args, env, id}`; this host never downloads, installs or resolves a
 registry and never fetches the network. `options.agent.id` selects a per-agent quirks entry from
-`src/families/acpAgents.mjs` (`default` only in this task; droid, omp, kimi, kiro and vibe come later).
+`src/families/acpAgents.mjs`: `default`, `droid` and `omp` (their complete elicitation forms), `kimi` (bare tool names
+with streamed JSON arguments), `kiro` (V3 launch, exact config ids and the autopilot rule), `mistral-vibe` (its
+`thinking` levels belong to the current model) and `glm` (bare model names). An unknown id gets `default`. The
+per-agent rules are a plain-JavaScript port of T3 Code (MIT, Copyright (c) 2026 T3 Tools Inc., commit
+`9168ca73d02003557725430b515b44e1551544af`).
 
+- **Kiro.** With `agent.id = "kiro"` and empty args the process runs `kiro-cli acp --agent-engine=v3 --auth-method=cli`
+  (T3's `KIRO_ACP_ARGS`). Session options use Kiro's ids `model`, `effortLevel` and `mode` (agents); a model is written even
+  when Kiro has not listed it, and `effortLevel` only after Kiro advertises it for the written model. **`autopilot` is
+  always written as `off` (Supervised) when Kiro offers it and never as `on`**: the host never lets Kiro auto-approve
+  tools, because policy stays in Rust; if Kiro offers no supervised value the session fails. `/compact` uses Kiro's
+  advertised `_kiro/session/compact`, `steer` uses `_session/steer` (`queued`, no cancel), and `open` operation `fork`
+  forks at a turn with `options.atTurn` as `_meta.kiro.messageId`.
 - **Initialize.** ACP protocol version 2, `clientInfo` "Orbyn", `clientCapabilities` advertising only form elicitation:
   **no `fs` and no `terminal`**, so the agent keeps using its own tools under the core's confinement. An agent that sends
   `fs/*` or `terminal/*` anyway gets JSON-RPC method-not-found and a `log` frame naming the method only (T3 advertises
@@ -216,32 +227,40 @@ registry and never fetches the network. `options.agent.id` selects a per-agent q
   received) answered once by `respond`. Allow is only `allow_once`; deny is `reject_once`; an agent offering only an
   always-allow option is denied. There is no host timeout. Cancel, run end and a crash refuse pending asks. Elicitation
   forms become `question` frames answered by `respond` `{answers}` (multi-selections comma-joined) or `{behavior:"deny"}`
-  (sent as `action: "cancel"`).
+  (sent as `action: "cancel"`); Droid's and OMP's complete forms use their own parser and leave other schemas to the
+  generic one.
 - **Turns.** `send` writes `session/prompt` with the person's text, plus image or resource blocks only when the agent's
   `promptCapabilities` allow them, answers when the prompt is on the wire, streams each `session/update`'s `update`
   object untouched as a `delta`, and ends with exactly one `runDone` from the prompt response (`end_turn` completed,
   `cancelled` cancelled, `max_tokens`/`max_turn_requests` maxTurns, `refusal` refused, an error failed with a `kind`).
-  A malformed `session/update` is dropped and logged by method only. `steer` cancels the running prompt and sends the new
-  text as the run's next prompt; `cancel` sends `session/cancel` and ends the run cancelled; `closeSession` cancels and
-  stops the process.
+  A malformed `session/update` is dropped and logged by method only. Kiro's `/compact` is its advertised extension, not a
+  prompt. `steer` cancels the running prompt and sends the new text as the run's next prompt (Kiro instead queues it
+  through `_session/steer` and does not cancel); `cancel` sends `session/cancel` and ends the run cancelled; `closeSession`
+  cancels and stops the process.
 - **Models.** `models` with an open `sessionId` returns the session's catalog; without one it takes `agent`, `cwd` and
   optional `confinement`, starts a throwaway agent, reads `session/new`, and stops it. The shape is Muse's
   `{models: [{id, name, isDefault, efforts: [{id, label, description?, isDefault?}], defaultEffort?}]}`, built from
   ACP `configOptions` (`model`, `thought_level`/`reasoning`, the Mistral Vibe `thinking` quirk, `mode`) with `_meta.reasoningEfforts`
-  winning per model. `options.model`, `options.effort` and `options.mode` at `open` or `send` go through
+  winning per model. Vibe's levels apply to its current model only; Kiro's `_meta.kiro.effortLevels`/`defaultEffortLevel`
+  shape its efforts; bare model ids are their names. `options.model`, `options.effort` and `options.mode` at `open` or `send` go through
   `session/set_config_option`, or `session/set_model` when only a model state is advertised.
   Capabilities: `steer` and `models`.
 
 Done and tested against replayed T3 Code transcripts of generic ACP agents (MIT, `test/fixtures/NOTICE`):
 simple, multi-turn, queued turn, message steering, a read-only tool call, a permission ask answered once, turn
-interrupt, a todo list, two elicitation forms, a malformed session update and a failed prompt. Nothing here has run
-against a real agent yet.
+interrupt, a todo list, two elicitation forms, a malformed session update and a failed prompt. Also replayed: fifteen
+Kiro 2.32.0 to 2.33.1 sessions (simple, multi-turn, queued turn, a read-only tool ask, turn interrupt with and without a
+tool, subagents, cloud config, compaction, effort, fork from a turn, steering, model switch, subagent interrupt and an
+unknown model) through the real family with `agent.id = "kiro"`. `test/acpAgents.test.mjs` covers the synthetic
+Droid/OMP forms, Kimi tool titles, Mistral Vibe levels, GLM/Kimi bare names, Kiro launch/config/autopilot, `/compact` and
+native steer. Nothing here has run against a real agent or model yet.
 
-Not done, so Planned: any run against a real agent or model; per-agent quirk entries; background work, `stopTask`,
-`background`, `rollback`, `readHistory` and a `usage` request (ACP has no background event; usage rides the update
-stream); `session/resume` for agents that do not advertise `loadSession`; `additionalDirectories`; T3's per-agent MCP
-transport preference (mcpTransport.ts) and its fs/terminal/URL-elicitation client policy (never ported); attachments
-against a real agent; Windows.
+Not done, so Planned: any run against a real agent or model; Kiro's cloud-config and `[STEERING ...]` note filters
+(the host streams the engine's updates untouched), its native session list/delete and `_session/steer` note handling;
+background work, `stopTask`, `background`, `rollback`, `readHistory` and a `usage` request (ACP has no background event;
+usage rides the update stream); `session/resume` for agents that do not advertise `loadSession`; `additionalDirectories`;
+T3's per-agent MCP transport preference (mcpTransport.ts) and its fs/terminal/URL-elicitation client policy (never
+ported); attachments against a real agent; Windows.
 
 ## Differences from T3 Code on purpose (Muse and Cursor)
 

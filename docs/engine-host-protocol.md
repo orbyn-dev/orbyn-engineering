@@ -154,57 +154,85 @@ Read-only, family-shaped results of `models` and `usage`, all optional and ignor
 ## ACP family
 
 Family `acp` (`src/families/acp.mjs`) speaks the Agent Client Protocol, newline JSON-RPC 2.0 on stdio, to one agent
-process per open session. Capabilities: `steer` and `models`.
+process per open session. Capabilities: `steer` and `models`. The per-agent quirks and Kiro's launch/session knowledge
+are a plain-JavaScript port of T3 Code (MIT, Copyright (c) 2026 T3 Tools Inc., commit
+`9168ca73d02003557725430b515b44e1551544af`): `provider-acp-registry`'s droid/omp/kimi flavours and
+`provider-kiro`/`provider-acp`'s Kiro and model/config rules.
 
+- **Agent entries.** `open.options.agent.id` selects the entry in `src/families/acpAgents.mjs`; an unknown or empty id is
+  `default`:
+  - `default`: no quirk; the generic form parser, tool title and model catalog apply.
+  - `droid`: `question_N`/`question_N_other` forms become questions without the companion; a custom answer is sent as
+    `question_N: "other"` plus `question_N_other` (T3's `extractDroidElicitationForm`).
+  - `omp`: `qN`/`qN__other` forms become questions; a custom answer is sent under `qN__other` (T3's
+    `extractOmpElicitationForm`).
+  - `kimi`: a tool title that is a bare name with streamed JSON arguments (`name: {partial JSON`) is reduced to the name
+    before a `permission` names it.
+  - `kiro`: the V3 launch and config ids below, with the autopilot rule.
+  - `mistral-vibe`: the `thinking` category's levels belong only to the session's current model.
+  - `glm`: bare model ids are their names; `_meta.supportsReasoningEffort: false` keeps a model without efforts.
 - **Options.** `open.options.agent = {command, args, env, id}`: the core resolves the agent and its binary; the host
-  never downloads, installs or resolves a registry and never fetches the network. `id` selects the per-agent quirks entry
-  in `src/families/acpAgents.mjs`. `options.authMethodId` names the sign-in method used when session setup says auth is
-  required. `options.mcpServers` are sent as ACP `mcpServers` (`stdio`/`http`/`acp`) in the transports the agent
-  advertised; an unsupported one is skipped and logged by name. `options.model`, `options.effort` and `options.mode` at
-  `open` or `send` are applied with `session/set_config_option` (or `session/set_model` when the session advertises only a
-  model state). `confinement.argvPrefix` and `confinement.env` apply exactly as they do to Muse; a malformed prefix is
-  `invalid_request`.
+  never downloads, installs or resolves a registry and never fetches the network. When `id` is `kiro` and `args` is empty,
+  the host passes `["acp", "--agent-engine=v3", "--auth-method=cli"]`; any explicit args are used unchanged.
+  `options.authMethodId` names the sign-in method used when session setup says auth is required. `options.mcpServers` are
+  sent as ACP `mcpServers` (`stdio`/`http`/`acp`) in the transports the agent advertised; an unsupported one is skipped and
+  logged by name. `options.model`, `options.effort` and `options.mode` at `open` or `send` are applied with
+  `session/set_config_option` (or `session/set_model` when the session advertises only a model state). For Kiro they are
+  written as its exact ids `model`, `effortLevel` and `mode` (agents); a model is written even when Kiro has not listed it.
+  Kiro's `autopilot` option is **always** written as `off` (Supervised) when offered, and never `on`: policy stays in Rust,
+  so the host never lets Kiro auto-approve tools. If Kiro offers no supervised value the session fails `kind: "unsupported"`.
+  `confinement.argvPrefix` and `confinement.env` apply exactly as they do to Muse; a malformed prefix is `invalid_request`.
 - **Initialize.** `initialize` sends protocol version 2 with `clientInfo.name` "Orbyn" and `clientCapabilities` advertising
   **only** form elicitation: no `fs` and no `terminal`. The agent keeps its own file and shell tools under the core's
   confinement; an `fs/*` or `terminal/*` request is answered with JSON-RPC method-not-found (-32601) and a `log` frame
   naming the method only, never its payload. This is deliberately unlike T3, which advertises and implements both.
   `authenticate` runs only when session setup fails as auth-required (-32000) and `options.authMethodId` is an advertised
-  method; otherwise `open` fails `kind: "auth"`.
+  method; otherwise `open` fails `kind: "auth"`. A prompt that fails with -32000 is the engine's failure, not a sign-in
+  (Kiro's unknown model does this), and stays `kind: "engine"` with Kiro's message.
 - **Session setup.** `create` uses `session/new`; `resume` uses `session/load` and fails `kind: "unsupported"` when the
-  agent does not advertise `loadSession`; `fork` uses `session/fork` only when the agent advertises it. `open` returns
-  `{engineSessionId}` and the host sends no `session` frame (ACP names the session at setup).
+  agent does not advertise `loadSession`; `fork` uses `session/fork` only when the agent advertises it. A Kiro fork starts
+  a provisional `session/new`, then forks the source session with `_meta.kiro.messageId` from the optional family-shaped
+  `options.atTurn` (or `options.forkAtTurn`), so the host can fork at a turn rather than only the session head. `open`
+  returns `{engineSessionId}` and the host sends no `session` frame (ACP names the session at setup).
 - **`delta`.** Every `session/update` notification becomes `{type:"delta", sendId, update: <params.update>}`: the
-  notification's `update` object is passed through unmodified (the same payload the CLI ACP driver maps). A malformed
+  notification's `update` object is passed through unmodified (the same payload the CLI ACP driver maps). Kiro's cloud
+  config call and `[STEERING ...]` notes are engine updates here; T3's filters for them are not ported. A malformed
   `update` is dropped and logged as `{type:"malformedSessionUpdate", method:"session/update"}` with no content; an update
   naming another session is dropped.
 - **`runDone`.** Exactly once, from the `session/prompt` reply: `end_turn` is `completed`, `cancelled` is `cancelled`,
   `max_tokens`/`max_turn_requests` are `maxTurns`, `refusal` is `refused`, an RPC error is `failed` with a `kind` from the
   closed set (and `retry` for `rate_limit`, `network` or overloaded). `result.usage` is ACP `Usage` mapped to the token
   counters. `threadDisposition` is `broken` when the process is gone or the session is lost. There is no background
-  event in ACP, so the run is never held.
+  event in ACP, so the run is never held. A Kiro `/compact` run ends `completed` from the extension's `success: true`.
 - **Asks.** A `session/request_permission` is a `permission` frame: `tool` is the request tool call's title (its
-  `title`, else `kind`, else "tool"), `input` is the request's own parameters with fields the earlier `tool_call` update
-  carried filled into its `toolCall`, and `options` is the agent's option list exactly as received. `respond` allow
-  selects `allow_once`; when the agent offers no `allow_once` it selects `reject_once` (or the cancelled outcome when
-  there is none either). Deny selects `reject_once`, else the cancelled outcome. An `elicitation/create` form is a
-  `question` frame (`tool: "AskUserQuestion"`, `input.questions` from the form schema); `respond` `{answers}` (several
-  selections joined by a comma; labels are mapped back to the schema values) answers `{action:"accept", content}`, and
-  `{behavior:"deny"}` answers `{action:"cancel"}`. Non-form or unparseable elicitations are declined. Asks have no host
-  timeout; cancel, run end and a crash answer them cancelled (with `{action:"cancel"}` for a question).
+  `title`, else `kind`, else "tool"; the agent entry may normalize it first), `input` is the request's own parameters with
+  fields the earlier `tool_call` update carried filled into its `toolCall`, and `options` is the agent's option list exactly
+  as received. `respond` allow selects `allow_once`; when the agent offers no `allow_once` it selects `reject_once` (or the
+  cancelled outcome when there is none either). Deny selects `reject_once`, else the cancelled outcome. An
+  `elicitation/create` form is a `question` frame (`tool: "AskUserQuestion"`, `input.questions` from the form schema);
+  `respond` `{answers}` (several selections joined by a comma; labels are mapped back to the schema values) answers
+  `{action:"accept", content}`, and `{behavior:"deny"}` answers `{action:"cancel"}`. Droid and OMP forms use their agent
+  parsers when complete; an incomplete form falls back to the generic parser. Non-form or unparseable elicitations are
+  declined. Asks have no host timeout; cancel, run end and a crash answer them cancelled (with `{action:"cancel"}` for a
+  question).
 - **Requests.** `send` writes `session/prompt` with the person's text (minus T3's instruction wrapper) and image or
   resource blocks only when `promptCapabilities` allows them, and answers when the prompt is on the wire. ACP's prompt
-  has no message id, so the core's `messageId` is echoed in the accepted result and not sent to the agent. `steer` sends
+  has no message id, so the core's `messageId` is echoed in the accepted result and not sent to the agent. Kiro's
+  `/compact` is answered by its advertised `_kiro/session/compact` extension instead of a prompt. `steer` sends
   `session/cancel` and then a new `session/prompt` carrying the steering text; the run stays open and ends on the
-  replacement prompt's reply. `cancel` sends `session/cancel` and ends the run cancelled. `closeSession` cancels an open
-  run, sends `session/close` when advertised, and stops the process. A second `send` while a run is open is
-  `invalid_request`: the core queues its own messages.
+  replacement prompt's reply. Kiro steers natively through `_session/steer` (`{outcome:"queued"}`, no cancel). `cancel`
+  sends `session/cancel` and ends the run cancelled. `closeSession` cancels an open run, sends `session/close` when
+  advertised, and stops the process. A second `send` while a run is open is `invalid_request`: the core queues its own
+  messages.
 - **Models.** `models` returns `{models: [{id, name, isDefault, efforts: [{id, label, description?, isDefault?}],
   defaultEffort?}]}`. The catalog comes from the setup result's `configOptions` (category `model`, with efforts from
   `thought_level`/`reasoning`, the Mistral Vibe `thinking` category, and a model's `_meta.reasoningEfforts`) or from its
-  `models` state; bare ids are their own names. Without an open `sessionId` the request takes `agent`, `cwd` and optional
-  `confinement`, starts a throwaway agent, reads `session/new`, and stops it.
-- **Not supported by this family** (no capability): `fork` as a request, `stopTask`, `background`, `rollback`,
-  `readHistory`, a `usage` request, `probe`, and ACP `session/resume` for agents without `loadSession`.
+  `models` state; bare ids are their own names. Mistral Vibe's `thinking` levels apply to its current model only; Kiro's
+  per-model `_meta.kiro.effortLevels`/`defaultEffortLevel` become its efforts. Without an open `sessionId` the request
+  takes `agent`, `cwd` and optional `confinement`, starts a throwaway agent, reads `session/new`, and stops it.
+- **Not supported by this family** (no capability): `fork` as a request (a Kiro turn fork is the `open` `fork` operation),
+  `stopTask`, `background`, `rollback`, `readHistory`, a `usage` request, `probe`, and ACP `session/resume` for agents
+  without `loadSession`. T3's Kiro cloud-config/steering-note filters and native session list/delete are not ported.
 
 ## Errors
 
