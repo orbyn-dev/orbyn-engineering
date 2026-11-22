@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use orbyn_contracts::{
-    AnswerKey, Brief, CrewError, CrewHash, CrewId, CrewMember, CrewObject, CrewToken, DelegateTask,
-    ErrorCode, ModelSelection, RouteDecision, WorkerObject,
+    AnswerKey, Brief, CheckKind, CrewCheck, CrewError, CrewHash, CrewId, CrewMember, CrewObject,
+    CrewToken, DelegateTask, ErrorCode, ModelSelection, RouteDecision, WorkerObject,
 };
 use serde_json::{Value, json};
 
@@ -62,6 +62,74 @@ pub(super) struct Launch<'a> {
 /// The member id a task's worker has: its prefix and the start of the brief's hash.
 pub(super) fn member_of(prefix: &str, brief: &Brief) -> Result<CrewMember, CrewError> {
     CrewMember::new(format!("{prefix}-{}", &brief.id.as_str()[7..15])).map_err(invalid)
+}
+
+/// The check a start adds for the repository's own checks, and the label its log line carries.
+const INHERITED_CHECK: &str = "chk-repo-required";
+const INHERITED_LABEL: &str = "inherited";
+
+/// Whether this start still has to inherit the repository's own checks (issue #795): every task that writes
+/// gets them (docs/crew.md, "Verification without limits"), a review writes nothing so it runs none, and a key
+/// that already runs them keeps its own rather than gaining a second.
+pub(super) fn needs_repo_checks(brief: &Brief, key: &AnswerKey) -> bool {
+    !is_reviewer(brief)
+        && !key
+            .checks
+            .iter()
+            .any(|check| matches!(check.kind, CheckKind::RepoRequired))
+}
+
+/// Adds the repository's own checks to the key of a task that writes, at the commit it starts from
+/// (issue #795). One `repo_required` check is added, marked [`INHERITED_LABEL`]; it reads the file at that
+/// commit through [`super::autopilot::merge::repo_checks`], the reader the verifier and the merge queue also
+/// use, so a worker's edit to the file cannot lower the bar. The file's lines are not copied into the key,
+/// which is why the check reads them where they are trusted. A repository that declares no check, and a
+/// checkout with no starting commit to read them at, add nothing.
+async fn inherit_repo_checks(
+    thread: &orbyn_contracts::Thread,
+    brief: &Brief,
+    key: &mut AnswerKey,
+    base: Option<&str>,
+) -> Result<(), CrewError> {
+    if !needs_repo_checks(brief, key) {
+        return Ok(());
+    }
+    // No starting commit is no copy the worker cannot edit, so there is nothing to inherit. An explicit
+    // `repo_required` check reports that missing commit as an error when it runs.
+    let Some(base) = base else {
+        return Ok(());
+    };
+    let declared = super::autopilot::merge::repo_checks(std::path::Path::new(&thread.cwd), base)
+        .await
+        .map_err(|why| invalid(why.public_message()))?;
+    if declared.is_empty() {
+        return Ok(());
+    }
+    let inherited: CrewCheck = serde_json::from_value(json!({
+        "id": free_check_id(key, INHERITED_CHECK),
+        "kind": "repo_required",
+        "params": { "name": INHERITED_LABEL },
+        "proves": "The repository's own checks from .orbyn/crew.json pass at the commit this task started from.",
+        "does_not_prove": "That the scripts those checks run were left as the worker found them.",
+    }))
+    .map_err(|why| invalid(format!("the inherited repository check: {why}")))?;
+    inherited.validate()?;
+    key.checks.push(inherited);
+    // A key's id is its content's hash, taken again now that the start added a check to it.
+    key.id = CrewObject::AnswerKey(key.clone()).computed_id()?;
+    Ok(())
+}
+
+/// `base`, or the first free `base-N`: the lead's own key may already use the inherited check's id.
+fn free_check_id(key: &AnswerKey, base: &str) -> String {
+    let taken = |id: &str| key.checks.iter().any(|check| check.id.as_str() == id);
+    if !taken(base) {
+        return base.to_owned();
+    }
+    (2..=key.checks.len() + 2)
+        .map(|n| format!("{base}-{n}"))
+        .find(|id| !taken(id))
+        .unwrap_or_else(|| format!("{base}-{}", key.checks.len() + 2))
 }
 
 /// Who is calling a Crew tool.
@@ -324,6 +392,12 @@ impl Core {
         // task. They are read before the task exists so a refusal that needs the router's answer (the daily budget) sees
         // exactly the route the task would get.
         let (base, classes) = self.crew_path_classes(thread, &brief, true).await;
+        // Issue #795: the repository's own checks join the key of every task that writes, read at the commit
+        // this task starts from. It is added here, after H1, H2 and H11 above, and before anything is stored:
+        // the check holds fixed text and none of the file's lines, so no text from the repository can reach
+        // the key, the brief or a secret scan, and the file is read again at that commit when it runs.
+        let mut key = key;
+        inherit_repo_checks(thread, &brief, &mut key, base.as_deref()).await?;
         let trigger = links.crew_started.then(|| {
             links.trigger.clone().unwrap_or_else(|| {
                 tracing::warn!(
