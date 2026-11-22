@@ -175,7 +175,8 @@ creates an attachment**, as `POST /api/threads/{id}/attachments` does, and answe
 ## Earlier messages of an imported thread (K36)
 
 Built: `GET /api/threads/{id}/earlier?before=<cursor>` with the read in `orbyn-core`'s `agents/earlier.rs`, the route in
-`orbynd`'s `routes/threads.rs` and class `local`. The web client is not wired in production yet.
+`orbynd`'s `routes/threads.rs` and class `local`. The production web client is wired through `request()`, and it skips a thread whose
+record has no `imported_at`. Not observed against a real service.
 
 `GET /api/threads/{id}/earlier?before=<cursor>` (the cursor is optional).
 
@@ -204,5 +205,6 @@ Built: `GET /api/threads/{id}/earlier?before=<cursor>` with the read in `orbyn-c
 
 The export, import and composer attach routes are wired in production: the two menus save a file under the thread title plus
 `.orbyn.json`, the sheet creates the thread and opens it, and a transcript dropped on the composer becomes an attachment of that
-thread. Photo conversion is not offered, and the earlier-messages read has a service route but no production client yet (`earlierApi()` answers `null`). An imported thread still
-carries its `source` and `imported_at`, so its marker shows and its history keeps the imported messages.
+thread. Photo conversion is not offered, and the earlier-messages read is wired in production (`earlierApi()` sends the route) but was
+not observed against a real service. An imported thread still carries its `source` and `imported_at`, so its marker shows and its
+history keeps the imported messages.
