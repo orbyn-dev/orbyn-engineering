@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiFailure, request } from "../../../api/client";
 import type { EngineStatus } from "../../../api/types";
@@ -91,5 +91,55 @@ it("cancels a list the person walks away from, so the next list is not refused a
   expect(signals.map((signal) => signal.aborted)).toEqual([false]);
   view.unmount();
   expect(signals.map((signal) => signal.aborted)).toEqual([true]);
-  useWorkspace.setState({ projects: { data: [], error: null, loading: false } });
+});
+
+/** The one held request a panel keeps open while the test walks away. */
+const held: AbortSignal[] = [];
+const oneSession = { sessions: [{ session_id: "s1", title: "First chat", imported_thread_id: null }], next_cursor: null };
+
+async function showedSessions() {
+  held.length = 0;
+  useWorkspace.setState({ projects: { data: [{ id: "p1", name: "Project" } as never], error: null, loading: false } });
+  vi.mocked(request).mockImplementation(((_method: string, path: string, _body?: unknown, signal?: AbortSignal) => {
+    if (path.endsWith("/native-sessions/capabilities")) return Promise.resolve(caps as never);
+    if (path.includes("/native-sessions?")) return Promise.resolve(oneSession as never);
+    // Import and delete take their time: the agent is still working when the panel goes away.
+    if (signal) held.push(signal);
+    return new Promise(() => undefined);
+  }) as never);
+  const view = render(<NativeSessions engine={engine} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  await act(async () => {
+    screen.getByRole("button", { name: "List sessions" }).click();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  return view;
+}
+
+it("cancels an import the person walks away from, so the agent is freed", async () => {
+  const view = await showedSessions();
+  await act(async () => {
+    screen.getByRole("button", { name: "Import" }).click();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(held.map((signal) => signal.aborted)).toEqual([false]);
+  view.unmount();
+  expect(held.map((signal) => signal.aborted)).toEqual([true]);
+});
+
+it("cancels a delete the person walks away from, so the agent is freed", async () => {
+  const view = await showedSessions();
+  await act(async () => {
+    screen.getByRole("button", { name: "Delete" }).click();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  await act(async () => {
+    within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }).click();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(held.map((signal) => signal.aborted)).toEqual([false]);
+  view.unmount();
+  expect(held.map((signal) => signal.aborted)).toEqual([true]);
 });
