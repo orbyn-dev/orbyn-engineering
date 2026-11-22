@@ -480,8 +480,13 @@ async fn a_running_operation_excludes_changes_to_its_command_and_its_own_runs() 
     assert_eq!(w.service.finished(&thread).await, "completed");
 }
 
+/// Characterizes what the service already does: the operation's future owns the guard and the
+/// child, so abandoning a request frees the instance by dropping it, without waiting for the
+/// service to notice the disconnect. This passes at `main`; it is not the regression guard for
+/// the client wiring, and `cancelled_list_releases_the_engine_for_the_next_request` covers the
+/// same release with an observed close.
 #[tokio::test]
-async fn a_list_right_after_a_cancelled_one_succeeds_without_waiting() {
+async fn a_list_that_follows_an_abandoned_one_is_admitted_at_once() {
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpStream;
     use tokio::time::{Duration, timeout};
