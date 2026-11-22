@@ -1,7 +1,7 @@
 # Devices
 
 Local Android AVDs and iOS simulators, the actions each supports now, and one writer
-per device. The contract is [docs/devices.md](../../../../docs/devices.md); the routes
+per tool id. The contract is [docs/devices.md](../../../../docs/devices.md); the routes
 are `GET /api/devices`, `GET /api/devices/{id}` and `POST /api/devices/{id}/actions`.
 
 | Module | Owns |
@@ -16,15 +16,16 @@ timed-out list is `tool_failed` with fixed copy. Device ids are matched as a who
 against the list from the same call, and only the service's own stored tool id
 reaches argv: an Android id is the AVD name, while its tool id is the booted
 emulator serial (`emulator-5554`); an iOS tool id is the simulator UDID. One action
-per device; a second is `device_busy`.
+per tool id; a second is `device_busy`.
 
 ## Verified and not
 
 Verified with fake tools (unit tests in `tests.rs`): every parser, the argv for
 every action, platform isolation, list failure and timeout, foldable detection
 true/false/failure, orientation and posture reads, read-back after an action,
-every refusal, the 4 KiB/1 MiB/16 MiB bounds, process-group timeout, one writer
-and the log-line builder.
+every refusal, the 1 MiB/16 MiB caps, iOS screenshot directory cleanup and symlink
+refusal, process-group timeout, one writer and the log-line builder. The 4 KiB body
+bound is route-tested in `crates/orbynd/tests/devices.rs`.
 
 Not verified: any real `adb`, emulator console or `xcrun simctl` call, on any
 platform. Every command is marked `UNVERIFIED` in `tools` and listed in the

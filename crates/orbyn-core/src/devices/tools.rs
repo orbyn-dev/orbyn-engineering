@@ -1,11 +1,13 @@
 //! The fixed argv table. A client value only ever fills a validated enum or the
 //! checked 1-to-179 angle; it never becomes a program, subcommand or flag.
 //!
-//! Every command below is marked `UNVERIFIED`: it comes from the Android and
-//! Xcode tool documentation and T3's device code (`packages/contracts/src/device.ts`,
-//! `apps/server/src/device/DeviceActions.ts`, `DeviceHubOperations.ts` at
-//! `9168ca73d`), and none was run on a real AVD, emulator console or simulator
-//! while this service was built. The docs carry the same list.
+//! Every command below is marked `UNVERIFIED`. T3's device files
+//! (`packages/contracts/src/device.ts`, `apps/server/src/device/DeviceActions.ts`,
+//! `DeviceHubOperations.ts` at `9168ca73d`) give the shape of the actions; no T3
+//! code was copied. `adb emu fold`, `adb emu unfold`, the `hinge-angle0` sensor
+//! command and the `device_state` commands come from the Android emulator/AOSP
+//! documentation. None was run on a real AVD, emulator console or simulator while
+//! this service was built. The docs carry the same list.
 
 use std::path::Path;
 

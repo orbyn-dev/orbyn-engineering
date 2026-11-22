@@ -3,7 +3,7 @@
 //! delays and failures, so no real adb, emulator or simctl runs.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -82,6 +82,7 @@ if (tool === 'adb') {
     process.exit(0);
   }
   if (args.includes('emu') && args.includes('avd') && args.includes('name')) {
+    if (read('avd_name_fail', '0') === '1') exit(2, 'no avd name');
     const name = read('android_mode', 'flat') === 'foldable' ? 'Pixel_Fold' : 'Pixel_8';
     fs.writeSync(1, name + '\nOK\n');
     process.exit(0);
@@ -172,6 +173,17 @@ if (tool === 'xcrun') {
   if (maybeAction()) process.exit(0);
   if (args.includes('io') && args.includes('screenshot')) {
     const file = args[args.length - 1];
+    const fail = Number(read('screenshot_exit', '0'));
+    if (fail !== 0) exit(fail, 'screenshot failed');
+    if (read('screenshot_timeout', '0') === '1') {
+      write('pid', process.pid);
+      sleep(30000);
+      process.exit(0);
+    }
+    if (read('screenshot_symlink', '0') === '1') {
+      fs.symlinkSync(path.join(dir, 'outside.png'), file);
+      process.exit(0);
+    }
     const size = Number(read('screenshot_bytes', '64'));
     fs.writeFileSync(file, png(size));
     process.exit(0);
@@ -327,6 +339,28 @@ fn call_args(call: &Value) -> Vec<&str> {
         .collect()
 }
 
+/// The temporary PNG path the service handed to `xcrun simctl io`.
+fn screenshot_path(fake: &Fake) -> PathBuf {
+    let call = fake
+        .calls()
+        .into_iter()
+        .find(|call| {
+            call_args(call).starts_with(&["simctl", "io", "UDID-1", "screenshot", "--type=png"])
+        })
+        .expect("the iOS screenshot command ran");
+    let args = call_args(&call);
+    PathBuf::from(*args.last().expect("the screenshot path is the last arg"))
+}
+
+fn assert_screenshot_cleaned(fake: &Fake) {
+    let path = screenshot_path(fake);
+    assert!(!path.exists(), "{} still exists", path.display());
+    let directory = path
+        .parent()
+        .expect("the screenshot has a private directory");
+    assert!(!directory.exists(), "{} still exists", directory.display());
+}
+
 // Parsers.
 
 #[test]
@@ -467,6 +501,21 @@ fn a_device_id_must_be_prefix_plus_a_safe_name() {
         "android:\u{1}",
     ] {
         assert!(!parse::valid_id(id), "{id}");
+    }
+}
+
+#[test]
+fn an_avd_config_path_stays_inside_the_avd_home() {
+    let home = Path::new("avd-home");
+    assert_eq!(
+        parse::avd_config_path(home, "Pixel_8"),
+        Some(home.join("Pixel_8.avd").join("config.ini"))
+    );
+    for name in ["../x", "a/b", "a\\b", "..", ".", "/abs", "C:\\x", ""] {
+        assert!(
+            parse::avd_config_path(home, name).is_none(),
+            "{name:?} escaped the AVD folder"
+        );
     }
 }
 
@@ -826,13 +875,38 @@ async fn rotate_sets_the_value_and_reads_the_orientation_back() {
         output.device.orientation,
         Some(DeviceOrientation::LandscapeLeft)
     );
-    let calls = fake.calls();
-    let rotations: Vec<_> = calls
-        .iter()
-        .filter(|call| call["args"].to_string().contains("user_rotation"))
+    let rotations: Vec<_> = fake
+        .calls()
+        .into_iter()
+        .filter(|call| call_args(call).contains(&"settings"))
         .collect();
-    assert_eq!(rotations.len(), 1);
-    assert!(rotations[0]["args"].to_string().contains("\"1\""));
+    assert_eq!(rotations.len(), 2, "{rotations:?}");
+    assert_eq!(
+        call_args(&rotations[0]),
+        [
+            "-s",
+            "emulator-5554",
+            "shell",
+            "settings",
+            "put",
+            "system",
+            "accelerometer_rotation",
+            "0"
+        ]
+    );
+    assert_eq!(
+        call_args(&rotations[1]),
+        [
+            "-s",
+            "emulator-5554",
+            "shell",
+            "settings",
+            "put",
+            "system",
+            "user_rotation",
+            "1"
+        ]
+    );
 }
 
 #[tokio::test]
@@ -951,14 +1025,22 @@ async fn hinge_sets_the_angle() {
         .await
         .unwrap();
     assert_eq!(output.device.fold.as_ref().unwrap().hinge_angle, Some(90.0));
-    let set: Vec<_> = fake
+    let call = fake
         .calls()
         .into_iter()
-        .filter(|call| call["args"].to_string().contains("hinge-angle0"))
-        .collect();
-    assert!(
-        set.iter()
-            .any(|call| call["args"].to_string().contains("90"))
+        .find(|call| call_args(call).ends_with(&["emu", "sensor", "set", "hinge-angle0", "90"]))
+        .expect("the free hinge angle command ran");
+    assert_eq!(
+        call_args(&call),
+        [
+            "-s",
+            "emulator-5554",
+            "emu",
+            "sensor",
+            "set",
+            "hinge-angle0",
+            "90"
+        ]
     );
 }
 
@@ -1170,6 +1252,23 @@ async fn fold_actions_on_a_flat_device_are_not_foldable() {
 }
 
 #[tokio::test]
+async fn an_unnameable_avd_is_listed_once_by_serial() {
+    let fake = Fake::new();
+    fake.set("avd_name_fail", 1);
+    let list = fake.devices().list().await;
+    let android: Vec<_> = list
+        .devices
+        .iter()
+        .filter(|device| device.platform == DevicePlatform::Android)
+        .map(|device| device.id.as_str())
+        .collect();
+    assert_eq!(android, ["android:emulator-5554"]);
+    let device = find(&list, "android:emulator-5554");
+    assert_eq!(device.name, "emulator-5554");
+    assert_eq!(device.state, DeviceState::Booted);
+}
+
+#[tokio::test]
 async fn a_second_action_on_one_device_is_device_busy() {
     let fake = Fake::new();
     fake.set("action_delay_ms", 500);
@@ -1210,6 +1309,45 @@ async fn a_second_action_on_one_device_is_device_busy() {
         )
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn busy_is_keyed_on_the_tool_id_not_the_wire_id() {
+    let fake = Fake::new();
+    fake.set("action_delay_ms", 2000);
+    let devices = Arc::new(fake.devices());
+    let first = {
+        let devices = devices.clone();
+        tokio::spawn(async move {
+            devices
+                .act(
+                    "android:Pixel_8",
+                    DeviceActionInput::Button {
+                        value: DeviceButton::Home,
+                    },
+                )
+                .await
+        })
+    };
+    fake.wait_for_action().await;
+    // A second list cannot read the AVD name, so the same running emulator now
+    // has the serial as its wire id. One writer must still refuse it.
+    fake.set("avd_name_fail", 1);
+    let error = devices
+        .act(
+            "android:emulator-5554",
+            DeviceActionInput::Button {
+                value: DeviceButton::Back,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "device_busy");
+    assert_eq!(error.status(), 409);
+    assert_eq!(error.public_message(), DEVICE_BUSY_MESSAGE);
+    // The first action reads back under the name it started with.
+    fake.set("avd_name_fail", 0);
+    first.await.unwrap().unwrap();
 }
 
 #[tokio::test]
@@ -1365,6 +1503,60 @@ async fn ios_screenshot_writes_a_temporary_file_and_answers_png() {
     );
     assert_eq!(args.len(), 6);
     assert!(args[5].ends_with(".png"));
+    assert_screenshot_cleaned(&fake);
+}
+
+#[tokio::test]
+async fn a_failed_ios_screenshot_removes_its_directory() {
+    let fake = Fake::new();
+    fake.set("screenshot_exit", 2);
+    let error = fake
+        .devices()
+        .act("ios:UDID-1", DeviceActionInput::Screenshot {})
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "tool_failed");
+    assert_screenshot_cleaned(&fake);
+}
+
+#[tokio::test]
+async fn a_timed_out_ios_screenshot_removes_its_directory() {
+    let fake = Fake::new();
+    fake.set("screenshot_timeout", 1);
+    let error = fake
+        .devices_with(
+            fake.all_tools(),
+            Timeouts {
+                list: Duration::from_secs(10),
+                action: Duration::from_secs(1),
+                screenshot: Duration::from_secs(1),
+            },
+        )
+        .act("ios:UDID-1", DeviceActionInput::Screenshot {})
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "tool_timeout");
+    assert_screenshot_cleaned(&fake);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_symlink_at_the_ios_screenshot_path_is_tool_failed() {
+    let fake = Fake::new();
+    let outside = fake.dir.path().join("outside.png");
+    std::fs::write(&outside, fake_png(64)).unwrap();
+    fake.set("screenshot_symlink", 1);
+    let error = fake
+        .devices()
+        .act("ios:UDID-1", DeviceActionInput::Screenshot {})
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "tool_failed");
+    assert_screenshot_cleaned(&fake);
+    assert!(
+        outside.exists(),
+        "the symlink target is not the service's to remove"
+    );
 }
 
 #[test]

@@ -119,14 +119,18 @@ fn fake(dir: &Path) -> PathBuf {
     bin
 }
 
-fn options(dir: &TempDir, bin: &Path) -> Options {
+fn options(dir: &TempDir, bin: &Path, with_person_key: bool) -> Options {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let path = std::env::join_paths(
         std::iter::once(bin.to_path_buf()).chain(std::env::split_paths(&path)),
     )
     .unwrap();
     Options {
-        args: vec!["--parent-stdin".into()],
+        args: if with_person_key {
+            vec!["--parent-stdin".into()]
+        } else {
+            Vec::new()
+        },
         env: vec![
             ("ORBYN_DEV_DISABLE_PERSON_KEY".into(), "0".into()),
             ("ORBYN_LOG".into(), "info".into()),
@@ -140,8 +144,15 @@ fn options(dir: &TempDir, bin: &Path) -> Options {
 }
 
 fn service(dir: &TempDir) -> Service {
+    service_with(dir, true)
+}
+
+fn service_with(dir: &TempDir, with_person_key: bool) -> Service {
     let bin = fake(dir.path());
-    Service::start(&dir.path().join("data"), options(dir, &bin))
+    Service::start(
+        &dir.path().join("data"),
+        options(dir, &bin, with_person_key),
+    )
 }
 
 fn calls(dir: &TempDir) -> String {
@@ -211,8 +222,29 @@ async fn device_reads_are_local_and_every_action_is_person_class() {
     assert_eq!(list["devices"][0]["id"], "android:Pixel_8");
     assert_eq!(list["platforms"][0]["available"], true);
     let detail = service.json("/api/devices/android:Pixel_8").await;
-    assert_eq!(detail["device"]["id"], "android:Pixel_8");
+    assert_eq!(detail["id"], "android:Pixel_8");
+    assert_eq!(detail["name"], "Pixel_8");
     assert_eq!(detail["actions"][0], "screenshot");
+    assert!(detail.get("device").is_none(), "{detail}");
+}
+
+#[tokio::test]
+async fn a_shell_less_service_answers_desktop_required() {
+    let dir = TempDir::new();
+    let service = service_with(&dir, false);
+    assert!(service.person_key.is_none());
+    let (status, answer) = post_without_key(&service, json!({ "type": "screenshot" })).await;
+    assert_eq!(status, 403, "{answer}");
+    assert_eq!(answer["code"], "desktop_required", "{answer}");
+    assert_eq!(
+        answer["message"],
+        "This action is only available in the desktop app."
+    );
+    assert!(
+        calls(&dir).is_empty(),
+        "a refused write started a device tool: {}",
+        calls(&dir)
+    );
 }
 
 #[tokio::test]

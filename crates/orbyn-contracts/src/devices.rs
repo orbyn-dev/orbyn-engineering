@@ -194,9 +194,11 @@ impl DeviceActionType {
 }
 
 wire! {
-/// `GET /api/devices/{id}`: the device and the actions it supports right now.
-#[serde(deny_unknown_fields)]
+/// `GET /api/devices/{id}`: the device's own fields, flat, plus the actions it
+/// supports right now. The web reads `detail.id` and `detail.actions`.
 pub struct DeviceDetail {
+    #[serde(flatten)]
+    #[ts(flatten)]
     pub device: Device,
     pub actions: Vec<DeviceActionType>,
 }
@@ -247,6 +249,28 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn a_device_detail_is_the_device_fields_plus_actions() {
+        let detail = DeviceDetail {
+            device: Device {
+                id: "android:Pixel_8".into(),
+                name: "Pixel 8".into(),
+                platform: DevicePlatform::Android,
+                state: DeviceState::Booted,
+                version: "14".into(),
+                foldable: false,
+                fold: None,
+                orientation: Some(DeviceOrientation::Portrait),
+            },
+            actions: vec![DeviceActionType::Screenshot, DeviceActionType::Rotate],
+        };
+        let value = serde_json::to_value(detail).unwrap();
+        assert_eq!(value["id"], "android:Pixel_8");
+        assert_eq!(value["name"], "Pixel 8");
+        assert_eq!(value["actions"], json!(["screenshot", "rotate"]));
+        assert!(value.get("device").is_none(), "{value}");
     }
 
     #[test]

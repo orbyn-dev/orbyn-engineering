@@ -15,7 +15,7 @@ call (short cache allowed, at most 2 s); the service never stores it.
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `id` | string, max 256 | Stable per platform: AVD name for Android, simulator UDID for iOS. Prefixed `android:` or `ios:` so ids never collide. |
+| `id` | string, max 256 | Stable per platform: AVD name for Android, or `android:<serial>` when the tool cannot read the AVD name; simulator UDID for iOS. Prefixed `android:` or `ios:` so ids never collide. |
 | `name` | string | Display name, such as `Pixel 8` or `iPhone 17 Pro`. |
 | `platform` | `android` or `ios` | |
 | `state` | `booted` or `shutdown` | T3 has `booted: boolean`; this contract names the state so a transition can be added later. These are the only two the service sends: a freshly started device reads as `shutdown` until booted, and `booting` is never sent. |
@@ -36,8 +36,10 @@ call (short cache allowed, at most 2 s); the service never stores it.
 `DevicePlatformAvailability`). Physical devices, SSH hosts, Expo or Simlock pools are not in the beta: the list holds local AVDs and
 simulators only.
 
-`GET /api/devices/{id}` answers `{device: Device, actions: ActionType[]}`, the action types this device supports right now. The web
-shows only what `actions` lists (T3: "the drawer only shows what the platform can do").
+When a booted emulator's AVD name cannot be read, that call lists booted devices by `android:<serial>` only: the shutdown AVD rows
+are omitted, so the same running emulator is not drawn a second time as a shutdown row.
+
+`GET /api/devices/{id}` answers the device's own fields **flat**, plus `actions`: `{id, name, platform, state, version, foldable, fold?, orientation?, actions: ActionType[]}`. The action types are what the device supports right now; the web reads `detail.id` and `detail.actions` at the top level and shows only what `actions` lists (T3: "the drawer only shows what the platform can do").
 
 ### Foldable detection
 
@@ -87,35 +89,38 @@ and the 1 to 179 `hinge` bound below, are still to confirm.**
 
 Open questions: whether Android reports `half_opened` for 130 or only by angle, and what the emulator accepts at exactly 0 and 180.
 The service never derives a posture name from an angle: it reports the name the tool gave, and `half_opened` at 130 stays an open
-question. Until confirmed, the service may answer `action_unsupported` for a value the tool rejects, and the web shows the message.
+question. `action_unsupported` is only for a platform/action combination the service refuses (iOS rotate and `button` `back`/`recents`);
+a tool that rejects a value exits non-zero and the answer is `502 tool_failed`.
 
-`fold` and `unfold` are required on every foldable. `hinge` and `hinge_preset` are offered (listed in `actions`) only when the tool
-can set an angle. Failure leaves the previous posture; the answer's `device.fold` is what the web shows.
+`fold` and `unfold` are required on every foldable. `hinge` and `hinge_preset` are listed for **every booted foldable**; there is no
+further capability check. A tool that rejects a value is `502 tool_failed`, not `action_unsupported`. Failure leaves the previous
+posture; the answer's `device.fold` is what the web shows.
 
 ## Person-class and 404
 
 Reads (`GET /api/devices`, `GET /api/devices/{id}`) are local only and not Person-class. **Every write is Person-class: all
-`POST /api/devices/{id}/actions` types**, including `screenshot` (it exposes the screen) and `power_off`. A client without the person key is
-refused with `403 person_required`, before the body is read and before any process starts.
+`POST /api/devices/{id}/actions` types**, including `screenshot` (it exposes the screen) and `power_off`. A service started with a
+desktop shell has a person key: a request without it is `403 person_required`. A shell-less service has no person key at all, so every
+write is `403 desktop_required`. Both refusals happen before the body is read and before any process starts.
 
 The three routes are always on, like the preview and media routes; there is no feature flag. An older service without them answers
-`404`, and the web hides the Device feature: no panel entry, no error shown. On `404` from `GET /api/devices` (a service without this contract) the web opens no Device panel; the "+" entry after
-Review and comments is drawn disabled with a short reason, and no error is shown. On `404 device_not_found` from a `{id}` route the web removes that device from its list and refreshes. An empty `devices`
-array with `available: false` platforms shows the platform message, not a hidden feature.
+`404`: `GET /api/devices` opens no Device panel, the "+" entry after Review and comments is drawn **disabled with a short reason**, and
+no error is shown. On `404 device_not_found` from a `{id}` route the web removes that device from its list and refreshes. An empty
+`devices` array with `available: false` platforms shows the platform message, not a hidden feature.
 
 ## Security
 
 | Rule | Requirement |
 | --- | --- |
 | Argv only | Every platform command is spawned as an argv array. No shell, no `sh -c`, no string interpolation, no `adb shell` with composed strings. |
-| Command allowlist | A fixed table maps each action `type` to its exact `adb`, `emulator` or `xcrun simctl` argv. Anything else is `action_unsupported`. No client text becomes a command name, subcommand or flag. |
-| Device ids | `{id}` is matched, as a whole string, against the list the service itself produced in the same call. Unlisted ids are `device_not_found`, and the client's text is never passed to a command; the service passes its own stored tool id: the booted AVD's adb serial (`emulator-5554`) for Android, the simulator UDID for iOS. |
+| Command allowlist | A fixed table maps each action `type` to its exact `adb`, `emulator` or `xcrun simctl` argv. Anything not in the table is refused; a platform/action combination the service does not implement is `action_unsupported`. No client text becomes a command name, subcommand or flag. |
+| Device ids | `{id}` is matched, as a whole string, against the list the service itself produced in the same call. Unlisted ids are `device_not_found`, and the client's text is never passed to a command; the service passes its own stored tool id: the booted AVD's adb serial (`emulator-5554`) for Android, or `android:<serial>` when the AVD name cannot be read; the simulator UDID for iOS. |
 | Values | `angle` is an integer 1 to 179; enums are matched against the fixed sets above; the body is decoded against the typed schema before any process starts. |
-| Timeouts | List: 10 s. Action: 12 s (T3's fold request uses 12 s). Screenshot: 15 s. On timeout the process is killed (whole process group) and the code is `tool_timeout`. |
-| Output caps | Tool stdout and stderr are capped at 1 MiB each, screenshots at 16 MiB. Over the cap: kill and `tool_output_too_large`. |
+| Timeouts | List: 10 s per list read. Action command: 12 s (T3's fold request uses 12 s). Screenshot: 15 s. An action reads the list once before the command and once again after it, so an HTTP action can take about 32 s (12 s plus two 10 s list reads). On a command timeout the process group is killed and the code is `tool_timeout`. |
+| Output caps | Tool stdout and stderr are capped at 1 MiB each. Android screenshots stream through a 16 MiB stdout cap; over it the process is killed and the code is `tool_output_too_large`. iOS `simctl io` writes a file, so its size is checked **after simctl exits**; the 15 s screenshot timeout bounds how long simctl can write it. An oversized iOS file answers `tool_output_too_large`, but the process has already exited, so there is no kill. |
 | No secrets in logs | Log the action type, device id, exit status and duration only. Never log request bodies, screenshots, paths from `$HOME`, or tool environment. Error `message` text is fixed copy, never raw tool output. |
 | Tool absent | Android needs both `adb` and `emulator`; iOS needs `xcrun`. If a platform's tool is missing, that platform is `available: false` with `tool_missing`, and its actions answer `409 tool_missing` with the fixed copy below. The other platform keeps working. |
-| One writer | One action per device at a time; a second is `409 device_busy`. |
+| One writer | One action per **tool id** at a time; a second is `409 device_busy`, even if the device's wire id changed between lists. |
 | Scope | Local devices only. No hub proxy, no shell-exec route, no SSH, no remote hosts. (T3's own docs call a shell-exec hub route a hazard; this contract has none.) |
 
 ## Errors and codes
@@ -125,15 +130,16 @@ Body: `{code, message, ...}`. The web acts on `code` and shows `message`.
 | Status | `code` | When |
 | --- | --- | --- |
 | 400 | `invalid_action` | Unknown `type`, bad or missing field, angle outside 1 to 179, body over 4 KiB |
-| 403 | `person_required` | A write without a Person session |
+| 403 | `person_required` | A write on a service with a person key, with no valid person key on the request |
+| 403 | `desktop_required` | A write on a shell-less service, which has no person key at all |
 | 404 | `device_not_found` | `{id}` is not in the list the service produced |
-| 404 | (route absent) | Service without devices; the web hides the feature |
+| 404 | (route absent) | Service without devices; the web draws the disabled entry, with no error |
 | 409 | `tool_missing` | `adb`/`emulator` or `xcrun` not installed, or not the right toolchain (Android: platform-tools and emulator; iOS: Xcode) |
 | 409 | `device_not_booted` | Action needs a booted device (every action; a shutdown device lists none) |
 | 409 | `device_busy` | Another action is running on this device |
 | 422 | `not_foldable` | `fold`, `unfold`, `hinge` or `hinge_preset` on a device with `foldable: false` |
-| 422 | `action_unsupported` | The platform or tool cannot do this action or value (T3 `unsupported` and `helper_missing`) |
-| 502 | `tool_failed` | The tool exited non-zero; `message` is fixed copy |
+| 422 | `action_unsupported` | The platform/action combination is not implemented (iOS rotate, `button` `back`/`recents`) |
+| 502 | `tool_failed` | The tool exited non-zero or its result could not be read; `message` is fixed copy |
 | 504 | `tool_timeout` | A timeout above elapsed |
 | 413 | `tool_output_too_large` | Output cap above exceeded |
 
@@ -146,6 +152,7 @@ not an HTTP error: that platform answers `available: false` with code `tool_fail
 | --- | --- |
 | `invalid_action` | "That action is not valid." |
 | `person_required` | "This action needs the person at the desktop app." |
+| `desktop_required` | "This action is only available in the desktop app." |
 | `device_not_found` | "That device is no longer there." |
 | `tool_missing` (Android) | "Android tools were not found. Install Android platform-tools and the emulator." |
 | `tool_missing` (iOS) | "Xcode was not found. Install Xcode, then try again." |
@@ -160,7 +167,7 @@ not an HTTP error: that platform answers `available: false` with code `tool_fail
 
 ## Commands (argv)
 
-Every command is spawned as an argv array. The device id and platform id are the service's own, and only a validated enum or the
+Every command is spawned as an argv array. The device id and tool id are the service's own, and only a validated enum or the
 1-to-179 angle fills a client value. **Not verified on a real machine:** every row below.
 
 | When | Argv |
@@ -248,8 +255,8 @@ installs it, and `scripts/assert-no-previews.mjs` fails a build that ships the r
   Ready, Update available or Not checked; Show steps opens the vendor's steps with a Copy command and an official link; Check now
   re-reads. Offline keeps the installed versions and hides any update claim. With no Planned client every row and the check are Planned.
 - **Toolbar and fold (H24, H25; existing).** Android, booted: Back, Home and Recents (`button`), Rotate, Screenshot, Power off. iOS,
-  booted: Screenshot and Power off only; Rotate and Home are disabled and marked Planned. iOS devices are never foldable in the UI and
-  show no fold or hinge control. Controls appear only when the device's `GET /api/devices/{id}` `actions` lists them. A device that is not
+  booted: Screenshot and Power off only; Rotate and Home are disabled and marked Planned. The service does implement iOS `button home`
+  (`xcrun simctl ui <udid> home`); the web hides it. iOS devices are never foldable in the UI and show no fold or hinge control. Controls appear only when the device's `GET /api/devices/{id}` `actions` lists them. A device that is not
   `booted` shows no controls. The bar shows the orientation the service reports (Portrait, Landscape left, Portrait upside down,
   Landscape right), and Rotate sends the next one in the contract's order; with no reported orientation it sends `landscape_left`
   (the first next from portrait) and the bar shows none. Fold, Unfold (one shows at a time by the returned posture; both when it is unreported), a hinge slider 1
@@ -267,7 +274,7 @@ installs it, and `scripts/assert-no-previews.mjs` fails a build that ships the r
   agent's four thread tools and paused. Record, the tools drawer and agent permission stay Planned.
 - **One click, one write.** A ref guards every write, the controls are disabled while one runs, and a failure shows the app's own
   sentence plus the service's message, capped, with Try again. `404 device_not_found` drops the device, clears its tab, shows the
-  service's sentence and reads the list again. All writes go through the pending Person route
+  service's sentence and reads the list again. All writes go through the Person route
   `POST /api/devices/{id}/actions` (`web/src/api/personKey.ts`).
 - **Text.** Device names, tab labels, versions, tool names and messages are cut (names 60, messages 160 to 200 characters) and rendered
   as text; states, platforms, orientations and postures are looked up in `Map`s so a service-chosen key such as `__proto__` is
@@ -307,9 +314,10 @@ argv table and the one-writer set; `crates/orbynd/src/routes/devices.rs` owns th
 - **Verified, with fake `adb`, `emulator` and `xcrun` programs:** every parser, the argv for every action and refusal (unknown
   type, extra field, angle 0/180/1000/-1, body over 4 KiB, unlisted ids answered `device_not_found`, injection-shaped ids
   starting no process), platform isolation when a tool is missing, a list failure or timeout, foldable detection true/false/failure, orientation and posture
-  reads, state read-back after an action, one writer, the 1 MiB/16 MiB caps and a process-group kill on timeout.
+  reads, state read-back after an action, one writer keyed on the tool id, the 1 MiB/16 MiB caps, iOS screenshot directory
+  cleanup and symlink refusal, and a process-group kill on timeout.
 - **Not verified:** any real `adb`, emulator console or `xcrun simctl` call, on any platform. The hinge presets (0/130/180), the
   1 to 179 bound, and whether Android calls 130 `half_opened` are among the open points above. The command table marks every
   argv as unverified.
 - **Always on, no feature flag**, like the neighbouring preview and media routes; a client that reaches an older service still
-  gets the `404` the web already hides the feature on.
+  gets the `404` for which the web draws the disabled entry.

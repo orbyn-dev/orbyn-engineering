@@ -191,7 +191,25 @@ impl Devices {
             log_action(action.as_str(), "invalid", None, started.elapsed());
             return Err(device_not_found());
         };
-        let busy = match self.try_busy(&reference.id) {
+        let listed = self.listed().await;
+        if let Some(error) = unavailable_error(&listed.platforms, reference.platform) {
+            log_action(action.as_str(), &reference.id, None, started.elapsed());
+            return Err(error);
+        }
+        let ListedDevice { device, tool_id } = match listed
+            .devices
+            .into_iter()
+            .find(|listed| listed.device.id == reference.id)
+        {
+            Some(listed) => listed,
+            None => {
+                log_action(action.as_str(), &reference.id, None, started.elapsed());
+                return Err(device_not_found());
+            }
+        };
+        // One writer per tool id: a changing AVD name must not let a second
+        // action through for the same emulator.
+        let busy = match self.try_busy(&tool_id) {
             Ok(busy) => busy,
             Err(error) => {
                 log_action(action.as_str(), &reference.id, None, started.elapsed());
@@ -199,7 +217,9 @@ impl Devices {
             }
         };
         let mut exit = None;
-        let result = self.act_inner(&reference, &input, &mut exit).await;
+        let result = self
+            .act_device(&reference, device, &tool_id, &input, &mut exit)
+            .await;
         log_action(action.as_str(), &reference.id, exit, started.elapsed());
         drop(busy);
         result
@@ -219,21 +239,14 @@ impl Devices {
         })
     }
 
-    async fn act_inner(
+    async fn act_device(
         &self,
         reference: &DeviceRef,
+        device: Device,
+        tool_id: &str,
         input: &DeviceActionInput,
         exit: &mut Option<i32>,
     ) -> Result<DeviceActionOutput> {
-        let listed = self.listed().await;
-        if let Some(error) = unavailable_error(&listed.platforms, reference.platform) {
-            return Err(error);
-        }
-        let ListedDevice { device, tool_id } = listed
-            .devices
-            .into_iter()
-            .find(|listed| listed.device.id == reference.id)
-            .ok_or_else(device_not_found)?;
         if device.state != DeviceState::Booted {
             return Err(device_not_booted());
         }
@@ -268,7 +281,7 @@ impl Devices {
 
         if matches!(input, DeviceActionInput::Screenshot { .. }) {
             let bytes = self
-                .capture_screenshot(&tool, &device, &tool_id, exit)
+                .capture_screenshot(&tool, &device, tool_id, exit)
                 .await?;
             let image = base64::engine::general_purpose::STANDARD.encode(&bytes);
             let device = self.read_back(reference, &device, false).await?;
@@ -279,7 +292,7 @@ impl Devices {
             });
         }
 
-        let commands = tools::action_commands(device.platform, input, &tool_id, None)
+        let commands = tools::action_commands(device.platform, input, tool_id, None)
             .ok_or_else(action_unsupported)?;
         self.execute(
             &tool,
@@ -359,13 +372,29 @@ impl Devices {
             return png(bytes);
         }
 
-        // `simctl io` writes a file, so the service names a private one and removes
-        // it after reading, capped at the same 16 MiB.
-        let path = std::env::temp_dir().join(format!("orbyn-device-{}.png", crate::util::new_id()));
+        // `simctl io` writes a file, so the service creates a private directory
+        // (0700 on Unix) and removes the whole directory on every exit path.
+        let directory =
+            std::env::temp_dir().join(format!("orbyn-device-{}", crate::util::new_id()));
+        let path = directory.join("screenshot.png");
         if path.to_str().is_none() {
             return Err(tool_failed());
         }
-        let _cleanup = TempPath(path.clone());
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&directory).map_err(|_| tool_failed())?;
+        let _cleanup = ScreenshotDir(directory.clone());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // The create mode is subject to the umask; pin it after creation too.
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+                .map_err(|_| tool_failed())?;
+        }
         let commands = tools::action_commands(
             device.platform,
             &DeviceActionInput::Screenshot {},
@@ -382,14 +411,20 @@ impl Devices {
             exit,
         )
         .await?;
-        match std::fs::metadata(&path) {
-            Ok(metadata) if metadata.len() > SCREENSHOT_CAP as u64 => Err(tool_output_too_large()),
-            Ok(metadata) if metadata.is_file() && metadata.len() > 0 => {
-                let bytes = std::fs::read(&path).map_err(|_| tool_failed())?;
-                png(bytes)
-            }
-            _ => Err(tool_failed()),
+        // Check the path itself, not what a symlink points at. The directory is
+        // private, so only a collaborating tool can plant one here.
+        let metadata = std::fs::symlink_metadata(&path).map_err(|_| tool_failed())?;
+        if !metadata.file_type().is_file() {
+            return Err(tool_failed());
         }
+        if metadata.len() > SCREENSHOT_CAP as u64 {
+            return Err(tool_output_too_large());
+        }
+        if metadata.len() == 0 {
+            return Err(tool_failed());
+        }
+        let bytes = std::fs::read(&path).map_err(|_| tool_failed())?;
+        png(bytes)
     }
 
     async fn execute(
@@ -481,37 +516,48 @@ impl Devices {
         let attached = self.required(adb, &["devices"]).await?;
         let listed = self.required(emulator, &["-list-avds"]).await?;
         let avds = parse::avd_names(&listed);
-        let mut devices: Vec<ListedDevice> = Vec::new();
-        let mut positions: HashMap<String, usize> = HashMap::new();
-        for name in avds {
-            let id = format!("android:{name}");
-            if !parse::valid_id(&id) {
-                continue;
-            }
-            positions.insert(name.clone(), devices.len());
-            devices.push(ListedDevice {
-                device: Device {
-                    id,
-                    name: name.clone(),
-                    platform: DevicePlatform::Android,
-                    state: DeviceState::Shutdown,
-                    version: String::new(),
-                    foldable: self.avd_foldable(&name),
-                    fold: None,
-                    orientation: None,
-                },
-                // Unused while shutdown; the booted row replaces it with the serial.
-                tool_id: name.clone(),
-            });
-        }
-
-        for serial in parse::adb_emulator_serials(&attached) {
+        let serials = parse::adb_emulator_serials(&attached);
+        let mut named: Vec<(String, Option<String>)> = Vec::new();
+        for serial in serials {
             let name = self
                 .text(adb, &["-s", &serial, "emu", "avd", "name"])
                 .await
                 .and_then(|text| parse::first_line(&text))
-                .filter(|name| parse::valid_id(&format!("android:{name}")))
-                .unwrap_or_else(|| serial.clone());
+                .filter(|name| parse::valid_id(&format!("android:{name}")));
+            named.push((serial, name));
+        }
+        // The AVD list cannot be matched to a running emulator whose name the tool
+        // will not report. Showing the shutdown list then would draw the same
+        // emulator twice, so the booted serial rows are the whole list instead.
+        let unnamed = named.iter().any(|(_, name)| name.is_none());
+        let mut devices: Vec<ListedDevice> = Vec::new();
+        let mut positions: HashMap<String, usize> = HashMap::new();
+        if !unnamed {
+            for name in avds {
+                let id = format!("android:{name}");
+                if !parse::valid_id(&id) {
+                    continue;
+                }
+                positions.insert(name.clone(), devices.len());
+                devices.push(ListedDevice {
+                    device: Device {
+                        id,
+                        name: name.clone(),
+                        platform: DevicePlatform::Android,
+                        state: DeviceState::Shutdown,
+                        version: String::new(),
+                        foldable: self.avd_foldable(&name),
+                        fold: None,
+                        orientation: None,
+                    },
+                    // Unused while shutdown; the booted row replaces it with the serial.
+                    tool_id: name.clone(),
+                });
+            }
+        }
+
+        for (serial, name) in named {
+            let name = name.unwrap_or_else(|| serial.clone());
             let id = format!("android:{name}");
             if !parse::valid_id(&id) {
                 continue;
@@ -681,11 +727,13 @@ impl Drop for BusyGuard<'_> {
     }
 }
 
-struct TempPath(PathBuf);
+/// Owns the per-screenshot temporary directory. Removing it removes the PNG and
+/// anything the tool may have left beside it, including a planted symlink.
+struct ScreenshotDir(PathBuf);
 
-impl Drop for TempPath {
+impl Drop for ScreenshotDir {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 

@@ -183,6 +183,9 @@ pub(super) fn avd_config_path(
 ) -> Option<std::path::PathBuf> {
     use std::path::Component;
 
+    if name.is_empty() || name.contains(['/', '\\']) {
+        return None;
+    }
     let mut components = std::path::Path::new(name).components();
     match (components.next(), components.next()) {
         (Some(Component::Normal(_)), None) => {
