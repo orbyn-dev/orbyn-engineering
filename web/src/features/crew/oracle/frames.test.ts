@@ -5,7 +5,7 @@ import { ORACLE_FRAMES } from "./names";
 const SHOWS: Record<string, string[]> = {
   "oracle-settings": ["Crew › Independent oracle", "Brief and contract facts", "Tasks that change code · Proposed", "Workers run as you, with your machine’s permissions."],
   "oracle-languages": ["Crew › Independent oracle › Mutation tools", "None Crew supports yet", "Install cargo-mutants for this project", "Proposed: Engineering sets the real values"],
-  "oracle-report": ["Add a rate limit to the login route", "Answer key check 4 · Claude Code · Sonnet 5.5 · exit 0 · 5d2e1a8", "Many addresses at once", "15 of 18 killed · 3 survived"],
+  "oracle-report": ["Add a rate limit to the login route", "Answer key check 4 · Claude Code · Sonnet 5.5 · exit 0 · 5d2e1a8", "Many addresses at once", "15 of 18 killed · 3 survived", "Run all againPlanned", "The app has no Report page"],
   "oracle-key": ["Add a rate limit to the login route", "The lead wrote the brief, the scope and the contract facts for the login route.", "Check written by the author", "kills no mutant on its own"],
   "oracle-gate-running": ["Add a rate limit to the login route", "Another engine, another vendor · saw the brief and the contract facts, not the code", "11 of 18 mutants run so far", "Codex · GPT-5.5 · commit 5d2e1a8 · 3 files · +96 −4."],
   "oracle-gate-survivors": ["Add a rate limit to the login route", "The gate passed: the key killed 15 of 18 mutants.", "No check sends exactly five requests, so the edge of the limit is not tested.", "The check asserts that the header is there, not its value."],

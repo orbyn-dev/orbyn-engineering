@@ -24,7 +24,7 @@ export function FlowArtifacts() {
                   <span>Scope</span>
                   <b>auth/redirect.ts</b>
                   <span>Answer key</span>
-                  <b>3 checks, no limit</b>
+                  <b>3 checks</b>
                   <span>Route</span>
                   <b>Claude Code · Sonnet 5.5</b>
                 </div>
@@ -58,8 +58,8 @@ export function FlowArtifacts() {
                   <span>Check 3 of 3</span>
                   <b>File scope · passed</b>
                 </div>
-                <div className="cx-ra"><Btn className="cx-btn">Open results</Btn><Btn className="cx-ghost">Re-run all</Btn></div>
-                <div style={{ marginTop: "6px" }}><span className="cx-cwpv" style={{ marginLeft: "0" }}>Re-run all: Available when the write route ships</span></div>
+                <div className="cx-ra"><Btn className="cx-btn">Open results</Btn><Btn className="cx-ghost">Re-run all<span className="cx-cwpv">Planned</span></Btn></div>
+                <div style={{ marginTop: "6px", color: "var(--color-muted)", fontSize: "11.5px" }}>The app has no Report page or artifact view yet; a task’s Re-run checks is built and asks first.</div>
               </div>
               <div className="cx-fpop" style={{ width: "320px" }}>
                 <h6><Ic n="bug" sm />Findings · Code review → Security review</h6>
