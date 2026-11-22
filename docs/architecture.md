@@ -42,8 +42,8 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    run the unmodified `claude` binary, never collect, read or store Claude.ai credentials (the engine keeps its own
    login), and never use `--bare`, which ignores subscription login. The person's `claude_engine_path` setting (`sdk`,
    the default, or `cli`, a device-local preference) is read at the start of each run; `ORBYN_ENGINE_HOST_CLAUDE` is opt-out
-   (only `0` turns the host off). *Planned*: the SDK path ships as the default after the host bundles the SDK and its notices
-   (docs/sdk-default-plan.md; built, default on after the next release). A person's choice is never switched silently: when the host is down the person sees why and may pick the CLI.
+   (only `0` turns the host off). The core default is on; the settings picker for `claude_engine_path` is *Planned* (Engineering 1), and a packaged turn on the SDK path is not yet observed
+   (docs/sdk-default-plan.md). A person's choice is never switched silently: when the host is down the person sees why and may pick the CLI.
 4. Orbyn writes nothing into target repositories or engine user config: no skills,
    instructions, excludes or context maps. The project file is read-only to Orbyn.
 5. A folder must be trusted before an engine, project script or terminal runs in

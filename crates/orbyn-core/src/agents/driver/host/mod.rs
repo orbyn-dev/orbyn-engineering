@@ -70,7 +70,7 @@ impl HostConfig {
         })
     }
 
-    /// Also reads `ORBYN_ENGINE_HOST_CURSOR`, which wants exactly `1` as the Claude flag does.
+    /// Also reads `ORBYN_ENGINE_HOST_CURSOR`, which wants exactly `1`.
     #[must_use]
     pub fn with_cursor(mut self, cursor_flag: Option<&str>) -> Self {
         self.cursor = cursor_flag == Some("1");

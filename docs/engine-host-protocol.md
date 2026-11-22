@@ -468,6 +468,6 @@ them) carries:
 ## Not in this document
 
 - Which families ship, and when (the sprint plan owns that).
-- Credential opt-in and the Anthropic and Cursor terms gates; the Claude SDK path stays behind a flag
+- Credential opt-in and the Anthropic and Cursor terms gates; the Claude SDK path is the default (`ORBYN_ENGINE_HOST_CLAUDE=0` opts out)
   with the CLI driver as the default for subscription sign-in.
 - The UI frames for host status and errors (the Designer owns them).
