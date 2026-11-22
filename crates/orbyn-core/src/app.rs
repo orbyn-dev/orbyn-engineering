@@ -151,7 +151,10 @@ pub struct Core {
     pub terminals: Arc<TerminalManager>,
     pub(crate) setups: Arc<SetupManager>,
     pub updates: Arc<UpdateCenter>,
-    pub shell: ShellBridge,
+    pub shell: Arc<ShellBridge>,
+    /// W10: one active waiting item per terminal, with the per-thread and
+    /// per-service caps, so a clear can name an item another watcher dropped.
+    pub(crate) attention: Arc<crate::agents::attention::AttentionHub>,
     /// A person's approvals given in the desktop app, in memory only.
     pub(crate) presence: crate::host::presence::PresenceBook,
     pub usage: Arc<UsageCenter>,
@@ -317,7 +320,8 @@ impl Core {
             terminals,
             setups,
             updates,
-            shell: ShellBridge::default(),
+            shell: Arc::new(ShellBridge::default()),
+            attention: Arc::default(),
             presence: crate::host::presence::PresenceBook::default(),
             usage,
             clones: ClonePool::default(),

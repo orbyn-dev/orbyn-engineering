@@ -17,7 +17,14 @@ export function createReviewControlsMock() {
   // `crew-worker-provider-any` starts on Any provider; `crew-worker-provider-fail` refuses the write.
   let providers: Record<string, "same_as_lead" | "any"> = {};
   return {
-    reset() { view = exampleTierView(); receipts = {}; providers = {}; },
+    reset(next = "default") {
+      view = exampleTierView();
+      // The engine picker scenario adds the reviewer-only ACP engine its Crew tiers list shows.
+      if (next === "crew-engine-picker") {
+        view.engines.push({ id: "kiro", name: "Kiro", native: false, available: true, unavailable_reason: null, defaults: ["kiro-default"] });
+      }
+      receipts = {}; providers = {};
+    },
     handle(scenario: string, method: string, path: string, body: unknown): MockResponse | null {
       if (!scenario.startsWith("crew")) return null;
       const fail = (message: string, status = 400) => ({ status, body: { code: "invalid", message } });

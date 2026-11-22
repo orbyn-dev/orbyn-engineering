@@ -108,6 +108,22 @@ describe("the reviewer backtest on the real 4n routes", () => {
     expect(calls.some(({ url }) => url === "/api/crew/backtest/run-4n/report")).toBe(true);
   });
 
+  it("labels the stacked narrow report: the run card first, then a card per lane", async () => {
+    openReport();
+    expect(await screen.findByText("Outcomes")).toBeInTheDocument();
+    expect(screen.getByText("Lanes that scored")).toBeInTheDocument();
+    expect(screen.getByText("What it used")).toBeInTheDocument();
+    expect(screen.getByText("Escapes caught: 6 of 9 · recall 66%")).toBeInTheDocument();
+    expect(screen.getByText("Findings raised: 21 · 2 unresolved")).toBeInTheDocument();
+    expect(screen.getByText("Matched an escape: 6 of 21 · precision 28%")).toBeInTheDocument();
+  });
+
+  it("keeps the replay count Planned, never a number", async () => {
+    openReport();
+    expect(await screen.findByText("The report route does not serve how many pull requests each lane replayed.")).toBeInTheDocument();
+    expect(screen.queryByText(/pull requests replayed/i)).toBeNull();
+  });
+
   it("shows Not measured where the escape log cannot score a lane, never a zero rate", async () => {
     answers.report = { status: 200, body: run({ lanes: [lane(), notMeasuredLane()] }) };
     openReport();

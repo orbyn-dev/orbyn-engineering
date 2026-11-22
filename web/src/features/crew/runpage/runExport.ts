@@ -1,13 +1,21 @@
 // The Run page of a Crew task (W11): a static HTML page and a short Markdown comment, both built here, on this device, from
-// the Flow task read the app already has. Nothing is uploaded and nothing is written to a route. Every piece of text is
-// untrusted (a task name, a brief, a finding's claim): it is cleaned (control characters, key-shaped words and machine paths
-// hidden, length capped) and then escaped for the format it goes into.
+// the Flow task read the app already has and, when the service answers it, the task's run read. Nothing is uploaded and
+// nothing is written to a route. Every piece of text is untrusted (a task name, a brief, a check's command, a finding's
+// claim): it is cleaned (control characters, key-shaped words and machine paths hidden, length capped) and then escaped for
+// the format it goes into.
+import type { FlowRunCheck } from "../../../generated/FlowRunCheck";
+import type { FlowRunPage } from "../../../generated/FlowRunPage";
 import type { FlowTaskDetail } from "../../../generated/FlowTaskDetail";
 import { cellOf, decidedBy, plain } from "../flow/live/model";
 import { checkWord, findingStatusWord } from "../map/model";
 
+/** What a check whose command or proves line the service withheld says until the task is final. */
+export const WITHHELD = "Withheld until the run finishes.";
+/** A final task whose check text the service does not carry still gets a value, never a blank. */
+export const NOT_RECORDED = "Not recorded.";
+
 /** The most characters of one cleaned text, by where it is shown. */
-const CAP = { title: 120, line: 300, short: 60 } as const;
+const CAP = { title: 120, line: 300, short: 60, check: 300, prompt: 2000, commit: 80 } as const;
 /** The most findings, gates and files the page lists. */
 const LIST_CAP = 50;
 /** The longest PR comment. The forge's own limit is far above it. */
@@ -77,6 +85,32 @@ export interface RunPageFinding {
   blocks: boolean;
 }
 
+/** The prompt the read quotes, cleaned again, with the note the frames put beside it. */
+export interface RunPagePrompt {
+  text: string;
+  hidden: boolean;
+  truncated: boolean;
+  note: string;
+}
+
+/** One check the read carries. `command` and `proves` are never blank: the withholding or the absence is said. */
+export interface RunPageCheck {
+  command: string;
+  proves: string;
+  outcome: string;
+  exitCode: number | null;
+  duration: string | null;
+  commit: string | null;
+  /** The service withheld this check's key words until the task is final. */
+  withheld: boolean;
+}
+
+export interface RunPagePull {
+  number: number | null;
+  branch: string | null;
+  commit: string | null;
+}
+
 export interface RunPageModel {
   title: string;
   stateWord: string;
@@ -96,7 +130,18 @@ export interface RunPageModel {
   confirmed: number;
   gates: string[];
   merge: string | null;
-  /** The sections this page cannot fill from the Flow read, named so the page never implies them. */
+  /** The run read was used: its prompt, checks, commit and pull request replace the Planned marks. */
+  hasRun: boolean;
+  prompt: RunPagePrompt | null;
+  /** The checks the run read carries; null when there is no run read, so the page keeps its count-only Planned mark. */
+  checkList: RunPageCheck[] | null;
+  /** What no check covered; null when there is no run read. */
+  notVerified: string[] | null;
+  commit: string | null;
+  pull: RunPagePull | null;
+  /** The run read cut a list at its cap. */
+  runTruncated: boolean;
+  /** The sections this page cannot fill, named so the page never implies them. */
   planned: string[];
 }
 
@@ -105,12 +150,61 @@ const utc = (iso: string): string => {
   return Number.isNaN(at.getTime()) ? cleanText(iso, 40) : `${at.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 };
 
-/** What the page and the comment say, from one Flow task read. `now` is when it is made. */
-export function runPageModel(detail: FlowTaskDetail, now: string): RunPageModel {
+const textOrNull = (text: string | null | undefined, cap: number): string | null => {
+  const cleaned = cleanText(typeof text === "string" ? text : "", cap);
+  return cleaned === "" ? null : cleaned;
+};
+
+/** `4 s`, `22 s`, `1 min 48 s`: a duration the read carries, never a made-up zero. */
+const durationText = (ms: number | null | undefined): string | null => {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return null;
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)} s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  return rest === 0 ? `${minutes} min` : `${minutes} min ${rest} s`;
+};
+
+/** The note the frames put beside a quoted prompt. A hidden value and a cut are both said, never implied. */
+function promptNote(hidden: boolean, truncated: boolean): string {
+  if (hidden && truncated) return "Your words. A value was hidden because it looked like a key, and the brief was cut at this page’s length.";
+  if (hidden) return "Your words. A value was hidden because it looked like a key.";
+  if (truncated) return "Your words. The brief was cut at this page’s length.";
+  return "Your words.";
+}
+
+/** One check, cleaned again. The task's `finished` is the signal: until it is final its key words are withheld, even if an
+ * older service still sends them. A final task's empty text is said as not recorded, never left blank. */
+function checkOf(check: FlowRunCheck, finished: boolean): RunPageCheck {
+  const label = cleanText(check.label ?? "", CAP.check);
+  const proves = cleanText(check.proves ?? "", CAP.check);
+  return {
+    command: finished ? label || NOT_RECORDED : WITHHELD,
+    proves: finished ? proves || NOT_RECORDED : WITHHELD,
+    outcome: cleanText(check.outcome ?? "", 40) || NOT_RECORDED,
+    exitCode: typeof check.exit_code === "number" && Number.isSafeInteger(check.exit_code) && check.exit_code >= 0 ? check.exit_code : null,
+    duration: durationText(check.duration_ms),
+    commit: textOrNull(check.commit, CAP.commit),
+    withheld: !finished,
+  };
+}
+
+/** What the page and the comment say, from one Flow task read and, when the service answers it, the run read. */
+export function runPageModel(detail: FlowTaskDetail, now: string, run?: FlowRunPage): RunPageModel {
   const { row } = detail;
   const state = STATES[row.state] ?? { word: "In progress", tone: "run" as const };
   const checks = cellOf(row, "checks");
   const confirmed = detail.findings.filter((one) => one.check === "confirmed").length;
+  const runChecks = run ? run.checks.slice(0, LIST_CAP).map((check) => checkOf(check, run.finished)) : null;
+  const promptText = run?.prompt ? cleanText(run.prompt.text ?? "", CAP.prompt) : "";
+  const pull = run?.pull
+    ? {
+        number: typeof run.pull.number === "number" && Number.isSafeInteger(run.pull.number) && run.pull.number > 0 ? run.pull.number : null,
+        branch: textOrNull(run.pull.branch, CAP.line),
+        commit: textOrNull(run.pull.commit, CAP.commit),
+      }
+    : null;
   return {
     title: cleanText(row.name || "Untitled task", CAP.title),
     stateWord: state.word,
@@ -138,7 +232,18 @@ export function runPageModel(detail: FlowTaskDetail, now: string): RunPageModel 
     confirmed,
     gates: detail.gates.slice(0, LIST_CAP).map((gate) => cleanText(`${gate.stage}: ${plain(gate.decision)} · decided by ${decidedBy(gate)}`, CAP.line)),
     merge: detail.merge ? cleanText(`${plain(detail.merge.state)} · risk ${detail.merge.risk} · ${detail.merge.mode}`, CAP.line) : null,
-    planned: ["Prompt and plan", "Check commands, exit codes and durations", "What was not verified", "Signed proof and verify"],
+    hasRun: run != null,
+    prompt: run?.prompt && promptText !== ""
+      ? { text: promptText, hidden: run.prompt.hidden === true, truncated: run.prompt.truncated === true, note: promptNote(run.prompt.hidden === true, run.prompt.truncated === true) }
+      : null,
+    checkList: runChecks,
+    notVerified: run ? run.not_verified.slice(0, LIST_CAP).map((line) => cleanText(line, CAP.line)).filter((line) => line !== "") : null,
+    commit: textOrNull(run?.commit, CAP.commit),
+    pull,
+    runTruncated: run ? run.truncated === true || run.checks.length > LIST_CAP || run.not_verified.length > LIST_CAP : false,
+    planned: run
+      ? ["Plan", "Pull request URL and head (stale proof)", "Signed proof and verify"]
+      : ["Prompt and plan", "Check commands, exit codes and durations", "What was not verified", "Signed proof and verify"],
   };
 }
 
@@ -153,11 +258,34 @@ p,li,dd{overflow-wrap:anywhere}.mute{color:var(--mute)}ul{padding-left:20px}dl{d
 
 const li = (html: string) => `<li>${html}</li>`;
 
+const pullText = (pull: RunPagePull | null, e: (text: string) => string): string => {
+  if (!pull) return "This task made no pull request.";
+  const parts = [pull.number != null ? `#${pull.number}` : null, pull.branch, pull.commit].filter((part): part is string => part != null);
+  return parts.length === 0 ? "No pull request details were recorded." : parts.map(e).join(" · ");
+};
+
 /** One self-contained page: inline style, no script, no remote resource, no link. Every value is escaped. */
 export function runPageHtml(model: RunPageModel): string {
   const e = escapeHtml;
   const head = model.tone === "fail" ? `<p class="banner bad" role="alert">${e(model.stateWord)}: this run did not pass. Read the checks and the findings before relying on it.</p>` : "";
   const findings = model.findings.length === 0 ? `<p class="mute">No findings.</p>` : `<ul>${model.findings.map((one) => li(`<strong>${e(one.claim)}</strong> <code>${e(one.where)}</code><br><span class="mute">${e(one.who)} · ${e(one.severity)}</span> <span class="chip">${e(one.check)}</span> <span class="chip">${e(one.status)}</span>${one.blocks ? ` <span class="chip bad">Blocks</span>` : ""}`)).join("")}</ul>${model.findingsOmitted > 0 ? `<p class="mute">${model.findingsOmitted} more findings are not listed.</p>` : ""}`;
+  const prompt = model.prompt
+    ? `<h2>Prompt</h2><p>${e(model.prompt.text)}</p><p class="mute">${e(model.prompt.note)}</p>`
+    : model.hasRun ? `<h2>Prompt</h2><p class="mute">No prompt was saved for this task.</p>` : "";
+  const summary = model.checks ? `<span class="${model.checksFailed ? "bad" : "ok"}">${e(model.checks)}</span>` : "No check result yet.";
+  const checkItem = (one: RunPageCheck): string => {
+    const facts = [one.exitCode != null ? `exit ${one.exitCode}` : null, one.duration].filter((part): part is string => part != null).map(e).join(" · ");
+    return li(`<strong>${e(one.outcome)}</strong> <code>${e(one.command)}</code>${facts === "" ? "" : `<br><span class="mute">${facts}</span>`}<br><span class="mute">Proves: ${e(one.proves)}</span>${one.commit ? `<br><span class="mute">commit ${e(one.commit)}</span>` : ""}`);
+  };
+  const checks = model.checkList
+    ? `<h2>Checks</h2><p>${summary}</p>${model.checkList.length === 0 ? `<p class="mute">No checks were recorded for this run.</p>` : `<ul>${model.checkList.map(checkItem).join("")}</ul>`}${model.runTruncated ? `<p class="mute">A list of this run was cut at its cap.</p>` : ""}`
+    : `<h2>Checks</h2><p>${summary} <span class="mute">Counts only; the commands are Planned.</span></p>`;
+  const runMeta = model.hasRun
+    ? `<h2>Commit and pull request</h2><dl><dt>Commit</dt><dd>${model.commit ? e(model.commit) : "No commit recorded."}</dd><dt>Pull request</dt><dd>${pullText(model.pull, e)}</dd></dl><p class="mute">Planned: the pull request URL and head, so the page cannot say the proof is stale.</p>`
+    : "";
+  const notVerified = model.notVerified
+    ? `<h2>Not verified</h2>${model.notVerified.length === 0 ? `<p class="mute">Nothing was recorded as not verified.</p>` : `<ul>${model.notVerified.map((line) => li(e(line))).join("")}</ul>`}<p class="mute">Still Planned, so not on this page: ${model.planned.map(e).join("; ")}. Only confirmed findings block; model reviews are advisory.</p>`
+    : `<h2>Not verified</h2><p class="mute">Planned, so not on this page: ${model.planned.map(e).join("; ")}. Only confirmed findings block; model reviews are advisory.</p>`;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><meta name="referrer" content="no-referrer">
@@ -168,11 +296,13 @@ ${head}
 <p class="mute">This page is a snapshot made on the device that ran the crew, on ${e(model.generatedAt)}. It does not update, and nothing was uploaded.</p>
 <h2>Brief</h2><p>${e(model.purpose)}</p>
 <dl><dt>Files</dt><dd>${model.files.length === 0 ? "None" : e(model.files.join(", "))}</dd><dt>Budget</dt><dd>${e(model.budget)}</dd><dt>Route</dt><dd>${model.route ? e(model.route) : "Not routed yet"}</dd></dl>
-<h2>Checks</h2><p>${model.checks ? `<span class="${model.checksFailed ? "bad" : "ok"}">${e(model.checks)}</span>` : "No check result yet."} <span class="mute">Counts only; the commands are Planned.</span></p>
+${prompt}
+${checks}
 <h2>Findings</h2>${findings}
 ${model.gates.length > 0 ? `<h2>Gates</h2><ul>${model.gates.map((gate) => li(e(gate))).join("")}</ul>` : ""}
 ${model.merge ? `<h2>Merge</h2><p>${e(model.merge)}</p>` : ""}
-<h2>Not verified</h2><p class="mute">Planned, so not on this page: ${model.planned.map(e).join("; ")}. Only confirmed findings block; model reviews are advisory.</p>
+${runMeta}
+${notVerified}
 </main></body></html>
 `;
 }
@@ -180,10 +310,35 @@ ${model.merge ? `<h2>Merge</h2><p>${e(model.merge)}</p>` : ""}
 /** The pull request comment: a short summary in Markdown, at most `RUN_COMMENT_CAP` characters. It is never posted by Orbyn. */
 export function runPageMarkdown(model: RunPageModel, pull: number | null): string {
   const m = escapeMd;
+  const runHead: string[] = [];
+  if (model.hasRun) {
+    if (model.prompt) {
+      runHead.push(`Prompt: ${m(model.prompt.text)}`);
+      runHead.push(`_${m(model.prompt.note)}_`);
+    }
+    runHead.push(model.checks ? `Checks: ${m(model.checks)}` : "Checks:");
+    if (model.checkList && model.checkList.length > 0) {
+      for (const one of model.checkList) {
+        const facts = [one.outcome, one.exitCode != null ? `exit ${one.exitCode}` : null, one.duration].filter((part): part is string => part != null).map(m).join(" · ");
+        runHead.push(`- ${facts}: ${m(one.command)}${one.proves ? ` — Proves: ${m(one.proves)}` : ""}${one.commit ? ` (commit ${m(one.commit)})` : ""}`);
+      }
+    } else {
+      runHead.push("- No checks were recorded for this run.");
+    }
+    runHead.push(model.notVerified && model.notVerified.length > 0 ? `Not verified: ${model.notVerified.map(m).join("; ")}` : "Not verified: nothing recorded.");
+    if (model.commit) runHead.push(`Commit: ${m(model.commit)}`);
+    if (model.pull) {
+      const parts = [model.pull.number != null ? `#${model.pull.number}` : null, model.pull.branch ? m(model.pull.branch) : null, model.pull.commit ? m(model.pull.commit) : null].filter((part): part is string => part != null);
+      runHead.push(`Pull request: ${parts.length > 0 ? parts.join(" · ") : "recorded, with no number, branch or commit yet."}`);
+    } else {
+      runHead.push("Pull request: none made by this task.");
+    }
+    if (model.runTruncated) runHead.push("_A list was cut at its cap._");
+  }
   const head = [
     `### Crew run${pull != null ? ` for #${pull}` : ""}: ${m(model.title)}`,
     `Result: **${model.stateWord}** · round ${model.round} · ${m(model.madeAt)}`,
-    ...(model.checks ? [`Checks: ${m(model.checks)}`] : []),
+    ...(model.hasRun ? runHead : model.checks ? [`Checks: ${m(model.checks)}`] : []),
     ...(model.route ? [`Route: ${m(model.route)}`] : []),
     `Findings: ${model.findings.length + model.findingsOmitted} (${model.confirmed} confirmed)`,
     "",

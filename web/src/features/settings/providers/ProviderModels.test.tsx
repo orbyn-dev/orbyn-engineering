@@ -84,6 +84,16 @@ it("says which binary couldn't run, in the service's own words, with Check again
   expect(within(banner).getByRole("button", { name: "Check again" })).toBeVisible();
 });
 
+it("shows only the service's sentence for a failed or signed-out start, not the path before it", async () => {
+  installMockFetch();
+  const issue = { kind: "failed" as const, message: "Couldn’t run Kiro. The program exited with code 1.", at: "2026-11-22T10:00:00Z" };
+  render(<ProviderDetail engine={{ ...engine, problem: "exited with code 1", start_issue: issue }} store={store} onBack={() => undefined} onEdit={() => undefined} />);
+  const banner = (await screen.findByText("Couldn’t run Kiro. The program exited with code 1.")).closest<HTMLElement>("[role=alert]")!;
+  expect(banner.textContent).not.toContain("/opt/claude");
+  expect(within(banner).getByRole("button", { name: "Check again" })).toBeVisible();
+  expect(screen.queryByText(/Couldn’t run \/opt\/claude/)).toBeNull();
+});
+
 it("says which thread runs on the engine and offers it, instead of a Remove that would fail", async () => {
   installMockFetch();
   useWorkspace.setState({ threads: { t1: { id: "t1", title: "Fix login redirect", engine: "claude", active_run: { id: "r1" } } as never } });

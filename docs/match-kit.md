@@ -43,6 +43,10 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **The shell.** `shell-home`, `shell-new-thread`, `shell-ledger`, `shell-thread-row-actions`, `shell-project-controls`, `update-sources`
 
+**The engine picker.** `engine-picker-closed`, `engine-picker-new-thread`, `engine-picker-crew-tiers`, `engine-picker-crew-tiers-narrow`
+
+**Unmanaged threads.** `unmanaged-thread-open`, `unmanaged-thread-open-narrow`, `unmanaged-thread-first-run`, `unmanaged-thread-first-run-narrow` (the mock's Kiro, a `managed: false` non-Cursor engine; the notice and labels only, because the non-Cursor mode refusal is planned until the service sends it)
+
 **Pull requests, the list and its states.** `pr-row-variants`, `pr-row-pending`, `pr-row-pending-failed`, `pr-list-none`, `pr-list-loading`, `pr-list-error`, `pr-list-signedout`, `pr-list-offline`, `pr-list-draft`, `pr-list-filtered`, `pr-list-narrow-900`, `pr-list-narrow-800`, `pr-list-narrow-700`, `pr-list-narrow-640`, `pr-list-narrow-580`, `pr-tb-filter-waiting`, `pr-tb-filter-failed`, `pr-tb-filter-rate-limited`, `pr-tb-filter-still-limited`, `pr-row-tooltips`, `pr-row-actions-hover`
 
 **Pull requests, the toolbar.** `pr-tb-default`, `pr-tb-search`, `pr-tb-filters`, `pr-tb-chips`, `pr-tb-sort`, `pr-tb-project`, `pr-tb-refreshing`, `pr-tb-loading`, `pr-tb-empty`, `pr-tb-author`, `pr-tb-author-none`, `pr-tb-narrow`, `pr-tb-phone`
@@ -60,6 +64,8 @@ or fail on the network, and what to click first. Use the design's frame id for a
 **The file editor.** `editor-default`, `editor-unsaved`, `editor-find`, `editor-goto`, `editor-tab-menu`, `editor-close-confirm`, `editor-loading`
 
 **Settings, one page for each section.** `s-general`, `s-appearance`, `s-chat`, `s-diffs`, `s-keybindings`, `s-providers`, `s-threads`, `s-tasks`, `s-projects`, `s-source-control`, `s-worktrees`, `s-maintenance`, `s-labs`, `s-about`, `s-archive`
+
+**Snap Shot, settings and the draft flow** (K49, docs/snapshots.md), drawn on the dev-only mock at `#/preview/snapshot?frame=<id>`. Settings: `snapshot-settings-off`, `snapshot-settings`, `snapshot-settings-shortcut`, `snapshot-settings-conflict`, `snapshot-settings-excluded`, `snapshot-settings-accessibility`, `snapshot-settings-windows`, `snapshot-settings-linux`, `snapshot-settings-off-narrow`, `snapshot-settings-narrow`, `snapshot-settings-excluded-narrow`. The composer and the draft: `snapshot-composer-button`, `snapshot-composer-button-narrow`, `snapshot-draft`, `snapshot-details`, `snapshot-capturing`, `snapshot-captured`, `snapshot-no-thread`, `snapshot-excluded`, `snapshot-excluded-narrow`, `snapshot-failed`, `snapshot-failed-no-window`, `snapshot-failed-too-large`, `snapshot-failed-timeout`, `snapshot-failed-error`, `snapshot-failed-narrow`, `snapshot-narrow`. Setup: `snapshot-setup-mac`, `snapshot-setup-asked`, `snapshot-setup-denied`, `snapshot-setup-accessibility`, `snapshot-setup-granted`, `snapshot-setup-windows`, `snapshot-setup-narrow`.
 
 **Usage, the Limits tab.** `usage-claude-windows`, `usage-claude-windows-unavailable`, `usage-claude-windows-loading`, `usage-claude-windows-narrow`, `usage-claude-windows-near`, `usage-claude-windows-reached`, `usage-claude-windows-signedout`, `usage-providers`, `usage-providers-error`
 

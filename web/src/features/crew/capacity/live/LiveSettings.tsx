@@ -150,7 +150,7 @@ function Body({ state, project, apply }: { state: CapacityState; project: string
             <small>
               {state.settings_saved
                 ? "Crew counts the High and Medium changes that merged and are waiting for you. Low-risk changes are batched, have no deadline and don’t count."
-                : "Not set. Until you set it, Crew never pauses a start because of your review queue. Crew counts the High and Medium changes that merged and are waiting for you; Low-risk changes don’t count."}
+                : "Not set. Until you set it, Crew does not pause a start because of your review queue. Crew counts the High and Medium changes that merged and are waiting for you; Low-risk changes don’t count."}
             </small>
           </div>
           {draft ? (
@@ -300,7 +300,7 @@ export function LiveSettings({ project }: { project: string }) {
           <span className="cx-cwpv">Preview</span>
         </h3>
         <p style={{ margin: "0", color: "var(--color-muted)", fontSize: "12.5px", lineHeight: 1.5 }}>
-          Agents can merge faster than a person can read. Say how many changes you can review, and Crew slows the work it starts on its own before the queue gets ahead of you. It never stops a merge, and nothing here changes what you can review.
+          Agents can merge faster than a person can read. Say how many changes you can review, and Crew slows the work it starts on its own before the queue gets ahead of you. It does not stop a merge, and nothing here changes what you can review.
         </p>
         {read.status === "loading" ? <Loading label="Reading review capacity" rows={3} /> : null}
         {read.status === "error" ? <ErrorState title="Can’t read review capacity" failure={read.error} onRetry={() => void read.reload()} /> : null}

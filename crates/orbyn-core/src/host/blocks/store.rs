@@ -728,7 +728,7 @@ mod tests {
         assert_eq!(fourth.text, "\n");
         assert!(fourth.next.is_none());
         assert_eq!(
-            first.text + &second.text + &third.text + &fourth.text,
+            format!("{}{}{}{}", first.text, second.text, third.text, fourth.text),
             "one\ntwo\n\u{e9}\u{e9}\u{e9}\n"
         );
     }

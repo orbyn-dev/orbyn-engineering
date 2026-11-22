@@ -3,6 +3,8 @@
 //! hash to its own id. The answer key has its own table and its own reader, so the
 //! brief a worker reads comes from a table that cannot hold it (H1).
 
+use std::collections::BTreeMap;
+
 use orbyn_contracts::{
     AnswerKey, Brief, CrewError, CrewMessage, CrewObject, CrewResult, Evidence, Gate, Lease,
     Report, RouteDecision, WorkerObject, canonical_json,
@@ -317,6 +319,91 @@ impl Store {
             ))),
         })
         .transpose()
+    }
+
+    /// The brief of every task in `task_ids`, read in one query. A read over a window of merges
+    /// needs these together; one query per merge would cost the same as the merges themselves.
+    pub fn crew_briefs_of_tasks(&self, task_ids: &[String]) -> Result<BTreeMap<String, Brief>> {
+        if task_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let marks = vec!["?"; task_ids.len()].join(",");
+        let conn = self.reader();
+        let mut statement = conn.prepare(&format!(
+            "SELECT id, body FROM crew_briefs WHERE id IN ({marks})"
+        ))?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(task_ids.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(id, body)| {
+                let brief = match read_object(&body)? {
+                    CrewObject::Brief(brief) => brief,
+                    other => {
+                        return Err(CoreError::Internal(format!(
+                            "crew_briefs holds a {}",
+                            other.type_name()
+                        )));
+                    }
+                };
+                Ok((id, brief))
+            })
+            .collect()
+    }
+
+    /// The moment each task's brief was accepted, read in one query.
+    pub fn crew_task_created_at(&self, task_ids: &[String]) -> Result<BTreeMap<String, String>> {
+        if task_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let marks = vec!["?"; task_ids.len()].join(",");
+        let conn = self.reader();
+        let mut statement = conn.prepare(&format!(
+            "SELECT id, created_at FROM crew_tasks WHERE id IN ({marks})"
+        ))?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(task_ids.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// The answer key of every task in `task_ids`, read in one query. Only the core and the
+    /// verifier call this; no tool returns these to a member.
+    pub fn crew_answer_keys_of_tasks(
+        &self,
+        task_ids: &[String],
+    ) -> Result<BTreeMap<String, AnswerKey>> {
+        if task_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let marks = vec!["?"; task_ids.len()].join(",");
+        let conn = self.reader();
+        let mut statement = conn.prepare(&format!(
+            "SELECT task_id, body FROM crew_answer_keys WHERE task_id IN ({marks})"
+        ))?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(task_ids.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(id, body)| {
+                let key = match read_object(&body)? {
+                    CrewObject::AnswerKey(key) => key,
+                    other => {
+                        return Err(CoreError::Internal(format!(
+                            "crew_answer_keys holds a {}",
+                            other.type_name()
+                        )));
+                    }
+                };
+                Ok((id, key))
+            })
+            .collect()
     }
 
     /// Appends a message, lease, evidence, gate or result to a task. The object must be

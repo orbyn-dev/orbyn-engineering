@@ -653,6 +653,16 @@
 .sent-gallery li {
   display: block;
 }
+.sent-snapshot-source {
+  display: block;
+  max-width: 132px;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .sent-gallery button,
 .sent-gallery-wait {
   display: block;
