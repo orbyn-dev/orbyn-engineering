@@ -8,7 +8,12 @@ export type ToastKind = "needs" | "done" | "failed" | "copied";
 /** A button on a toast, such as View. Using it closes the toast. */
 export interface ToastAction { label: string; run(): void }
 /** A toast that is still working shows a spinner and has no timer; the caller dismisses it. */
-export interface ToastOptions { busy?: boolean }
+export interface ToastOptions { busy?: boolean; /** How long it stays, for a message with more to read. */ durationMs?: number }
+
+/** A Snap Shot shortcut chord (docs/snapshots.md): one key with at least one modifier. `mod` is Cmd on macOS, Ctrl on Windows. */
+export interface SnapShotShortcutPref { kind: "chord"; key: string; mod: boolean; shift: boolean; alt: boolean; ctrl: boolean }
+
+export type SnapShotSound = "soft-pop" | "camera-shutter";
 
 export type LayoutChoice = "console" | "ledger" | "reading";
 export const LAYOUT_CHOICES: readonly LayoutChoice[] = ["console", "ledger", "reading"];
@@ -164,6 +169,15 @@ export interface Prefs {
   environmentIdentification: EnvironmentIdentification;
   /** The welcome steps were finished or skipped on this device. */
   welcomeDone: boolean;
+  /** Snap Shot (K49, docs/snapshots.md), with the rest of the client settings. */
+  snapshotEnabled: boolean;
+  snapshotShortcut: SnapShotShortcutPref;
+  snapshotIncludeAccessibility: boolean;
+  snapshotPlaySound: boolean;
+  snapshotSound: SnapShotSound;
+  snapshotFlash: boolean;
+  snapshotAnimations: boolean;
+  snapshotExcludedApps: string[];
 }
 
 export type EnvironmentIdentification = "artwork" | "pill" | "none";

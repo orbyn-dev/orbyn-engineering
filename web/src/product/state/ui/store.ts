@@ -154,7 +154,7 @@ export const useUi = create<UiState>((set, get) => {
       const id = ++toastCounter;
       const busy = options?.busy === true;
       set((state) => ({ toasts: [...state.toasts, { id, text, kind, ...(action ? { action } : {}), ...(busy ? { busy } : {}) }] }));
-      if (!busy) setTimeout(() => get().dismissToast(id), TOAST_MS);
+      if (!busy) setTimeout(() => get().dismissToast(id), options?.durationMs ?? TOAST_MS);
       return id;
     },
     dismissToast(id) {

@@ -1,5 +1,5 @@
 import { ArrowUp, Archive, Paperclip, SlidersHorizontal, Square } from "lucide-react";
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import type { EngineStatus, ModelInfo, PermissionMode, Thread } from "../../../api/types";
 import { isUnmanaged } from "../../../product/engines/unmanaged";
 import type { StashedPrompt } from "../../../product/state/ui";
@@ -38,6 +38,7 @@ export function ComposerBar({
   pickModel,
   stop,
   setError,
+  snapshotButton,
 }: {
   bar: RefObject<HTMLDivElement | null>;
   filePicker: RefObject<HTMLInputElement | null>;
@@ -66,6 +67,8 @@ export function ComposerBar({
   pickModel(next: { engine: string; model: string | null }): Promise<void>;
   stop(): Promise<void>;
   setError(message: string | null): void;
+  /** The Snap Shot button, present only when the shell supports the feature and the setting is on. */
+  snapshotButton?: ReactNode;
 }) {
   const AccessIcon = ACCESS[access].icon;
   const unmanaged = isUnmanaged(engine);
@@ -85,6 +88,7 @@ export function ComposerBar({
       >
         <Paperclip size={16} aria-hidden />
       </IconButton>
+      {snapshotButton}
       {stashes.length > 0 ? (
         <button
           type="button"
