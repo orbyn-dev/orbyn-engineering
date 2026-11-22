@@ -486,6 +486,9 @@ fn spawn(
     secrets: Option<RunSecrets>,
     blocks: Option<Arc<TerminalBlocks>>,
 ) -> Result<Arc<PtySession>> {
+    // A workflow run's env values are masked on the way out, and blocks read the stream before that
+    // mask: a terminal that carries run secrets keeps no command blocks, so no value can sit in one.
+    let blocks = if secrets.is_some() { None } else { blocks };
     fn failed(error: impl std::fmt::Display) -> CoreError {
         CoreError::Internal(format!("PTY failed: {error}"))
     }
@@ -715,6 +718,30 @@ mod tests {
         retire_control(&slot);
         retire_control(&slot);
         assert_eq!(drops.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_terminal_with_run_secrets_keeps_no_command_blocks() {
+        let dir = crate::testing::TempDir::new();
+        let spec = |engine| PtySpec {
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), "true".into()],
+            cwd: dir.path().to_owned(),
+            cols: 80,
+            rows: 24,
+            engine,
+        };
+        let blocks = || Some(Arc::new(TerminalBlocks::new(None, "t", "main")));
+        let masker = crate::redaction::LiteralMasker::new(&[("KEY", "value-1")]).unwrap();
+        let secrets = RunSecrets {
+            env: Vec::new(),
+            mask: masker,
+        };
+        let plain = spawn(spec(false), None, blocks()).unwrap();
+        assert!(plain.blocks().is_some());
+        let masked = spawn(spec(false), Some(secrets), blocks()).unwrap();
+        assert!(masked.blocks().is_none());
     }
 
     #[cfg(windows)]
