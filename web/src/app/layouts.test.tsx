@@ -244,6 +244,7 @@ describe("the phone's sidebar", () => {
     const { container } = render(<App />);
     await screen.findByRole("button", { name: "Hide sidebar" }, { timeout: 8000 });
     expect(sidebar()).toBeInTheDocument();
+    expect(useUi.getState().sidebarCollapsed).toBe(false);
     await user.keyboard("{Control>}b{/Control}");
     // The window folds its docked sidebar; nothing opens over the page, because a desktop window has no sheet.
     await waitFor(() => expect(useUi.getState().sidebarCollapsed).toBe(true));
@@ -264,9 +265,11 @@ describe("the phone's sidebar", () => {
     await waitFor(() => expect(sidebar()).not.toBeInTheDocument());
     await waitFor(() => expect(window.location.hash).not.toBe("#/threads/t-done"));
     // Focus follows the new page to its own title, and not to a node the sheet took with it.
-    const title = container.querySelector("main [data-page-title]");
-    expect(title).not.toBeNull();
-    await waitFor(() => expect(title).toHaveFocus());
+    await waitFor(() => {
+      const title = container.querySelector("main [data-page-title]");
+      expect(title).not.toBeNull();
+      expect(title).toHaveFocus();
+    });
     expect(screen.getByRole("button", { name: "Show sidebar" })).not.toHaveFocus();
     expect(document.body).not.toHaveFocus();
   });
