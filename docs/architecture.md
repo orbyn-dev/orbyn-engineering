@@ -509,20 +509,17 @@ limits appear only where an engine reports them itself, as Codex does through
 `account/rateLimits/read`. Subscription reports are read fresh on every request:
 the supported drivers do not expose an authoritative current account/workspace binding
 that can validate a kept report. Email, plan and cached signed-in status are not identities.
-A failed read returns unavailable without an old-account fallback, including in the client:
-a person's own refresh keeps the figures on screen while it runs and after it fails, with
-the error beside them, while a mount or service-event read that fails shows none.
-Opening or refreshing Limits waits for the bounded provider read. An overlapping older
-read cannot answer after a newer read, a forget or an engine configuration change. No
-subscription report is exposed through the no-I/O `cached_limits` path: Crew treats it as
-not reported, and scheduled near-limit checks still ask the engine afresh. Only Codex's
-`rateLimits`, `rateLimitsByLimitId` and plan leave the driver; its account ID, upsell copy
-and reset-credit offers are dropped; `?force=true` reads again and spends no model usage.
-Nothing is kept, so force skips no window and no fence: a forced read takes the same
-forget and configuration fences and the same bounded provider read as an automatic one,
-so a refresh can never bring another account's figures back. `/api/limits` also gives one
-number per window length across engines, the highest used percentage, since that engine
-stops first. The overview excludes
+A failed read returns unavailable without an old-account fallback, including in the client;
+opening or refreshing Limits waits for the bounded provider read. An overlapping older read
+cannot answer after a newer read, a forget or an engine configuration change. No subscription
+report is exposed through the no-I/O `cached_limits` path: Crew treats it as not reported,
+and scheduled near-limit checks still ask the engine afresh. Only Codex's `rateLimits`,
+`rateLimitsByLimitId` and plan leave the driver; its account ID, upsell copy and
+reset-credit offers are dropped; `?force=true` reads again, spends no model usage and
+skips no window or fence, because no report is kept: a forced read takes the same
+fences and the same bounded provider read.
+`/api/limits` also gives one number per window length across
+engines, the highest used percentage, since that engine stops first. The overview excludes
 the Claude family, including named instances, before any status or usage probe; an explicit
 engine/thread limits read can still ask Claude.
 Windows with an unknown duration remain separate, because an absent duration does
