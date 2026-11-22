@@ -54,8 +54,8 @@ export const SNAPSHOT_EVENTS: readonly SnapShotEventName[] = [
 
 export type SnapShotSetupAction = "allow_screen_recording" | "allow_accessibility" | "test_capture" | "retry_shortcut";
 
-/** The source of a capture, exactly the body `PUT /api/attachments/{id}/source` takes. */
-export type SnapShotSource = AttachmentSource;
+/** What the shell reports for a capture: the service's `AttachmentSource` plus the size the shell knows and the service does not keep. */
+export type SnapShotSource = AttachmentSource & { width?: number; height?: number };
 
 /** The generated Attachment answer plus the optional source the service is adding (read defensively). */
 export type SnapShotAttachment = Attachment & { source?: SnapShotSource };
@@ -178,7 +178,7 @@ export function isSnapShotSource(value: unknown): value is SnapShotSource {
 }
 
 /** The body `PUT /api/attachments/{id}/source` takes: the contract's fields, and no display-only size. */
-export function sourceBodyOf(source: SnapShotSource): SnapShotSource {
+export function sourceBodyOf(source: SnapShotSource): AttachmentSource {
   return {
     kind: "snap_shot",
     captured_at: source.captured_at,

@@ -1,6 +1,7 @@
 import { ArrowUp, Archive, Paperclip, SlidersHorizontal, Square } from "lucide-react";
 import type { ReactNode, RefObject } from "react";
 import type { EngineStatus, ModelInfo, PermissionMode, Thread } from "../../../api/types";
+import { isUnmanaged } from "../../../product/engines/unmanaged";
 import type { StashedPrompt } from "../../../product/state/ui";
 import { IconButton } from "../../../ui/controls";
 import { ProfilePicker } from "../../profiles";
@@ -23,7 +24,6 @@ export function ComposerBar({
   narrowBar,
   contextMeter,
   showContext,
-  unmanaged,
   access,
   accessView,
   busy,
@@ -53,7 +53,6 @@ export function ComposerBar({
   narrowBar: boolean;
   contextMeter: boolean;
   showContext: boolean;
-  unmanaged: boolean;
   access: PermissionMode;
   accessView: AccessView;
   busy: boolean;
@@ -72,6 +71,7 @@ export function ComposerBar({
   snapshotButton?: ReactNode;
 }) {
   const AccessIcon = ACCESS[access].icon;
+  const unmanaged = isUnmanaged(engine);
   return (
     <div ref={bar} className="composer-bar">
       <input

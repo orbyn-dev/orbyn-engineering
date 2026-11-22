@@ -54,29 +54,10 @@ export type { Approval } from "../generated/Approval";
 export type { ApprovalState } from "../generated/ApprovalState";
 export type { Attachment } from "../generated/Attachment";
 
-/**
- * Where an attachment came from (docs/snapshots.md, "What the page sends to the service"). The service adds it to the
- * Attachment answer; the generated type does not carry it yet, so it is read defensively.
- */
-export interface AttachmentSource {
-  kind: "snap_shot";
-  captured_at: string;
-  /** At most 255 characters. */
-  app_name: string;
-  /** At most 1000 characters. */
-  window_title: string;
-  /** At most 255 characters. */
-  app_id?: string;
-  /** At most 32,000 characters. */
-  accessible_text?: string;
-  /** Whether the capture carried accessible text, without sending the text in a list. */
-  has_accessible_text?: boolean;
-  width?: number;
-  height?: number;
-  size_bytes?: number;
-}
+export type { AttachmentSource } from "../generated/AttachmentSource";
 
-export type AttachmentWithSource = Attachment & { source?: AttachmentSource };
+/** The Attachment answer now carries `source` itself; the alias keeps the callers that name it. */
+export type AttachmentWithSource = Attachment;
 export type { AuthState } from "../generated/AuthState";
 export type { CreateThread } from "../generated/CreateThread";
 export type { CustomEngine } from "../generated/CustomEngine";

@@ -1,5 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { exampleTierView } from "../../../../../mock/reviewControls";
 import type { EngineStatus } from "../../../../api/types";
@@ -157,4 +159,29 @@ it("draws the Reviewer only chip, with the service's reason as its tooltip, for 
   expect(screen.getByText("Reviewer only").closest("[title]")).toHaveAttribute("title", "Not yet confined for writing work");
   expect(screen.getAllByText(/Reviewer only/)).toHaveLength(1);
   useWorkspace.setState({ engines: { data: [], error: null, loading: false } });
+});
+it("gives Reviewer only the rule 8 default when the service sends no reason", async () => {
+  useWorkspace.setState({ engines: { data: [{ id: "example-acp", name: "Example ACP", crew_role: "reviewer_only" } as unknown as EngineStatus], error: null, loading: false } });
+  render(<EngineTiers />);
+  const chip = (await screen.findByText("Reviewer only")).closest("[title]");
+  expect(chip).toHaveAttribute("title", "Orbyn cannot ask before it acts");
+  useWorkspace.setState({ engines: { data: [], error: null, loading: false } });
+});
+it("draws no Reviewer only chip when crew_role is any or absent", async () => {
+  useWorkspace.setState({ engines: { data: [{ id: "example-acp", name: "Example ACP", crew_role: "any" } as unknown as EngineStatus], error: null, loading: false } });
+  const first = render(<EngineTiers />);
+  expect(await screen.findByText("Example ACP")).toBeVisible();
+  expect(screen.queryByText("Reviewer only")).toBeNull();
+  first.unmount();
+  useWorkspace.setState({ engines: { data: [{ id: "example-acp", name: "Example ACP" } as unknown as EngineStatus], error: null, loading: false } });
+  render(<EngineTiers />);
+  expect(await screen.findByText("Example ACP")).toBeVisible();
+  expect(screen.queryByText("Reviewer only")).toBeNull();
+  useWorkspace.setState({ engines: { data: [], error: null, loading: false } });
+});
+it("stacks the tier row at 640 px so the Reviewer only chip stays under the engine", () => {
+  const css = readFileSync(join(process.cwd(), "src/features/crew/autopilot/approvals/review-controls.css"), "utf8");
+  expect(css).toMatch(/@media\s*\(max-width:\s*640px\)\s*\{/);
+  expect(css).toMatch(/@media\s*\(max-width:\s*640px\)[\s\S]*?\.et-row\s*\{[^}]*flex-direction:\s*column/);
+  expect(css).toMatch(/@media\s*\(max-width:\s*640px\)[\s\S]*?\.et-side\s*\{[^}]*align-items:\s*flex-start/);
 });

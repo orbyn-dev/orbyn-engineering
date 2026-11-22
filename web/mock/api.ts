@@ -67,7 +67,7 @@ export type Scenario =
   /** Live review fixtures: "crew-review-consent", "crew-review-same", "crew-review-full", "crew-review-remove". Background crews: "crew-background" (the four the designs draw), "crew-background-empty". */
   /** Escape log, Crew Designs v79: "crew-escapes" (the design’s six rows), "crew-escapes-checks" (the check frames’ escapes), "crew-escapes-limit" (5,000 in all), "crew-escapes-empty", "crew-escapes-low", "crew-escapes-unreadable", "crew-escapes-stale", "crew-escapes-stored" (a person’s stored thresholds). */
   /** Review capacity and the coverage map, Crew Designs v77: "crew-capacity" (a limit of 8 saved, pausing off, every batch reviewed) and "crew-capacity-save-fails" (every save refused with 403 person_required). */
-  /** Reviewer backtest, Crew Designs v23: "crew-backtest" (the estimate), "crew-backtest-report" (the finished run "run-4n"), "crew-backtest-stopped" (the stopped run "run-stopped"). */
+  /** Reviewer backtest, Crew Designs v23: "crew-backtest" (the estimate and a finished last run), "crew-backtest-report" (the finished run "run-4n"), "crew-backtest-stopped" (the stopped run "run-stopped"), "crew-backtest-kind-none" (a lane whose kind was not recorded), "crew-backtest-budget-none" (one engine has no budget), "crew-backtest-none" (the project never ran a backtest), "crew-backtest-failed" (a failed last run) and "crew-backtest-running" (a stored run in progress). */
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-empty", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
   /** Code Mode (dev and test stand-in for the service routes, mock/codemode.ts): the first thread with a search, a describe, a finished run, and a paused run with its approval. */
   | "codemode"
@@ -98,6 +98,8 @@ export type Scenario =
   | "browser-profiles-empty"
   /** The first thread on Cursor: the first send answers 409 engine_notice_required, every later one 409 engine_mode_refused (use with #/preview/cursor-thread). */
   | "cursor-thread"
+  /** A thread on Kiro, an engine the service says Orbyn cannot gate, for the unmanaged-thread screens: the one mode, the notice and its labels. */
+  | "unmanaged-thread"
   /** Transcript import: a project default engine, so the sheet can preview; `transcript-imported` adds a thread made from a file. */
   | "transcript-import"
   | "transcript-import-no-default"
@@ -181,6 +183,31 @@ export function createMockApi(options: MockOptions = {}) {
   const reviewControlsMock = createReviewControlsMock();
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
+  /** Kiro, an ACP engine the service says Orbyn cannot gate, for the engine picker and unmanaged-thread screens. */
+  const addKiro = (permission_modes: EngineStatus["capabilities"]["permission_modes"]) => {
+    const cursor = engines.find((engine) => engine.id === "cursor");
+    if (!cursor) return;
+    engines.push({
+      ...structuredClone(cursor),
+      id: "kiro",
+      name: "Kiro",
+      tier: "acp",
+      capabilities: { ...cursor.capabilities, managed: false, approvals: false, permission_modes },
+      path: "/usr/local/bin/kiro-cli",
+      version: null,
+      auth: "unknown",
+      installer: "unknown",
+      latest: null,
+      support: "unknown",
+      update_command: null,
+      manual_hint: null,
+      sign_in_command: "kiro-cli login",
+      updating: false,
+      problem: null,
+      crew_role: "reviewer_only",
+    });
+  };
+
   function reset(next: Scenario = "default") {
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
@@ -192,7 +219,7 @@ export function createMockApi(options: MockOptions = {}) {
     escapesMock.reset(next);
     backtestMock.reset(next);
     backgroundMock.reset(next);
-    reviewControlsMock.reset();
+    reviewControlsMock.reset(next);
     secretsMock.reset();
     signedIn = false;
     idCounter = 0;
@@ -254,6 +281,25 @@ export function createMockApi(options: MockOptions = {}) {
       preferenceValues = { ...preferenceValues, default_engine: "claude", default_model: "", default_effort: "", default_model_options: {}, disabled_engines: [] };
     }
     if (next === "transcript-import-no-default") preferenceValues = { ...preferenceValues, disabled_engines: [] };
+    // The engine picker's Unmanaged label, on an ACP engine the service says it cannot gate.
+    if (next === "crew-engine-picker") {
+      addKiro(["supervised", "auto", "full_access"]);
+      preferenceValues = {
+        ...preferenceValues,
+        default_engine: "kiro",
+        default_model: "",
+        default_effort: "",
+        default_model_options: {},
+        disabled_engines: [],
+      };
+    }
+    // The unmanaged thread's one mode, notice and labels, on a thread the service says Orbyn cannot gate.
+    if (next === "unmanaged-thread") {
+      addKiro(["no_approvals"]);
+      threads = threads.map((thread) => thread.id === "t-empty"
+        ? { ...thread, project_id: "p-app", engine: "kiro", model: "sonnet", lifecycle: { ...(thread.lifecycle ?? fixtures.lifecycle()), permission_mode: "auto" } }
+        : thread);
+    }
     if (!blank) preferenceValues = { ...preferenceValues, provider_instances: structuredClone(providerInstances), custom_models: structuredClone(customModels) };
   }
   reset();
@@ -303,6 +349,10 @@ export function createMockApi(options: MockOptions = {}) {
       return cursorSends === 1
         ? err(409, "engine_notice_required", "Cursor does not ask before acting.")
         : err(409, "engine_mode_refused", "Cursor cannot run in Supervised mode.");
+    }
+    // The notice is the only unmanaged-thread state the service sends for a non-Cursor engine today; the mode refusal is planned.
+    if (scenario === "unmanaged-thread" && thread.engine === "kiro") {
+      return err(409, "engine_notice_required", "Orbyn cannot ask before Kiro acts.");
     }
     const runId = nextId("run");
     const run = {
