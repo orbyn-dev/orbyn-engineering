@@ -3,7 +3,8 @@
 //! Reading needs no sign-in and writes nothing. A caller names a session by id, and
 //! optionally its working folder, never by path.
 
-use std::io::{BufRead, BufReader};
+use std::collections::{HashMap, HashSet};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -16,6 +17,62 @@ use crate::error::{CoreError, Result};
 const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
 /// Project folders looked through when no working folder is given.
 const MAX_FOLDERS: usize = 4000;
+
+/// Opens a transcript without waiting on a FIFO or another special file: the handle's
+/// metadata is checked before any byte is read.
+fn open_transcript(path: &Path) -> Result<std::fs::File> {
+    let file = open_without_blocking(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(CoreError::Invalid(
+            "This Claude session is not a regular file.".into(),
+        ));
+    }
+    if metadata.len() > MAX_FILE_BYTES {
+        return Err(CoreError::Invalid(
+            "This Claude session is too large to read here.".into(),
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn open_without_blocking(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    // A FIFO opened read-only would wait for a writer. O_NONBLOCK returns the read end at
+    // once, so the handle's metadata can refuse it; a regular file reads as usual.
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_without_blocking(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::open(path)
+}
+
+/// Lines from a transcript, at most `limit` bytes. The line the cap cuts is dropped, as a
+/// line a crash cut off is.
+fn capped_lines(file: std::fs::File, limit: u64) -> impl Iterator<Item = std::io::Result<String>> {
+    let mut reader = BufReader::new(file.take(limit));
+    let mut read = 0u64;
+    std::iter::from_fn(move || {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => None,
+            Ok(bytes) => {
+                read = read.saturating_add(bytes as u64);
+                if !line.ends_with('\n') && read >= limit {
+                    None
+                } else {
+                    Some(Ok(line))
+                }
+            }
+            Err(error) => Some(Err(error)),
+        }
+    })
+}
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -48,7 +105,8 @@ fn find_transcript(root: &Path, session: &str, dir: Option<&str>) -> Option<Path
     let file = format!("{session}.jsonl");
     if let Some(dir) = dir {
         let path = root.join(project_folder_name(dir)).join(&file);
-        return path.is_file().then_some(path);
+        // Any entry is a candidate; the opened handle decides whether it is a regular file.
+        return path.exists().then_some(path);
     }
     std::fs::read_dir(root)
         .ok()?
@@ -56,7 +114,7 @@ fn find_transcript(root: &Path, session: &str, dir: Option<&str>) -> Option<Path
         .take(MAX_FOLDERS)
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
         .map(|entry| entry.path().join(&file))
-        .find(|path| path.is_file())
+        .find(|path| path.exists())
 }
 
 /// The session's user and assistant messages in file order, and system ones when
@@ -75,14 +133,9 @@ fn session_messages_in(root: &Path, session: &str, options: &HistoryOptions) -> 
     }
     let path = find_transcript(root, session, options.dir.as_deref())
         .ok_or_else(|| CoreError::NotFound("Claude session".into()))?;
-    let file = std::fs::File::open(&path)?;
-    if file.metadata()?.len() > MAX_FILE_BYTES {
-        return Err(CoreError::Invalid(
-            "This Claude session is too large to read here.".into(),
-        ));
-    }
+    let file = open_transcript(&path)?;
     let mut messages = Vec::new();
-    for line in BufReader::new(file).lines() {
+    for line in capped_lines(file, MAX_FILE_BYTES) {
         let line = line?;
         // A line cut off by a crash is skipped, as Claude itself does.
         let Ok(entry) = serde_json::from_str::<Value>(&line) else {
@@ -176,27 +229,49 @@ pub(crate) fn resume_point_in(
             .ok_or_else(|| CoreError::NotFound("Claude session".into()))?,
         None => return Err(CoreError::NotFound("Claude session".into())),
     };
-    let file = std::fs::File::open(&path)?;
-    if file.metadata()?.len() > MAX_FILE_BYTES {
-        return Err(CoreError::Invalid(
-            "This Claude session is too large to read here.".into(),
-        ));
+    let file = open_transcript(&path)?;
+    // The prompt's branch: each entry's parent, and whether it is a top-level assistant.
+    struct Node {
+        parent: Option<String>,
+        assistant: bool,
     }
+    let mut nodes: HashMap<String, Node> = HashMap::new();
     let mut earlier: Option<String> = None;
+    let mut prompt_parent: Option<Value> = None;
     let mut found_prompt = false;
-    for line in BufReader::new(file).lines() {
+    for line in capped_lines(file, MAX_FILE_BYTES) {
         let line = line?;
         // A line cut off by a crash is skipped, as Claude itself does. A file that lost
         // the prompt this way cannot name a point, and the rewind falls back.
         let Ok(entry) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
+        if let Some(uuid) = entry
+            .get("uuid")
+            .and_then(Value::as_str)
+            .filter(|uuid| !uuid.is_empty())
+        {
+            nodes.insert(
+                uuid.to_owned(),
+                Node {
+                    parent: entry
+                        .get("parentUuid")
+                        .and_then(Value::as_str)
+                        .filter(|parent| !parent.is_empty())
+                        .map(str::to_owned),
+                    assistant: entry.get("type").and_then(Value::as_str) == Some("assistant")
+                        && top_level(&entry)
+                        && valid_uuid(uuid),
+                },
+            );
+        }
         if !top_level(&entry) {
             continue;
         }
         match entry.get("type").and_then(Value::as_str) {
             Some("user") if entry.get("uuid").and_then(Value::as_str) == Some(prompt_id) => {
                 found_prompt = true;
+                prompt_parent = entry.get("parentUuid").cloned();
                 break;
             }
             Some("assistant") => {
@@ -214,7 +289,36 @@ pub(crate) fn resume_point_in(
     if !found_prompt {
         return Err(CoreError::NotFound("the run's Claude prompt".into()));
     }
-    earlier.ok_or_else(|| CoreError::NotFound("an earlier Claude assistant message".into()))
+    fn no_point() -> CoreError {
+        CoreError::NotFound("an earlier Claude assistant message".into())
+    }
+    // No parent links on the prompt (older files): the old file-order rule still answers.
+    let mut at = match prompt_parent {
+        None => return earlier.ok_or_else(no_point),
+        Some(Value::Null) => return Err(no_point()),
+        Some(Value::String(parent)) if !parent.is_empty() => parent,
+        Some(_) => return earlier.ok_or_else(no_point),
+    };
+    // A file written before parent links, or a chain that leaves the file, keeps the old
+    // rule. A chain that reaches the root, loops or loses its shape names no point: an
+    // assistant from another branch is exactly what must not be guessed at.
+    let mut visited = HashSet::new();
+    visited.insert(prompt_id.to_owned());
+    loop {
+        if !visited.insert(at.clone()) {
+            return Err(no_point());
+        }
+        let Some(node) = nodes.get(&at) else {
+            return earlier.ok_or_else(no_point);
+        };
+        if node.assistant {
+            return Ok(at);
+        }
+        let Some(parent) = node.parent.as_deref() else {
+            return Err(no_point());
+        };
+        at = parent.to_owned();
+    }
 }
 
 #[cfg(test)]
@@ -246,6 +350,10 @@ mod tests {
     const SESSION: &str = "0f3c2b1a-1111-4222-8333-444455556666";
     const PROMPT: &str = "a1a1a1a1-1111-4222-8333-444455556666";
     const BEFORE: &str = "b2b2b2b2-1111-4222-8333-444455556666";
+    const ANCESTOR: &str = "c3c3c3c3-1111-4222-8333-444455556666";
+    const ABANDONED: &str = "d4d4d4d4-1111-4222-8333-444455556666";
+    const MISSING: &str = "e5e5e5e5-1111-4222-8333-444455556666";
+    const TOOL_RESULT: &str = "f6f6f6f6-1111-4222-8333-444455556666";
 
     fn user(uuid: &str) -> Value {
         json!({"type":"user","uuid":uuid,"sessionId":SESSION,"message":{"role":"user","content":"hi"}})
@@ -262,6 +370,12 @@ mod tests {
 
     fn assistant(uuid: &str) -> Value {
         json!({"type":"assistant","uuid":uuid,"sessionId":SESSION,"message":{"role":"assistant","content":"answer"}})
+    }
+
+    /// A JSONL line whose entry names the entry it follows in the conversation tree.
+    fn with_parent(mut entry: Value, parent: &str) -> Value {
+        entry["parentUuid"] = json!(parent);
+        entry
     }
 
     #[test]
@@ -354,6 +468,106 @@ mod tests {
             resume_point_in(dir.path(), SESSION, PROMPT, Some(Path::new(cwd))).unwrap(),
             BEFORE
         );
+    }
+
+    #[test]
+    fn a_rewind_point_follows_the_prompts_branch_not_file_order() {
+        let dir = TempDir::new();
+        let folder = project_folder_name("/one");
+        write_whole(
+            dir.path(),
+            &folder,
+            SESSION,
+            &[
+                user("u0"),
+                with_parent(assistant(ANCESTOR), "u0"),
+                // Another branch from the same root: it is nearer the prompt in file order,
+                // but the prompt did not continue from it.
+                with_parent(assistant(ABANDONED), "u0"),
+                with_parent(tool_result(TOOL_RESULT), ABANDONED),
+                with_parent(user(PROMPT), ANCESTOR),
+                assistant("after"),
+            ],
+        );
+        assert_eq!(
+            resume_point_in(dir.path(), SESSION, PROMPT, Some(Path::new("/one"))).unwrap(),
+            ANCESTOR,
+            "the prompt's own ancestor wins over the last assistant in file order"
+        );
+    }
+
+    #[test]
+    fn a_rewind_point_walks_through_tool_results_to_its_ancestor() {
+        let dir = TempDir::new();
+        let folder = project_folder_name("/one");
+        write_whole(
+            dir.path(),
+            &folder,
+            SESSION,
+            &[
+                user("u0"),
+                with_parent(assistant(ANCESTOR), "u0"),
+                with_parent(tool_result(TOOL_RESULT), ANCESTOR),
+                with_parent(user(PROMPT), TOOL_RESULT),
+            ],
+        );
+        assert_eq!(
+            resume_point_in(dir.path(), SESSION, PROMPT, Some(Path::new("/one"))).unwrap(),
+            ANCESTOR
+        );
+    }
+
+    #[test]
+    fn a_broken_parent_chain_falls_back_to_file_order_or_refuses() {
+        // The parent is not in the file: the old rule still names the last assistant before it.
+        let dir = TempDir::new();
+        let folder = project_folder_name("/one");
+        write_whole(
+            dir.path(),
+            &folder,
+            SESSION,
+            &[assistant(ABANDONED), with_parent(user(PROMPT), MISSING)],
+        );
+        assert_eq!(
+            resume_point_in(dir.path(), SESSION, PROMPT, Some(Path::new("/one"))).unwrap(),
+            ABANDONED,
+            "a chain that leaves the file falls back to file order"
+        );
+
+        // The chain reaches the root with only user entries: no point is guessed at.
+        let root = TempDir::new();
+        write_whole(
+            root.path(),
+            &folder,
+            SESSION,
+            &[
+                user("u0"),
+                assistant(ABANDONED),
+                with_parent(user(PROMPT), "u0"),
+            ],
+        );
+        assert!(matches!(
+            resume_point_in(root.path(), SESSION, PROMPT, Some(Path::new("/one"))),
+            Err(CoreError::NotFound(_))
+        ));
+
+        // A loop never becomes a point, even when an unrelated assistant is earlier in the file.
+        let looped = TempDir::new();
+        write_whole(
+            looped.path(),
+            &folder,
+            SESSION,
+            &[
+                json!({"type":"user","uuid":"u0","parentUuid":"u1","sessionId":SESSION,"message":{}}),
+                json!({"type":"user","uuid":"u1","parentUuid":"u0","sessionId":SESSION,"message":{}}),
+                assistant(ABANDONED),
+                with_parent(user(PROMPT), "u0"),
+            ],
+        );
+        assert!(matches!(
+            resume_point_in(looped.path(), SESSION, PROMPT, Some(Path::new("/one"))),
+            Err(CoreError::NotFound(_))
+        ));
     }
 
     #[test]
@@ -459,5 +673,72 @@ mod tests {
             resume_point_in(dir.path(), SESSION, PROMPT, Some(Path::new("/one"))),
             Err(CoreError::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn a_transcript_larger_than_the_cap_is_refused() {
+        let dir = TempDir::new();
+        let folder = dir.path().join(project_folder_name("/one"));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join(format!("{SESSION}.jsonl"));
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_FILE_BYTES + 1).unwrap();
+        assert!(matches!(
+            resume_point_in(dir.path(), SESSION, PROMPT, Some(Path::new("/one"))),
+            Err(CoreError::Invalid(_))
+        ));
+        assert!(matches!(
+            session_messages_in(dir.path(), SESSION, &HistoryOptions::default()),
+            Err(CoreError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn a_capped_read_never_passes_the_cap_and_drops_the_line_it_cut() {
+        let dir = TempDir::new();
+        let path = dir.path().join("capped.jsonl");
+        let first = format!("{}\n", assistant(BEFORE));
+        let text = format!("{first}{}", "x".repeat(200));
+        std::fs::write(&path, &text).unwrap();
+        let limit = first.len() as u64 + 10;
+        let file = std::fs::File::open(&path).unwrap();
+        let lines: Vec<String> = capped_lines(file, limit)
+            .map(|line| line.unwrap())
+            .collect();
+        assert_eq!(lines, [first], "the line the cap cut is dropped");
+        assert!(lines.iter().map(String::len).sum::<usize>() as u64 <= limit);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_is_refused_without_blocking() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = TempDir::new();
+        let folder = dir.path().join(project_folder_name("/one"));
+        std::fs::create_dir_all(&folder).unwrap();
+        let fifo = folder.join(format!("{SESSION}.jsonl"));
+        let name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `name` is a live NUL-terminated path and mkfifo does not keep it.
+        if unsafe { libc::mkfifo(name.as_ptr(), 0o600) } != 0 {
+            eprintln!(
+                "SKIPPED: mkfifo failed: {}",
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
+        let root = dir.path().to_path_buf();
+        let (reply, answer) = mpsc::channel();
+        std::thread::spawn(move || {
+            let point = resume_point_in(&root, SESSION, PROMPT, Some(Path::new("/one")));
+            let _ = reply.send(point);
+        });
+        let point = answer
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a FIFO must be refused, not waited on");
+        assert!(matches!(&point, Err(CoreError::Invalid(_))), "{point:?}");
     }
 }

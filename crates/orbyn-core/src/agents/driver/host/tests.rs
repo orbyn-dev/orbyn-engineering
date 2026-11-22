@@ -5,6 +5,7 @@
 mod acp;
 mod asks;
 mod control;
+mod cursor;
 mod pool;
 mod real;
 mod runs;
