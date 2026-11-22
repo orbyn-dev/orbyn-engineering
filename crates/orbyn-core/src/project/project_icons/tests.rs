@@ -346,12 +346,12 @@ async fn scratch_library_and_removed_project_identity_are_refused() {
     let library = core.workspace.root().unwrap();
     let mut protected = project.clone();
     protected.path = library.to_string_lossy().into_owned();
-    assert!(ImageScope::new(&protected, &library).is_err());
+    assert!(ImageScope::new(&protected, &library, None).is_err());
     protected = project.clone();
     protected.scratch = true;
-    assert!(ImageScope::new(&protected, &library).is_err());
+    assert!(ImageScope::new(&protected, &library, None).is_err());
     assert!(core.project_icon("missing").await.is_err());
-    let mut context = ImageScope::new(&project, &library).unwrap();
+    let mut context = ImageScope::new(&project, &library, None).unwrap();
     context.source_budget = 0;
     write(&root, "index.html", b"<link rel='icon' href='inside.svg'>");
     write(&root, "inside.svg", b"hint");
@@ -377,7 +377,7 @@ async fn a_replaced_registered_root_is_not_followed() {
 async fn actual_handle_identity_rejects_outside_or_git_bytes_despite_safe_current_path() {
     let (dir, core, project, root) = fixture().await;
     let library = core.workspace.root().unwrap();
-    let scope = ImageScope::new(&project, &library).unwrap();
+    let scope = ImageScope::new(&project, &library, None).unwrap();
     write(&root, "folder/icon.svg", b"original");
     let opened = std::fs::File::open(root.join("folder/icon.svg")).unwrap();
     let outside = dir.path().join("moved-outside");
