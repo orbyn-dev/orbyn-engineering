@@ -112,6 +112,13 @@ impl HostError {
         }
     }
 
+    /// The host's fixed sentence when this build carries no SDK for the family. It is the one
+    /// answer that names a packaging gap, and the core records it rather than guessing.
+    pub fn sdk_missing(&self) -> bool {
+        self.message_text()
+            .is_some_and(|text| text.ends_with("SDK is not available in this build."))
+    }
+
     /// The first kind found walking down the chain, so a wrapper without one still acts on
     /// the cause's.
     pub fn effective_kind(&self) -> ErrorKind {
@@ -159,12 +166,21 @@ pub struct Response {
     pub result: Result<Value, HostError>,
 }
 
+/// The SDK a host runs: the package name and version its hello names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostSdk {
+    pub name: String,
+    pub version: String,
+}
+
 /// What `hello` says.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hello {
     pub protocol: u64,
     pub host: String,
     pub family: String,
+    /// Both halves of the SDK are needed; a hello with neither, or one, carries none.
+    pub sdk: Option<HostSdk>,
     pub capabilities: Vec<String>,
 }
 
@@ -345,6 +361,13 @@ pub fn decode(line: &str) -> Result<Incoming, FrameError> {
             protocol: uint(&object, "protocol")?,
             host: optional_string(&object, "host").unwrap_or_default(),
             family: string(&object, "family")?,
+            sdk: object.get("sdk").and_then(|sdk| {
+                let sdk = sdk.as_object()?;
+                Some(HostSdk {
+                    name: sdk.get("name")?.as_str()?.to_owned(),
+                    version: sdk.get("version")?.as_str()?.to_owned(),
+                })
+            }),
             capabilities: object
                 .get("capabilities")
                 .and_then(Value::as_array)

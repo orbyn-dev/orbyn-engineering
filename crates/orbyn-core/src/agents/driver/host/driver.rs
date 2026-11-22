@@ -131,7 +131,7 @@ async fn begin(
     confinement: Option<Value>,
     send_id: u64,
     message_id: &str,
-) -> Result<Value> {
+) -> std::result::Result<Value, RequestError> {
     let operation = if spec.resume.is_some() {
         "resume"
     } else {
@@ -153,7 +153,7 @@ async fn begin(
     if let Some(confinement) = confinement {
         open["confinement"] = confinement;
     }
-    connection.request("open", open).await.map_err(refused)?;
+    connection.request("open", open).await?;
     connection
         .request_as(
             send_id,
@@ -161,7 +161,6 @@ async fn begin(
             json!({ "sessionId": spec.run_id, "message": HostDriver::message(spec), "messageId": message_id }),
         )
         .await
-        .map_err(refused)
 }
 
 #[async_trait]
@@ -312,10 +311,17 @@ impl EngineDriver for HostDriver {
         )
         .await
         {
-            Ok(accepted) => accepted,
+            Ok(accepted) => {
+                // The SDK loaded before the host accepted the turn, so this build carries it.
+                self.pool.note_sdk_present();
+                accepted
+            }
             Err(error) => {
+                if error.sdk_missing() {
+                    self.pool.note_sdk_missing();
+                }
                 connection.fire("closeSession", json!({ "sessionId": spec.run_id }));
-                return Err(error);
+                return Err(refused(error));
             }
         };
         let cancel = CancellationToken::new();

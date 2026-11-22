@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
-use super::frames::{AskFrame, HostError, Incoming, RunDone, decode, is_gated, request};
+use super::frames::{AskFrame, HostError, HostSdk, Incoming, RunDone, decode, is_gated, request};
 use super::process::{Read, Ready, Transport};
 use super::state::{CrashInfo, CrashKind, ExitRecord, MalformedWindow, Timings};
 
@@ -53,6 +53,13 @@ pub enum RequestError {
     Closed,
 }
 
+impl RequestError {
+    /// Whether the host answered that this build carries no SDK for the family.
+    pub fn sdk_missing(&self) -> bool {
+        matches!(self, Self::Failed(error) if error.sdk_missing())
+    }
+}
+
 /// The connection is closing and takes no new run.
 #[derive(Debug)]
 pub struct Closing;
@@ -91,7 +98,11 @@ pub struct Connection {
     pub id: u64,
     pub capabilities: Vec<String>,
     pub host_version: String,
+    /// The SDK package and version the host's hello named, when it named both.
+    pub sdk: Option<HostSdk>,
     started: Instant,
+    /// Unix seconds when this host became ready, for the UI's `since`.
+    started_at: i64,
     shared: Arc<Shared>,
     outbox: mpsc::UnboundedSender<String>,
     closed: watch::Receiver<Option<ClosedReason>>,
@@ -140,7 +151,9 @@ impl Connection {
             id,
             capabilities: ready.hello.capabilities,
             host_version: ready.hello.host,
+            sdk: ready.hello.sdk,
             started: Instant::now(),
+            started_at: crate::util::unix_now(),
             shared: shared.clone(),
             outbox: transport.outbox.clone(),
             closed,
@@ -153,6 +166,11 @@ impl Connection {
 
     pub fn uptime(&self) -> std::time::Duration {
         self.started.elapsed()
+    }
+
+    /// Unix seconds when this host became ready.
+    pub fn started_at(&self) -> i64 {
+        self.started_at
     }
 
     pub fn has_capability(&self, name: &str) -> bool {

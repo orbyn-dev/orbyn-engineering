@@ -19,6 +19,21 @@ async fn a_host_that_says_hello_and_ready_is_running() {
     assert!(connection.has_capability("steer"));
     assert!(!connection.has_capability("fork"));
     assert_eq!(status.restart_count, 0);
+    assert!(status.since.is_some());
+    assert_eq!(
+        status.sdk,
+        Some(crate::agents::driver::host::HostSdk {
+            name: "standin".into(),
+            version: "0".into(),
+        })
+    );
+    assert_eq!(
+        status.capabilities,
+        Some(vec!["steer".into(), "stopTask".into(), "background".into()])
+    );
+    assert!(status.pooled);
+    assert!(!status.sdk_missing);
+    assert!(!status.has_driver);
 }
 
 #[tokio::test]
@@ -77,6 +92,23 @@ async fn a_hello_timeout_counts_as_a_crash() {
 }
 
 #[tokio::test]
+async fn a_restarting_host_reports_the_try_the_limit_and_the_wait() {
+    let timings = Timings {
+        backoff_base: Duration::from_millis(500),
+        backoff_cap: Duration::from_millis(500),
+        ..fast()
+    };
+    let Some(rig) = standin(&[("STANDIN_EXIT_BEFORE_HELLO", "1")], timings) else {
+        return;
+    };
+    assert!(rig.pool.acquire().await.is_err());
+    let restart = rig.pool.status().await.restart.expect("a restart waits");
+    assert_eq!((restart.attempt, restart.limit), (1, 5));
+    assert_eq!(restart.next_try_seconds, Some(1));
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
 async fn five_restarts_in_five_minutes_make_the_family_unavailable_until_asked() {
     let Some(rig) = standin(&[("STANDIN_EXIT_BEFORE_HELLO", "1")], fast()) else {
         return;
@@ -90,6 +122,7 @@ async fn five_restarts_in_five_minutes_make_the_family_unavailable_until_asked()
     .await;
     let status = rig.pool.status().await;
     assert_eq!(status.restart_count, 5);
+    assert_eq!(status.stops_in_window, Some(5));
     let (crash, _) = status.last_crash.unwrap();
     assert_eq!(crash.exit.unwrap().code, Some(1));
     // the host's last words are kept, with the credential-looking line gone

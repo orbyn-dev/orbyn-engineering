@@ -124,6 +124,7 @@ const handlers = {
     return { engineSessionId: r.engineSessionId ?? `eng-${r.sessionId}` };
   },
   send: (r) => {
+    if (env.STANDIN_SDK_MISSING) throw new Error("The Claude Agent SDK is not available in this build.");
     runs.set(r.id, { cancelled: false, text: String(r.message), session: r.sessionId, uuid: r.messageId });
     setImmediate(() => {
       write({ type: "session", sendId: r.id, engineSessionId: `eng-${r.sessionId}`, turnId: `turn-${r.id}` });
