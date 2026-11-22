@@ -60,7 +60,7 @@ describe("command blocks in the drawer", () => {
     expect(screen.getByText("Output of t2")).toBeInTheDocument();
     expect(container.querySelector(".cb-list")).toBeNull();
     expect(screen.queryByRole("group", { name: "Command blocks" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Commands Orbyn runs appear here as blocks")).not.toBeInTheDocument();
+    expect(screen.queryByText("Commands you run here appear as blocks")).not.toBeInTheDocument();
     expect(screen.queryByText("Couldn't read this terminal's blocks.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
     expect(useUi.getState().toasts).toEqual([]);

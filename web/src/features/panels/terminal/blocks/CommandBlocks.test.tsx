@@ -59,7 +59,7 @@ describe("the production client", () => {
     expect(String(fetching.mock.calls[0]?.[0])).toBe("/api/threads/th/terminals/main/blocks");
     await settle();
     expect(container).toBeEmptyDOMElement();
-    expect(screen.queryByText("Commands Orbyn runs appear here as blocks")).not.toBeInTheDocument();
+    expect(screen.queryByText("Commands you run here appear as blocks")).not.toBeInTheDocument();
     expect(useUi.getState().toasts).toEqual([]);
   });
 
@@ -126,7 +126,7 @@ describe("the blocks", () => {
   it("says what blocks are when there are none", async () => {
     install([]);
     mount();
-    expect(await screen.findByText("Commands Orbyn runs appear here as blocks")).toBeInTheDocument();
+    expect(await screen.findByText("Commands you run here appear as blocks")).toBeInTheDocument();
   });
 
   it("says it could not read the blocks and tries again on the person's click only", async () => {
