@@ -19,6 +19,40 @@ use crate::util::{canonicalize, new_id, now};
 
 const WORKTREE_SUFFIX: &str = "-wt";
 
+/// A name is one folder component, even when an explicit destination is supplied.
+fn validate_new_project_name(name: &str, windows: bool) -> Result<()> {
+    let trimmed = name.trim();
+    let invalid = trimmed.is_empty()
+        || matches!(trimmed, "." | "..")
+        || name
+            .chars()
+            .any(|ch| ch.is_control() || matches!(ch, '/' | '\\'));
+    let invalid_windows = windows && {
+        let stem = name
+            .split('.')
+            .next()
+            .unwrap_or(name)
+            .trim_end_matches(' ')
+            .to_ascii_uppercase();
+        let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || ["COM", "LPT"].iter().any(|prefix| {
+                stem.strip_prefix(prefix).is_some_and(|n| {
+                    matches!(
+                        n,
+                        "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                    )
+                })
+            });
+        reserved || name.ends_with(['.', ' ']) || name.contains(['<', '>', ':', '"', '|', '?', '*'])
+    };
+    if invalid || invalid_windows {
+        return Err(CoreError::Invalid(
+            "Enter a valid project name without path separators or invalid characters.".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn slug_of(name: &str) -> Result<String> {
     let lowered: String = name
         .trim()
@@ -396,6 +430,7 @@ impl Core {
         readme: bool,
         chosen: Option<&str>,
     ) -> Result<Project> {
+        validate_new_project_name(name, cfg!(windows))?;
         let (slug, path) = self.slot(name, chosen).await?;
         self.audit_project("project.create", &slug, serde_json::Value::Null)?;
         let parent = path

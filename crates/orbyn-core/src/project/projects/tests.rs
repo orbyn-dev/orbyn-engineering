@@ -75,6 +75,65 @@ fn slugs_are_plain_and_never_a_worktree_root() {
     assert_eq!(name_from_url("https://x.test/a/b/"), Some("b"));
 }
 
+#[test]
+fn project_name_checks_host_specific_rules() {
+    for name in [
+        "bad:name*?<x",
+        "CON",
+        "con.txt",
+        "COM1",
+        "Lpt³.txt",
+        "name.",
+        "name ",
+    ] {
+        assert!(validate_new_project_name(name, true).is_err(), "{name:?}");
+    }
+    for name in ["Café Notes", "My project", "a.b", "widget-1"] {
+        assert!(validate_new_project_name(name, true).is_ok(), "{name:?}");
+        assert!(validate_new_project_name(name, false).is_ok(), "{name:?}");
+    }
+    assert!(validate_new_project_name("bad:name", false).is_ok());
+}
+
+#[tokio::test]
+async fn new_project_rejects_path_components_before_any_creation() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let base = dir.path().join("base");
+    std::fs::create_dir(&base).unwrap();
+    for name in [
+        "../escape",
+        "nested/name",
+        r"nested\name",
+        ".",
+        "..",
+        "bad\nname",
+    ] {
+        let chosen = base.join(name);
+        let error = core
+            .new_project(name, false, Some(chosen.to_str().unwrap()))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CoreError::Invalid(_)), "{name:?}: {error}");
+        assert!(
+            error.to_string().contains("project name"),
+            "{name:?}: {error}"
+        );
+        assert!(
+            core.new_project(name, false, None).await.is_err(),
+            "{name:?}"
+        );
+    }
+    assert!(!dir.path().join("escape").exists());
+    assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0);
+    let chosen = base.join("Café Notes");
+    let project = core
+        .new_project("Café Notes", false, Some(chosen.to_str().unwrap()))
+        .await
+        .unwrap();
+    assert_eq!(PathBuf::from(project.path), chosen);
+}
+
 #[tokio::test]
 async fn create_makes_a_nested_repository() {
     let dir = TempDir::new();
