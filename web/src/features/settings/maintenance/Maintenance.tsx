@@ -541,9 +541,6 @@ export function MaintenanceSection() {
 
   return (
     <>
-      <h1 className="sr-only" tabIndex={-1} data-page-title>
-        Maintenance
-      </h1>
       <DiagnosticsGroup />
       <CleanupGroup />
       <TelemetryGroup />

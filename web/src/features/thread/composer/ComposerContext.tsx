@@ -1,5 +1,7 @@
 import { Folder, GitBranch, ShieldOff } from "lucide-react";
-import type { PermissionMode, Thread } from "../../../api/types";
+import type { EngineStatus, PermissionMode, Thread } from "../../../api/types";
+import { UnmanagedLabel } from "../../../product/engines/UnmanagedLabel";
+import { isUnmanaged } from "../../../product/engines/unmanaged";
 import { ACCESS, type AccessView, type useTraitsMenu } from "./ComposerTraits";
 
 /** The checkout, branch and access row under the composer. */
@@ -8,7 +10,7 @@ export function ComposerContext({
   hidden,
   branch,
   branchPending,
-  unmanaged,
+  engine,
   access,
   accessView,
   busy,
@@ -18,13 +20,14 @@ export function ComposerContext({
   hidden: boolean;
   branch: string | null;
   branchPending: boolean;
-  unmanaged: boolean;
+  engine: EngineStatus | null;
   access: PermissionMode;
   accessView: AccessView;
   busy: boolean;
   traits: Pick<ReturnType<typeof useTraitsMenu>, "openAt">;
 }) {
   const AccessIcon = ACCESS[access].icon;
+  const unmanaged = isUnmanaged(engine);
   return (
     <div className="composer-context" hidden={hidden}>
       <dl>
@@ -57,10 +60,7 @@ export function ComposerContext({
           <dt className="sr-only">Access</dt>
           <dd className={unmanaged ? "tone-warn" : undefined}>
             {unmanaged ? (
-              <>
-                <ShieldOff size={12} aria-hidden />
-                Unmanaged
-              </>
+              <UnmanagedLabel engine={engine} variant="text" icon={<ShieldOff size={12} aria-hidden />} note />
             ) : (
               <button
                 type="button"

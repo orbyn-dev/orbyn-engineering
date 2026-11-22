@@ -49,11 +49,12 @@ pub(crate) fn parse(value: &Value) -> Result<WritingStyle> {
 
 /// Uses the existing confined file handle reader, without following a link
 /// outside the checkout or loading ignored credential/configuration homes.
-fn local_text(cwd: &Path, name: &str) -> Result<Option<String>> {
+fn local_text(cwd: &Path, name: &str, data_dir: Option<&Path>) -> Result<Option<String>> {
     let scope = crate::governance::approvals::WriteScope {
         checkout: cwd.into(),
         engine_cwd: cwd.into(),
         excluded: Vec::new(),
+        data_dir: data_dir.map(Path::to_path_buf),
     };
     let path = crate::project::files::inside(&scope, name)?;
     if !path.try_exists()? {
@@ -82,7 +83,7 @@ fn local_text(cwd: &Path, name: &str) -> Result<Option<String>> {
 }
 
 impl WritingStyle {
-    pub async fn instructions(&self, cwd: &Path) -> Result<String> {
+    pub async fn instructions(&self, cwd: &Path, data_dir: Option<&Path>) -> Result<String> {
         match self.mode {
             Mode::Custom => Ok(format!(
                 "User writing instructions: {}",
@@ -95,7 +96,7 @@ impl WritingStyle {
             Mode::RepoConventions => {
                 let subjects =
                     utf8(read_git(cwd, &["log", "--all", "-15", "--format=%s", "--"]).await?)?;
-                let instructions = local_text(cwd, "AGENTS.md")?.unwrap_or_default();
+                let instructions = local_text(cwd, "AGENTS.md", data_dir)?.unwrap_or_default();
                 Ok(format!(
                     "Match the repository's writing conventions. Reference data: {}",
                     serde_json::json!({"recent_subjects":subjects,"repository_instructions":instructions})
@@ -173,13 +174,17 @@ mod tests {
         std::fs::write(cwd.join("AGENTS.md"), "Use a scoped imperative subject").unwrap();
         run_git(cwd, &["add", "."]);
         run_git(cwd, &["commit", "-qm", "fix(core): preserve conventions"]);
-        let repo = parse(&json!({})).unwrap().instructions(cwd).await.unwrap();
+        let repo = parse(&json!({}))
+            .unwrap()
+            .instructions(cwd, None)
+            .await
+            .unwrap();
         assert!(repo.contains("fix(core): preserve conventions"));
         assert!(repo.contains("Use a scoped imperative subject"));
         let custom =
             parse(&json!({"mode":"custom","custom_instructions":"Short French summaries"}))
                 .unwrap()
-                .instructions(cwd)
+                .instructions(cwd, None)
                 .await
                 .unwrap();
         assert!(custom.contains("Short French summaries"));
@@ -187,7 +192,7 @@ mod tests {
         assert!(
             parse(&json!({"mode":"conventional_commits"}))
                 .unwrap()
-                .instructions(cwd)
+                .instructions(cwd, None)
                 .await
                 .unwrap()
                 .contains("type(scope): subject")

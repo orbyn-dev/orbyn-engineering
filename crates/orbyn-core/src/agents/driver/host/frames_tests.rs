@@ -103,4 +103,5 @@ fn requests_carry_their_id_and_type() {
     assert_eq!(value, json!({"id":5,"type":"cancel","sendId":4}));
     assert!(!line.contains('\n'));
     assert!(is_gated("steer") && !is_gated("open"));
+    assert!(is_gated("readSubagent"));
 }

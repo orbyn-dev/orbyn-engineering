@@ -1,7 +1,9 @@
 import { useClearSelectionOnLeave } from "../../lib/clearSelection";
 import { CloneJobs, CommandPalette, FoldersNotice, GitHubStarPrompt, QuitConfirmation, Sidebar } from "../../features/workspace";
+import { ChevronLeft } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { SettingsPage } from "../../features/settings";
+import { TranscriptImportHost } from "../../features/thread";
 import { Toasts } from "../../product/ui/Toasts";
 import { usePanelMotionRoot } from "../../product/panels/panelAnimations";
 import { useTaskRunNotifications } from "../taskNotifications";
@@ -12,6 +14,8 @@ import { useVisibleProjects, useWorkspace } from "../../product/state/workspace"
 import { TitleBar } from "../TitleBar";
 import { useReadingNav } from "../readingNav";
 import { useSidebarDrawer } from "../../product/shell/sidebarDrawer";
+import { tabbables } from "../../ui/focusReturn";
+import { Button } from "../../ui/controls";
 import { useEscapeClose } from "../../ui/useEscapeClose";
 import { PreviewFloat, useTerminalAttention } from "../../features/panels";
 import { startAppDataRefresh } from "./dataRefresh";
@@ -75,32 +79,49 @@ export function Shell() {
   const overlay = route.name === "settings";
   const underneath = overlay ? behindSettings.current : route;
   if (!overlay) behindSettings.current = route;
-  const onHome = underneath.name === "home" && !needsProject;
   const reading = useUi((state) => state.workspaceLayout === "reading");
   const readingNav = useReadingNav((state) => state.open);
-  // Small windows (600 to 899 px) fold the sidebar into a drawer over the thread.
+  // The sidebar is never docked under 900 px. A small window folds it into a drawer over the thread;
+  // the phone (under 600 px) draws it as its home page, and as a full-screen sheet over any page that
+  // is not home (Engineer Designs, "Phone layout (under 600 px)": the sidebar is a full-screen sheet,
+  // never docked or overlaid beside the page).
+  const phone = layout === "phone";
   const small = layout === "small";
   const drawerOpen = useSidebarDrawer((state) => state.open);
   const closeDrawer = useSidebarDrawer((state) => state.close);
-  const showNav = layout === "phone" ? onHome && route.name !== "settings" : small ? drawerOpen : reading ? readingNav : !collapsed;
+  const home = underneath.name === "home" && !needsProject && !overlay;
+  const showNav = phone ? home || drawerOpen : small ? drawerOpen : reading ? readingNav : !collapsed;
   // A docked sidebar stays mounted while collapsed: showing it again must not rebuild every row.
-  const docked = !small && layout !== "phone" && !reading;
+  const docked = !small && !phone && !reading;
   const navMounted = showNav || docked;
-  // Choosing something closes it, and a window that grows past small leaves nothing open behind.
+  // The overlay form of the sidebar: the drawer on a small window, the sheet on a page that is not
+  // the phone's home. Choosing something closes it, the Esc key closes it, and a window that changes
+  // layout leaves nothing open behind.
+  const overlaid = drawerOpen && (small || phone);
   useEffect(() => {
     closeDrawer();
-  }, [routeKey, small, closeDrawer]);
-  useEscapeClose(small && drawerOpen, closeDrawer, () => document.querySelector<HTMLElement>("[data-sidebar-toggle]"));
+  }, [routeKey, small, phone, closeDrawer]);
+  useEscapeClose(overlaid, closeDrawer, () => document.querySelector<HTMLElement>("[data-sidebar-toggle]"));
   const dismissDrawer = () => {
     closeDrawer();
     document.querySelector<HTMLElement>("[data-sidebar-toggle]")?.focus();
+  };
+  // The phone's sheet takes the page's place, so keyboard focus moves into it; Escape and the Close
+  // link give it back to the title bar button, which never leaves the screen.
+  const sheetNav = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (phone && drawerOpen && sheetNav.current) tabbables(sheetNav.current)[0]?.focus();
+  }, [phone, drawerOpen]);
+  // A link in the sidebar is a choice: it closes the drawer or the sheet as well as changing the page.
+  const chooseInNav = (event: React.MouseEvent) => {
+    if ((event.target as Element).closest("a[href]")) dismissDrawer();
   };
 
   return (
     <div
       className="shell"
-      data-nav={showNav && !small ? "shown" : "hidden"}
-      data-drawer={small && drawerOpen ? "open" : undefined}
+      data-nav={showNav && !small && !phone ? "shown" : "hidden"}
+      data-drawer={overlaid ? "open" : undefined}
       data-layout={layout}
       data-reading-nav={readingNav ? "open" : undefined}
       data-page={underneath.name}
@@ -112,12 +133,21 @@ export function Shell() {
       }}>
         Skip to content
       </a>
-      <TitleBar layout={layout} />
+      <TitleBar layout={layout} navShown={showNav} />
       {small && drawerOpen ? <div className="drawer-scrim" aria-hidden onClick={dismissDrawer} /> : null}
       {navMounted ? (
         small ? (
           // Choosing a thread or page closes the drawer, even one already open.
-          <div className="sidebar-drawer" onClick={(event) => (event.target as Element).closest("a[href]") && dismissDrawer()}>
+          <div className="sidebar-drawer" onClick={chooseInNav}>
+            <Sidebar route={route} />
+          </div>
+        ) : phone && drawerOpen ? (
+          <div ref={sheetNav} className="sidebar-sheet" onClick={chooseInNav}>
+            <div className="sidebar-sheet-head">
+              <Button small tone="quiet" icon={<ChevronLeft size={14} aria-hidden />} onClick={dismissDrawer}>
+                Close
+              </Button>
+            </div>
             <Sidebar route={route} />
           </div>
         ) : (
@@ -126,6 +156,7 @@ export function Shell() {
       ) : null}
       <BackgroundAnnouncer />
       <QuitConfirmation />
+      <TranscriptImportHost />
       <PreviewFloat threadId={route.name === "thread" ? route.id : null} />
       <Toasts
         lead={
@@ -137,12 +168,16 @@ export function Shell() {
       />
       <CloneJobs />
       {palette ? <CommandPalette start={palette} onClose={() => setPalette(null)} /> : null}
-      {layout === "phone" && onHome && !overlay ? (
+      {phone && home ? (
+        // The sidebar is this page, so nothing is drawn under it.
         <main id="main" ref={main} tabIndex={-1} hidden />
       ) : (
-        <main id="main" ref={main} tabIndex={-1} className="main">
+        // The page under the phone's sheet stays mounted, so its scroll and its terminal survive.
+        <main id="main" ref={main} tabIndex={-1} className="main" hidden={phone && drawerOpen}>
           {route.name === "settings" ? <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} row={route.row} onClose={() => navigate(underneath)} /> : null}
-          {/* The page behind settings stays mounted, so a terminal, preview or scroll position survives. */}
+          {/* The page behind settings stays mounted, so a terminal, preview or scroll position survives. `hidden` takes it out of the
+              accessibility tree and the tab order while Settings is open, so the open page owns the only h1. Not `inert`: the theme
+              editor's element picker shows this page again (`html[data-inspecting]`) and inert content cannot be pointed at. */}
           <div className="main-view" hidden={route.name === "settings"}>
             <RouteView route={underneath} needsProject={needsProject} />
           </div>

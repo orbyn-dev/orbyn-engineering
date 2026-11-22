@@ -276,7 +276,7 @@ describe("the Details button and the Details popover", () => {
     expect(within(card()!).queryByRole("button", { name: /Copy folder path/ })).toBeNull();
     await user.click(await screen.findByRole("button", { name: "Thread menu" }));
     const menu = await screen.findByRole("menu", { name: "Thread menu" });
-    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Settle", "Snooze…", "Rename", "Copy folder path", "Archive", "Delete thread"]);
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Settle", "Snooze…", "Rename", "Copy folder path", "Export transcript", "Archive", "Delete thread"]);
     await user.click(within(menu).getByRole("menuitem", { name: "Delete thread" }));
     expect(await screen.findByRole("dialog", { name: /Delete “/ })).toBeInTheDocument();
   });

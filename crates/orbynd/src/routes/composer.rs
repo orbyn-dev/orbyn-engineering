@@ -4,19 +4,28 @@ use std::collections::HashMap;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use orbyn_contracts::ModelSelection;
-use orbyn_contracts::{EditQueuedMessage, EnqueueMessage, SteerRun, UpdateThread};
+use orbyn_contracts::{
+    AttachmentSource, EditQueuedMessage, EnqueueMessage, SteerRun, UpdateThread,
+};
+use orbyn_core::CoreError;
 use orbyn_core::agents::selection;
+use orbyn_core::conversation::photo_conversion::MAX_PHOTO_INPUT_BYTES;
 use serde::Deserialize;
 
 use crate::http::{ApiFailure, ApiJson, ApiResult, AppState, LOCAL_USER};
 
 /// A little over the largest allowed file; core enforces the exact limits.
 const UPLOAD_LIMIT: usize = 51 * 1024 * 1024;
+/// The same headroom for the photo route, so core answers `413 file_too_large` in its own words
+/// instead of this layer's body limit.
+const PHOTO_LIMIT: usize = 51 * 1024 * 1024;
+/// The largest source body; core enforces the character limits.
+const SOURCE_LIMIT: usize = 64 * 1024;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -31,8 +40,16 @@ pub fn routes() -> Router<AppState> {
                 .post(upload_attachment)
                 .layer(DefaultBodyLimit::max(UPLOAD_LIMIT)),
         )
+        .route(
+            "/api/threads/{id}/attachments/convert",
+            post(convert_attachment).layer(DefaultBodyLimit::max(PHOTO_LIMIT)),
+        )
         .route("/api/attachments/{id}", delete(remove_attachment))
         .route("/api/attachments/{id}/content", get(attachment_content))
+        .route(
+            "/api/attachments/{id}/source",
+            put(set_attachment_source).layer(DefaultBodyLimit::max(SOURCE_LIMIT)),
+        )
         .route("/api/threads/{id}/mentions", get(mentions))
         .route("/api/threads/{id}/commands", get(slash_commands))
 }
@@ -124,14 +141,14 @@ async fn steer(
 }
 
 #[derive(Deserialize)]
-struct UploadQuery {
+struct NameQuery {
     name: String,
 }
 
 async fn upload_attachment(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Query(query): Query<UploadQuery>,
+    Query(query): Query<NameQuery>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> ApiResult<impl IntoResponse> {
@@ -141,6 +158,47 @@ async fn upload_attachment(
         .unwrap_or("application/octet-stream");
     let attachment = state.core.add_attachment(&id, &query.name, mime, &body)?;
     Ok((StatusCode::CREATED, Json(attachment)))
+}
+
+/// `POST /api/threads/{id}/attachments/convert?name=`. The body is the photo the person picked and the
+/// answer is the stored photo the run sends instead (docs/attachments-transcripts.md, "Photo
+/// conversion"). The service sniffs and converts off the request thread, so a big photo does not hold
+/// the runtime.
+async fn convert_attachment(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<NameQuery>,
+    headers: HeaderMap,
+    request: Request,
+) -> ApiResult<impl IntoResponse> {
+    let too_large = |size: u64| {
+        ApiFailure::from(CoreError::FileTooLarge {
+            size,
+            limit: MAX_PHOTO_INPUT_BYTES,
+        })
+    };
+    // Refused from the declared length before a byte of the body is read, as the doc requires.
+    let claimed = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    if let Some(size) = claimed.filter(|size| *size > MAX_PHOTO_INPUT_BYTES) {
+        return Err(too_large(size));
+    }
+    // Then a counting read, so a request without a length still stops at the cap.
+    let body = axum::body::to_bytes(request.into_body(), MAX_PHOTO_INPUT_BYTES as usize + 1)
+        .await
+        .map_err(|_| too_large(claimed.unwrap_or(MAX_PHOTO_INPUT_BYTES + 1)))?;
+    let core = state.core.clone();
+    let name = query.name;
+    let photo = tokio::task::spawn_blocking(move || core.convert_photo(&id, &name, &body))
+        .await
+        .map_err(|_| {
+            ApiFailure::from(CoreError::Internal(
+                "the photo could not be converted".into(),
+            ))
+        })??;
+    Ok((StatusCode::OK, Json(photo)))
 }
 
 async fn list_attachments(
@@ -164,6 +222,15 @@ async fn remove_attachment(
 ) -> ApiResult<StatusCode> {
     state.core.remove_attachment(&id)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `PUT /api/attachments/{id}/source`: where an image came from, before it is sent.
+async fn set_attachment_source(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(source): ApiJson<AttachmentSource>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.set_attachment_source(&id, source)?))
 }
 
 /// `GET /api/attachments/{id}/content`. The bytes a sent message carried.

@@ -3,7 +3,7 @@ import { useUi } from "../../../product/state/ui";
 import { Segmented } from "../../../ui/Segmented";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { PreferenceGroups } from "../rows/PreferenceRows";
-import { heading, Toggle } from "./parts";
+import { Toggle } from "./parts";
 import { SearchEngineRows } from "./SearchEngineRows";
 
 const MOD = typeof navigator !== "undefined" && /mac/i.test(navigator.platform) ? "⌘" : "Ctrl";
@@ -23,7 +23,6 @@ export function ChatSection() {
   const setPrefs = useUi((state) => state.setPrefs);
   return (
     <>
-      {heading("Chat")}
       <SettingGroup>
         <SettingRow title={settingsLabel("chat-chat-width")}>
           <Segmented

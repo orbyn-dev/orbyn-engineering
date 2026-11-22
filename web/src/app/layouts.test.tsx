@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { installMockFetch, setViewportWidth } from "../test-support";
 import { useUi } from "../product/state/ui";
+import { navigate } from "../product/state/route";
 import { App } from "./App";
 import { useSidebarDrawer } from "../product/shell/sidebarDrawer";
 
@@ -125,5 +126,80 @@ describe("layouts by window width", () => {
     expect(panel()).toHaveAttribute("data-mode", "sheet");
     expect(thread()).toHaveAttribute("hidden");
     expect(screen.queryByRole("button", { name: "Show side panel" })).not.toBeInTheDocument();
+  });
+});
+
+describe("the phone's sidebar", () => {
+  const sheetClose = () => screen.queryByRole("button", { name: "Close" });
+
+  it("opens the sidebar sheet from a thread, where the sidebar is not the page", async () => {
+    setViewportWidth(375);
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    // The page is the thread, so the button says what it will do; it used to say Hide sidebar and do nothing.
+    const toggle = await screen.findByRole("button", { name: "Show sidebar" }, { timeout: 8000 });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(sidebar()).not.toBeInTheDocument();
+    await user.click(toggle);
+    // A full-screen sheet in the page's place: the places in the sidebar are reachable from the thread.
+    expect(sidebar()).toBeInTheDocument();
+    expect(within(sidebar()!).getByRole("link", { name: "Pull requests" })).toBeInTheDocument();
+    expect(within(sidebar()!).getByRole("link", { name: "Usage" })).toBeInTheDocument();
+    expect(container.querySelector(".sidebar-sheet")).not.toBeNull();
+    expect(container.querySelector(".shell")).toHaveAttribute("data-drawer", "open");
+    expect(container.querySelector("main")).toHaveAttribute("hidden");
+    // Focus lands in the sheet, on the link back to the page.
+    expect(sheetClose()).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("closes the sheet on Escape and on a chosen destination, leaving no focus or scroll behind", async () => {
+    setViewportWidth(375);
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    const toggle = await screen.findByRole("button", { name: "Show sidebar" }, { timeout: 8000 });
+    await user.click(toggle);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(sidebar()).not.toBeInTheDocument());
+    // Focus comes back to the button that stays on screen, not to the sheet that left.
+    expect(toggle).toHaveFocus();
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    // Nothing is left inert or scrolled-locked behind the closed sheet: the page is back and scrolls.
+    expect(container.querySelector("main")).not.toHaveAttribute("hidden");
+    expect(document.body.style.overflow).toBe("");
+    expect(document.documentElement.style.overflow).toBe("");
+    // A destination in the sheet is a choice: it closes the sheet and changes the page.
+    await user.click(screen.getByRole("button", { name: "Show sidebar" }));
+    await user.click(within(sidebar()!).getByRole("link", { name: "Pull requests" }));
+    await waitFor(() => expect(sidebar()).not.toBeInTheDocument());
+    expect(container.querySelector(".shell")).not.toHaveAttribute("data-drawer");
+    await waitFor(() => expect(window.location.hash).toBe("#/pulls"));
+  });
+
+  it("closes the sheet with its own Close link", async () => {
+    setViewportWidth(375);
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Show sidebar" }, { timeout: 8000 }));
+    await user.click(sheetClose()!);
+    expect(sidebar()).not.toBeInTheDocument();
+    expect(container.querySelector("main")).not.toHaveAttribute("hidden");
+    expect(screen.getByRole("button", { name: "Show sidebar" })).toHaveFocus();
+  });
+
+  it("keeps the sidebar as the home page, where the button says Hide sidebar", async () => {
+    setViewportWidth(375);
+    const user = userEvent.setup();
+    render(<App />);
+    act(() => navigate({ name: "home" }));
+    // On the home screen the sidebar is the page itself, so the button reports it as shown.
+    const toggle = await screen.findByRole("button", { name: "Hide sidebar" }, { timeout: 8000 });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(sidebar()).toBeInTheDocument();
+    expect(document.querySelector(".sidebar-sheet")).toBeNull();
+    await user.click(toggle);
+    // Leaving the sidebar's page closes it: the composer takes the page over.
+    await waitFor(() => expect(sidebar()).not.toBeInTheDocument());
+    await screen.findByRole("button", { name: "Show sidebar" }, { timeout: 8000 });
   });
 });

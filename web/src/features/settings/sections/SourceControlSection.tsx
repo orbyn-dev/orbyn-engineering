@@ -9,7 +9,6 @@ import { Empty, ErrorState, Loading } from "../../../product/ui/states";
 import { PreferenceGroups } from "../rows/PreferenceRows";
 import { IssueTrackersSettings } from "../../issues";
 import { SourceControlWriting } from "./SourceControlWriting";
-import { heading } from "./parts";
 
 export function SourceControlSection() {
   const forges = useAsync("forges", (signal) => listForges(signal));
@@ -18,7 +17,6 @@ export function SourceControlSection() {
   if (forges.status === "ready" && !offline) scannedAt.current = Date.now();
   return (
     <>
-      {heading("Source control")}
       <SourceControlWriting />
       <PreferenceGroups groups={[{ title: "", rows: [{
         key: "auto_pull", title: settingsLabel("source-control-automatic-pull"),

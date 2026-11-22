@@ -219,6 +219,7 @@ impl Core {
 
     pub fn open_with(config: CoreConfig, backend: Arc<dyn ComputerBackend>) -> Result<Self> {
         std::fs::create_dir_all(&config.data_dir)?;
+        restrict_data_dir(&config.data_dir);
         let lock = take_owner_lock(&config.data_dir)?;
         let timings = crate::operations::local_trace::LocalTrace::open(&config.data_dir)?;
         // A preview outlives no process, so any profile here is a leftover.
@@ -274,6 +275,7 @@ impl Core {
             base_url: config.base_url.clone(),
             scm_reads: scm_reads.clone(),
             explorer: explorer.clone(),
+            data_dir: config.data_dir.clone(),
             runs_dir: config.data_dir.join("runs"),
             renders_dir: crate::conversation::renders::renders_root(&config.data_dir),
             setups: setups.clone(),
@@ -676,6 +678,22 @@ impl Drop for OwnerLock {
     }
 }
 
+/// Keeps the data folder owner-only: the account files and `service.json` sit
+/// directly in it. Windows keeps the per-user app-data ACL.
+#[cfg(unix)]
+fn restrict_data_dir(data_dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(meta) = std::fs::metadata(data_dir) else {
+        return;
+    };
+    if meta.permissions().mode() & 0o777 != 0o700 {
+        let _ = std::fs::set_permissions(data_dir, std::fs::Permissions::from_mode(0o700));
+    }
+}
+
+#[cfg(not(unix))]
+fn restrict_data_dir(_: &Path) {}
+
 /// One live owner per data directory: a second process must not fence the first.
 fn take_owner_lock(data_dir: &Path) -> Result<OwnerLock> {
     let path = data_dir.join("orbynd.lock");
@@ -742,6 +760,35 @@ fn clean_stale_run_dirs(runs_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_data_directory_is_created_private_and_tightened_when_it_exists() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = crate::testing::TempDir::new();
+        let fresh = dir.path().join("fresh");
+        let mut config = CoreConfig::new(fresh.clone(), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        assert_eq!(
+            std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        drop(core);
+
+        let existing = dir.path().join("existing");
+        std::fs::create_dir(&existing).unwrap();
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut config = CoreConfig::new(existing.clone(), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        assert_eq!(
+            std::fs::metadata(&existing).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        drop(core);
+    }
 
     #[test]
     fn the_data_directory_has_one_owner_until_its_guard_is_dropped() {

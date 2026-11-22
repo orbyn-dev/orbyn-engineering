@@ -19,7 +19,7 @@ import { USAGE_PERIODS, type UsageDays, type UsageMetric } from "./usageModel";
 import { UsageView } from "./UsageView";
 import { ScanStatus, Segment } from "./UsageParts";
 import { LIMITS_WAIT_MS, LimitsAsking, LimitsView } from "./UsageLimits";
-import { forgetLimits, readLimits } from "../../lib/limitsStore";
+import { engineLimitsKey, forgetLimits, limitsRefreshOn, readLimits } from "../../lib/limitsStore";
 import { useLimitsChecked } from "../../lib/limitsChecked";
 import { LimitsAge, LimitsFailure, LimitsRefresh } from "../../product/ui/LimitsChecked";
 
@@ -63,7 +63,7 @@ export function UsagePage() {
   const dimmed = useWaited(usage.pending && usage.data !== null);
   const limits = useAsync(`limits:${metric === "limits"}`, (signal, context) =>
     metric === "limits" ? readLimits("overview", (force) => api.limits(force, signal), { force: context.force }) : Promise.resolve(null),
-  { fresh: true, keepOnManual: true, refreshOn: metric === "limits" ? under("limits") : undefined },
+  { fresh: true, keepOnManual: true, refreshOn: metric === "limits" ? limitsRefreshOn(under("limits"), () => "overview") : undefined },
 );
   const checked = useLimitsChecked("overview", limits);
 
@@ -105,10 +105,11 @@ export function UsagePage() {
     }
   };
 
-  // Asks one engine and shows what the page now holds; the other engines are not asked.
+  // Asks one engine and shows what the page now holds; the other engines are not asked. The read goes through the
+  // shared store, so the composer panel and the details row showing the same engine answer from it too.
   const retry = async (engine: string) => {
     try {
-      await api.engineLimits(engine, true);
+      await readLimits(engineLimitsKey(engine), (force) => api.engineLimits(engine, force), { force: true });
     } catch {
       /* the page reads the failure again below */
     }

@@ -12,7 +12,7 @@ import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { navigate } from "../../../product/state/route";
 import { LogoTile } from "../../../product/ui/Logo";
 import { DRAFT_KEY, SCRATCH } from "../../../product/state/draftStore";
-import { heading, Toggle } from "./parts";
+import { Toggle } from "./parts";
 
 /** The two lists of open-source packages, one for the interface and one for the service. */
 function LicenceLists({ onBack }: { onBack(): void }) {
@@ -131,10 +131,9 @@ export function AboutSection() {
   const info = useAsync("about-info", (signal) => api.info(signal), { keep: true });
   const [licences, setLicences] = useState(false);
   const update = useDownloadedUpdate();
-  if (licences) return <><h1 className="sr-only" tabIndex={-1} data-page-title>About</h1><LicenceLists onBack={() => setLicences(false)} /></>;
+  if (licences) return <LicenceLists onBack={() => setLicences(false)} />;
   return (
     <>
-      {heading("About")}
       <div className="set-card">
         <LogoTile size={40} />
         <div>
