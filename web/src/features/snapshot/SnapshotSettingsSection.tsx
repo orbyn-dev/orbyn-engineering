@@ -215,7 +215,7 @@ export function SnapshotSettingsSection() {
             </Row>
           )}
           {recording ? (
-            <Row title="Other kinds" description="Both Shift keys, or one modifier pair. Planned, after the beta.">
+            <Row title="Other kinds" description="Both Shift keys, or one modifier pair. Planned.">
               <Button small disabled>Both Shift keys</Button>
               <Button small disabled>Modifier pair</Button>
               <span className="set-pill planned">Planned</span>
