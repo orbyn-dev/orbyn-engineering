@@ -463,7 +463,7 @@ mod sandbox {
         if crate::host::confine::unavailable().is_some() {
             return;
         }
-        let Ok(codex_program) = crate::host::process::resolve("codex") else {
+        let Some(mut command) = crate::host::process::resolve("codex") else {
             return;
         };
         let f = fixture();
@@ -472,12 +472,10 @@ mod sandbox {
             .unwrap();
         let home = configured.codex_home().unwrap().to_path_buf();
         let checkout = std::fs::canonicalize(f.data.join("workspace/repo/p")).unwrap();
-        let mut command = codex_program;
-        command.args = vec!["app-server".into()];
         configured.wrap(&mut command).expect("the tool is there");
         let mut child = std::process::Command::new(&command.program)
             .args(&command.prefix)
-            .args(&command.args)
+            .arg("app-server")
             .env("CODEX_HOME", &home)
             .current_dir(&checkout)
             .stdin(Stdio::piped())
