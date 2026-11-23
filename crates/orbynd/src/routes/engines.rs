@@ -6,6 +6,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use axum::middleware::from_fn_with_state;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use orbyn_contracts::{AcpNativeSessionsQuery, DeleteAcpNativeSession, ImportAcpNativeSession};
@@ -19,8 +20,23 @@ use serde::Deserialize;
 
 use crate::http::{ApiFailure, ApiJson, ApiResult, AppState, LOCAL_USER, to_the_end};
 
-pub fn routes() -> Router<AppState> {
+pub fn routes(state: AppState) -> Router<AppState> {
+    // An engine's one-time notice is a project's setting at this computer; its acknowledgement is the person's.
+    let notice = Router::new()
+        .route(
+            "/api/projects/{project_id}/engines/{engine}/notice/acknowledge",
+            post(acknowledge_engine_notice),
+        )
+        .route_layer(from_fn_with_state(
+            state,
+            super::engine_credentials::local_only,
+        ));
     Router::new()
+        .merge(notice)
+        .route(
+            "/api/projects/{project_id}/engines/{engine}/notice",
+            get(engine_notice),
+        )
         .route("/api/threads/{id}/tools", get(thread_tools))
         .route("/api/engines/{id}/tools", get(engine_tools))
         .route("/api/engines/{id}/models", get(engine_models))
@@ -72,6 +88,26 @@ pub fn routes() -> Router<AppState> {
             "/api/acp/registry/{id}",
             post(install_acp_agent).delete(remove_acp_agent),
         )
+}
+
+/// Whether the project has acknowledged the engine's one-time notice. 404 for an engine that has none.
+async fn engine_notice(
+    State(state): State<AppState>,
+    Path((project_id, engine)): Path<(String, String)>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.engines.notice(&project_id, &engine)?))
+}
+
+/// The person's one click. Writes one audit row the first time; acknowledging again changes nothing.
+async fn acknowledge_engine_notice(
+    State(state): State<AppState>,
+    Path((project_id, engine)): Path<(String, String)>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.engines.acknowledge_notice(
+        &project_id,
+        &engine,
+        LOCAL_USER,
+    )?))
 }
 
 /// What the thread's engine has available: servers, connectors, plugins and tools.
@@ -212,7 +248,13 @@ async fn list_engines(State(state): State<AppState>) -> ApiResult<impl IntoRespo
 
 /// Each family's engine host: state, version, restarts and the last crash. A plain read.
 async fn engine_host(State(state): State<AppState>) -> impl IntoResponse {
-    Json(state.core.engines.host_status().await)
+    let statuses = state.core.engines.host_status().await;
+    Json(
+        statuses
+            .into_iter()
+            .map(|status| redacted(&state, status))
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// Every host-derived string of a status, through the same redaction the engine key routes use, so a key
@@ -224,6 +266,15 @@ pub(super) fn redacted(state: &AppState, mut status: EngineHostStatus) -> Engine
     if let Some(crash) = status.last_crash.as_mut() {
         crash.message = redact_message(core, &crash.message);
         crash.stderr_tail = redact_message(core, &crash.stderr_tail);
+    }
+    if let Some(sdk) = status.sdk.as_mut() {
+        sdk.name = redact_message(core, &sdk.name);
+        sdk.version = redact_message(core, &sdk.version);
+    }
+    if let Some(capabilities) = status.capabilities.as_mut() {
+        for word in capabilities {
+            *word = redact_message(core, word);
+        }
     }
     status
 }

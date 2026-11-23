@@ -284,7 +284,7 @@ async fn a_bad_request_is_refused_and_stores_nothing() {
     }
     let (_, listed) = app.call("GET", "/api/crew/background", None).await;
     assert_eq!(listed["total"], 1, "only the good crew was stored");
-    // No client path starts a run, merges or reverts: the routes that exist are the listed ones, and the wrong methods are not routes.
+    // Run now is the one route that starts a run; nothing merges, reverts or spends from here, and the wrong methods are not routes.
     for (method, path) in [
         ("PUT", format!("/api/crew/background/{id}")),
         ("DELETE", format!("/api/crew/background/{id}")),
@@ -297,6 +297,89 @@ async fn a_bad_request_is_refused_and_stores_nothing() {
         let (status, _) = app.call(method, &path, Some(json!({}))).await;
         assert!(matches!(status, 404 | 405), "{method} {path} gave {status}");
     }
+}
+
+/// Run now starts one run by hand: the route hands the core's own refusal and plain reason back, and every refusal leaves no
+/// run behind.
+#[tokio::test]
+async fn run_now_refuses_what_the_core_refuses_with_the_cores_reason() {
+    let app = serve("run-now").await;
+    let (status, crew) = app
+        .call(
+            "POST",
+            "/api/crew/background/create",
+            Some(app.body("Bump")),
+        )
+        .await;
+    assert_eq!(status, 200, "{crew}");
+    let id = crew["id"].as_str().unwrap().to_owned();
+
+    // Off: nothing may start it, and the refusal is the core's own sentence.
+    let (status, body) = app
+        .call("POST", &format!("/api/crew/background/{id}/run-now"), None)
+        .await;
+    assert_eq!(
+        (status, &body["code"]),
+        (403, &json!("policy_denied")),
+        "{body}"
+    );
+    assert_eq!(
+        body["message"],
+        "This background crew is off. Turn it on, then start a run."
+    );
+
+    // On, but a dependency update has no listener, so nothing can start it yet.
+    assert_eq!(
+        app.call("POST", &format!("/api/crew/background/{id}/enable"), None)
+            .await
+            .0,
+        200
+    );
+    let (status, body) = app
+        .call("POST", &format!("/api/crew/background/{id}/run-now"), None)
+        .await;
+    assert_eq!(
+        (status, &body["code"]),
+        (403, &json!("policy_denied")),
+        "{body}"
+    );
+    assert_eq!(
+        body["message"],
+        "A dependency update crew cannot run yet: Orbyn has nothing that can start it."
+    );
+
+    // A crew that is not there is refused before anything is read.
+    let (status, body) = app
+        .call("POST", "/api/crew/background/nothing/run-now", None)
+        .await;
+    assert_eq!((status, &body["code"]), (404, &json!("not_found")));
+
+    // An enabled crew of a kind that can start reaches the full guard chain, and an untrusted project is refused first.
+    let mut body = app.body("Fix CI");
+    body["template"] = json!("fix_failing_ci");
+    body["trigger"] = json!({ "kind": "ci_failure", "branch": "main" });
+    let (status, crew) = app
+        .call("POST", "/api/crew/background/create", Some(body))
+        .await;
+    assert_eq!(status, 200, "{crew}");
+    let id = crew["id"].as_str().unwrap().to_owned();
+    let (status, _) = app
+        .call("POST", &format!("/api/crew/background/{id}/enable"), None)
+        .await;
+    assert_eq!(status, 200);
+    let (status, body) = app
+        .call("POST", &format!("/api/crew/background/{id}/run-now"), None)
+        .await;
+    assert_eq!(
+        (status, &body["code"]),
+        (403, &json!("folder_untrusted")),
+        "{body}"
+    );
+    // No refusal left a run behind.
+    let (_, runs) = app
+        .call("GET", &format!("/api/crew/background/{id}/runs"), None)
+        .await;
+    assert_eq!(runs["total"], 0);
 }
 
 #[tokio::test]
@@ -322,6 +405,7 @@ fn an_agent_is_refused_every_background_change_by_path() {
         "/api/crew/background/t-1/enable",
         "/api/crew/background/t-1/disable",
         "/api/crew/background/t-1/delete",
+        "/api/crew/background/t-1/run-now",
         "/api/CREW/background//t-1/./enable",
         "/api/crew/background/x/../t-1/delete",
         "/api/crew/background/t-1/start",

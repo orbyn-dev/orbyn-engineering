@@ -15,7 +15,7 @@ the last section. The Rust types live in `orbyn-contracts` and generate the web 
 |---|---|---|---|
 | `github` | `gh`, run in the project's checkout | the user's own `gh` login; Orbyn never reads its token | github.com, or the host `gh` is signed in to |
 | `gitlab` | the REST API | token in the OS keychain | stored with the connection, default `https://gitlab.com` |
-| `azure_devops` | the REST API | token in the OS keychain | the organisation URL, stored with the connection |
+| `azure_devops` | the REST API | token in the OS keychain | `https://dev.azure.com`, `https://dev.azure.com/{organization}` or `https://{organization}.visualstudio.com`, stored with the connection |
 | `forgejo` | the REST API | token in the OS keychain | stored with the connection, no default |
 | `linear` | the GraphQL API | token in the OS keychain | `https://api.linear.app`, fixed |
 
@@ -77,18 +77,23 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
 ```
 
 - **Filters** are `state` (`open | closed | all`), `label` (every one must match), `assignee` (`any | me | none`
-  or a login) and `q` (text the tracker itself matches). Nothing else; no sort option (newest update first).
+  or a login; for Linear, the person's name) and `q` (text the tracker itself matches). Nothing else; no sort option
+  (newest update first).
 - **Paging.** `next_cursors` maps `"<tracker> <scope>"` to an opaque cursor (one per tracker and scope that has
   more). To carry on, send `cursors` once, as that same object encoded as JSON and then URL-encoded
-  (`cursors=%7B%22github%20o%2Fr%22%3A%22abc%22%7D`), at most 4 KiB, with the same filters. Only the scopes named
-  in `cursors` are read, one page each, and the answer holds just those pages and their next cursors. The
-  cursor is opaque: the page never builds or edits one, and the service refuses one it did not issue for that
-  scope and filter (`400 invalid`). The beta UI may leave paging out.
+  (`cursors=%7B%22github%20o%2Fr%22%3A%22abc%22%7D`), at most 4 KiB, with the same filters. The service applies the
+  same limit to what it emits: at most 50 cursors and 4 KiB of them as that JSON, with any further scopes dropped in
+  key order. Only the scopes named in `cursors` are read, one page each, and the answer holds just those pages and
+  their next cursors. The cursor is opaque: the page never builds or edits one, and the service refuses one it did
+  not issue for that scope and filter (`400 invalid`). Built for GitLab, Forgejo, Azure DevOps and Linear; GitHub
+  gives one page and no cursor. The beta UI may leave paging out.
 - **"Not planned"** is `close_reason: "not_planned"` when the tracker says so (GitHub, GitLab "won't fix"
   labels are not guessed at). A tracker that does not say reports `null`.
 - `counts` are the tracker's totals before label, assignee and text filters; `null` when it cannot say.
-- A tracker that fails while others answer goes in `failed`, with the service's own message (never the raw
-  tracker response). A listing is up to 100 issues per tracker and scope; results are cached 30 seconds.
+- A tracker that fails for any other reason while others answer goes in `failed`, with the service's own message
+  (never the raw tracker response). An invalid request, such as a paging cursor the service did not issue, is
+  `400 invalid` instead and fails the whole listing. A listing is up to 100 issues per tracker and scope; results are
+  cached 30 seconds.
 - `linked_pull_requests` is what the tracker reports of its own accord, read-only. A tracker that does not
   report them gives `[]`.
 - A link keeps an `IssueRef` snapshot beside the thread (table `issue_links`; the migration takes the next
@@ -105,9 +110,301 @@ The service's usual error body `{ code, message }`. Codes for issues, with the s
 | `forbidden` | 403 | the tracker refused the token or the repository |
 | `not_found` | 404 | no such issue; a link to one is refused the same way |
 | `tracker_unavailable` | 502 | the tracker did not answer or answered nonsense |
-| `invalid` | 400 | a host that is not `https://`, a scope outside the connection, a bad filter |
+| `invalid` | 400 | a host that is not `https://`, a scope outside the connection, a bad filter, or a paging cursor the service did not issue |
 
 A message never contains a token or a raw tracker body.
+
+## GitLab as built
+
+`gitlab` reads issues in `crates/orbyn-core/src/issues/gitlab.rs`, behind the same `ORBYN_ISSUES` flag. List and
+detail are built, and the thread link, start-thread, draft and find paths use them; of the T3 issue work only the
+`update` and `state` writes and the `candidates` read are missing for GitLab (Planned).
+
+- **Requests.** `GET {host}/api/v4/projects/{path}/issues` (`state` `opened|closed|all`, `labels`, `search`,
+  `assignee_username`, `assignee_id=None`, `scope=assigned_to_me`, `order_by=updated_at`, `per_page` up to 100,
+  `page`), `.../issues_statistics` for `counts` (best effort: no answer means `counts: null`, never a failed
+  list), `.../issues/{iid}` and `.../issues/{iid}/notes` for a detail. `{path}` is the project path with every `/`
+  sent as `%2F`, so `group/sub/project` is one path segment. Reads only: every request is a `GET`.
+- **Credentials and host.** The token is read from the keychain for each source and sent only as the
+  `PRIVATE-TOKEN` header to the connection's own host, which must be `https://` (re-checked when the reader is
+  built, and the HTTP client itself refuses plain `http`). No proxy, no referer, 10 second timeout, an answer
+  over 2 MiB is refused, and a redirect is followed only within the same scheme, host and port (at most three);
+  any other redirect ends the request as `tracker_unavailable`. The token is in no log line, address or error.
+- **Scope.** The scopes of a GitLab connection are the scopes it names, then the project paths of the git remotes
+  (`origin`) of this machine's projects whose remote host equals the connection's host (`gitlab_path_of_remote`:
+  https, `ssh://` and `git@host:` forms; user, port and `.git` dropped; subgroups kept). A connection made in the UI
+  keeps no scope of its own. A scope outside these is `400 invalid` and nothing is sent.
+- **Mapping.** `key` is the project's `iid` as text, `display_key` is `#<iid>`, `author` and `assignees` are
+  usernames, labels are names, `url` is `web_url` when it stays on the connection's host (otherwise
+  `{host}/{path}/-/issues/{iid}`), `comment_count` is `user_notes_count`. State `opened` is category `open`, name
+  `Open`; `closed` is `closed`, `Closed`. GitLab's system notes are events and are not comments; notes are read 100 a
+  page (at most five pages) until 50 comments or the end, and come back oldest first.
+- **Paging.** The listing carries `next_cursors["gitlab <path>"]` while GitLab advertises a next page, and infers
+  the next page from a full page when GitLab sends no `x-next-page` header. A cursor is
+  the page number and a tag bound to the scope and the filters; one that does not verify is `400 invalid` and
+  nothing is sent. The tag is not signed with a secret, so it proves "made for these filters", not "made by this
+  service". With `cursors` present only the scopes it names are read (this applies to every tracker; GitHub issues no
+  cursor and refuses any).
+- **Failures.** `401` is `tracker_not_connected` ("GitLab did not accept the saved token"), `403` is `forbidden`,
+  `404` is `not_found`, `429` is `rate_limited` with the wait from `Retry-After` or `RateLimit-Reset` when GitLab gave
+  one, and everything else (a `5xx`, a timeout, a refused redirect, an unreadable or oversized answer) is
+  `tracker_unavailable`. The message is always the service's sentence, never GitLab's reply. A list that fails for
+  any other reason goes in `IssueList.failed` while other trackers answer; an invalid cursor or a comma in a label
+  filter is the usual `400 invalid` and no list at all. There is no separate rate-limited screen.
+- **Untrusted text.** Titles are cut to 256 characters, labels to 200 and at most 100 of them, user names to 100
+  and at most 50 assignees, an issue body to 64 KiB and a comment to 16 KiB. Text is never read for instructions
+  and the draft framing above is unchanged.
+- **Planned, not built.** Linked merge requests (`linked_pull_requests` stays empty), "won't fix" and other close
+  reasons (`close_reason` stays `null`), a tracker state name other than Open and Closed, the T3 writes `update` and
+  `state`, and the `candidates` read. Thread link, start-thread, draft and find already work through list and detail.
+  `find` parses only `https://github.com/.../issues/<n>` links: a pasted GitLab link is not parsed as one and goes
+  to the tracker as search text. A bare number is looked up as the `iid` in every connected scope.
+- **Not verified.** No real GitLab (gitlab.com or self-managed) was contacted. The reader is tested against a
+  local fake server; the field names, header names, `issues_statistics` shape, `x-next-page` and `RateLimit-Reset`
+  behavior are from GitLab's documentation as understood, and a self-managed version or a proxy may differ.
+
+## Forgejo as built
+
+`forgejo` reads issues in `crates/orbyn-core/src/issues/forgejo.rs`, behind the same `ORBYN_ISSUES` flag. List and
+detail are built, and the thread link, start-thread, draft and find paths use them; of the T3 issue work only the
+`update` and `state` writes, the `candidates` read and the list's `sort` option are missing for Forgejo (Planned).
+
+- **Requests.** `GET {host}/api/v1/repos/{owner}/{repo}/issues` (`type=issues`, `state` `open|closed|all`, `q`,
+  `labels` as comma-separated names, `assigned_by`, `sort=recentupdate`, `page`, `limit` up to Forgejo's 50), two
+  `limit=1` reads for the open and closed totals from `X-Total-Count` (best effort: no answer means `counts: null`,
+  never a failed list), `GET .../issues/{number}` and `GET .../issues/{number}/comments` for a detail. `owner` and
+  `repo` are validated to plain characters, so nothing needs encoding, and are sent as two separate path segments.
+  Reads only: every request is a `GET`.
+- **Credentials and host.** The token is read from the keychain for each source (`tracker:forgejo`) and sent only as
+  the `Authorization: token <token>` header to the connection's own host, which must be `https://` (re-checked when
+  the reader is built, and the HTTP client itself refuses plain `http`). No proxy, no referer, 10 second timeout, an
+  answer over 2 MiB is refused, and a redirect is followed only within the same scheme, host and port (at most
+  three); any other redirect ends the request as `tracker_unavailable`. The token is in no log line, address or
+  error.
+- **Scope.** The scopes of a Forgejo connection are the scopes it names, then the `owner/repo` of the git remotes
+  (`origin`) of this machine's projects whose remote host equals the connection's host (`forgejo_path_of_remote`:
+  https, `ssh://` and `git@host:` forms; user, port and `.git` dropped; Forgejo has no subgroups, so only exactly
+  two path segments are a scope). A connection made in the UI keeps no scope of its own. A scope outside these is
+  `400 invalid` and nothing is sent.
+- **Mapping.** `key` is `number` as text, `display_key` is `#<number>`, `author` and `assignees` are `user.login`
+  and `assignees[].login`, labels are names, `url` is `html_url` when it stays on the connection's host (otherwise
+  `{host}/{owner}/{repo}/issues/{number}`), `comment_count` is `comments`. State `open` is category `open`, name
+  `Open`; `closed` is `closed`, `Closed`; `close_reason` is always `null`. A row carrying a `pull_request` object is
+  skipped even though `type=issues` asks Forgejo to leave pull requests out. The comments endpoint returns every
+  comment (Forgejo's API reference lists no page or limit for it); the first 50 are kept, oldest first.
+- **Paging.** The listing carries `next_cursors["forgejo <owner/repo>"]` while Forgejo's `Link` header names a next
+  page, and infers the next page from a full page when the header is absent. A cursor is the page number and a tag
+  bound to the scope and the filters; one that does not verify is `400 invalid` and nothing is sent. The tag is not
+  signed with a secret, so it proves "made for these filters", not "made by this service". With `cursors` present
+  only the scopes it names are read (this applies to every tracker; GitHub issues no cursor and refuses any).
+- **Filters.** The `assigned_by` filter sends the login; `me` is resolved with a `GET /api/v1/user` on the same
+  host and token; `none` is refused as `400 invalid` because Forgejo's issue list has no way to ask for unassigned
+  issues. A label name containing a comma cannot be expressed as the comma-separated `labels` value and is
+  `400 invalid` before anything is sent.
+- **Failures.** `401` is `tracker_not_connected` ("Forgejo did not accept the saved token"), `403` is `forbidden`,
+  `404` is `not_found`, `429` is `rate_limited` with the wait from `Retry-After` when Forgejo gave one, and
+  everything else (a `5xx`, a timeout, a refused redirect, an unreadable or oversized answer) is
+  `tracker_unavailable` ("Forgejo did not answer."). The message is always the service's sentence, never Forgejo's
+  reply. A list that fails for any other reason goes in `IssueList.failed` while other trackers answer; an invalid
+  cursor or a comma in a label filter is the usual `400 invalid` and no list at all.
+- **Untrusted text.** Titles are cut to 256 characters, labels to 200 and at most 100 of them, user names to 100
+  and at most 50 assignees, an issue body to 64 KiB and a comment to 16 KiB. Text is never read for instructions
+  and the draft framing above is unchanged.
+- **Planned, not built.** Linked pull requests (`linked_pull_requests` stays empty), close reasons (`close_reason`
+  stays `null`), a tracker state name other than Open and Closed, the T3 writes `update` and `state`, the
+  `candidates` read, and the T3 list `sort` option (the reader always asks for newest update first). Thread link,
+  start-thread, draft and find already work through list and detail. `find` parses only
+  `https://github.com/.../issues/<n>` links: a pasted Forgejo link is not parsed as one and goes to the tracker as
+  search text. A bare number is looked up as the issue `number` in every connected scope.
+- **Not verified.** No real Forgejo (or Codeberg) was contacted. The reader is tested against a local fake server;
+  the field names, `X-Total-Count`, the `Link` header, `sort=recentupdate`, the comments endpoint returning every
+  comment, and the `assigned_by` filter are UNVERIFIED: they are from the API as understood, and a version or a
+  proxy may differ.
+
+## Azure DevOps as built
+
+`azure_devops` reads work items in `crates/orbyn-core/src/issues/azure.rs`, behind the same `ORBYN_ISSUES` flag.
+List and detail are built, and the thread link, start-thread, draft and find paths use them; of the T3 issue work
+only the `update` and `state` writes, the `candidates` read and the list's `sort` option are missing for Azure
+DevOps (Planned).
+
+- **Requests.** A listing is one `POST {host}/{org}/{project}/_apis/wit/wiql?api-version=7.1&$top=<n>` whose JSON
+  body is a WIQL `SELECT` (below), then, when it names ids, one
+  `GET .../workitems?ids=<up to 50 ids>&fields=<the fields a summary maps>&api-version=7.1`; a detail is
+  `GET .../workitems/{id}?api-version=7.1` and
+  `GET .../workItems/{id}/comments?$top=50&order=asc&api-version=7.1-preview.4` (`order=asc` asks for oldest
+  first, and the answer's order is kept). The `fields` value is
+  `System.Id`, `System.Title`, `System.State`, `System.CreatedBy`, `System.AssignedTo`, `System.CreatedDate`,
+  `System.ChangedDate`, `System.Tags` and `Microsoft.VSTS.Common.ClosedDate`, so a large description is never read
+  for a listing. The POST is a query, not a write: WIQL only reads, the body is fixed text plus validated filter
+  values, and every other request is a `GET`. `counts` is always `null`: Azure DevOps has no cheap total before
+  filters. `{host}` is the stored connection host without a `dev.azure.com/{organization}` path: every
+  `dev.azure.com` host, with or without an organization in the stored host, appends `/{org}/{project}`; a
+  `{org}.visualstudio.com` host appends `/{project}` only, because the organization is its subdomain. The org and
+  project are validated to ASCII letters, digits, space, `.`, `_` and `-`, each at most 128 bytes (they cannot
+  start with `-`, `.` or a space or end with a space), and each path segment is percent-encoded, so the project
+  `My Project` travels as `My%20Project`.
+- **Credentials and host.** The PAT is read from the keychain (`tracker:azure_devops`) for each source and sent
+  only as the `Authorization: Basic base64(":" + PAT)` header to the connection's own host, which must be
+  `https://dev.azure.com` (or a `dev.azure.com/{organization}` path) or `https://{organization}.visualstudio.com`
+  (re-checked when the reader is built, and the HTTP client itself refuses plain `http`). No proxy, no
+  referer, 10 second timeout, an answer over 2 MiB is refused, and a redirect is followed only within the same
+  scheme, host and port (at most three); any other redirect ends the request as `tracker_unavailable`. The token
+  is in no log line, address or error.
+- **Scope.** The scopes of an Azure DevOps connection are the scopes it names, then the `organization/project` of
+  the git remotes (`origin`) of this machine's projects whose remote names the connection's host
+  (`azure_scope_of_remote`): `https://dev.azure.com/{org}/{project}/_git/{repo}` (a user name is dropped),
+  `git@ssh.dev.azure.com:v3/{org}/{project}/{repo}` (and its `ssh://` twin), and
+  `https://{org}.visualstudio.com/{project}/_git/{repo}` only when the connection host is that same
+  `{org}.visualstudio.com` host, whose subdomain is the organization. A `.git` ending and a trailing slash are
+  dropped and percent-encoded names are decoded; a remote with extra segments, another host or another form is
+  ignored. When the stored host names an organization (`https://dev.azure.com/{organization}`), a remote of
+  another organization is ignored and a scope of another organization is `400 invalid`. A scope is at most 200
+  bytes. A scope outside these is `400 invalid` and nothing is sent. A connection is checked when it is saved: a
+  host that is not one of the two shapes and a scope that is not `organization/project` are refused before the PAT
+  is stored.
+- **Mapping.** `key` is the work item id as text, `display_key` is `#<id>`, `title` is `System.Title`, `author`
+  is `System.CreatedBy.uniqueName` (a missing or empty `uniqueName` falls back to `displayName`; a plain string
+  `Name <email>` keeps the address), and there is one assignee, from `System.AssignedTo` the same way. Labels are
+  `System.Tags` split on `;`; `url` is `_links.html.href` when it
+  stays on the connection's host, otherwise `{host}/{org}/{project}/_workitems/edit/{id}` (on a
+  `{org}.visualstudio.com` host the org is the subdomain, so the fallback is `{host}/{project}/_workitems/edit/{id}`).
+  `created_at` and `updated_at` are `System.CreatedDate` and `System.ChangedDate`; `closed_at` is
+  `Microsoft.VSTS.Common.ClosedDate` when it is there. `comment_count` is 0 in a listing (comments are not read)
+  and the number of comments read in a detail (at most 50). A comment keeps its `text` as plain text or markdown
+  (it is not HTML) and its id from `id`, or `commentId` in the preview shape.
+- **States.** `System.State` is trimmed, then New, Active, To Do, Doing, Proposed, Approved, Committed and In
+  Progress are category `open`; Closed, Done, Resolved, Removed and Completed are `closed`; anything else is open.
+  `IssueState.name` is always the tracker's own (trimmed) state name (so "Active", "Resolved" or a custom
+  "Won't Fix"), and `close_reason` is always `null`.
+- **Query.** The WIQL body is `{"query": "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project
+  AND [System.WorkItemType] <> 'Test Case' ... ORDER BY [System.ChangedDate] DESC"}`. The state filter appends
+  `[System.State] <> '<closed>'` for each closed name (state open), `= '<closed>'` joined with `OR` (state closed),
+  or nothing (state all). Text appends `[System.Title] CONTAINS '<text>'` (`System.Title` is a String field, so
+  word search does not apply); each label appends `[System.Tags] CONTAINS '<label>'`; the assignee appends
+  `[System.AssignedTo] = @Me` or `= '<login>'`. Single quotes are doubled, text is capped at 200 bytes, a label at
+  200 and a login at 320 (the route's caps; the reader also caps characters as a second guard), and a control
+  character is `400 invalid`. An `assignee=none` filter is `400 invalid`: this reader has no WIQL form for
+  unassigned work items.
+- **Paging.** The listing asks WIQL for the ids through `offset + page size`, slices out the page, and carries
+  `next_cursors["azure_devops <org>/<project>"]` when the page is full and the next offset is at most 1000. The
+  limit is clamped to 1..50, and work item ids are read at most 50 per `GET`. A cursor is the offset and a tag
+  bound to the scope and the filters; the offset must be a positive multiple of the page size and at most 1000, so
+  a forged, replayed or out-of-range cursor is `400 invalid` and nothing is sent. The tag is not signed with a
+  secret, so it proves "made for these filters", not "made by this service".
+- **Failures.** `401` is `tracker_not_connected` ("Azure DevOps did not accept the saved token"), `403` is
+  `forbidden`, `404` is `not_found` ("project" for a listing, "work item" for a detail), `429` is `rate_limited`
+  with the wait from `Retry-After` when it is an integer number of seconds (an HTTP-date is ignored and the
+  sentence says "in a minute"), and everything else (a `5xx`, a timeout, a refused redirect, an unreadable or
+  oversized answer) is `tracker_unavailable` ("Azure DevOps did not answer."). A `404` on the comments read is an
+  empty comment list, not a missing work item: the preview endpoint may not be there. The
+  message is always the service's sentence, never Azure DevOps' reply. A list that fails for any other reason
+  goes in `IssueList.failed` while other trackers answer; an invalid cursor or label is the usual `400 invalid`
+  and no list at all.
+- **Untrusted text.** Titles are cut to 256 characters, labels to 200 and at most 100 of them, user names to 100,
+  a state name to 100, a link to 2048 bytes, a date to 64 characters, an issue body to 64 KiB and a comment to
+  16 KiB (at most 50 comments). Descriptions are HTML, so a small stripper drops tags, turns `<br>` and the ends of blocks into line
+  breaks, drops `script`/`style` bodies and HTML comments, decodes a few entities, and never interprets the result
+  again; a `<` that does not start a tag (an ASCII letter, `/` or `!`) is text, so `1 < 2 and 3 > 0` survives.
+  Comments are plain text or markdown, not HTML, so they are only cut. Text is never read for instructions and the
+  draft framing above is unchanged.
+- **Planned, not built.** Linked pull requests (`linked_pull_requests` stays empty), close reasons
+  (`close_reason` stays `null`), counts, comment paging beyond the first 50, the T3 writes `update` and `state`,
+  the `candidates` read, the T3 list `sort` option, and parsing a pasted Azure DevOps work item link in `find`
+  (it goes to the tracker as search text). Thread link, start-thread, draft and find already work through list and
+  detail. A bare number is looked up as the work item id in every connected scope.
+- **Not verified.** No real Azure DevOps (cloud or Server) was contacted. The reader is tested against a local
+  fake server; the WIQL grammar, `$top`, the batch `ids` read and its `fields` value, the work item fields
+  (`System.State` values, `System.CreatedDate`, `System.ChangedDate`, `_links.html.href`), the identity fields,
+  `System.Tags` as a semicolon-separated string, `Microsoft.VSTS.Common.ClosedDate`, the preview comments shape
+  (`text` as plain text, `createdBy`, `createdDate`, `id` or `commentId`, `$top=50` and `order=asc`, and whether it
+  pages), and the `dev.azure.com` / `visualstudio.com` path shapes are UNVERIFIED: they are from the API as
+  understood, and a version, a process template or a proxy may differ.
+
+## Linear as built
+
+`linear` reads issues in `crates/orbyn-core/src/issues/linear.rs`, behind the same `ORBYN_ISSUES` flag. List and
+detail are built, and the thread link, start-thread, draft and find paths use them; of the T3 issue work only the
+`update` and `state` writes, the `candidates` read and the list's `sort` option are missing for Linear (Planned).
+
+- **Requests.** `POST https://api.linear.app/graphql` with a JSON body of `{ query, variables }`. The list query is
+  `issues(filter: { team: { key: { eq: $team } }, state: { type: { in: $state } }, assignee: ..., labels: ..., or:
+  [{ title: { containsIgnoreCase: $text } }, { description: { containsIgnoreCase: $text } }] }, first: $first, after:
+  $after, orderBy: updatedAt)` with `pageInfo { hasNextPage endCursor }`, and a label filter is one
+  `{ labels: { name: { eq: $labelN } } }` condition per label inside `and: [...]`. Only the filters that are set are
+  in the filter object. The list reads `identifier title url createdAt updatedAt completedAt canceledAt state { name
+  type } creator { name displayName } assignee { name displayName } labels(first: 100) { nodes { name } }`, and
+  never selects `description` or comments (the text filter may test `description`), so 100 issues cannot push the
+  answer past 2 MiB. The detail is `issue(id: $id)` with the same fields, `description`, and `comments(first: 50)`.
+  A connection with no scope first reads `teams(first: 20) { nodes { key } }`. Every query is a fixed string and a
+  filter or key is only a GraphQL variable, so no user text is ever spliced into the query. Reads only: every
+  request body holds a query, never a mutation. `first` is at most 100.
+- **Credentials and host.** The token is read from the keychain for each source (`tracker:linear`) and sent only as the
+  `Authorization` header, with the personal API key itself (no `Bearer` prefix), to `https://api.linear.app/graphql`.
+  The connection's host is fixed to that origin: `connect` refuses a host, the reader re-checks it when built (a stored
+  plain `http` host or any other host is `400 invalid`), and the HTTP client itself refuses plain `http`. No proxy, no
+  referer, 10 second timeout, an answer over 2 MiB is refused, and a redirect is followed only within the same scheme,
+  host and port (at most three); any other redirect ends the request as `tracker_unavailable`. The token is in no log
+  line, address or error.
+- **Scope.** A Linear scope is a team key (`^[A-Z][A-Z0-9]{1,9}$`): a git remote cannot reveal one, so no remote is
+  read. `connect` refuses a scope that is not a team key, before it saves the token or the connection. The scopes of a
+  connection are the team keys stored with it; a connection made in the UI stores none, so the reader then reads
+  `teams(first: 20) { nodes { key } }` with the same key and uses the valid, distinct keys (at most 20; when the key
+  can see more, only those first 20 teams are read). That teams read is cached for the same 30 seconds as a listing
+  and cleared by connect and disconnect. Nothing outside those keys is read: a listing drops a row whose identifier
+  belongs to another team, and a detail for another team's identifier is `not_found` before the lookup; a UUID is
+  checked against the team in the issue that comes back. A scope outside the connection is `400 invalid` and nothing
+  is sent. A stored team key needs no teams read.
+- **Mapping.** `key` and `display_key` are the identifier (`ENG-123`), `title` is `title`, `author` and `assignees` are
+  the creator's and assignee's `displayName` (falling back to `name`, cut to 100 characters), labels are
+  `labels.nodes[].name`, `url` is `url` when it is an `https://linear.app` address with no user info or port (otherwise
+  `https://linear.app/issue/<identifier>`), and `comment_count` is the number of comments the detail read returned (at
+  most 50), not Linear's total; a listing reads none and reports `0`. `state.type` `completed`, `canceled` and
+  `duplicate` are category `closed`, every other type is `open`; the name is the tracker's own `state.name` (cut to
+  200 characters); `close_reason` is always `null`; `closed_at` is `completedAt` for a `completed` issue and
+  `canceledAt` for a `canceled` or `duplicate` one. `description` is the body, cut to 64 KiB. The answer's 50 newest
+  comments are kept, each body cut to 16 KiB, and shown oldest first by `createdAt`.
+- **Filters.** `state` `open` sends `triage`, `backlog`, `unstarted` and `started`, `closed` sends `completed`,
+  `canceled` and `duplicate`, and `all` leaves the state filter out. `assignee` `me` is `isMe: { eq: true }`, `none`
+  is `null: true`, any other value is the person's name as Linear shows it (`name: { eq: $assignee }`), and `any`
+  leaves it out. A label filter is one `{ labels: { name: { eq: $labelN } } }` condition per label inside `and:
+  [...]`, so every named label must be on the issue. An empty label name, one over 200 characters (counted in
+  characters, not bytes), one with a control character, or more than 20 names is `400 invalid` before anything is
+  sent.
+- **Paging.** The listing carries `next_cursors["linear <team>"]` while `pageInfo.hasNextPage` is true, as Linear's
+  `endCursor` and a tag bound to the scope and the filters; one that does not verify is `400 invalid` and nothing is
+  sent. `hasNextPage` must be a boolean, and when it is true `endCursor` must be a non-empty string with no control
+  characters; anything else is `tracker_unavailable` ("Linear answered something unreadable."). The tag is not signed
+  with a secret, so it proves "made for these filters", not "made by this service". A cursor longer than the 200 bytes
+  `query.rs` accepts back is not emitted. With `cursors` present only the scopes it names are read (this applies to
+  every tracker; GitHub issues no cursor and refuses any).
+- **Failures.** `401` is `tracker_not_connected` ("Linear did not accept the saved token"), `403` is `forbidden`,
+  `404` is `not_found` ("issue not found"), `429` is `rate_limited` with the wait from an integer `Retry-After` in
+  seconds or `X-RateLimit-Requests-Reset` in UTC epoch milliseconds (an HTTP-date `Retry-After` is not read), and
+  everything else (including a `5xx`, a timeout, a refused redirect, an unreadable or oversized answer) is
+  `tracker_unavailable` ("Linear did not answer."). A GraphQL answer with a non-empty `errors` array is a failure
+  too, even at HTTP 200: `extensions.type` is read before `extensions.code`, and case, spaces, underscores and
+  hyphens are ignored; authentication is `tracker_not_connected`, forbidden is `forbidden`, ratelimited is
+  `rate_limited` with the headers, and on a detail `invalid input`, `not found` or `entity not found` is `not_found`;
+  everything else is `tracker_unavailable`. The message is always the service's sentence, never Linear's `message`.
+  A detail whose `data.issue` is null is `not_found`. A list that fails for any other reason goes in
+  `IssueList.failed` while other trackers answer; an invalid cursor, scope or label filter is the usual `400 invalid`
+  and no list at all.
+- **Untrusted text.** Titles are cut to 256 characters, labels to 200 and at most 100 of them, names to 100, the state
+  name to 200, a comment id to 100, an issue body to 64 KiB and a comment to 16 KiB. Text is never read for
+  instructions and the draft framing above is unchanged.
+- **Planned, not built.** Linked pull requests (`linked_pull_requests` stays empty), close reasons (`close_reason`
+  stays `null`), the list's open and closed totals (`counts` stays `null`), a comment count in a listing
+  (`comment_count` is `0` there), the T3 writes `update` and `state`, the `candidates` read, and the T3 list `sort`
+  option (the reader always asks for newest update first). Thread link, start-thread, draft and find already work
+  through list and detail. `find` parses only `https://github.com/.../issues/<n>` links: a pasted Linear link or a
+  bare `ENG-123` is search text, not a lookup by identifier. A bare number is looked up as the key in every connected
+  scope, which Linear's identifier check refuses.
+- **Not verified.** No real Linear workspace was contacted and no real tracker token was used. The reader is tested
+  against a local fake server; the query and field names, the filter comparators, `comments(first: 50)`,
+  `teams(first: 20)`, the `extensions.type` and `extensions.code` values, and the `Retry-After`/
+  `X-RateLimit-Requests-Reset` headers are UNVERIFIED: they are from Linear's public GraphQL schema and developer
+  documentation as understood, and a workspace, API version or proxy may differ.
 
 ## Issue text is untrusted
 
@@ -171,7 +468,7 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
 ## What T3 has that this does not (Planned)
 
 Creating and commenting on issues, reactions, issue templates, the event timeline, "involved/mentioned"
-filters and more than one page of comments. None is in the beta; each is a later row.
+filters and more than the first 50 comments. None is in the beta; each is a later row.
 
 ## Differences from the web side's guessed contract
 

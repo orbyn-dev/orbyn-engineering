@@ -93,7 +93,7 @@ function TaskCrumb({ title, tier, children }: { title: string; tier: "low" | "me
 }
 
 const TIER_RULE =
-  "A score from the four reasons above, shown with its parts. Changes to login, sessions or permissions, keys, crypto, migrations, CI, dependency changes and large diffs count as High unless the changes are in a path class marked Low in .orbyn/crew.json. Any other file in an auth path only raises the score. A tier is never hidden, and you can see why it is what it is.";
+  "A score from the four reasons above, shown with its parts. Changes to login, sessions or permissions, keys, crypto, migrations, CI, dependency changes and large diffs count as High unless the changes are in a path class marked Low in .orbyn/crew.json. Any other file in an auth path only raises the score. A tier comes with its reasons.";
 
 /** risk-reasons: Low, Medium and High side by side. */
 export function RiskReasonsScreen() {
@@ -139,7 +139,6 @@ export function RiskHighOnScreen() {
     <CrewFrame
       tab="Flow"
       reviewCount={7}
-      inbox={3}
       crumbs={
         <TaskCrumb title="Rotate the signing key" tier="high">
           <RiskChip tier="high" />
@@ -213,7 +212,7 @@ export function RiskDemotedScreen() {
 /** risk-board-card: each Taskboard card shows its tier and what happened to it. */
 export function RiskBoardScreen() {
   return (
-    <CrewFrame tab="Board" reviewCount={7} inbox={1}>
+    <CrewFrame tab="Board" reviewCount={7}>
       <div className="crew-board">
         {board.map((column) => (
           <section key={column.label} className="crew-col" aria-label={column.label}>

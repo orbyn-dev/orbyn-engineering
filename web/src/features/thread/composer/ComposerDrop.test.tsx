@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api } from "../../../api/client";
+import { ApiFailure, api } from "../../../api/client";
 import type { Run, Thread } from "../../../api/types";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { useUi } from "../../../product/state/ui";
@@ -16,6 +16,7 @@ const thread: Thread = {
 };
 
 beforeEach(() => {
+  setTranscriptsApi(null);
   useComposerChips.setState({ chips: {}, reviewDrafts: {} });
   useUi.setState({ drafts: {} });
   useWorkspace.setState({ approvals: { data: [], error: null, loading: false } });
@@ -55,7 +56,7 @@ it("turns a dropped transcript into a chip, sends the other files as attachments
   const upload = vi.spyOn(api, "uploadAttachment").mockResolvedValue({ id: "a1", name: "login-error.log" } as never);
   const start = vi.spyOn(api, "startRun").mockResolvedValue({ id: "r1" } as Run);
   render(<Composer thread={thread} engine={null} showContext />);
-  fireEvent.drop(box(), { dataTransfer: { types: ["Files"], getData: () => "", files: [new File(["x"], "redirect-loop.transcript"), new File(["x"], "login-error.log")] } });
+  fireEvent.drop(box(), { dataTransfer: { types: ["Files"], getData: () => "", files: [new File(["x"], "redirect-loop.orbyn.json"), new File(["x"], "login-error.log")] } });
   expect(await screen.findByText("Redirect loop on logout")).toBeInTheDocument();
   expect(screen.getByText("· 214 messages")).toBeInTheDocument();
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
@@ -69,15 +70,15 @@ it("holds send while a transcript is being read", async () => {
   setTranscriptsApi({ read: vi.fn().mockReturnValue(new Promise(() => {})) });
   const start = vi.spyOn(api, "startRun").mockResolvedValue({ id: "r1" } as Run);
   render(<Composer thread={thread} engine={null} showContext />);
-  fireEvent.drop(box(), { dataTransfer: { types: ["Files"], getData: () => "", files: [new File(["x"], "a.transcript")] } });
+  fireEvent.drop(box(), { dataTransfer: { types: ["Files"], getData: () => "", files: [new File(["x"], "a.orbyn.json")] } });
   await userEvent.type(screen.getByRole("textbox"), "hi{Enter}");
   expect(start).not.toHaveBeenCalled();
 });
 
 it("uploads a dropped transcript as an ordinary attachment when no client is installed", async () => {
-  const upload = vi.spyOn(api, "uploadAttachment").mockResolvedValue({ id: "a1", name: "a.transcript" } as never);
+  const upload = vi.spyOn(api, "uploadAttachment").mockResolvedValue({ id: "a1", name: "a.orbyn.json" } as never);
   render(<Composer thread={thread} engine={null} showContext />);
-  fireEvent.drop(box(), { dataTransfer: { types: ["Files"], getData: () => "", files: [new File(["x"], "a.transcript")] } });
+  fireEvent.drop(box(), { dataTransfer: { types: ["Files"], getData: () => "", files: [new File(["x"], "a.orbyn.json")] } });
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
 });
 
@@ -92,6 +93,30 @@ it("keeps a HEIC photo's send held until it is converted, then sends the convert
   await userEvent.type(screen.getByRole("textbox"), "look{Enter}");
   expect(start).not.toHaveBeenCalled();
   finish({ id: "p1", name: "IMG_4021.jpg", size: 2_000_000, original_name: "IMG_4021.HEIC", original_size: 3_000_000, action: "converted" });
+  expect(await screen.findByText(/Converted to JPEG/)).toBeInTheDocument();
+  await userEvent.type(screen.getByRole("textbox"), "{Enter}");
+  await waitFor(() => expect(start).toHaveBeenCalledWith("t1", "look", ["p1"]));
+});
+
+it("shows the service's refusal on a red HEIC chip with Retry and Remove, and keeps send held until a retry works", async () => {
+  const message = "HEIC photos cannot be converted yet. Save it as JPEG or PNG first.";
+  const convert = vi.fn()
+    .mockRejectedValueOnce(new ApiFailure("unsupported_type", message, 415))
+    .mockResolvedValueOnce({
+      id: "p1", name: "IMG_4021.jpg", size: 2_000_000, original_name: "IMG_4021.HEIC", original_size: 3_000_000, action: "converted",
+    });
+  setPhotoConversionApi({ convert });
+  const start = vi.spyOn(api, "startRun").mockResolvedValue({ id: "r1" } as Run);
+  render(<Composer thread={thread} engine={null} showContext />);
+  const heic = new File(["x"], "IMG_4021.HEIC", { type: "image/heic" });
+  await userEvent.upload(screen.getByLabelText("Attach files", { selector: "input" }), heic);
+  expect(await screen.findByText(message)).toBeInTheDocument();
+  expect(screen.getByText(message).closest("li")).toHaveAttribute("data-conversion", "failed");
+  expect(screen.getByRole("button", { name: "Retry IMG_4021.HEIC" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Remove IMG_4021.HEIC" })).toBeInTheDocument();
+  await userEvent.type(screen.getByRole("textbox"), "look{Enter}");
+  expect(start).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Retry IMG_4021.HEIC" }));
   expect(await screen.findByText(/Converted to JPEG/)).toBeInTheDocument();
   await userEvent.type(screen.getByRole("textbox"), "{Enter}");
   await waitFor(() => expect(start).toHaveBeenCalledWith("t1", "look", ["p1"]));

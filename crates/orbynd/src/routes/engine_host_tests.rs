@@ -65,6 +65,8 @@ async fn serve(name: &str, flag_on: bool) -> Option<Served> {
     config.engines.engine_host = Some(HostConfig {
         program: launcher,
         claude: flag_on,
+        cursor: false,
+        acp: false,
         timings: Timings::default(),
     });
     let core = Arc::new(Core::open(config).unwrap());
@@ -260,6 +262,17 @@ async fn nothing_the_host_said_leaves_a_key_in_a_stop_or_restart_answer() {
         action: None,
         threads: None,
         last_error_kind: None,
+        since: None,
+        sdk: Some(orbyn_contracts::EngineHostSdk {
+            name: format!("sdk {KEY}"),
+            version: format!("version {KEY}"),
+        }),
+        capabilities: Some(vec![format!("capability {KEY}")]),
+        pooled: false,
+        restart: None,
+        stops_in_window: None,
+        has_driver: false,
+        sdk_missing: false,
     };
     let clean = serde_json::to_string(&super::engines::redacted(&app.state, leaky)).unwrap();
     assert!(!clean.contains(KEY), "{clean}");

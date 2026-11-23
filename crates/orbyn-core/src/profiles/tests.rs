@@ -4,9 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use orbyn_contracts::{
-    ApplyCrewProfile, ApplyProfile, AuthState, AutopilotMode, EngineCapabilities, EngineStatus,
-    EngineTier, InstallerKind, ModelInfo, PermissionMode, Profile, ProfileDraft, ProfileGrant,
-    ProfileTier, UpdateProfile, VersionSupport,
+    ApplyCrewProfile, ApplyProfile, AuthState, AutopilotMode, EngineCapabilities, EngineCrewRole,
+    EngineStatus, EngineTier, InstallerKind, ModelInfo, PermissionMode, Profile, ProfileDraft,
+    ProfileGrant, ProfileTier, UpdateProfile, VersionSupport,
 };
 use serde_json::json;
 
@@ -51,6 +51,9 @@ fn status(id: &str, installed: bool, modes: &[PermissionMode]) -> EngineStatus {
         instance_of: None,
         accent: None,
         account: None,
+        start_issue: None,
+        crew_role: EngineCrewRole::Any,
+        crew_role_reason: None,
     }
 }
 

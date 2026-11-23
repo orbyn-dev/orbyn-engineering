@@ -1,4 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { PreferenceView } from "../../../api/types";
 import type { ScopedPreferenceMember } from "../../../generated/ScopedPreferenceMember";
 import type { ScopedPreferenceOverride } from "../../../generated/ScopedPreferenceOverride";
@@ -19,12 +20,14 @@ function displayValue(row: PreferenceRow, value: unknown): string {
 }
 
 /** A reference-style provenance popover, kept inside the owning modal's top layer. */
-export function PreferenceInheritance({ row, view, global, members, overrides, mixed, disabled, onResetOverrides, onOpenOverride }: {
+export function PreferenceInheritance({ row, view, global, members, overrides, mixed, disabled, onResetOverrides, onOpenOverride, portal = false }: {
   row: PreferenceRow; view: PreferenceView; global: PreferenceView;
   members?: ScopedPreferenceMember[]; overrides?: ScopedPreferenceOverride[];
   mixed?: boolean; disabled?: boolean;
   onResetOverrides?(ids: string[]): void;
   onOpenOverride?(id: string): void;
+  /** Render the popup in the body, out of a query container that would re-anchor its fixed placement. */
+  portal?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
@@ -56,6 +59,32 @@ export function PreferenceInheritance({ row, view, global, members, overrides, m
     { label: "Default", value: displayValue(row, view.default), active: view.source === "default" },
   ];
   const chains = members ? members.length ? members : [{ project_id: null, name: null, view: global }] : [{ project_id: "project", name: null, view }];
+  const popup = (
+    <div ref={panel} id={id} className="setting-inheritance-popup" role="dialog" aria-label={row.title} tabIndex={-1}>
+      {chains.map((chain) => <section key={chain.project_id ?? "environment"}>
+        {chains.length > 1 ? <p>{chain.name}</p> : null}
+        <ol>
+          {layersFor(chain.view, chain.project_id === null).map((layer) => (
+            <li key={layer.label} aria-current={layer.active || undefined}>
+              <span>{layer.label}</span>
+              <span className="setting-inheritance-value">{layer.value}{layer.active ? <Check size={12} aria-hidden /> : null}</span>
+            </li>
+          ))}
+        </ol>
+      </section>)}
+      {overrides?.length ? <div className="setting-overrides">
+        <div><span>Overridden by</span>
+          <Button small tone="quiet" disabled={disabled} onClick={() => onResetOverrides?.(overrides.map((entry) => entry.project_id))}>
+            Reset {overrides.length === 1 ? "it" : "all"}
+          </Button>
+        </div>
+        {overrides.map((override) => <div key={override.project_id}>
+          <Button small tone="quiet" onClick={() => { popover.dismiss("select"); onOpenOverride?.(override.project_id); }}>{override.name}</Button>
+          <span>{displayValue(row, override.value)}</span>
+        </div>)}
+      </div> : null}
+    </div>
+  );
   return (
     <div>
       <div ref={trigger}>
@@ -64,32 +93,7 @@ export function PreferenceInheritance({ row, view, global, members, overrides, m
           <Layers size={12} aria-hidden />
         </IconButton>
       </div>
-      {open ? (
-        <div ref={panel} id={id} className="setting-inheritance-popup" role="dialog" aria-label={row.title} tabIndex={-1}>
-          {chains.map((chain) => <section key={chain.project_id ?? "environment"}>
-            {chains.length > 1 ? <p>{chain.name}</p> : null}
-            <ol>
-              {layersFor(chain.view, chain.project_id === null).map((layer) => (
-                <li key={layer.label} aria-current={layer.active || undefined}>
-                  <span>{layer.label}</span>
-                  <span className="setting-inheritance-value">{layer.value}{layer.active ? <Check size={12} aria-hidden /> : null}</span>
-                </li>
-              ))}
-            </ol>
-          </section>)}
-          {overrides?.length ? <div className="setting-overrides">
-            <div><span>Overridden by</span>
-              <Button small tone="quiet" disabled={disabled} onClick={() => onResetOverrides?.(overrides.map((entry) => entry.project_id))}>
-                Reset {overrides.length === 1 ? "it" : "all"}
-              </Button>
-            </div>
-            {overrides.map((override) => <div key={override.project_id}>
-              <Button small tone="quiet" onClick={() => { popover.dismiss("select"); onOpenOverride?.(override.project_id); }}>{override.name}</Button>
-              <span>{displayValue(row, override.value)}</span>
-            </div>)}
-          </div> : null}
-        </div>
-      ) : null}
+      {open ? (portal ? createPortal(popup, document.body) : popup) : null}
     </div>
   );
 }

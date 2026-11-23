@@ -81,12 +81,12 @@ function PullRow({ pull }: { pull: LinkedPullRequest }) {
 
 /** What the tracker reports of its own accord, in its order. No CI or checks status: the contract carries none. */
 function LinkedPullRequests({ pulls }: { pulls: LinkedPullRequest[] }) {
+  // Shown only when the tracker reports a pull request: an empty card on every issue says nothing.
+  if (pulls.length === 0) return null;
   return (
     <section className="iss-card" role="group" aria-label="Linked pull requests">
-      <h2>{pulls.length > 0 ? `Linked pull requests · ${pulls.length}` : "Linked pull requests"}</h2>
-      {pulls.length === 0 ? <p className="iss-quiet">No pull request is linked to this issue.</p> : (
-        <ul className="iss-prs">{pulls.map((pull, at) => <PullRow key={`${at}:${pull.repository}#${pull.number}`} pull={pull} />)}</ul>
-      )}
+      <h2>{`Linked pull requests · ${pulls.length}`}</h2>
+      <ul className="iss-prs">{pulls.map((pull, at) => <PullRow key={`${at}:${pull.repository}#${pull.number}`} pull={pull} />)}</ul>
     </section>
   );
 }

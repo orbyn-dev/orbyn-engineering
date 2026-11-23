@@ -107,8 +107,12 @@ it("reads a failed phase of an action as a failure, and passes 404 and 409 throu
   await expect(reposApi().threadGit("t1", "zz", { kind: "push" })).rejects.toMatchObject({ code: "not_found", status: 404 });
 });
 
-it("has no call that removes a repository from a thread", () => {
-  expect("removeThreadRepo" in reposApi()).toBe(false);
+it("removes a repository from a thread with DELETE and the person key, and passes the service's refusal through", async () => {
+  const fetching = stub(new Response(null, { status: 204 }), json({ code: "invalid", message: "Commit or discard its changes first" }, 400));
+  await expect(reposApi().removeThreadRepo("t 1", "r/2")).resolves.toBeUndefined();
+  expect(call(fetching)).toMatchObject({ method: "DELETE", path: "/api/threads/t%201/repos/r%2F2" });
+  expect(call(fetching).key).not.toBeNull();
+  await expect(reposApi().removeThreadRepo("t1", "r2")).rejects.toMatchObject({ status: 400, message: "Commit or discard its changes first" });
 });
 
 it("scans through the Person-class route with the path in the body, and shapes the answer", async () => {

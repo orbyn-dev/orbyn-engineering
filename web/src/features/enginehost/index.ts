@@ -2,7 +2,7 @@
 // is called, and the pieces the thread draws (the picker's state rows and the composer's line). The Settings screens that
 // show the same facts live in `features/settings/engineHost` and read them from here.
 export { engineHostApi, hostWritable, setEngineHostApi, useEngineHostCrashes, useEngineHosts, useKeyStorage } from "./hostApi";
-export { cannotSend, engineGap, pickerGap, programOf, sendsWithoutHost } from "./gaps";
+export { cannotSend, engineGap, pickerGap, programOf } from "./gaps";
 export type { Gap, GapAction, GapKind } from "./gaps";
 export {
   bannerLine, cantStartLead, capabilityLine, CHIPS, chipFor, clock, errorKindLine, exitLine, notUsedReason, isProcess, listLine, mismatchLine, plain, processLine, restartLine, runningFor, shortDate, stateLine, STOPPED_SENTENCE,
@@ -13,5 +13,5 @@ export { isBackgroundOpen } from "./hostControl";
 export type {
   EngineHostApi, HostCause, HostControlOptions, HostCrash, HostError, HostErrorKind, HostRow, HostState, KeyStorage, StorageChoice,
 } from "./contract";
-export { ComposerHostLine, PickerGapRow, useHostFor, useHostLine } from "./HostUi";
+export { ClaudeHostActions, ClaudePathLine, ComposerHostLine, PickerGapRow, claudeHostDown, claudeHostSentence, claudeHostWaiting, useAppUpdateOrbyn, useHostFor, useHostLine } from "./HostUi";
 export type { HostLine } from "./HostUi";

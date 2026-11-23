@@ -110,6 +110,8 @@ function SettingsPageContent({ section, sub, unknown, row: addressRow, onClose }
   const [query, setQuery] = useState("");
   const [target, setTarget] = useState<{ id: string; anchor?: boolean } | null>(null);
   const shell = useAsync("settings-search-shell", (signal) => api.shell(signal), { keep: true });
+  // A row that exists only on macOS is left out of search elsewhere, so a result never lands on a missing row.
+  const info = useAsync("environment-identity", (signal) => api.info(signal));
   // The Account category exists only while the sign-in gate is on: no dead entry, nothing disabled-looking.
   const accountOn = useAccountAvailable();
   // Crew is Preview: its category exists only while the service says Crew is on.
@@ -152,8 +154,8 @@ function SettingsPageContent({ section, sub, unknown, row: addressRow, onClose }
     for (const permission of shell.data?.facts?.permissions ?? []) {
       if (permission.id === "accessibility" || permission.id === "screen_recording") available.add(permission.id);
     }
-    return searchSettings(query, shell.data?.attached === true, available);
-  }, [query, shell.data]);
+    return searchSettings(query, shell.data?.attached === true, available, info.data?.platform === "macos");
+  }, [query, shell.data, info.data]);
 
   // An address that names a row on the open page: reveal it, and ring it until the next click or key.
   useEffect(() => {
@@ -266,6 +268,8 @@ function SettingsPageContent({ section, sub, unknown, row: addressRow, onClose }
         </nav>
       </div>
       <div className="settings-main">
+        {/* The page owns the only h1; its sections start at h2. */}
+        <h1 className="sr-only" tabIndex={-1} data-page-title>{open ? SUBPAGES[open].label : labels[current]}</h1>
         <SettingsCrumbs section={current} label={labels[current]} sub={open} narrow={narrow} labelOf={(entry) => labels[entry]} />
         <header className="settings-head">
           <span className="settings-title" aria-hidden>{open ? SUBPAGES[open].label : labels[current]}</span>

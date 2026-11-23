@@ -80,6 +80,7 @@ impl Core {
                     subject: None,
                     body: None,
                     strip_credits: false,
+                    remove_agent_credits: None,
                     expected_head: None,
                 };
                 self.merge_project_pull(project_id, layer.number, &options, actor)
@@ -193,7 +194,8 @@ impl Core {
             relation: None,
             scratch: false,
         })?;
-        self.store.link_pull(&thread.id, &pull)?;
+        self.store
+            .link_pull(&thread.id, &thread.project_id, &pull)?;
         Ok(thread)
     }
 }

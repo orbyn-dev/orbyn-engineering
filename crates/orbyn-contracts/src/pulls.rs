@@ -101,10 +101,16 @@ pub struct PullDetails {
     #[ts(optional)]
     pub approval_count: Option<u32>,
     /// The signed-in viewer's latest review: `approved`, `changes_requested`,
-    /// `commented`, `dismissed`, `pending` or `none`.
+    /// `commented`, `dismissed`, `pending` or `none`. Absent when the read could not
+    /// see every review, so the viewer's may be past it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub viewer_review_state: Option<String>,
+    /// Whether the forge can merge the pull request: `mergeable`, `conflicting` or
+    /// `unknown`. Absent when the forge does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mergeable: Option<String>,
 }
 }
 
@@ -551,6 +557,11 @@ pub struct MergePull {
     /// Removes agent credit lines from the merge commit body.
     #[serde(default)]
     pub strip_credits: bool,
+    /// This merge's own choice to remove agent credit lines. When present it wins over the account setting
+    /// "Remove agent credits on merge", in both directions; absent, the setting (or `strip_credits`) applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub remove_agent_credits: Option<bool>,
     /// The head commit the person saw. The forge refuses the merge if the branch has moved on.
     /// Only GitHub and GitLab (not a rebase) are fully guarded: the forge itself refuses a moved head.
     /// For Azure, Forgejo, Bitbucket and a GitLab rebase the service reads the head just before the

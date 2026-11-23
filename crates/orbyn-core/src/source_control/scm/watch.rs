@@ -11,8 +11,11 @@ impl Core {
     /// One pass of the pull request watch. A failure waits for the next pass.
     pub async fn watch_pulls(&self) {
         let threads = self.store.threads_with_open_pulls().unwrap_or_default();
-        for id in threads {
-            if let Err(error) = self.refresh_pulls(&id).await {
+        for (id, repo) in threads {
+            // A repository other than the primary is refreshed as its own scope.
+            let primary = self.store.thread(&id).map(|t| t.project_id).ok();
+            let scope = (primary.as_deref() != Some(repo.as_str())).then_some(repo);
+            if let Err(error) = crate::in_repo(scope, self.refresh_pulls(&id)).await {
                 tracing::debug!(%error, "could not refresh a pull request");
             }
         }

@@ -11,6 +11,10 @@
 //!   or whose log cannot be read whole (over its cap), is Not measured: every lane then shows finding counts only, never a
 //!   zero. Escapes whose fix files cannot be read are counted as unresolved in the lane, never scored.
 //! - **Budgets are tokens per engine,** one entry per engine and never summed. No money appears in a request or a view.
+//! - **A start input is served, never invented.** `crew_backtest_start_view` reads back the lanes (with the kind each was
+//!   started as) and the per-engine budgets of the project's most recent run, so "Run again" is composed from what the
+//!   service recorded. A project that never ran a backtest gets none of them: nothing is defaulted, and a budget that
+//!   was never recorded reads unset rather than as a number.
 //! - **History is the project's own merges** (`crew_merges`), numbered by the merge's record id: a pull request nobody
 //!   merged through Crew is not replayed (open question 7 of the design note).
 
@@ -62,6 +66,13 @@ fn wire_kind(kind: wire::BacktestLaneKind) -> LaneKind {
     match kind {
         wire::BacktestLaneKind::Review => LaneKind::Review,
         wire::BacktestLaneKind::Check => LaneKind::Check,
+    }
+}
+
+fn kind_wire(kind: LaneKind) -> wire::BacktestLaneKind {
+    match kind {
+        LaneKind::Review => wire::BacktestLaneKind::Review,
+        LaneKind::Check => wire::BacktestLaneKind::Check,
     }
 }
 
@@ -171,6 +182,7 @@ fn run_view(report: BacktestReport) -> wire::BacktestRun {
                     lane: lane.lane,
                     engine: lane.engine,
                     model: lane.model,
+                    kind: lane.kind.map(kind_wire),
                     state: lane_state_view(lane.state),
                     tokens_used: lane.tokens_used,
                     outcome,
@@ -305,6 +317,45 @@ impl Core {
         Ok(run_view(report(&self.store, id)?))
     }
 
+    /// The input a start request needs, as far as the service can serve it: the lanes and the per-engine token budgets
+    /// the project's most recent backtest was started with (`BacktestStartInput`), so a person's "Run again" is
+    /// composed from what the service recorded rather than from a guess. Reads only, and nothing is defaulted: a
+    /// project that never ran a backtest gets no lane, engine or budget, and a budget the run did not record reads
+    /// unset, never as a number. The live lane runner is still not built, so a start is still refused after this.
+    pub fn crew_backtest_start_view(&self, project: &str) -> Result<wire::BacktestStartView> {
+        self.crew_preview_only()?;
+        self.store.project(project)?;
+        let Some(run) = self.store.crew_backtest_latest_run(project)? else {
+            return Ok(wire::BacktestStartView {
+                project: project.to_owned(),
+                run: None,
+            });
+        };
+        Ok(wire::BacktestStartView {
+            project: project.to_owned(),
+            run: Some(wire::BacktestStartRun {
+                id: run.id.clone(),
+                state: state_view(run.state),
+                lanes: self
+                    .store
+                    .crew_backtest_lanes(&run.id)?
+                    .into_iter()
+                    .map(|lane| wire::BacktestStartLane {
+                        lane: lane.lane,
+                        engine: lane.engine,
+                        model: lane.model,
+                        kind: lane.kind.map(kind_wire),
+                    })
+                    .collect(),
+                budgets: run
+                    .budgets
+                    .into_iter()
+                    .map(|(engine, tokens)| wire::BacktestEngineBudget { engine, tokens })
+                    .collect(),
+            }),
+        })
+    }
+
     /// At startup: a run left `running` by a crash (a release build aborts on a panic, so the run's own process cannot
     /// close it) becomes failed with the reason "interrupted". Runs whatever the Preview flag says: a run can only exist
     /// from an earlier process. A failure is logged and never stops the core opening.
@@ -334,8 +385,15 @@ impl Core {
     /// Tests: a run of `project` that is running, as one a crash or a slow replay leaves, with one lane.
     #[cfg(any(test, feature = "test-support"))]
     pub fn crew_backtest_seed_running(&self, id: &str, project: &str) {
+        use crate::store::NewLane;
+
         let budgets = BTreeMap::from([("a".to_owned(), 100)]);
-        let lanes = [("security".to_owned(), "a".to_owned(), "m".to_owned())];
+        let lanes = [NewLane {
+            lane: "security".to_owned(),
+            engine: "a".to_owned(),
+            model: "m".to_owned(),
+            kind: LaneKind::Review,
+        }];
         self.store
             .crew_backtest_create(id, project, BacktestState::Running, &budgets, &lanes, 1)
             .unwrap();

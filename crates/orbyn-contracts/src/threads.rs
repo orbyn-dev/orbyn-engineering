@@ -49,11 +49,11 @@ pub struct Thread {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub removed_project_name: Option<String>,
-    /// Set on a thread made from a file: `orbyn-transcript`. Absent on a thread made here. The "Imported" pill reads it.
+    /// Set on a transcript-imported thread: `orbyn-transcript`. Absent on a thread made here or from an engine's history. The "Imported" pill reads it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub source: Option<String>,
-    /// When the file was imported. Set together with `source`.
+    /// When the thread was imported, from a transcript file or an engine's history. Absent on a thread made here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub imported_at: Option<String>,
@@ -127,6 +127,9 @@ pub enum PermissionMode {
     Auto,
     /// Accepts everything policy does not refuse. Writes stay in the checkout.
     FullAccess,
+    /// The one mode of an engine that never asks before acting (Cursor). It is not in `ALL`: an
+    /// engine offers it only by naming it in its `permission_modes`.
+    NoApprovals,
 }
 }
 
@@ -139,9 +142,15 @@ impl PermissionMode {
         PermissionMode::FullAccess,
     ];
 
-    /// Whether `self` accepts more than `other` without asking.
+    /// Whether `self` accepts more than `other` without asking. No approvals accepts everything an
+    /// engine can do, so it is the loosest.
     pub fn looser_than(self, other: PermissionMode) -> bool {
-        let rank = |mode| Self::ALL.iter().position(|one| *one == mode);
+        let rank = |mode| {
+            Self::ALL
+                .iter()
+                .position(|one| *one == mode)
+                .unwrap_or(Self::ALL.len())
+        };
         rank(self) > rank(other)
     }
 }
@@ -230,6 +239,25 @@ pub struct SteerRun {
 }
 
 wire! {
+/// Where an attachment came from, when the page knows more than the upload did.
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AttachmentSource {
+    /// A Snap Shot the desktop shell captured (docs/snapshots.md).
+    SnapShot {
+        captured_at: String,
+        app_name: String,
+        window_title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        app_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        accessible_text: Option<String>,
+    },
+}
+}
+
+wire! {
 pub struct Attachment {
     pub id: String,
     pub thread_id: String,
@@ -237,6 +265,10 @@ pub struct Attachment {
     pub mime: String,
     pub size: u64,
     pub created_at: String,
+    /// Absent for an ordinary upload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<AttachmentSource>,
 }
 }
 
@@ -516,4 +548,78 @@ pub struct CreateThread {
     #[ts(optional, as = "Option<BTreeMap<String, String>>")]
     pub options: BTreeMap<String, String>,
 }
+}
+
+#[cfg(test)]
+mod attachment_source_tests {
+    use super::*;
+
+    fn attachment(source: Option<AttachmentSource>) -> Attachment {
+        Attachment {
+            id: "a".into(),
+            thread_id: "t".into(),
+            name: "shot.png".into(),
+            mime: "image/png".into(),
+            size: 3,
+            created_at: "2026-11-22T10:00:00Z".into(),
+            source,
+        }
+    }
+
+    fn snap_shot() -> AttachmentSource {
+        AttachmentSource::SnapShot {
+            captured_at: "2026-11-22T10:00:00Z".into(),
+            app_name: "Notes".into(),
+            window_title: "Weekly plan".into(),
+            app_id: Some("com.apple.Notes".into()),
+            accessible_text: Some("buy milk".into()),
+        }
+    }
+
+    #[test]
+    fn an_attachment_without_a_source_serializes_as_before() {
+        let value = serde_json::to_value(attachment(None)).unwrap();
+        assert!(value.get("source").is_none());
+        let decoded: Attachment = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.source, None);
+    }
+
+    #[test]
+    fn a_snap_shot_source_round_trips_and_keeps_its_wire_name() {
+        let source = snap_shot();
+        let value = serde_json::to_value(&source).unwrap();
+        assert_eq!(value["kind"], "snap_shot");
+        assert_eq!(value["app_name"], "Notes");
+        assert_eq!(
+            serde_json::from_value::<AttachmentSource>(value).unwrap(),
+            source
+        );
+        let without_optional = serde_json::json!({
+            "kind": "snap_shot",
+            "captured_at": "2026-11-22T10:00:00Z",
+            "app_name": "Notes",
+            "window_title": "Weekly plan",
+        });
+        assert_eq!(
+            serde_json::from_value::<AttachmentSource>(without_optional).unwrap(),
+            AttachmentSource::SnapShot {
+                captured_at: "2026-11-22T10:00:00Z".into(),
+                app_name: "Notes".into(),
+                window_title: "Weekly plan".into(),
+                app_id: None,
+                accessible_text: None,
+            }
+        );
+    }
+
+    #[test]
+    fn an_unknown_kind_or_field_is_a_deserialization_error() {
+        assert!(
+            serde_json::from_value::<AttachmentSource>(serde_json::json!({"kind": "future"}))
+                .is_err()
+        );
+        let mut unknown = serde_json::to_value(snap_shot()).unwrap();
+        unknown["app_icon"] = serde_json::json!("icon.png");
+        assert!(serde_json::from_value::<AttachmentSource>(unknown).is_err());
+    }
 }

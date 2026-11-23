@@ -7,6 +7,7 @@ export function SettingRow({
   title,
   settingId: explicitId,
   description,
+  error,
   actions,
   stacked,
   children,
@@ -14,6 +15,8 @@ export function SettingRow({
   title: string;
   settingId?: string;
   description?: ReactNode;
+  /** Says why this row's own save failed, in the row that failed (.field-error, as the frames draw a field error). */
+  error?: ReactNode;
   actions?: ReactNode;
   /** Puts the control under the label, for one that needs the full width. */
   stacked?: boolean;
@@ -27,6 +30,7 @@ export function SettingRow({
           <span className="setting-line-title">{title}</span>
         </div>
         {description ? <span className="setting-line-desc">{description}</span> : null}
+        {error ? <p className="field-error" role="alert">{error}</p> : null}
       </div>
       {children || actions ? <div className="setting-line-control">{actions}{children}</div> : null}
     </div>
@@ -34,7 +38,7 @@ export function SettingRow({
 }
 
 /** A group of rows. With no title the rows stand alone, as the settings frames draw them. */
-export function SettingGroup({ title, description, children }: { title?: string; description?: ReactNode; children: ReactNode }) {
+export function SettingGroup({ title, description, children }: { title?: ReactNode; description?: ReactNode; children: ReactNode }) {
   return (
     <section className="setting-group">
       {title ? <h2>{title}</h2> : null}

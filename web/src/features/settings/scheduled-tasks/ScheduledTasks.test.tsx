@@ -1,8 +1,9 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import * as fixtures from "../../../../mock/fixtures";
 import { api } from "../../../api/client";
+import type { Project } from "../../../api/types";
 import { useWorkspace } from "../../../product/state/workspace";
 import { installMockFetch } from "../../../test-support";
 import { ScheduledTasksSection } from "./ScheduledTasks";
@@ -229,6 +230,117 @@ it("shows the two task defaults on the settings page, with Run while closed gone
   expect(screen.getByText("Waits until Codex’s limit window has room (90% used or more). Engines that report no window are never held. Applies to scheduled and follow-up runs.")).toBeVisible();
   expect(screen.getByRole("switch", { name: "Notify when a run finishes or fails" })).toBeChecked();
   expect(screen.queryByText(/while closed/i)).toBeNull();
+});
+
+/** Opens New scheduled task from the task list the mock serves. */
+async function openNewTask() {
+  window.location.hash = "#/settings/tasks";
+  const user = userEvent.setup();
+  render(<ScheduledTasksSection />);
+  // The list settles from its loading state into rows or the empty state; a click on the button
+  // that settle replaces would be lost.
+  await waitFor(() => expect(screen.queryByText("Loading tasks")).toBeNull());
+  await user.click(await screen.findByRole("button", { name: "New task" }));
+  const dialog = await screen.findByRole("dialog", { name: "New scheduled task" });
+  return { user, dialog };
+}
+
+it("offers the projects the rest of the app lists, choosing the first", async () => {
+  installMockFetch();
+  await useWorkspace.getState().refreshAll();
+  const { dialog } = await openNewTask();
+  const picker = within(dialog).getByRole("combobox", { name: "Project" });
+  expect(within(picker).getAllByRole("option").map((option) => option.textContent)).toEqual(
+    fixtures.projects.map((project) => project.name),
+  );
+  expect(picker).toHaveValue("p-app");
+});
+
+it("leaves the skills library and scratch projects out of the Project list, as every other list does", async () => {
+  const library: Project = { ...fixtures.projects[0]!, id: "p-library", name: "Skills library", library: true };
+  const scratch: Project = { ...fixtures.projects[1]!, id: "p-scratch", name: "Scratch", scratch: true };
+  useWorkspace.setState({
+    projects: { data: [...fixtures.projects, library, scratch], error: null, loading: false },
+    engines: { data: fixtures.engines, error: null, loading: false },
+  });
+  installMockFetch();
+  const { dialog } = await openNewTask();
+  const picker = within(dialog).getByRole("combobox", { name: "Project" });
+  expect(within(picker).getAllByRole("option").map((option) => option.textContent)).toEqual(
+    fixtures.projects.map((project) => project.name),
+  );
+});
+
+it("keeps an edited task's own project, and Save, even when that project is not in the list", async () => {
+  const hidden: Project = { ...fixtures.projects[0]!, id: "p-app", name: "Skills library", library: true };
+  useWorkspace.setState({
+    projects: { data: [hidden, ...fixtures.projects.slice(1).filter((entry) => entry.id !== "p-app")], error: null, loading: false },
+    engines: { data: fixtures.engines, error: null, loading: false },
+  });
+  window.location.hash = "#/settings/tasks?task=task-review&edit=1";
+  installMockFetch();
+  render(<ScheduledTasksSection />);
+  const dialog = await screen.findByRole("dialog", { name: "Edit scheduled task" });
+  expect(within(dialog).getByRole("button", { name: "Save changes" })).toBeEnabled();
+  expect(within(dialog).getByRole("combobox", { name: "Project" })).toHaveValue("p-app");
+});
+
+it("uses the projects when the workspace read answers after the dialog opens, and says it is still reading until then", async () => {
+  useWorkspace.setState({
+    projects: { data: null, error: null, loading: true },
+    engines: { data: fixtures.engines, error: null, loading: false },
+  });
+  installMockFetch();
+  const { dialog } = await openNewTask();
+  const picker = within(dialog).getByRole("combobox", { name: "Project" });
+  expect(within(picker).getAllByRole("option").map((option) => option.textContent)).toEqual(["Loading projects…"]);
+  const save = within(dialog).getByRole("button", { name: "Save task" });
+  expect(save).toBeDisabled();
+  expect(save).toHaveAccessibleDescription("Save task needs a name, what the agent should do and a project.");
+
+  act(() => useWorkspace.setState({ projects: { data: fixtures.projects, error: null, loading: false } }));
+  await waitFor(() => expect(picker).toHaveValue("p-app"));
+  expect(within(picker).getAllByRole("option").map((option) => option.textContent)).toEqual(
+    fixtures.projects.map((project) => project.name),
+  );
+});
+
+it("with no projects, says to add one first and keeps Save's reason visible and accessible", async () => {
+  const mock = installMockFetch();
+  mock.reset("empty");
+  await useWorkspace.getState().refreshAll();
+  const { user, dialog } = await openNewTask();
+  const picker = within(dialog).getByRole("combobox", { name: "Project" });
+  expect(picker).toHaveAttribute("required");
+  expect(within(picker).getAllByRole("option").map((option) => option.textContent)).toEqual(["No projects yet"]);
+  expect(picker).toHaveAccessibleDescription("No projects yet. Add one in Settings › Projects, then come back.");
+  const save = within(dialog).getByRole("button", { name: "Save task" });
+  expect(save).toBeDisabled();
+  expect(save).toHaveAccessibleDescription("Save task needs a name, what the agent should do and a project.");
+
+  await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Nightly triage");
+  await user.type(within(dialog).getByRole("textbox", { name: "What should the agent do?" }), "Triage new issues.");
+  expect(save).toBeDisabled();
+  expect(save).toHaveAccessibleDescription("Save task needs a project.");
+});
+
+it("names what Save still needs instead of disabling silently", async () => {
+  ready();
+  installMockFetch();
+  const { user, dialog } = await openNewTask();
+  const save = within(dialog).getByRole("button", { name: "Save task" });
+  const reason = "Save task needs a name and what the agent should do.";
+  expect(save).toBeDisabled();
+  expect(save).toHaveAccessibleDescription(reason);
+  expect(within(dialog).getByText(reason)).toBeVisible();
+
+  await user.type(within(dialog).getByRole("textbox", { name: "What should the agent do?" }), "Triage new issues.");
+  expect(save).toHaveAccessibleDescription("Save task needs a name.");
+
+  await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Nightly triage");
+  expect(save).toBeEnabled();
+  expect(save).not.toHaveAccessibleDescription();
+  expect(within(dialog).queryByText(/^Save task needs/)).toBeNull();
 });
 
 it("shows New task once while the list is empty (the empty state's) and in the header once tasks exist", async () => {

@@ -10,6 +10,12 @@ import { ALL_DATA, onDataChanged } from "../api/shell";
  */
 export const COALESCE_MS = 200;
 export const EVERYTHING = ALL_DATA;
+/**
+ * A topic no service event uses: the app came back into view, so what a screen shows may have moved on while
+ * nobody was looking. A screen that wants to notice adds it to its matcher; its own store decides whether the
+ * read actually goes out, so a click on the window never re-asks for an answer that is still fresh.
+ */
+export const AWAKE = "awake";
 
 interface Refresher {
   matches: (what: string) => boolean;
@@ -41,11 +47,22 @@ function hear(what: string) {
   timer ??= setTimeout(flush, COALESCE_MS);
 }
 
-/** Starts hearing the service's change events. Returns a stop function. */
+/** Starts hearing the service's change events and the app coming back into view. Returns a stop function. */
 export function startDataRefresh(): () => void {
   const stop = onDataChanged(hear);
+  // Being away is not an event: nothing arrived while the window was hidden or another app had the focus, so the
+  // screens that asked to notice read again through the same one-per-burst path. A window turned visible and a
+  // window given the focus both count, and the burst is held like any other.
+  const wake = () => hear(AWAKE);
+  const visible = () => {
+    if (!document.hidden) wake();
+  };
+  window.addEventListener("focus", wake);
+  document.addEventListener("visibilitychange", visible);
   return () => {
     stop();
+    window.removeEventListener("focus", wake);
+    document.removeEventListener("visibilitychange", visible);
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
     pending = new Set();

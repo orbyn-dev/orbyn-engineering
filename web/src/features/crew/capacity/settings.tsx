@@ -12,7 +12,7 @@ export function CapacitySettings() {
           <span className="cx-cwpv">Preview</span>
         </h3>
         <p style={{ margin: "0", color: "var(--color-muted)", fontSize: "12.5px", lineHeight: 1.5 }}>
-          Agents can merge faster than a person can read. Say how many changes you can review, and Crew slows the work it starts on its own before the queue gets ahead of you. It never stops a merge, and nothing here changes what you can review.
+          Agents can merge faster than a person can read. Say how many changes you can review, and Crew slows the work it starts on its own before the queue gets ahead of you. It does not stop a merge, and nothing here changes what you can review.
         </p>
         <div>
           <div className="cx-setrow">

@@ -5,6 +5,7 @@ import { readToken } from "./token";
 import { inBackground, inLane, laneFor } from "./lanes";
 import type { CreateBranch } from "../generated/CreateBranch";
 import type { SwitchBranch } from "../generated/SwitchBranch";
+import type { StartRun } from "../generated/StartRun";
 import type { SteerResult } from "../generated/SteerResult";
 import type { SkillPackStatus } from "../generated/SkillPackStatus";
 import type { EngineUpdateOutcome } from "../generated/EngineUpdateOutcome";
@@ -32,7 +33,8 @@ import type {
   KeybindingsView,
   ApplyAllResult,
   Approval,
-  Attachment,
+  AttachmentSource,
+  AttachmentWithSource,
   Checkpoint,
   CloneJob,
   CreateThread,
@@ -49,7 +51,6 @@ import type {
   LibraryUpdateResult,
   LimitsOverview,
   Mentions,
-  PermissionMode,
   PreviewTab,
   Project,
   ProjectRemoval,
@@ -106,7 +107,7 @@ export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function failureFrom(response: Response): Promise<ApiFailure> {
+export async function failureFrom(response: Response): Promise<ApiFailure> {
   let code = `http_${response.status}`;
   let message = `The server answered ${response.status}.`;
   let detail: unknown;
@@ -310,6 +311,14 @@ export const api = {
     request<KeybindingsView>("GET", "/api/keybindings", undefined, signal),
   threadItem: (threadId: string, itemId: string, signal?: AbortSignal) =>
     request<unknown>("GET", `/api/threads/${q(threadId)}/items/${q(itemId)}`, undefined, signal),
+  /** The engine consoles waiting for the person in one thread now (docs/cli-agent-attention.md). Local, read-only. */
+  terminalAttention: (threadId: string, signal?: AbortSignal) =>
+    request<import("../generated/TerminalAttentionOpen").TerminalAttentionOpen>(
+      "GET",
+      `/api/threads/${q(threadId)}/terminal-attention`,
+      undefined,
+      signal,
+    ),
   regenerateTitle: (id: string) => request<Thread>("POST", `/api/threads/${q(id)}/title`),
   reorderThreads: (ids: string[]) => request<void>("POST", "/api/threads/order", { ids }),
   /** Every archived thread, including those of a project that was removed. */
@@ -321,7 +330,7 @@ export const api = {
     request<JsonValue | null>("GET", `/api/threads/${q(threadId)}/usage`, undefined, signal),
   commands: (threadId: string, signal?: AbortSignal) =>
     request<SlashCommand[]>("GET", `/api/threads/${q(threadId)}/commands`, undefined, signal),
-  uploadAttachment: async (threadId: string, file: File): Promise<Attachment> => {
+  uploadAttachment: async (threadId: string, file: File): Promise<AttachmentWithSource> => {
     let response: Response;
     try {
       response = await fetch(serviceUrl(`/api/threads/${q(threadId)}/attachments?name=${q(file.name)}`), {
@@ -334,8 +343,16 @@ export const api = {
       throw new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0);
     }
     if (!response.ok) throw await failureFrom(response);
-    return (await response.json()) as Attachment;
+    return (await response.json()) as AttachmentWithSource;
   },
+
+  /**
+   * Where a kept attachment came from (docs/snapshots.md, "What the page sends to the service"). The route answers 404 for
+   * another thread's attachment or one already sent, `source_too_large` over a limit, and `unsupported_type` for a file
+   * that is not an image.
+   */
+  attachmentSource: (id: string, source: AttachmentSource) =>
+    request<void>("PUT", `/api/attachments/${q(id)}/source`, source),
 
   usage: (days: number, signal?: AbortSignal) =>
     request<UsageReport>("GET", `/api/usage?days=${days}`, undefined, signal),
@@ -391,6 +408,8 @@ export const api = {
 
   projects: (signal?: AbortSignal) => request<Project[]>("GET", "/api/projects", undefined, signal),
   trustProject: (id: string) => request<Project>("POST", `/api/projects/${q(id)}/trust`),
+  /** Starts Git in an added project's folder; the service refuses one that is untrusted, already a repository or gone. */
+  initProjectGit: (id: string) => request<Project>("POST", `/api/projects/${q(id)}/git/init`),
   browse: (path: string | null, signal?: AbortSignal) =>
     request<FsListing>("GET", `/api/fs/browse${path ? `?path=${q(path)}` : ""}`, undefined, signal),
 
@@ -411,12 +430,7 @@ export const api = {
     threadId: string,
     prompt: string,
     attachmentIds: string[] = [],
-    turn: {
-      model?: string;
-      effort?: string;
-      permission_mode?: PermissionMode;
-      options?: Record<string, string>;
-    } = {},
+    turn: Pick<StartRun, "model" | "effort" | "permission_mode" | "options" | "purpose"> = {},
   ) =>
     request<Run>("POST", `/api/threads/${q(threadId)}/runs`, {
       prompt,

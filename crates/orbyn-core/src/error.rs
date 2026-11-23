@@ -48,6 +48,8 @@ pub enum CoreError {
     FileConflict { revision: Option<String> },
     #[error("This file is too large to open here: {size} bytes, over the {limit} byte limit.")]
     FileTooLarge { size: u64, limit: u64 },
+    #[error("The Snap Shot's {field} is over the {limit} character limit.")]
+    SourceTooLarge { field: &'static str, limit: usize },
     #[error("{0} other thread(s) work in this folder, so restoring could lose their work.")]
     SharedDirectory(usize),
     #[error("finish or stop active runs first")]
@@ -162,6 +164,14 @@ pub enum CoreError {
         message: String,
         detail: serde_json::Value,
     },
+    /// A run start an engine's own rules refuse, with the fields a screen acts on (docs/cursor-thread-contract.md): `code` is
+    /// `engine_mode_refused` or `engine_notice_required`, and `fields` are sent beside `code` and `message`.
+    #[error("{message}")]
+    EngineRefused {
+        code: &'static str,
+        message: String,
+        fields: serde_json::Value,
+    },
     /// An action that only a person at the desktop app may give: the service has no desktop shell (it was started without one, or
     /// as a remote service), so nothing can be approved.
     #[error("Approving a command needs the Orbyn desktop app on this computer.")]
@@ -220,6 +230,7 @@ impl CoreError {
             Self::NotFastForward(_) => "not_fast_forward",
             Self::FileConflict { .. } => "file_conflict",
             Self::FileTooLarge { .. } => "file_too_large",
+            Self::SourceTooLarge { .. } => "source_too_large",
             Self::SharedDirectory(_) => "shared_directory",
             Self::RunsActive => "runs_active",
             Self::Updating => "updating",
@@ -257,6 +268,7 @@ impl CoreError {
             Self::TaskEnded => "task_ended",
             Self::Account { code, .. }
             | Self::PatternRefused { code, .. }
+            | Self::EngineRefused { code, .. }
             | Self::Refused { code, .. } => code,
             Self::ProjectExists(_) => "project_exists",
             Self::SessionLost => "session_lost",
@@ -276,7 +288,7 @@ impl CoreError {
             Self::NotFound(_) => 404,
             Self::Updating => 503,
             Self::Invalid(_) | Self::CloneRefused(_) | Self::PermissionModeUnsupported(_) => 400,
-            Self::FileTooLarge { .. } => 413,
+            Self::FileTooLarge { .. } | Self::SourceTooLarge { .. } => 413,
             Self::FolderUntrusted
             | Self::FolderUntrustedInit
             | Self::PolicyDenied(_)
@@ -327,6 +339,7 @@ impl CoreError {
             | Self::RunClosed
             | Self::TaskEnded
             | Self::Stale(_)
+            | Self::EngineRefused { .. }
             | Self::InvalidTransition { .. } => 409,
             Self::Gone(_) => 410,
             Self::Refused { status, .. } => *status,
@@ -379,6 +392,10 @@ impl CoreError {
             },
             Self::FileTooLarge { size, limit } => Self::FileTooLarge {
                 size: *size,
+                limit: *limit,
+            },
+            Self::SourceTooLarge { field, limit } => Self::SourceTooLarge {
+                field,
                 limit: *limit,
             },
             Self::SharedDirectory(n) => Self::SharedDirectory(*n),
@@ -440,6 +457,15 @@ impl CoreError {
                 code,
                 message: message.clone(),
                 detail: detail.clone(),
+            },
+            Self::EngineRefused {
+                code,
+                message,
+                fields,
+            } => Self::EngineRefused {
+                code,
+                message: message.clone(),
+                fields: fields.clone(),
             },
             Self::Refused {
                 status,

@@ -2,20 +2,28 @@ import { CircleCheck, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullReq
 import type { PullListEntry } from "../../../api/types";
 import { compactAge } from "../../../lib/format";
 import { Button, IconButton } from "../../../ui/controls";
-import { ChecksCell, CommentsCell, ReviewersCell, YourReviewCell, type CellEnv } from "./PullCells";
+import { ChecksCell, ChecksResult, CommentsCell, ReviewersCell, YourReviewCell, type CellEnv } from "./PullCells";
+import { changesNeedYou, checksView, yourReview, type PullDetails } from "../model/pullModel";
+import { useLayoutWidth } from "../../../lib/useLayout";
 import { detailsKey, type DetailsByKey } from "../model/pullModel";
 
-/** The one word after the title. Conflicts and Ready to merge wait for the list to carry whether it merges cleanly. */
-export const stateWord = (pull: PullListEntry["pull"]) =>
+/**
+ * The one word after the title. A known conflict is the state label, so it wins over Ready to merge.
+ * The list carries mergeability from its details read; a forge that does not say, or details that have
+ * not arrived, leave the word as it was rather than hiding a row's merge.
+ */
+export const stateWord = (pull: PullListEntry["pull"], mergeable?: string | null) =>
   pull.state === "merged"
     ? "Merged"
     : pull.state === "closed"
       ? "Closed"
       : pull.draft
         ? "Draft"
-        : pull.review_state === "approved" && pull.checks_state === "pass"
-          ? "Ready to merge"
-          : null;
+        : mergeable === "conflicting"
+          ? "Conflicts"
+          : pull.review_state === "approved" && pull.checks_state === "pass"
+            ? "Ready to merge"
+            : null;
 const STATE_ICON = { merged: GitMerge, closed: GitPullRequestClosed, draft: GitPullRequestDraft, open: GitPullRequest } as const;
 
 /** The table's column titles. The comments column is named by its icon. */
@@ -60,6 +68,30 @@ export function PullsSkeleton() {
   );
 }
 
+/**
+ * The checks line of a phone row, and what takes the place of the columns that width hides: Changes requested, as a
+ * neutral label (amber only on the person's own pull request), and the small amber Review asked marker when a review
+ * is asked of the person. Only CSS shows it, under 600 px; the hidden cells it replaces are not read out then.
+ */
+function PhoneLine({ entry, details, env }: { entry: PullListEntry; details: PullDetails | undefined; env: CellEnv }) {
+  const view = checksView(entry.pull);
+  const mine = details ? yourReview(details, env.viewers) : undefined;
+  const asked = mine !== undefined && mine !== null && mine.tone === "act" && mine.label === "Review requested";
+  const changes = !entry.pull.draft && entry.pull.review_state === "changes_requested";
+  if (!view && !changes && !asked) return null;
+  return (
+    <span className="pull-phone-line">
+      {view ? <ChecksResult view={view} /> : null}
+      {changes ? (
+        <span className="pull-phone-changes" data-tone={changesNeedYou(entry.pull, env.viewers) ? "act" : undefined}>
+          Changes requested
+        </span>
+      ) : null}
+      {asked ? <span className="pull-phone-asked">Review asked</span> : null}
+    </span>
+  );
+}
+
 export interface PullRowsProps {
   rows: readonly PullListEntry[];
   details: DetailsByKey;
@@ -79,12 +111,16 @@ export interface PullRowsProps {
 
 export function PullRows(props: PullRowsProps) {
   const { rows, details, env, picked } = props;
+  // The phone row's third line duplicates what the hidden columns say, so it is rendered only in the phone layout.
+  const phone = useLayoutWidth() === "phone";
   return (
     <ul className="pull-rows" data-reveal={props.revealed || undefined}>
       {rows.map((entry) => {
         const { project_id: project, pull } = entry;
         const isPicked = picked.some((one) => one.project_id === project && one.pull.number === pull.number);
         const row = details.get(detailsKey(project, pull.number));
+        // Whether it merges cleanly comes with the row's details, so the word waits for them.
+        const word = stateWord(pull, row?.mergeable);
         return (
           <li
             key={`${project}:${pull.number}`}
@@ -110,10 +146,11 @@ export function PullRows(props: PullRowsProps) {
                 <span className="pull-row-name" data-quiet={pull.draft || pull.state !== "open" || undefined}>
                   {pull.title}
                 </span>
-                {stateWord(pull) ? <span className="pull-state-word">{stateWord(pull)}</span> : null}
+                {word ? <span className="pull-state-word">{word}</span> : null}
               </span>
               <small>{[`#${pull.number}`, pull.head, props.projectName(project), pull.author].filter(Boolean).join(" · ")}</small>
             </button>
+            {phone ? <PhoneLine entry={entry} details={row} env={env} /> : null}
             <ChecksCell entry={entry} env={env} />
             <ReviewersCell entry={entry} details={row} env={env} />
             <YourReviewCell entry={entry} details={row} env={env} />
@@ -132,7 +169,7 @@ export function PullRows(props: PullRowsProps) {
               ) : null}
               {pull.state === "open" ? (
                 <>
-                  {stateWord(pull) === "Ready to merge" && props.online ? (
+                  {word === "Ready to merge" && props.online ? (
                     <Button small tone="primary" aria-label={`Merge #${pull.number}`} onClick={() => props.onMerge(entry)}>
                       Merge
                     </Button>

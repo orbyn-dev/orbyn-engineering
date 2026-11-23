@@ -30,7 +30,7 @@ function ParamTable({ params }: { params: readonly Param[] }) {
 }
 
 const Source = ({ repo }: { repo: boolean }) => (
-  <p className="lib-source">{repo ? <>From this repository’s <code>.orbyn/</code> <Pill>Read-only</Pill> Orbyn reads it and never writes it.</> : "Only on this computer. Not in the repository."}</p>
+  <p className="lib-source">{repo ? <>From this repository’s <code>.orbyn/</code> <Pill>Read-only</Pill> Orbyn reads it and does not write it.</> : "Only on this computer. Not in the repository."}</p>
 );
 
 /** Frame `workflow-detail`: the command (as text, with `{{name}}` marked), the parameter table, where it comes from and the actions. */
@@ -55,7 +55,7 @@ export function WorkflowPage({ workflow, repo, sets, hasThread, onUse, onEdit, o
       {workflow.description ? <p className="field-hint">{plain(workflow.description, 200)}</p> : null}
       <div className="field"><span className="lib-label">Command</span><pre className="lib-pre" data-testid="command">{shown.text}{shown.cut ? "…" : ""}</pre></div>
       <div className="field"><span className="lib-label">Parameters</span><ParamTable params={workflow.params} /></div>
-      {attached.length > 0 ? <p className="field-hint">Environment: {attached.map((name) => plain(name, 40)).join(", ")}. Applied by the run; values stay hidden.</p> : null}
+      {attached.length > 0 ? <p className="field-hint">Environment: {attached.map((name) => plain(name, 40)).join(", ")}. Applied by the run; values are masked in the output when they match exactly.</p> : null}
       <Source repo={repo} />
       {"needs_ack" in workflow && workflow.needs_ack ? <p className="field-hint" role="note">This command came from outside this device. Its next run asks you to confirm first.</p> : null}
       <div className="lib-actions">
@@ -173,7 +173,7 @@ export function EnvSetPage({ set, repo, onChanged, onEdit, onDelete, onCopy, bus
         {problem ? <p className="field-error" role="alert">{problem}</p> : null}
       </div>
       {note ? <p className="field-hint" role="note">{note}</p> : plannedNote ? <p className="field-hint" role="note">{plannedNote}</p> : null}
-      <p className="field-hint">Secrets are never in the repository or shown again. A workflow that lists this set gets them when it runs, and they are hidden in its output.</p>
+      <p className="field-hint">Secret values are stored on this computer, not in the repository, and are not shown again. A workflow that lists this set gets them when it runs, and they are masked in its output when they match exactly.</p>
       <Source repo={repo} />
       <div className="lib-actions">
         {repo ? <Button tone="primary" busy={busyCopy} onClick={onCopy}>Copy to Personal</Button> : (

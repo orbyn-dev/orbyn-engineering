@@ -298,13 +298,16 @@ describe("Flow on the real routes", () => {
     expect(writes()).toHaveLength(0);
   }, 20_000);
 
-  it("draws Pause crew and Stop crew After the beta, inert", async () => {
+  it("draws Pause crew and Stop crew Planned, inert, and says a task’s Cancel and Re-run checks are built", async () => {
     await open("crew");
     await table();
     for (const name of ["Pause crew", "Stop crew"]) {
       const button = screen.getByRole("button", { name: new RegExp(`^${name}`) });
       expect(button).toBeDisabled();
-      expect(button).toHaveTextContent("After the beta");
+      expect(button).toHaveTextContent("Planned");
+      expect(button.getAttribute("title")).toContain("A task’s Cancel and Re-run checks are built");
+      expect(button.getAttribute("aria-description")).toContain("each asks first");
+      expect(button.getAttribute("title")).not.toContain("when it is wired");
     }
   });
 

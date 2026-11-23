@@ -22,6 +22,32 @@ body {
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
+/* Scrollbars, in every theme: the model-picker frames of Orbyn Engineer Designs draw a 4px thumb in --line2,
+   radius 2px, on a clear track. --color-borderStrong holds that value in Light (rgba(0, 0, 0, .12)) and in
+   Dark and Dim (rgba(255, 255, 255, .14)), so one rule follows the theme instead of the platform default.
+   Chromium and WebKit paint the thumb through these pseudo-elements; Firefox has none, and its standard pair
+   wins over them in Chromium, so the pair is scoped to the engines that cannot paint the thumb. A row that
+   draws no bar at all, such as the model picker's chips, hides it on its own. */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  border-radius: 2px;
+  background: var(--color-borderStrong);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-borderStrong) transparent;
+  }
+}
 h1,
 h2,
 h3,
@@ -141,7 +167,8 @@ select {
     .flf,
     .x2find,
     .fv-search,
-    .iss-search
+    .iss-search,
+    .cb-in
   )
   input:not([type="checkbox"], [type="radio"]):not([type="hidden"]),
 .pulls-fld .pulls-inp input:not([type="checkbox"], [type="radio"]) {
@@ -204,7 +231,8 @@ input[type="checkbox"][role="switch"]:checked {
 input[type="checkbox"][role="switch"]:checked::after {
   left: 14px;
 }
-input[type="checkbox"][role="switch"]:disabled {
+input[type="checkbox"][role="switch"]:disabled,
+input[type="checkbox"][role="switch"][aria-readonly="true"] {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -346,6 +374,26 @@ input[type="checkbox"][role="switch"]:disabled {
 .pill-info {
   background: var(--color-infoSoft);
   color: var(--color-info);
+}
+/* Rule 8: the visible word beside an engine Orbyn cannot gate, wherever one is picked. */
+.unmanaged-label {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 4px;
+  white-space: nowrap;
+}
+.unmanaged-label-text {
+  color: var(--color-warnText);
+  font-size: var(--text-meta);
+  font-weight: 600;
+}
+.unmanaged-note {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-weight: 400;
+  text-overflow: ellipsis;
 }
 .count {
   display: inline-grid;
@@ -767,7 +815,8 @@ input[type="checkbox"][role="switch"]:disabled {
   color: var(--color-faint);
   cursor: default;
 }
-.popup-menu button[aria-current] {
+.popup-menu button[aria-current],
+.popup-menu button[data-option-on] {
   color: var(--color-text);
 }
 /* Leaving: a menu or popover stays mounted, inert, and fades out over --m-base-out with --m-io,
@@ -936,11 +985,10 @@ input[type="checkbox"][role="switch"]:disabled {
   flex-wrap: wrap;
   gap: 6px;
 }
+/* Clone jobs are toasts, so they stack inside .toasts: that is the designed toast position, clear of
+   the sidebar's footer, and the one live region a failure is announced from. A layer of their own at
+   a fixed offset sat over the sidebar's Engines chip. */
 .clone-jobs {
-  position: fixed;
-  z-index: 70;
-  left: 16px;
-  bottom: 56px;
   display: flex;
   flex-direction: column;
   gap: 8px;

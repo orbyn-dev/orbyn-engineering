@@ -28,8 +28,21 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
   const [again, setAgain] = useState(0);
   const [deleting, setDeleting] = useState<AcpNativeSession | null>(null);
   const epoch = useRef(0);
+  const operation = useRef<AbortController | null>(null);
   const active = engine.tier === "acp" && engine.installed;
   const project = projectId ?? projects[0]?.id ?? null;
+
+  // One of this panel's requests runs at a time (`busy` gates the controls), so one owner retires it: the panel
+  // going away, or a newer request replacing it. Cancelling drops the service's operation, which frees the agent.
+  const begin = () => {
+    operation.current?.abort();
+    const abort = new AbortController();
+    operation.current = abort;
+    return abort;
+  };
+  const end = (abort: AbortController) => {
+    if (operation.current === abort) operation.current = null;
+  };
 
   useEffect(() => {
     epoch.current += 1;
@@ -56,6 +69,8 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
     return () => {
       abort.abort();
       clearTimeout(timer);
+      // A response nobody is waiting for would keep the agent's one operation, and the next ask would be refused as busy.
+      operation.current?.abort();
     };
   }, [engine.id, active, again]);
 
@@ -75,48 +90,57 @@ export function NativeSessions({ engine }: { engine: EngineStatus }) {
   const load = async (cursor?: string) => {
     if (!project || busy) return;
     const mine = epoch.current;
+    // A newer list takes over from the one it replaces.
+    const abort = begin();
     setBusy("list");
     try {
       const query = `?project_id=${encodeURIComponent(project)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
-      const page = await listNativeSessions(engine.id, query);
-      if (mine !== epoch.current) return;
+      const page = await listNativeSessions(engine.id, query, abort.signal);
+      if (mine !== epoch.current || abort.signal.aborted) return;
       setSessions((current) => (cursor ? [...current, ...page.sessions] : page.sessions));
       setNext(page.next_cursor);
     } catch (failure) {
-      if (mine === epoch.current) fail("Could not list ACP sessions", failure);
+      if (!abort.signal.aborted && mine === epoch.current) fail("Could not list ACP sessions", failure);
     } finally {
-      if (mine === epoch.current) setBusy(null);
+      end(abort);
+      if (!abort.signal.aborted && mine === epoch.current) setBusy(null);
     }
   };
   const importSession = async (session: AcpNativeSession) => {
     if (!project || busy) return;
     const mine = epoch.current;
+    const abort = begin();
     setBusy(session.session_id);
     try {
       const done = await importNativeSession(engine.id, {
         project_id: project, session_id: session.session_id,
         ...(session.title ? { title: session.title } : {}), ...(session.updated_at ? { updated_at: session.updated_at } : {}),
-      });
-      if (mine !== epoch.current) return;
+      }, abort.signal);
+      if (mine !== epoch.current || abort.signal.aborted) return;
       setSessions((current) => current.map((row) => (row.session_id === session.session_id ? { ...row, imported_thread_id: done.thread_id } : row)));
       toast(done.imported ? "ACP session imported" : "ACP session already imported");
     } catch (failure) {
-      if (mine === epoch.current) fail("Could not import ACP session", failure);
+      if (!abort.signal.aborted && mine === epoch.current) fail("Could not import ACP session", failure);
     } finally {
-      if (mine === epoch.current) setBusy(null);
+      end(abort);
+      if (!abort.signal.aborted && mine === epoch.current) setBusy(null);
     }
   };
   const remove = async (session: AcpNativeSession) => {
     if (!project) return;
     const mine = epoch.current;
+    const abort = begin();
     setBusy(session.session_id);
     try {
-      await deleteNativeSession(engine.id, { project_id: project, session_id: session.session_id });
-      if (mine !== epoch.current) return;
+      await deleteNativeSession(engine.id, { project_id: project, session_id: session.session_id }, abort.signal);
+      if (mine !== epoch.current || abort.signal.aborted) return;
       setSessions((current) => current.filter((row) => row.session_id !== session.session_id));
       toast("ACP session deleted");
+    } catch (failure) {
+      if (!abort.signal.aborted && mine === epoch.current) fail("Could not delete ACP session", failure);
     } finally {
-      if (mine === epoch.current) setBusy(null);
+      end(abort);
+      if (!abort.signal.aborted && mine === epoch.current) setBusy(null);
     }
   };
 
