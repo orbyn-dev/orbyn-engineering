@@ -235,7 +235,7 @@ impl RunManager {
         let token = self.mcp.register(McpBinding {
             scope,
             permission_prompt: driver.family() == "claude",
-            skills: route.selection.clone(),
+            skills: self.skills.tool_selection(&route)?,
         })?;
         let url = format!("{}/mcp/{token}", self.base_url);
         let chosen = selection::of_thread(&thread);
