@@ -1208,7 +1208,8 @@ async fn a_file_that_cannot_be_read_on_either_side_never_starts_a_task() {
     );
 
     // Invalid at HEAD, fine on the default branch: the commit the task starts from cannot be read, so the start
-    // itself is refused with the reader's problem in plain words, before routing, and nothing is stored (#795).
+    // itself is refused with the reader's problem in plain words, before routing (#795; #1140's start test asserts
+    // nothing is stored on this path).
     let w = two().await;
     commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["alpha"])]));
     pin_origin_here(&w.repo);
