@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it } from "vitest";
 import type { MockApi } from "../../../../mock/api";
@@ -64,9 +64,13 @@ it("ignores a catalogue reply after unmount and a newer page read", async () => 
   mock.setFoundPrograms([found("Current catalogue")]);
   render(<ProvidersSection />);
   expect(await screen.findByText("Current catalogue")).toBeVisible();
-  slow.release();
+  // The late reply is delivered and its continuation runs inside act before anything is asserted.
+  await act(async () => {
+    slow.release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   // Since the slow read was held: it and the new page's own read.
-  await waitFor(() => expect(reads()).toBe(2));
+  expect(reads()).toBe(2);
   expect(screen.getByText("Current catalogue")).toBeVisible();
   expect(screen.queryByText("Stale catalogue")).toBeNull();
 });

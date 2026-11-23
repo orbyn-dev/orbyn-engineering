@@ -647,9 +647,16 @@ export function createMockApi(options: MockOptions = {}) {
     return project;
   }
 
+  /** The repository a checkout belongs to; every other project is its own group. */
+  const repositoryOf = (project: Project) => (scenario === "settings-checkouts" && project.id.startsWith("p-app") ? "orbyn-engineering-app" : null);
+  /** The catalog key of the group a project is in (`repo:` for checkouts of one repository, `mock:` for a project of its own). */
+  const groupKeyOf = (projectId: string) => {
+    const project = projects.find((entry) => entry.id === projectId);
+    const repository = project ? repositoryOf(project) : null;
+    return repository ? `repo:${repository}` : `mock:${projectId}`;
+  };
+
   function scopeCatalog(scope: ProjectScopesQuery): ProjectScopeCatalog {
-    /** The repository a checkout belongs to; every other project is its own group. */
-    const repositoryOf = (project: Project) => (scenario === "settings-checkouts" && project.id.startsWith("p-app") ? "orbyn-engineering-app" : null);
     const member = (project: Project) => ({
       project_id: project.id, physical_key: `mock-physical:${project.id}`, name: project.name, path: project.path,
       repository_key: repositoryOf(project), repository_label: repositoryOf(project), repository_relative_path: "",
@@ -658,9 +665,12 @@ export function createMockApi(options: MockOptions = {}) {
     });
     const listed = projects.filter((project) => !project.scratch && project.path !== managed.library?.path);
     // Checkouts of one repository are one group; so are the projects a test asked to be grouped (`groupProjects`).
-    const together = listed.filter((project) => groupedProjects.includes(project.id));
+    const asked = new Set(groupedProjects);
+    const togetherAll = listed.filter((project) => asked.has(project.id));
+    // A group that lost members down to one is that project's own group again.
+    const together = togetherAll.length > 1 ? togetherAll : [];
     const grouped = new Map<string, Project[]>();
-    for (const project of listed.filter((entry) => !groupedProjects.includes(entry.id))) {
+    for (const project of listed.filter((entry) => !together.includes(entry))) {
       const repository = repositoryOf(project);
       const key = repository ? `repo:${repository}` : `mock:${project.id}`;
       grouped.set(key, [...(grouped.get(key) ?? []), project]);
@@ -947,7 +957,7 @@ export function createMockApi(options: MockOptions = {}) {
         break;
       case "GET /api/preferences": {
         const projectId = query.get("project_id");
-        const scope: ProjectScopesQuery = projectId ? { selection: { kind: "checkout", group_key: `mock:${projectId}`, project_id: projectId } } : {};
+        const scope: ProjectScopesQuery = projectId ? { selection: { kind: "checkout", group_key: groupKeyOf(projectId), project_id: projectId } } : {};
         if (scopedPreferences(scope, []).catalog.selection.kind === "unavailable") return err(404, "not_found", "Project not found.");
         const rows = preferenceViews(scope);
         // The credits setting on, for the read-only merge dialog frame (pr-detail-merge-dialog-credits-readonly-on).
@@ -989,7 +999,7 @@ export function createMockApi(options: MockOptions = {}) {
         const projectId = seg[2] ?? "";
         if (!projects.some((project) => project.id === projectId)) return err(404, "not_found", "Project not found.");
         writePreferences(projectId, (data.values ?? {}) as Record<string, JsonValue>);
-        return { status: 200, body: preferenceViews({ selection: { kind: "checkout", group_key: `mock:${projectId}`, project_id: projectId } }) };
+        return { status: 200, body: preferenceViews({ selection: { kind: "checkout", group_key: groupKeyOf(projectId), project_id: projectId } }) };
       }
       case "POST /api/settings":
         if (seg[2] === "project-scopes") return { status: 200, body: scopeCatalog(data as ProjectScopesQuery) };
@@ -1509,8 +1519,15 @@ export function createMockApi(options: MockOptions = {}) {
       }
       if (seg[1] === "engines" && seg[2] === "refresh") return { status: 200, body: engines };
       if (seg[1] === "engines" && seg[3] === "native-sessions" && seg[4] === "import") {
+        // The thread the answer names exists afterwards, in the project whose folder the chat was in.
+        const project = projects[0];
+        if (!project) return err(404, "not_found", "No project to import into.");
         const thread_id = nextId("t");
         importedNative.set(`${seg[2]}:${String(data.session_id)}`, thread_id);
+        threads = [...threads, {
+          scratch: false, id: thread_id, project_id: project.id, title: "First chat", engine: seg[2] ?? "", model: null, cwd: project.path,
+          worktree: null, skill_profile: null, active_run: null, last_run_state: null, created_at: now(), updated_at: now(),
+        }];
         return { status: 200, body: { thread_id, imported: true } };
       }
       if (seg[1] === "engines" && seg[3] === "native-sessions" && seg[4] === "delete") {
@@ -1533,7 +1550,7 @@ export function createMockApi(options: MockOptions = {}) {
       }
       // Updates every engine that owns an installer and has a newer version, one after another, as one update each would.
       if (seg[1] === "engines" && seg[2] === "update-all") {
-        const outcomes = engines.filter((engine) => engine.installed && !engine.instance_of && engine.update_command !== null && engine.latest !== null && engine.latest !== engine.version).map((engine) => {
+        const outcomes = engines.filter((engine) => engine.installed && !engine.updating && !engine.instance_of && engine.update_command !== null && engine.latest !== null && engine.latest !== engine.version).map((engine) => {
           const answer = takeFailure(`/api/engines/${engine.id}/update`) ?? route("POST", `/api/engines/${engine.id}/update`, new URLSearchParams(), {});
           return answer.status < 400 ? { id: engine.id, name: engine.name, version: engine.latest ?? undefined } : { id: engine.id, name: engine.name, error: String((answer.body as { message?: string }).message) };
         });
