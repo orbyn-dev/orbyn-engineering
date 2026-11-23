@@ -49,6 +49,8 @@ mod crew_escapes;
 #[cfg(test)]
 mod crew_escapes_tests;
 mod crew_flow;
+#[cfg(test)]
+mod crew_formats_tests;
 mod crew_guard;
 mod crew_merge_corrections;
 mod crew_merge_forge;

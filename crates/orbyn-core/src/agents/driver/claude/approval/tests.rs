@@ -91,6 +91,59 @@ async fn synthetic_cli_receives_exact_controls_and_preserves_actual_usage_on_rej
     }
 }
 
+/// Every number the CLI reports is held to the spec: one past a limit is refused with the fixed
+/// words and the usage it really reported is kept; a number exactly on its limit is accepted.
+#[tokio::test]
+async fn a_reported_number_past_its_limit_is_refused_and_one_on_the_limit_is_accepted() {
+    const REFUSED: &str = "The reported approval exceeded its acceptance limits.";
+    let dir = crate::testing::TempDir::new();
+    let driver = fake(dir.path());
+    let mut problems = Vec::new();
+    // (prompt, reported total tokens, accepted)
+    for (prompt, total, accepted) in [
+        ("at-the-limits", 16384, true),
+        ("over-output", 1035, false),
+        ("over-total", 16390, false),
+        ("over-budget", 20, false),
+        ("two-turns", 20, false),
+        ("error-result", 20, false),
+        ("error-subtype", 20, false),
+        ("other-model", 20, false),
+        ("two-models", 20, false),
+    ] {
+        let (send, mut receive) = mpsc::channel(16);
+        let handle = driver.start_approval(spec(prompt), send).await.unwrap();
+        let mut usage = None;
+        let mut text = String::new();
+        let mut outcome = None;
+        while let Some(event) = receive.recv().await {
+            match event {
+                EngineEvent::Usage(value) => usage = Some(value),
+                EngineEvent::Agui(AgUiEvent::TextMessageContent { delta, .. }) => text += &delta,
+                EngineEvent::Finished(value) => {
+                    outcome = Some(value);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        handle.task.await.unwrap();
+        let reported = usage.expect("the reported usage is kept").total_tokens;
+        if reported != Some(total) {
+            problems.push(format!("{prompt}: usage {reported:?}, expected {total}"));
+        }
+        let ended_as_expected = if accepted {
+            outcome == Some(EngineOutcome::Completed) && !text.is_empty()
+        } else {
+            outcome == Some(EngineOutcome::Failed(REFUSED.into())) && text.is_empty()
+        };
+        if !ended_as_expected {
+            problems.push(format!("{prompt}: ended {outcome:?} with text {text:?}"));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
 #[tokio::test]
 async fn synthetic_cli_is_owned_through_cancellation_and_deadline() {
     let dir = crate::testing::TempDir::new();

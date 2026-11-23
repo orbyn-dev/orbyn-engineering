@@ -134,6 +134,18 @@ describe("Cancel on a Taskboard card", () => {
     expect(await screen.findByText(/^Already cancelled\./)).toBeVisible();
   });
 
+  it("keeps the task in its column and shows the service's 502 words, with no cancelled confirmation", async () => {
+    const user = await board("crew-write-engine");
+    await choose(user, /^Running/, /^Actions for Use next/, /^Cancel$/);
+    await user.click(await screen.findByRole("button", { name: "Cancel task" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The task was not cancelled. Try again.");
+    expect(within(screen.getByRole("region", { name: /^Running/ })).getByRole("button", { name: /^Actions for Use next/ })).toBeVisible();
+    expect(screen.queryByText(/^Cancelled\./)).toBeNull();
+    expect(posts()).toHaveLength(1);
+    expect(String(posts()[0]![0])).toBe("/api/crew/tasks/b-running/cancel");
+  });
+
   it.each([
     ["crew-write-ended", "This task already ended."],
     // The service's own two messages for a 502, copied from crates/orbyn-core/src/crew/cancel.rs: shown as they are, and nothing added.
