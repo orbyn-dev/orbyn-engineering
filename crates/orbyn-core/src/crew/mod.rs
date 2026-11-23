@@ -66,6 +66,7 @@ pub use autopilot::{
 };
 pub use background::{
     BackgroundEnd, EVERY_HOURS_MAX, MINUTES_MAX, NAME_MAX, SETTING_MAX, TURNS_MAX,
+    WATCH_COMMAND_MAX,
 };
 pub use bus::{ASK_TOOL, BOARD_READ_TOOL, BOARD_WRITE_TOOL, BUS_TOOLS, Bus, Limits, POST_TOOL};
 pub use classes::{

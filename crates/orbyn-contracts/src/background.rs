@@ -24,13 +24,24 @@ pub enum BackgroundTriggerKind {
     IssueLabel,
     Schedule,
     DependencyUpdate,
+    Watch,
+}
+}
+
+wire_enum! {
+/// What a `watch` crew does when its command turns failing: wait for the person (`needs_you`, the default behaviour) or start
+/// its template's run (`template`).
+pub enum BackgroundWatchAction {
+    NeedsYou,
+    Template,
 }
 }
 
 wire! {
 /// The settings of a trigger. Only the fields of its kind may be set, and the ones marked required must be:
 /// `ci_failure` takes `branch` and `workflow` (both optional, absent means any), `issue_label` needs `label`,
-/// `schedule` needs `every_hours` (1 to 720) and `dependency_update` takes `ecosystem` (optional). Any other field is refused.
+/// `schedule` needs `every_hours` (1 to 720), `dependency_update` takes `ecosystem` (optional) and `watch` needs
+/// `command` (1 to 500 characters), `every_hours` (1 to 720) and `on_failing` (`needs_you` or `template`). Any other field is refused.
 #[serde(deny_unknown_fields)]
 pub struct BackgroundTrigger {
     pub kind: BackgroundTriggerKind,
@@ -49,6 +60,12 @@ pub struct BackgroundTrigger {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub ecosystem: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub command: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub on_failing: Option<BackgroundWatchAction>,
 }
 }
 

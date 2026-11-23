@@ -20,7 +20,7 @@ fn project(w: &World) -> String {
 }
 
 /// A stored crew with a daily budget, on. The run budget is wide enough that only the daily one can stop a run here.
-fn crew_daily(w: &World, name: &str, runs: u32, turns: u32) -> String {
+async fn crew_daily(w: &World, name: &str, runs: u32, turns: u32) -> String {
     let body: wire::BackgroundCrewCreate = serde_json::from_value(json!({
         "project_id": project(w), "name": name, "template": "fix_failing_ci",
         "trigger": { "kind": "ci_failure", "branch": "main" },
@@ -29,7 +29,7 @@ fn crew_daily(w: &World, name: &str, runs: u32, turns: u32) -> String {
         "utc_offset_minutes": OFFSET,
     }))
     .unwrap();
-    let crew = w.core.background_create(&body).unwrap();
+    let crew = w.core.background_create(&body).await.unwrap();
     w.core.background_set_enabled(&crew.id, true).unwrap();
     crew.id
 }
@@ -111,7 +111,7 @@ fn audits(w: &World, action: &str) -> Vec<Value> {
 #[tokio::test]
 async fn a_run_is_cancelled_at_the_daily_cap_and_shows_what_it_spent() {
     let w = world(true, outside()).await;
-    let id = crew_daily(&w, "One turn a day", 5, 1);
+    let id = crew_daily(&w, "One turn a day", 5, 1).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
 
     // The engine's one turn is counted as it happens, and the run is cancelled at the cap: stopped
@@ -157,7 +157,7 @@ async fn a_run_is_cancelled_at_the_daily_cap_and_shows_what_it_spent() {
 #[tokio::test]
 async fn a_new_event_is_refused_with_the_reset_time_and_never_queued() {
     let w = world(true, outside()).await;
-    let id = crew_daily(&w, "Spent", 5, 1);
+    let id = crew_daily(&w, "Spent", 5, 1).await;
     w.core.crew_background_run_now(&id, "user").await.unwrap();
     until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
 
@@ -220,7 +220,7 @@ async fn a_new_event_is_refused_with_the_reset_time_and_never_queued() {
 #[tokio::test]
 async fn an_engine_out_of_daily_runs_is_refused_even_with_turns_left() {
     let w = world(true, good()).await;
-    let id = crew_daily(&w, "One run a day", 1, 100);
+    let id = crew_daily(&w, "One run a day", 1, 100).await;
     w.core.crew_background_run_now(&id, "user").await.unwrap();
     until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
 
@@ -258,7 +258,7 @@ async fn a_crew_from_before_the_daily_budget_has_none() {
 #[tokio::test]
 async fn a_turn_that_reaches_the_cap_but_passes_ends_the_run_needs_review() {
     let w = world(true, good()).await;
-    let id = crew_daily(&w, "Pass at the cap", 5, 1);
+    let id = crew_daily(&w, "Pass at the cap", 5, 1).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
 
     // The engine's only turn is its last allowed one for the day, and it passes: the run ends
@@ -285,7 +285,7 @@ async fn a_turn_that_reaches_the_cap_but_passes_ends_the_run_needs_review() {
 #[tokio::test]
 async fn the_daily_budget_is_set_at_creation_only() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
-    let refused = |daily: Value, offset: Value| {
+    let refused = async |daily: Value, offset: Value| {
         let body: wire::BackgroundCrewCreate = serde_json::from_value(json!({
             "project_id": project(&w), "name": "Crew", "template": "fix_failing_ci",
             "trigger": { "kind": "ci_failure" },
@@ -294,16 +294,16 @@ async fn the_daily_budget_is_set_at_creation_only() {
         }))
         .unwrap();
         matches!(
-            w.core.background_create(&body).unwrap_err(),
+            w.core.background_create(&body).await.unwrap_err(),
             CoreError::Invalid(_)
         )
     };
-    assert!(refused(json!({ "runs": 0, "turns": 1 }), json!(0)));
-    assert!(refused(json!({ "runs": 1001, "turns": 1 }), json!(0)));
-    assert!(refused(json!({ "runs": 1, "turns": 0 }), json!(0)));
-    assert!(refused(json!({ "runs": 1, "turns": 10_001 }), json!(0)));
-    assert!(refused(json!({ "runs": 1, "turns": 1 }), json!(841)));
-    assert!(refused(json!({ "runs": 1, "turns": 1 }), json!(-841)));
+    assert!(refused(json!({ "runs": 0, "turns": 1 }), json!(0)).await);
+    assert!(refused(json!({ "runs": 1001, "turns": 1 }), json!(0)).await);
+    assert!(refused(json!({ "runs": 1, "turns": 0 }), json!(0)).await);
+    assert!(refused(json!({ "runs": 1, "turns": 10_001 }), json!(0)).await);
+    assert!(refused(json!({ "runs": 1, "turns": 1 }), json!(841)).await);
+    assert!(refused(json!({ "runs": 1, "turns": 1 }), json!(-841)).await);
     // The bounds themselves are accepted, and the crew answers with its daily budget.
     let edge: wire::BackgroundCrewCreate = serde_json::from_value(json!({
         "project_id": project(&w), "name": "Edge", "template": "fix_failing_ci",
@@ -312,7 +312,7 @@ async fn the_daily_budget_is_set_at_creation_only() {
         "daily": { "runs": 1000, "turns": 10_000 }, "utc_offset_minutes": -840,
     }))
     .unwrap();
-    let crew = w.core.background_create(&edge).unwrap();
+    let crew = w.core.background_create(&edge).await.unwrap();
     assert_eq!(
         crew.daily,
         wire::BackgroundDailyBudget {
@@ -335,7 +335,7 @@ async fn the_daily_budget_is_set_at_creation_only() {
 #[tokio::test]
 async fn a_daily_budget_that_cannot_be_read_refuses_the_start_instead_of_allowing_it() {
     let w = world(true, good()).await;
-    let id = crew_daily(&w, "Unreadable", 5, 100);
+    let id = crew_daily(&w, "Unreadable", 5, 100).await;
     w.core
         .store
         .reader()
@@ -360,7 +360,7 @@ async fn a_daily_budget_that_cannot_be_read_refuses_the_start_instead_of_allowin
 #[tokio::test]
 async fn a_turn_that_cannot_be_counted_stops_the_run_instead_of_letting_it_go_on() {
     let w = world(true, outside()).await;
-    let id = crew_daily(&w, "Uncountable", 5, 100);
+    let id = crew_daily(&w, "Uncountable", 5, 100).await;
     // The write that counts a daily turn fails (it is audited in the same transaction), as under a brief database lock.
     w.core
         .store
@@ -386,7 +386,7 @@ async fn a_turn_that_cannot_be_counted_stops_the_run_instead_of_letting_it_go_on
 #[tokio::test]
 async fn a_late_turn_that_cannot_be_counted_leaves_the_ended_run_and_its_task_alone() {
     let w = world(true, good()).await;
-    let id = crew_daily(&w, "Late and uncountable", 5, 100);
+    let id = crew_daily(&w, "Late and uncountable", 5, 100).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
     let task = w
@@ -425,7 +425,7 @@ async fn a_late_turn_that_cannot_be_counted_leaves_the_ended_run_and_its_task_al
 #[tokio::test]
 async fn a_turn_that_ends_after_its_run_still_counts_for_the_engines_day() {
     let w = world(true, good()).await;
-    let id = crew_daily(&w, "Late turn", 5, 100);
+    let id = crew_daily(&w, "Late turn", 5, 100).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let done = until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
     let task = w

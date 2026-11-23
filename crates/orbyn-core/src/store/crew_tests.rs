@@ -391,7 +391,9 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_reviews",
             "crew_route_decisions",
             "crew_runs",
-            "crew_tasks"
+            "crew_tasks",
+            "crew_watch_changes",
+            "crew_watch_state"
         ]
     );
     let kept: String = store
