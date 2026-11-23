@@ -5,6 +5,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use super::flow_board::FlowWorking;
+
 wire_enum! {
 pub enum FlowRole {
     Lead,
@@ -72,6 +74,11 @@ pub struct FlowNode {
     #[ts(optional = nullable)]
     pub state: Option<String>,
     pub quiet: FlowQuiet,
+    /// Why the worker owns live work now (KC3), from the one `working` function; `null` when it owns none or is the lead.
+    /// Quiet and Working are separate words: a silent worker is still working.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub working: Option<FlowWorking>,
     pub engine_status: FlowEngineStatus,
     pub subagents: FlowSubagents,
     /// The brief's outcome, in place of a live step.

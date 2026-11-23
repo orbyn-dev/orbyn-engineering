@@ -5,8 +5,10 @@
 //! (docs/crew/background-engine-start.md, section 4). The person settles one by acknowledging it through the background module
 //! (`Core::background_acknowledge_review`): the queue itself only reads.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use orbyn_contracts as wire;
 use serde_json::{Value, json};
 
 use super::queue::MergeTarget;
@@ -14,6 +16,7 @@ use super::risk::Risk;
 use super::watch::revert_merge;
 use crate::app::Core;
 use crate::crew::capacity::{FIX_WAITING, paused_by_capacity};
+use crate::crew::wire_name;
 use crate::error::{CoreError, Result};
 use crate::store::MergeRecord;
 
@@ -47,6 +50,10 @@ pub struct ReviewQueue {
     pub merges: Vec<ReviewItem>,
     /// The background runs waiting for the person, oldest first.
     pub background: Vec<BackgroundReview>,
+    /// The waits the one needs-you field (KC3) names that this queue does not answer: the Inbox's items, by kind, most
+    /// first then by kind. The page says "N more wait for you in the Inbox" from this, and it is the same field the
+    /// Inbox and the Taskboard read, so the counts agree. A review wait this queue owns is not here.
+    pub waiting_elsewhere: Vec<(wire::NeedsYouKind, u32)>,
 }
 
 /// One merge waiting for the person.
@@ -139,6 +146,24 @@ impl Core {
                     std::cmp::Reverse(b.merged_unix),
                 ))
         });
+        // KC3: what waits elsewhere is read from the one needs-you field, never assembled here. The review waits this
+        // queue answers (`MergeWaiting` and `BackgroundReview`) are left out: they are its own lists above.
+        let mut elsewhere: BTreeMap<String, (wire::NeedsYouKind, u32)> = BTreeMap::new();
+        for item in self.needs_you_list()? {
+            match item.kind {
+                wire::NeedsYouKind::MergeWaiting | wire::NeedsYouKind::BackgroundReview => {}
+                kind => {
+                    let row = elsewhere.entry(wire_name(&kind)).or_insert((kind, 0));
+                    row.1 = row.1.saturating_add(1);
+                }
+            }
+        }
+        let mut waiting_elsewhere: Vec<(wire::NeedsYouKind, u32)> =
+            elsewhere.into_values().collect();
+        waiting_elsewhere.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| wire_name(&a.0).cmp(&wire_name(&b.0)))
+        });
         let background = self
             .store
             .background_reviews()?
@@ -160,7 +185,11 @@ impl Core {
                 ended_at: row.run.ended_at,
             })
             .collect();
-        Ok(ReviewQueue { merges, background })
+        Ok(ReviewQueue {
+            merges,
+            background,
+            waiting_elsewhere,
+        })
     }
 
     /// The person's answer to a merge. A revert returns the revert commit; refused with the reason when it cannot be done safely.

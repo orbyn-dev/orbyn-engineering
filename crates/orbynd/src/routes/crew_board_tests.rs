@@ -47,6 +47,9 @@ async fn a_stored_task_is_a_queued_card_without_its_key() {
     assert_eq!(card["engine"], json!(null), "not routed yet");
     assert_eq!(card["can_cancel"], true);
     assert_eq!(card["can_rerun"], false);
+    // KC3: a queued task that nobody waits for owns no live work and answers no wait.
+    assert_eq!(card["working"], json!(null));
+    assert_eq!(card["needs_you"], json!(null));
     let text = board.to_string();
     assert!(!text.contains(&key_text), "the board holds the key's check");
     assert!(

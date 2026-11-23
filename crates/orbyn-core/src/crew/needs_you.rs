@@ -8,6 +8,10 @@
 //! the person, then a background run waiting for review, then a stopped task with a trip wire, then a stopped task whose worker
 //! stopped twice. Other stopped and cancelled tasks are not items. Every text is one line, redacted and capped at 160
 //! characters; only a task that waits on a person carries its own scrubbed reason, every other kind carries fixed core words.
+//!
+//! Since KC3 PR2 this list is the one field: the Taskboard's Needs you column, the Review queue's `waiting_elsewhere` and the
+//! dashboard's `live` row call `needs_you_list` (the same items `crew_needs_you` answers with) instead of deriving their own
+//! rule, so a dismissal hides the wait on every surface at once and no two counts can disagree.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -210,8 +214,10 @@ impl Core {
         Ok(items)
     }
 
-    /// The items a person sees: dismissed waits removed, newest first, ties by id, at most 200.
-    fn needs_you_list(&self) -> Result<Vec<wire::NeedsYouItem>> {
+    /// The items a person sees: dismissed waits removed, newest first, ties by id, at most 200. The same list `crew_needs_you`
+    /// answers with; the KC3 reads that draw a "needs you" count (the dashboard's live row, the Review queue digest) call
+    /// this so they agree with the Inbox without going through the route's gate twice.
+    pub(super) fn needs_you_list(&self) -> Result<Vec<wire::NeedsYouItem>> {
         let mut items = self.needs_you_items()?;
         let mut dismissed: BTreeMap<(String, String), String> = BTreeMap::new();
         for row in self.store.crew_needs_you_dismissals()? {

@@ -2,7 +2,9 @@
 //! count of checks and no check text, a task that needs the person carries its reason, the reads change nothing, and the flag
 //! off hides them. No test depends on the clock: two tasks that start together get briefs of their own.
 
-use orbyn_contracts::{CrewObject, FlowBoard, FlowColumnId as Column, object_id};
+use orbyn_contracts::{
+    CrewObject, FlowBoard, FlowColumnId as Column, FlowWorking, NeedsYouKind, object_id,
+};
 use serde_json::{Value, json};
 
 use super::flow::{built_another, crew_rows, nonce, page};
@@ -108,11 +110,13 @@ async fn a_finished_task_is_one_card_and_its_reviewer_is_not() {
             "kind",
             "model",
             "name",
+            "needs_you",
             "owner",
             "reason",
             "state",
             "stop_reason",
-            "updated_at"
+            "updated_at",
+            "working"
         ]
     );
 
@@ -191,6 +195,12 @@ async fn a_running_task_can_be_cancelled_and_shows_no_check_text() {
         card.checks.is_none(),
         "a running task shows no count, though it holds evidence"
     );
+    assert_eq!(
+        card.working,
+        Some(FlowWorking::Running),
+        "KC3: a live turn is Working"
+    );
+    assert!(card.needs_you.is_none(), "nothing waits for the person");
     assert!(
         column(&view, Column::Passed).cards[0].checks.is_some(),
         "the passed one still does"
@@ -369,4 +379,105 @@ async fn bad_input_is_refused_and_the_flag_off_hides_the_board() {
             .crew_flow_board("crew-1", None, None, None, None, None, page()),
         Err(crate::error::CoreError::NotFound(_))
     ));
+}
+
+/// KC3: the Needs you column is the one needs-you field (a passed task whose merge waits and a stopped task whose trip
+/// wire stopped it are cards there; a dismissed stop is not, and no second rule puts it back), and a live turn's card is
+/// Working from the one working function while its column still says its run state.
+#[tokio::test]
+async fn the_needs_you_column_is_the_one_field_and_a_live_card_is_working() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => Turn::Hang,
+    }))
+    .await;
+    // A passed task whose merge waits: the field says MergeWaiting, so the card is in Needs you, not in Passed.
+    let merged = w.built_work().await;
+    let crew_id = w.task(&merged).crew_id;
+    let mut record = crate::crew::fixtures::merge_record(&merged, "/repo", "main", "a break");
+    record.crew_id = crew_id.clone();
+    record.review_state = "waiting".to_owned();
+    record.needs_person = Some("The break needs a person.".to_owned());
+    w.core.store.add_crew_merge(&record).unwrap();
+
+    // A task still running: Working, in Running.
+    let (answer, error) = w
+        .start(
+            brief(json!({ "outcome": "Keeps working.", "files": [{ "path": "src/live/**", "mode": "write" }] })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let running = answer["task"].as_str().unwrap().to_owned();
+    assert_eq!(w.task(&running).state, "running");
+
+    // A task stopped by a trip wire: it waits for the person even though its run state is stopped.
+    let (answer, error) = w
+        .start(
+            brief(json!({ "outcome": "Stopped by a trip wire.", "files": [{ "path": "src/stop/**", "mode": "write" }] })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let stopped = answer["task"].as_str().unwrap().to_owned();
+    w.core
+        .store
+        .move_crew_task(&stopped, "stopped", Some("too_many_denials"))
+        .unwrap();
+    w.core
+        .store
+        .add_crew_autopilot_event(&stopped, &crew_id, "tripwire", &json!({ "in_a_row": 3 }))
+        .unwrap();
+
+    let view = board(&w, &crew_id);
+    let needs = column(&view, Column::NeedsYou);
+    assert_eq!(needs.count, 2, "the merge wait and the trip-wire stop");
+    assert_eq!(
+        column(&view, Column::Passed).count,
+        0,
+        "a waiting merge is not Passed"
+    );
+    assert_eq!(column(&view, Column::StoppedCancelled).count, 0);
+    let waiting_merge = needs.cards.iter().find(|c| c.id == merged).unwrap();
+    assert_eq!(waiting_merge.state, "passed");
+    assert_eq!(waiting_merge.needs_you, Some(NeedsYouKind::MergeWaiting));
+    assert_eq!(
+        waiting_merge.reason.as_deref(),
+        Some("A merge needs your decision."),
+        "the reason is the field's own line"
+    );
+    assert!(
+        waiting_merge.working.is_none(),
+        "passed work is not Working"
+    );
+    let tripwire = needs.cards.iter().find(|c| c.id == stopped).unwrap();
+    assert_eq!(tripwire.state, "stopped");
+    assert_eq!(tripwire.needs_you, Some(NeedsYouKind::TripwireStop));
+
+    let live = &column(&view, Column::Running).cards[0];
+    assert_eq!(live.id, running);
+    assert_eq!(live.working, Some(FlowWorking::Running));
+    assert!(live.needs_you.is_none());
+
+    // The column is the field's own count for this crew: no second rule adds or removes a card.
+    let field: Vec<_> = w
+        .core
+        .crew_needs_you()
+        .unwrap()
+        .items
+        .into_iter()
+        .filter(|i| i.crew_id.as_deref() == Some(crew_id.as_str()))
+        .collect();
+    assert_eq!(field.len(), needs.count as usize);
+
+    // A dismissed stop leaves the column on the next read, and the field is the reason.
+    w.core
+        .crew_needs_you_dismiss(NeedsYouKind::TripwireStop, &stopped, "user")
+        .unwrap();
+    let view = board(&w, &crew_id);
+    let needs = column(&view, Column::NeedsYou);
+    assert_eq!(needs.count, 1, "the dismissed stop is gone");
+    assert!(needs.cards.iter().all(|c| c.id != stopped));
+    assert_eq!(column(&view, Column::StoppedCancelled).count, 1);
+    assert_eq!(column(&view, Column::StoppedCancelled).cards[0].id, stopped);
 }

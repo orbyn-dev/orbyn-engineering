@@ -2,6 +2,7 @@
 import type { CrewDashboardArea } from "./CrewDashboardArea";
 import type { CrewDashboardCycle } from "./CrewDashboardCycle";
 import type { CrewDashboardEngine } from "./CrewDashboardEngine";
+import type { CrewDashboardLive } from "./CrewDashboardLive";
 import type { CrewDashboardRecent } from "./CrewDashboardRecent";
 import type { CrewDashboardRevert } from "./CrewDashboardRevert";
 import type { CrewDashboardWeek } from "./CrewDashboardWeek";
@@ -76,6 +77,12 @@ reverts: Array<CrewDashboardRevert>,
  * merges, where a rate would say too little.
  */
 recent: Array<CrewDashboardRecent>, 
+/**
+ * What waits and what works right now, on this device (KC3): a live count of now, not a figure
+ * over the window. It ignores `days`, and every count in it comes from the one needs-you field or
+ * the one working function, so it agrees with the Taskboard, the Inbox and the Review queue.
+ */
+live: CrewDashboardLive, 
 /**
  * A list above had more rows than it holds.
  */

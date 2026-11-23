@@ -823,6 +823,8 @@ async fn the_review_queue_and_the_log_page() {
     assert!(queue["next_offset"].is_null());
     // No background run waits, and the field is still served: the join is read-only and additive.
     assert_eq!(queue["background_runs"], json!([]));
+    // KC3: what waits elsewhere is the one needs-you field; nothing waits for this person here, and the field is served.
+    assert_eq!(queue["waiting_elsewhere"], json!([]));
     let (_, first) = app.call("GET", "/api/crew/approvals?limit=2", None).await;
     assert_eq!(first["rows"].as_array().unwrap().len(), 2);
     assert_eq!(first["total"], 5);

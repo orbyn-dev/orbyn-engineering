@@ -640,6 +640,12 @@ impl Core {
             next_offset,
             background_runs,
             background_total: to_u32(background_total),
+            // KC3: the Inbox's waits, from the one needs-you field the queue already read.
+            waiting_elsewhere: all
+                .waiting_elsewhere
+                .into_iter()
+                .map(|(kind, count)| wire::AutopilotWaitingElsewhere { kind, count })
+                .collect(),
             now_unix: now,
         })
     }

@@ -965,3 +965,77 @@ fn with_usage(
         "cost": serde_json::Value::Object(cost),
     })
 }
+
+/// KC3: the "Right now" row is not a figure over the window. Its waits are the one needs-you field (a dismissed stop
+/// leaves it and the window's merges stay put), and its Working count comes from the one working function.
+#[tokio::test]
+async fn the_live_row_reads_the_one_needs_you_field_and_the_one_working_function() {
+    use orbyn_contracts::NeedsYouKind;
+
+    let mut r = rig().await;
+    // One merge in the window, whose task is still running (the rig hangs every worker).
+    let merged = r
+        .merge("src/live", NOW, "alpha", with_usage(None, None, None))
+        .await;
+    r.w.core
+        .store
+        .set_merge_needs_person(&merged, Some("The break needs a person."))
+        .unwrap();
+    // A worker that never ran waits too, and this one can be dismissed.
+    let (answer, error) =
+        r.w.start(
+            brief(json!({
+                "engine": { "id": "ghost", "assigned_by": "lead" },
+                "files": [{ "path": "src/ghost/**", "mode": "write" }]
+            })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let ghost = answer["task"].as_str().unwrap().to_owned();
+
+    let read = |days: Option<u32>| r.read(days, 0, NOW);
+    let live = read(Some(30)).live;
+    assert_eq!(
+        live.needs_you
+            .iter()
+            .map(|w| (w.kind, w.count))
+            .collect::<Vec<_>>(),
+        [
+            (NeedsYouKind::CouldNotStart, 1),
+            (NeedsYouKind::MergeWaiting, 1)
+        ],
+        "both waits are the field's own items"
+    );
+    assert_eq!(
+        live.working
+            .iter()
+            .map(|w| (w.why, w.count))
+            .collect::<Vec<_>>(),
+        [(wire::FlowWorking::Running, 1)],
+        "the running worker is Working"
+    );
+    assert!(!live.truncated);
+
+    // The live row ignores the 30, 60 and 90 day range at the same instant.
+    assert_eq!(read(Some(30)).live, read(Some(60)).live);
+    assert_eq!(read(Some(60)).live, read(Some(90)).live);
+
+    // A dismissal hides the stop from the live row and moves no window figure.
+    let window_merges = read(Some(30)).merges;
+    r.w.core
+        .crew_needs_you_dismiss(NeedsYouKind::CouldNotStart, &ghost, "user")
+        .unwrap();
+    let after = read(Some(30));
+    assert_eq!(
+        after.live.needs_you,
+        vec![wire::CrewDashboardWaiting {
+            kind: NeedsYouKind::MergeWaiting,
+            count: 1
+        }]
+    );
+    assert_eq!(
+        after.merges, window_merges,
+        "the window is not the live row"
+    );
+}

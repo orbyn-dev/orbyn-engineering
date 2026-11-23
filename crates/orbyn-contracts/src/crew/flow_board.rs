@@ -1,9 +1,13 @@
-//! The Taskboard over HTTP (Crew Preview): a crew's work tasks grouped by run state. A card is a view the core builds from what
-//! it already stores; none can hold an answer key, a check, a check's text, a repro, a thread id or a path (H1). Free text is
-//! redacted and capped before it is put in one. Times are RFC 3339.
+//! The Taskboard over HTTP (Crew Preview): a crew's work tasks grouped into the seven columns. Since KC3 a card sits in Needs you
+//! because the one needs-you field names it (`needs_you`), not because of its run state, and its `working` word comes from the one
+//! `working` function; every other column is the task's run state. A card is a view the core builds from what it already stores;
+//! none can hold an answer key, a check, a check's text, a repro, a thread id or a path (H1). Free text is redacted and capped
+//! before it is put in one. Times are RFC 3339.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+use super::NeedsYouKind;
 
 wire_enum! {
 /// The seven columns, in the order work moves through them.
@@ -23,6 +27,21 @@ wire! {
 pub struct FlowChecks {
     pub passed: u32,
     pub of: u32,
+}
+}
+
+wire_enum! {
+/// Why the worker owns live work now (KC3 PR2): the one `working` function's answer, so the Taskboard, the Map and the
+/// dashboard cannot disagree about who is Working. The words are the page's; the task's column still says its run state.
+pub enum FlowWorking {
+    /// A live turn: a build running, a reviewer lane's round, or a background run in flight.
+    Running,
+    /// The verifier is running the task's checks.
+    Verifying,
+    /// A retry is queued after a failed check (`failed`, or the once-in-a-life approach change).
+    Retry,
+    /// The task itself has ended and a fix of a review finding has not finished.
+    Fix,
 }
 }
 
@@ -68,6 +87,16 @@ pub struct FlowCard {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub checks: Option<FlowChecks>,
+    /// The wait this card answers, when the one needs-you field names it (KC3): the kind decides the shared sentence, and the
+    /// card sits in Needs you because the field says so, not because of its run state. `null` when nothing waits.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub needs_you: Option<NeedsYouKind>,
+    /// Why its worker owns live work now (KC3), from the one `working` function; `null` when it owns none. Not the column:
+    /// the column still says the task's run state.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub working: Option<FlowWorking>,
 }
 }
 

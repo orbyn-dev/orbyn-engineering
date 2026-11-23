@@ -116,7 +116,8 @@ async fn the_map_has_a_lead_and_the_workers_and_says_how_each_message_was_delive
             "subagents",
             "task",
             "unread",
-            "updated_at"
+            "updated_at",
+            "working"
         ]
     );
     assert_eq!(
