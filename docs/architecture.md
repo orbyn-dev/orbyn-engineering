@@ -1635,7 +1635,11 @@ stays as the fallback with no data migration.
 off for the scope, with its display name, up to 200 of the models its catalog returned (a
 failed listing is an empty list, not an error), the global chosen model or null, and the
 resolved model with its reason or null. `?project=<id>` adds the project's effective
-chosen and resolved choice. A write goes through the ordinary preferences routes
+chosen and resolved choice, and `own`: true when the project's own map names that engine,
+false when the choice is inherited from all projects. A project's map is layered over the
+global one engine by engine, so an engine the project does not name keeps the global
+choice. Clearing a choice (back to Automatic) is a write of the map without that engine,
+at either scope; at project scope the engine then inherits the global choice. A write goes through the ordinary preferences routes
 (`PUT /api/preferences`, `PUT /api/projects/{id}/preferences` or the scoped settings
 route); there is no text-generator write route.
 

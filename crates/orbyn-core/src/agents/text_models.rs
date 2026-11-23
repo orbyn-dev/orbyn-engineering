@@ -16,7 +16,7 @@ use serde_json::Value;
 use crate::agents::engines::EngineManager;
 use crate::app::Core;
 use crate::error::{CoreError, Result};
-use crate::settings::preferences::stored_preference;
+use crate::settings::preferences::{stored_preference, stored_preferences};
 use crate::store::Store;
 
 /// The per-engine map: engine id -> model id.
@@ -118,6 +118,28 @@ pub(crate) fn check_offered(engines: &EngineManager, value: &Value) -> Result<()
     Ok(())
 }
 
+/// The map in two layers: the global one and the project's own (empty when the project stores none), and the map a
+/// project call resolves with: the global entries, each replaced by the project's own entry for the same engine. A project
+/// that does not name an engine inherits the global choice for it. Clearing is a write without the key.
+fn layers(store: &Store, project_id: Option<&str>) -> Result<(Value, Value, Value)> {
+    let global = stored_preference(store, SETTING, None)?;
+    let Some(id) = project_id else {
+        return Ok((global.clone(), Value::Object(Default::default()), global));
+    };
+    let own = stored_preferences(store, Some(id))?
+        .into_iter()
+        .find(|view| view.key == SETTING && view.source == "project")
+        .map_or_else(|| Value::Object(Default::default()), |view| view.value);
+    let mut effective = global.as_object().cloned().unwrap_or_default();
+    if let Some(own) = own.as_object() {
+        effective.extend(
+            own.iter()
+                .map(|(engine, model)| (engine.clone(), model.clone())),
+        );
+    }
+    Ok((global, own, Value::Object(effective)))
+}
+
 fn named<'a>(map: &'a Value, engine: &str) -> Option<&'a str> {
     map.get(engine)
         .and_then(Value::as_str)
@@ -184,7 +206,7 @@ pub(crate) async fn text_model_for(
     project_id: Option<&str>,
     thread_model: Option<&str>,
 ) -> Result<Option<TextModel>> {
-    let per_engine = stored_preference(store, SETTING, project_id)?;
+    let (_, _, per_engine) = layers(store, project_id)?;
     let legacy = stored_preference(store, LEGACY_SETTING, project_id)?;
     let legacy = legacy.as_str().unwrap_or_default();
     let models = engines
@@ -199,14 +221,18 @@ impl Core {
     /// Every known engine that is not turned off for the scope, with its models
     /// and the global and project choices. A read: it starts no run and spends nothing.
     pub async fn text_generators(&self, project_id: Option<&str>) -> Result<TextGenerators> {
-        let global_map = self.preference(SETTING, None)?;
+        let (global_map, _, _) = layers(&self.store, None)?;
         let global_legacy = self.preference(LEGACY_SETTING, None)?;
         let project_scope = match project_id {
-            Some(id) => Some((
-                id.to_owned(),
-                self.preference(SETTING, Some(id))?,
-                self.preference(LEGACY_SETTING, Some(id))?,
-            )),
+            Some(id) => {
+                let (_, own, effective) = layers(&self.store, Some(id))?;
+                Some((
+                    id.to_owned(),
+                    effective,
+                    own,
+                    self.preference(LEGACY_SETTING, Some(id))?,
+                ))
+            }
             None => None,
         };
         let disabled = self.preference("disabled_engines", project_id)?;
@@ -234,7 +260,7 @@ impl Core {
                 None,
             );
             let chosen = named(&global_map, &status.id).map(str::to_owned);
-            let project = project_scope.as_ref().map(|(id, map, legacy)| {
+            let project = project_scope.as_ref().map(|(id, map, own, legacy)| {
                 let choice = choose(
                     &status.id,
                     map,
@@ -245,6 +271,7 @@ impl Core {
                 TextGeneratorProject {
                     project_id: id.clone(),
                     chosen: named(map, &status.id).map(str::to_owned),
+                    own: named(own, &status.id).is_some(),
                     resolved: choice.as_ref().map(|choice| choice.model.clone()),
                     reason: choice.map(|choice| choice.reason),
                 }
@@ -563,6 +590,7 @@ mod tests {
         assert_eq!(scoped.chosen.as_deref(), Some("small"));
         assert_eq!(scoped.resolved.as_deref(), Some("small"));
         assert_eq!(scoped.reason, Some(TextModelReason::Chosen));
+        assert!(scoped.own, "the project's own map names this engine");
 
         // A failed read is an empty list, never an error.
         let two = read.engines.iter().find(|e| e.engine == "two").unwrap();
@@ -570,6 +598,20 @@ mod tests {
         assert_eq!(two.chosen.as_deref(), Some("missing"));
         assert_eq!(two.resolved, None);
         assert_eq!(two.reason, None);
+        // An engine the project does not name inherits the global choice, and says it is not the project's own.
+        let inherited = two.project.as_ref().unwrap();
+        assert_eq!(inherited.chosen.as_deref(), Some("missing"));
+        assert!(!inherited.own);
+
+        // Clearing is a write without the key: the project then inherits the global choice for that engine.
+        set(&core, Some(&project), json!({}));
+        let read = core.text_generators(Some(&project)).await.unwrap();
+        let one = read.engines.iter().find(|e| e.engine == "one").unwrap();
+        let scoped = one.project.as_ref().unwrap();
+        assert_eq!(scoped.chosen.as_deref(), Some("big"));
+        assert!(!scoped.own);
+        assert_eq!(scoped.resolved.as_deref(), Some("big"));
+        set(&core, Some(&project), json!({"one": "small"}));
 
         // The wire shape keeps nulls and the nested project object.
         let value = serde_json::to_value(&read).unwrap();
