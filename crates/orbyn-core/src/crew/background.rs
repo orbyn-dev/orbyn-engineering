@@ -251,7 +251,7 @@ pub(super) fn run_wire(run: BackgroundRunRow) -> Result<wire::BackgroundRun> {
     })
 }
 
-fn next_offset(page: Page, total: u32) -> Option<u32> {
+pub(super) fn next_offset(page: Page, total: u32) -> Option<u32> {
     let next = page.offset.checked_add(page.limit)?;
     (next < total).then_some(next)
 }

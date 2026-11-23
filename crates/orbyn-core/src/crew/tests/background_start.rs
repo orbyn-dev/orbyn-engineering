@@ -238,7 +238,7 @@ async fn a_kind_nothing_can_start_is_refused_with_a_plain_reason() {
     )
     .await;
     let before = threads(&w);
-    for id in [label, bump, watch] {
+    for id in [label, bump] {
         let error = w
             .core
             .crew_background_run_now(&id, "user")
@@ -249,6 +249,16 @@ async fn a_kind_nothing_can_start_is_refused_with_a_plain_reason() {
         };
         assert!(why.contains("cannot run yet"), "{why}");
     }
+    // A watch runs its command on its own schedule; Run now does not start a run for it.
+    let error = w
+        .core
+        .crew_background_run_now(&watch, "user")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, CoreError::PolicyDenied(why) if why == "A watch crew's command runs on its schedule; Run now does not start a run for it."),
+        "{error}"
+    );
     assert_eq!(threads(&w), before);
 }
 

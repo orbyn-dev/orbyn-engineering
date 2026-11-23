@@ -128,8 +128,9 @@ pub use crew_autonomy::{AreaChange, AreaEvent, AreaMode, AreaWrite};
 pub use crew_autonomy_person::{PersonWrite, Seen};
 pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};
 pub use crew_background::{
-    BackgroundReviewRow, BackgroundRow, BackgroundRunRow, NewBackground,
+    BackgroundReviewRow, BackgroundRow, BackgroundRunRow, NewBackground, NewWatchChange,
     PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX, RunEnd, Unwound, WATCHES_PER_PROJECT_MAX,
+    WatchChangeRow, WatchRaisedRow, WatchStateRow,
 };
 pub use crew_backtest::{
     BacktestLaneRow, BacktestResultRow, BacktestRunRow, BacktestState, LaneState,

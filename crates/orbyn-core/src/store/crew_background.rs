@@ -79,6 +79,87 @@ pub struct BackgroundReviewRow {
     pub template: String,
 }
 
+/// One watch's last check as stored. Written only for a `watch` crew, by the watch tick; the tables hold which state the
+/// person reads and no repository text beyond the redacted tail the writer cut.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WatchStateRow {
+    pub background_id: String,
+    /// The last check that ran: `pass` or `fail`. None before one has.
+    pub last_result: Option<String>,
+    pub baseline_done: bool,
+    pub error_streak: u32,
+    pub last_checked_unix: Option<i64>,
+    pub last_exit_code: Option<i64>,
+    /// `not_checked`, `passing`, `failing` or `could_not_run`.
+    pub last_state: String,
+    /// Why the last check could not run, in the writer's fixed words; None when it ran.
+    pub last_reason: Option<String>,
+    /// The last check's output, redacted and cut by the writer.
+    pub tail: Option<String>,
+}
+
+/// One change to write into a watch's history: its kind and action are the stored words (`baseline`, `failing`, `passing`,
+/// `turned_off`; `needs_you`, `started_template`, `resolved`, `none`).
+pub struct NewWatchChange<'a> {
+    pub kind: &'a str,
+    pub action: &'a str,
+    pub at_unix: i64,
+    pub exit_code: Option<i64>,
+    pub tail: Option<&'a str>,
+}
+
+/// One row of a watch's change history as stored.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WatchChangeRow {
+    pub id: i64,
+    pub kind: String,
+    pub action: String,
+    pub at_unix: i64,
+    pub exit_code: Option<i64>,
+    pub tail: Option<String>,
+}
+
+/// A watch that asks for the person now, with the crew it belongs to and the newest change it wrote.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WatchRaisedRow {
+    pub crew_id: String,
+    pub project_id: String,
+    /// `failing` or `could_not_run`.
+    pub last_state: String,
+    pub error_streak: u32,
+    pub last_checked_unix: Option<i64>,
+    pub last_reason: Option<String>,
+    /// The newest change row's kind and action, when there is one.
+    pub change_kind: Option<String>,
+    pub change_action: Option<String>,
+    pub change_at: Option<i64>,
+}
+
+fn watch_state_row(row: &Row<'_>) -> rusqlite::Result<WatchStateRow> {
+    Ok(WatchStateRow {
+        background_id: row.get("background_id")?,
+        last_result: row.get("last_result")?,
+        baseline_done: row.get::<_, i64>("baseline_done")? == 1,
+        error_streak: row.get("error_streak")?,
+        last_checked_unix: row.get("last_checked_unix")?,
+        last_exit_code: row.get("last_exit_code")?,
+        last_state: row.get("last_state")?,
+        last_reason: row.get("last_reason")?,
+        tail: row.get("tail")?,
+    })
+}
+
+fn watch_change_row(row: &Row<'_>) -> rusqlite::Result<WatchChangeRow> {
+    Ok(WatchChangeRow {
+        id: row.get("id")?,
+        kind: row.get("kind")?,
+        action: row.get("action")?,
+        at_unix: row.get("at_unix")?,
+        exit_code: row.get("exit_code")?,
+        tail: row.get("tail")?,
+    })
+}
+
 /// How a run ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunEnd<'a> {
@@ -764,9 +845,20 @@ impl Store {
     /// The newest schedule bucket this crew has fired (claimed), or none. A bucket at or before it never fires again, so a clock
     /// that moves back cannot re-fire a bucket the crew already had, and a bucket that was only claimed counts as fired.
     pub fn latest_schedule_bucket(&self, crew: &str) -> Result<Option<i64>> {
-        let low = format!("schedule:{crew}:");
+        self.latest_bucket("schedule", crew)
+    }
+
+    /// The newest watch bucket this crew has checked (claimed), or none: the same rule as a schedule's bucket, so a watch checks
+    /// once per bucket and a clock that moves back checks nothing again.
+    pub fn latest_watch_bucket(&self, crew: &str) -> Result<Option<i64>> {
+        self.latest_bucket("watch", crew)
+    }
+
+    /// The newest bucket claimed for a crew under `prefix` (`schedule` or `watch`).
+    fn latest_bucket(&self, prefix: &str, crew: &str) -> Result<Option<i64>> {
+        let low = format!("{prefix}:{crew}:");
         // ':' is followed by ';' in byte order, so this range is every identity that starts with `low`.
-        let high = format!("schedule:{crew};");
+        let high = format!("{prefix}:{crew};");
         let conn = self.reader();
         Ok(conn.query_row(
             "SELECT MAX(CAST(substr(identity, ?3) AS INTEGER)) FROM crew_background_events WHERE identity >= ?1 AND identity < ?2",
@@ -1224,5 +1316,123 @@ impl Store {
                 run_row,
             )?)
         })
+    }
+
+    /// One watch's last check, or none before one has run.
+    pub fn watch_state(&self, crew: &str) -> Result<Option<WatchStateRow>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT * FROM crew_watch_state WHERE background_id = ?1",
+                [crew],
+                watch_state_row,
+            )
+            .optional()?)
+    }
+
+    /// Writes one check: the watch's state row and, when the check was a change, its history row, in one transaction. The caller
+    /// has already decided both; this layer writes them as given.
+    pub fn save_watch_check(
+        &self,
+        state: &WatchStateRow,
+        change: Option<&NewWatchChange<'_>>,
+    ) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "INSERT INTO crew_watch_state
+                    (background_id, last_result, baseline_done, error_streak, last_checked_unix, last_exit_code,
+                     last_state, last_reason, tail)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT(background_id) DO UPDATE SET
+                    last_result = excluded.last_result, baseline_done = excluded.baseline_done,
+                    error_streak = excluded.error_streak, last_checked_unix = excluded.last_checked_unix,
+                    last_exit_code = excluded.last_exit_code, last_state = excluded.last_state,
+                    last_reason = excluded.last_reason, tail = excluded.tail",
+                params![
+                    state.background_id,
+                    state.last_result,
+                    state.baseline_done,
+                    state.error_streak,
+                    state.last_checked_unix,
+                    state.last_exit_code,
+                    state.last_state,
+                    state.last_reason,
+                    state.tail,
+                ],
+            )?;
+            if let Some(change) = change {
+                tx.execute(
+                    "INSERT INTO crew_watch_changes (background_id, kind, at_unix, exit_code, action, tail)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        state.background_id,
+                        change.kind,
+                        change.at_unix,
+                        change.exit_code,
+                        change.action,
+                        change.tail,
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// One page of a watch's change history, newest first, and how many rows it has.
+    pub fn watch_changes_page(
+        &self,
+        crew: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<WatchChangeRow>, u32)> {
+        let conn = self.reader();
+        let total: u32 = conn.query_row(
+            "SELECT COUNT(*) FROM crew_watch_changes WHERE background_id = ?1",
+            [crew],
+            |row| row.get(0),
+        )?;
+        let mut statement = conn.prepare(
+            "SELECT * FROM crew_watch_changes WHERE background_id = ?1 ORDER BY id DESC LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = statement
+            .query_map(params![crew, limit, offset], watch_change_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok((rows, total))
+    }
+
+    /// The watches that ask for the person now, with the newest change each wrote: one whose last check could not run three
+    /// times in a row, and one that turned failing and asked for the person. A failing watch that started its template, or that
+    /// only had a failing baseline (a first check never raises), asks for nothing; a watch that is off asks for nothing either,
+    /// because nothing will check it until it is turned back on.
+    pub fn watch_raised(&self) -> Result<Vec<WatchRaisedRow>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT s.background_id, c.project_id, s.last_state, s.error_streak, s.last_checked_unix, s.last_reason,
+                    ch.kind AS change_kind, ch.action AS change_action, ch.at_unix AS change_at
+             FROM crew_watch_state s
+             JOIN crew_background c ON c.id = s.background_id
+             LEFT JOIN crew_watch_changes ch
+                ON ch.id = (SELECT MAX(id) FROM crew_watch_changes WHERE background_id = s.background_id)
+             WHERE c.trigger_kind = 'watch' AND c.enabled = 1
+               AND ((s.last_state = 'could_not_run' AND s.error_streak >= 3)
+                    OR (s.last_state = 'failing' AND ch.kind = 'failing' AND ch.action = 'needs_you'))
+             ORDER BY s.background_id",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(WatchRaisedRow {
+                    crew_id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    last_state: row.get(2)?,
+                    error_streak: row.get(3)?,
+                    last_checked_unix: row.get(4)?,
+                    last_reason: row.get(5)?,
+                    change_kind: row.get(6)?,
+                    change_action: row.get(7)?,
+                    change_at: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 }

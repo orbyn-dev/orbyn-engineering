@@ -1141,17 +1141,34 @@ is 1 to 720, and `on_failing` is required. A project holds at most 10 watches, c
 is screened at create and update with the always-denied list (N1 to N10) and the blast-radius guard, with the project's folder as the
 worktree; a refusal names the rule in one fixed sentence and never repeats the command. `needs_you` stores the template and budgets as
 given (they must be in range, and no model run follows); `template` validates them like any other crew. The command is stored redacted.
-Nothing runs a watch yet: there is no listener, no command execution, no model call and no UI, and Run now refuses one.
+
+**As built (KC6 slice 2, service only):** the listener's watch tick runs each enabled watch's stored command once per
+`every_hours` bucket, in the project's checkout, for at most five minutes, and claims `watch:<crew>:<bucket>` before it runs so a
+crash mid-check does not repeat it. The command is screened again before every check (the always-denied list and the blast-radius
+guard, whose lists may have changed since the crew was made). Its last 20 lines and 2 KiB are kept, redacted through the locked
+redactor; nothing else of its output is stored. **The first check that runs is a baseline and raises nothing** (a failing baseline is
+recorded as failing); after it, only a turn between passing and failing is a change. A turn to failing writes one change row and either
+raises one Needs you row (`on_failing` = `needs_you`) or starts the crew's template once through `crew_background_start`
+(`template`); a turn to passing writes "Passing again" and resolves the row. A different failure while it stays failing updates the last
+exit code and tail and writes no row. A check that could not run (it timed out, could not start, the screen refuses the command now, or
+the folder is not trusted) counts a streak: three in a row raise one Needs you row, and a check that runs again resolves it. A command
+that could not run never raises by itself, and no model is called while the result stays the same. A template start the listener is
+refused (a run already in progress, the daily budget, no engine, review capacity) leaves the change row saying the person is needed
+and writes one `crew.background.listener.refused` audit row; the refusal's sentence is not stored. Run now still refuses a watch: its
+command runs on its own schedule. No migration was needed: migration 77's two tables hold the state and the change rows. No screen is
+built in this slice.
 
 **As built (slice 4h, listeners, migration 59):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
 service starts behind the Preview flag **only when it sets an interval** (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60 s to 24 h; unset means no pass, not even at
 startup) and awaits on shutdown. Each pass fires what is due for the crews that are on (a crew that is off is not read from the forge and spends no event):
-a `schedule` crew once per `every_hours` bucket, and a `ci_failure` crew on a failed check run at its branch head (its branch setting, else the project default),
+a `schedule` crew once per `every_hours` bucket, a `watch` crew's command once per `every_hours` bucket (see "Watches" above), and a
+`ci_failure` crew on a failed check run at its branch head (its branch setting, else the project default),
 narrowed by its optional workflow filter. Every firing first claims a row in `crew_background_events` (first write wins) and then starts a run through the same seam as Run now:
 
 | Event | Claim | Held-start key |
 | --- | --- | --- |
 | schedule | `schedule:<crew>:<bucket>` | `<crew>:schedule:<bucket>` |
+| watch | `watch:<crew>:<bucket>` | `<crew>:watch:<bucket>` |
 | CI failure | `ci:<crew>:<head>:<hash>` | `<crew>:ci:<head>:<hash>` |
 
 `<hash>` is the first 16 hex characters of the SHA-256 of the failing check's name. A repeat of an event starts nothing new, and a bucket at or before the newest claimed one
@@ -1768,7 +1785,8 @@ writes `crew.task.resumed` in the same transaction as the state, attempt and res
 `crew.task.restart_stopped` with `why` (`reviewer`, `already_resumed`, `not_resumable` or `send_failed`) in
 the same transaction as its `stopped`/`engine_error` move.
 
-**As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342); its core route is not built. KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
+**As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342); its core route is not built. KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slices 1 and 2 on this branch (#1343 slice 1; slice 2 is the runner, state machine, watch tick and template start,
+service only, no web). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
 
 **Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
 (our router never swaps an engine) and release channels.

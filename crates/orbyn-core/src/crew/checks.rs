@@ -22,6 +22,10 @@ use crate::redaction::Redactor;
 
 /// No check runs longer than this.
 const TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// The reason a command that hit its deadline carries; a watch reads it to say `timed out`.
+pub const RAN_OUT_OF_TIME: &str = "The check ran out of time and was stopped.";
+/// The first words of the reason a command that could not start carries; a watch reads them to say `could not start`.
+pub const COULD_NOT_START: &str = "The check could not start:";
 /// The most a diff-size count reads of an untracked file.
 const COUNTED_BYTES: u64 = 2 * 1024 * 1024;
 /// The most a secret scan reads of one changed file: a larger one fails as an error, never as a
@@ -229,16 +233,12 @@ async fn run_command(run: &str, expect: u32, site: &Site<'_>, started: Instant) 
         Ok(Err(why)) => {
             return error(
                 run.to_owned(),
-                &format!("The check could not start: {}", why.public_message()),
+                &format!("{COULD_NOT_START} {}", why.public_message()),
                 started,
             );
         }
         Err(_) => {
-            return error(
-                run.to_owned(),
-                "The check ran out of time and was stopped.",
-                started,
-            );
+            return error(run.to_owned(), RAN_OUT_OF_TIME, started);
         }
     };
     let mut log = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -296,6 +296,27 @@ pub fn failing_names(log: &str) -> Vec<String> {
     names.sort();
     names.dedup();
     names
+}
+
+/// The last `max_lines` lines of `text`, then at most `max_bytes` of UTF-8, never splitting a character: the watch's kept
+/// output. A cut inside a line drops that line; the last line is kept whole when it is longer than the byte cap. The result is
+/// trimmed at its end.
+pub fn tail_lines_bytes(text: &str, max_lines: usize, max_bytes: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(max_lines);
+    let mut kept = lines[start..].join("\n");
+    if kept.len() > max_bytes {
+        let mut cut = kept.len() - max_bytes;
+        while cut < kept.len() && !kept.is_char_boundary(cut) {
+            cut += 1;
+        }
+        let cut = kept.split_off(cut);
+        kept = match cut.split_once('\n') {
+            Some((_, rest)) => rest.to_owned(),
+            None => cut,
+        };
+    }
+    kept.trim_end().to_owned()
 }
 
 /// The last `max` characters of `text`, cut at a line.

@@ -1,15 +1,16 @@
 //! The background events that start a run without a person pressing anything (docs/crew/background-engine-start.md,
-//! PR 3: the `schedule` timer and the `ci_failed` watch). One owned future, like `run_crew_merge_watch`: the service
-//! opts in behind the Crew Preview flag and awaits it on shutdown; there is no spawned child and no OS schedule. Every
-//! firing goes through the same start as Run now (`crew_background_start`), with the event in the start's
-//! `PausedTrigger` key instead of `:manual`, and is deduplicated by an event key that is kept in the store, so a repeat
+//! PR 3: the `schedule` timer and the `ci_failed` watch, and KC6's `watch` timer). One owned future, like
+//! `run_crew_merge_watch`: the service opts in behind the Crew Preview flag and awaits it on shutdown; there is no spawned child
+//! and no OS schedule. Every firing goes through the same start as Run now (`crew_background_start`), with the event in the
+//! start's `PausedTrigger` key instead of `:manual`, and is deduplicated by an event key that is kept in the store, so a repeat
 //! of the same firing starts nothing new and nothing is retried on a timer. At most one start is attempted per crew per
 //! pass, only enabled crews are read from the forge or claimed, and a pass runs only when the service sets an interval.
 //!
 //! **What is watched.** A stored crew is the authority: the schedule timer reads each `schedule` crew's `every_hours`,
-//! and the CI watch reads each `ci_failure` crew's branch (its setting, else the project's default) and its optional
-//! workflow filter. `issue_label`, `dependency_update` and `watch` crews have no listener and are never listed here; the
-//! start seam still refuses them with a plain reason. A trigger declared in a project's `.orbyn/crew.json` that has no
+//! the CI watch reads each `ci_failure` crew's branch (its setting, else the project's default) and its optional
+//! workflow filter, and the watch timer reads each `watch` crew's `every_hours` and runs its stored command
+//! (`crew::watch`). `issue_label` and `dependency_update` crews have no listener and are never listed here; the start seam
+//! still refuses them with a plain reason. A trigger declared in a project's `.orbyn/crew.json` that has no
 //! stored crew is ignored: nothing starts, nothing is adopted, and the most it earns is a diagnostic line
 //! ("found in .orbyn/crew.json, no matching crew") that no screen shows.
 //!
@@ -30,6 +31,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::background::EVERY_HOURS_MAX;
 use super::triggers::{self, TriggerDef, TriggerKind};
+use super::watch::{CouldNotRun, WatchCheck};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::source_control::forge::crew::{
@@ -106,6 +108,10 @@ impl Core {
         stop: &CancellationToken,
     ) -> Result<()> {
         self.crew_background_schedule_tick(now, stop).await;
+        if stop.is_cancelled() {
+            return Ok(());
+        }
+        self.crew_background_watch_tick(now, stop).await;
         if stop.is_cancelled() {
             return Ok(());
         }
@@ -333,14 +339,21 @@ impl Core {
     /// capacity, the daily budget) and is never retried by this listener: the claim stays, and the next firing is a
     /// new event. A refusal also writes one code-owned audit row (`crew.background.listener.refused`, the crew, the
     /// listener and a fixed category), so it reads beside the crew rather than only in a log. The start's actor is
-    /// the constant `LISTENER_ACTOR`, never event text, and the start is never cancelled once it has begun.
-    async fn fire_background_event(self: &Arc<Self>, crew: &str, listener: &str, event: &str) {
+    /// the constant `LISTENER_ACTOR`, never event text, and the start is never cancelled once it has begun. Answers
+    /// whether a run started, which the watch timer records on the change it fired for.
+    pub(super) async fn fire_background_event(
+        self: &Arc<Self>,
+        crew: &str,
+        listener: &str,
+        event: &str,
+    ) -> bool {
         match self
             .crew_background_start(crew, event, LISTENER_ACTOR)
             .await
         {
             Ok(run) => {
-                tracing::info!(crew = %crew, run = %run.id, "a background event started a run")
+                tracing::info!(crew = %crew, run = %run.id, "a background event started a run");
+                true
             }
             Err(error) => {
                 tracing::warn!(
@@ -355,6 +368,83 @@ impl Core {
                 ) {
                     tracing::warn!(%audit, crew = %crew, "a refused background firing could not be audited");
                 }
+                false
+            }
+        }
+    }
+
+    /// The watch timer: each enabled `watch` crew's stored command runs once per `every_hours` bucket, in the project's
+    /// checkout, for at most five minutes (`crew::watch`). The bucket is claimed before the command runs, so a repeat of the
+    /// same bucket checks nothing again and a crash mid-check does not repeat it; a bucket at or before the newest claimed one
+    /// never runs, so a clock that moves back checks nothing. A crew that is off is never looked at and spends no claim. A check
+    /// writes its own state and history and only starts a run (through `crew_background_start`, with the event in the held
+    /// row's key) when a result turns failing with `on_failing` = `template`; a start that is refused is audited like the other
+    /// listeners' refusals and leaves the Needs you row raised. Nothing here calls a model.
+    async fn crew_background_watch_tick(self: &Arc<Self>, now: i64, stop: &CancellationToken) {
+        let crews = self
+            .store
+            .background_crews_of_kind("watch")
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "the watch crews could not be read");
+                Vec::new()
+            });
+        for crew in crews.into_iter().filter(|crew| crew.enabled) {
+            if stop.is_cancelled() {
+                return;
+            }
+            let Some(hours) = every_hours(&crew) else {
+                tracing::warn!(crew = %crew.id, "a watch crew has no usable every_hours; nothing checked");
+                continue;
+            };
+            let Some(command) = crew.trigger_settings["command"].as_str() else {
+                tracing::warn!(crew = %crew.id, "a watch crew has no command; nothing checked");
+                continue;
+            };
+            let project = match self.store.project(&crew.project_id) {
+                Ok(project) => project,
+                Err(error) => {
+                    tracing::warn!(%error, crew = %crew.id, "the watch crew's project is gone; nothing checked");
+                    continue;
+                }
+            };
+            let bucket = crate::crew::watch::bucket_of(now, hours);
+            match self.store.latest_watch_bucket(&crew.id) {
+                Ok(Some(newest)) if bucket <= newest => continue,
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(%error, crew = %crew.id, "a watch's newest bucket could not be read");
+                    continue;
+                }
+            }
+            let identity = format!("watch:{}:{bucket}", crew.id);
+            match self.store.claim_background_event(&identity) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    tracing::warn!(%error, crew = %crew.id, "a watch check could not be claimed");
+                    continue;
+                }
+            }
+            let check = if project.trusted {
+                // Between firings only: a check that has begun is not cut short, so its claim and its row cannot disagree.
+                tokio::select! {
+                    biased;
+                    _ = stop.cancelled() => return,
+                    check = self.watch_check(
+                        Path::new(&project.path),
+                        command,
+                        crate::crew::watch::CHECK_LIMIT,
+                    ) => check,
+                }
+            } else {
+                WatchCheck::could_not_run(CouldNotRun::Untrusted)
+            };
+            let at = now;
+            if let Err(error) = self
+                .record_watch_check(&crew, &crate::crew::watch::event_key(bucket), check, at)
+                .await
+            {
+                tracing::warn!(%error, crew = %crew.id, "a watch check could not be recorded");
             }
         }
     }

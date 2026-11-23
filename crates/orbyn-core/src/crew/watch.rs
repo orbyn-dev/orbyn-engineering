@@ -1,0 +1,321 @@
+//! Watches (docs/crew.md, "Kiro Crew features" KC6, slices 2 and 3): a background crew's fixed command run on its own schedule
+//! with no model call. The command runs in the project's checkout for at most five minutes, screened again before every check
+//! (the always-denied list and the blast-radius guard, whose lists may have changed since the crew was made), and its last 20
+//! lines and 2 KiB are kept, redacted; nothing else of its output is stored. **The first check that runs is a baseline and raises
+//! nothing.** After it, only a turn between passing and failing is a change: a turn to failing raises one Needs you row or starts
+//! the crew's template once, and a turn to passing writes "Passing again" and resolves the row. A different failure while it
+//! stays failing, and a repeat of the same result, update the last exit code and tail and write no row. A check that could not
+//! run counts a streak: three in a row raise one Needs you row, and a check that runs again resolves it. A command that could not
+//! run never raises by itself.
+//!
+//! **No model call while nothing changes.** The runner runs the command only; a start happens only through
+//! `crew_background_start`, the same seam Run now and the other listeners take, and only when a result turns failing with the
+//! trigger's `on_failing` set to `template`. A start that is refused (the crew already running, the daily budget, an untrusted
+//! folder, no engine) leaves the Needs you row raised and writes the same `crew.background.listener.refused` audit row the other
+//! listeners write; the refusal's sentence is not stored.
+//!
+//! The state machine is the pure `plan` function below, applied by the watch tick in `background_listeners`; the reads are
+//! views of the two tables migration 77 made.
+
+use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use orbyn_contracts::CheckOutcome;
+
+use super::autopilot::Screened;
+use super::checks::{self, COULD_NOT_START, RAN_OUT_OF_TIME};
+use super::redact;
+use crate::app::Core;
+use crate::error::Result;
+use crate::store::{BackgroundRow, NewWatchChange, WatchStateRow};
+
+/// No check of a watch runs longer than this.
+pub const CHECK_LIMIT: Duration = Duration::from_secs(5 * 60);
+/// How many lines of a check's output are kept.
+pub const TAIL_LINES: usize = 20;
+/// How many bytes of that output are kept.
+pub const TAIL_BYTES: usize = 2 * 1024;
+/// The most of a check's raw log is read before it is redacted and cut, so a command that prints megabytes costs at most this.
+const RAW_KEEP: usize = 64 * 1024;
+
+/// Why a check could not run, in the fixed words the state row and the person read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CouldNotRun {
+    TimedOut,
+    CouldNotStart,
+    /// The command the screen refuses now, though it was accepted when the watch was made.
+    Refused,
+    /// The project's folder is no longer trusted, so nothing runs in it.
+    Untrusted,
+}
+
+impl CouldNotRun {
+    /// The word stored in `crew_watch_state.last_reason`.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::TimedOut => "timed_out",
+            Self::CouldNotStart => "could_not_start",
+            Self::Refused => "refused",
+            Self::Untrusted => "untrusted",
+        }
+    }
+
+    /// The same reason as a person reads it.
+    pub fn sentence(self) -> &'static str {
+        match self {
+            Self::TimedOut => "timed out",
+            Self::CouldNotStart => "could not start",
+            Self::Refused => "refused",
+            Self::Untrusted => "folder not trusted",
+        }
+    }
+}
+
+/// What one check found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WatchFound {
+    /// The command ran: it passed when it exited 0.
+    Ran {
+        pass: bool,
+        exit_code: Option<u32>,
+    },
+    CouldNotRun(CouldNotRun),
+}
+
+/// One check of one watch: what it found and the redacted tail it kept.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WatchCheck {
+    pub found: WatchFound,
+    /// The output, already redacted and cut; None when nothing ran or it printed nothing.
+    pub tail: Option<String>,
+}
+
+impl WatchCheck {
+    pub fn could_not_run(why: CouldNotRun) -> Self {
+        Self {
+            found: WatchFound::CouldNotRun(why),
+            tail: None,
+        }
+    }
+
+    fn exit_code(&self) -> Option<i64> {
+        match self.found {
+            WatchFound::Ran { exit_code, .. } => exit_code.map(i64::from),
+            WatchFound::CouldNotRun(_) => None,
+        }
+    }
+
+    /// The word the state row keeps for why the check could not run.
+    fn reason_word(&self) -> Option<&'static str> {
+        match self.found {
+            WatchFound::CouldNotRun(why) => Some(why.word()),
+            WatchFound::Ran { .. } => None,
+        }
+    }
+}
+
+/// One check applied to a watch: the state row to write, and the change row when the check was a change.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Planned {
+    pub next: WatchStateRow,
+    /// The change to write: its kind, the check's exit code and its tail. None when the check was not a change.
+    pub change: Option<(&'static str, Option<i64>, Option<String>)>,
+    /// What Crew did or will do for the change: the action word stored on the change row, or an empty string when there is no row.
+    pub action: &'static str,
+    /// A failing change with `on_failing` = `template`: the caller tries the start first and records `needs_you` if it is
+    /// refused.
+    pub start_template: bool,
+}
+
+fn result_word(pass: bool) -> &'static str {
+    if pass { "pass" } else { "fail" }
+}
+
+/// The state machine: one check applied to the state the watch had. Pure; the store write and the template start follow it.
+pub fn plan(
+    previous: &WatchStateRow,
+    check: &WatchCheck,
+    on_failing_template: bool,
+    at: i64,
+) -> Planned {
+    let mut next = previous.clone();
+    next.last_checked_unix = Some(at);
+    next.last_exit_code = check.exit_code();
+    next.tail = check.tail.clone();
+    match check.found {
+        WatchFound::CouldNotRun(_) => {
+            next.error_streak = previous.error_streak.saturating_add(1);
+            next.last_state = "could_not_run".to_owned();
+            next.last_reason = check.reason_word().map(str::to_owned);
+            // The last result that ran is kept: a check that could not run tells nothing about it.
+            Planned {
+                next,
+                change: None,
+                action: "",
+                start_template: false,
+            }
+        }
+        WatchFound::Ran { pass, .. } => {
+            next.error_streak = 0;
+            next.last_reason = None;
+            next.last_result = Some(result_word(pass).to_owned());
+            next.last_state = if pass { "passing" } else { "failing" }.to_owned();
+            let previous_pass = previous
+                .last_result
+                .as_deref()
+                .and_then(|result| match result {
+                    "pass" => Some(true),
+                    "fail" => Some(false),
+                    _ => None,
+                });
+            if !previous.baseline_done || previous_pass.is_none() {
+                // The first check that runs: a baseline. It never raises, even when it fails.
+                next.baseline_done = true;
+                return Planned {
+                    next,
+                    change: Some(("baseline", check.exit_code(), check.tail.clone())),
+                    action: "none",
+                    start_template: false,
+                };
+            }
+            if previous_pass == Some(pass) {
+                // The same result again: the latest exit code and tail replace the last ones, and nothing is a change.
+                return Planned {
+                    next,
+                    change: None,
+                    action: "",
+                    start_template: false,
+                };
+            }
+            let action = if pass {
+                "resolved"
+            } else if on_failing_template {
+                "started_template"
+            } else {
+                "needs_you"
+            };
+            Planned {
+                next,
+                change: Some((
+                    if pass { "passing" } else { "failing" },
+                    check.exit_code(),
+                    check.tail.clone(),
+                )),
+                action,
+                start_template: !pass && on_failing_template,
+            }
+        }
+    }
+}
+
+/// The tail a check keeps: its output redacted and cut to the last 20 lines and 2 KiB.
+fn kept_tail(log: &str) -> Option<String> {
+    if log.is_empty() {
+        return None;
+    }
+    // Cut the raw log first, so redacting a command that printed megabytes is bounded; the kept 2 KiB is far inside it.
+    let mut at = log.len().saturating_sub(RAW_KEEP);
+    while at < log.len() && !log.is_char_boundary(at) {
+        at += 1;
+    }
+    let redacted = redact(&log[at..]);
+    let tail = checks::tail_lines_bytes(&redacted, TAIL_LINES, TAIL_BYTES);
+    (!tail.is_empty()).then_some(tail)
+}
+
+/// The state a watch that has never been checked reads as.
+fn blank_state(crew: &str) -> WatchStateRow {
+    WatchStateRow {
+        background_id: crew.to_owned(),
+        last_result: None,
+        baseline_done: false,
+        error_streak: 0,
+        last_checked_unix: None,
+        last_exit_code: None,
+        last_state: "not_checked".to_owned(),
+        last_reason: None,
+        tail: None,
+    }
+}
+
+impl Core {
+    /// Runs one watch's command once: screened again first, then run in `worktree` for at most `limit`. `limit` is the five
+    /// minutes the tick passes; a test may shorten it. Nothing is written here and no model is called.
+    pub(crate) async fn watch_check(
+        &self,
+        worktree: &Path,
+        command: &str,
+        limit: Duration,
+    ) -> WatchCheck {
+        if let Screened::Refused(_) = self.crew_screen_command(worktree, None, &[], command).await {
+            return WatchCheck::could_not_run(CouldNotRun::Refused);
+        }
+        let deadline = Instant::now() + limit;
+        let ran = checks::run_line(command, worktree, deadline).await;
+        match ran.outcome {
+            CheckOutcome::Pass | CheckOutcome::Fail => WatchCheck {
+                found: WatchFound::Ran {
+                    pass: ran.outcome == CheckOutcome::Pass,
+                    exit_code: ran.exit_code,
+                },
+                tail: kept_tail(&ran.log),
+            },
+            _ => {
+                let why = match ran.reason.as_deref() {
+                    Some(RAN_OUT_OF_TIME) => CouldNotRun::TimedOut,
+                    Some(reason) if reason.starts_with(COULD_NOT_START) => {
+                        CouldNotRun::CouldNotStart
+                    }
+                    _ => CouldNotRun::CouldNotStart,
+                };
+                WatchCheck::could_not_run(why)
+            }
+        }
+    }
+
+    /// Applies one check to a watch: writes its state row and, when the check was a change, the change row, in one transaction.
+    /// A turn to failing with `on_failing` = `template` first starts the crew's template through the listener seam; a start
+    /// that is refused leaves the Needs you row raised. `event` names the firing in the start's `PausedTrigger` key
+    /// (`watch:<bucket>`) and is never part of a prompt.
+    pub(crate) async fn record_watch_check(
+        self: &Arc<Self>,
+        crew: &BackgroundRow,
+        event: &str,
+        check: WatchCheck,
+        at: i64,
+    ) -> Result<()> {
+        let previous = self
+            .store
+            .watch_state(&crew.id)?
+            .unwrap_or_else(|| blank_state(&crew.id));
+        let on_failing_template = crew.trigger_settings["on_failing"].as_str() == Some("template");
+        let planned = plan(&previous, &check, on_failing_template, at);
+        let mut action = planned.action;
+        if planned.start_template && !self.fire_background_event(&crew.id, "watch", event).await {
+            action = "needs_you";
+        }
+        let change = planned.change;
+        let change = change
+            .as_ref()
+            .map(|(kind, exit_code, tail)| NewWatchChange {
+                kind,
+                action,
+                at_unix: at,
+                exit_code: *exit_code,
+                tail: tail.as_deref(),
+            });
+        self.store.save_watch_check(&planned.next, change.as_ref())
+    }
+}
+
+/// The event key the watch tick fires a start with: `watch:<bucket>`, so the start's held-row key is
+/// `<crew>:watch:<bucket>` and the claim is `watch:<crew>:<bucket>`.
+pub fn event_key(bucket: i64) -> String {
+    format!("watch:{bucket}")
+}
+
+/// The watch's own schedule bucket, which the tick claims and names its event with.
+pub fn bucket_of(now: i64, hours: u32) -> i64 {
+    now.div_euclid(i64::from(hours) * 3600)
+}
