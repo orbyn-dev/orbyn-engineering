@@ -305,6 +305,15 @@ impl Guard {
 mod tests {
     use super::*;
 
+    /// The one answer every path outside the worktree gets, whatever the spelling that got it there.
+    fn outside<T>(result: Result<T>, what: &str) {
+        let refusal = result.err();
+        assert!(
+            matches!(&refusal, Some(CoreError::Invalid(why)) if why == "That path is outside this worktree."),
+            "{what}: {refusal:?}"
+        );
+    }
+
     #[test]
     fn spelling_alone_refuses_traversal_and_git() {
         for bad in [
@@ -322,7 +331,7 @@ mod tests {
             "a\0b",
             "a\nb",
         ] {
-            assert!(clean(bad, false).is_err(), "{bad:?}");
+            outside(clean(bad, false), &format!("{bad:?}"));
         }
         for bad in [
             "C:/x",
@@ -337,13 +346,13 @@ mod tests {
             "ordinary.",
             "ordinary ",
         ] {
-            assert!(clean(bad, true).is_err(), "{bad:?}");
+            outside(clean(bad, true), &format!("{bad:?}"));
         }
         assert_eq!(clean("", false).unwrap(), "");
         assert_eq!(clean("./a//b/", false).unwrap(), "a/b");
         assert_eq!(clean("a:b.rs", false).unwrap(), "a:b.rs");
         assert_eq!(clean("%2e%2e/x", false).unwrap(), "%2e%2e/x");
-        assert!(clean(&"a/".repeat(3000), false).is_err());
+        outside(clean(&"a/".repeat(3000), false), "a very long path");
     }
 
     #[test]
@@ -370,9 +379,11 @@ mod tests {
         assert!(guard.resolve("a.txt").is_ok());
         // The library inside the root is still found through the other spelling.
         let with_library = Guard::with_library(&alias, &data, Some(alias.join("library"))).unwrap();
-        assert!(with_library.mutation_path("library/repo").is_err());
+        outside(with_library.mutation_path("library/repo"), "the library");
         // A root that is gone is still not found.
-        assert!(Guard::new(&real.join("missing"), &data, None).is_err());
+        assert!(
+            matches!(Guard::new(&real.join("missing"), &data, None), Err(CoreError::NotFound(what)) if what == "worktree")
+        );
     }
 
     #[test]
@@ -388,14 +399,14 @@ mod tests {
             "parent/data/new",
             "parent",
         ] {
-            assert!(guard.mutation_path(path).is_err(), "{path}");
+            outside(guard.mutation_path(path), path);
         }
         assert!(guard.mutation_path("normal").is_ok());
         let library = root.join("library");
         std::fs::create_dir(&library).unwrap();
         let current = Guard::with_library(&root, &root.join("parent/data"), Some(library)).unwrap();
-        assert!(current.mutation_path("library/repo").is_err());
-        assert!(current.mutation_path("library").is_err());
+        outside(current.mutation_path("library/repo"), "library/repo");
+        outside(current.mutation_path("library"), "library");
         assert!(current.mutation_path("other/repo").is_ok());
         let missing = Guard::with_library(
             &root,
@@ -403,14 +414,20 @@ mod tests {
             Some(root.join("absent-library")),
         )
         .unwrap();
-        assert!(missing.mutation_path("absent-library").is_err());
-        assert!(missing.mutation_path("absent-library/repo").is_err());
+        outside(missing.mutation_path("absent-library"), "absent-library");
+        outside(
+            missing.mutation_path("absent-library/repo"),
+            "absent-library/repo",
+        );
         #[cfg(any(windows, target_os = "macos"))]
         {
             for path in ["REPO", "PARENT/DATA/new"] {
-                assert!(guard.mutation_path(path).is_err(), "{path}");
+                outside(guard.mutation_path(path), path);
             }
-            assert!(missing.mutation_path("ABSENT-LIBRARY/REPO").is_err());
+            outside(
+                missing.mutation_path("ABSENT-LIBRARY/REPO"),
+                "ABSENT-LIBRARY/REPO",
+            );
         }
     }
 
