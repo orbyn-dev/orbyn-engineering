@@ -29,10 +29,11 @@ const pickItem = async (user: ReturnType<typeof userEvent.setup>, name: string) 
 const personal = async (user: ReturnType<typeof userEvent.setup>) => user.click(await screen.findByRole("tab", { name: /^Personal/ }));
 
 it("draws nothing, and no error, when the library route answers 404", async () => {
-  const fetching = vi.fn(async () => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404 }));
+  const fetching = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404 }));
   vi.stubGlobal("fetch", fetching);
   const { container } = render(<LibraryPanel threadId="t1" typeIntoTerminal={typeIn} />);
   await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
+  expect(String(fetching.mock.calls[0]?.[0])).toMatch(/\/api\/library/);
   await act(async () => { await Promise.resolve(); });
   expect(container).toBeEmptyDOMElement();
   expect(screen.queryByRole("alert")).toBeNull();
