@@ -2,11 +2,12 @@ import { Book, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { SkillSummary } from "../../generated/SkillSummary";
 import { useWaited } from "../../lib/motion";
+import { useLayoutWidth } from "../../lib/useLayout";
 import { DRAFT_KEY } from "../../product/state/draftStore";
 import { navigate, routeHref } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
 import { Button } from "../../ui/controls";
-import { ErrorState } from "../../product/ui/states";
+import { ErrorState, NarrowBack } from "../../product/ui/states";
 import { useSkills } from "./skillsStore";
 import "./skills.css";
 
@@ -25,6 +26,7 @@ function startThreadWithSkill(skill: SkillSummary) {
 
 export function SkillsPage({ skill }: { skill?: string }) {
   const result = useSkills();
+  const phone = useLayoutWidth() === "phone";
   const slow = useWaited(result.loading && !result.data);
   const [category, setCategory] = useState<string>("All");
   const [search, setSearch] = useState("");
@@ -69,6 +71,19 @@ export function SkillsPage({ skill }: { skill?: string }) {
     }
   }, [skill, ready, known]);
 
+  // The phone has no persistent sidebar: keep a way out even while the catalog cannot load.
+  if (phone && !result.data) {
+    return <section className="skills-page" aria-label={skill === undefined ? "Skills" : "Skill"}>
+      <header className="skills-heading">
+        <NarrowBack to={skill === undefined ? undefined : { name: "skills" }} />
+        <h1 tabIndex={-1} data-page-title>{skill ?? "Skills"}</h1>
+      </header>
+      {result.error ? <ErrorState title="Couldn't load skills" failure={result.error} onRetry={() => void result.reload()} />
+        : slow ? <div className="skills-loading" role="status" aria-label="Loading skills">
+          {Array.from({ length: 6 }, (_, index) => <div className="skills-placeholder" key={index} />)}
+        </div> : null}
+    </section>;
+  }
   if (!result.data && !result.error) {
     return slow ? (
       <div className="skills-loading" role="status" aria-label="Loading skills">
@@ -95,6 +110,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
     return (
       <section className="skills-page" aria-label="Skill">
         <header className="skills-heading">
+          <NarrowBack to={{ name: "skills" }} />
           <h1 ref={heading} tabIndex={-1} data-page-title>
             {selected.name}
           </h1>
@@ -124,6 +140,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
     return (
       <section className="skills-page" aria-label="Skills">
         <header className="skills-heading">
+          <NarrowBack />
           <h1 ref={heading} tabIndex={-1} data-page-title>
             Skills
           </h1>
@@ -141,6 +158,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
   return (
     <section className="skills-page" aria-label="Skills">
       <header className="skills-heading">
+        <NarrowBack />
         <h1 ref={heading} tabIndex={-1} data-page-title>
           Skills
         </h1>
