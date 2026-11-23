@@ -258,13 +258,14 @@ async fn a_kind_only_its_listener_starts_is_refused_by_run_now_with_a_plain_reas
             "{error}"
         );
     }
+    // A watch runs its command on its own schedule; Run now does not start a run for it.
     let error = w
         .core
         .crew_background_run_now(&watch, "user")
         .await
         .unwrap_err();
     assert!(
-        matches!(&error, CoreError::PolicyDenied(why) if why.contains("cannot run yet")),
+        matches!(&error, CoreError::PolicyDenied(why) if why == "A watch crew's command runs on its schedule; Run now does not start a run for it."),
         "{error}"
     );
     assert_eq!(threads(&w), before);

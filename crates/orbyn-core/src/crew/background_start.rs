@@ -287,9 +287,10 @@ impl Core {
         }
     }
 
-    /// The refusals that need only the stored crew. `event` is the start's event key: Run now passes `manual`, and a
-    /// listener passes its own. The issue-label and dependency-update kinds are refused by hand but started by their
-    /// listener through this same seam, so only a `manual` start is turned away.
+    /// The refusals that need only the stored crew. `event` is the start's event key: Run now passes `manual`, a listener
+    /// passes its own. The issue-label and dependency-update kinds are refused by hand but started by their listener through this
+    /// same seam, so only a `manual` start is turned away. A watch's own check fires `watch:<start>`, which a watch accepts;
+    /// Run now's `manual` is refused for it, because a watch runs its command on its schedule and not on demand.
     fn refuse_background_start(&self, crew: &BackgroundRow, event: &str) -> Result<()> {
         if !crew.enabled {
             return Err(CoreError::PolicyDenied(
@@ -313,11 +314,12 @@ impl Core {
             }
             // Its own listener fires these kinds through this seam; only Run now is turned away above.
             "issue_label" | "dependency_update" => {}
-            "watch" => {
+            "watch" if !event.starts_with("watch:") => {
                 return Err(CoreError::PolicyDenied(
-                    "A watch crew cannot run yet: Orbyn does not run its command yet.".into(),
+                    "A watch crew's command runs on its schedule; Run now does not start a run for it.".into(),
                 ));
             }
+            "watch" => {}
             kind => {
                 let words = kind.replace('_', " ");
                 return Err(CoreError::PolicyDenied(format!(
