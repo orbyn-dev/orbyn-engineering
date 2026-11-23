@@ -311,6 +311,27 @@ describe("Background crews on the Crew routes", () => {
     expect(within(dialog).getByRole("button", { name: "Create background crew" })).toBeEnabled();
   });
 
+  it("keeps the entered daily budget and the dialog open when the service refuses it as over the cap", async () => {
+    const { user, dialog } = await openCreate();
+    const runs = within(dialog).getByLabelText("Runs a day");
+    const turns = within(dialog).getByLabelText("Turns a day");
+    setValue(runs, "3");
+    setValue(turns, "120");
+    mock.fail("/api/crew/background/create", 1, 409, "budget_exceeded", "This crew would exceed the daily cap for its engine.");
+
+    await user.click(within(dialog).getByRole("button", { name: "Create background crew" }));
+    expect(await within(dialog).findByText("This crew would exceed the daily cap for its engine.")).toBeVisible();
+    expect(runs).toHaveValue(3);
+    expect(turns).toHaveValue(120);
+    expect(screen.getByRole("dialog", { name: /New background crew/ })).toBe(dialog);
+    expect(screen.queryByRole("table", { name: "Background crews" })).toBeNull();
+    expect(screen.getByText("No background crews yet")).toBeVisible();
+    expect(within(dialog).getByText(DAILY_HINT)).toBeVisible();
+    const posts = vi.mocked(fetch).mock.calls.filter(([url, init]) => String(url) === "/api/crew/background/create" && init?.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(String(posts[0]![1]?.body))).toMatchObject({ daily: { runs: 3, turns: 120 } });
+  });
+
   it("keeps Create on when the optional CI workflow and Branch are empty", async () => {
     const { user, dialog } = await openCreate();
     const workflow = within(dialog).getByLabelText("CI workflow · optional");

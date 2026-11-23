@@ -324,6 +324,71 @@ async fn a_cursor_carries_to_the_next_page_and_only_for_its_own_scope_and_filter
 }
 
 #[tokio::test]
+async fn an_empty_page_has_no_next_cursor() {
+    let server = Server::start(|req| {
+        if req.path().ends_with("/issues") && req.param("limit").as_deref() != Some("1") {
+            return Reply::json(&json!([]));
+        }
+        Reply::status(500)
+    })
+    .await;
+    let page = reader(&server)
+        .list("grp/proj", &IssueQuery::default())
+        .await
+        .unwrap();
+    assert!(page.issues.is_empty());
+    assert_eq!(page.counts, None, "a failed count is not a failed list");
+    assert_eq!(page.next, None, "an empty page is the end");
+    let listed = listing(&server);
+    assert_eq!(listed.path(), "/api/v1/repos/grp/proj/issues");
+    assert_eq!(listed.param("limit").as_deref(), Some("50"));
+    assert_eq!(listed.param("page").as_deref(), Some("1"));
+}
+
+#[tokio::test]
+async fn a_cursor_minted_by_another_tracker_is_refused_with_no_request() {
+    let gitlab_server = Server::start(|req| {
+        if req.path().ends_with("/issues_statistics") {
+            return Reply::status(500);
+        }
+        // A cursor is inferred from the page size, so 50 rows of any shape mint one.
+        Reply::json(&Value::Array(vec![Value::Null; 50]))
+    })
+    .await;
+    let forged = crate::issues::GitLab::for_test(
+        &gitlab_server.base,
+        "test-cursor-token",
+        Duration::from_secs(5),
+    )
+    .list("grp/proj", &IssueQuery::default())
+    .await
+    .unwrap()
+    .next
+    .expect("a full GitLab page has a next cursor");
+
+    let server = Server::start(|_| Reply::json(&json!([]))).await;
+    let refused = reader(&server)
+        .list(
+            "grp/proj",
+            &IssueQuery {
+                cursors: BTreeMap::from([("forgejo grp/proj".to_owned(), forged)]),
+                ..IssueQuery::default()
+            },
+        )
+        .await
+        .map(|_| ());
+    assert!(
+        matches!(
+            refused,
+            Err(CoreError::Invalid(m))
+                if m == "That page cursor was not issued for this repository and filter."
+        ),
+        "another tracker's cursor is not ours"
+    );
+    assert!(server.seen().is_empty(), "a refused cursor sends nothing");
+}
+
+#[tokio::test]
 async fn a_full_page_without_a_link_header_infers_the_next_cursor() {
     let server = Server::start(|req| {
         let base = base_of(req);
@@ -483,6 +548,42 @@ async fn each_failure_maps_to_the_contracts_code_with_fixed_copy() {
             .map(|_| ()),
         Err(CoreError::TrackerUnavailable(_))
     ));
+}
+
+#[tokio::test]
+async fn a_list_answer_that_is_not_json_is_unreadable_and_never_echoed() {
+    for body in ["not json", r#"{"items":["#] {
+        let reply_body = body.as_bytes().to_vec();
+        let server = Server::start(move |_| Reply::raw(200, reply_body.clone())).await;
+        let error = reader(&server)
+            .list("grp/proj", &IssueQuery::default())
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::TrackerUnavailable(m) if m == "Forgejo answered something unreadable."),
+            "the fixed unreadable copy"
+        );
+        assert_eq!(
+            server
+                .seen()
+                .iter()
+                .filter(|r| {
+                    r.path().ends_with("/issues") && r.param("limit").as_deref() != Some("1")
+                })
+                .count(),
+            1,
+            "the list answer was read"
+        );
+        for text in [
+            error.to_string(),
+            error.public_message(),
+            format!("{error:?}"),
+        ] {
+            assert!(!text.contains(body), "the tracker's body is not echoed");
+            assert!(!text.contains(TOKEN), "the token is not echoed");
+        }
+    }
 }
 
 #[tokio::test]

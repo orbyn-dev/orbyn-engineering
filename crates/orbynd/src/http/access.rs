@@ -937,11 +937,17 @@ mod tests {
     #[cfg(debug_assertions)]
     #[test]
     fn the_development_override_is_the_only_way_through_without_a_key() {
-        assert!(access().person_check(&with_person(None)).is_err());
+        assert_eq!(
+            code(access().person_check(&with_person(None))).as_deref(),
+            Some("desktop_required")
+        );
         let open = access().with_dev_person_override(true);
         assert!(open.person_check(&with_person(None)).is_ok());
         let off = access().with_dev_person_override(false);
-        assert!(off.person_check(&with_person(None)).is_err());
+        assert_eq!(
+            code(off.person_check(&with_person(None))).as_deref(),
+            Some("desktop_required")
+        );
     }
 
     #[test]
