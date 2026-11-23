@@ -6,13 +6,14 @@ import { useWorkspace } from "../../../../product/state/workspace";
 import { levelKey, useExplorer } from "../../../workspace";
 import { clearReportedCommands, publishFinished } from "../shellOutcomes";
 import { registerTerminal, type TerminalControls } from "../terminalControls";
+import { historyOf } from "./history";
 import { TerminalInput } from "./TerminalInput";
 
 const ROOT = "/w/tree";
 let written: string[] = [];
 let stop: () => void = () => undefined;
 /** Each case gets its own terminal, so one case's saved lines cannot show in another's list. */
-const keys = ["th:one", "th:two", "th:three", "th:four"];
+const keys = ["th:one", "th:two", "th:three", "th:four", "th:five", "th:six"];
 let keyAt = 0;
 
 const controls = (): TerminalControls => ({
@@ -40,13 +41,13 @@ const setup = async (command: string) => {
     loadWorktrees: vi.fn(() => Promise.resolve()),
     loadLevel: vi.fn(() => Promise.resolve()),
   } as never);
-  render(<TerminalInput threadId="th" keyOf={key} />);
+  const view = render(<TerminalInput threadId="th" keyOf={key} />);
   const field = screen.getByLabelText("Terminal input") as HTMLTextAreaElement;
   const user = userEvent.setup();
   await user.type(field, command);
   await user.keyboard("{Enter}");
   expect(written).toEqual([`${command}\r`]);
-  return { key, user };
+  return { key, user, view };
 };
 
 const openHistory = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -93,5 +94,37 @@ describe("a history row shows how the shell said the line ended", () => {
     act(() => publishFinished(key, [{ seq: 0, command: "cargo test", exitCode: 1 }]));
     const row = await openHistory(user);
     expect(row.querySelector(".term-input-ok, .term-input-bad")).toBeNull();
+  });
+
+  it("gives a report to one line only, so a later run of the same command stays unknown", async () => {
+    const { key, user } = await setup("ls");
+    act(() => publishFinished(key, [{ seq: 0, command: "ls", exitCode: 0 }]));
+    const field = screen.getByLabelText("Terminal input") as HTMLTextAreaElement;
+    await user.type(field, "ls");
+    await user.keyboard("{Enter}");
+    // Another command ends: the first report must not move on to the second `ls`.
+    act(() => publishFinished(key, [{ seq: 1, command: "pwd", exitCode: 0 }]));
+    expect(historyOf(key).map((entry) => entry.ok)).toEqual([true, null]);
+    // The second run's own report is the first that says how it ended.
+    act(() => publishFinished(key, [{ seq: 2, command: "ls", exitCode: 1 }]));
+    expect(historyOf(key).map((entry) => entry.ok)).toEqual([true, false]);
+    const row = await openHistory(user);
+    expect(row.querySelector(".term-input-bad")).not.toBeNull();
+    expect(row.querySelector(".term-input-ok")).toBeNull();
+    expect(row.querySelector(".term-input-when")?.textContent).toMatch(/ · 1 failed$/);
+  });
+
+  it("applies nothing twice when the same reported list comes back on a re-render or a remount", async () => {
+    const { key, user, view } = await setup("ls");
+    act(() => publishFinished(key, [{ seq: 0, command: "ls", exitCode: 0 }]));
+    const field = screen.getByLabelText("Terminal input") as HTMLTextAreaElement;
+    await user.type(field, "ls");
+    await user.keyboard("{Enter}");
+    view.rerender(<TerminalInput threadId="th" keyOf={key} />);
+    expect(historyOf(key).map((entry) => entry.ok)).toEqual([true, null]);
+    // The input goes away while the terminal reconnects and comes back with the same reported list.
+    view.unmount();
+    render(<TerminalInput threadId="th" keyOf={key} />);
+    expect(historyOf(key).map((entry) => entry.ok)).toEqual([true, null]);
   });
 });

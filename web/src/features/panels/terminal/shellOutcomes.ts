@@ -14,6 +14,8 @@ import type { FinishedCommand } from "./shellMarks";
 export interface ReportedCommands {
   /** The sequence number of the newest command published, -1 before the first. */
   lastSeq: number;
+  /** The newest command the editor has applied, so each report reaches one line only; -1 before the first. */
+  appliedSeq: number;
   kept: readonly FinishedCommand[];
 }
 
@@ -38,12 +40,27 @@ export function publishFinished(key: string, finished: readonly FinishedCommand[
   const newest = fresh.at(-1);
   if (!newest) return;
   const kept = [...(before?.kept ?? NOTHING), ...fresh].slice(-KEPT);
-  reported.set(key, { lastSeq: newest.seq, kept });
+  reported.set(key, { lastSeq: newest.seq, appliedSeq: before?.appliedSeq ?? -1, kept });
   tell(key);
 }
 
 /** The commands this terminal has reported ending, oldest first. */
 export const reportedCommandsOf = (key: string): readonly FinishedCommand[] => reported.get(key)?.kept ?? NOTHING;
+
+/**
+ * The commands in `latest` this terminal has not applied yet, oldest first. They count as applied from
+ * now on, so a re-render or a remount never gives one to a second line; a report with no exit code still
+ * advances the mark.
+ */
+export function takeReportedCommands(key: string, latest: readonly FinishedCommand[]): readonly FinishedCommand[] {
+  const before = reported.get(key);
+  if (!before) return NOTHING;
+  const fresh = latest.filter((command) => command.seq > before.appliedSeq);
+  const newest = fresh.at(-1);
+  if (!newest) return NOTHING;
+  reported.set(key, { ...before, appliedSeq: newest.seq });
+  return fresh;
+}
 
 /** Forgets a terminal's commands: a closed terminal, or one that starts again, leaves nothing behind. */
 export function clearReportedCommands(key: string): void {
