@@ -45,7 +45,7 @@ it("ignores non-primary buttons and other pointers", () => {
   expect(handle.setPointerCapture).not.toHaveBeenCalled();
   fireEvent.pointerDown(handle, { pointerId: 2, button: 0 });
   fireEvent.pointerDown(handle, { pointerId: 3, button: 0 });
-  expect(handle.setPointerCapture).toHaveBeenCalledTimes(1);
+  expect(handle.setPointerCapture).toHaveBeenCalledExactlyOnceWith(2);
   fireEvent.pointerMove(handle, { pointerId: 3, clientX: 1000 });
   expect(panel.style.width).toBe("");
   fireEvent.pointerMove(handle, { pointerId: 2, clientX: 1000 });

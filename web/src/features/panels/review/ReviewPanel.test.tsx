@@ -210,6 +210,7 @@ describe("Review and comments tab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("On the pull request · 1")).toBeInTheDocument();
     expect(linked).toHaveBeenCalledTimes(2);
+    expect(linked).toHaveBeenLastCalledWith("t1", expect.any(AbortSignal));
     expect(screen.queryByText("Pull request comments could not be read.")).toBeNull();
   });
 

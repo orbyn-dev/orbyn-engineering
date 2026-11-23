@@ -160,6 +160,7 @@ describe("a new device waiting for a trusted one", () => {
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(cancel).toHaveBeenCalledTimes(2);
+    expect(cancel.mock.calls[1]).toEqual(cancel.mock.calls[0]);
     expect(onBack).toHaveBeenCalledExactlyOnceWith("sign-in");
     vi.restoreAllMocks();
   });

@@ -70,6 +70,7 @@ describe("the production client", () => {
     setBlocksApi(null);
     const { container } = mount();
     await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
+    expect(String(fetching.mock.calls[0]?.[0])).toBe("/api/threads/th/terminals/main/blocks");
     await settle();
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByText("Couldn't read this terminal's blocks.")).not.toBeInTheDocument();
