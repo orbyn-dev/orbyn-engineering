@@ -61,9 +61,9 @@ export function usedWords(lesson: Lesson): string {
     : "Not used yet";
 }
 
-/** "Not edited", or the moment the person's own edit was saved. */
+/** "Not edited", or "You". No time: `updated_at` also moves on turn off, turn on and promote, so it is not an edit time. */
 export function editedWords(lesson: Lesson): string {
-  return lesson.edited_by_person ? `You, ${moment(lesson.updated_at)}` : "Not edited";
+  return lesson.edited_by_person ? "You" : "Not edited";
 }
 
 /**
@@ -74,7 +74,7 @@ export function editedWords(lesson: Lesson): string {
  */
 export function happenedWords(source: LessonSource): string {
   return source === "fingerprint"
-    ? "The same failing check, ended the same way, with the same names of what failed, on 2 tasks of this repository within 60 days. The text is built from names Crew already redacts for a worker, never from worker output."
+    ? "The same failing check, ended the same way, with the same names of what failed, on 2 or more tasks of this repository within 60 days. The text is built from names Crew already redacts for a worker, never from worker output."
     : source === "escape"
       ? "You confirmed this escape. The text is the escape’s own recorded reason."
       : source === "revert"

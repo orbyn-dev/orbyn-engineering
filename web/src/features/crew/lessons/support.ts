@@ -55,12 +55,14 @@ export const list = (over: Partial<LessonList> = {}): LessonList => ({
   ...over,
 });
 
-export type Answer = { status: number; body?: unknown } | "never";
+/** "never" hangs; "network" is a fetch that rejects, as when the service is not running. */
+export type Answer = { status: number; body?: unknown } | "never" | "network";
 export type Call = { url: string; init?: RequestInit };
 /** What a lessons write answers: the method, the path with its query, and the parsed body when it has one. */
 export type Write = { method: string; url: string; body: Record<string, unknown> | undefined };
 
 const json = (answer: Answer): Response => {
+  if (answer === "network") throw new TypeError("Failed to fetch");
   if (answer === "never") return new Promise<Response>(() => undefined) as unknown as Response;
   return new Response(answer.body === undefined ? null : JSON.stringify(answer.body), { status: answer.status });
 };
@@ -78,7 +80,7 @@ export function stubFetch(
     hidden?: Answer;
     settings?: Answer;
     detail?: Answer;
-    write?: (one: Write) => Answer;
+    write?: (one: Write) => Answer | Promise<Answer>;
   },
   calls: Call[],
 ) {
@@ -93,7 +95,7 @@ export function stubFetch(
       if (url.includes("/api/crew/preview")) return json(answers.preview ?? { status: 200, body: { enabled: true } });
       if (url.includes("/api/crew/lessons/settings"))
         return json(answers.settings ?? { status: 200, body: { repo: "p-app", use_lessons: true } });
-      if (method !== "GET") return json(answers.write ? answers.write({ method, url, body }) : { status: 404, body: { code: "not_found", message: "No such route." } });
+      if (method !== "GET") return json(answers.write ? await answers.write({ method, url, body }) : { status: 404, body: { code: "not_found", message: "No such route." } });
       if (url.includes("/api/crew/lessons?")) {
         const hidden = url.includes("filter=hidden");
         return json((hidden ? answers.hidden : undefined) ?? answers.list ?? { status: 200, body: list() });

@@ -6,6 +6,7 @@ import { navigate } from "../../../product/state/route";
 import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { Frame } from "../shared/Frame";
 import { lessonsApi } from "./api";
+import { useLessons } from "./useLessons";
 import { MAX_TEXT } from "./model";
 import { markAdded } from "./saved";
 import type { LessonScope } from "./types";
@@ -31,6 +32,7 @@ function Card({ children }: { children: ReactNode }) {
  * Add a lesson by hand (KC5, part B): the person's own words, up to 300 characters, for this repository or for all of them.
  * Nothing is drawn, and no lessons route is read, while Crew Preview is off or the route names a repository the project
  * list does not show (the contract answers 404 for an unknown repository); with no project at all it draws the empty state.
+ * A lessons read that answers 404 not_found (a service without the lessons routes) draws nothing either.
  * Saving is a Person write and only the person's click sends it; a saved lesson opens its card, which says "Saved." once.
  */
 export function LessonAddPage({ repo }: { repo?: string }) {
@@ -52,7 +54,17 @@ export function LessonAddPage({ repo }: { repo?: string }) {
   const named = repo !== undefined && repo !== "";
   const project = named ? projects.find((entry) => entry.id === repo) : projects[0];
   if (!project) return named ? null : <Card><Empty title="No project to show" /></Card>;
-  return <AddLesson key={project.id} repo={project.id} name={project.name} />;
+  return <GatedAdd key={project.id} repo={project.id} name={project.name} />;
+}
+
+/** The form is drawn once the repository's lessons read answered 200: a service without the lessons routes answers 404, and nothing is drawn. */
+function GatedAdd({ repo, name }: { repo: string; name: string }) {
+  const read = useLessons(repo, "all");
+  if (read.status === "missing") return null;
+  if (read.status === "loading") return <Card><Loading label="Reading lessons" rows={2} /></Card>;
+  if (read.status === "error")
+    return <Card><ErrorState title="Can’t read the lessons" failure={read.failure} onRetry={() => void read.reload()} /></Card>;
+  return <AddLesson repo={repo} name={name} />;
 }
 
 /** The one scope choice a hand-written lesson makes: this repository, or every repository on this device. */

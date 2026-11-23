@@ -321,6 +321,94 @@ describe("a lesson's card on the real route", () => {
     expect(writes(calls, "PATCH")).toHaveLength(2);
   });
 
+  it("Try again after a failed edit sends the text as it is now, not the text that failed", async () => {
+    answers.write = () => ({ status: 500, body: { code: "unreadable", message: "The lessons on this device can’t be read." } });
+    const user = userEvent.setup();
+    open();
+    await loaded();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const field = await screen.findByRole("textbox", { name: "Lesson text" });
+    await user.clear(field);
+    await user.type(field, "First sentence.");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Can’t save the lesson")).toBeInTheDocument();
+    await user.clear(field);
+    await user.type(field, "Second sentence.");
+    answers.write = ({ method, body }) =>
+      method === "PATCH" ? { status: 200, body: lesson({ text: String(body?.text), rev: 2 }) } : notFound;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Saved.")).toBeInTheDocument();
+    const sent = writes(calls, "PATCH").map(({ init }) => bodyOf(init).text);
+    expect(sent).toEqual(["First sentence.", "Second sentence."]);
+  });
+
+  it("reads the lesson again after a stale edit, so Try again sends the fresh revision", async () => {
+    answers.write = () => ({ status: 409, body: { code: "stale", message: "This lesson changed since you opened it." } });
+    const user = userEvent.setup();
+    open();
+    await loaded();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const field = await screen.findByRole("textbox", { name: "Lesson text" });
+    await user.clear(field);
+    await user.type(field, "My sentence.");
+    answers.detail = {
+      status: 200,
+      body: detail({
+        lesson: lesson({ rev: 5 }),
+        evidence: [{ kind: "task", id: "task-9" }],
+      }),
+    };
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("This lesson changed since you opened it.")).toBeInTheDocument();
+    expect(await screen.findByText("Task task-9")).toBeInTheDocument();
+    answers.write = ({ method, body }) =>
+      method === "PATCH" ? { status: 200, body: lesson({ text: String(body?.text), rev: 6 }) } : notFound;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Saved.")).toBeInTheDocument();
+    expect(writes(calls, "PATCH").map(({ init }) => bodyOf(init).rev)).toEqual([1, 5]);
+    expect(field).toHaveValue("My sentence.");
+  });
+
+  it("says only that the person edited a lesson, never a time that turn off or promote also move", async () => {
+    answers.detail = {
+      status: 200,
+      body: detail({ lesson: lesson({ edited_by_person: true, updated_at: "2026-11-09T10:00:00Z" }) }),
+    };
+    open();
+    await loaded();
+    expect(screen.getByText("You")).toBeInTheDocument();
+    expect(screen.queryByText(/^You,/)).toBeNull();
+    expect(screen.queryByText("Not edited")).toBeNull();
+  });
+
+  it("says the same failing check happened on two or more tasks, not exactly two", async () => {
+    open();
+    await loaded();
+    expect(screen.getByText(/on 2 or more tasks of this repository within 60 days/)).toBeInTheDocument();
+  });
+
+  it("drops the Saved line once a later write changes the lesson", async () => {
+    answers.write = ({ method, url, body }) =>
+      method === "PATCH"
+        ? { status: 200, body: lesson({ text: String(body?.text), edited_by_person: true, rev: 2 }) }
+        : url === "/api/crew/lessons/les-1/promote"
+          ? { status: 200, body: lesson({ scope: "global", repo: null, text: "Edited once.", rev: 3 }) }
+          : notFound;
+    const user = userEvent.setup();
+    open();
+    await loaded();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const field = await screen.findByRole("textbox", { name: "Lesson text" });
+    await user.clear(field);
+    await user.type(field, "Edited once.");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Saved.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Promote to all repositories" }));
+    await user.click(within(await dialog()).getByRole("button", { name: "Promote lesson" }));
+    expect(await screen.findByRole("button", { name: "Move back to one repository" })).toBeInTheDocument();
+    expect(screen.queryByText("Saved.")).toBeNull();
+  });
+
   it("promotes through its confirm, with where the lesson would apply, and draws the answer", async () => {
     answers.write = ({ method, url }) =>
       method === "POST" && url === "/api/crew/lessons/les-1/promote"
@@ -405,6 +493,27 @@ describe("a lesson's card on the real route", () => {
     expect(screen.getByText("This lesson changed since you opened it.")).toBeInTheDocument();
     expect(window.location.hash).toBe("");
     expect(useLessonUndo.getState().pending).toBeNull();
+  });
+
+  it("says to check the service when a delete could not reach it, as every other write does", async () => {
+    answers.write = () => "network";
+    const user = userEvent.setup();
+    open();
+    await loaded();
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(await screen.findByText("Can’t delete the lesson")).toBeInTheDocument();
+    expect(screen.getByText(/Check that the Orbyn service is running\./)).toBeInTheDocument();
+  });
+
+  it("draws nothing for an id the route lacks or the service would refuse, even while the project list is still being read", async () => {
+    answers.projects = "never";
+    useWorkspace.setState({ projects: { data: null, loading: true, error: null } });
+    for (const id of [undefined, "les 1/.."]) {
+      const { container, unmount } = render(<LessonCardPage id={id} repo="p-app" />);
+      await waitFor(() => expect(calls.some(({ url }) => url.startsWith("/api/projects"))).toBe(true));
+      expect(container).toBeEmptyDOMElement();
+      unmount();
+    }
   });
 
   it("draws nothing for a repository the route names but the project list does not show", async () => {

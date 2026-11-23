@@ -9,7 +9,7 @@ import { clearLessonUndo, showLessonUndo, useLessonUndo } from "./undo";
 import { lesson, list, project, stubFetch, writes, type Answer, type Call, type Write } from "./support";
 
 let calls: Call[] = [];
-let answers: { preview?: Answer; projects?: Answer; list?: Answer; write?: (one: Write) => Answer };
+let answers: { preview?: Answer; projects?: Answer; list?: Answer; write?: (one: Write) => Answer | Promise<Answer> };
 
 const notFound = { status: 404, body: { code: "not_found", message: "No such route." } } as const;
 const toastName = "Lesson deleted. Undo for 10 seconds";
@@ -88,6 +88,42 @@ describe("the delete's Undo toast", () => {
     await user.click(within(toast).getByRole("button", { name: "Undo" }));
     await waitFor(() => expect(useUi.getState().toasts.map((one) => one.text)).toContain("That delete is final now."));
     expect(useLessonUndo.getState().pending).toBeNull();
+  });
+
+  it("keeps Undo open when the service could not be reached, and a second press can still take it back", async () => {
+    answers.write = () => "network";
+    showLessonUndo({ id: "les-1", until: Date.now() + 10_000, seconds: 10 });
+    const user = userEvent.setup();
+    render(<LiveLessons view="list" />);
+    const toast = await screen.findByRole("status", { name: toastName });
+    await user.click(within(toast).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(useUi.getState().toasts.length).toBeGreaterThan(0));
+    expect(useLessonUndo.getState().pending?.id).toBe("les-1");
+    expect(within(screen.getByRole("status", { name: toastName })).getByRole("button", { name: "Undo" })).toBeEnabled();
+    answers.write = () => ({ status: 200, body: lesson() });
+    await user.click(within(screen.getByRole("status", { name: toastName })).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(useLessonUndo.getState().pending).toBeNull());
+  });
+
+  it("keeps a second delete's Undo when the first Undo finishes after it", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    answers.write = async () => {
+      await gate;
+      return { status: 200, body: lesson() };
+    };
+    showLessonUndo({ id: "les-1", until: Date.now() + 10_000, seconds: 10 });
+    const user = userEvent.setup();
+    render(<LessonUndoToast />);
+    await user.click(within(screen.getByRole("status", { name: toastName })).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(writes(calls, "POST")).toHaveLength(1));
+    act(() => showLessonUndo({ id: "les-2", until: Date.now() + 10_000, seconds: 10 }));
+    release();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Undo" })).toBeEnabled());
+    expect(useLessonUndo.getState().pending?.id).toBe("les-2");
+    expect(screen.getByRole("status", { name: toastName })).toBeInTheDocument();
   });
 
   it("is not drawn when nothing was deleted", async () => {

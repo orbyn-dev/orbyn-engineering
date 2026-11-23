@@ -10,7 +10,8 @@ import "./lessons.css";
 /**
  * The ten seconds after a delete in which it can be taken back (KC5): the list's toast, counting the service's own
  * `undo_until` down and offering Undo. A window that runs out hides the toast; the service keeps the delete final, and an
- * Undo it no longer accepts says why in a toast of its own. Undo puts the lesson back and reads the list again.
+ * Undo it no longer accepts (404) says why in a toast of its own. Any other failure says why and leaves Undo open until
+ * the window runs out. Undo puts the lesson back and reads the list again.
  */
 export function LessonUndoToast({ onUndone }: { onUndone?: () => void }) {
   const pending = useLessonUndo((state) => state.pending);
@@ -18,7 +19,7 @@ export function LessonUndoToast({ onUndone }: { onUndone?: () => void }) {
   const [busy, setBusy] = useState(false);
   const left = pending ? Math.max(0, Math.ceil((pending.until - now) / 1000)) : 0;
   useEffect(() => {
-    if (pending && left <= 0) clearLessonUndo();
+    if (pending && left <= 0) clearLessonUndo(pending.id);
   }, [pending, left]);
   if (!pending || left <= 0) return null;
   const undo = async () => {
@@ -26,11 +27,12 @@ export function LessonUndoToast({ onUndone }: { onUndone?: () => void }) {
     setBusy(true);
     try {
       await lessonsApi.undo(pending.id);
-      clearLessonUndo();
+      clearLessonUndo(pending.id);
       onUndone?.();
     } catch (error) {
       const one = toFailure(error);
-      clearLessonUndo();
+      // Only the service saying the delete is final closes the window; a lost connection or a 5xx leaves Undo to try again.
+      if (one.status === 404) clearLessonUndo(pending.id);
       useUi.getState().pushToast(one.message);
     } finally {
       setBusy(false);

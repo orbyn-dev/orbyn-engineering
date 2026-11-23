@@ -22,4 +22,6 @@ export const useLessonUndo = create<LessonUndoState>(() => ({ pending: null }));
 
 export const showLessonUndo = (pending: LessonUndo): void => useLessonUndo.setState({ pending });
 
-export const clearLessonUndo = (): void => useLessonUndo.setState({ pending: null });
+/** Closes the open Undo. With an id it closes only that delete's, so a late answer for one delete cannot close the next. */
+export const clearLessonUndo = (id?: string): void =>
+  useLessonUndo.setState((state) => (id === undefined || state.pending?.id === id ? { pending: null } : state));

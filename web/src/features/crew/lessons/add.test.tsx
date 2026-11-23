@@ -6,7 +6,7 @@ import { LessonAddPage } from "./LessonAddPage";
 import { lesson, project, stubFetch, writes, type Answer, type Call, type Write } from "./support";
 
 let calls: Call[] = [];
-let answers: { preview?: Answer; projects?: Answer; write?: (one: Write) => Answer };
+let answers: { preview?: Answer; projects?: Answer; list?: Answer; write?: (one: Write) => Answer };
 
 const notFound = { status: 404, body: { code: "not_found", message: "No such route." } } as const;
 
@@ -31,6 +31,15 @@ describe("adding a lesson by hand", () => {
     await waitFor(() => expect(calls.some(({ url }) => url.includes("/api/crew/preview"))).toBe(true));
     await waitFor(() => expect(container).toBeEmptyDOMElement());
     expect(calls.some(({ url }) => url.includes("/api/crew/lessons"))).toBe(false);
+  });
+
+  it("draws nothing when the lessons read answers 404 not_found, as a service without the lessons routes does", async () => {
+    answers.list = notFound;
+    const { container } = open();
+    await waitFor(() => expect(calls.some(({ url }) => url.includes("/api/crew/lessons?"))).toBe(true));
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    expect(screen.queryByRole("textbox", { name: "Lesson text" })).toBeNull();
+    expect(writes(calls, "POST")).toHaveLength(0);
   });
 
   it("draws the form, its scope choice and its 300-character count, and sends nothing yet", async () => {

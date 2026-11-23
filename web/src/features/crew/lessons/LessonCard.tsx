@@ -42,12 +42,14 @@ import {
 } from "./LessonParts";
 import "./lessons.css";
 
-/** A write that did not happen, in its own banner: the headline, the detail, and the one action that could retry it. */
+/** A write that did not happen, in its own banner: the headline and the detail. */
 interface Failure {
   title: string;
   detail: string;
-  retry?: () => void;
 }
+
+/** The service's `stale` answer: the lesson changed since it was read, so the next write needs the fresh revision. */
+const isStale = (error: { code: string }): boolean => error.code === "stale";
 
 /**
  * One lesson's card (KC5, part B): the whole lesson as the read carries it, where it came from, how it is used, and the
@@ -95,6 +97,11 @@ function Loaded({ read, repo, name }: { read: LessonReader & { status: "ready" }
     read.setLesson(next);
     setRefused(false);
     setFailure(null);
+    setSaved(null);
+  };
+  /** A write the service refused as stale: read the lesson again, so what is drawn and the next write use its revision. */
+  const reloadIfStale = (error: { code: string }) => {
+    if (isStale(error)) void read.reload();
   };
   const startEdit = () => {
     setSaved(null);
@@ -109,7 +116,11 @@ function Loaded({ read, repo, name }: { read: LessonReader & { status: "ready" }
     setSaved(null);
     void (lesson.state === "disabled" ? lessonsApi.enable(lesson.id, lesson.rev) : lessonsApi.disable(lesson.id, lesson.rev))
       .then(apply)
-      .catch((error: unknown) => setFailure({ title: "Can’t save the lesson", detail: saveFailureDetail(toFailure(error)) }))
+      .catch((error: unknown) => {
+        const one = toFailure(error);
+        setFailure({ title: "Can’t save the lesson", detail: saveFailureDetail(one) });
+        reloadIfStale(one);
+      })
       .finally(() => setBusy(null));
   };
   const promote = () => {
@@ -134,7 +145,11 @@ function Loaded({ read, repo, name }: { read: LessonReader & { status: "ready" }
         showLessonUndo({ id: answer.id, until: deadline, seconds: Math.max(1, Math.ceil((deadline - Date.now()) / 1000)) });
         navigate({ name: "settings", section: "crew", crewPage: "lessons", repo });
       })
-      .catch((error: unknown) => setFailure({ title: "Can’t delete the lesson", detail: toFailure(error).message }))
+      .catch((error: unknown) => {
+        const one = toFailure(error);
+        setFailure({ title: "Can’t delete the lesson", detail: saveFailureDetail(one) });
+        reloadIfStale(one);
+      })
       .finally(() => setBusy(null));
   };
 
@@ -144,6 +159,7 @@ function Loaded({ read, repo, name }: { read: LessonReader & { status: "ready" }
         detail={detail}
         repo={repo}
         name={name}
+        onStale={reloadIfStale}
         onCancel={() => {
           setEditing(false);
           setFailure(null);
@@ -162,7 +178,7 @@ function Loaded({ read, repo, name }: { read: LessonReader & { status: "ready" }
       {lesson.state === "disabled" ? <OffBanner /> : null}
       {lesson.left_out_of > 0 ? <LeftOutBanner count={lesson.left_out_of} /> : null}
       {refused ? <PromoteRefused onEdit={startEdit} /> : null}
-      {failure ? <WriteFailure title={failure.title} detail={failure.detail} onRetry={failure.retry} /> : null}
+      {failure ? <WriteFailure title={failure.title} detail={failure.detail} /> : null}
       <TheLesson lesson={lesson} />
       <div className="cx-t13row">
         <button type="button" className="cx-ghost" disabled={busy !== null} onClick={startEdit}>
@@ -310,12 +326,14 @@ function EditLesson({
   detail,
   repo,
   name,
+  onStale,
   onCancel,
   onSaved,
 }: {
   detail: LessonDetail;
   repo: string;
   name: string;
+  onStale(error: { code: string }): void;
   onCancel(): void;
   onSaved(lesson: Lesson): void;
 }) {
@@ -324,6 +342,7 @@ function EditLesson({
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [refused, setRefused] = useState(false);
+  // Try again is `send` itself, drawn fresh each render, so it sends the text as it is now and the revision as it is now.
   const send = () => {
     if (saving) return;
     const next = text.trim();
@@ -338,13 +357,16 @@ function EditLesson({
         const one = toFailure(error);
         setSaving(false);
         if (one.code === "secret_refused") setRefused(true);
-        else setFailure({ title: "Can’t save the lesson", detail: saveFailureDetail(one), retry: send });
+        else {
+          setFailure({ title: "Can’t save the lesson", detail: saveFailureDetail(one) });
+          onStale(one);
+        }
       });
   };
   return (
     <>
       {refused ? <SecretRefused /> : null}
-      {failure ? <WriteFailure title={failure.title} detail={failure.detail} onRetry={failure.retry} /> : null}
+      {failure ? <WriteFailure title={failure.title} detail={failure.detail} onRetry={send} /> : null}
       <Intro>Editing changes the lesson’s text. Saving runs the secret scan again. What it was learned from, and when, stay as they are.</Intro>
       <LessonField value={text} onChange={setText} invalid={refused} readOnly={saving} autoFocus />
       <FormFoot
