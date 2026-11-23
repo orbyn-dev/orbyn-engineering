@@ -1371,3 +1371,188 @@ fn migration_77_keeps_background_rows_and_adds_the_watch_tables() {
         assert_eq!(left, 0, "{table}");
     }
 }
+
+#[test]
+fn migration_82_keeps_background_rows_and_lets_a_run_never_start() {
+    let versions: Vec<i64> = migrations::MIGRATIONS.iter().map(|(v, _)| *v).collect();
+    assert!(versions.contains(&82));
+    let before = *versions
+        .iter()
+        .filter(|version| **version < 82)
+        .max()
+        .unwrap();
+
+    let dir = TempDir::new();
+    let path = dir.path().join("old.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)").unwrap();
+    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v < 82) {
+        conn.execute_batch(sql).unwrap();
+        conn.execute(
+            "INSERT INTO schema_migrations VALUES (?1,'fixture')",
+            [version],
+        )
+        .unwrap();
+    }
+    // A crew from before the slice, with a run and its daily row.
+    conn.execute(
+        "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+         budget_turns, budget_minutes, enabled, created_at, updated_at, daily_runs, daily_turns, utc_offset_minutes)
+         VALUES ('old', 'project-1', 'Old', 'fix_failing_ci', 'schedule', '{\"every_hours\":6}',
+                 10, 30, 1, 'created', 'updated', 2, 40, 600)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO crew_background_runs (id, background_id, state, stop_reason, turns_spent, minutes_spent,
+         budget_turns, budget_minutes, review_waiting, review_reason, started_at, updated_at, ended_at)
+         VALUES ('run-1', 'old', 'stopped', 'budget', 10, 30, 10, 30, 1, 'budget', 'started', 'updated', 'ended')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO crew_background_daily (background_id, run_id, day, engine, turns_spent)
+         VALUES ('old', 'run-1', '2026-11-01', 'claude', 10)",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let store = Store::open(&path, "not-started-upgrade").unwrap();
+    let upgrade = store.upgrade().expect("an upgrade");
+    assert_eq!(
+        (upgrade.from, upgrade.to),
+        (before, *versions.last().unwrap()),
+        "every later migration is applied too"
+    );
+
+    // Every column and row of the rebuilt run table survived, with no code attached to a run that stopped.
+    let run = store.background_run("run-1").unwrap().unwrap();
+    assert_eq!(
+        (
+            run.background_id.as_str(),
+            run.state.as_str(),
+            run.stop_reason.as_deref(),
+            run.reason_code.as_deref(),
+            run.turns_spent,
+            run.minutes_spent,
+            run.review_waiting,
+            run.review_reason.as_deref(),
+            run.started_at.as_str(),
+            run.ended_at.as_deref(),
+        ),
+        (
+            "old",
+            "stopped",
+            Some("budget"),
+            None,
+            10,
+            30,
+            true,
+            Some("budget"),
+            "started",
+            Some("ended"),
+        )
+    );
+    // The daily ledger's run link survived the rebuild of both tables, and still cascades.
+    let daily: u32 = store
+        .reader()
+        .query_row(
+            "SELECT turns_spent FROM crew_background_daily WHERE background_id = 'old' AND run_id = 'run-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(daily, 10);
+
+    // A run that never started is stopped with the code alone: no stop reason, nothing spent, nobody waiting.
+    store
+        .writer()
+        .execute(
+            "INSERT INTO crew_background_runs (id, background_id, state, reason_code, budget_turns, budget_minutes,
+             started_at, updated_at, ended_at)
+             VALUES ('run-2', 'old', 'stopped', 'disk_low', 10, 30, 's', 's', 's')",
+            [],
+        )
+        .unwrap();
+    let never = store.background_run("run-2").unwrap().unwrap();
+    assert_eq!(
+        (
+            never.state.as_str(),
+            never.stop_reason.as_deref(),
+            never.reason_code.as_deref(),
+            never.review_waiting,
+            never.turns_spent,
+            never.ended_at.is_some(),
+        ),
+        ("stopped", None, Some("disk_low"), false, 0, true)
+    );
+    // The table's own rules still hold: a stopped row needs one of the two reasons and never both, a running row has
+    // neither, and the budget it was given cannot be changed.
+    for (name, sql) in [
+        (
+            "stopped with neither",
+            "INSERT INTO crew_background_runs (id, background_id, state, budget_turns, budget_minutes, started_at,
+             updated_at, ended_at) VALUES ('bad-1', 'old', 'stopped', 10, 30, 's', 's', 's')",
+        ),
+        (
+            "stopped with both",
+            "INSERT INTO crew_background_runs (id, background_id, state, stop_reason, reason_code, budget_turns,
+             budget_minutes, started_at, updated_at, ended_at)
+             VALUES ('bad-2', 'old', 'stopped', 'budget', 'disk_low', 10, 30, 's', 's', 's')",
+        ),
+        (
+            "running with a code",
+            "INSERT INTO crew_background_runs (id, background_id, state, reason_code, budget_turns, budget_minutes,
+             started_at, updated_at) VALUES ('bad-3', 'old', 'running', 'disk_low', 10, 30, 's', 's')",
+        ),
+    ] {
+        assert!(
+            store.writer().execute(sql, []).is_err(),
+            "{name} was accepted"
+        );
+    }
+    assert!(
+        store
+            .writer()
+            .execute(
+                "UPDATE crew_background_runs SET budget_turns = 99 WHERE id = 'run-2'",
+                []
+            )
+            .is_err()
+    );
+
+    // The rebuilt index and link still hold: only one run of a crew runs, and deleting the crew cascades both tables.
+    store
+        .writer()
+        .execute(
+            "INSERT INTO crew_background_runs (id, background_id, state, budget_turns, budget_minutes, started_at,
+             updated_at) VALUES ('run-3', 'old', 'running', 10, 30, 'r', 'r')",
+            [],
+        )
+        .unwrap();
+    assert!(
+        store
+            .writer()
+            .execute(
+                "INSERT INTO crew_background_runs (id, background_id, state, budget_turns, budget_minutes, started_at,
+                 updated_at) VALUES ('run-4', 'old', 'running', 10, 30, 'r', 'r')",
+                [],
+            )
+            .is_err(),
+        "two runs of one crew ran at once"
+    );
+    store
+        .writer()
+        .execute("DELETE FROM crew_background WHERE id = 'old'", [])
+        .unwrap();
+    for table in ["crew_background_runs", "crew_background_daily"] {
+        let left: u32 = store
+            .reader()
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(left, 0, "{table}");
+    }
+}

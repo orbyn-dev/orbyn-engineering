@@ -238,6 +238,7 @@ pub(super) fn run_wire(run: BackgroundRunRow) -> Result<wire::BackgroundRun> {
     Ok(wire::BackgroundRun {
         state: parse_wire(&run.state)?,
         stop_reason: run.stop_reason.as_deref().map(parse_wire).transpose()?,
+        reason_code: run.reason_code,
         budget: budget_wire(run.budget_turns, run.budget_minutes),
         id: run.id,
         crew_id: run.background_id,

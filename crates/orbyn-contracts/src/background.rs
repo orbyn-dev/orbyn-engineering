@@ -200,6 +200,11 @@ pub struct BackgroundRun {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub stop_reason: Option<BackgroundStopReason>,
+    /// Why a run never started, such as `disk_low`, and absent once a run starts: a not-started run is `stopped`
+    /// with this code and no stop reason.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub reason_code: Option<String>,
     pub turns_spent: u32,
     pub minutes_spent: u32,
     pub budget: BackgroundBudget,

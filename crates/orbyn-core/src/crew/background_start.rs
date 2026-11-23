@@ -6,7 +6,11 @@
 //! **The lead thread runs no engine.** It exists so the task has a crew and a project. Nothing in the crew's own paths sends it a
 //! prompt (the retry and the lead notices refuse a background lead), and a person's message to it is refused at admission: the run is
 //! the person's to read, not a lead's to answer. A run's id is its lead thread's id, which is also the `crew_id` of every task of
-//! that thread, so a task finds its run (and the run its tasks) with no extra column.
+//! that thread, so a task finds its run (and the run its tasks) with no extra column. A run that never started has no lead thread.
+//!
+//! **A start the disk guard refuses keeps its row.** Every other refusal before a task exists takes its run and lead thread back and
+//! returns an error. A disk refusal is different: the run stays as the crew's history, ended `stopped` with `reason_code`
+//! `disk_low` and the disk sentence, waiting for nobody, and its lead thread is removed with it. The person still gets the error.
 //!
 //! **What a task's end means for the run.** A task that passed ends the run `needs_review`. A budget stop, a loop-guard stop and an
 //! engine error end it `stopped` with that reason. Anything else that ends a task without a person (a cancel, too many denials, text
@@ -45,6 +49,8 @@ const MAX_FILES: u64 = 50;
 const MAX_LINES: u64 = 2000;
 /// The longest sentence kept as why a run waits, in characters.
 const WHY_MAX: usize = 300;
+/// The `reason_code` of a run the disk guard refused: the volume holding the project was under the person's floor, so no worker ran.
+const DISK_LOW: &str = "disk_low";
 
 /// What a template asks for, in the words of the task. Code-owned: no repository text and no event text is part of it.
 fn outcome(template: &str, branch: Option<&str>) -> Result<String> {
@@ -278,6 +284,15 @@ impl Core {
         }
         match (launched, run) {
             (Err(error), Some(run)) if run.state == "running" => {
+                // A disk refusal never deletes its run: the stopped row is the only history of the start that never happened.
+                // Nothing of the task was stored (the gate sits before it), so the lead thread goes and the row keeps its id.
+                // Every other refusal before a task still takes the run and the thread back.
+                if error.code == ErrorCode::DiskLow {
+                    let why = redact(&error.message);
+                    self.store
+                        .end_background_run_not_started(&thread.id, DISK_LOW, &why, "crew")?;
+                    return Err(refusal(error));
+                }
                 self.unwind_background_start(&thread.id, refusal(error))
             }
             (_, Some(run)) => run_wire(run),
