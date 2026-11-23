@@ -541,8 +541,10 @@ cannot answer after a newer read, a forget or an engine configuration change. No
 report is exposed through the no-I/O `cached_limits` path: Crew treats it as not reported,
 and scheduled near-limit checks still ask the engine afresh. Only Codex's `rateLimits`,
 `rateLimitsByLimitId` and plan leave the driver; its account ID, upsell copy and
-reset-credit offers are dropped; `?force=true` reads again and
-spends no model usage. `/api/limits` also gives one number per window length across
+reset-credit offers are dropped; `?force=true` reads again, spends no model usage and
+skips no window or fence, because no report is kept: a forced read takes the same
+fences and the same bounded provider read.
+`/api/limits` also gives one number per window length across
 engines, the highest used percentage, since that engine stops first. The overview excludes
 the Claude family, including named instances, before any status or usage probe; an explicit
 engine/thread limits read can still ask Claude.
