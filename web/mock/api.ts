@@ -19,6 +19,7 @@ import type {
   Approval,
   EngineModels,
   CleanupPreview,
+  Diagnostics,
   EngineStatus,
   Project,
   ProjectFileView,
@@ -213,6 +214,8 @@ export function createMockApi(options: MockOptions = {}) {
   let browserProfiles: { id: string; name: string; in_use: boolean }[] = [];
   /** The thread each imported agent-history session became, by `engine:session_id`. */
   const importedHistory = new Map<string, string>();
+  /** What a test changed of the diagnostics the service reports (events, processes, database). */
+  let diagnosticsPatch: Partial<Diagnostics> = {};
   /** Tasks whose webhook has an address; the token itself is never kept, as in the service. */
   const hooks = new Set<string>(["task-hook"]);
   let failures: Failure[] = [];
@@ -308,6 +311,7 @@ export function createMockApi(options: MockOptions = {}) {
     failures = [];
     clones = [];
     importedHistory.clear();
+    diagnosticsPatch = {};
     cloneError = null;
     reviewsSent.clear();
     detailsReads = 0;
@@ -553,7 +557,9 @@ export function createMockApi(options: MockOptions = {}) {
       library: { ...updates.library, dirty, can_apply: libraryReason === null, blocked_reason: libraryReason },
       app: {
         ...updates.app,
-        blocked_reason: updates.app.mode === "server" ? updates.app.blocked_reason : runsReason,
+        // The desktop app says it in the service's words (operations/updates.rs); the other modes keep the count.
+        blocked_reason: updates.app.mode === "server" ? updates.app.blocked_reason
+          : updates.app.mode === "desktop" ? (runs > 0 ? "Finish or stop active runs first." : updates.app.blocked_reason) : runsReason,
       },
     };
   };
@@ -987,7 +993,7 @@ export function createMockApi(options: MockOptions = {}) {
       case "POST /api/acp":
         return acpRegistry.some((entry) => entry.id === seg[3]) ? { status: 204 } : err(404, "not_found", "That agent is not in the registry.");
       case "GET /api/diagnostics":
-        return { status: 200, body: diagnostics(Date.now()) };
+        return { status: 200, body: { ...diagnostics(Date.now()), ...diagnosticsPatch } };
       case "POST /api/diagnostics":
         return seg[2] === "otlp" ? { status: 200, body: { ok: true, status: 200, message: null } } : { status: 204 };
       // No desktop app is attached to this service.
@@ -1643,6 +1649,10 @@ export function createMockApi(options: MockOptions = {}) {
     /** Replaces what Settings › Browser lists (the "browser-profiles" scenario answers it), for ids and names the scenario does not hold. */
     setBrowserProfiles(rows: { id: string; name: string; in_use: boolean }[]) {
       browserProfiles = rows;
+    },
+    /** Changes what Settings › Maintenance reads as the service's diagnostics, until the next reset. */
+    patchDiagnostics(patch: Partial<Diagnostics>) {
+      diagnosticsPatch = { ...diagnosticsPatch, ...patch };
     },
     patchWorkspace(patch: Partial<WorkspaceStatus>) {
       managed = { ...managed, ...patch };
