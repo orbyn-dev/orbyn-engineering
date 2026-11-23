@@ -162,10 +162,18 @@ export interface WatchEvidence {
   ok: boolean;
 }
 
+/** One action on the watch strip or the ask banner. */
+export interface WatchAction {
+  label: string;
+  primary?: boolean;
+  /** Not built in the app: the frame draws a Planned pill after the label. */
+  planned?: boolean;
+}
+
 export interface WatchData {
   health: string;
-  strip: { tone: "bad" | "ok"; heading?: string; text: string; actions: { label: string; primary?: boolean }[] };
-  ask?: { heading: string; text: string; actions: { label: string; primary?: boolean }[] };
+  strip: { tone: "bad" | "ok"; heading?: string; text: string; actions: WatchAction[] };
+  ask?: { heading: string; text: string; actions: WatchAction[] };
   list?: { heading: string; summary: string; rows: CommitRow[] };
   evidence?: { heading: string; summary: string; rows: WatchEvidence[] };
   after?: { heading: string; text: string };

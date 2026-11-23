@@ -512,7 +512,7 @@ export function TerminalDrawerBody({
                     )}
                   </div>
                 ) : null}
-                {/* Hidden: draws nothing until a blocks client is installed (docs/command-blocks.md). A click writes a line into the shell, never a newline. */}
+                {/* Reads the service's blocks (docs/command-blocks.md); a shell that emits no marks leaves the terminal alone. A click writes a line into the shell, never a newline. */}
                 <CommandBlocks
                   threadId={threadId}
                   terminalId={terminal.id}

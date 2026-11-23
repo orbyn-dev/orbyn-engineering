@@ -66,12 +66,50 @@ pub(super) fn approval_row(row: &Row<'_>) -> rusqlite::Result<(Approval, String)
     ))
 }
 
+/// Adds the exact wait for this approval to the Code Mode run that asked it, from the approval's
+/// creation to its decision or expiry. A direct approval (no `via`) counts nothing, and a row created
+/// before waits were recorded (no `created_at_ms`) or a run stored before them (NULL `waited_ms`)
+/// stays without a number. This is a derived metric: a failure here is logged and never rolls back the
+/// decision that is being committed.
+pub(super) fn add_run_wait(tx: &rusqlite::Transaction<'_>, approval: &Approval) {
+    if let Err(error) = add_run_wait_in(tx, approval) {
+        tracing::warn!(%error, approval = %approval.id, "could not add a Code Mode wait");
+    }
+}
+
+fn add_run_wait_in(tx: &rusqlite::Transaction<'_>, approval: &Approval) -> Result<()> {
+    let Some(via) = &approval.via else {
+        return Ok(());
+    };
+    let started: Option<i64> = tx.query_row(
+        "SELECT created_at_ms FROM approvals WHERE id = ?1",
+        [&approval.id],
+        |row| row.get(0),
+    )?;
+    let Some(started) = started else {
+        return Ok(());
+    };
+    // Cap the column below i64::MAX so SQLite never promotes the sum to REAL.
+    const MAX_WAITED: i64 = i64::MAX / 2;
+    let waited = crate::util::unix_now_ms().saturating_sub(started).max(0);
+    tx.execute(
+        "UPDATE code_runs SET waited_ms = CASE
+                WHEN waited_ms > ?3 - ?2 THEN ?3
+                ELSE waited_ms + ?2
+            END
+         WHERE run_id = ?1 AND waited_ms IS NOT NULL",
+        params![via.code_run, waited, MAX_WAITED],
+    )?;
+    Ok(())
+}
+
 impl Store {
     /// Creates a pending approval and moves the run to `awaiting_approval`.
     /// Fails for a finished run, which the caller must treat as a denial.
     pub fn create_approval(&self, new: NewApproval) -> Result<Approval> {
         self.commit(|tx, appended| {
             let guard = guard_active(tx, &self.epoch, &new.run_id)?;
+            let created_at_ms = crate::util::unix_now_ms();
             let approval = Approval {
                 id: new.id,
                 thread_id: guard.thread_id.clone(),
@@ -100,8 +138,8 @@ impl Store {
             )?;
             tx.execute(
                 "INSERT INTO approvals (id, thread_id, run_id, engine, kind, target, summary,
-                    detail, state, created_at, via)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', ?9, ?10)",
+                    detail, state, created_at, via, created_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', ?9, ?10, ?11)",
                 params![
                     approval.id,
                     approval.thread_id,
@@ -116,7 +154,8 @@ impl Store {
                         .via
                         .as_ref()
                         .map(serde_json::to_string)
-                        .transpose()?
+                        .transpose()?,
+                    created_at_ms
                 ],
             )?;
             // A question for you ends a snooze early.
@@ -230,6 +269,7 @@ impl Store {
             approval.state = state;
             approval.decided_by = Some(actor.to_owned());
             approval.decided_at = Some(stamp.clone());
+            add_run_wait(tx, &approval);
             if remember {
                 self.remember_rule(
                     tx,

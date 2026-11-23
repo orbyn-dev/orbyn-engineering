@@ -10,7 +10,7 @@ export function FlowOffline() {
       <div className="cx-cwpg">
             <FlowHead sub="Login redirect crew · Task: Use next in the auth redirect · 5 runs" acts />
             <div className="cx-cwtabs">
-              <Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox · 4", "Report"]} on={0} />
+              <Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox", "Report"]} on={0} />
               <span className="cx-end">Claude Code 412k of 1M tokens · Codex not reported while offline · 2h 14m<span className="cx-cwpv" title="Planned: no Flow route reports usage yet">Planned</span></span>
             </div>
             <div className="cx-flcr">
@@ -32,7 +32,7 @@ export function FlowOffline() {
               <span className="cx-fh" style={{ left: "904px", top: "22px", width: "93px" }}><Ic n="git" sm />Main</span>
               <span className="cx-fh" style={{ left: "1017px", top: "22px", width: "93px" }}><Ic n="user" sm />You</span>
               <span className="cx-fg" style={{ left: "113px", top: "0", width: "206px" }}>Build</span>
-              <span className="cx-fg" style={{ left: "339px", top: "0", width: "432px" }}>Prove: separate runs, no limit</span>
+              <span className="cx-fg" style={{ left: "339px", top: "0", width: "432px" }}>Prove: separate runs</span>
               <span className="cx-fg" style={{ left: "791px", top: "0", width: "206px" }}>Land: no human wait</span>
               <span className="cx-fg" style={{ left: "1017px", top: "0", width: "93px" }}>You</span>
               <svg className="cx-fe" width="1110" height="322" aria-hidden="true">

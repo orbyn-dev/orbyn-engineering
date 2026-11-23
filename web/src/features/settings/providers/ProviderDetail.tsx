@@ -19,6 +19,7 @@ import { FeedbackAction, hasFeedback, UpdateAction, useCustomModels } from "./Pr
 import type { InstanceStore } from "./ProviderInstances";
 import { patchInstance } from "./providerInstanceData";
 import { EngineHostBanner, EngineHostCard } from "../engineHost/HostCard";
+import { ClaudePathBanner, ClaudePathSettings } from "./ClaudePath";
 import { KeyStorageRow } from "../engineHost/KeyStorage";
 import { EngineGapCard } from "../engineHost/NeedsAttention";
 
@@ -109,6 +110,7 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
   const running = useWorkspace((state) => Object.values(state.threads).find((thread) => thread.engine === engine.id && thread.active_run !== null));
   const instance = store.instances.find((entry) => entry.id === engine.id);
   const opencode = (engine.instance_of ?? engine.id) === "opencode";
+  const claudePath = engine.id === "claude";
   const removable = instance !== undefined || engine.tier !== "native";
   const hasNewer = engine.latest !== null && engine.latest !== engine.version;
   const recheck = async () => {
@@ -131,7 +133,7 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
       {issue || engine.problem ? <SettingsBanner tone="err" actions={<Button small busy={checking} onClick={() => void recheck()}>Check again</Button>}>
         {issue ?? `${engine.path ? `Couldn’t run ${engine.path}. ` : ""}${engine.problem}`}
       </SettingsBanner> : null}
-      <EngineHostBanner engineId={engine.id} />
+      {claudePath ? <ClaudePathBanner /> : <EngineHostBanner engineId={engine.id} />}
       {failure ? <p className="field-error" role="alert">{failure}</p> : null}
       {!engine.installed ? <VendorInstall engine={engine} view={install} checking={checking} onCheck={() => void recheck()} /> : null}
       <InstallBanner engine={engine} view={install} />
@@ -151,8 +153,9 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
         </SettingRow>
         <KeyStorageRow engineId={engine.id} />
         <SettingRow title="Location"><code className="set-path">{engine.path ?? "Not found"}</code></SettingRow>
+        {claudePath ? <ClaudePathSettings /> : null}
       </SettingGroup>
-      <EngineHostCard engineId={engine.id} />
+      {claudePath ? null : <EngineHostCard engineId={engine.id} />}
       <EngineGapCard engine={engine} />
       {engine.installed && !engine.update_command && engine.manual_hint && !engine.compatibility ? <p className="setting-line-desc">{engine.manual_hint}</p> : null}
       {engine.installed && !opencode ? <CodeModeSetting engine={engine} /> : null}

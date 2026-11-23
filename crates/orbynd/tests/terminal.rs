@@ -288,3 +288,20 @@ async fn a_settle_script_runs_in_the_threads_own_worktree() {
         "and not in the primary clone"
     );
 }
+
+#[tokio::test]
+async fn open_attention_items_are_read_for_a_known_thread_only() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    // A plain shell never waits, so a known thread lists nothing.
+    let listed = service
+        .json(&format!("/api/threads/{thread}/terminal-attention"))
+        .await;
+    assert_eq!(listed, json!({ "items": [] }));
+    let missing = service
+        .get("/api/threads/no-such-thread/terminal-attention")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), 404);
+}

@@ -63,8 +63,8 @@ fn only_a_busy_changed_or_turned_off_thread_stops_the_action() {
         CoreError::ThreadArchived,
         CoreError::FolderUntrusted,
         invalid(THREAD_CHANGED),
-        invalid("claude is turned off for this project."),
-        invalid("claude is turned off."),
+        invalid("Claude is turned off for this project."),
+        invalid("Claude is turned off."),
     ] {
         assert!(stops_the_action(&error), "{error}");
     }

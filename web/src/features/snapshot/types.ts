@@ -22,6 +22,18 @@ export interface SnapShotSettings {
 export type SnapShotPlatform = "macos" | "windows";
 export type SnapShotNeedsSetup = "screen_recording" | "accessibility" | null;
 
+/**
+ * Screen Recording setup is built (docs/snapshots.md): the shell's `snapshot_setup` allow action prompts once and opens the
+ * System Settings pane, so the setup entry and dialog show. Flip this to false if the shell stops answering it.
+ */
+export const SNAPSHOT_SETUP_AVAILABLE = true;
+
+/**
+ * The shell's `allow_accessibility` only reads the grant back (accessible text is Planned), so no Allow Accessibility button
+ * is offered. Flip this when the shell prompts for it.
+ */
+export const SNAPSHOT_ACCESSIBILITY_SETUP_AVAILABLE = false;
+
 export interface SnapShotState {
   supported: boolean;
   platform: SnapShotPlatform;
@@ -34,6 +46,13 @@ export interface SnapShotState {
 }
 
 export type SnapShotFailureReason = "permission" | "no_window" | "too_large" | "capture_error" | "timeout";
+
+/** One `snapshot://` event payload. `excluded` carries the capture's id too when the shell knows it. */
+export interface SnapShotEventPayload {
+  id?: string;
+  reason?: SnapShotFailureReason;
+  app_name?: string;
+}
 
 export type SnapShotEventName =
   | "snapshot://requested"
@@ -165,16 +184,25 @@ export function isSnapShotTake(value: unknown): value is SnapShotTake {
     && isSnapShotSource(take.source);
 }
 
+/** The shell truncates to these limits and the service counts them in characters, so the page accepts the same counts. */
+export const MAX_SOURCE_APP_NAME_CHARS = 255;
+export const MAX_SOURCE_WINDOW_TITLE_CHARS = 1_000;
+export const MAX_SOURCE_APP_ID_CHARS = 255;
+export const MAX_SOURCE_ACCESSIBLE_TEXT_CHARS = 32_000;
+
+/** A character as the shell and service count it: a Unicode code point, not a UTF-16 code unit. */
+const charCount = (value: string): number => Array.from(value).length;
+
 /** Reads the optional source on an attachment answer, defensively: a missing or damaged one is no source. */
 export function isSnapShotSource(value: unknown): value is SnapShotSource {
   if (typeof value !== "object" || value === null) return false;
   const source = value as Record<string, unknown>;
   return source.kind === "snap_shot"
     && typeof source.captured_at === "string"
-    && typeof source.app_name === "string" && source.app_name.length <= 255
-    && typeof source.window_title === "string" && source.window_title.length <= 1000
-    && (source.app_id === undefined || (typeof source.app_id === "string" && source.app_id.length <= 255))
-    && (source.accessible_text === undefined || (typeof source.accessible_text === "string" && source.accessible_text.length <= 32_000));
+    && typeof source.app_name === "string" && charCount(source.app_name) <= MAX_SOURCE_APP_NAME_CHARS
+    && typeof source.window_title === "string" && charCount(source.window_title) <= MAX_SOURCE_WINDOW_TITLE_CHARS
+    && (source.app_id === undefined || (typeof source.app_id === "string" && charCount(source.app_id) <= MAX_SOURCE_APP_ID_CHARS))
+    && (source.accessible_text === undefined || (typeof source.accessible_text === "string" && charCount(source.accessible_text) <= MAX_SOURCE_ACCESSIBLE_TEXT_CHARS));
 }
 
 /** The body `PUT /api/attachments/{id}/source` takes: the contract's fields, and no display-only size. */

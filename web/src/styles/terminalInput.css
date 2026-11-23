@@ -237,6 +237,20 @@
   margin-left: auto;
   white-space: nowrap;
 }
+/* A row's result, from the design's `input-history` frame: a muted check when the command succeeded, a red cross when it failed. */
+.term-input-ok,
+.term-input-bad {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 14px;
+}
+.term-input-ok {
+  color: var(--color-muted);
+}
+.term-input-bad {
+  color: var(--color-danger);
+}
 .term-input-scope .text-action {
   padding: 1px 8px;
   border-radius: var(--radius-md);
