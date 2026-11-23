@@ -139,7 +139,7 @@ export type MaybeResumed = { resumed?: boolean | null; round?: number | null };
 
 export const RESUMED_CARD = "Resumed after a restart from its last verified round.";
 
-export const wasResumed = (task: MaybeResumed): boolean => task.resumed === true;
+export const wasResumed = (task: object): boolean => (task as MaybeResumed).resumed === true;
 
 /** The zoom's note: the round it resumed from is the one before the attempt now running. */
 export function resumedNote(task: MaybeResumed): string {
