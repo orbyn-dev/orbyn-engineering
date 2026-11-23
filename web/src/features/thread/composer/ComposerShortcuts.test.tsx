@@ -59,7 +59,7 @@ async function openThread(id: string) {
   const box = await screen.findByRole("textbox", { name: /^Message/ });
   await screen.findByRole("button", { name: /^Effort:/ });
   // The dispatcher needs the keymap, which loads asynchronously.
-  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
+  // Real wait: the keymap is ready when its request has been answered and applied; nothing on screen shows it, so give it a moment.
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
   return box;
 }
