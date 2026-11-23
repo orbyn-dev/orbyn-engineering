@@ -689,6 +689,46 @@ impl World {
             .worker_thread_id
             .unwrap()
     }
+
+    /// A real restart: closes this core and opens a new one on the same data folder. Fake engines
+    /// are not registered again, since a stored record and its replay only need the core.
+    pub async fn restart(self) -> World {
+        let World {
+            _dir,
+            core,
+            lead,
+            repo,
+            prompts,
+            answers,
+            steered,
+            confines,
+            crew_tasks,
+            approval_turns,
+            approval_specs,
+            ..
+        } = self;
+        let config = core.config.clone();
+        core.shutdown().await;
+        let old = Arc::downgrade(&core);
+        drop(core);
+        assert!(old.upgrade().is_none(), "the old core is gone");
+        let core = Arc::new(Core::open(config).expect("the restarted core opens"));
+        let lead_token = bind(&core, &lead, "run-lead");
+        World {
+            approval_turns,
+            approval_specs,
+            _dir,
+            core,
+            repo,
+            lead,
+            lead_token,
+            prompts,
+            answers,
+            steered,
+            confines,
+            crew_tasks,
+        }
+    }
 }
 
 /// A brief draft that writes under `src/`, and a key whose checks keep to it. The command

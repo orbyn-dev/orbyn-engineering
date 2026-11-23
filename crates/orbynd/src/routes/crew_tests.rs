@@ -871,10 +871,11 @@ fn the_wire_types_round_trip_and_carry_no_key_or_secret_field() {
     let change: wire::AutopilotModeChange =
         serde_json::from_value(json!({ "scope": "default", "mode": "on" })).unwrap();
     assert_eq!(change.id, None);
-    assert!(
+    let unknown =
         serde_json::from_value::<wire::AutopilotModeChange>(json!({ "scope": "x", "mode": "on" }))
-            .is_err()
-    );
+            .unwrap_err()
+            .to_string();
+    assert!(unknown.contains("unknown variant `x`"), "{unknown}");
     let body: wire::AutopilotAnswerBody =
         serde_json::from_value(json!({ "merge_commit": "abc1234" })).unwrap();
     assert_eq!(body.text, None);
