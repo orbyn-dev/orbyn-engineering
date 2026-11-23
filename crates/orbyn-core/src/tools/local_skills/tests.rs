@@ -165,7 +165,10 @@ fn an_edit_needs_the_revision_it_read_and_a_stale_one_is_refused() {
     local.write(LocalSkillWrite::create(SKILL), &[]).unwrap();
     let edited = SKILL.replace("follows a redirect.", "follows a redirect now.");
     let skill = local
-        .write(LocalSkillWrite::edit("redirect-checks", edited.clone(), 1), &[])
+        .write(
+            LocalSkillWrite::edit("redirect-checks", edited.clone(), 1),
+            &[],
+        )
         .unwrap();
     assert_eq!(skill.local_revision, 2);
     let before = snapshot(local.root());
@@ -572,9 +575,7 @@ fn the_cap_is_on_the_stored_file_and_a_boundary_file_is_readable() {
     let padding = MAX_SKILL_BYTES - with_revision(&exact, 1).len();
     exact.push_str(&"x".repeat(padding));
     assert_eq!(with_revision(&exact, 1).len(), MAX_SKILL_BYTES);
-    let skill = local
-        .write(LocalSkillWrite::create(exact), &[])
-        .unwrap();
+    let skill = local.write(LocalSkillWrite::create(exact), &[]).unwrap();
     assert_eq!(skill.local_revision, 1);
     let stored = local.root().join("boundary").join("SKILL.md");
     assert_eq!(
@@ -601,7 +602,11 @@ fn the_skill_file_cap_applies_when_it_is_read_by_its_explicit_name() {
     let (_dir, _store, local) = fixture();
     local.write(LocalSkillWrite::create(SKILL), &[]).unwrap();
     let folder = local.root().join("redirect-checks");
-    let over = format!("{}{}", with_name("redirect-checks"), "y".repeat(MAX_SKILL_BYTES));
+    let over = format!(
+        "{}{}",
+        with_name("redirect-checks"),
+        "y".repeat(MAX_SKILL_BYTES)
+    );
     std::fs::write(folder.join("SKILL.md"), over).unwrap();
     for file in [None, Some("SKILL.md")] {
         let error = local.read("redirect-checks", file).unwrap_err();
@@ -641,10 +646,7 @@ fn a_failed_publish_keeps_the_previous_skill_and_leaves_no_staging_file() {
     local.fail_next_publish();
     let edited = SKILL.replace("follows a redirect.", "follows a redirect never.");
     let error = local
-        .write(
-            LocalSkillWrite::edit("redirect-checks", edited, 1),
-            &[],
-        )
+        .write(LocalSkillWrite::edit("redirect-checks", edited, 1), &[])
         .unwrap_err();
     assert!(matches!(error, CoreError::Internal(_)), "{error}");
     // The previous skill is whole and the failed attempt's staging file is gone.
