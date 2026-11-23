@@ -281,7 +281,10 @@ impl LocalSkills {
                 if current.local_revision != edit.local_revision {
                     return Err(stale());
                 }
-                let revision = current.local_revision.saturating_add(1);
+                // A revision that cannot advance would let two edits both pass the stale check.
+                let Some(revision) = current.local_revision.checked_add(1) else {
+                    return Err(stale());
+                };
                 let text = capped(&write.text, revision)?;
                 (Some(current), text, revision)
             }

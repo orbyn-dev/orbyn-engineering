@@ -739,3 +739,29 @@ fn an_area_that_is_a_link_is_refused_and_nothing_is_written_through_it() {
     );
     assert!(local.list().unwrap().is_empty());
 }
+
+#[test]
+fn a_skill_whose_revision_cannot_advance_is_not_edited() {
+    let (_dir, _store, local) = fixture();
+    local.write(LocalSkillWrite::create(SKILL), &[]).unwrap();
+    let file = local.root().join("redirect-checks/SKILL.md");
+    let text = std::fs::read_to_string(&file).unwrap().replace(
+        "local_revision: 1",
+        &format!("local_revision: {}", u32::MAX),
+    );
+    std::fs::write(&file, &text).unwrap();
+    let before = snapshot(local.root());
+
+    let error = local
+        .write(
+            LocalSkillWrite::edit("redirect-checks", SKILL, u32::MAX),
+            &[],
+        )
+        .unwrap_err();
+    assert_eq!(error.status(), 409, "{error}");
+    assert_eq!(
+        snapshot(local.root()),
+        before,
+        "a refused edit changes nothing"
+    );
+}
