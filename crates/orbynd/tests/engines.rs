@@ -5,6 +5,30 @@ mod support;
 use serde_json::{Value, json};
 use support::*;
 
+#[tokio::test]
+async fn engine_feedback_refuses_wrong_types_without_echoing_values() {
+    let dir = TempDir::new();
+    let (service, _) = setup(&dir, Options::default(), "codex").await;
+    let response = service
+        .post("/api/engines/codex/feedback")
+        .json(&json!({ "reason": 48190273 }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    let body = response.text().await.unwrap();
+    assert!(
+        !body.contains("48190273"),
+        "value leaked in refusal: {body}"
+    );
+    assert_eq!(status, 400);
+    assert!(
+        body.contains("reason"),
+        "field missing from refusal: {body}"
+    );
+    service.stop().await;
+}
+
 async fn set_instances(service: &Service, list: Value) -> (u16, Value) {
     let response = service
         .client

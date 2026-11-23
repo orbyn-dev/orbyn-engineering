@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 
 use crate::http::{ApiFailure, AppState};
 
+use super::precompressed;
+
 const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
     img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; \
     base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
@@ -222,7 +224,11 @@ pub async fn serve(State(state): State<AppState>, request: Request) -> Response 
         return ApiFailure::new(StatusCode::NOT_FOUND, "no_ui", "No UI is installed.")
             .into_response();
     };
-    let target = match resolve(root, &path).filter(|candidate| candidate.is_file()) {
+    // A compressed sibling is a transport artifact, never a resource, so a request naming
+    // one falls through like any other name this directory does not serve.
+    let target = match resolve(root, &path)
+        .filter(|candidate| candidate.is_file() && !precompressed::is_sibling(candidate))
+    {
         Some(target) => target,
         None if is_asset_path(&path) => {
             return StatusCode::NOT_FOUND.into_response();
@@ -236,19 +242,25 @@ pub async fn serve(State(state): State<AppState>, request: Request) -> Response 
             index
         }
     };
+    // A sibling the UI build compressed is served as it is: no per-request CPU, and a
+    // better ratio than compressing this request's bytes could reach.
+    let served = precompressed::negotiate(&target, request.headers()).await;
     let (gzip_quality, identity_quality) = encoding_qualities(request.headers());
-    if gzip_quality == 0 && identity_quality == 0 {
+    if served.is_none() && gzip_quality == 0 && identity_quality == 0 {
         let mut response = StatusCode::NOT_ACCEPTABLE.into_response();
         response
             .headers_mut()
             .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
         return response;
     }
-    let try_gzip = gzip_quality > 0
+    let try_gzip = served.is_none()
+        && gzip_quality > 0
         && (identity_quality == 0 || (gzip_quality >= identity_quality && compressible(&target)));
     #[cfg(test)]
     read_observer::attempted(&target);
-    let loaded = if try_gzip {
+    let loaded = if let Some(served) = served {
+        Ok((served.bytes, Some(served.encoding)))
+    } else if try_gzip {
         #[cfg(test)]
         if COMPRESS_SLOTS.available_permits() == 0 {
             read_observer::waiting(&target);
@@ -276,17 +288,17 @@ pub async fn serve(State(state): State<AppState>, request: Request) -> Response 
             Ok(Ok((original, Some(Ok(encoded)))))
                 if identity_quality == 0 || encoded.len() < original.len() =>
             {
-                Ok((encoded, true))
+                Ok((encoded, Some("gzip")))
             }
-            Ok(Ok((original, _))) if identity_quality > 0 => Ok((original, false)),
+            Ok(Ok((original, _))) if identity_quality > 0 => Ok((original, None)),
             Ok(Err(error)) => Err(error),
             _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     } else {
-        read_file(&target).await.map(|bytes| (bytes, false))
+        read_file(&target).await.map(|bytes| (bytes, None))
     };
     match loaded {
-        Ok((bytes, compressed)) => {
+        Ok((bytes, encoding)) => {
             let relative = target.strip_prefix(root).unwrap_or(&target);
             let digest = Sha256::digest(&bytes)
                 .iter()
@@ -316,8 +328,8 @@ pub async fn serve(State(state): State<AppState>, request: Request) -> Response 
             };
             let headers = response.headers_mut();
             headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
-            if compressed {
-                headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+            if let Some(encoding) = encoding {
+                headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static(encoding));
             }
             if let Ok(value) = HeaderValue::from_str(&etag) {
                 headers.insert(header::ETAG, value);

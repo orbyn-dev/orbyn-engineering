@@ -8,6 +8,7 @@ decide where each applies (Settings › Secrets, W4).
 | `builtin` | The recognised formats: id, label, example, the class Crew's refusals name, the patterns |
 | `custom` | A person's pattern: reading it (text or regular expression), the checks and limits, plain-words errors |
 | `redactor` | The compiled detectors and what they do to text: find, spans, `[hidden: label]`, dots |
+| `prefilter` | The one-pass set that names the detectors that can match, so the rest skip their pass; a pattern too big for a set keeps its own |
 | `settings` | The stored document, its safe defaults and the per-surface and per-project rules |
 | `api` | Reading the view, one change at a time with its audit row, trying a pattern |
 

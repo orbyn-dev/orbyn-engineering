@@ -1,6 +1,6 @@
 //! Crew Flow (Preview) over HTTP: the crews that have work, a crew's tasks with the ten cells of each, one task zoomed,
-//! one task's checks, artifacts and diff, and one task's Run page. Reads only: five GETs, each listed in
-//! `orbyn_core::crew::changes::READS`, so Autopilot's N1 marker does not treat them as changes. Nothing here approves,
+//! one task's checks, artifacts and diff, one task's Run page, and one of its reviewer lanes in full. Reads only: six GETs, each listed
+//! in `orbyn_core::crew::changes::READS`, so Autopilot's N1 marker does not treat them as changes. Nothing here approves,
 //! merges or reverts. Transport only: `orbyn_core::crew` builds every view and keeps the answer key, check text, repros,
 //! thread ids and paths out of them; the Run page is the one read that names a check's command, and it never names the
 //! key's id or its expectations (`docs/crew-run-page.md`). The artifacts read runs read-only git for its diff. The routes
@@ -22,6 +22,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/crew/flow/tasks", get(tasks))
         .route("/api/crew/flow/tasks/{id}", get(task))
         .route("/api/crew/flow/tasks/{id}/artifacts", get(task_artifacts))
+        .route("/api/crew/flow/tasks/{id}/lanes", get(lanes))
         .route("/api/crew/flow/tasks/{id}/run", get(run))
 }
 
@@ -71,6 +72,20 @@ async fn task_artifacts(
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.crew_flow_task_artifacts(&id).await?))
+}
+
+/// `lane` (required): the lane's own name, as the task zoom shows it.
+async fn lanes(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    let lane = query
+        .0
+        .get("lane")
+        .map(String::as_str)
+        .ok_or_else(|| CoreError::Invalid("lane is required".into()))?;
+    Ok(Json(state.core.crew_flow_lane(&id, lane)?))
 }
 
 /// One task's Run page: its prompt, the checks the verifier ran, what was not verified and the pull request it made.

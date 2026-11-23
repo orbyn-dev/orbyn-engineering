@@ -8,6 +8,9 @@ mod limits;
 #[cfg(test)]
 #[path = "usage/limits_tests.rs"]
 pub(crate) mod limits_tests;
+mod profile;
+
+pub(crate) use profile::history_root;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader};
@@ -304,30 +307,6 @@ fn jsonl_files(root: &Path, name: Option<&str>, found: &mut Vec<PathBuf>) {
         {
             found.push(path);
         }
-    }
-}
-
-fn home() -> Option<PathBuf> {
-    crate::util::home_dir()
-}
-
-pub(crate) fn history_root(engine: Engine) -> Option<PathBuf> {
-    match engine {
-        Engine::Claude => std::env::var_os("CLAUDE_CONFIG_DIR")
-            .map(PathBuf::from)
-            .or_else(|| home().map(|home| home.join(".claude")))
-            .map(|root| root.join("projects")),
-        Engine::Codex => std::env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .or_else(|| home().map(|home| home.join(".codex")))
-            .map(|root| root.join("sessions")),
-        // Muse resolves its own home when it starts, and no Muse driver is here to
-        // ask. Its recorded logs sit under the XDG data directory
-        // (`~/.local/share/muse/sessions/2026/10/11/<session>/session.jsonl`).
-        Engine::Muse => std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| home().map(|home| home.join(".local").join("share")))
-            .map(|root| root.join("muse").join("sessions")),
     }
 }
 
