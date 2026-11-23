@@ -99,6 +99,7 @@ export const SETTINGS: readonly SettingSearchItem[] = [
   {"id": "threads-keep-pull-requests", "title": "Keep threads with open pull requests", "section": "threads"},
   {"id": "threads-title-instructions", "title": "Title instructions", "section": "threads"},
   {"id": "threads-name-new-threads", "title": "Name new threads automatically", "section": "threads"},
+  {"id": "threads-text-generators", "title": "Text generators", "section": "threads"},
   {"id": "threads-title-model", "title": "Title model", "section": "threads"},
   {"id": "secrets-terminal-blocks", "title": "Terminal blocks", "section": "secrets"},
   {"id": "secrets-what-agents-read", "title": "What agents read", "section": "secrets"},
