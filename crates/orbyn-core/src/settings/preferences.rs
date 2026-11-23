@@ -141,6 +141,7 @@ const DEFINITIONS: &[Definition] = defs![
     "provider_instances" Kind::List, [], false;
     "crew_digest" Kind::Object, {"time": "17:00"}, false;
     "crew_turn_budget" Kind::Number, 0, false;
+    "crew_min_free_gb" Kind::Number, 5, false;
     "claude_engine_path" Kind::OneOf(&["sdk", "cli"]), "sdk", false;
 ];
 
@@ -152,6 +153,9 @@ pub(crate) const CREW_DIGEST: &str = "crew_digest";
 
 /// The crew-wide turn budget's catalog key. Its value is whole turns; 0 is no crew budget.
 pub(crate) const CREW_TURN_BUDGET: &str = "crew_turn_budget";
+
+/// The free gigabytes a Crew worker needs on the lead thread's volume; 0 is no floor.
+pub(crate) const CREW_MIN_FREE_GB: &str = "crew_min_free_gb";
 
 /// Keys the service writes itself; a client edit names them only through their owner.
 const SERVICE_OWNED: &[&str] = &["default_theme_set_at"];
@@ -250,6 +254,16 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
         // Whole turns only: a fraction could never be spent, and 0 is no crew-wide budget.
         return Err(CoreError::Invalid(
             "A crew turn budget is a whole number of turns, or 0 for no budget.".into(),
+        ));
+    }
+    if fits
+        && definition.key == CREW_MIN_FREE_GB
+        && value.as_u64().is_none_or(|gigabytes| gigabytes > 1000)
+    {
+        // Whole gigabytes from 0 to 1000; 0 is no floor.
+        return Err(CoreError::Invalid(
+            "The crew disk floor is a whole number of gigabytes from 0 to 1000, or 0 for none."
+                .into(),
         ));
     }
     if fits && definition.key == crate::agents::attention::QUIET_PREFERENCE {
@@ -635,6 +649,22 @@ mod tests {
         assert!(check(budget, &json!(1.5)).is_err());
         assert!(check(budget, &json!("30")).is_err());
         assert!(check(budget, &json!(-1)).is_err());
+    }
+
+    #[test]
+    fn a_crew_disk_floor_defaults_to_five_gigabytes() {
+        assert_eq!((definition(CREW_MIN_FREE_GB).unwrap().default)(), json!(5));
+    }
+
+    #[test]
+    fn a_crew_disk_floor_is_whole_gigabytes_from_zero_to_a_thousand() {
+        let floor = definition(CREW_MIN_FREE_GB).unwrap();
+        assert!(check(floor, &json!(5)).is_ok());
+        assert!(check(floor, &json!(0)).is_ok(), "0 is no floor");
+        assert!(check(floor, &json!(1000)).is_ok());
+        assert!(check(floor, &json!(-1)).is_err());
+        assert!(check(floor, &json!(1.5)).is_err());
+        assert!(check(floor, &json!(1001)).is_err());
     }
 
     #[test]
