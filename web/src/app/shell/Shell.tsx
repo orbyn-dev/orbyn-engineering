@@ -1,4 +1,5 @@
 import { useClearSelectionOnLeave } from "../../lib/clearSelection";
+import { CloseLeadDialog } from "../../features/crew";
 import { CloneJobs, CommandPalette, FoldersNotice, GitHubStarPrompt, QuitConfirmation, Sidebar } from "../../features/workspace";
 import { ChevronLeft } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
@@ -176,6 +177,7 @@ export function Shell() {
       ) : null}
       <BackgroundAnnouncer />
       <QuitConfirmation />
+      <CloseLeadDialog />
       <TranscriptImportHost />
       <PreviewFloat threadId={route.name === "thread" ? route.id : null} />
       <DevicesFloat threadId={route.name === "thread" ? route.id : null} />

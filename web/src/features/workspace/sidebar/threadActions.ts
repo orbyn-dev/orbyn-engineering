@@ -1,6 +1,7 @@
 import { api } from "../api";
 import type { Thread, UpdateThread } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
+import { askCloseLead, type CloseOutcome } from "../../crew";
 import { pullsApi } from "../api";
 import { threadToken } from "../../../product/composer/skillMention";
 import { navigate, parseRoute } from "../../../product/state/route";
@@ -64,11 +65,62 @@ async function each(
   );
 }
 
-export function settleThreads(threads: readonly Thread[]) {
+interface AskedThread {
+  thread: Thread;
+  outcome: CloseOutcome;
+}
+
+/** One close question at a time, in the order the person's batch named the threads. */
+async function askEach(threads: readonly Thread[], verb: "settle" | "archive"): Promise<AskedThread[]> {
+  const asked: AskedThread[] = [];
+  for (const thread of threads) asked.push({ thread, outcome: await askCloseLead(thread, verb) });
+  return asked;
+}
+
+const isClosed = (outcome: CloseOutcome): outcome is Extract<CloseOutcome, { kind: "closed" }> => outcome.kind === "closed";
+
+/** What a thread with live work leaves instead of Undo: the counts, and the first task that could not be stopped. */
+function toastClosed(verb: "settle" | "archive", outcome: Extract<CloseOutcome, { kind: "closed" }>) {
+  const word = verb === "settle" ? "settled" : "archived";
+  const count = outcome.closed.length;
+  const cancelled = `${count} ${count === 1 ? "task" : "tasks"} cancelled.`;
+  if (outcome.failed.length === 0) {
+    useUi.getState().pushToast(`Thread ${word}. ${cancelled}`, "done");
+    return;
+  }
+  const firstFailed = outcome.failed[0] ?? "";
+  const name = outcome.tasks.find((task) => task.id === firstFailed)?.name ?? (firstFailed || "a task");
+  const stopped = `${outcome.failed.length} could not be stopped: ${name}. Its worker may still be running. Stop it again from the Crew board.`;
+  useUi.getState().pushToast(
+    `Thread ${word}. ${count === 0 ? "" : `${cancelled} `}${stopped}`,
+    "failed",
+    {
+      label: "Open task",
+      run: () => {
+        if (firstFailed) navigate({ name: "crew", tab: "flow", task: firstFailed });
+      },
+    },
+    { durationMs: 12000 },
+  );
+}
+
+export async function settleThreads(threads: readonly Thread[]) {
   const moving = threads.filter((thread) => !thread.lifecycle?.settled_at);
-  moveOff(new Set(moving.map((thread) => thread.id)));
-  return each(moving, "settle the thread", () => ({ settled: true }), (thread) =>
-    pushUndo("Settled", () => patch(thread, restoreSettled(thread)).catch((f: unknown) => toastFailure("undo", f))),
+  const accepted = (await askEach(moving, "settle")).filter((entry) => entry.outcome.kind !== "declined");
+  if (accepted.length === 0) return;
+  moveOff(new Set(accepted.map((entry) => entry.thread.id)));
+  await each(
+    accepted.map((entry) => entry.thread),
+    "settle the thread",
+    () => ({ settled: true }),
+    (thread) => {
+      const outcome = accepted.find((entry) => entry.thread.id === thread.id)?.outcome;
+      if (outcome && isClosed(outcome)) {
+        toastClosed("settle", outcome);
+        return;
+      }
+      pushUndo("Settled", () => patch(thread, restoreSettled(thread)).catch((f: unknown) => toastFailure("undo", f)));
+    },
   );
 }
 
@@ -101,11 +153,32 @@ export const unpinThreads = async (threads: readonly Thread[]) =>
     pushUndo("Unpinned", () => patch(thread, { pinned: true }).catch((f: unknown) => toastFailure("undo", f))),
   );
 
-export function archiveThreads(threads: readonly Thread[]) {
-  if (useUi.getState().confirmArchive && declined("Archive this thread?")) return undefined;
-  moveOff(new Set(threads.map((thread) => thread.id)));
-  return each(threads, "archive the thread", () => ({ archived: true }), (thread) =>
-    pushUndo("Archived", () => patch(thread, { archived: false }).catch((f: unknown) => toastFailure("undo", f))),
+export async function archiveThreads(threads: readonly Thread[]) {
+  const moving = threads.filter((thread) => !thread.lifecycle?.archived_at);
+  const accepted = (await askEach(moving, "archive")).filter((entry) => entry.outcome.kind !== "declined");
+  if (accepted.length === 0) return undefined;
+  // Cancelling live work is the reason to archive; a thread with no live work still asks, as it did before.
+  let keeping = accepted;
+  if (useUi.getState().confirmArchive && accepted.some((entry) => entry.outcome.kind === "none")) {
+    if (declined("Archive this thread?")) {
+      // A declined question drops only the threads it was asked for; work already cancelled still archives.
+      keeping = accepted.filter((entry) => entry.outcome.kind === "closed");
+      if (keeping.length === 0) return undefined;
+    }
+  }
+  moveOff(new Set(keeping.map((entry) => entry.thread.id)));
+  await each(
+    keeping.map((entry) => entry.thread),
+    "archive the thread",
+    () => ({ archived: true }),
+    (thread) => {
+      const outcome = keeping.find((entry) => entry.thread.id === thread.id)?.outcome;
+      if (outcome && isClosed(outcome)) {
+        toastClosed("archive", outcome);
+        return;
+      }
+      pushUndo("Archived", () => patch(thread, { archived: false }).catch((f: unknown) => toastFailure("undo", f)));
+    },
   );
 }
 
