@@ -1770,6 +1770,15 @@ the same transaction as its `stopped`/`engine_error` move.
 
 **As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342); its core route is not built. KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
 
+**KC9 library side (built after that snapshot):** an approved skill proposal writes the skill into the device's own
+skills folder, `<data>/skills-local/<slug>/SKILL.md`, whose front matter carries a `local_revision`; the shared library and
+any target repository are never written, so the library's revision and dirty flag cannot change. The one writer
+(`SkillService::write_local_skill`) refuses a name that already exists in the library or in `skills-local` unless it edits
+that local skill at the revision it read, caps the file at 64 KiB, refuses a secret with the contract's `secret_refused`
+sentence, and records one audit row (`skills.local.write`) with the name, the revision and the proposal and lesson ids only,
+never the text. Engines reach the skill through the MCP `skill_search` and `skill_load` tools; native discovery is a
+follow-up. The proposal store and its routes, and the web, are not built in this slice.
+
 **Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
 (our router never swaps an engine) and release channels.
 

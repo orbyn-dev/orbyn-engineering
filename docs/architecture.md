@@ -2325,7 +2325,9 @@ a handshake or session open is refused with ACP's auth-required code, and `faile
 fails any other way. A successful open or model handshake clears it, so a signed-out engine
 reports the login again only until it next starts cleanly.
 
-Skills come from the workspace, in place. Nothing is copied, packed or signed.
+Skills come from the workspace, in place. Nothing is copied, packed or signed. The one
+exception is a skill approved from a Crew proposal, written into the device's own skills
+area under [Workspace](#workspace), never into the workspace.
 
 - Claude starts in the selected checkout, so the project's own instructions are the
   primary ones, and gets the library with `--add-dir <library>`, which loads its
@@ -2511,6 +2513,18 @@ A skill's identity is the library revision plus its dirty flag. Profiles filter 
 the MCP server and the bootstrap list. On Windows `.claude/skills` and
 `.agents/skills` are Git symlinks; if they did not materialize, status says so and
 that session uses the MCP route. The tree is never rewritten.
+
+A skill approved from a Crew proposal is the one skill that is not in the workspace: it is
+stored on the device at `<data>/skills-local/<slug>/SKILL.md`, one folder per skill, its
+front matter carrying a `local_revision`. The write is staged beside the file and renamed
+into place; only slug names and paths inside the skill's own folder are accepted; the file
+is capped at 64 KiB; a body the locked secret scan finds a secret in is refused (`400
+secret_refused`); a name the shared library or `skills-local` already holds is refused
+unless it edits the local skill at the revision it read; and one audit row carries the
+name, the revision and the proposal and lesson ids, never the text. The library's revision
+and dirty flag never include these skills, and no target repository is written. Engines
+reach them through the MCP `skill_search` and `skill_load` tools; native discovery is
+not built yet.
 
 ## Updates
 
