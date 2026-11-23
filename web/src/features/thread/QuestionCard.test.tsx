@@ -1,12 +1,13 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
-import { ApiFailure, api, request } from "../../api/client";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { MockApi } from "../../../mock/api";
+import { installMockFetch } from "../../test-support";
+import { wire } from "../../wire.test-support";
 import type { QuestionRequest, Thread } from "../../api/types";
 import { useWorkspace } from "../../product/state/workspace";
 import { QuestionCard } from "./QuestionCard";
 
-vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 const prose = "### Approach\n\nUse **small** steps and `checks`.\n\n- First\n- Next\n\n```ts\nconst safe = true;\n```\n\n<script>unsafe()</script>";
 const baseAsk: QuestionRequest = { id: "request/1", thread_id: "t", run_id: "r", state: "pending", answers: null,
   attachments: null, decided_by: null, decided_at: null, created_at: "", questions: [
@@ -15,22 +16,25 @@ const baseAsk: QuestionRequest = { id: "request/1", thread_id: "t", run_id: "r",
     { id: "followup", header: "", question: "Choose **follow-up**.", options: [], multi_select: false, allow_other: true, secret: false },
   ] };
 let ask: QuestionRequest;
-const mock = vi.mocked(request);
-let open: boolean;
-let fail: boolean;
+let mock: MockApi;
+/** What the page sent to settle a question, as the service received it. */
+const settled = () => wire().filter((call) => call.method === "POST" && call.path.startsWith("/api/questions/"));
+/** Shows the question the agent asked, as the service holds it, in front of the thread. */
+const renderCard = () => {
+  mock.questions.ask(ask);
+  return render(<QuestionCard threadId="t" waiting />);
+};
+/** The service refuses the next answer. */
+const refuseAnswer = () => mock.fail("/api/questions/", 1, 400, "invalid_input", "Answer every question.");
 beforeEach(() => {
   ask = structuredClone(baseAsk);
-  open = true; fail = false; mock.mockReset();
-  mock.mockImplementation(async (method) => {
-    if (method === "GET") return (open ? [ask] : []) as never;
-    if (fail) throw new ApiFailure("unavailable", "Answer could not be sent.", 503);
-    open = false; return undefined as never;
-  });
+  mock = installMockFetch();
 });
+afterEach(() => vi.unstubAllGlobals());
 
 it("renders prose as Markdown, including headerless questions, and preserves answer identity/order", async () => {
   const user = userEvent.setup();
-  const { container } = render(<QuestionCard threadId="t" waiting />);
+  const { container } = renderCard();
   expect(await screen.findByRole("heading", { name: "Approach" })).toBeVisible();
   const choice = screen.getByRole("group", { name: "Choice" });
   expect(within(choice).getByText("small").tagName).toBe("STRONG");
@@ -47,17 +51,18 @@ it("renders prose as Markdown, including headerless questions, and preserves ans
   await user.type(input, "  Keep this  ");
   expect(input).toHaveFocus();
   await user.click(screen.getByRole("button", { name: "Submit answers" }));
-  expect(mock).toHaveBeenCalledWith("POST", "/api/questions/request%2F1/answer", { answers: { choice: ["B"], followup: ["Keep this"] } });
+  expect(settled()).toEqual([{ method: "POST", path: "/api/questions/request%2F1/answer", body: { answers: { choice: ["B"], followup: ["Keep this"] } } }]);
   await waitFor(() => expect(screen.queryByRole("region")).toBeNull());
 });
 
 it("keeps picks and a custom answer after a failed submission", async () => {
-  fail = true; const user = userEvent.setup();
-  render(<QuestionCard threadId="t" waiting />);
+  const user = userEvent.setup();
+  renderCard();
   await user.click(await screen.findByRole("button", { name: /A\s*First/ }));
   await user.type(screen.getByRole("textbox"), "Custom");
+  refuseAnswer();
   await user.click(screen.getByRole("button", { name: "Submit answers" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Answer could not be sent.");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Answer every question.");
   expect(screen.getByRole("button", { name: /A\s*First/ })).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByRole("textbox")).toHaveValue("Custom");
   expect(screen.getByRole("button", { name: "Submit answers" })).toBeEnabled();
@@ -65,7 +70,7 @@ it("keeps picks and a custom answer after a failed submission", async () => {
 
 it("links remote question images without creating a media fetch element", async () => {
   ask.questions[0]!.question = "Choose **![Diagram](https://remote.example/diagram.svg)** or ![Other](http://remote.example/a.png).\n\n<svg onload=unsafe()></svg>";
-  const { container } = render(<QuestionCard threadId="t" waiting />);
+  const { container } = renderCard();
   expect(await screen.findByRole("link", { name: "Diagram" })).toHaveAttribute("href", "https://remote.example/diagram.svg");
   expect(screen.getByRole("link", { name: "Other" })).toHaveAttribute("href", "http://remote.example/a.png");
   expect(container.querySelector("img, video, iframe, svg[onload], script")).toBeNull();
@@ -88,7 +93,7 @@ it.each([
 ])("renders a checkout image in a question (%s, %s)", async (cwd, source, path) => {
   atCheckout(cwd);
   ask.questions[0]!.question = `Review **![Checkout diagram](${source})**.`;
-  render(<QuestionCard threadId="t" waiting />);
+  renderCard();
   const image = await screen.findByRole("img", { name: "Checkout diagram" });
   expect(image).toHaveAttribute("src", `/api/threads/t/files/raw?${new URLSearchParams({ path })}`);
   expect(screen.getByRole("button", { name: "Expand Checkout diagram" })).toBeVisible();
@@ -98,7 +103,7 @@ it("shows an unavailable checkout image without losing the question or answer", 
   const user = userEvent.setup();
   atCheckout("/work/checkout");
   ask.questions[0]!.question = "Review ![Missing](docs/missing.png).";
-  render(<QuestionCard threadId="t" waiting />);
+  renderCard();
   const image = await screen.findByRole("img", { name: "Missing" });
   const option = screen.getByRole("button", { name: /A\s*First/ });
   await user.click(option);
@@ -114,7 +119,7 @@ it("leaves outside-root and file URLs inert in question prose", async () => {
   atCheckout("/work/checkout");
   const prose = "![Outside](/other/shot.png) ![Sibling](/work/checkout-other/shot.png) ![File](file:///work/checkout/shot.png)";
   ask.questions[0]!.question = prose;
-  const { container } = render(<QuestionCard threadId="t" waiting />);
+  const { container } = renderCard();
   await screen.findByRole("region", { name: "Question from the agent" });
   expect(container.querySelector("img, video, iframe")).toBeNull();
   expect(container).toHaveTextContent(prose);
@@ -124,23 +129,22 @@ it("does not resolve checkout media without a thread route", async () => {
   atCheckout("/work/checkout");
   window.location.hash = "#/";
   ask.questions[0]!.question = "![Checkout](docs/shot.png)";
-  const { container } = render(<QuestionCard threadId="t" waiting />);
+  const { container } = renderCard();
   await screen.findByRole("region", { name: "Question from the agent" });
   expect(container.querySelector("img")).toBeNull();
   expect(container).toHaveTextContent("![Checkout](docs/shot.png)");
 });
 
 it("dismisses without submitting selected or custom answers", async () => {
-  const user = userEvent.setup(); render(<QuestionCard threadId="t" waiting />);
+  const user = userEvent.setup(); renderCard();
   await user.click(await screen.findByRole("button", { name: "Dismiss" }));
-  expect(mock).toHaveBeenCalledWith("POST", "/api/questions/request%2F1/dismiss", undefined);
-  expect(mock.mock.calls.filter(([method]) => method === "POST")).toHaveLength(1);
+  expect(settled()).toEqual([{ method: "POST", path: "/api/questions/request%2F1/dismiss" }]);
 });
 
 it("replaces a single choice with custom text and retains that answer after failure", async () => {
   ask.questions[0]!.allow_other = true;
-  fail = true; const user = userEvent.setup();
-  render(<QuestionCard threadId="t" waiting />);
+  const user = userEvent.setup();
+  renderCard();
   const choice = await screen.findByRole("group", { name: "Choice" });
   const option = within(choice).getByRole("button", { name: /A\s*First/ });
   await user.click(option);
@@ -149,20 +153,22 @@ it("replaces a single choice with custom text and retains that answer after fail
   expect(option).toHaveAttribute("aria-pressed", "false");
   expect(custom).toHaveFocus();
   await user.type(screen.getByRole("textbox", { name: "Choose **follow-up**." }), "Keep this");
+  refuseAnswer();
   await user.click(screen.getByRole("button", { name: "Submit answers" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Answer could not be sent.");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Answer every question.");
   expect(custom).toHaveValue("Different approach");
   expect(option).toHaveAttribute("aria-pressed", "false");
-  fail = false;
   await user.click(screen.getByRole("button", { name: "Submit answers" }));
-  expect(mock).toHaveBeenCalledWith("POST", "/api/questions/request%2F1/answer", {
+  await waitFor(() => expect(settled()).toHaveLength(2));
+  expect(settled()[1]).toEqual({ method: "POST", path: "/api/questions/request%2F1/answer", body: {
     answers: { choice: ["Different approach"], followup: ["Keep this"] },
-  });
+  } });
+  expect(mock.questions.all[0]?.state).toBe("answered");
 });
 
 it("selecting an offered answer by keyboard clears custom text", async () => {
   ask.questions[0]!.allow_other = true;
-  const user = userEvent.setup(); render(<QuestionCard threadId="t" waiting />);
+  const user = userEvent.setup(); renderCard();
   const choice = await screen.findByRole("group", { name: "Choice" });
   const custom = within(choice).getByRole("textbox");
   await user.type(custom, "Different approach");
@@ -181,7 +187,7 @@ it("selecting an offered answer by keyboard clears custom text", async () => {
 
 it("keeps multiple offered choices but switches exclusively between them and custom text", async () => {
   ask.questions[0]!.multi_select = true; ask.questions[0]!.allow_other = true;
-  const user = userEvent.setup(); render(<QuestionCard threadId="t" waiting />);
+  const user = userEvent.setup(); renderCard();
   const choice = await screen.findByRole("group", { name: "Choice" });
   const a = within(choice).getByRole("button", { name: /A\s*First/ });
   const b = within(choice).getByRole("button", { name: /B\s*Second/ });
@@ -195,17 +201,14 @@ it("keeps multiple offered choices but switches exclusively between them and cus
   await user.click(a); expect(custom).toHaveValue(""); await user.click(b);
   await user.type(screen.getByRole("textbox", { name: "Choose **follow-up**." }), "Keep this");
   await user.click(screen.getByRole("button", { name: "Submit answers" }));
-  expect(mock).toHaveBeenCalledWith("POST", "/api/questions/request%2F1/answer", {
+  expect(settled()).toEqual([{ method: "POST", path: "/api/questions/request%2F1/answer", body: {
     answers: { choice: ["A", "B"], followup: ["Keep this"] },
-  });
+  } }]);
 });
 
 it("uploads a file for a custom answer and keeps it with that question", async () => {
-  const upload = vi.spyOn(api, "uploadAttachment").mockResolvedValue({
-    id: "attachment/1", thread_id: "t", name: "trace.txt", mime: "text/plain", size: BigInt(5), created_at: "",
-  });
   const user = userEvent.setup();
-  render(<QuestionCard threadId="t" waiting />);
+  renderCard();
   const choice = await screen.findByRole("group", { name: "Choice" });
   await user.click(within(choice).getByRole("button", { name: /A\s*First/ }));
   const followup = screen.getByRole("group", { name: "Choose **follow-up**." });
@@ -214,17 +217,17 @@ it("uploads a file for a custom answer and keeps it with that question", async (
   await user.upload(screen.getByLabelText("Attach a file to Choose **follow-up**."), file);
   expect(await screen.findByText("trace.txt")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Submit answers" }));
-  expect(mock).toHaveBeenCalledWith("POST", "/api/questions/request%2F1/answer", {
+  expect(wire().filter((call) => call.path.startsWith("/api/threads/t/attachments"))).toEqual([{ method: "POST", path: "/api/threads/t/attachments?name=trace.txt" }]);
+  expect(settled()).toEqual([{ method: "POST", path: "/api/questions/request%2F1/answer", body: {
     answers: { choice: ["A"], followup: ["See the trace"] },
-    attachments: { followup: ["attachment/1"] },
-  });
-  expect(upload).toHaveBeenCalledWith("t", file);
+    attachments: { followup: [expect.stringMatching(/^att-/)] },
+  } }]);
 });
 
 it("keys 1-9 pick an option, and Enter submits only from the panel itself", async () => {
   ask.questions = [{ ...ask.questions[0]!, question: "See [the docs](https://example.com/docs)." }];
   const user = userEvent.setup();
-  render(<QuestionCard threadId="t" waiting />);
+  renderCard();
   const panel = await screen.findByRole("region", { name: "Question from the agent" });
   const first = within(panel).getByRole("button", { name: /A\s*First/ });
   first.focus();
@@ -233,8 +236,8 @@ it("keys 1-9 pick an option, and Enter submits only from the panel itself", asyn
   // A link keeps Enter for itself, so nothing is sent.
   within(panel).getByRole("link", { name: "the docs" }).focus();
   await user.keyboard("{Enter}");
-  expect(mock).not.toHaveBeenCalledWith("POST", expect.anything(), expect.anything());
+  expect(settled()).toEqual([]);
   panel.focus();
   await user.keyboard("{Enter}");
-  expect(mock).toHaveBeenCalledWith("POST", "/api/questions/request%2F1/answer", { answers: { choice: ["B"] } });
+  expect(settled()).toEqual([{ method: "POST", path: "/api/questions/request%2F1/answer", body: { answers: { choice: ["B"] } } }]);
 });

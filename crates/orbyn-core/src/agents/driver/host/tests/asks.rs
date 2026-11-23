@@ -197,7 +197,14 @@ async fn an_answer_that_comes_after_the_run_is_over_is_dropped_and_never_sent() 
     assert_eq!(outcome, EngineOutcome::Cancelled);
     // The hold is gone: the gate's answer finds nobody, and the host hears nothing more.
     assert!(request.reply.send(Verdict::Allow).is_err());
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // The host reads its input in order, so once the next run has finished on the same host, any
+    // late answer would already be in what it received.
+    let (_, outcome) = start(&rig.driver(), spec("again"))
+        .await
+        .unwrap()
+        .outcome()
+        .await;
+    assert_eq!(outcome, EngineOutcome::Completed);
     assert!(responds(&rig).is_empty(), "{:?}", responds(&rig));
     rig.pool.shutdown().await;
 }

@@ -94,7 +94,8 @@ fn where_nothing_can_restrict_a_confined_run_is_refused_not_started_bare() {
     let (_dir, spec) = confined_spec();
     let error = build(&spec, "claude").unwrap_err();
     assert!(
-        matches!(error, CoreError::EngineUnavailable(_)),
-        "{error:?}"
+        matches!(&error, CoreError::EngineUnavailable(message)
+            if Some(message.as_str()) == crate::host::confine::unavailable().as_deref()),
+        "refused with the platform's own reason: {error:?}"
     );
 }
