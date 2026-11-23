@@ -4,7 +4,7 @@ import type { FlowTaskRow } from "../../../../generated/FlowTaskRow";
 import { tasksPath } from "./api";
 import { cellOf, cellView, countOf, decidedBy, laneWord, roundView, shown, stageWord, STAGES, when, resumedNote, wasResumed } from "./model";
 
-const row = (over: Partial<FlowTaskRow>): FlowTaskRow => ({ id: "t", name: "n", kind: "implement", owner: "Lead", state: "running", could_not_start: false, round: 1, cells: [], created_at: "", updated_at: "", ...over });
+const row = (over: Partial<FlowTaskRow>): FlowTaskRow => ({ id: "t", name: "n", kind: "implement", owner: "Lead", state: "running", could_not_start: false, resumed: false, round: 1, cells: [], created_at: "", updated_at: "", ...over });
 
 describe("the cells of a task's line", () => {
   it("writes checks as passed over run and lanes as a count, and names the state for a screen reader", () => {
