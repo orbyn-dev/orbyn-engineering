@@ -166,6 +166,14 @@ impl Store {
                 "UPDATE crew_runs SET downtime_secs = downtime_secs + ?2 WHERE task_id = ?1",
                 params![task_id, secs],
             )?;
+            // The boundary moves with the credit: this row is the task's newest event, so an interrupted recovery that runs
+            // again measures from here and never credits the same off time twice.
+            audit(
+                tx,
+                "crew.task.downtime_excused",
+                task_id,
+                serde_json::json!({ "secs": secs }),
+            )?;
             Ok(())
         })
     }
