@@ -322,6 +322,61 @@ mod tests {
         assert_eq!(std::fs::read(outside.path().join("secret")).unwrap(), b"s");
     }
 
+    /// A kept change whose path was recorded through a folder that is a link out of the checkout: the restore must
+    /// neither write the file the link leads to nor report it restored.
+    #[cfg(unix)]
+    #[test]
+    fn a_restore_through_a_linked_folder_never_writes_outside_the_checkout() {
+        let dir = TempDir::new();
+        let outside = TempDir::new();
+        let scope = scope(dir.path());
+        std::fs::write(outside.path().join("f"), "new").unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("d")).unwrap();
+        let change = KeptChange {
+            path: "d/f".into(),
+            before: Snapshot::Stored(b"old".to_vec()),
+            after: Snapshot::Stored(b"new".to_vec()),
+        };
+        for point in [RestorePoint::Start, RestorePoint::End] {
+            let outcome = restore_one(&scope, &change, point);
+            assert!(
+                !matches!(outcome, Ok(RestoreOutcome::Restored)),
+                "{point:?} restored through a link out: {outcome:?}"
+            );
+            assert_eq!(std::fs::read(outside.path().join("f")).unwrap(), b"new");
+        }
+    }
+
+    /// Paths a kept change must never name: Git's own folder, a climb out of the checkout, an absolute path. Each
+    /// is refused with the outside-the-checkout answer and nothing is written.
+    #[test]
+    fn a_restore_never_touches_git_a_climb_or_an_absolute_path() {
+        let dir = TempDir::new();
+        let outside = TempDir::new();
+        let scope = scope(dir.path());
+        std::fs::create_dir_all(dir.path().join(".git/hooks")).unwrap();
+        std::fs::write(dir.path().join(".git/hooks/pre-commit"), "new").unwrap();
+        std::fs::write(outside.path().join("f"), "new").unwrap();
+        let absolute = outside.path().join("f").to_string_lossy().into_owned();
+        for path in [".git/hooks/pre-commit", "../escape", absolute.as_str()] {
+            let change = KeptChange {
+                path: path.into(),
+                before: Snapshot::Stored(b"old".to_vec()),
+                after: Snapshot::Stored(b"new".to_vec()),
+            };
+            let Err(CoreError::Invalid(why)) = restore_one(&scope, &change, RestorePoint::Start)
+            else {
+                panic!("{path} was not refused as invalid");
+            };
+            assert_eq!(why, "That path is outside this checkout.", "{path}");
+        }
+        assert_eq!(
+            std::fs::read(dir.path().join(".git/hooks/pre-commit")).unwrap(),
+            b"new"
+        );
+        assert_eq!(std::fs::read(outside.path().join("f")).unwrap(), b"new");
+    }
+
     #[test]
     fn a_restore_leaves_later_work_alone() {
         let dir = TempDir::new();

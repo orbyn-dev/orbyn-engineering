@@ -23,6 +23,15 @@ fail() {
 }
 
 if [ -n "$version" ]; then
+  # A version names one release folder: digits first, then letters, digits, dots, plus and hyphen only, so it cannot
+  # carry a path, a query or a space into the download address.
+  case "${version#v}" in
+    [0-9]*) ;;
+    *) fail "ORBYN_VERSION must look like 1.2.3 or v1.2.3-beta.1, not '$version'." ;;
+  esac
+  case "${version#v}" in
+    *[!0-9A-Za-z.+-]*) fail "ORBYN_VERSION must look like 1.2.3 or v1.2.3-beta.1, not '$version'." ;;
+  esac
   url="$base/download/v${version#v}"
 else
   case "$channel" in

@@ -2,8 +2,9 @@
 // and runs this platform's installer against it: install.sh on macOS, install.ps1 on
 // Windows. Every folder the installer writes is a throwaway one.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { machine, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -24,6 +25,7 @@ let archive;
 let server;
 let base;
 let corrupt = false;
+let serveDir;
 const requests = [];
 
 before(async () => {
@@ -47,11 +49,12 @@ before(async () => {
   mkdirSync(join(build, "library"), { recursive: true });
   writeFileSync(join(build, "library", "REVISION"), "test\n");
   archive = packCli({ target, binaries, build, out: join(root, "release") });
+  serveDir = dirname(archive);
 
   server = createServer((request, response) => {
     requests.push(request.url);
     const name = basename(request.url);
-    const file = join(dirname(archive), name);
+    const file = join(serveDir, name);
     if (!name.startsWith("orbyn-cli-") || !existsSync(file)) {
       response.writeHead(404).end();
       return;
@@ -231,4 +234,85 @@ test("an unreachable release says so and installs nothing", { skip }, async () =
   assert.notEqual(missing.status, 0);
   assert.match(missing.stderr, /could not download/);
   assert.ok(!existsSync(launcher(missing.home)));
+});
+
+// An archive built by hand, served in place of the real one with a matching checksum, so the installer's own checks
+// on what the archive holds are what answer. Unix only: the shell installer's tar.
+const unixOnly = skip || (windows && "the shell installer and tar run on macOS");
+
+function serveArchive(entries) {
+  const dir = mkdtempSync(join(root, "alt-"));
+  const archiveName = basename(archive);
+  const file = join(dir, archiveName);
+  const spec = JSON.stringify({ file, entries });
+  execFileSync("python3", [
+    "-I",
+    "-c",
+    [
+      "import io, json, sys, tarfile",
+      "spec = json.loads(sys.argv[1])",
+      "with tarfile.open(spec['file'], 'w:gz') as tar:",
+      "    for name, mode in spec['entries']:",
+      "        data = b'#!/bin/sh\\necho x\\n'",
+      "        info = tarfile.TarInfo(name)",
+      "        info.size = len(data)",
+      "        info.mode = mode",
+      "        tar.addfile(info, io.BytesIO(data))",
+    ].join("\n"),
+    spec,
+  ]);
+  const sum = createHash("sha256").update(readFileSync(file)).digest("hex");
+  writeFileSync(`${file}.sha256`, `${sum}  ${archiveName}\n`);
+  return dir;
+}
+
+test("an archive without orbynd installs nothing and keeps the earlier install", { skip: unixOnly }, async () => {
+  const first = await install();
+  assert.equal(first.status, 0, first.stderr);
+  const marker = join(first.home, "share", "cli", "kept");
+  writeFileSync(marker, "");
+  const real = serveDir;
+  serveDir = serveArchive([["./orbyn", 0o755]]);
+  try {
+    const second = await runIn(first.home, first.env);
+    assert.notEqual(second.status, 0);
+    assert.match(second.stderr, /does not hold orbyn and orbynd/);
+    assert.ok(existsSync(marker), "the earlier install was replaced by an incomplete archive");
+  } finally {
+    serveDir = real;
+  }
+});
+
+test("an archive that names paths outside its folder writes nothing outside it", { skip: unixOnly }, async () => {
+  const first = await install();
+  const scratch = mkdtempSync(join(root, "tmp-"));
+  const inner = join(scratch, "inner");
+  mkdirSync(inner);
+  const absolute = join(first.home, "absolute-marker");
+  const real = serveDir;
+  serveDir = serveArchive([
+    ["./orbyn", 0o755],
+    ["./orbynd", 0o755],
+    ["../../escaped-marker", 0o644],
+    [absolute, 0o644],
+  ]);
+  try {
+    // The installer works in a folder made under TMPDIR, so `../..` from its extraction folder is TMPDIR itself.
+    await runIn(first.home, { ...first.env, TMPDIR: inner });
+    assert.ok(!existsSync(join(inner, "escaped-marker")), "an entry climbed out of the extraction folder");
+    assert.ok(!existsSync(join(scratch, "escaped-marker")), "an entry climbed out of TMPDIR");
+    assert.ok(!existsSync(absolute), "an absolute entry was written where it named");
+  } finally {
+    serveDir = real;
+  }
+});
+
+test("a version that is not a plain version string is refused before any download", { skip }, async () => {
+  for (const version of ["1/../x", "1.2.3/../../latest", "1 2", "v1.2.3?x=y", "..", "-1", "1.2.3#frag"]) {
+    requests.length = 0;
+    const result = await install({ ORBYN_VERSION: version });
+    assert.notEqual(result.status, 0, `${version} was accepted`);
+    assert.match(result.stderr, /ORBYN_VERSION/, version);
+    assert.deepEqual(requests, [], `${version} reached the server`);
+  }
 });
