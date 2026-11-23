@@ -57,7 +57,8 @@ export function useTerminalAttention(openId: string | null): void {
     };
     return api.subscribe((delivery) => {
       const fresh = useAttention.getState().receive(delivery);
-      if (fresh) tell(fresh);
+      // A value read from the open-items route was already waiting: the dots and the thread's own item show it, but it is not news.
+      if (fresh && delivery.source !== "open") tell(fresh);
     });
   }, []);
 }

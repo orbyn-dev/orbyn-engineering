@@ -4,7 +4,7 @@ import { Dialog } from "../../ui/Dialog";
 import { useUi } from "../../product/state/ui";
 import { useSnapshot } from "./runtime";
 import { SnapshotDraftChip, SnapshotWorks } from "./SnapshotChip";
-import { shortcutKeys, shortcutText } from "./types";
+import { shortcutKeys, shortcutText, SNAPSHOT_ACCESSIBILITY_SETUP_AVAILABLE, SNAPSHOT_SETUP_AVAILABLE } from "./types";
 import "./snapshot.css";
 
 const Pill = ({ children, kind = "" }: { children: ReactNode; kind?: string }) => (
@@ -40,6 +40,17 @@ export function SnapshotSetupDialog() {
   const chord = useUi((user) => user.snapshotShortcut);
   const includeText = useUi((user) => user.snapshotIncludeAccessibility);
   const setPrefs = useUi((user) => user.setPrefs);
+  const platform = state?.platform;
+  const screenRecording = state?.permissions.screen_recording ?? false;
+  const waitingForScreen = waitingFor === "screen_recording" && !screenRecording;
+
+  useEffect(() => {
+    if (!open || platform !== "macos" || !waitingForScreen) return;
+    const timer = setInterval(() => {
+      if (!document.hidden) void refresh();
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [open, platform, waitingForScreen, refresh]);
 
   useEffect(() => {
     if (!open) return;
@@ -48,11 +59,9 @@ export function SnapshotSetupDialog() {
     return () => window.removeEventListener("focus", read);
   }, [open, refresh]);
 
-  if (!open || !state || !state.supported) return null;
+  if (!SNAPSHOT_SETUP_AVAILABLE || !open || !state || !state.supported) return null;
   const mac = state.platform === "macos";
-  const screenRecording = state.permissions.screen_recording;
   const accessibility = state.permissions.accessibility;
-  const waitingForScreen = waitingFor === "screen_recording" && !screenRecording;
   const waitingForAccess = waitingFor === "accessibility" && !accessibility;
   const keys = shortcutKeys(chord, state.platform);
   const testBlocked = mac && !screenRecording;
@@ -63,7 +72,7 @@ export function SnapshotSetupDialog() {
       onClose={close}
       footer={(
         <>
-          {mac && focus === "accessibility" ? <Button onClick={() => { setPrefs({ snapshotIncludeAccessibility: false }); close(); }}>Turn off the text</Button> : null}
+          {mac && SNAPSHOT_ACCESSIBILITY_SETUP_AVAILABLE && focus === "accessibility" ? <Button onClick={() => { setPrefs({ snapshotIncludeAccessibility: false }); close(); }}>Turn off the text</Button> : null}
           {mac ? <Button onClick={close}>Not now</Button> : null}
           {mac ? <Button tone="primary" disabled={waitingForScreen || waitingForAccess} onClick={close}>Done</Button> : <Button tone="primary" onClick={close}>Done</Button>}
         </>
@@ -91,23 +100,25 @@ export function SnapshotSetupDialog() {
               </>
             )}
           </Row>
-          <Row
-            title="Accessibility"
-            description={accessibility
-              ? "Granted by macOS"
-              : waitingForAccess
-                ? "System Settings is open. Turn Orbyn on under Accessibility, then come back."
-                : includeText
-                  ? "Include accessibility text is on, but macOS has not allowed Accessibility. Without it captures work and carry no text."
-                  : "Optional. Only for Include accessibility text, which is off."}
-          >
-            {accessibility ? <Pill kind="good">Granted</Pill> : waitingForAccess ? <Waiting /> : (
-              <>
-                <Pill>Not granted</Pill>
-                <Button small onClick={() => void action("allow_accessibility")}>Allow Accessibility</Button>
-              </>
-            )}
-          </Row>
+          {SNAPSHOT_ACCESSIBILITY_SETUP_AVAILABLE ? (
+            <Row
+              title="Accessibility"
+              description={accessibility
+                ? "Granted by macOS"
+                : waitingForAccess
+                  ? "System Settings is open. Turn Orbyn on under Accessibility, then come back."
+                  : includeText
+                    ? "Include accessibility text is on, but macOS has not allowed Accessibility. Without it captures work and carry no text."
+                    : "Optional. Only for Include accessibility text, which is off."}
+            >
+              {accessibility ? <Pill kind="good">Granted</Pill> : waitingForAccess ? <Waiting /> : (
+                <>
+                  <Pill>Not granted</Pill>
+                  <Button small onClick={() => void action("allow_accessibility")}>Allow Accessibility</Button>
+                </>
+              )}
+            </Row>
+          ) : null}
           <Row title="Shortcut" description={state.shortcut_registered ? `${shortcutText(chord, state.platform)} is registered.` : state.shortcut_message ?? "The shortcut is not registered."}>
             <span className="pb-keys">{keys.map((key) => <kbd key={`${key.aria}-${key.label}`}>{key.label}</kbd>)}</span>
             {!state.shortcut_registered ? <Button small onClick={() => void action("retry_shortcut")}>Try again</Button> : null}
@@ -123,8 +134,8 @@ export function SnapshotSetupDialog() {
             {worked ? <SnapshotWorks /> : null}
             <Button small disabled={testBlocked} onClick={() => void test()}>{worked ? "Test again" : "Test capture"}</Button>
           </Row>
-          {!screenRecording && !waitingForScreen ? (
-            <p className="snapshot-setup-note">After you allow Screen Recording, macOS may ask to quit and reopen Orbyn.</p>
+          {!screenRecording ? (
+            <p className="snapshot-setup-note">After you allow Screen Recording in System Settings, restart Orbyn. macOS usually needs that before a capture works.</p>
           ) : null}
         </>
       ) : (

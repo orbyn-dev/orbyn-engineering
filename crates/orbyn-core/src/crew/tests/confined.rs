@@ -36,6 +36,24 @@ async fn a_worker_run_is_handed_rules_that_deny_the_data_folder_but_not_its_own_
     assert!(rules.allow_write.contains(&repo), "{rules:?}");
 }
 
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn a_codex_home_is_removed_when_its_task_ends() {
+    let w = world_confined(Arc::new(|_, _| Turn::Hang)).await;
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap();
+    let home = crate::host::confine::home_path(&w.core.config.data_dir, id)
+        .expect("a task id names a home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join("auth.json"), "fake auth for the test").unwrap();
+    w.core
+        .crew_cancel_task(id, None, "user")
+        .await
+        .expect("a person cancels the task");
+    assert!(!home.exists(), "the task's private Codex home stayed");
+}
+
 #[cfg(not(target_os = "macos"))]
 #[tokio::test]
 async fn a_worker_is_refused_where_no_restriction_exists() {

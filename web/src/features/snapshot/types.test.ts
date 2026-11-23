@@ -7,8 +7,13 @@ describe("the attachment source extension", () => {
     expect(isSnapShotSource(sourceOf())).toBe(true);
     expect(isSnapShotSource(undefined)).toBe(false);
     expect(isSnapShotSource({ ...sourceOf(), kind: "file" })).toBe(false);
+    expect(isSnapShotSource(sourceOf({ app_name: "a".repeat(255), window_title: "a".repeat(1000) }))).toBe(true);
+    // The shell and the service count characters, not UTF-16 code units.
+    expect(isSnapShotSource(sourceOf({ app_name: "😀".repeat(255), window_title: "😀".repeat(1000) }))).toBe(true);
     expect(isSnapShotSource({ ...sourceOf(), app_name: "a".repeat(256) })).toBe(false);
     expect(isSnapShotSource({ ...sourceOf(), window_title: "a".repeat(1001) })).toBe(false);
+    expect(isSnapShotSource({ ...sourceOf(), app_name: "😀".repeat(256) })).toBe(false);
+    expect(isSnapShotSource({ ...sourceOf(), window_title: "😀".repeat(1001) })).toBe(false);
     expect(isSnapShotSource({ ...sourceOf(), accessible_text: "a".repeat(32_001) })).toBe(false);
     expect(attachmentSourceOf({ id: "a", thread_id: "t", name: "x", mime: "image/png", size: 1n, created_at: "", source: sourceOf() })).toMatchObject({ app_name: "Safari" });
     expect(attachmentSourceOf(null)).toBeNull();

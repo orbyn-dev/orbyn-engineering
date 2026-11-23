@@ -123,6 +123,28 @@ pub struct EngineHostCrash {
 }
 
 wire! {
+/// The SDK a family's engine host runs, as its `hello` names it.
+pub struct EngineHostSdk {
+    pub name: String,
+    pub version: String,
+}
+}
+
+wire! {
+/// The automatic restart a family's host waits for.
+pub struct EngineHostRestart {
+    /// The restart being waited for, counting from one inside the window.
+    pub attempt: u32,
+    /// The most restarts allowed inside the window.
+    pub limit: u32,
+    /// Whole seconds until the next try; absent when there is no deadline to report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub next_try_seconds: Option<u32>,
+}
+}
+
+wire! {
 /// One family's engine host.
 pub struct EngineHostStatus {
     pub family: String,
@@ -161,5 +183,38 @@ pub struct EngineHostStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub last_error_kind: Option<EngineHostRunError>,
+    /// RFC 3339, when the live host started running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub since: Option<String>,
+    /// The SDK package and version the live host's `hello` named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sdk: Option<EngineHostSdk>,
+    /// The requests the live host's `hello` says it implements.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub capabilities: Option<Vec<String>>,
+    /// One host process serves every thread of the family.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub pooled: bool,
+    /// Present only while the family waits to restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub restart: Option<EngineHostRestart>,
+    /// How many times the host stopped inside the restart window, for a family that gave up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stops_in_window: Option<u32>,
+    /// A Rust driver wraps the host for this family, so the person can run it by choosing the CLI path. Nothing
+    /// switches to it on its own: a down host under the SDK path still fails the run.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub has_driver: bool,
+    /// This build carries no SDK for the family; the host refused a run saying so.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub sdk_missing: bool,
 }
 }

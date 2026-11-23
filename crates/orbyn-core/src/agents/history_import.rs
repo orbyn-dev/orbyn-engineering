@@ -197,6 +197,16 @@ fn read_head(engine: Engine, path: &Path) -> Option<Head> {
     })
 }
 
+/// The newest history file that names `session_id`, by the same scan, file order and head
+/// parser the import uses. A caller names a session by id, never by path.
+pub(crate) fn find_session_file(engine: Engine, root: &Path, session_id: &str) -> Option<PathBuf> {
+    let (files, _) = history_files(engine, root);
+    files.into_iter().find_map(|found| {
+        let head = read_head(engine, &found.path)?;
+        (head.session_id.as_str() == session_id).then_some(found.path)
+    })
+}
+
 fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128

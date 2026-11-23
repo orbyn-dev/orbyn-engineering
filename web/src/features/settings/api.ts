@@ -26,7 +26,6 @@ import type { RedactionPatternTest } from "../../generated/RedactionPatternTest"
 import type { RedactionPatternTestInput } from "../../generated/RedactionPatternTestInput";
 import type { RedactionSettings } from "../../generated/RedactionSettings";
 import type { RedactionSurfaceChange } from "../../generated/RedactionSurfaceChange";
-import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
 import type { TriagePlaybook } from "../../generated/TriagePlaybook";
 
 const q = encodeURIComponent;
@@ -36,13 +35,7 @@ export function listProviders(signal?: AbortSignal) {
   return request<ProviderList>("GET", "/api/providers", undefined, signal);
 }
 
-export function queryPreferences(body: unknown, signal?: AbortSignal) {
-  return request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", body, signal);
-}
-
-export function updatePreferences(body: unknown) {
-  return request<ScopedPreferencesResult>("PUT", "/api/settings/preferences", body);
-}
+export { queryPreferences, updatePreferences } from "../../api/preferences";
 
 export function queryProjectScopes(body: unknown, signal?: AbortSignal) {
   return request<ProjectScopeCatalog>("POST", "/api/settings/project-scopes", body, signal);

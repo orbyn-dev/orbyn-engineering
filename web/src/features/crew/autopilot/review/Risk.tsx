@@ -139,7 +139,6 @@ export function RiskHighOnScreen() {
     <CrewFrame
       tab="Flow"
       reviewCount={7}
-      inbox={3}
       crumbs={
         <TaskCrumb title="Rotate the signing key" tier="high">
           <RiskChip tier="high" />
@@ -213,7 +212,7 @@ export function RiskDemotedScreen() {
 /** risk-board-card: each Taskboard card shows its tier and what happened to it. */
 export function RiskBoardScreen() {
   return (
-    <CrewFrame tab="Board" reviewCount={7} inbox={1}>
+    <CrewFrame tab="Board" reviewCount={7}>
       <div className="crew-board">
         {board.map((column) => (
           <section key={column.label} className="crew-col" aria-label={column.label}>

@@ -2,24 +2,22 @@
 //! usage, so there are two ways in: the first message of a thread, unless
 //! `auto_thread_titles` is off, and an explicit request.
 
-use orbyn_contracts::{ModelInfo, Thread};
+use orbyn_contracts::Thread;
 use serde_json::json;
 
 use crate::agents::driver::EngineDriver;
 use crate::agents::engines::EngineManager;
+use crate::agents::text_models::text_model_for;
 use crate::error::{CoreError, Result};
 use crate::settings::preferences::stored_preference;
 use crate::store::{AuditRecord, Store};
 
 pub const NEW_THREAD_TITLE: &str = "New thread";
 pub const AUTO_TITLES_SETTING: &str = "auto_thread_titles";
-const TEXT_MODEL_SETTING: &str = "text_generation_model";
 
 /// How much of a first message a title sees; the start names the task.
 const FIRST_MESSAGE_CHARS: usize = 2_000;
 const TITLE_MAX_CHARS: usize = 80;
-/// Families engines use for their small models, preferred in this order.
-const SMALL_MODELS: &[&str] = &["haiku", "luna", "mini", "flash", "small"];
 
 /// What a generated title is drawn from.
 pub struct TitleCall<'a> {
@@ -40,39 +38,6 @@ pub fn auto_titles_on(store: &Store, project_id: &str) -> bool {
 /// What the first message of a thread gives a title to go on.
 pub fn first_message(prompt: &str) -> String {
     prompt.chars().take(FIRST_MESSAGE_CHARS).collect()
-}
-
-/// The small model in a list, if one is recognisable by name.
-fn smallest(models: &[ModelInfo]) -> Option<String> {
-    SMALL_MODELS.iter().find_map(|family| {
-        models
-            .iter()
-            .find(|model| model.id.to_lowercase().contains(family))
-            .map(|model| model.id.clone())
-    })
-}
-
-/// The chosen text model when this engine offers it, else its small one, else
-/// the thread's own. The setting is one name and threads differ in engine, so a
-/// name this engine does not list is passed over, not sent.
-async fn title_model(
-    store: &Store,
-    engines: &std::sync::Arc<EngineManager>,
-    thread: &Thread,
-) -> Option<String> {
-    let chosen = stored_preference(store, TEXT_MODEL_SETTING, Some(&thread.project_id))
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .filter(|model| !model.is_empty());
-    let models = engines
-        .models(&thread.engine, false)
-        .await
-        .map(|catalog| catalog.models)
-        .unwrap_or_default();
-    chosen
-        .filter(|model| models.iter().any(|known| known.id == *model))
-        .or_else(|| smallest(&models))
-        .or_else(|| thread.model.clone())
 }
 
 /// Asks the engine for a title and saves it. A rename that lands while the engine
@@ -103,7 +68,17 @@ pub async fn generate_title(
          Reply with only the title.{}\n\n<conversation>\n{conversation}\n</conversation>\n",
         instructions.map_or_else(String::new, |text| format!("\n\n{text}"))
     );
-    let model = title_model(store, engines, thread).await;
+    let model = text_model_for(
+        store,
+        engines,
+        &thread.engine,
+        Some(&thread.project_id),
+        thread.model.as_deref(),
+    )
+    .await
+    .ok()
+    .flatten()
+    .map(|choice| choice.model);
     store.append_audit(&AuditRecord {
         actor: actor.to_owned(),
         action: "engine.one_shot".into(),
@@ -135,19 +110,6 @@ fn clean_title(reply: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn model(id: &str) -> ModelInfo {
-        ModelInfo {
-            id: id.to_owned(),
-            label: id.to_owned(),
-            description: None,
-            is_default: false,
-            custom: false,
-            options: Vec::new(),
-            input_modalities: Vec::new(),
-            upgrade: None,
-        }
-    }
-
     #[test]
     fn titles_lose_quotes_markup_and_extra_lines() {
         assert_eq!(
@@ -160,13 +122,6 @@ mod tests {
             clean_title(&"x".repeat(200)).unwrap().len(),
             TITLE_MAX_CHARS
         );
-    }
-
-    #[test]
-    fn the_small_model_is_found_by_family() {
-        let list = [model("opus"), model("gpt-6-mini"), model("haiku")];
-        assert_eq!(smallest(&list).as_deref(), Some("haiku"));
-        assert_eq!(smallest(&[model("opus")]), None);
     }
 
     #[test]
