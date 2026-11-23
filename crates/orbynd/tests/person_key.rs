@@ -980,6 +980,97 @@ esac
     assert_eq!(current_branch(&folder), "main");
 }
 
+/// A run may keep or lower its thread's permission mode with the service token alone, but raising it is the person's.
+/// The middle modes are the control: an equal mode (`auto`) and both lower modes (`auto_edits`, `supervised`) reach the
+/// handler, while the one-step-looser mode and an empty or garbage key are refused with `person_required`.
+#[tokio::test]
+async fn a_run_can_lower_but_not_raise_its_thread_s_permission_mode() {
+    let f = fixture(true).await;
+    let key = f.service.person_key.clone().expect("a shell gets a key");
+    let runs = format!("/api/threads/{}/runs", f.thread);
+
+    // The thread starts Supervised. With the key, raise it to Auto so the checks below have an equal mode and two
+    // lower ones. The PATCH route is Person as a whole, and the shell's key is the person.
+    let response = f
+        .service
+        .client
+        .patch(format!("{}/api/threads/{}", f.service.url, f.thread))
+        .bearer_auth(&f.service.token)
+        .header(KEY_HEADER, &key)
+        .json(&json!({ "permission_mode": "auto" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let thread = f.service.json(&format!("/api/threads/{}", f.thread)).await;
+    assert_eq!(thread["lifecycle"]["permission_mode"], json!("auto"));
+
+    // FullAccess is one step looser than Auto.
+    let raise = json!({ "prompt": "raise", "permission_mode": "full_access" });
+    let (status, body) = f.call(&runs, raise.clone(), None).await;
+    assert_eq!((status, &body["code"]), (403, &json!("person_required")));
+    // An empty or garbage key is a wrong key, not "no key": both still answer the same refusal.
+    for wrong in ["", "garbage"] {
+        let (status, body) = f.call(&runs, raise.clone(), Some(wrong)).await;
+        assert_eq!(
+            (status, &body["code"]),
+            (403, &json!("person_required")),
+            "{wrong:?}"
+        );
+    }
+    let thread = f.service.json(&format!("/api/threads/{}", f.thread)).await;
+    assert_eq!(
+        thread["lifecycle"]["permission_mode"],
+        json!("auto"),
+        "a refused run moved the mode"
+    );
+
+    // Equal and lower modes pass the person layer. A handler may refuse for another reason, but not with 403.
+    for mode in ["auto", "auto_edits", "supervised"] {
+        let (status, body) = f
+            .call(
+                &runs,
+                json!({ "prompt": "stay", "permission_mode": mode }),
+                None,
+            )
+            .await;
+        assert_ne!(status, 403, "{mode}: {body}");
+        assert_ne!(body["code"], json!("person_required"), "{mode}: {body}");
+        f.service.finished(&f.thread).await;
+    }
+}
+
+/// `CheckoutPull.worktree` has no serde default. A body that omits it is refused by the JSON extractor as
+/// `invalid_input` (400) before the handler runs, so no checkout can move. The explicit `worktree: false` is the
+/// body that would move the project's own checkout, and that reaches the handler and is refused by the person layer.
+#[tokio::test]
+async fn an_omitted_checkout_worktree_is_invalid_input_and_never_moves_the_checkout() {
+    let f = fixture(true).await;
+    let checkout = format!("/api/projects/{}/pulls/12/checkout", f.project);
+
+    let (status, body) = f.call(&checkout, json!({}), None).await;
+    assert_eq!((status, &body["code"]), (400, &json!("invalid_input")));
+
+    let (status, body) = f.call(&checkout, json!({ "worktree": false }), None).await;
+    assert_eq!((status, &body["code"]), (403, &json!("person_required")));
+}
+
+/// The person layer reads a non-empty `resume[]` before the handler parses it. A malformed entry is therefore a
+/// person-action refusal, not invalid input: a token-only caller cannot answer an interrupt whatever the body says.
+#[tokio::test]
+async fn a_malformed_agui_resume_is_refused_before_the_body_is_parsed() {
+    let f = fixture(true).await;
+    let agui = format!("/agui/threads/{}", f.thread);
+    let (status, body) = f
+        .call(
+            &agui,
+            json!({ "threadId": &f.thread, "runId": "run-1", "resume": [{}] }),
+            None,
+        )
+        .await;
+    assert_eq!((status, &body["code"]), (403, &json!("person_required")));
+}
+
 /// A browser cannot set a header on a socket and the key must not be in the URL, so the page offers it as the subprotocol
 /// `orbyn.person.<key>` beside `orbyn.v1`. The upgrade answers `orbyn.v1` and never echoes the key.
 #[tokio::test]
