@@ -37,6 +37,8 @@ export function Shell() {
   const main = useRef<HTMLElement>(null);
   const routeKey = routeHref(route);
   const threadReady = useWorkspace((state) => route.name !== "thread" || state.threads[route.id] !== undefined);
+  const phone = layout === "phone";
+  const drawerOpen = useSidebarDrawer((state) => state.open);
 
   const layoutKey =
     route.name === "thread" ? route.id : route.name === "new" || route.name === "home" ? DRAFT_LAYOUT : null;
@@ -50,7 +52,10 @@ export function Shell() {
   useTaskRunNotifications();
   useTerminalAttention(route.name === "thread" ? route.id : null);
   usePanelMotionRoot(routeKey);
-  useRouteFocus(routeKey, route.name, threadReady, main);
+  // The phone's sheet takes the page's place (it is `hidden` under it), so the new screen only takes
+  // focus once the sheet is out of the way: a chosen destination's title, never a node the sheet took
+  // with it, and never the page while it is still hidden.
+  useRouteFocus(routeKey, route.name, threadReady && !(phone && drawerOpen), main);
   useClearSelectionOnLeave(routeKey);
   useToastClearance(`${routeKey}:${threadReady}`);
 
@@ -83,12 +88,10 @@ export function Shell() {
   const reading = useUi((state) => state.workspaceLayout === "reading");
   const readingNav = useReadingNav((state) => state.open);
   // The sidebar is never docked under 900 px. A small window folds it into a drawer over the thread;
-  // the phone (under 600 px) draws it as its home page, and as a full-screen sheet over any page that
-  // is not home (Engineer Designs, "Phone layout (under 600 px)": the sidebar is a full-screen sheet,
-  // never docked or overlaid beside the page).
-  const phone = layout === "phone";
+  // the phone (under 600 px, see `phone` above) draws it as its home page, and as a full-screen sheet
+  // over any page that is not home (Engineer Designs, "Phone layout (under 600 px)": the sidebar is a
+  // full-screen sheet, never docked or overlaid beside the page).
   const small = layout === "small";
-  const drawerOpen = useSidebarDrawer((state) => state.open);
   const closeDrawer = useSidebarDrawer((state) => state.close);
   const home = underneath.name === "home" && !needsProject && !overlay;
   const showNav = phone ? home || drawerOpen : small ? drawerOpen : reading ? readingNav : !collapsed;
