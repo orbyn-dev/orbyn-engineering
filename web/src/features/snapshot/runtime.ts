@@ -10,6 +10,7 @@ import { useUi } from "../../product/state/ui";
 import { readSnapShotGate, type SnapShotClient } from "./shell";
 import {
   EXCLUDED_TEXT,
+  SNAPSHOT_ACCESSIBILITY_SETUP_AVAILABLE,
   SNAPSHOT_SETUP_AVAILABLE,
   withoutAccessibleText,
   FAILURE_COPY,
@@ -319,7 +320,8 @@ export const useSnapshot = create<SnapshotRuntimeState>((set, get) => ({
   },
 
   async setupAction(action) {
-    if (!SNAPSHOT_SETUP_AVAILABLE && (action === "allow_screen_recording" || action === "allow_accessibility")) return;
+    if (action === "allow_accessibility" && !SNAPSHOT_ACCESSIBILITY_SETUP_AVAILABLE) return;
+    if (action === "allow_screen_recording" && !SNAPSHOT_SETUP_AVAILABLE) return;
     const { client, state } = get();
     if (!client) return;
     if (action === "test_capture") {

@@ -3,6 +3,7 @@ import { Button } from "../../../../ui/controls";
 import { useNow } from "../../../../lib/useNow";
 import { blocksApi, type BlockTerminal, type CommandBlock, type CommandBlocksApi } from "./blocksContract";
 import { BlockCard, isRunning } from "./BlockCard";
+import { FullscreenStrip } from "./FullscreenStrip";
 
 /** How often the list is read again while a command runs. */
 const POLL_MS = 2000;
@@ -132,25 +133,29 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
           Show earlier commands
         </Button>
       )}
-      {blocks.map((block) => (
-        <BlockCard
-          key={block.id}
-          api={api}
-          terminal={terminal}
-          block={block}
-          tick={tick}
-          now={now}
-          selected={selected === block.id}
-          collapsed={collapsed.has(block.id)}
-          showAll={expanded.has(block.id)}
-          onSelect={() => setSelected(block.id)}
-          onToggle={() => toggle(block.id)}
-          onShowAll={() => showAll(block.id)}
-          onCollapseAll={() => setCollapsed(new Set(blocks.map((one) => one.id)))}
-          write={write}
-          interrupt={interrupt}
-        />
-      ))}
+      {blocks.map((block) =>
+        isRunning(block) && block.fullscreen ? (
+          <FullscreenStrip key={block.id} command={block.command} />
+        ) : (
+          <BlockCard
+            key={block.id}
+            api={api}
+            terminal={terminal}
+            block={block}
+            tick={tick}
+            now={now}
+            selected={selected === block.id}
+            collapsed={collapsed.has(block.id)}
+            showAll={expanded.has(block.id)}
+            onSelect={() => setSelected(block.id)}
+            onToggle={() => toggle(block.id)}
+            onShowAll={() => showAll(block.id)}
+            onCollapseAll={() => setCollapsed(new Set(blocks.map((one) => one.id)))}
+            write={write}
+            interrupt={interrupt}
+          />
+        ),
+      )}
     </div>
   );
 }
