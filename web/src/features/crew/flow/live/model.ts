@@ -130,3 +130,19 @@ export function when(iso: string): string {
 
 /** "8 of 31 shown": how many rows are drawn of those that match. */
 export const shown = (rows: number, total: number): string => `${rows} of ${total} shown`;
+
+/**
+ * A task that resumed once after Orbyn restarted. The core adds `resumed` (and the attempt `round`) to the task read
+ * with KC8; the generated types do not carry them yet, so they are read here and only when the service sends them.
+ */
+export type MaybeResumed = { resumed?: boolean | null; round?: number | null };
+
+export const RESUMED_CARD = "Resumed after a restart from its last verified round.";
+
+export const wasResumed = (task: MaybeResumed): boolean => task.resumed === true;
+
+/** The zoom's note: the round it resumed from is the one before the attempt now running. */
+export function resumedNote(task: MaybeResumed): string {
+  const from = typeof task.round === "number" && task.round > 1 ? `round ${task.round - 1}` : "its last verified round";
+  return `Resumed after a restart from ${from}. Same key and budget. Nothing new is added.`;
+}
