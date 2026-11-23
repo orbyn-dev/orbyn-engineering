@@ -623,9 +623,16 @@ export function createMockApi(options: MockOptions = {}) {
     return project;
   }
 
+  /** The repository a checkout belongs to; every other project is its own group. */
+  const repositoryOf = (project: Project) => (scenario === "settings-checkouts" && project.id.startsWith("p-app") ? "orbyn-engineering-app" : null);
+  /** The catalog key of the group a project is in (`repo:` for checkouts of one repository, `mock:` for a project of its own). */
+  const groupKeyOf = (projectId: string) => {
+    const project = projects.find((entry) => entry.id === projectId);
+    const repository = project ? repositoryOf(project) : null;
+    return repository ? `repo:${repository}` : `mock:${projectId}`;
+  };
+
   function scopeCatalog(scope: ProjectScopesQuery): ProjectScopeCatalog {
-    /** The repository a checkout belongs to; every other project is its own group. */
-    const repositoryOf = (project: Project) => (scenario === "settings-checkouts" && project.id.startsWith("p-app") ? "orbyn-engineering-app" : null);
     const grouped = new Map<string, Project[]>();
     for (const project of projects.filter((entry) => !entry.scratch && entry.path !== managed.library?.path)) {
       const repository = repositoryOf(project);
@@ -910,7 +917,7 @@ export function createMockApi(options: MockOptions = {}) {
         break;
       case "GET /api/preferences": {
         const projectId = query.get("project_id");
-        const scope: ProjectScopesQuery = projectId ? { selection: { kind: "checkout", group_key: `mock:${projectId}`, project_id: projectId } } : {};
+        const scope: ProjectScopesQuery = projectId ? { selection: { kind: "checkout", group_key: groupKeyOf(projectId), project_id: projectId } } : {};
         if (scopedPreferences(scope, []).catalog.selection.kind === "unavailable") return err(404, "not_found", "Project not found.");
         const rows = preferenceViews(scope);
         // The credits setting on, for the read-only merge dialog frame (pr-detail-merge-dialog-credits-readonly-on).
@@ -952,7 +959,7 @@ export function createMockApi(options: MockOptions = {}) {
         const projectId = seg[2] ?? "";
         if (!projects.some((project) => project.id === projectId)) return err(404, "not_found", "Project not found.");
         writePreferences(projectId, (data.values ?? {}) as Record<string, JsonValue>);
-        return { status: 200, body: preferenceViews({ selection: { kind: "checkout", group_key: `mock:${projectId}`, project_id: projectId } }) };
+        return { status: 200, body: preferenceViews({ selection: { kind: "checkout", group_key: groupKeyOf(projectId), project_id: projectId } }) };
       }
       case "POST /api/settings":
         if (seg[2] === "project-scopes") return { status: 200, body: scopeCatalog(data as ProjectScopesQuery) };
