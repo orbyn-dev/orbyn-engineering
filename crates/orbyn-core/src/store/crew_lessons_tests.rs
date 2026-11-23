@@ -701,6 +701,7 @@ fn the_brief_read_holds_only_active_visible_lessons_newest_first() {
             [&a.id],
         )
         .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
     let c = store
         .write_crew_lesson(lesson("repo", Some("p1"), "person", "Third.", None))
         .unwrap()
@@ -712,11 +713,52 @@ fn the_brief_read_holds_only_active_visible_lessons_newest_first() {
             [&c.id],
         )
         .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let d = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Fourth.", None))
+        .unwrap()
+        .unwrap();
     let ids: Vec<String> = store
         .crew_lessons_for_brief("repo", Some("p1"))
         .unwrap()
         .into_iter()
         .map(|lesson| lesson.id)
         .collect();
-    assert_eq!(ids, [b.id]);
+    // Two are eligible, and the newer one comes first; the disabled and the hidden one are not there.
+    assert_eq!(ids, [d.id, b.id]);
+}
+
+#[test]
+fn a_counter_that_fails_after_another_succeeded_rolls_both_back() {
+    let (_dir, store) = open();
+    seed_project(&store, "p1");
+    let first = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Use pnpm.", None))
+        .unwrap()
+        .unwrap();
+    let second = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Run lint.", None))
+        .unwrap()
+        .unwrap();
+    // Only the second counter is refused, so the first one has already been written when the failure comes.
+    store
+        .writer()
+        .execute_batch(&format!(
+            "CREATE TRIGGER refuse_second BEFORE UPDATE ON crew_lessons WHEN NEW.id = '{}'
+             BEGIN SELECT RAISE(ABORT, 'counter refused'); END;",
+            second.id
+        ))
+        .unwrap();
+    let task = store
+        .create_crew_task_with_lessons(
+            &brief(),
+            &key(),
+            "run-01",
+            &[first.id.clone(), second.id.clone()],
+            &[],
+        )
+        .unwrap();
+    assert!(store.crew_task(&task.id).unwrap().is_some());
+    assert_eq!(store.crew_lesson(&first.id).unwrap().unwrap().uses, 0);
+    assert_eq!(store.crew_lesson(&second.id).unwrap().unwrap().uses, 0);
 }
