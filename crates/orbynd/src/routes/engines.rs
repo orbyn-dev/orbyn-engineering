@@ -150,7 +150,7 @@ async fn engine_models(
 async fn engine_feedback(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(body): Json<EngineFeedbackRequest>,
+    ApiJson(body): ApiJson<EngineFeedbackRequest>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.engines.feedback(&id, &body).await?))
 }
@@ -248,7 +248,13 @@ async fn list_engines(State(state): State<AppState>) -> ApiResult<impl IntoRespo
 
 /// Each family's engine host: state, version, restarts and the last crash. A plain read.
 async fn engine_host(State(state): State<AppState>) -> impl IntoResponse {
-    Json(state.core.engines.host_status().await)
+    let statuses = state.core.engines.host_status().await;
+    Json(
+        statuses
+            .into_iter()
+            .map(|status| redacted(&state, status))
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// Every host-derived string of a status, through the same redaction the engine key routes use, so a key
@@ -260,6 +266,15 @@ pub(super) fn redacted(state: &AppState, mut status: EngineHostStatus) -> Engine
     if let Some(crash) = status.last_crash.as_mut() {
         crash.message = redact_message(core, &crash.message);
         crash.stderr_tail = redact_message(core, &crash.stderr_tail);
+    }
+    if let Some(sdk) = status.sdk.as_mut() {
+        sdk.name = redact_message(core, &sdk.name);
+        sdk.version = redact_message(core, &sdk.version);
+    }
+    if let Some(capabilities) = status.capabilities.as_mut() {
+        for word in capabilities {
+            *word = redact_message(core, word);
+        }
     }
     status
 }

@@ -1,3 +1,4 @@
+import "../../shared/design.css";
 import "./review.css";
 import { useState, type ReactNode } from "react";
 import { BatchScreen } from "./Batch";

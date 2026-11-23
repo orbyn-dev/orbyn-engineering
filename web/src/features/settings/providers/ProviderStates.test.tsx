@@ -79,7 +79,7 @@ it("lists the other unverified engines under More engines with their note and pr
 it("says Limited support beside Ready on an older version", async () => {
   show([engine({})], [entry({ labels: ["limited_support"], note: "Update to the supported version." })]);
   await switches();
-  const row = rowOf("Claude Code");
+  const row = rowOf("Claude (SDK)");
   expect(within(row).getByText("Ready")).toBeVisible();
   expect(within(row).getByText("Limited support")).toBeVisible();
 });
@@ -88,8 +88,39 @@ it("puts a known-broken engine under Found, can’t start and still opens it", a
   const open = show([engine({})], [entry({ group: "cant_start", labels: ["cant_start"], note: "0.1.2 corrupts sessions." })]);
   await switches();
   expect(tables()).toEqual(["Found, can’t start"]);
-  await userEvent.click(screen.getByRole("button", { name: "Claude Code" }));
+  await userEvent.click(screen.getByRole("button", { name: "Claude (SDK)" }));
   expect(open).toHaveBeenCalledWith("claude");
+});
+
+it("shows Can’t start once for an installed Codex that cannot start, with no Ready", async () => {
+  show([engine({ id: "codex", name: "Codex" })], [
+    entry({ id: "codex", name: "Codex", group: "cant_start", labels: ["cant_start"], note: "Codex is installed, but it cannot start." }),
+  ]);
+  await switches();
+  const row = rowOf("Codex");
+  expect(within(row).getAllByText("Can’t start")).toHaveLength(1);
+  expect(within(row).queryByText("Ready")).toBeNull();
+});
+
+it("keeps the Version column in the DOM on a narrow table, where CSS alone hides it", async () => {
+  show([engine({})], [entry({})]);
+  await switches();
+  expect(screen.getByRole("table", { name: "Providers" })).toHaveClass("set-tbl", "prov");
+  expect(screen.getByRole("columnheader", { name: "Version" })).toBeInTheDocument();
+  const row = rowOf("Claude (SDK)");
+  const cells = within(row).getAllByRole("cell");
+  expect(cells).toHaveLength(6);
+  expect(cells[2]).toHaveTextContent("2.1.318");
+  expect(cells[2]).not.toHaveStyle({ display: "none" });
+});
+
+it("keeps the In use inheritance popover out of the table's width container", async () => {
+  show([engine({})], [entry({})]);
+  await switches();
+  await userEvent.click(screen.getByRole("button", { name: "Default" }));
+  const popup = screen.getByRole("dialog", { name: "Providers in use" });
+  expect(popup.closest(".set-tbl.prov")).toBeNull();
+  expect(document.body.contains(popup)).toBe(true);
 });
 
 it("keeps an engine whose program was not found, with its switch and Edit", async () => {
@@ -128,8 +159,8 @@ it("keeps a non-beta detail closed even when older catalog data says it opens", 
 it("shows Signed out for a signed-out engine even with no sign-in command", async () => {
   show([engine({ auth: "logged_out", sign_in_command: null })], [entry({})]);
   await switches();
-  expect(within(rowOf("Claude Code")).getByText("Signed out")).toBeVisible();
-  expect(within(rowOf("Claude Code")).queryByText("Ready")).toBeNull();
+  expect(within(rowOf("Claude (SDK)")).getByText("Signed out")).toBeVisible();
+  expect(within(rowOf("Claude (SDK)")).queryByText("Ready")).toBeNull();
 });
 
 it("lists a refused program as a card that says so, with no action", async () => {

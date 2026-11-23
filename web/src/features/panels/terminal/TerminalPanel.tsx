@@ -14,6 +14,7 @@ import { captureFocusReturn } from "../../../ui/focusReturn";
 import { linkProvider } from "./terminalLinks";
 import { ShellMarks, type Position, type ShellCommand } from "./shellMarks";
 import { hearShellFolder } from "./shellFolder";
+import { clearReportedCommands, publishFinished } from "./shellOutcomes";
 import { TerminalInput } from "./input/TerminalInput";
 import type { Terminal as XTerm } from "@xterm/xterm";
 
@@ -151,14 +152,18 @@ export function TerminalPanel({
       // The shared focus rule puts focus on the terminal's own input, which xterm has just made.
       if (focusOnOpen.current) captureFocusReturn(element.querySelector<HTMLElement>(".xterm-helper-textarea")).restore();
       const marks = new ShellMarks((fromLine, fromCol, toLine) => typedText(terminal, fromLine, fromCol, toLine));
+      // The key for everything this shell reports: its folder (OSC 7) and how each command ended (OSC 133/633).
+      const key = terminalKey(threadId, terminalId);
       const oscs = [133, 633].map((ident) =>
         terminal.parser.registerOscHandler(ident, (data) => {
           marks.mark(ident, data, () => cursorPosition(terminal));
+          // What the shell said a finished command ended with, for the editor's history rows.
+          publishFinished(key, marks.finished());
           return true;
         }),
       );
       // The shell's own report of its folder (OSC 7) is untrusted text: parsed strictly, kept per terminal, never shown or logged.
-      const folder = hearShellFolder(terminal.parser, terminalKey(threadId, terminalId));
+      const folder = hearShellFolder(terminal.parser, key);
       const links = terminal.registerLinkProvider(
         linkProvider(terminal, (link) => {
           if (link.kind === "url") {
@@ -275,6 +280,7 @@ export function TerminalPanel({
         chosen.dispose();
         for (const osc of oscs) osc.dispose();
         folder.dispose();
+        clearReportedCommands(key);
         links.dispose();
         socket.onclose = null;
         socket.close();

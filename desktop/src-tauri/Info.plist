@@ -28,6 +28,10 @@
       </array>
     </dict>
   </array>
+  <!-- ScreenCaptureKit shows this purpose string when macOS asks for Screen
+       Recording. The shell only reads the grant; it never requests it. -->
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Capture the window in front of Orbyn for a Snap Shot that you send yourself.</string>
   <!-- System Settings lists an app as a default browser only when it also opens web
        pages. Alternate rank never claims HTML files, and the shell drops any link
        that is not http or https, so a file handed over this way opens nothing. -->

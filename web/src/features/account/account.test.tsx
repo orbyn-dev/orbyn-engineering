@@ -219,6 +219,9 @@ describe("create an account", () => {
     expect(screen.getByRole("heading", { name: "Choose a password" })).toBeVisible();
     expect(screen.getByText(/For new@example.com/)).toBeVisible();
     expect(screen.getByText("Use at least 12 characters.")).toBeVisible();
+    // The password goes once to orbynd on this computer (docs/account.md D3): the copy says it stays on the computer, not in the page.
+    expect(screen.getByText(/Your password stays on this computer\./)).toBeVisible();
+    expect(screen.queryByText(/never leaves this device/)).toBeNull();
     await typePasswords(user);
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByText("Step 4 of 5 · Check your email")).toBeVisible();

@@ -26,7 +26,7 @@ import type { RedactionPatternTest } from "../../generated/RedactionPatternTest"
 import type { RedactionPatternTestInput } from "../../generated/RedactionPatternTestInput";
 import type { RedactionSettings } from "../../generated/RedactionSettings";
 import type { RedactionSurfaceChange } from "../../generated/RedactionSurfaceChange";
-import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
+import type { TextGenerators } from "../../generated/TextGenerators";
 import type { TriagePlaybook } from "../../generated/TriagePlaybook";
 
 const q = encodeURIComponent;
@@ -36,13 +36,19 @@ export function listProviders(signal?: AbortSignal) {
   return request<ProviderList>("GET", "/api/providers", undefined, signal);
 }
 
-export function queryPreferences(body: unknown, signal?: AbortSignal) {
-  return request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", body, signal);
+/** Every enabled engine with its text-generator models and the choice for this scope. */
+export function listTextGenerators(project: string | null, signal?: AbortSignal) {
+  return request<TextGenerators>("GET", project === null ? "/api/text-generators" : `/api/text-generators?project=${q(project)}`, undefined, signal);
 }
 
-export function updatePreferences(body: unknown) {
-  return request<ScopedPreferencesResult>("PUT", "/api/settings/preferences", body);
+/** One engine's model, written through the ordinary preferences route; the service merges the engine entries. */
+export function saveTextGeneratorModel(project: string | null, engine: string, model: string) {
+  return request("PUT", project === null ? "/api/preferences" : `/api/projects/${q(project)}/preferences`, {
+    values: { text_generation_models: { [engine]: model } },
+  });
 }
+
+export { queryPreferences, updatePreferences } from "../../api/preferences";
 
 export function queryProjectScopes(body: unknown, signal?: AbortSignal) {
   return request<ProjectScopeCatalog>("POST", "/api/settings/project-scopes", body, signal);

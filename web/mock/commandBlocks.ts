@@ -1,6 +1,7 @@
 /**
  * MOCK of the command-blocks routes of docs/command-blocks.md (provisional), for tests and the dev-only preview
- * (`#/preview/command-blocks`), which installs it through `setBlocksApi`. The app's own default is no client at all: nothing here ships.
+ * (`#/preview/command-blocks`), which installs it through `setBlocksApi`. The app's production default is the real client in
+ * `blocksClient.ts`; nothing here ships.
  * The scenario is the word after the route, as in `#/preview/command-blocks?failed`: `default`, `failed`, `running`, `long`,
  * `fullscreen`, `many`, `empty`, `error`. Output the mock serves includes markup and escape sequences on purpose: the blocks must draw
  * them as plain text.

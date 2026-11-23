@@ -35,6 +35,7 @@ export const preferenceCatalog: Record<string, JsonValue> = {
   worktree_submodules: "recursive",
   add_project_base_directory: "",
   text_generation_model: "",
+  text_generation_models: {},
   auto_thread_titles: true,
   project_title_instructions: "",
   branch_naming_mode: "static",
@@ -66,6 +67,7 @@ export const preferenceCatalog: Record<string, JsonValue> = {
   disabled_engines: [],
   provider_instances: [],
   crew_turn_budget: 0,
+  claude_engine_path: "sdk",
 };
 
 export const projectPreferenceKeys: ReadonlySet<string> = new Set([
@@ -88,6 +90,7 @@ export const projectPreferenceKeys: ReadonlySet<string> = new Set([
   "new_worktrees_start_from_origin",
   "worktree_submodules",
   "text_generation_model",
+  "text_generation_models",
   "auto_thread_titles",
   "project_title_instructions",
   "branch_naming_mode",

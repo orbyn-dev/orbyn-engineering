@@ -69,7 +69,7 @@
 .shell :is(.topbar, .settings-head, .skills-heading) {
   padding-right: max(28px, calc(var(--bar-end-w, 0px) + 14px + 12px));
 }
-.shell:has(> .titlebar[data-nav="hidden"][data-bar="float"]) :is(.topbar, .settings-head, .skills-heading) {
+.shell:has(> .titlebar[data-nav="hidden"][data-bar="float"]) :is(.topbar, .skills-heading) {
   padding-left: max(28px, var(--bar-lead, 0px));
 }
 /* The full 44px strip drags the window; see useDragStrip for when it takes the pointer. */
