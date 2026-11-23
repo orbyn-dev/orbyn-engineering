@@ -132,12 +132,16 @@ export function TrustDialog({ projectId, repo, onClose, onDone }: { projectId: s
   );
 }
 
-export function SetupGitDialog({ projectId, repo, onClose, onDone }: { projectId: string; repo: RepoRow; onClose(): void; onDone: Done }) {
+/**
+ * Confirms one `git init` in a folder: for a repository row and for the project's own folder, since both are the same
+ * write with the same meaning. `setup` is the route that writes, so this dialog never picks between them.
+ */
+export function SetupGitDialog({ name, path, setup, onClose, onDone }: { name: string; path: string; setup(): Promise<unknown>; onClose(): void; onDone: Done }) {
   return (
-    <ActionDialog title={`Set up Git in ${plain(repo.name)}?`} confirmLabel="Set up Git" cancelFocus onClose={onClose}
-      onConfirm={async () => { await reposApi().setupGit(projectId, repo.id); onDone(); }}>
+    <ActionDialog title={`Set up Git in ${plain(name)}?`} confirmLabel="Set up Git" cancelFocus onClose={onClose}
+      onConfirm={async () => { await setup(); onDone(); }}>
       <p>This runs <code>git init</code> in the folder. Existing files are not changed.</p>
-      <ConfirmFacts facts={[{ label: "Folder", value: <Path path={repo.path} />, mono: true }]} />
+      <ConfirmFacts facts={[{ label: "Folder", value: <Path path={path} />, mono: true }]} />
     </ActionDialog>
   );
 }
