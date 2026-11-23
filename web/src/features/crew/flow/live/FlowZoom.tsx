@@ -6,7 +6,7 @@ import type { FlowTaskDetail } from "../../../../generated/FlowTaskDetail";
 import { ErrorState, Empty, Loading } from "../../../../product/ui/states";
 import { Button } from "../../../../ui/controls";
 import { DownIcon, RightIcon, StageIcon } from "./glyphs";
-import { cellOf, decidedBy, laneWord, plain, roundView, STAGES, stageWord, when } from "./model";
+import { cellOf, decidedBy, resumedNote, wasResumed, laneWord, plain, roundView, STAGES, stageWord, when } from "./model";
 import { checkWord, findingStatusWord, laneFacts } from "../../map/model";
 import { useTaskWrite, WriteStatus } from "../../writes/TaskWrite";
 import { useFlowTask, useRefresh } from "./useFlow";
@@ -88,6 +88,11 @@ function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: Rea
       </div>
       <WriteStatus id={row.id} op={write.op} />
       {write.dialog}
+      {wasResumed(row) ? (
+        <p className="fv-note" role="note">
+          {resumedNote(row)}
+        </p>
+      ) : null}
       {detail.truncated ? (
         <p className="fv-note" role="note">
           A list of this task was cut at its cap; the newest are shown.
