@@ -135,7 +135,9 @@ fn the_audit_row_carries_the_name_and_ids_and_never_the_text() {
     assert!(!shown.contains("Redirect checks"), "{shown}");
     assert!(!shown.contains("Use when a task changes"), "{shown}");
 
-    local.write(LocalSkillWrite::edit(SKILL, 1), &[]).unwrap();
+    local
+        .write(LocalSkillWrite::edit("redirect-checks", SKILL, 1), &[])
+        .unwrap();
     let rows = audits(&store);
     assert_eq!(rows.len(), 2);
     // Newest first: the edit's row, then the create's.
@@ -163,12 +165,12 @@ fn an_edit_needs_the_revision_it_read_and_a_stale_one_is_refused() {
     local.write(LocalSkillWrite::create(SKILL), &[]).unwrap();
     let edited = SKILL.replace("follows a redirect.", "follows a redirect now.");
     let skill = local
-        .write(LocalSkillWrite::edit(edited.clone(), 1), &[])
+        .write(LocalSkillWrite::edit("redirect-checks", edited.clone(), 1), &[])
         .unwrap();
     assert_eq!(skill.local_revision, 2);
     let before = snapshot(local.root());
     let error = local
-        .write(LocalSkillWrite::edit(SKILL, 1), &[])
+        .write(LocalSkillWrite::edit("redirect-checks", SKILL, 1), &[])
         .unwrap_err();
     refusal(error, "stale", 409);
     assert_eq!(snapshot(local.root()), before);
@@ -179,7 +181,9 @@ fn an_edit_needs_the_revision_it_read_and_a_stale_one_is_refused() {
             .contains("follows a redirect now.")
     );
     assert_eq!(audits(&store).len(), 2);
-    let skill = local.write(LocalSkillWrite::edit(edited, 2), &[]).unwrap();
+    let skill = local
+        .write(LocalSkillWrite::edit("redirect-checks", edited, 2), &[])
+        .unwrap();
     assert_eq!(skill.local_revision, 3);
 }
 
@@ -187,13 +191,23 @@ fn an_edit_needs_the_revision_it_read_and_a_stale_one_is_refused() {
 fn an_edit_cannot_rename_a_local_skill() {
     let (_dir, store, local) = fixture();
     local.write(LocalSkillWrite::create(SKILL), &[]).unwrap();
+    local
+        .write(LocalSkillWrite::create(with_name("another-name")), &[])
+        .unwrap();
     let before = snapshot(local.root());
+    // Both skills are at revision 1: without the carried name this edit would rewrite
+    // `another-name` at the revision it guessed.
     let error = local
-        .write(LocalSkillWrite::edit(with_name("another-name"), 1), &[])
+        .write(
+            LocalSkillWrite::edit("redirect-checks", with_name("another-name"), 1),
+            &[],
+        )
         .unwrap_err();
-    assert_eq!(error.code(), "not_found", "{error}");
+    refusal(error, "invalid", 400);
     assert_eq!(snapshot(local.root()), before);
-    assert_eq!(audits(&store).len(), 1);
+    assert_eq!(audits(&store).len(), 2);
+    assert_eq!(local.get("another-name").unwrap().local_revision, 1);
+    assert_eq!(local.get("redirect-checks").unwrap().local_revision, 1);
 }
 
 #[test]
@@ -206,13 +220,21 @@ fn two_edits_from_one_revision_leave_one_winner_and_no_lost_text() {
     let (left, right) = std::thread::scope(|scope| {
         let left = scope.spawn(move || {
             one.write(
-                LocalSkillWrite::edit(SKILL.replace("follows a redirect.", "one."), 1),
+                LocalSkillWrite::edit(
+                    "redirect-checks",
+                    SKILL.replace("follows a redirect.", "one."),
+                    1,
+                ),
                 &[],
             )
         });
         let right = scope.spawn(move || {
             two.write(
-                LocalSkillWrite::edit(SKILL.replace("follows a redirect.", "two."), 1),
+                LocalSkillWrite::edit(
+                    "redirect-checks",
+                    SKILL.replace("follows a redirect.", "two."),
+                    1,
+                ),
                 &[],
             )
         });
@@ -430,8 +452,14 @@ fn a_refused_write_leaves_the_area_byte_for_byte() {
         ),
         (LocalSkillWrite::create(huge), Vec::new()),
         (LocalSkillWrite::create(with_name("con")), Vec::new()),
-        (LocalSkillWrite::edit(SKILL, 0), Vec::new()),
-        (LocalSkillWrite::edit(with_name("other"), 1), Vec::new()),
+        (
+            LocalSkillWrite::edit("redirect-checks", SKILL, 0),
+            Vec::new(),
+        ),
+        (
+            LocalSkillWrite::edit("other", with_name("other"), 1),
+            Vec::new(),
+        ),
     ];
     for (index, (attempt, reserved)) in attempts.into_iter().enumerate() {
         assert!(local.write(attempt, &reserved).is_err(), "{index}");
@@ -458,7 +486,9 @@ fn writing_never_touches_a_target_repository_or_the_shared_library() {
     let before_library = snapshot(&library);
     let before_target = snapshot(&target);
     local.write(LocalSkillWrite::create(SKILL), &[]).unwrap();
-    local.write(LocalSkillWrite::edit(SKILL, 1), &[]).unwrap();
+    local
+        .write(LocalSkillWrite::edit("redirect-checks", SKILL, 1), &[])
+        .unwrap();
     assert_eq!(snapshot(&library), before_library);
     assert_eq!(snapshot(&target), before_target);
 }
@@ -527,8 +557,123 @@ fn a_staging_leftover_is_not_a_skill_and_does_not_break_reading() {
     std::fs::write(folder.join(".SKILL.md.leftover.tmp"), "half a file").unwrap();
     assert_eq!(local.list().unwrap().len(), 1);
     assert_eq!(local.get("redirect-checks").unwrap().local_revision, 1);
-    local.write(LocalSkillWrite::edit(SKILL, 1), &[]).unwrap();
+    local
+        .write(LocalSkillWrite::edit("redirect-checks", SKILL, 1), &[])
+        .unwrap();
     // The person's unrelated file stays; the write's own staging is gone.
     assert!(folder.join(".SKILL.md.leftover.tmp").exists());
     assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 2);
+}
+
+#[test]
+fn the_cap_is_on_the_stored_file_and_a_boundary_file_is_readable() {
+    let (_dir, store, local) = fixture();
+    let mut exact = with_name("boundary");
+    let padding = MAX_SKILL_BYTES - with_revision(&exact, 1).len();
+    exact.push_str(&"x".repeat(padding));
+    assert_eq!(with_revision(&exact, 1).len(), MAX_SKILL_BYTES);
+    let skill = local
+        .write(LocalSkillWrite::create(exact), &[])
+        .unwrap();
+    assert_eq!(skill.local_revision, 1);
+    let stored = local.root().join("boundary").join("SKILL.md");
+    assert_eq!(
+        std::fs::metadata(&stored).unwrap().len() as usize,
+        MAX_SKILL_BYTES
+    );
+    assert_eq!(local.read("boundary", None).unwrap().len(), MAX_SKILL_BYTES);
+    assert_eq!(local.get("boundary").unwrap().local_revision, 1);
+
+    // One byte over the stored size is refused before anything is written.
+    let mut over = with_name("boundary-over");
+    let padding = MAX_SKILL_BYTES - with_revision(&over, 1).len() + 1;
+    over.push_str(&"x".repeat(padding));
+    assert_eq!(with_revision(&over, 1).len(), MAX_SKILL_BYTES + 1);
+    let rows = audits(&store).len();
+    let error = local.write(LocalSkillWrite::create(over), &[]).unwrap_err();
+    refusal(error, "invalid", 400);
+    assert!(!local.root().join("boundary-over").exists());
+    assert_eq!(audits(&store).len(), rows);
+}
+
+#[test]
+fn the_skill_file_cap_applies_when_it_is_read_by_its_explicit_name() {
+    let (_dir, _store, local) = fixture();
+    local.write(LocalSkillWrite::create(SKILL), &[]).unwrap();
+    let folder = local.root().join("redirect-checks");
+    let over = format!("{}{}", with_name("redirect-checks"), "y".repeat(MAX_SKILL_BYTES));
+    std::fs::write(folder.join("SKILL.md"), over).unwrap();
+    for file in [None, Some("SKILL.md")] {
+        let error = local.read("redirect-checks", file).unwrap_err();
+        refusal(error, "invalid", 400);
+    }
+    assert!(local.get("redirect-checks").is_err());
+    assert_eq!(local.list().unwrap(), Vec::new());
+}
+
+#[test]
+fn a_crash_orphaned_empty_folder_is_reclaimed_but_a_damaged_one_is_refused() {
+    let (_dir, _store, local) = fixture();
+    let root = local.root();
+    std::fs::create_dir_all(root.join("orphan")).unwrap();
+    let skill = local
+        .write(LocalSkillWrite::create(with_name("orphan")), &[])
+        .unwrap();
+    assert_eq!(skill.local_revision, 1);
+    assert!(local.read("orphan", None).unwrap().contains("# orphan"));
+
+    let damaged = root.join("damaged");
+    std::fs::create_dir_all(&damaged).unwrap();
+    std::fs::write(damaged.join("notes.txt"), "someone's work").unwrap();
+    let before = snapshot(root);
+    let error = local
+        .write(LocalSkillWrite::create(with_name("damaged")), &[])
+        .unwrap_err();
+    refusal(error, "name_taken", 409);
+    assert_eq!(snapshot(root), before);
+}
+
+#[test]
+fn a_failed_publish_keeps_the_previous_skill_and_leaves_no_staging_file() {
+    let (_dir, store, local) = fixture();
+    local.write(LocalSkillWrite::create(SKILL), &[]).unwrap();
+    let rows = audits(&store).len();
+    local.fail_next_publish();
+    let edited = SKILL.replace("follows a redirect.", "follows a redirect never.");
+    let error = local
+        .write(
+            LocalSkillWrite::edit("redirect-checks", edited, 1),
+            &[],
+        )
+        .unwrap_err();
+    assert!(matches!(error, CoreError::Internal(_)), "{error}");
+    // The previous skill is whole and the failed attempt's staging file is gone.
+    assert_eq!(local.get("redirect-checks").unwrap().local_revision, 1);
+    let text = local.read("redirect-checks", None).unwrap();
+    assert!(text.contains("follows a redirect."));
+    assert!(!text.contains("never"));
+    assert_eq!(
+        std::fs::read_dir(local.root().join("redirect-checks"))
+            .unwrap()
+            .count(),
+        1
+    );
+    // Rule 6 writes the audit row before the effect, so a failed publish can leave the
+    // attempt's row while the file itself is unchanged.
+    let rows_after = audits(&store);
+    assert_eq!(rows_after.len(), rows + 1);
+    assert_eq!(rows_after[0].detail["local_revision"], 2);
+}
+
+#[test]
+fn a_failed_create_publish_leaves_no_skill_folder() {
+    let (_dir, store, local) = fixture();
+    local.fail_next_publish();
+    let error = local
+        .write(LocalSkillWrite::create(with_name("never")), &[])
+        .unwrap_err();
+    assert!(matches!(error, CoreError::Internal(_)), "{error}");
+    assert!(!local.root().join("never").exists());
+    assert_eq!(local.list().unwrap(), Vec::new());
+    assert_eq!(audits(&store).len(), 1);
 }

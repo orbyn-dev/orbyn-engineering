@@ -203,18 +203,28 @@ impl SkillService {
     /// The skill names a run's MCP `skill_search` and `skill_load` tools may serve: the
     /// route's own selection, plus the device-local skills an approved Crew proposal wrote
     /// while the thread uses the default profile. A chosen profile stays what it names, so
-    /// a local skill is never delivered where the person limited the thread.
+    /// a local skill is never delivered where the person limited the thread. A damaged or
+    /// unreadable local area never fails the run: it is logged and the route's own
+    /// selection is served.
     pub fn tool_selection(&self, route: &SkillRoute) -> Result<Vec<String>> {
         let mut names = route.selection.clone();
-        if !route.limited {
-            names.extend(self.local.list()?.into_iter().map(|skill| skill.name));
+        if route.limited {
+            return Ok(names);
+        }
+        match self.local.list() {
+            Ok(skills) => {
+                let local: Vec<String> = skills
+                    .into_iter()
+                    .map(|skill| skill.name)
+                    .filter(|name| !names.contains(name))
+                    .collect();
+                names.extend(local);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "the skills-local area could not be read; serving the library selection");
+            }
         }
         Ok(names)
-    }
-
-    /// The device-local skills, as the skills area reads them.
-    pub fn local_skills(&self) -> Result<Vec<LocalSkill>> {
-        self.local.list()
     }
 
     /// Writes a skill an approved Crew proposal stores in `skills-local`. This is the
@@ -236,17 +246,19 @@ impl SkillService {
             .split_whitespace()
             .map(str::to_owned)
             .collect();
+        let catalog = self.catalog()?;
+        // The shared library wins a name it holds: a local skill of the same name is not
+        // listed a second time and is never the one an engine reads.
         let local: Vec<LocalSkill> = self
             .local
             .list()?
             .into_iter()
             .filter(|skill| allowed.contains(&skill.name))
+            .filter(|skill| !catalog.iter().any(|library| library.name == skill.name))
             .collect();
-        let mut found: Vec<Value> = self
-            .catalog()?
+        let mut found: Vec<Value> = catalog
             .iter()
             .filter(|skill| allowed.contains(&skill.name))
-            .filter(|skill| !local.iter().any(|local| local.name == skill.name))
             .filter(|skill| {
                 let text = format!("{} {}", skill.name, skill.description).to_lowercase();
                 terms.iter().all(|term| text.contains(term))
@@ -266,14 +278,12 @@ impl SkillService {
     }
 
     /// Reads a file of an allowed skill. The resolved path must stay inside that
-    /// skill's folder, so neither `..` nor a symlink can reach anything else.
+    /// skill's folder, so neither `..` nor a symlink can reach anything else. A name the
+    /// shared library holds is read from the library; a local skill is only read when the
+    /// library does not hold that name.
     pub fn load(&self, name: &str, file: Option<&str>, allowed: &[String]) -> Result<String> {
         if !allowed.iter().any(|skill| skill == name) {
             return Err(CoreError::NotFound(format!("skill {name}")));
-        }
-        // A local skill wins its own name before the library is read at all.
-        if self.local.contains(name) {
-            return self.local.read(name, file);
         }
         let relative = Path::new(file.unwrap_or("SKILL.md"));
         if !relative
@@ -281,6 +291,10 @@ impl SkillService {
             .all(|part| matches!(part, Component::Normal(_)))
         {
             return Err(CoreError::NotFound("skill file".into()));
+        }
+        let library_holds = self.catalog()?.iter().any(|skill| skill.name == name);
+        if !library_holds && self.local.contains(name) {
+            return self.local.read(name, file);
         }
         let root = canonicalize(&self.workspace.root()?.join("skills").join(name))
             .map_err(|_| CoreError::NotFound(format!("skill {name}")))?;
@@ -563,10 +577,77 @@ Read this before changing how a redirect is followed.
             .write_local_skill(LocalSkillWrite::create(LOCAL_SKILL))
             .unwrap();
         service
-            .write_local_skill(LocalSkillWrite::edit(LOCAL_SKILL, skill.local_revision))
+            .write_local_skill(LocalSkillWrite::edit(
+                "redirect-checks",
+                LOCAL_SKILL,
+                skill.local_revision,
+            ))
             .unwrap();
         assert_eq!(files(&library), before_library);
         assert_eq!(files(&target), before_target);
         assert!(!target.join("skills-local").exists());
+    }
+
+    #[tokio::test]
+    async fn a_library_skill_added_later_wins_over_the_local_one() {
+        let (dir, service) = fixture().await;
+        service
+            .write_local_skill(LocalSkillWrite::create(LOCAL_SKILL))
+            .unwrap();
+        // The library gains the same name after the local skill was written.
+        let root = dir.path().join("library");
+        std::fs::create_dir_all(root.join("skills/redirect-checks")).unwrap();
+        std::fs::write(
+            root.join("skills/redirect-checks/SKILL.md"),
+            "---\nname: redirect-checks\ndescription: \"The library one.\"\n---\n\n# Library checks\n",
+        )
+        .unwrap();
+        let catalog_path = root.join("skills/catalog.json");
+        let mut catalog: Value =
+            serde_json::from_str(&std::fs::read_to_string(&catalog_path).unwrap()).unwrap();
+        catalog["skills"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "name": "redirect-checks", "category": "Engineering practice" }));
+        std::fs::write(&catalog_path, serde_json::to_string(&catalog).unwrap()).unwrap();
+
+        let route = service
+            .route(&[SkillDelivery::McpSkillServer], None)
+            .unwrap();
+        let allowed = service.tool_selection(&route).unwrap();
+        assert_eq!(
+            allowed
+                .iter()
+                .filter(|name| name.as_str() == "redirect-checks")
+                .count(),
+            1,
+            "{allowed:?}"
+        );
+        let text = service.load("redirect-checks", None, &allowed).unwrap();
+        assert!(text.contains("# Library checks"), "{text}");
+        assert!(!text.contains("Read this before changing"));
+        let found = service.search("redirect", &allowed).unwrap();
+        let entries: Vec<&Value> = found
+            .iter()
+            .filter(|entry| entry.get("name").and_then(Value::as_str) == Some("redirect-checks"))
+            .collect();
+        assert_eq!(entries.len(), 1, "{found:?}");
+        assert_eq!(
+            entries[0].get("description").and_then(Value::as_str),
+            Some("The library one.")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_damaged_skills_local_area_does_not_fail_the_run_selection() {
+        let (dir, service) = fixture().await;
+        // A plain file where the area folder belongs makes reading the area fail.
+        let broken = dir.path().join("broken-data");
+        std::fs::write(&broken, b"not a folder").unwrap();
+        let broken = SkillService::new(service.store.clone(), service.workspace.clone(), broken);
+        let route = broken
+            .route(&[SkillDelivery::McpSkillServer], None)
+            .unwrap();
+        assert_eq!(broken.tool_selection(&route).unwrap(), route.selection);
     }
 }

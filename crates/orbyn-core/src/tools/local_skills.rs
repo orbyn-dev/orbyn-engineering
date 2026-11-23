@@ -6,9 +6,18 @@
 //!
 //! The write is atomic: the complete file is staged beside its destination and renamed
 //! into place, so a reader sees the old skill or the new one, never half a file. The
-//! revision makes an edit from a stale read fail instead of overwriting a newer text.
-//! Only slug names are accepted, and every resolved path must stay inside the skill's
-//! own folder, so neither `..` nor a symlink can reach anything else.
+//! revision makes an edit from a stale read fail instead of overwriting a newer text, and
+//! an edit carries the name it was read under, so rewriting the front-matter name cannot
+//! land on another skill. A create reclaims a folder a crash left empty; a folder that
+//! holds anything else is a damaged skill and stays refused. Only slug names are accepted,
+//! and every resolved path must stay inside the skill's own folder, so neither `..` nor a
+//! symlink can reach anything else. The stored file, its revision line included, is capped
+//! at [`MAX_SKILL_BYTES`], and that same cap applies when it is read back.
+//!
+//! A local skill is personal to this device and applies to every project; the repository a
+//! proposal came from is in the proposal's text only and cannot narrow where the skill
+//! applies. The shared library always wins a name it holds: a local skill may not be
+//! created over one, `skill_load` reads the library one, and `skill_search` lists it once.
 //!
 //! The one writer is `SkillService::write_local_skill`; the Crew proposals service calls
 //! it when a person approves. Engines reach the result through the MCP `skill_search`
@@ -26,7 +35,7 @@ use crate::store::{AuditRecord, Store};
 use crate::tools::skills::parse_frontmatter;
 use crate::util::{canonicalize, new_id};
 
-/// The most a `SKILL.md` in `skills-local` may hold, in bytes.
+/// The most a stored `SKILL.md` may hold, in bytes, its `local_revision` line included.
 pub const MAX_SKILL_BYTES: usize = 64 * 1024;
 /// The longest skill name, in characters.
 pub const MAX_NAME_CHARS: usize = 64;
@@ -55,15 +64,24 @@ pub struct LocalSkill {
     pub local_revision: u32,
 }
 
+/// Which existing local skill an edit replaces, and at which revision it was read. The
+/// name is carried separately from the text so an edit can never land on a different
+/// skill by rewriting the front-matter name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalSkillEdit {
+    pub name: String,
+    pub local_revision: u32,
+}
+
 /// What one write stores. The text is the complete `SKILL.md`, front matter included,
 /// as the person approved or edited it; the ids are for the audit row only.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LocalSkillWrite {
     pub text: String,
     /// `None` creates a new local skill and is refused when the name already exists.
-    /// `Some(revision)` replaces that local skill and is refused when it has changed
-    /// since that revision was read.
-    pub edit: Option<u32>,
+    /// `Some(edit)` replaces that named local skill and is refused when it has changed
+    /// since that revision was read, or when the text changes its name.
+    pub edit: Option<LocalSkillEdit>,
     /// The proposal this write came from, an id only, for the audit row.
     pub proposal: Option<String>,
     /// The proposal's source lessons, ids only, for the audit row.
@@ -78,10 +96,15 @@ impl LocalSkillWrite {
         }
     }
 
-    pub fn edit(text: impl Into<String>, local_revision: u32) -> Self {
+    /// Replaces the local skill `name` read at `local_revision`; the text in `text` must
+    /// keep that name.
+    pub fn edit(name: impl Into<String>, text: impl Into<String>, local_revision: u32) -> Self {
         Self {
             text: text.into(),
-            edit: Some(local_revision),
+            edit: Some(LocalSkillEdit {
+                name: name.into(),
+                local_revision,
+            }),
             ..Self::default()
         }
     }
@@ -101,6 +124,10 @@ pub struct LocalSkills {
     /// One write at a time, so a create's name check and its folder creation cannot race,
     /// and two edits cannot both pass the revision check.
     writing: Mutex<()>,
+    /// Test-only: the next write publishes nothing, so a failed publish's rollback can be
+    /// exercised without a real rename failure.
+    #[cfg(test)]
+    fail_publish: std::sync::atomic::AtomicBool,
 }
 
 impl LocalSkills {
@@ -109,7 +136,28 @@ impl LocalSkills {
             root: data_dir.join("skills-local"),
             store,
             writing: Mutex::new(()),
+            #[cfg(test)]
+            fail_publish: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Test-only: makes the next write's publish fail after its audit row, as a rename
+    /// failure would.
+    #[cfg(test)]
+    pub(crate) fn fail_next_publish(&self) {
+        self.fail_publish
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    fn made_publish_fail(&self) -> bool {
+        self.fail_publish
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[cfg(not(test))]
+    fn made_publish_fail(&self) -> bool {
+        false
     }
 
     /// Where the area lives, for tests and for a message that names it.
@@ -162,10 +210,10 @@ impl LocalSkills {
         })
     }
 
-    /// Whether the area holds a skill of a valid name, so the MCP read knows to look here
-    /// before the library.
+    /// Whether the area holds a readable skill of a valid name, so the MCP read knows to
+    /// look here when the shared library does not hold the name.
     pub fn contains(&self, name: &str) -> bool {
-        self.skill_dir(name).is_ok()
+        self.get(name).is_ok()
     }
 
     /// Reads `SKILL.md` or a file it references. The name is a slug and the file is a
@@ -184,7 +232,9 @@ impl LocalSkills {
         if !path.starts_with(&directory) {
             return Err(CoreError::NotFound("skill file".into()));
         }
-        if file.is_none() {
+        // The skill file itself is capped however it is named, `None` or an
+        // explicit `Some("SKILL.md")`; a referenced file may be larger.
+        if relative == Path::new(SKILL_FILE) {
             let size = std::fs::metadata(&path)?.len();
             if size > MAX_SKILL_BYTES as u64 {
                 return Err(too_large());
@@ -197,37 +247,57 @@ impl LocalSkills {
     /// atomic file. `reserved` is the shared library's own names: a local skill may not
     /// shadow one, so `skill_load` always has one answer.
     ///
-    /// The audit row is appended before the rename, as rule 6 requires. The file is
-    /// staged inside the skill's own folder first, so a failure before that rename leaves
-    /// the previous skill (or none) exactly as it was.
+    /// A create reclaims a folder a crash left empty between making it and publishing its
+    /// file; a folder that holds anything else stays refused, so a damaged skill is never
+    /// overwritten. An edit must keep the name it was read under.
+    ///
+    /// The audit row is appended before the rename, as rule 6 requires: a publish that
+    /// fails after it can leave the attempt's row, while the file itself is unchanged. The
+    /// file is staged inside the skill's own folder first, so a failure before that rename
+    /// leaves the previous skill (or none) exactly as it was.
     pub(crate) fn write(&self, write: LocalSkillWrite, reserved: &[String]) -> Result<LocalSkill> {
         let (name, description) = parse_write(&write.text)?;
         let _writing = self
             .writing
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let current = match write.edit {
-            Some(expected) => {
-                let current = self.get(&name)?;
-                if current.local_revision != expected {
+        let (current, text, revision) = match &write.edit {
+            Some(edit) => {
+                if name != edit.name {
+                    return Err(invalid(
+                        "A skill keeps its name when it is edited. Open the skill it belongs to.",
+                    ));
+                }
+                let current = self.get(&edit.name)?;
+                if current.local_revision != edit.local_revision {
                     return Err(stale());
                 }
-                Some(current)
+                let revision = current.local_revision.saturating_add(1);
+                let text = capped(&write.text, revision)?;
+                (Some(current), text, revision)
             }
             None => {
-                if self.contains(&name) {
-                    return Err(name_taken(&name, "in skills-local"));
-                }
+                // The cap is checked before anything on disk can change, so a refused
+                // write leaves the area exactly as it was.
+                let revision = 1;
+                let text = capped(&write.text, revision)?;
                 if reserved.iter().any(|reserved| reserved == &name) {
-                    return Err(name_taken(&name, "in the shared library"));
+                    return Err(name_taken_library(&name));
                 }
-                None
+                if let Ok(directory) = self.skill_dir(&name) {
+                    match self.get(&name) {
+                        Ok(_) => return Err(name_taken_local(&name)),
+                        // A crash between making the folder and publishing its file
+                        // leaves it empty with no skill in it; reclaim it.
+                        Err(_) if is_empty_directory(&directory) => {
+                            std::fs::remove_dir(&directory)?;
+                        }
+                        Err(_) => return Err(name_taken_local(&name)),
+                    }
+                }
+                (None, text, revision)
             }
         };
-        let revision = current
-            .as_ref()
-            .map_or(1, |skill| skill.local_revision.saturating_add(1));
-        let text = with_revision(&write.text, revision);
         std::fs::create_dir_all(&self.root)?;
         let root = canonicalize(&self.root)?;
         let directory = root.join(&name);
@@ -236,7 +306,7 @@ impl LocalSkills {
             match std::fs::create_dir(&directory) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    return Err(name_taken(&name, "in skills-local"));
+                    return Err(name_taken_local(&name));
                 }
                 Err(error) => return Err(error.into()),
             }
@@ -272,6 +342,13 @@ impl LocalSkills {
                 let _ = std::fs::remove_dir(&directory);
             }
             return Err(error);
+        }
+        if self.made_publish_fail() {
+            drop(staged);
+            if created {
+                let _ = std::fs::remove_dir(&directory);
+            }
+            return Err(CoreError::Internal("the test made the publish fail".into()));
         }
         if let Err(error) = staged.publish(&directory.join(SKILL_FILE)) {
             if created {
@@ -389,6 +466,17 @@ fn parse_write(text: &str) -> Result<(String, String)> {
     Ok((name, description))
 }
 
+/// The stored text for `revision`, refused when the file would be over the cap. The cap
+/// is on the stored file, its revision line included, so nothing the writer accepts is
+/// later refused by its own reader.
+fn capped(text: &str, revision: u32) -> Result<String> {
+    let text = with_revision(text, revision);
+    if text.len() > MAX_SKILL_BYTES {
+        return Err(too_large());
+    }
+    Ok(text)
+}
+
 /// The text with its front-matter revision set to `revision`, and nothing else changed.
 fn with_revision(text: &str, revision: u32) -> String {
     let Some(rest) = text.strip_prefix("---") else {
@@ -447,18 +535,36 @@ fn too_large() -> CoreError {
     refused(
         400,
         "invalid",
-        "A skill holds at most 64 KiB. Shorten it and save again.",
+        "A skill file holds at most 64 KiB. Shorten it and save again.",
         json!({ "limit": MAX_SKILL_BYTES }),
     )
 }
 
-fn name_taken(name: &str, where_: &str) -> CoreError {
+fn name_taken_local(name: &str) -> CoreError {
     refused(
         409,
         "name_taken",
-        format!("A skill named {name} already exists {where_}. Edit it instead."),
+        format!("A skill named {name} already exists on this device. Edit it instead."),
         json!({ "field": "name" }),
     )
+}
+
+/// A shared-library skill is not editable here, so a collision asks for another name.
+fn name_taken_library(name: &str) -> CoreError {
+    refused(
+        409,
+        "name_taken",
+        format!("A skill named {name} already exists in the shared library. Choose another name."),
+        json!({ "field": "name" }),
+    )
+}
+
+/// A folder a crash left behind between making it and publishing its file is empty; one
+/// with anything in it is a damaged skill and is never overwritten.
+fn is_empty_directory(path: &Path) -> bool {
+    std::fs::read_dir(path)
+        .map(|mut entries| entries.next().is_none())
+        .unwrap_or(false)
 }
 
 fn stale() -> CoreError {

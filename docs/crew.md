@@ -1755,7 +1755,7 @@ worker, the secret scan on the way in and out) and builds no screen before its f
 | KC6 | Watches | A background crew kind `watch`: a fixed command on a schedule with no model call; it acts once when the result turns failing | E4 | M26 |
 | KC7 | The missing listeners | `issue_label` and `dependency_update` background crews get listeners (refused today) | E4 | M27 |
 | KC8 | Resume after restart | A task whose worker died in a restart resumes once from its last verified round with the same key and budget, then stops as today | E2 | M28 |
-| KC9 | Skill proposals | Three lessons with the same pattern propose a skill in the skills workspace; nothing installs without the person | E2, E4 | M29 |
+| KC9 | Skill proposals | Three lessons with the same pattern propose a skill in the device's own skills area, `skills-local`; nothing installs without the person | E2, E4 | M29 |
 | KC10 | Device notifications | A desktop notification the first time something needs the person, once per item | E3, E1 | M30 |
 
 **Resume after restart (KC8).** A builder or fix task left `running` (or `changed_approach`) after a restart
@@ -1772,12 +1772,16 @@ the same transaction as its `stopped`/`engine_error` move.
 
 **KC9 library side (built after that snapshot):** an approved skill proposal writes the skill into the device's own
 skills folder, `<data>/skills-local/<slug>/SKILL.md`, whose front matter carries a `local_revision`; the shared library and
-any target repository are never written, so the library's revision and dirty flag cannot change. The one writer
-(`SkillService::write_local_skill`) refuses a name that already exists in the library or in `skills-local` unless it edits
-that local skill at the revision it read, caps the file at 64 KiB, refuses a secret with the contract's `secret_refused`
-sentence, and records one audit row (`skills.local.write`) with the name, the revision and the proposal and lesson ids only,
-never the text. Engines reach the skill through the MCP `skill_search` and `skill_load` tools; native discovery is a
-follow-up. The proposal store and its routes, and the web, are not built in this slice.
+any target repository are never written, so the library's revision and dirty flag cannot change. A local skill is personal
+and applies to every project; the repository a proposal came from appears in its text only and cannot narrow where it
+applies. The one writer (`SkillService::write_local_skill`) refuses a name that already exists in the library or in
+`skills-local` unless it edits that local skill at the revision (and under the name) it read, caps the stored file at 64 KiB
+including its revision line, refuses a secret with the contract's `secret_refused` sentence, and records one audit row
+(`skills.local.write`) with the name, the revision and the proposal and lesson ids only, never the text. The shared library
+wins a name it holds: a local skill cannot be created over one, and if the library later gains the name, `skill_load` reads
+the library copy and `skill_search` lists it once. Engines reach local skills through the MCP `skill_search` and
+`skill_load` tools; native discovery is a follow-up. The proposal store and its routes, and the web, are not built in this
+slice.
 
 **Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
 (our router never swaps an engine) and release channels.
