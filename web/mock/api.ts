@@ -7,6 +7,7 @@ import type { InstallOutcome } from "../src/generated/InstallOutcome.ts";
 import type { KeybindingRule } from "../src/generated/KeybindingRule.ts";
 import type { KeybindingsView } from "../src/generated/KeybindingsView.ts";
 import type { ModelInfo } from "../src/generated/ModelInfo.ts";
+import type { ProviderEntry } from "../src/generated/ProviderEntry.ts";
 import type { TextGeneratorEngine } from "../src/generated/TextGeneratorEngine.ts";
 import type { TextGenerators } from "../src/generated/TextGenerators.ts";
 /**
@@ -220,6 +221,8 @@ export function createMockApi(options: MockOptions = {}) {
   /** What a test changed of the diagnostics the service reports (events, processes, database). */
   let diagnosticsPatch: Partial<Diagnostics> = {};
   /** Projects settings treats as checkouts of one repository, so a group selection has several members. */
+  /** Programs the service found on the computer besides the engines it lists, as the provider list reports them. */
+  let foundPrograms: ProviderEntry[] = [];
   let groupedProjects: string[] = [];
   /** The model lists a test replaced, by engine. */
   const modelLists = new Map<string, ModelInfo[]>();
@@ -322,6 +325,7 @@ export function createMockApi(options: MockOptions = {}) {
     nativeDeleted.clear();
     diagnosticsPatch = {};
     groupedProjects = [];
+    foundPrograms = [];
     modelLists.clear();
     cloneError = null;
     reviewsSent.clear();
@@ -1363,8 +1367,10 @@ export function createMockApi(options: MockOptions = {}) {
             skills: fixtures.skills,
           },
         };
-      case "GET /api/providers":
-        return { status: 200, body: providerList(engines) };
+      case "GET /api/providers": {
+        const list = providerList(engines);
+        return { status: 200, body: { ...list, providers: [...list.providers, ...foundPrograms] } };
+      }
       case "GET /api/engines":
         if (seg[3] === "native-sessions" && seg[4] === "count") {
           return { status: 200, body: { engine: seg[2], count: fixtures.nativeSessionCounts[seg[2] ?? ""] ?? 0, truncated: false } };
@@ -1724,6 +1730,10 @@ export function createMockApi(options: MockOptions = {}) {
     /** Changes what Settings › Maintenance reads as the service's diagnostics, until the next reset. */
     patchDiagnostics(patch: Partial<Diagnostics>) {
       diagnosticsPatch = { ...diagnosticsPatch, ...patch };
+    },
+    /** Replaces the extra programs the provider list reports (rows for what is on the computer but is not an engine). */
+    setFoundPrograms(entries: ProviderEntry[]) {
+      foundPrograms = entries;
     },
     /** Settings treats these projects as checkouts of one repository: one group, selected as `mock:group:<ids joined by +>`. */
     groupProjects(ids: string[]) {
