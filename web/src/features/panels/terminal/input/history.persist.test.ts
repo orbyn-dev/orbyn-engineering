@@ -66,7 +66,7 @@ describe("saved history", () => {
     expect(mod.historyOf("k").map((e) => e.command)).toEqual(["ls"]);
   });
 
-  it.each(["tool --password hunter2", "mysql -u root -pSecretValue db", "curl https://user:pass@host.test/x", "mysql --password $'hunter2'"])(
+  it.each(["tool --password hunter2", "mysql -u root -pSecretValue db", "curl https://user:pass@host.test/x", "mysql --password $'hunter2'", "curl --pass ${PASS:-hunter2}", "curl --pass ${PASS:=hunter2}"])(
     "keeps %s out of local storage",
     async (line) => {
       const mod = await fresh();
@@ -77,7 +77,7 @@ describe("saved history", () => {
     },
   );
 
-  it.each(["mkdir -p out/a", "docker run -p 8080:80 app", "tool --password-file ./pw.txt", "git push https://github.com/o/r.git", "mysql -u root -p", "ssh -p 22 host", "curl 'https://host.test?contact=team:x@example.test'", "curl https://host.test/#a:b@c", "tool --password $HOME_PASSWORD"])(
+  it.each(["mkdir -p out/a", "docker run -p 8080:80 app", "tool --password-file ./pw.txt", "git push https://github.com/o/r.git", "mysql -u root -p", "ssh -p 22 host", "curl 'https://host.test?contact=team:x@example.test'", "curl https://host.test/#a:b@c", "tool --password $HOME_PASSWORD", "tool --password \"$HOME_PASSWORD\"", "tool --token=${API_TOKEN}"])(
     "still keeps the ordinary line %s",
     async (line) => {
       const mod = await fresh();
