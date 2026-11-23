@@ -276,6 +276,7 @@ it("does not restore a prior account's session-kept window when Limits remounts"
   const stop = startDataRefresh();
   try {
     act(() => { dataChanged("limits"); });
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((done) => setTimeout(done, COALESCE_MS + 50));
   } finally { stop(); }
   render(<UsagePage />);
@@ -430,6 +431,7 @@ it("checks limits again when the app comes back into view, but not while the ans
     await screen.findByRole("meter");
     expect(read).toHaveBeenCalledTimes(1);
     act(() => { window.dispatchEvent(new Event("focus")); });
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((done) => setTimeout(done, COALESCE_MS + 50));
     expect(read).toHaveBeenCalledTimes(1);
     // A person away longer than the window: the click on the window reads again, as one event read.

@@ -16,8 +16,10 @@ describe("useFlowTasks, the next page", () => {
   it("sends one read when showMore is called twice before the first answer, whatever a button does", async () => {
     mock.reset("crew-flow-many");
     const real = vi.mocked(fetch).getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
     vi.mocked(fetch).mockImplementation(async (input, init) => {
-      if (String(input).includes("offset=50")) await new Promise((resolve) => setTimeout(resolve, 60));
+      if (String(input).includes("offset=50")) await gate;
       return real(input, init);
     });
     const { result } = renderHook(() => useFlowTasks({ crew: MOCK_CREW, filter: "all", q: "", engine: null }));
@@ -27,6 +29,7 @@ describe("useFlowTasks, the next page", () => {
       void result.current.showMore();
       void result.current.showMore();
     });
+    release();
     await waitFor(() => expect(result.current.rows).toHaveLength(60));
     expect(nextPages()).toHaveLength(1);
   });
