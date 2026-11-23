@@ -42,6 +42,7 @@ import { mapMock } from "./map.ts";
 import { needsYouMock } from "./needsyou.ts";
 import { createExplorerMock } from "./explorer.ts";
 import { createSecretsMock } from "./secrets.ts";
+import { createTerminalsMock } from "./terminals.ts";
 import * as fixtures from "./fixtures.ts";
 import { acpRegistry, historyScan } from "./history.ts";
 import { customModels, instanceEngines, providerInstances } from "./instances.ts";
@@ -224,6 +225,7 @@ export function createMockApi(options: MockOptions = {}) {
   const backtestMock = createBacktestMock();
   const backgroundMock = createBackgroundMock();
   const reviewControlsMock = createReviewControlsMock();
+  const terminalsMock = createTerminalsMock();
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
   /** Kiro, an ACP engine the service says Orbyn cannot gate, for the engine picker and unmanaged-thread screens. */
@@ -265,6 +267,7 @@ export function createMockApi(options: MockOptions = {}) {
     backgroundMock.reset(next);
     reviewControlsMock.reset(next);
     secretsMock.reset();
+    terminalsMock.reset();
     signedIn = false;
     idCounter = 0;
     preferenceValues = {};
@@ -649,6 +652,8 @@ export function createMockApi(options: MockOptions = {}) {
 
     const explored = explorerRoute(method, seg, query);
     if (explored) return explored;
+    const terminal = terminalsMock.handle(method, seg, body);
+    if (terminal) return terminal;
 
     if (method === "POST" && seg[1] === "projects" && seg[3] === "pulls" && seg[5] === "review" && scenario.startsWith("pulls") && fixtures.pageStates[Number(seg[4])]) {
       reviewsSent.set(Number(seg[4]), [...(reviewsSent.get(Number(seg[4])) ?? []), String(data.body ?? "")]);
@@ -1502,6 +1507,8 @@ export function createMockApi(options: MockOptions = {}) {
       if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? backgroundMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? needsYouMock(scenario, method, parsed.pathname) ?? escapesMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? lessonsMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? backtestMock.handle(method, parsed.pathname) ?? capacityMock.handle(scenario, method, parsed.pathname, body) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
+    /** The thread terminals and their command blocks: seed what the service lists, read it back after a write. */
+    terminals: terminalsMock,
     /** The Code Mode stand-in (mock/codemode.ts): seed a run record, read the writes, switch the routes off (404). */
     codeMode: codeModeMock,
     /** Changes the account has waiting to upload, for the offline and paused wording. */
