@@ -242,7 +242,6 @@ const unixOnly = skip || (windows && "the shell installer and tar run on macOS")
 
 function serveArchive(entries) {
   const dir = mkdtempSync(join(root, "alt-"));
-  const stage = mkdtempSync(join(root, "stage-"));
   const archiveName = basename(archive);
   const file = join(dir, archiveName);
   const spec = JSON.stringify({ file, entries });
@@ -264,7 +263,6 @@ function serveArchive(entries) {
   ]);
   const sum = createHash("sha256").update(readFileSync(file)).digest("hex");
   writeFileSync(`${file}.sha256`, `${sum}  ${archiveName}\n`);
-  rmSync(stage, { recursive: true, force: true });
   return dir;
 }
 
@@ -306,5 +304,15 @@ test("an archive that names paths outside its folder writes nothing outside it",
     assert.ok(!existsSync(absolute), "an absolute entry was written where it named");
   } finally {
     serveDir = real;
+  }
+});
+
+test("a version that is not a plain version string is refused before any download", { skip }, async () => {
+  for (const version of ["1/../x", "1.2.3/../../latest", "1 2", "v1.2.3?x=y", "..", "-1", "1.2.3#frag"]) {
+    requests.length = 0;
+    const result = await install({ ORBYN_VERSION: version });
+    assert.notEqual(result.status, 0, `${version} was accepted`);
+    assert.match(result.stderr, /ORBYN_VERSION/, version);
+    assert.deepEqual(requests, [], `${version} reached the server`);
   }
 });
