@@ -30,6 +30,7 @@ mod issues;
 mod library;
 mod mcp_apps;
 mod media;
+mod precompressed;
 mod preview;
 mod profiles;
 mod projects;
