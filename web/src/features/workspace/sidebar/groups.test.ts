@@ -8,6 +8,7 @@ import {
   dropVerb,
   foldersOf,
   ledgerGroupsOf,
+  ledgerKey,
   projectDrop,
   sectionOf,
   sweepIds,
@@ -229,10 +230,29 @@ describe("ledger order", () => {
     expect(attentionRank(thread("a"))).toBe(2);
   });
 
+  it("counts a terminal waiting for the person as needing you, whatever else the thread is doing", () => {
+    expect(attentionRank(thread("a"), true)).toBe(0);
+    expect(attentionRank(thread("a", {}, failed), true)).toBe(0);
+    expect(attentionRank(thread("a"), false)).toBe(2);
+    expect(ledgerKey(thread("a"), true)).toBe("needs");
+    expect(ledgerKey(thread("a"))).toBe("done");
+  });
+
   it("lists active threads that need you first only when asked", () => {
     const threads = [thread("plain", { position: 0 }), thread("broke", { position: 1 }, failed), thread("asks", { position: 2 }, waiting)];
     expect(arrangeThreads(threads, now).active.map((t) => t.id)).toEqual(["plain", "broke", "asks"]);
     expect(arrangeThreads(threads, now, true, true).active.map((t) => t.id)).toEqual(["asks", "broke", "plain"]);
+  });
+});
+
+describe("a terminal wait in the Ledger", () => {
+  it("puts a thread waiting on a terminal in Needs you, sorted first", () => {
+    const threads = [thread("plain", { position: 0 }), thread("term", { position: 1 })];
+    const ids = new Set(["term"]);
+    expect(arrangeThreads(threads, now, true, true, ids).active.map((t) => t.id)).toEqual(["term", "plain"]);
+    const groups = ledgerGroupsOf(threads, ids);
+    expect(groups.find((g) => g.key === "needs")?.rows.map((t) => t.id)).toEqual(["term"]);
+    expect(groups.find((g) => g.key === "done")?.rows.map((t) => t.id)).toEqual(["plain"]);
   });
 });
 

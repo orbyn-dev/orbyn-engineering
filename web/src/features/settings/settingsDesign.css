@@ -19,6 +19,28 @@
   font-size: var(--text-meta);
   line-height: 1.45;
 }
+/* A row is the label block and its control on one line. The control is as wide as its content, so when the pane
+   can no longer keep the label's 180px, the control drops under the label instead of drawing over the description
+   or running off the row. The shared rules already give a segmented row that basis (pages.css); here it holds for
+   every row. The pane is narrower than the window while the sidebar and the section list are open, so the row
+   wraps on its own width: a viewport breakpoint cannot see that, and containment would re-anchor the fixed
+   inheritance popover the rows open. */
+.settings-page .setting-line:not(.setting-line-stacked) {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.settings-page .setting-line:not(.setting-line-stacked) > .setting-line-text {
+  flex-basis: 180px;
+}
+/* On a line of its own the control may use the row's whole width. */
+.settings-page .setting-line:not(.setting-line-stacked) > .setting-line-control {
+  max-width: 100%;
+}
+/* A segmented control cannot shrink its choices away; it wraps them inside the width it has. */
+.settings-page .setting-line-control .segmented {
+  max-width: 100%;
+  flex-wrap: wrap;
+}
 .settings-page .settings-scope svg {
   flex: none;
 }
@@ -136,6 +158,45 @@
 .set-tr .row-actions {
   display: flex;
   gap: 6px;
+}
+
+/* The Providers table owns its grid: Version is the first column to go when the table is narrow. */
+.set-tbl.prov {
+  container-type: inline-size;
+  --prov-columns: 28px minmax(120px, 1fr) 90px 130px 60px 88px;
+}
+.set-tbl.prov .set-tr {
+  grid-template-columns: var(--prov-columns);
+}
+/* Budget at 528, 628, 852px: 28 mark + 60 Edit + 88 In use = 176px fixed (88 holds the 80px Not selected pill), four 12px
+   gaps = 48px, and 8px row padding. Status keeps a shared 130px track and wraps rather than resizing each row. At 528px the name gets 166px; at 628px 266px;
+   at 852px 490px. Both the name (min 120px) and Status keep at least 120px at 528px.
+   Version's 90px shows from 800px up: the settings body is at most 864px wide (920px minus 28px
+   padding each side), so the table is never wider, and the 800px threshold keeps Version on every
+   wide window. With Version the fixed tracks are 28 + 90 + 60 + 88 = 266px, Status 130px, five
+   12px gaps = 60px and 8px padding = 464px, which leaves the name 336px at 800px. */
+@container (max-width: 799px) {
+  .set-tbl.prov .set-tr {
+    --prov-columns: 28px minmax(120px, 1fr) 130px 60px 88px;
+  }
+  .set-tbl.prov .set-tr > :nth-child(3) {
+    display: none;
+  }
+}
+/* Status is safety text: it wraps in its track rather than clipping to nothing. */
+.set-tbl.prov .set-states {
+  min-width: 0;
+  white-space: normal;
+}
+.set-tbl.prov .set-states > * {
+  min-width: 0;
+}
+.set-tbl.prov .set-states .set-pill {
+  max-width: 100%;
+  height: auto;
+  min-height: 22px;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 /* Key caps */
@@ -813,6 +874,37 @@
 .set-track .set-pill {
   margin-left: auto;
 }
+/* The Claude path choices: the frame draws two setting rows, the SDK one carrying Default. */
+.claude-path-choices {
+  display: flex;
+  flex-direction: column;
+}
+.claude-path-choice {
+  justify-content: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+.claude-path-choice .set-radio {
+  margin-top: 0;
+}
+.claude-path-choice[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+.claude-path-label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.claude-path-help,
+.claude-path-next {
+  padding: 0 0 8px;
+}
+.claude-path-host {
+  margin-top: 12px;
+}
 .set-radio {
   display: inline-block;
   position: relative;
@@ -1017,3 +1109,14 @@ html[data-inspecting] .main-view[hidden] { display: block; }
 .inspector-card-head { display: flex; align-items: center; gap: 8px; }
 .inspector-card-head code { color: var(--color-muted); font-size: 11.5px; }
 .tkn[data-picked] { outline: 2px solid var(--color-blue); outline-offset: 4px; border-radius: var(--radius-5); }
+
+/* Target size (WCAG 2.2 AA 2.5.8): the small text controls in Settings are at least the designed hit size (--hit, 28 px,
+   above the 24 px minimum), so a click lands without widening the type or the row. */
+.settings-page :is(.set-link, .set-red-link, .set-row-open, .tg-toggle, .tg-open-skills) {
+  min-height: var(--hit);
+  min-width: var(--hit);
+}
+.settings-page .settings-crumbs a {
+  min-height: var(--hit);
+  min-width: var(--hit);
+}

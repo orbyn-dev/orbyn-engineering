@@ -705,6 +705,7 @@ async fn tracked_diff(cwd: &Path, range: &[&str]) -> Result<Vec<FileDiff>> {
             additions,
             deletions,
             patch: String::from_utf8_lossy(&patch).into_owned(),
+            repo_id: None,
         });
     }
     Ok(files)
@@ -740,6 +741,7 @@ async fn untracked_diff(cwd: &Path, path: &str) -> Result<FileDiff> {
         additions,
         deletions: 0,
         patch,
+        repo_id: None,
     })
 }
 

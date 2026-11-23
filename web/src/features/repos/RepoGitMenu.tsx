@@ -1,6 +1,7 @@
 import { Ellipsis } from "lucide-react";
 import { useRef, useState } from "react";
 import { ApiFailure } from "../../api/client";
+import { pullsApi } from "../../api/pulls";
 import { toFailure } from "../../lib/useAsync";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
@@ -12,15 +13,18 @@ import { reposApi } from "./api";
 import type { RepoRow, ThreadGitAction, ThreadRepo } from "./contract";
 import { TrustDialog } from "./Dialogs";
 import { plain } from "./model";
+import { RepoMergeDialog, RepoReviewDialog } from "./RepoPullDialogs";
 
-type Open = "commit" | "pull_request";
+type Open = "commit" | "pull_request" | "review" | "merge";
+const STATE_WORDS: Record<string, string> = { open: "Open", merged: "Merged", closed: "Closed" };
 
 /**
  * The Git menu of ONE repository of a thread, on its group in the Changes list. Every item acts on this repository only: there is
- * no action that spans repositories, and no item removes a repository from a thread (not in the beta). Each item sends the thread's
- * existing `git/action` route with this repository's `repo_id`, left out for the project's primary repository. There is no merge or review
- * item: the pull request routes take no `repo_id` yet and would act on the primary repository. A repository that is not trusted
- * runs nothing: its Git items are off and nothing is sent; one the service finds untrusted (`409 repo_untrusted`) opens the app's own
+ * no action that spans repositories, and no item removes a repository from a thread (that is the Repos popover). Each item sends the thread's
+ * existing `git/action` route with this repository's `repo_id`, left out for the project's primary repository. The repository's own pull
+ * request (`ThreadRepo.pull_request`: its open one with the highest number, else its latest) is named in the menu; while it is open the
+ * menu offers Review and Merge on it, through the thread pull request routes with the same `repo_id`, and no second Create. A repository that is not trusted
+ * runs nothing: its Git and pull request items are off and nothing is sent; one the service finds untrusted (`409 repo_untrusted`) opens the app's own
  * trust prompt. Push is one write per click (the ref refuses a second click before the first renders); the rest ask in a dialog the
  * person confirms, through the shared one-write dialog.
  */
@@ -73,12 +77,24 @@ export function RepoGitMenu({ threadId, repo, onChanged }: { threadId: string; r
       running.current = false;
     }
   };
+  const pull = repo.pull_request ?? null;
+  const target = pull ? { threadId, number: Number(pull.number), repoId: primary ? undefined : repo.repo_id, name } : null;
+  const isOpen = pull?.state === "open";
+  /** A merge or review changes the pull request: the forge is asked again before the list reads the repository's state. */
+  const pullDone = async () => {
+    await pullsApi.refreshLinked(threadId, target?.repoId).catch(() => []);
+    onChanged();
+  };
   const untrusted = repo.trusted ? undefined : "This repository is not trusted. Trust it in the project's settings first.";
   const once = (item: MenuItem): MenuItem => ({ ...item, onSelect: () => { if (picked.current) return; picked.current = true; item.onSelect?.(); } });
   const items: MenuItem[] = [
     { label: "Commit…", disabled: !repo.trusted, title: untrusted, onSelect: () => { setText(""); setOpen("commit"); } },
     { label: "Push", disabled: !repo.trusted, title: untrusted, onSelect: () => { void quick({ kind: "push" }); } },
-    { label: "Create pull request…", disabled: !repo.trusted, title: untrusted, onSelect: () => { setText(""); setOpen("pull_request"); } },
+    ...(pull ? [{ label: `Pull request #${Number(pull.number)}`, disabled: true, title: pull.title ? plain(pull.title) : undefined, shortcut: STATE_WORDS[pull.state] ?? plain(pull.state) }] : []),
+    ...(isOpen ? [
+      { label: "Review…", disabled: !repo.trusted, title: untrusted, onSelect: () => setOpen("review") },
+      { label: "Merge…", disabled: !repo.trusted, title: untrusted, onSelect: () => setOpen("merge") },
+    ] : [{ label: "Create pull request…", disabled: !repo.trusted, title: untrusted, onSelect: () => { setText(""); setOpen("pull_request"); } }]),
   ].map(once);
   const close = () => setOpen(null);
   return (
@@ -103,6 +119,8 @@ export function RepoGitMenu({ threadId, repo, onChanged }: { threadId: string; r
           <p className="field-hint">Pushes {plain(repo.branch)} and opens one pull request in {name}.</p>
         </ActionDialog>
       ) : null}
+      {open === "review" && target ? <RepoReviewDialog pull={target} onClose={close} onDone={() => pullDone()} /> : null}
+      {open === "merge" && target ? <RepoMergeDialog pull={target} onClose={close} onDone={() => pullDone()} /> : null}
       {trust && projectId ? (
         <TrustDialog projectId={projectId} repo={trust} onClose={() => setTrust(null)} onDone={() => { pushToast(`Trusted ${plain(trust.name)}. Run the action again.`); onChanged(); }} />
       ) : null}

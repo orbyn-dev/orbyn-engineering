@@ -53,15 +53,24 @@
 .hero-title strong {
   font-weight: 500;
 }
+/* The heading's project name opens the project picker. The designs mark a picker with a down chevron and draw its hover
+   as the raised fill (`.sel`, `.pick`, `.tcr:hover`); the projects chip carries `--raise`, which is `--color-hover`. */
 .hero-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 0;
   border: 0;
+  border-radius: var(--radius-md);
   background: transparent;
   color: inherit;
   font-size: inherit;
   font-weight: 500;
   letter-spacing: inherit;
   cursor: pointer;
+}
+.hero-project:hover:not(:disabled) {
+  background: var(--color-hover);
 }
 .draft-stage {
   position: relative;
@@ -539,6 +548,12 @@
 }
 .context-chips li > .transcript-count {
   flex: none;
+  color: var(--color-muted);
+}
+.transcript-note {
+  margin: 0;
+  padding: 0 16px;
+  font-size: var(--text-label);
   color: var(--color-muted);
 }
 /* What a file dragged over the composer will do, said in the middle of the box (B43). */

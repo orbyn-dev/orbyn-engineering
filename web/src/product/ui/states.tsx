@@ -82,7 +82,7 @@ export function NarrowBack({ to }: { to?: Route }) {
   const layout = useLayoutWidth();
   if (layout !== "phone") return null;
   // A page inside a section goes back to that section's list; the rest go to the threads.
-  const label = to?.name === "pulls" ? "Back to pull requests" : to?.name === "issues" ? "Back to Issues" : "Back to threads";
+  const label = to?.name === "pulls" ? "Back to pull requests" : to?.name === "issues" ? "Back to Issues" : to?.name === "skills" ? "Back to skills" : "Back to threads";
   return (
     <a className="icon-btn" href={routeHref(to ?? { name: "home" })} aria-label={label} title={label}>
       <ArrowLeft size={16} aria-hidden />

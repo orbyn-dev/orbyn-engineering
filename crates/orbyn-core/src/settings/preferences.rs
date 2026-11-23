@@ -95,6 +95,8 @@ const DEFINITIONS: &[Definition] = defs![
     "warm_next_turn" Kind::Bool, false, false;
     "app_update_mode" Kind::OneOf(&["automatic", "notify", "off"]), "notify", false;
     "keep_awake_during_runs" Kind::Bool, true, false;
+    "terminal_attention_enabled" Kind::Bool, true, false;
+    "terminal_attention_quiet_seconds" Kind::Number, 20, false;
     "quit_confirmation" Kind::OneOf(QUIT), "direct", false;
     "default_engine" Kind::Text, "", true;
     "default_effort" Kind::Text, "", true;
@@ -106,6 +108,7 @@ const DEFINITIONS: &[Definition] = defs![
     "worktree_submodules" Kind::OneOf(SUBMODULES), "recursive", true;
     "add_project_base_directory" Kind::Text, "", false;
     "text_generation_model" Kind::Text, "", true;
+    "text_generation_models" Kind::Object, {}, true;
     "auto_thread_titles" Kind::Bool, true, true;
     "project_title_instructions" Kind::Text, "", true;
     "branch_naming_mode" Kind::OneOf(NAMING), "static", true;
@@ -138,7 +141,11 @@ const DEFINITIONS: &[Definition] = defs![
     "provider_instances" Kind::List, [], false;
     "crew_digest" Kind::Object, {"time": "17:00"}, false;
     "crew_turn_budget" Kind::Number, 0, false;
+    "claude_engine_path" Kind::OneOf(&["sdk", "cli"]), "sdk", false;
 ];
+
+/// Which path Claude runs take: `sdk` (the engine host, the default) or `cli`. Read at each run's start.
+pub(crate) const CLAUDE_ENGINE_PATH: &str = "claude_engine_path";
 
 /// The daily digest's send time (issue #806): a Person route stores it, and the Crew watch reads it.
 pub(crate) const CREW_DIGEST: &str = "crew_digest";
@@ -227,11 +234,25 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
                 .into(),
         ));
     }
+    if fits && definition.key == crate::agents::text_models::SETTING {
+        crate::agents::text_models::validate_syntax(value)?;
+    }
     if fits && definition.key == CREW_TURN_BUDGET && value.as_u64().is_none() {
         // Whole turns only: a fraction could never be spent, and 0 is no crew-wide budget.
         return Err(CoreError::Invalid(
             "A crew turn budget is a whole number of turns, or 0 for no budget.".into(),
         ));
+    }
+    if fits && definition.key == crate::agents::attention::QUIET_PREFERENCE {
+        let allowed = value.as_u64().is_some_and(|seconds| {
+            (crate::agents::attention::QUIET_MIN_SECS..=crate::agents::attention::QUIET_MAX_SECS)
+                .contains(&seconds)
+        });
+        if !allowed {
+            return Err(CoreError::Invalid(
+                "Quiet time is a whole number of seconds from 10 to 120.".into(),
+            ));
+        }
     }
     if fits {
         Ok(())
@@ -420,6 +441,9 @@ impl Core {
             if !value.is_null() {
                 check(definition, value)?;
                 refuse_agent_device_access(key, value)?;
+                if key == crate::agents::text_models::SETTING {
+                    crate::agents::text_models::check_offered(&self.engines, value)?;
+                }
             }
             if key == crate::agents::engines::instances::PREFERENCE && !value.is_null() {
                 let list = crate::agents::engines::instances::parse(value)?;
@@ -506,7 +530,8 @@ impl Core {
             .is_some_and(|list| list.iter().any(|item| item.as_str() == Some(engine)));
         if off {
             return Err(CoreError::Invalid(format!(
-                "{engine} is turned off for this project."
+                "{} is turned off for this project.",
+                self.engines.display_name(engine)
             )));
         }
         Ok(())
@@ -600,6 +625,18 @@ mod tests {
                 .filter(|d| d.key == definition.key)
                 .count();
             assert_eq!(same, 1, "{}", definition.key);
+        }
+    }
+
+    #[test]
+    fn the_claude_engine_path_defaults_to_sdk_and_takes_only_sdk_or_cli() {
+        let path = definition(CLAUDE_ENGINE_PATH).unwrap();
+        assert_eq!((path.default)(), json!("sdk"));
+        assert!(!path.project, "one choice for the whole computer");
+        assert!(check(path, &json!("cli")).is_ok());
+        assert!(check(path, &json!("sdk")).is_ok());
+        for bad in [json!("auto"), json!(""), json!(true), json!(null)] {
+            assert!(check(path, &bad).is_err(), "{bad}");
         }
     }
 

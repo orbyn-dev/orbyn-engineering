@@ -67,13 +67,14 @@ export type Scenario =
   /** Live review fixtures: "crew-review-consent", "crew-review-same", "crew-review-full", "crew-review-remove". Background crews: "crew-background" (the four the designs draw), "crew-background-empty". */
   /** Escape log, Crew Designs v79: "crew-escapes" (the design’s six rows), "crew-escapes-checks" (the check frames’ escapes), "crew-escapes-limit" (5,000 in all), "crew-escapes-empty", "crew-escapes-low", "crew-escapes-unreadable", "crew-escapes-stale", "crew-escapes-stored" (a person’s stored thresholds). */
   /** Review capacity and the coverage map, Crew Designs v77: "crew-capacity" (a limit of 8 saved, pausing off, every batch reviewed) and "crew-capacity-save-fails" (every save refused with 403 person_required). */
-  /** Reviewer backtest, Crew Designs v23: "crew-backtest" (the estimate), "crew-backtest-report" (the finished run "run-4n"), "crew-backtest-stopped" (the stopped run "run-stopped"). */
+  /** Reviewer backtest, Crew Designs v23: "crew-backtest" (the estimate and a finished last run), "crew-backtest-report" (the finished run "run-4n"), "crew-backtest-stopped" (the stopped run "run-stopped"), "crew-backtest-kind-none" (a lane whose kind was not recorded), "crew-backtest-budget-none" (one engine has no budget), "crew-backtest-none" (the project never ran a backtest), "crew-backtest-failed" (a failed last run) and "crew-backtest-running" (a stored run in progress). */
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-empty", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
   /** Code Mode (dev and test stand-in for the service routes, mock/codemode.ts): the first thread with a search, a describe, a finished run, and a paused run with its approval. */
   | "codemode"
   | `crew${"" | `-${string}`}`
   /** The Pull requests page with its rows in every data state, and the variants a screen needs. */
   | "pulls"
+  | "pulls-credits-on"
   | "pulls-details-failed"
   | "pulls-rate-limited"
   /** The first details read is answered in full, then the service pauses every detail field (as it does when GitHub's limit is spent) and names when it resumes, so a filter set on the details is already on when the pause comes (press Refresh): "pulls-limited" in ten minutes (pr-tb-filter-rate-limited), "pulls-limited-still" two seconds from every read, so the check at that time finds the limit still on (pr-tb-filter-still-limited). */
@@ -96,7 +97,13 @@ export type Scenario =
   | "browser-profiles"
   | "browser-profiles-empty"
   /** The first thread on Cursor: the first send answers 409 engine_notice_required, every later one 409 engine_mode_refused (use with #/preview/cursor-thread). */
-  | "cursor-thread";
+  | "cursor-thread"
+  /** A thread on Kiro, an engine the service says Orbyn cannot gate, for the unmanaged-thread screens: the one mode, the notice and its labels. */
+  | "unmanaged-thread"
+  /** Transcript import: a project default engine, so the sheet can preview; `transcript-imported` adds a thread made from a file. */
+  | "transcript-import"
+  | "transcript-import-no-default"
+  | "transcript-imported";
 
 type Subscriber = (event: WireThreadEvent) => void;
 
@@ -149,6 +156,8 @@ export function createMockApi(options: MockOptions = {}) {
   const hooks = new Set<string>(["task-hook"]);
   let failures: Failure[] = [];
   let clones: unknown[] = [];
+  /** Why the next clone ends failed, or null while clones succeed. */
+  let cloneError: string | null = null;
   /** The notes of the reviews sent from a pull request page, by number. */
   const reviewsSent = new Map<number, string[]>();
   /** The details reads since the scenario began: the limited scenarios answer the first in full and then hit the limit. */
@@ -176,6 +185,31 @@ export function createMockApi(options: MockOptions = {}) {
   const reviewControlsMock = createReviewControlsMock();
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
+  /** Kiro, an ACP engine the service says Orbyn cannot gate, for the engine picker and unmanaged-thread screens. */
+  const addKiro = (permission_modes: EngineStatus["capabilities"]["permission_modes"]) => {
+    const cursor = engines.find((engine) => engine.id === "cursor");
+    if (!cursor) return;
+    engines.push({
+      ...structuredClone(cursor),
+      id: "kiro",
+      name: "Kiro",
+      tier: "acp",
+      capabilities: { ...cursor.capabilities, managed: false, approvals: false, permission_modes },
+      path: "/usr/local/bin/kiro-cli",
+      version: null,
+      auth: "unknown",
+      installer: "unknown",
+      latest: null,
+      support: "unknown",
+      update_command: null,
+      manual_hint: null,
+      sign_in_command: "kiro-cli login",
+      updating: false,
+      problem: null,
+      crew_role: "reviewer_only",
+    });
+  };
+
   function reset(next: Scenario = "default") {
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
@@ -187,7 +221,7 @@ export function createMockApi(options: MockOptions = {}) {
     escapesMock.reset(next);
     backtestMock.reset(next);
     backgroundMock.reset(next);
-    reviewControlsMock.reset();
+    reviewControlsMock.reset(next);
     secretsMock.reset();
     signedIn = false;
     idCounter = 0;
@@ -195,6 +229,7 @@ export function createMockApi(options: MockOptions = {}) {
     preferenceOverrides = {};
     failures = [];
     clones = [];
+    cloneError = null;
     reviewsSent.clear();
     detailsReads = 0;
     delayMs = 0;
@@ -203,6 +238,7 @@ export function createMockApi(options: MockOptions = {}) {
     // Autopilot by area is drawn for one repository (the design has a separate frame for several): its scenarios keep the first project.
     if (next.startsWith("crew-areas")) projects = projects.slice(0, 1);
     threads = blank ? [] : fixtures.threads();
+    if (next === "transcript-imported") threads = [...threads, fixtures.importedThread()];
     approvals = blank ? [] : fixtures.pendingApprovals();
     tasks = blank ? [] : fixtures.scheduledTasks();
     cursorSends = 0;
@@ -215,6 +251,7 @@ export function createMockApi(options: MockOptions = {}) {
         ]
       : [];
     logs = blank ? {} : fixtures.logs();
+    if (next === "transcript-imported") logs["t-imported"] = fixtures.importedLog();
     if (next === "reference") {
       const state = fixtures.referenceState(Date.now());
       projects = state.projects;
@@ -242,6 +279,29 @@ export function createMockApi(options: MockOptions = {}) {
       const keep = next === "limits-providers" ? ["gemini-acp", "aider"] : next === "limits-claude" ? ["claude"] : next === "limits-error" ? ["codex", "gemini-acp"] : ["claude", "codex"];
       engines = engines.filter((engine) => keep.includes(engine.id));
       for (const engine of engines) if (engine.id === "codex" && next !== "limits-signedout") engine.auth = "logged_in";
+    }
+    if (next === "transcript-import" || next === "transcript-imported") {
+      preferenceValues = { ...preferenceValues, default_engine: "claude", default_model: "", default_effort: "", default_model_options: {}, disabled_engines: [] };
+    }
+    if (next === "transcript-import-no-default") preferenceValues = { ...preferenceValues, disabled_engines: [] };
+    // The engine picker's Unmanaged label, on an ACP engine the service says it cannot gate.
+    if (next === "crew-engine-picker") {
+      addKiro(["supervised", "auto", "full_access"]);
+      preferenceValues = {
+        ...preferenceValues,
+        default_engine: "kiro",
+        default_model: "",
+        default_effort: "",
+        default_model_options: {},
+        disabled_engines: [],
+      };
+    }
+    // The unmanaged thread's one mode, notice and labels, on a thread the service says Orbyn cannot gate.
+    if (next === "unmanaged-thread") {
+      addKiro(["no_approvals"]);
+      threads = threads.map((thread) => thread.id === "t-empty"
+        ? { ...thread, project_id: "p-app", engine: "kiro", model: "sonnet", lifecycle: { ...(thread.lifecycle ?? fixtures.lifecycle()), permission_mode: "auto" } }
+        : thread);
     }
     if (!blank) preferenceValues = { ...preferenceValues, provider_instances: structuredClone(providerInstances), custom_models: structuredClone(customModels) };
   }
@@ -292,6 +352,10 @@ export function createMockApi(options: MockOptions = {}) {
       return cursorSends === 1
         ? err(409, "engine_notice_required", "Cursor does not ask before acting.")
         : err(409, "engine_mode_refused", "Cursor cannot run in Supervised mode.");
+    }
+    // The notice is the only unmanaged-thread state the service sends for a non-Cursor engine today; the mode refusal is planned.
+    if (scenario === "unmanaged-thread" && thread.engine === "kiro") {
+      return err(409, "engine_notice_required", "Orbyn cannot ask before Kiro acts.");
     }
     const runId = nextId("run");
     const run = {
@@ -585,6 +649,7 @@ export function createMockApi(options: MockOptions = {}) {
         };
       }
       if (seg[5] === "checks" || seg[5] === "timeline") return { status: 200, body: [] };
+      if (seg[5] === "comments") return { status: 200, body: fixtures.pullConversation() };
       if (seg[5] === "stack") return { status: 200, body: { layers: [], position: 0 } };
     }
 
@@ -594,6 +659,80 @@ export function createMockApi(options: MockOptions = {}) {
     }
     if (method === "POST" && seg[1] === "threads" && seg[3] === "pulls" && seg[4] === "refresh") {
       return { status: 200, body: fixtures.pulls().map((entry) => entry.pull) };
+    }
+
+    if (method === "GET" && seg[1] === "threads" && seg[3] === "export" && !seg[4]) {
+      const thread = threads.find((entry) => entry.id === seg[2]);
+      if (!thread) return err(404, "not_found", "Thread not found.");
+      return {
+        status: 200,
+        body: {
+          format: "orbyn-transcript",
+          version: 1,
+          exported_at: now(),
+          thread: { title: thread.title, engine: thread.engine, model: thread.model, created_at: thread.created_at },
+          messages: [
+            { role: "user", ts: thread.created_at, text: "The logout page redirects back to itself in a loop." },
+            { role: "assistant", ts: thread.updated_at, text: "The cookie is cleared after the redirect has already fired." },
+          ],
+          omitted_earlier: 0,
+        },
+      };
+    }
+
+    if (method === "POST" && seg[1] === "threads" && seg[2] === "import") {
+      const project = projects.find((entry) => entry.id === query.get("project_id"));
+      if (!project) return err(404, "not_found", "Project not found.");
+      const name = query.get("name") ?? "transcript.orbyn.json";
+      if (/huge/i.test(name)) return err(413, "file_too_large", "A transcript is at most 2 MiB.");
+      if (/newer/i.test(name)) return err(422, "transcript_too_new", "This transcript was made by a newer Orbyn.");
+      if (/notes/i.test(name)) return err(422, "transcript_unreadable", "This file is not an Orbyn transcript.");
+      if (/nokey/i.test(name)) return err(403, "person_required", "This action is only available in the desktop app.");
+      if (/engine-gone/i.test(name)) return err(404, "engine_unavailable", "That engine is not available here. Choose another.");
+      const document = (body ?? {}) as Record<string, unknown>;
+      const sourceThread = typeof document.thread === "object" && document.thread !== null ? (document.thread as Record<string, unknown>) : {};
+      const messages = Array.isArray(document.messages) ? document.messages : [];
+      const engineId = query.get("engine") ?? (typeof sourceThread.engine === "string" ? sourceThread.engine : "");
+      const known = engines.find((entry) => entry.id === engineId);
+      if (engineId === "" || !known || known.installed === false) {
+        return err(404, "engine_unavailable", "That engine is not available here. Choose another.");
+      }
+      const namedTitle = typeof sourceThread.title === "string" && sourceThread.title !== "" ? sourceThread.title : null;
+      const title = namedTitle ?? (name.replace(/\.orbyn\.json$/i, "").replace(/[-_]+/g, " ") || "Imported transcript");
+      const droppedSample = /dropped/i.test(name);
+      const problems = droppedSample
+        ? [
+            { kind: "message", index: 7, code: "unknown_role" },
+            { kind: "message", index: 31, code: "text_empty" },
+            { kind: "message", index: 96, code: "not_an_object" },
+          ]
+        : [];
+      const common = {
+        title,
+        message_count: droppedSample ? 211 : messages.length,
+        dropped: problems.length,
+        problems,
+      };
+      if (query.get("dry_run") === "true") return { status: 200, body: { dry_run: true, thread: null, ...common } };
+      const thread: Thread = {
+        scratch: false,
+        id: nextId("t"),
+        project_id: project.id,
+        title,
+        engine: engineId,
+        model: null,
+        cwd: project.path,
+        worktree: null,
+        skill_profile: null,
+        active_run: null,
+        last_run_state: null,
+        created_at: now(),
+        updated_at: now(),
+        source: "orbyn-transcript",
+        imported_at: now(),
+      };
+      threads = [...threads, thread];
+      return { status: 201, body: { dry_run: false, thread, ...common } };
     }
 
     switch (key) {
@@ -661,7 +800,12 @@ export function createMockApi(options: MockOptions = {}) {
         const scope: ProjectScopesQuery = projectId ? { selection: { kind: "checkout", group_key: `mock:${projectId}`, project_id: projectId } } : {};
         const result = scopedPreferences(scope, Object.keys(preferenceDefaults));
         if (result.catalog.selection.kind === "unavailable") return err(404, "not_found", "Project not found.");
-        return { status: 200, body: result.rows.map((row) => row.members[0]?.view ?? row.environment) };
+        const rows = result.rows.map((row) => row.members[0]?.view ?? row.environment);
+        // The credits setting on, for the read-only merge dialog frame (pr-detail-merge-dialog-credits-readonly-on).
+        if (scenario === "pulls-credits-on") {
+          return { status: 200, body: rows.map((view) => (view.key === "remove_agent_credits_on_merge" ? { ...view, value: true } : view)) };
+        }
+        return { status: 200, body: rows };
       }
       case "POST /api/settings":
         if (seg[2] === "project-scopes") return { status: 200, body: scopeCatalog(data as ProjectScopesQuery) };
@@ -690,6 +834,10 @@ export function createMockApi(options: MockOptions = {}) {
         return { status: 200, body: query.get("dry_run") === "true" ? cleanupPreview(Date.now()) : { ...cleanupPreview(Date.now()), dry_run: false } };
       case "GET /api/settings":
         return { status: 200, body: settings };
+      // Where a kept attachment came from (docs/snapshots.md): the service answers for a Local image route.
+      case "PUT /api/attachments":
+        if (seg[3] !== "source") break;
+        return { status: 204 };
       // The editor's save: it writes only over the revision it started from, as the service does.
       case "PUT /api/threads": {
         if (seg[3] !== "files" || seg[4] !== "content") break;
@@ -889,6 +1037,13 @@ export function createMockApi(options: MockOptions = {}) {
       case "GET /api/clones":
         return { status: 200, body: clones };
       case "POST /api/clones": {
+        // A bad URL fails as the job starts, which is when the toast has to announce it.
+        if (cloneError !== null) {
+          const failed = { id: `c-${clones.length}`, url: data.url, name: null, path: null, state: "failed", project: null, error: cloneError, used_https: false, started_at: now() };
+          cloneError = null;
+          clones = [...clones, failed];
+          return { status: 202, body: failed };
+        }
         const project = newProject(String(data.url ?? "repo").split("/").at(-1)?.replace(".git", "") ?? "repo");
         const job = { id: `c-${clones.length}`, url: data.url, name: null, state: "done", project, error: null, used_https: false, started_at: now() };
         clones = [...clones, job];
@@ -1101,7 +1256,11 @@ export function createMockApi(options: MockOptions = {}) {
         return { status: 202 };
       }
       if (seg[1] === "threads" && seg[3] === "attachments") {
-        return { status: 201, body: { id: nextId("att"), thread_id: seg[2], name: query.get("name") ?? "file", mime: "", size: 1, created_at: now() } };
+        const name = query.get("name") ?? "file";
+        const snap = /snap shot/i.test(name)
+          ? { source: { kind: "snap_shot", captured_at: now(), app_name: "Safari", window_title: "Acme · Sign in", app_id: "com.apple.Safari", width: 1280, height: 800 } }
+          : {};
+        return { status: 201, body: { id: nextId("att"), thread_id: seg[2], name, mime: "", size: 1, created_at: now(), ...snap } };
       }
       if (seg[1] === "threads" && seg[3] === "runs") {
         const thread = threads.find((t) => t.id === seg[2]);
@@ -1271,6 +1430,10 @@ export function createMockApi(options: MockOptions = {}) {
     /** Makes the next setup attempt end in the failed state. */
     failSetup() {
       failNextSetup = true;
+    },
+    /** Makes the next clone end failed, with the Git error a bad URL answers. */
+    failClone(message = "fatal: repository 'bad url with spaces' does not exist") {
+      cloneError = message;
     },
     /** Fails the given step of the next apply, once. */
     failUpdateStep(id: string) {

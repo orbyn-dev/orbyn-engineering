@@ -265,7 +265,6 @@ function ThemeEditorPage() {
   };
   return (
     <>
-      <h1 className="sr-only" tabIndex={-1} data-page-title>Theme editor</h1>
       <div className="set-licence-bar">
         <select aria-label={`${scheme_name} theme`} value={presetValue ?? ""} onChange={(event) => { setPrefs({ [presetKey]: event.target.value || null }); applyTheme(theme); }}>
           <option value="">{scheme_name} theme · Orbyn {scheme_name}</option>
@@ -403,9 +402,6 @@ export function AppearanceSection() {
   if (editor) return <ThemeEditorPage />;
   return (
     <>
-      <h1 className="sr-only" tabIndex={-1} data-page-title>
-        Appearance
-      </h1>
       <SettingGroup>
         <ThemeChoiceRow />
       </SettingGroup>

@@ -134,7 +134,7 @@ function CrewMap({ crew }: { crew: string }) {
               </svg>
               talking to
             </span>
-            <span>“live” means handed to a turn in progress (never for an engine that can’t be steered mid-turn); “next turn” means queued, or sent with the next prompt</span>
+            <span>“live” means handed to a turn in progress or to a waiting crew_ask call; “next turn” means queued, or sent with the next prompt</span>
           </div>
         </div>
         )}
@@ -250,7 +250,7 @@ function Sub({ node, x, y, w }: { node: FlowNode; x: number; y: number; w: numbe
   );
 }
 
-const AFTER = "After the beta";
+const AFTER = "Planned";
 /** The map does not carry a task's cancel or re-run flags, so it does not guess them: those two are inert here, and the Board card has them. */
 const NOT_HERE = "Use the Board card";
 

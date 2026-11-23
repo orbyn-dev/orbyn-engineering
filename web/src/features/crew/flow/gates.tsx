@@ -10,7 +10,7 @@ export function FlowGates() {
       <div className="cx-cwpg">
             <FlowHead sub="Login redirect crew · Task: Use next in the auth redirect · 5 runs" acts />
             <div className="cx-cwtabs">
-              <Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox · 4", "Report"]} on={0} />
+              <Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox", "Report"]} on={0} />
               <span className="cx-end">Claude Code 412k of 1M tokens · Codex 62% of its weekly limit · 2h 14m<span className="cx-cwpv" title="Planned: no Flow route reports usage yet">Planned</span></span>
             </div>
             <div style={{ padding: "20px 28px", display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -53,7 +53,7 @@ export function FlowGates() {
               </div>
               <div className="cx-fbx" style={{ maxWidth: "1040px" }}>
                 <h6>What a model can and can’t do at a gate</h6>
-                <p>A model’s review is shown as a finding. It never passes or fails a gate. A finding blocks after a separate check confirms it: a code repro, or an independent second run. Unconfirmed findings stay visible, marked “unconfirmed”.</p>
+                <p>A model’s review is shown as a finding. It does not pass or fail a gate. A finding blocks after a separate check confirms it: a code repro, or an independent second run. Unconfirmed findings stay visible, marked “unconfirmed”.</p>
               </div>
             </div>
       </div>

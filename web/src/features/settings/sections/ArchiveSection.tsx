@@ -7,7 +7,6 @@ import { Button } from "../../../ui/controls";
 import { Empty, Loading } from "../../../product/ui/states";
 import { unarchiveThread } from "../../workspace";
 import { ConfirmDialog } from "../../../ui/Dialog";
-import { heading } from "./parts";
 
 /** The project's name over its archived threads. A project that was removed keeps its group, with a neutral Removed tag. */
 export function ArchiveGroupHead({ name, removed }: { name: string; removed: boolean }) {
@@ -44,7 +43,6 @@ export function ArchiveSection() {
   ].filter((group) => group.owned.length > 0);
   return (
     <>
-      {heading("Archive")}
       {error ? (
         <p className="field-error" role="alert">
           {error}

@@ -8,7 +8,7 @@ export function OracleReport() {
       <div className="cx-cwpg">
         <PageHead sub="Login redirect crew · Lead: Fix login redirect on Claude Code · 3 workers" acts />
         <div className="cx-cwtabs">
-          <Seg kind="segx" on={6} items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox · 4", "Report"]} />
+          <Seg kind="segx" on={6} items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox", "Report"]} />
           <span className="cx-end">Claude Code 412k of 1M tokens · Codex 62% of its weekly limit · 2h 14m</span>
         </div>
         <div className="cx-flcr">
@@ -32,10 +32,11 @@ export function OracleReport() {
                 <b>Claims</b>
                 <span>5 claims · 4 verified · 1 unverified</span>
                 <span className="cx-le">
-                  <Btn className="cx-ghost" style={{ height: "26px", fontSize: "12px" }}><Ic n="refresh" sm />Run all again</Btn>
+                  <Btn className="cx-ghost" style={{ height: "26px", fontSize: "12px" }}><Ic n="refresh" sm />Run all again<span className="cx-cwpv">Planned</span></Btn>
                   <Btn className="cx-btn" style={{ height: "26px", fontSize: "12px" }}><Ic n="plus" sm />Add a check</Btn>
                 </span>
               </div>
+              <div style={{ padding: "0 14px 8px", color: "var(--color-muted)", fontSize: "11.5px" }}>The app has no Report page yet; a task’s Re-run checks is built and asks first.</div>
               <div className="cx-clm">
                 <span className="cx-cmi cx-cok"><Ic n="ok" sm /></span>
                 <div className="cx-cmt">
@@ -97,7 +98,7 @@ export function OracleReport() {
             <div className="cx-nvc">
               <h6><Ic n="eye" sm />{"Model reviews "}<span className="cx-rtag">Advisory</span></h6>
               <div className="cx-prf"><span>Claude Code</span><b>Correctness · 0 findings</b><span>OpenCode</span><b>Performance · 1 unconfirmed finding</b></div>
-              <span className="cx-cmn">A review by a model is a finding to look at. It never passes or fails a task: checks and your decision do.</span>
+              <span className="cx-cmn">A review by a model is a finding to look at. It does not pass or fail a task: checks and your decision do.</span>
             </div>
             <div className="cx-nvc">
               <h6><Ic n="shield" sm />{"Answer key "}<span className="cx-rtag">Independent</span></h6>

@@ -1,5 +1,5 @@
 import type { McpAppView } from "./mcpAppBridge";
-import type { Approval, JsonValue, WireThreadEvent } from "../../api/types";
+import type { Approval, AttachmentSource, JsonValue, WireThreadEvent } from "../../api/types";
 
 export interface ItemBase {
   key: string;
@@ -14,6 +14,8 @@ export interface SentAttachment {
   name: string;
   mime: string;
   size: number;
+  /** Where a Snap Shot came from, when the service kept it (docs/snapshots.md). */
+  source?: AttachmentSource;
 }
 
 export interface MessageItem extends ItemBase {

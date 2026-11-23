@@ -103,6 +103,10 @@ impl Served {
             self.project
         )
     }
+
+    fn start_view_path(&self) -> String {
+        format!("/api/crew/backtest/start-view?project={}", self.project)
+    }
 }
 
 #[tokio::test]
@@ -110,6 +114,7 @@ async fn with_the_flag_off_the_routes_are_not_there() {
     let off = serve("off", false, false).await;
     for (method, path) in [
         ("GET", off.estimate_path()),
+        ("GET", off.start_view_path()),
         ("GET", "/api/crew/backtest/run-1/report".to_owned()),
         ("POST", START.to_owned()),
         ("POST", "/api/crew/backtest/run-1/stop".to_owned()),
@@ -128,6 +133,7 @@ async fn the_credential_is_needed_and_a_start_or_stop_is_a_persons_not_an_agents
     let app = serve("auth", true, false).await;
     for (method, path) in [
         ("GET", app.estimate_path()),
+        ("GET", app.start_view_path()),
         ("POST", START.to_owned()),
         ("POST", "/api/crew/backtest/run-1/stop".to_owned()),
     ] {
@@ -140,11 +146,13 @@ async fn the_credential_is_needed_and_a_start_or_stop_is_a_persons_not_an_agents
     }
     for path in [
         "/api/crew/backtest/estimate",
+        "/api/crew/backtest/start-view",
         "/api/crew/backtest/run-1/report",
     ] {
         assert!(!changes_crew_state(path), "{path}");
     }
     assert!(READS.contains(&("GET", "/api/crew/backtest/estimate")));
+    assert!(READS.contains(&("GET", "/api/crew/backtest/start-view")));
     assert!(READS.contains(&("GET", "/api/crew/backtest/{id}/report")));
     assert!(STATE_CHANGING.contains(&("POST", "/api/crew/backtest/start")));
     assert!(STATE_CHANGING.contains(&("POST", "/api/crew/backtest/{id}/stop")));
@@ -154,6 +162,8 @@ async fn the_credential_is_needed_and_a_start_or_stop_is_a_persons_not_an_agents
 async fn a_remote_viewer_reads_and_cannot_start_or_stop() {
     let remote = serve("remote", true, true).await;
     let (status, body) = remote.get(&remote.estimate_path()).await;
+    assert_eq!(status, 200, "{body}");
+    let (status, body) = remote.get(&remote.start_view_path()).await;
     assert_eq!(status, 200, "{body}");
     let (status, _) = remote.get("/api/crew/backtest/run-1/report").await;
     assert_eq!(status, 404, "an unknown run is not found, not forbidden");
@@ -335,6 +345,10 @@ async fn a_started_run_is_reported_with_each_lane_not_measured_and_no_total() {
     assert_eq!(run["budgets"], json!([{ "engine": "a", "tokens": 100 }]));
     let lane = &run["lanes"][0];
     assert_eq!(lane["state"], "done");
+    assert_eq!(
+        lane["kind"], "review",
+        "the lane says what it was started as"
+    );
     assert_eq!(lane["outcome"], "not_measured");
     assert_eq!(lane["score"], Value::Null);
     assert_eq!(lane["findings_n"], 0);
@@ -348,4 +362,59 @@ async fn a_started_run_is_reported_with_each_lane_not_measured_and_no_total() {
     app.core.crew_backtest_join().await;
     let (status, _) = app.get("/api/crew/backtest/..%2Fescape/report").await;
     assert!(status == 400 || status == 404, "{status}");
+}
+
+#[tokio::test]
+async fn the_start_view_reads_the_projects_last_run_and_defaults_nothing() {
+    let app = serve("startview", true, false).await;
+    // A project that never ran a backtest: no lane, no engine and no budget, never a default or a zero.
+    let (status, body) = app.get(&app.start_view_path()).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["project"], json!(app.project));
+    assert_eq!(body["run"], Value::Null);
+    // A project is required, and an unknown one is not found.
+    let (status, _) = app.get("/api/crew/backtest/start-view").await;
+    assert_eq!(status, 400);
+    let (status, _) = app.get("/api/crew/backtest/start-view?project=nope").await;
+    assert_eq!(status, 404);
+    assert_eq!(
+        app.core
+            .store
+            .crew_backtest_runs_of(&app.project)
+            .unwrap()
+            .len(),
+        0,
+        "the read writes nothing"
+    );
+
+    // A run it did have: its lanes, the kind each was started as, and one budget per engine read back.
+    app.core
+        .crew_backtest_use(Arc::new(ScriptedRunner::default()), None);
+    let (status, started) = app.post(START, app.request()).await;
+    assert_eq!(status, 200, "{started}");
+    app.core.crew_backtest_join().await;
+    let (status, view) = app.get(&app.start_view_path()).await;
+    assert_eq!(status, 200, "{view}");
+    let run = &view["run"];
+    assert_eq!(run["id"], started["id"]);
+    assert_eq!(run["state"], "finished");
+    assert_eq!(run["lanes"][0]["lane"], "security");
+    assert_eq!(run["lanes"][0]["engine"], "a");
+    assert_eq!(run["lanes"][0]["model"], "m");
+    assert_eq!(run["lanes"][0]["kind"], "review");
+    assert_eq!(run["budgets"], json!([{ "engine": "a", "tokens": 100 }]));
+    // Reading again gives the same, and still wrote nothing.
+    assert_eq!(app.get(&app.start_view_path()).await.1, view);
+    assert_eq!(
+        app.core
+            .store
+            .crew_backtest_runs_of(&app.project)
+            .unwrap()
+            .len(),
+        1
+    );
+    let text = view.to_string().to_lowercase();
+    for word in ["total", "cost", "usd", "price", "money"] {
+        assert!(!text.contains(word), "the view holds {word}");
+    }
 }

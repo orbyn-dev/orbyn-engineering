@@ -1,7 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { EngineStatus, ModelInfo, PermissionMode } from "../../../api/types";
-import { EffortTrigger, offeredModes, refusalSentence, refusedModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
+import { EffortTrigger, offeredModes, oneModeReason, refusalSentence, refusedModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
 
 const withModes = (permission_modes?: PermissionMode[]) =>
   ({ capabilities: { permission_modes } }) as unknown as EngineStatus;
@@ -81,10 +82,18 @@ describe("an engine that never asks before acting", () => {
   });
 
   it("says why in the app's own mode names", () => {
-    expect(refusalSentence("Cursor", ["supervised", "auto_edits"])).toBe(
+    expect(refusalSentence("cursor", "Cursor", ["supervised", "auto_edits"])).toBe(
       "Cursor does not ask before acting, so Supervised and Auto-accept edits are not available here.",
     );
-    expect(refusalSentence("Cursor", ["supervised"])).toBe("Cursor does not ask before acting, so Supervised is not available here.");
+    expect(refusalSentence("cursor", "Cursor", ["supervised"])).toBe("Cursor does not ask before acting, so Supervised is not available here.");
+  });
+
+  it("gives another engine Orbyn's own reason, in both the one mode and the refused rows", () => {
+    expect(oneModeReason("kiro", "Kiro")).toBe("Orbyn cannot ask before Kiro acts. This thread has one mode.");
+    expect(refusalSentence("kiro", "Kiro", ["supervised", "auto_edits"])).toBe(
+      "Orbyn cannot ask before Kiro acts. Supervised and Auto-accept edits are not available here.",
+    );
+    expect(refusalSentence("kiro", "Kiro", ["supervised"])).toBe("Orbyn cannot ask before Kiro acts. Supervised is not available here.");
   });
 
   it("draws the refused modes dimmed with the reason, and a press on one changes nothing and says why", () => {
@@ -93,7 +102,7 @@ describe("an engine that never asks before acting", () => {
     function Open() {
       const traits = useTraitsMenu({
         model: null, effort: null, extras: {}, access: "auto", modes: offeredModes(cursor),
-        refused: { modes: refusedModes(cursor), sentence: refusalSentence("Cursor", refusedModes(cursor)), onPick: onRefused },
+        refused: { modes: refusedModes(cursor), sentence: refusalSentence("cursor", "Cursor", refusedModes(cursor)), onPick: onRefused },
         onEffort: () => {}, onOption: () => {}, onAccess,
       });
       return <><button type="button" onClick={(event) => traits.openAt(event.currentTarget, true)}>open</button>{traits.menu}</>;
@@ -111,4 +120,18 @@ describe("an engine that never asks before acting", () => {
     expect(onAccess).not.toHaveBeenCalled();
     expect(onRefused).toHaveBeenCalledTimes(1);
   });
+});
+
+it("reaches the effort pill by Tab and opens its menu with Enter and with Space", async () => {
+  const user = userEvent.setup();
+  const opened = vi.fn();
+  render(<EffortTrigger model={withEffort([{ id: "low", label: "Low" }])} effort={null} access={null} onOpen={opened} />);
+  const trigger = screen.getByRole("button", { name: "Effort: Default" });
+  expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+  await user.tab();
+  expect(trigger).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(opened).toHaveBeenCalledTimes(1);
+  await user.keyboard(" ");
+  expect(opened).toHaveBeenCalledTimes(2);
 });

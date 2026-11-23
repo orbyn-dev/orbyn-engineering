@@ -13,7 +13,9 @@ export async function sendPrompt(thread: Pick<Thread, "id" | "active_run">, prom
     const queued = await api.enqueue(thread.id, prompt, []);
     return { kind: "queued", id: queued.id };
   }
-  const run = await api.startRun(thread.id, prompt);
+  // The service supplies the typed result and records one `orbyn.proposal` event for this run. A queued message has no
+  // run id yet, so its eventual run never draws a card here.
+  const run = await api.startRun(thread.id, prompt, [], { purpose: "terminal_proposal" });
   return { kind: "run", id: run.id };
 }
 

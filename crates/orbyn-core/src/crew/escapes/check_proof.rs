@@ -421,6 +421,38 @@ mod tests {
         }
     }
 
+    /// A check that double-forks has no parent link left to the run by the time the deadline or a withdraw stops it, so the group kill
+    /// alone let the grandchild live on. Linux adopts it under the leader, where the walk finds it; macOS keeps that limit, so the case
+    /// is Linux-only. The pid is polled for, with no fixed delay.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_run_reaps_a_double_forked_grandchild_at_its_deadline_and_on_a_cancel() {
+        use crate::testing::{
+            assert_process_reaped, double_fork_sleeper, process_alive, sleeper_pid,
+        };
+        for how in ["the deadline", "a cancel"] {
+            let dir = TempDir::new();
+            let data = dir.path().join("data");
+            let root = data.join("proof");
+            std::fs::create_dir_all(&data).unwrap();
+            let pid_file = data.join("pid");
+            let token = CancellationToken::new();
+            let limit = Duration::from_secs(if how == "the deadline" { 8 } else { 600 });
+            let started = tokio::spawn({
+                let script = format!("{} sleep 600", double_fork_sleeper(&pid_file, false));
+                let (root, data, token) = (root.clone(), data.clone(), token.clone());
+                async move { run(&script, &root, &data, false, limit, &token).await }
+            });
+            let escaped = sleeper_pid(&pid_file).await;
+            assert!(process_alive(escaped));
+            if how == "a cancel" {
+                token.cancel();
+            }
+            assert_eq!(started.await.unwrap(), None, "{how}");
+            assert_process_reaped(escaped, how).await;
+        }
+    }
+
     /// The command gets a short, fixed environment: its own `HOME` and `TMPDIR` inside the scratch folder, `CI=1`, and nothing that
     /// looks like a token, key or session marker of the person's.
     #[cfg(unix)]
@@ -483,12 +515,17 @@ mod tests {
     /// On a Mac that can restrict: everything the worker's profile denies, and in addition no network, no other process's environment,
     /// no launchd job, no preference write, no clipboard, unreadable credential folders, and file writes only in its own scratch folder (and `/dev/null`). Where an unrestricted run has the
     /// ability, the same command is run unrestricted first, so the test proves the restriction and not a broken command.
+    ///
+    /// A Mac that cannot restrict fails here instead of returning: a green line must mean these rules ran, and this is the strongest
+    /// sandbox proof in the suite. The library's own macOS availability test fails the same way.
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn a_confined_run_has_every_worker_rule_and_the_proofs_own() {
-        if !confined() {
-            return;
-        }
+        assert!(
+            confined(),
+            "this Mac cannot confine a proof ({}), so its sandbox rules were not proven",
+            crate::host::confine::proof_unavailable().unwrap_or_default()
+        );
         let dir = TempDir::new();
         let data = std::fs::canonicalize(dir.path()).unwrap().join("data");
         let root = data.join("proof");

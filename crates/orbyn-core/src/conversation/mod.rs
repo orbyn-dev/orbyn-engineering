@@ -5,6 +5,7 @@ pub mod checkpoints;
 pub mod composer;
 pub mod delegation;
 pub mod file_changes;
+pub mod photo_conversion;
 pub mod questions;
 pub mod renders;
 pub mod runs;

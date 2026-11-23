@@ -17,7 +17,6 @@ import {
 } from "../api";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { SettingsBanner } from "../rows/SettingsBanner";
-import { heading } from "../sections/parts";
 import { PatternDialog } from "./PatternDialog";
 import { ProjectsOffDialog } from "./ProjectsOffDialog";
 import "./Secrets.css";
@@ -28,8 +27,6 @@ const plural = (label: string) => (label.includes("values") ? label : `${label}s
 const lookLike = (format: RedactionFormat) =>
   format.id === "named_value" ? "Environment values named like a secret" : `Values that look like ${plural(format.label)}`;
 
-/** The terminal switch hides nothing today: terminal blocks are not built. */
-const Pending = () => <span className="secrets-pending">Not applied yet</span>;
 
 const appliesTo = (pattern: RedactionPattern) => (pattern.applies_to === "anywhere" ? "Anywhere" : "Environment values");
 
@@ -59,7 +56,6 @@ export function SecretsSection() {
   if (!settings) {
     return (
       <>
-        {heading("Secrets")}
         {read.error ? (
           <SettingsBanner tone="err" actions={<Button small onClick={read.reload}>Try again</Button>}>
             Secrets could not be read. {read.error.message}
@@ -71,23 +67,19 @@ export function SecretsSection() {
     );
   }
 
+  // Terminal blocks are masked by the service: crates/orbyn-core/src/host/blocks/store.rs, test `a_secret_printed_across_two_reads_is_never_stored_or_answered`.
   return (
     <>
-      {heading("Secrets")}
       <p className="secrets-intro">
         Orbyn hides values that look like secrets in the Crew ledger and in what Crew stores. Your own patterns also mask
-        ledger text when you read it, old rows included. What agents read is hidden too: your messages, follow-ups, steers, review text and attached text files reach the engine with each value as “[hidden: …]”, while your thread keeps what you typed and attached. Terminal blocks follow later.
+        ledger text when you read it, old rows included. What agents read is hidden too: your messages, follow-ups, steers, review text and attached text files reach the engine with each value as “[hidden: …]”, while your thread keeps what you typed and attached. Terminal blocks are masked as well: the command, its output and its working directory are hidden before they are kept and again when they are read.
       </p>
-      <SettingsBanner>
-        Hiding in terminal blocks is not applied yet. These choices are saved and take effect when it arrives. Crew already blocks every format, always.
-      </SettingsBanner>
       {error ? <SettingsBanner tone="err">{error}</SettingsBanner> : null}
       <SettingGroup title="Where values are hidden">
         <SettingRow
           title="Terminal blocks"
           description="Replaced by a grey mask."
         >
-          <Pending />
           <input
             type="checkbox"
             role="switch"
@@ -103,7 +95,7 @@ export function SecretsSection() {
           title="Crew ledger and Crew objects"
           description="Locked on. Crew blocks every recognised format, whatever is set here, so a recognised secret cannot be stored in the ledger or in a Crew object. It can’t be switched off, for any project."
         >
-          <span className="secrets-lock"><Lock size={13} aria-hidden />Always on</span>
+          <span className="secrets-lock"><Lock size={13} aria-hidden />On, locked</span>
         </SettingRow>
         <SettingRow
           title="Projects with redaction off"
@@ -117,7 +109,7 @@ export function SecretsSection() {
         </SettingRow>
       </SettingGroup>
 
-      <SettingGroup title="Recognised formats" description="Not applied yet to terminal blocks; they apply to what agents read. Crew uses every format whatever is set here.">
+      <SettingGroup title="Recognised formats" description="They apply to terminal blocks and to what agents read. Crew uses every format whatever is set here.">
         {settings.formats.map((format) => (
           <SettingRow key={format.id} title={format.label} description={format.example}>
             <input
@@ -131,7 +123,7 @@ export function SecretsSection() {
         ))}
       </SettingGroup>
 
-      <SettingGroup title="Your patterns" description="They apply to the Crew ledger when you read it, old rows included, and to what agents read. They do not apply to terminal blocks yet.">
+      <SettingGroup title="Your patterns" description="They apply to the Crew ledger when you read it, old rows included, and to what agents read and to terminal blocks.">
         {settings.patterns.length ? (
           <div className="set-tbl" role="table" aria-label="Your patterns">
             <div role="row" className="set-tr h secrets-cols">

@@ -321,8 +321,8 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
 - **Not done.** `GET .../files` and `.../files/metadata` take `repo_id` on the service, but the web has no call to either route (the file
   explorer uses the worktree routes and file reads already send `repo_id`), so there is nothing to change until a screen shows another
   repository's tree. The delete confirm of a thread has no place for notes, so it does not say that a multi-repository thread's worktrees
-  stay on disk (the service does not remove them yet). The optional first `message` is not asked for in the dialog (the thread opens and
-  the person types). A repository's pull request summary and `repo_id` on pull request routes and `FileDiff` are still not built.
+  stay on disk when they hold changes (the service removes the clean ones; see "As built: pull requests and removal"). The optional first `message` is not asked for in the dialog (the thread opens and
+  the person types). `ThreadRepo.pull_request`, `repo_id` on pull request routes and on `FileDiff` and removing a repository are now in the service ("As built: pull requests and removal"); the web side draws them (below).
 - **Not verified against a live service.** Checked with the mock (which now applies the rules above) and request-level tests of the
   client; the routes have not been run against an `orbynd` with `ORBYN_MULTI_REPO=1`.
 
@@ -344,9 +344,7 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
   working in a thread that already has its worktree.
 - **`GET /api/threads/{id}/repos`** answers `ThreadRepo[]` (`repo_id`, `name`, `branch`, `added`, `deleted`, `trusted`, `files` at most
   200 repo-relative paths): lines and files changed against `HEAD`, read with the hardened Git. `404` for an ordinary thread.
-- **Not built.** Pull request routes (`.../pulls`, `.../pulls/{number}/merge`, `.../review`) do not take `repo_id` yet: a pull request is
-  linked to a thread by number, and two repositories can share a number, so they need their own change; they act on the primary
-  repository until then. Adding a repository to a thread (`POST /api/threads/{id}/repos`), `repo-threads`, the task folder.
+- **Pull requests per repository.** See "As built: pull requests and removal" below.
 
 ## As built: repository threads and the task folder
 
@@ -371,8 +369,38 @@ Behind the same flag; no new migration (`thread_repos` is from the slice above).
 - **Adding a repository** (`POST /api/threads/{id}/repos` `{ repo_id }`, `ThreadRepo`): a trusted repository of the project that is not
   in the thread, on the thread's branch cut from that repository's current branch (`400` when none is checked out, when it already has
   the branch name or is already in the thread; `409 repo_limit` at 8, `409 repo_untrusted`). Both writes are Person-class.
-- **Not built.** Deleting a multi-repository thread does not remove its worktrees or branches yet (the folder stays under app data); removing
-  a repository from a thread; pull request routes with `repo_id`; per-repository settings.
+- **Not built.** Per-repository settings.
+
+## As built: pull requests and removal
+
+- **Links are per repository.** A pull request link is stored by (thread, repository, number) (migration 70). Every link made before it moved
+  to the thread's own project, which is its primary repository (a test keeps old links alive). A repository id is the project id for the
+  primary and the repository row id for the others, as everywhere else. `GET /api/projects/{id}/pulls/{number}/linked-threads` matches
+  the project's own repository only, so another repository's #12 never lists a thread.
+- **`repo_id` on the thread pull request routes.** `?repo_id=` on `GET` and `POST /api/threads/{id}/pulls`, `POST .../pulls/refresh`,
+  `GET` and `DELETE .../pulls/{number}`, `POST .../pulls/{number}/review` and `.../merge`. Absent means the primary repository, so every
+  older client is unchanged. Unknown, untrusted or flag-off repositories are refused as for the Git routes. Watches
+  (`.../pulls/{number}/watch`) stay on the primary repository for now; unlinking a primary link drops its watch, any other link does not.
+  The watch pass refreshes the open links of each repository of a thread.
+- **`ThreadRepo.pull_request`.** The repository's open pull request with the highest number, else the latest one it has; absent when none.
+- **`FileDiff.repo_id`.** Set on a thread diff of a multi-repository thread: the repository asked for, else the primary. Absent for an
+  ordinary thread.
+- **Deleting a multi-repository thread** removes each worktree that holds nothing to lose: a change, an untracked file or an ignored file
+  keeps it, and so does a worktree outside the thread's own folder. Branches are kept, as for a single-repository thread. The folder is
+  removed when empty. What was kept is in the `repo.thread.delete` audit row.
+- **`DELETE /api/threads/{id}/repos/{repo_id}`** (Person-class, `204`) removes a repository from a multi-repository thread: the same worktree
+  rule (`400` with "Commit or discard its changes first" when it holds something), no run in flight, never the primary repository.
+  Its pull request links go with it; the branch is kept. `404` for an unknown repository.
+
+Web side of pull requests and removal (mock-tested, not run against a live `orbynd`):
+
+- **Repository menu.** Shows the repository's own pull request from `ThreadRepo.pull_request`. While it is open the menu offers Review and Merge
+  (`threadReview`, `threadMerge`, `?repo_id=` left out for the primary) in place of Create pull request; a merged or closed one is named and
+  Create pull request returns. The merge here sends no `remove_agent_credits`, so credits follow the account setting.
+- **Remove from thread.** A button on each non-primary row of the Repos popover, behind a confirm dialog; the service's `400` message is shown as written.
+- **Diff.** The service answers one repository per read, so the Changes panel still reads once per trusted repository; `FileDiff.repo_id` is not needed to group.
+- **Merge dialog.** The "Remove agent credits" switch is the person's choice for that merge and is sent as `remove_agent_credits` (the account setting when untouched).
+- **Not done.** A pull request screen per repository (the pulls page is keyed by project, not repository) and watches for a non-primary repository.
 
 ## Not in the beta
 

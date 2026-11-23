@@ -10,6 +10,7 @@ import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton } from "../../ui/controls";
 import { failureWantsResend } from "./runFailures";
+import { isClaudeEngine } from "../../product/engines/claudePath";
 
 const dismissed = new Set<string>();
 
@@ -91,9 +92,13 @@ export function ThreadErrorBanner({ thread }: { thread: Thread }) {
   const [, redraw] = useState(0);
   const refreshThread = useWorkspace((state) => state.refreshThread);
   const pushToast = useUi((state) => state.pushToast);
+  const engine = useWorkspace((state) => state.engines.data?.find((entry) => entry.id === thread.engine));
   if (thread.active_run || thread.last_run_state !== "failed" || thread.lifecycle?.limit || !items) return null;
   const failure = items.findLast((item) => item.kind === "notice" && item.tone === "error");
   if (!failure || failure.kind !== "notice" || dismissed.has(failure.key)) return null;
+  // The Claude host failures keep their two actions on the failed run; a second Retry here would send the message.
+  if (isClaudeEngine(thread.engine, engine?.instance_of)
+    && (failure.code === "engine_unavailable" || failure.code === "engine_host_stopped")) return null;
   const prompt = items.findLast((item) => item.kind === "message" && item.role === "user");
   if (failure.code === "workspace_preparation_failed" || failure.code === "workspace_preparation_unavailable") return null;
   // A no-reply or lost-conversation failure keeps only Resend, which sits on the
@@ -204,5 +209,30 @@ function LimitCountdown({ limit, now }: { limit: { stopped_at: string; resets_at
         <i style={{ width: `${Math.round(share * 100)}%` }} />
       </span>
     </span>
+  );
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** The import date from the service, drawn as the frame says: 22 Nov. */
+function importedDate(at: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(at);
+  if (!match) return new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return `${Number(match[3])} ${MONTHS[Number(match[2]) - 1] ?? ""}`.trim();
+}
+
+/** The header's small Imported pill on a thread made from a transcript file. */
+export function ImportedThreadPill({ thread }: { thread: Thread }) {
+  if (thread.source !== "orbyn-transcript") return null;
+  return <span className="page-sub-item transcript-imported-pill">Imported</span>;
+}
+
+/** The one line after imported history: when it came in, and that the next message starts a fresh session. */
+export function ImportedThreadMarker({ thread }: { thread: Thread }) {
+  if (thread.source !== "orbyn-transcript" || !thread.imported_at) return null;
+  return (
+    <p className="imported-marker" role="note">
+      Imported {importedDate(thread.imported_at)} · new messages start a fresh session
+    </p>
   );
 }

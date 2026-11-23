@@ -17,6 +17,7 @@ use crate::conversation::runs::{RunManager, RunServices};
 use crate::error::{CoreError, Result};
 use crate::governance::approvals::ApprovalGate;
 use crate::governance::computer::{ComputerBackend, ComputerConfig, ComputerGateway, LocalBackend};
+use crate::host::blocks::BlockStore;
 use crate::host::shell::ShellBridge;
 use crate::host::terminal::TerminalManager;
 use crate::operations::updates::UpdateCenter;
@@ -150,12 +151,17 @@ pub struct Core {
     pub terminals: Arc<TerminalManager>,
     pub(crate) setups: Arc<SetupManager>,
     pub updates: Arc<UpdateCenter>,
-    pub shell: ShellBridge,
+    pub shell: Arc<ShellBridge>,
+    /// W10: one active waiting item per terminal, with the per-thread and
+    /// per-service caps, so a clear can name an item another watcher dropped.
+    pub(crate) attention: Arc<crate::agents::attention::AttentionHub>,
     /// A person's approvals given in the desktop app, in memory only.
     pub(crate) presence: crate::host::presence::PresenceBook,
     pub usage: Arc<UsageCenter>,
     pub clones: ClonePool,
     pub previews: PreviewManager,
+    /// Local AVDs and simulators, their actions and one writer per device (`devices`).
+    pub devices: Arc<crate::devices::Devices>,
     /// For requests a person asked for, such as reading the ACP registry.
     pub http: reqwest::Client,
     pub recovery: Recovery,
@@ -219,6 +225,7 @@ impl Core {
 
     pub fn open_with(config: CoreConfig, backend: Arc<dyn ComputerBackend>) -> Result<Self> {
         std::fs::create_dir_all(&config.data_dir)?;
+        restrict_data_dir(&config.data_dir);
         let lock = take_owner_lock(&config.data_dir)?;
         let timings = crate::operations::local_trace::LocalTrace::open(&config.data_dir)?;
         // A preview outlives no process, so any profile here is a leftover.
@@ -232,7 +239,9 @@ impl Core {
         }
         let gate = Arc::new(ApprovalGate::new(store.clone(), config.approval_timeout));
         let questions = Arc::new(QuestionDesk::new(store.clone(), config.approval_timeout));
-        let terminals = Arc::new(TerminalManager::default());
+        let terminals = Arc::new(TerminalManager::with_blocks(Arc::new(BlockStore::new(
+            store.clone(),
+        ))));
         let setups = Arc::new(SetupManager::new(store.clone())?);
         let http = reqwest::Client::builder()
             .user_agent(concat!("orbyn/", env!("CARGO_PKG_VERSION")))
@@ -274,6 +283,7 @@ impl Core {
             base_url: config.base_url.clone(),
             scm_reads: scm_reads.clone(),
             explorer: explorer.clone(),
+            data_dir: config.data_dir.clone(),
             runs_dir: config.data_dir.join("runs"),
             renders_dir: crate::conversation::renders::renders_root(&config.data_dir),
             setups: setups.clone(),
@@ -312,11 +322,13 @@ impl Core {
             terminals,
             setups,
             updates,
-            shell: ShellBridge::default(),
+            shell: Arc::new(ShellBridge::default()),
+            attention: Arc::default(),
             presence: crate::host::presence::PresenceBook::default(),
             usage,
             clones: ClonePool::default(),
             previews: PreviewManager::default(),
+            devices: Arc::new(crate::devices::Devices::new()),
             http,
             recovery,
             keybinding_writer,
@@ -363,6 +375,9 @@ impl Core {
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared
         // here, before any run can end and claim another.
         core.store.clear_crew_claims()?;
+        // A Codex worker's home outlives no task. Anything left from the last process whose
+        // task is not live is removed before a new worker can use the folder.
+        core.sweep_crew_codex_homes();
         core.crew_backtest_recover();
         core.code_runs_recover();
         core.repos_recover();
@@ -676,6 +691,22 @@ impl Drop for OwnerLock {
     }
 }
 
+/// Keeps the data folder owner-only: the account files and `service.json` sit
+/// directly in it. Windows keeps the per-user app-data ACL.
+#[cfg(unix)]
+fn restrict_data_dir(data_dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(meta) = std::fs::metadata(data_dir) else {
+        return;
+    };
+    if meta.permissions().mode() & 0o777 != 0o700 {
+        let _ = std::fs::set_permissions(data_dir, std::fs::Permissions::from_mode(0o700));
+    }
+}
+
+#[cfg(not(unix))]
+fn restrict_data_dir(_: &Path) {}
+
 /// One live owner per data directory: a second process must not fence the first.
 fn take_owner_lock(data_dir: &Path) -> Result<OwnerLock> {
     let path = data_dir.join("orbynd.lock");
@@ -742,6 +773,35 @@ fn clean_stale_run_dirs(runs_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_data_directory_is_created_private_and_tightened_when_it_exists() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = crate::testing::TempDir::new();
+        let fresh = dir.path().join("fresh");
+        let mut config = CoreConfig::new(fresh.clone(), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        assert_eq!(
+            std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        drop(core);
+
+        let existing = dir.path().join("existing");
+        std::fs::create_dir(&existing).unwrap();
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut config = CoreConfig::new(existing.clone(), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        assert_eq!(
+            std::fs::metadata(&existing).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        drop(core);
+    }
 
     #[test]
     fn the_data_directory_has_one_owner_until_its_guard_is_dropped() {

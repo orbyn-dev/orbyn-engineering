@@ -6,6 +6,19 @@ import { useAsync } from "../../lib/useAsync";
 import { Button } from "../../ui/controls";
 import { Empty, ErrorState, Loading } from "./states";
 
+/**
+ * The folder above `path`, read from the text alone: used when the read failed and the service gave no `parent`. Answers `null`
+ * at a root (`/`, `C:\\`) so the service picks its own start.
+ */
+export function parentOfPath(path: string): string | null {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (cut < 0) return null;
+  if (cut === 0) return trimmed.length > 1 ? "/" : null;
+  const head = trimmed.slice(0, cut);
+  return /^[A-Za-z]:$/.test(head) ? `${head}\\` : head;
+}
+
 export function FolderBrowser({
   actionLabel,
   busy,

@@ -1,12 +1,18 @@
 /**
- * The device contract of docs/devices.md (PROVISIONAL: Eng 4's contract, not yet run against adb or simctl, and no service
- * answers it yet). Hand-written because no generated types exist for these routes. Field names are the doc's; anything the
- * doc leaves open is marked "guess" and listed in the pull request.
+ * The device contract of docs/devices.md, answered by the service (#1250; not yet run against a real adb or simctl by the web).
+ * Hand-written so the frames' extra states (`frozen`, `crashed`) can sit beside the service's two; `generatedContract.test.ts`
+ * holds every other field to the generated types in web/src/generated/Device*.ts.
  */
 
 export type Platform = "android" | "ios";
-/** Eng 4's ruling: the state is one of these three. A word the service adds later is shown as Unknown. */
-export type DeviceState = "shutdown" | "booting" | "booted";
+/**
+ * The service answers `booted` or `shutdown` only; `booting` is never sent and is not mapped. `frozen` and `crashed`
+ * are the target states the frames draw (device-frozen, device-crashed) and the mock sends them for those frames;
+ * a word the service adds later is shown as Unknown.
+ */
+export type DeviceState = "shutdown" | "booted" | "frozen" | "crashed";
+/** The device's current orientation in the contract's order. Only when the device is booted and the tool reports it. */
+export type Orientation = "portrait" | "landscape_left" | "portrait_upside_down" | "landscape_right";
 /** `flipped` and `tent` are read only. The web renders whatever posture the service returns and never assumes one. */
 export type Posture = "closed" | "half_opened" | "opened" | "flipped" | "tent";
 
@@ -25,6 +31,8 @@ export interface Device {
   state: DeviceState;
   version: string;
   foldable: boolean;
+  /** The orientation the service read, when the device is booted and the tool reports it; absent when unreadable. */
+  orientation?: Orientation;
   /** Only when `foldable` and the device is booted. */
   fold?: Fold;
 }
@@ -42,7 +50,6 @@ export interface DeviceList {
 }
 
 export type ActionType = "screenshot" | "rotate" | "button" | "power_off" | "fold" | "unfold" | "hinge" | "hinge_preset";
-export type Orientation = "portrait" | "landscape_left" | "portrait_upside_down" | "landscape_right";
 export type ButtonName = "home" | "back" | "recents";
 export type HingePreset = "closed" | "half_open" | "open";
 
@@ -62,7 +69,7 @@ export interface DeviceDetail extends Device {
   actions: ActionType[];
 }
 
-/** `{ok: true, device}` with the state read back; a screenshot also answers `image`, a PNG as base64 (guess: the field name is the doc's). */
+/** `{ok: true, device}` with the state read back; a screenshot also answers `image`, a PNG as base64. */
 export interface ActionResult {
   ok: true;
   device: Device;
@@ -77,6 +84,6 @@ export interface DevicesApi {
   /** The device list, or `null` when the service has no devices route (`404`): the feature is hidden, with no error. */
   list(signal?: AbortSignal): Promise<DeviceList | null>;
   detail(id: string, signal?: AbortSignal): Promise<DeviceDetail>;
-  /** A write. Person-class (`PENDING_PERSON_ROUTES`). */
+  /** A write. Person-class (`PERSON_ROUTES`): a key-less client is answered 403 `person_required`, a shell-less service 403 `desktop_required`. */
   act(id: string, action: DeviceAction): Promise<ActionResult>;
 }

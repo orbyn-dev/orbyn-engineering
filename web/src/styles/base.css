@@ -141,7 +141,8 @@ select {
     .flf,
     .x2find,
     .fv-search,
-    .iss-search
+    .iss-search,
+    .cb-in
   )
   input:not([type="checkbox"], [type="radio"]):not([type="hidden"]),
 .pulls-fld .pulls-inp input:not([type="checkbox"], [type="radio"]) {
@@ -347,6 +348,26 @@ input[type="checkbox"][role="switch"][aria-readonly="true"] {
 .pill-info {
   background: var(--color-infoSoft);
   color: var(--color-info);
+}
+/* Rule 8: the visible word beside an engine Orbyn cannot gate, wherever one is picked. */
+.unmanaged-label {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 4px;
+  white-space: nowrap;
+}
+.unmanaged-label-text {
+  color: var(--color-warnText);
+  font-size: var(--text-meta);
+  font-weight: 600;
+}
+.unmanaged-note {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-weight: 400;
+  text-overflow: ellipsis;
 }
 .count {
   display: inline-grid;
@@ -938,11 +959,10 @@ input[type="checkbox"][role="switch"][aria-readonly="true"] {
   flex-wrap: wrap;
   gap: 6px;
 }
+/* Clone jobs are toasts, so they stack inside .toasts: that is the designed toast position, clear of
+   the sidebar's footer, and the one live region a failure is announced from. A layer of their own at
+   a fixed offset sat over the sidebar's Engines chip. */
 .clone-jobs {
-  position: fixed;
-  z-index: 70;
-  left: 16px;
-  bottom: 56px;
   display: flex;
   flex-direction: column;
   gap: 8px;

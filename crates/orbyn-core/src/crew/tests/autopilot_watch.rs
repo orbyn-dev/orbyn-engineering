@@ -272,7 +272,7 @@ async fn a_later_merge_that_depends_on_the_cause_is_listed_and_nothing_is_revert
     );
     // It tops the Review queue, even under Full.
     assert_eq!(
-        h.w.core.crew_review_queue(NOW + 200).unwrap()[0].task_id,
+        h.w.core.crew_review_queue(NOW + 200).unwrap().merges[0].task_id,
         h.tasks[2]
     );
     assert!(kinds(&h.w, &h.tasks[2]).contains(&"main_broken".to_owned()));

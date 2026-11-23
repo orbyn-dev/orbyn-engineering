@@ -60,9 +60,9 @@ impl Store {
             let stamp = now();
             tx.execute(
                 "INSERT INTO threads (id, project_id, title, engine, model, cwd,
-                    created_at, updated_at, position, engine_session, scratch)
+                    created_at, updated_at, position, engine_session, scratch, imported_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7,
-                    (SELECT COALESCE(MIN(position), 0) - 1 FROM threads), ?8, ?9)",
+                    (SELECT COALESCE(MIN(position), 0) - 1 FROM threads), ?8, ?9, ?7)",
                 params![
                     id,
                     new.project_id,
