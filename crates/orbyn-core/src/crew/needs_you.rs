@@ -4,8 +4,8 @@
 //! check). Nothing here moves a task, answers a merge or settles a run; the dismissal is a row of its own and touches nothing
 //! behind the item.
 //!
-//! A task appears once. The first rule that matches wins, in this order: a task waiting on a person, then a task whose last
-//! cancel attempt could not stop its worker, then a merge waiting on the person, then a background run waiting for review, then
+//! A task appears once. The first rule that matches wins, in this order: a task whose last cancel attempt could not stop its
+//! worker (its worker may still run, so it comes before the same task waiting on a person), then a task waiting on a person, then a merge waiting on the person, then a background run waiting for review, then
 //! a stopped task with a trip wire, then a stopped task whose worker stopped twice. Other stopped and cancelled tasks are not
 //! items. Every text is one line, redacted and capped at 160 characters; only a task that waits on a person carries its own
 //! scrubbed reason, every other kind carries fixed core words.
@@ -90,6 +90,22 @@ impl Core {
         let mut items = Vec::new();
         let mut stopped = Vec::new();
 
+        for waiting in self.store.crew_could_not_stop()? {
+            if !seen.insert(waiting.task.id.clone()) {
+                continue;
+            }
+            let kind = wire::NeedsYouKind::CouldNotStop;
+            items.push(wire::NeedsYouItem {
+                id: waiting.task.id.clone(),
+                kind,
+                project_id: waiting.project_id,
+                crew_id: Some(waiting.task.crew_id),
+                since: waiting.since,
+                dismissible: dismissible(kind),
+                reason: fixed_reason(kind).map(str::to_owned),
+            });
+        }
+
         for place in self
             .store
             .crew_tasks_in_states(&["needs_person", "stopped"])?
@@ -132,22 +148,6 @@ impl Core {
                     reason,
                 });
             }
-        }
-
-        for waiting in self.store.crew_could_not_stop()? {
-            if !seen.insert(waiting.task.id.clone()) {
-                continue;
-            }
-            let kind = wire::NeedsYouKind::CouldNotStop;
-            items.push(wire::NeedsYouItem {
-                id: waiting.task.id.clone(),
-                kind,
-                project_id: waiting.project_id,
-                crew_id: Some(waiting.task.crew_id),
-                since: waiting.since,
-                dismissible: dismissible(kind),
-                reason: fixed_reason(kind).map(str::to_owned),
-            });
         }
 
         let merges: Vec<_> = self

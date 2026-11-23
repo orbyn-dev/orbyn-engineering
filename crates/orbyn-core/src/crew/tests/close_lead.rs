@@ -225,6 +225,28 @@ async fn a_task_that_cannot_be_stopped_is_named_and_the_others_and_the_thread_st
     w.core.crew_cancel_task(&stuck, None, "user").await.unwrap();
     assert_eq!(w.task(&stuck).state, "cancelled");
 }
+/// The close chooses its tasks again when it runs, so one that started after the confirm was read is cancelled too: the
+/// confirm's list is the person's view, not a fixed set.
+#[tokio::test]
+async fn a_task_started_after_the_confirm_is_cancelled_by_the_close() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let first = running(&w, "Seen in the confirm.").await;
+    let shown: Vec<String> = w
+        .core
+        .crew_lead_live(&w.lead)
+        .unwrap()
+        .tasks
+        .into_iter()
+        .map(|task| task.id)
+        .collect();
+    assert_eq!(shown, vec![first.clone()]);
+
+    let late = running(&w, "Started after the confirm.").await;
+    let answer = w.core.crew_close_lead(&w.lead, "user").await.unwrap();
+    assert_eq!(answer.closed, vec![first, late.clone()]);
+    assert_eq!(w.task(&late).state, "cancelled");
+}
+
 #[tokio::test]
 async fn the_live_read_is_exactly_what_the_close_tries() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;

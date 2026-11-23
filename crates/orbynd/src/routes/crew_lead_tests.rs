@@ -170,8 +170,10 @@ async fn the_live_read_is_exactly_what_the_close_cancels() {
     assert!(settled["lifecycle"]["settled_at"].as_str().is_some());
 }
 
+/// `PATCH /api/threads/{id}` is not a Person route, so a settle or an archive through it must never stop a task: only the
+/// confirmed `POST .../close` (a Person route) does.
 #[tokio::test]
-async fn the_thread_route_closes_the_live_tasks_before_it_archives() {
+async fn the_thread_route_alone_cancels_nothing() {
     let app = serve("thread", true, false).await;
     let thread = app.thread("Lead");
     let first = app.task("archive-a", &thread, None);
@@ -183,24 +185,22 @@ async fn the_thread_route_closes_the_live_tasks_before_it_archives() {
         .await;
     assert_eq!(status, 200, "{archived}");
     assert!(archived["lifecycle"]["archived_at"].as_str().is_some());
-    assert_eq!(
-        app.core.store.crew_task(&first).unwrap().unwrap().state,
-        "cancelled"
-    );
-    assert_eq!(
-        app.core.store.crew_task(&second).unwrap().unwrap().state,
-        "cancelled"
-    );
-    // The close wrote the audited cancel for each.
+    for task in [&first, &second] {
+        assert_ne!(
+            app.core.store.crew_task(task).unwrap().unwrap().state,
+            "cancelled",
+            "{task}"
+        );
+    }
     let cancelled = app
         .core
         .store
         .list_audit(None, 100)
         .unwrap()
         .into_iter()
-        .filter(|row| row.action == "crew.task.cancelled")
+        .filter(|row| row.action.starts_with("crew.task.cancel"))
         .count();
-    assert_eq!(cancelled, 2);
+    assert_eq!(cancelled, 0, "the patch wrote no cancel");
 }
 
 #[tokio::test]

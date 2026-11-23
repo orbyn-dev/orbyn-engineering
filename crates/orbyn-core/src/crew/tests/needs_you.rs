@@ -256,6 +256,25 @@ async fn a_task_whose_last_cancel_attempt_failed_is_could_not_stop_and_not_dismi
     assert!(items(&w).iter().all(|item| item.id != id));
 }
 
+/// A task that waits on a person and whose worker could not be stopped is the stop, not the wait: its worker may still run.
+#[tokio::test]
+async fn a_failed_stop_outranks_the_same_task_waiting_on_a_person() {
+    let w = crew(arc(|_, _| Turn::Hang)).await;
+    let id = started_hanging(&w, "Stuck and waiting.").await;
+    let _epoch = take_worker_run(&w, &id);
+    let answer = w.core.crew_close_lead(&w.lead, "user").await.unwrap();
+    assert_eq!(answer.failed, vec![id.clone()]);
+    w.core
+        .store
+        .move_crew_task(&id, "needs_person", None)
+        .unwrap();
+
+    let ours: Vec<_> = items(&w).into_iter().filter(|item| item.id == id).collect();
+    assert_eq!(ours.len(), 1, "one item for the task");
+    assert_eq!(ours[0].kind, NeedsYouKind::CouldNotStop);
+    assert!(!ours[0].dismissible);
+}
+
 #[tokio::test]
 async fn a_task_is_one_item_and_the_first_rule_wins() {
     let w = crew(arc(|_, _| Turn::Hang)).await;

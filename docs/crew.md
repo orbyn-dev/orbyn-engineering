@@ -1998,15 +1998,16 @@ the person key were merged first (#1342).
 - **What a close tries.** The non-final tasks (`briefed`, `routed`, `running`, `verifying`, `failed`, `changed_approach`,
   `needs_person`) whose `crew_runs.lead_thread_id` is this thread, oldest first. A task another thread leads is never one and a task
   that already ended (`passed`, `stopped`, `cancelled`) is skipped. One private function chooses that list for both routes, so the
-  confirm's count is exactly what the close will try.
+  confirm's count is what the close tries when nothing starts in between. The close chooses again when it runs: a task that starts on
+  the thread after the confirm was read is cancelled too (`a_task_started_after_the_confirm_is_cancelled_by_the_close`).
 - **One by one, the audited cancel.** Each task runs the existing person's cancel (`crew_cancel_task`) with the reason
   "The lead thread was closed.": the intent row first, the worker's engine stopped and confirmed, then the state and its row, and the
   task's leases, final `cancelled` result and end all as any cancel. An `Ok` is a task closed; `TaskEnded` (it ended between the read
   and the try) is skipped; any other refusal is a task named in `failed` and the loop goes on, so one stuck worker never stops the rest.
-- **The thread closes regardless.** The thread's own settle or archive is the person's `PATCH /api/threads/{id}` (`settled` or
-  `archived` true) and, with Preview on, that handler runs the close first and then the patch whatever the close answered. A task that
-  could not be stopped keeps its state, so its worker may still run. The merged web dialog also POSTs `/close` before its PATCH, so a
-  lead thread it closes may be tried twice: an already-cancelled task is skipped and a failed one is tried once more.
+- **The thread closes regardless.** The thread's own settle or archive is `PATCH /api/threads/{id}` (`settled` or `archived`
+  true). It is not a Person route and cancels nothing: a token-only caller must not be able to stop a task by settling a thread.
+  The web dialog POSTs `/close` first and then sends its PATCH, whatever the close answered. A task that could not be stopped keeps
+  its state, so its worker may still run.
 - **The lead is not told.** A cancelled result normally queues a note on the lead thread, and a note on an idle thread starts it: a
   close therefore tells the lead nothing. `tell_lead` skips a cancelled result whose latest cancel intent row says
   "The lead thread was closed."; a cancel with another reason still tells it. Without this the note would start the thread the
