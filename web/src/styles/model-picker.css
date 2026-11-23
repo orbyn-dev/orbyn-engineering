@@ -13,6 +13,9 @@
   color: var(--color-muted);
   font-size: var(--text-meta);
   white-space: nowrap;
+}
+/* Only a control takes the pointer cursor and the hover fill: a `.composer-control` span shows a value and is not one. */
+button.composer-control {
   cursor: pointer;
 }
 .composer-control > span:not(.unmanaged-label):not(.engine-glyph) {
@@ -24,7 +27,7 @@
   overflow: visible;
   text-overflow: clip;
 }
-.composer-control:hover:not(:disabled) {
+button.composer-control:hover:not(:disabled) {
   background: var(--color-hover);
   color: var(--color-text);
 }
@@ -59,12 +62,14 @@
 .hero-link {
   padding: 0;
   border: 0;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-muted);
   font-size: var(--text-body);
   cursor: pointer;
 }
-.hero-link:hover {
+.hero-link:hover:not(:disabled) {
+  background: var(--color-hover);
   color: var(--color-text);
 }
 .composer-spacer {
