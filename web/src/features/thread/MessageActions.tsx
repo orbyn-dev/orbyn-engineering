@@ -4,7 +4,7 @@ import { api } from "./api";
 import { toFailure } from "../../lib/useAsync";
 import { navigate, parseRoute } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
-import { useWorkspace } from "../../product/state/workspace";
+import { engineById, useWorkspace } from "../../product/state/workspace";
 import { useComposerChips } from "../../product/state/composerChipStore";
 import { IconButton } from "../../ui/controls";
 import { chipId } from "../../product/composer/composerContext";
@@ -28,7 +28,10 @@ export function MessageActions({ text, runId, role }: { text: string; runId: str
   const pushToast = useUi((state) => state.pushToast);
   const scoped = useContext(ThreadScope);
   const threadId = scoped ?? openThread();
-  const busy = useWorkspace((state) => (threadId ? state.threads[threadId]?.active_run !== null : true));
+  const thread = useWorkspace((state) => (threadId ? state.threads[threadId] : undefined));
+  const engines = useWorkspace((state) => state.engines.data);
+  const engineName = (thread && engineById(engines, thread.engine)?.name) || "The engine";
+  const busy = thread ? thread.active_run !== null : true;
 
   const copy = () => {
     void navigator.clipboard?.writeText(text).then(() => {
@@ -94,7 +97,8 @@ export function MessageActions({ text, runId, role }: { text: string; runId: str
             await useWorkspace.getState().refreshThread(threadId);
           }}
         >
-          <p>The conversation continues from before this message.</p>
+          <p>The conversation continues from before this message. Messages from here on are hidden; the log keeps them.</p>
+          <p>{engineName} goes back in its own session when it can. When it can't, it carries on in a new session and is given the earlier conversation as text.</p>
           <label className="check">
             <input
               type="checkbox"
