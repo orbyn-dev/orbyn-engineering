@@ -511,7 +511,26 @@ standard rate, so its tokens stay unpriced. Each estimate is also split by token
 the same period's figures and chart during an explicit local refresh, dimming them
 after 150 ms while the scan is pending. A failed refresh keeps those figures and
 offers Retry. Changing the period clears them, and an earlier response cannot
-replace the new period or clear its pending state. Subscription
+replace the new period or clear its pending state. Cursor keeps no local history of its own: its spend is billed to the account, so the core keeps
+the account's billed events in `billed_events`, one row per event, keyed by a digest of the
+conversation, timestamp, model and counters because Cursor sends no event id. Nothing produces
+those events yet: the engine host answers `usage` with limits only and lists Cursor's
+`accountUsage.ts` as not added, so the table stays empty and no `cursor` row appears in
+`/api/usage` — the row is drawn only when the store holds events, never as an always-empty engine.
+Three states stay apart: no store and no rows are no row at all, and a period that holds none of
+the stored events is a scanned engine of nothing. When the host read lands it must hand over one
+complete window, as T3 reconciles against `totalUsageEventsCount`: a report replaces the rows of
+the days it names, so reading a window twice writes the same rows and a window of two events is
+stored as two, while an amount that settles later updates its row instead of adding one. A record
+that cannot be read as a billed event — no usage block, no timestamp or model that names a day,
+a negative counter — is dropped rather than counted as zero. The account's counters are separate,
+not inclusive: `inputTokens` is the uncached input, and cached input and cache writes are their own
+counters; reasoning stays inside `outputTokens`, which is where Cursor bills it, so no separate
+reasoning counter is kept or added. Cost has one source for every engine, the configured
+`model_prices`; the account's own billed cents are stored but not yet shown, because a day row
+costed from them would disagree with the model rows that are priced from the table.
+
+Subscription
 limits appear only where an engine reports them itself, as Codex does through
 `account/rateLimits/read`. Subscription reports are read fresh on every request:
 the supported drivers do not expose an authoritative current account/workspace binding
@@ -522,8 +541,10 @@ cannot answer after a newer read, a forget or an engine configuration change. No
 report is exposed through the no-I/O `cached_limits` path: Crew treats it as not reported,
 and scheduled near-limit checks still ask the engine afresh. Only Codex's `rateLimits`,
 `rateLimitsByLimitId` and plan leave the driver; its account ID, upsell copy and
-reset-credit offers are dropped; `?force=true` reads again and
-spends no model usage. `/api/limits` also gives one number per window length across
+reset-credit offers are dropped; `?force=true` reads again, spends no model usage and
+skips no window or fence, because no report is kept: a forced read takes the same
+fences and the same bounded provider read.
+`/api/limits` also gives one number per window length across
 engines, the highest used percentage, since that engine stops first. The overview excludes
 the Claude family, including named instances, before any status or usage probe; an explicit
 engine/thread limits read can still ask Claude.
@@ -554,8 +575,12 @@ next run. A rewind does the same unless the engine rolls its own session back. D
 stays until a run that carried it completes, so a failed start, a stop or a restart
 leaves it pending, and until then `/compact` and `/goal`, which reach an engine bare, are
 `422 unsupported`. The log stays whole; a rewind is logged as `CUSTOM
-thread.rewound` for clients to hide what follows. The web hides events between `through` and
-the rewound event, and says "went back" only on `native: true`.
+thread.rewound` for clients to hide what follows. The event carries the `through` position
+and `native: true` only when the engine point was noted. The web hides events between `through` and
+the rewound event, and says "went back" only on `native: true`. That point waits in memory until
+the thread's next send, however late: a service restart before that send loses it, and the
+run then resumes with the engine's full history while the view and the event still say the
+rewind was native.
 
 Each run keeps the engine session and the first turn id it spoke in; for the Claude host
 the turn it keeps is the prompt's message id, because the host's own turn id is a counter
@@ -567,9 +592,10 @@ that run's turn, which keeps only the earlier turns. Rewinding a Claude thread w
 went through the engine host reads the session file by the stored session id and names the
 nearest top-level assistant ancestor of the run's prompt, falling back to the last one
 before it in file order when the file has no parent links; the next run's `open` carries it
-as `resumeAt` once, within two minutes, and a create, a different session or a changed
-thread session drops it. The session then goes on, nothing is handed off, and the event and
-audit carry `native: true`. Files are restored only by the rewind's own checkpoint step.
+as `resumeAt` once, on the thread's next send however late, and a create, a different
+session or a changed thread session drops it. The session then goes on, nothing is handed
+off, and the event, audit and `RewindResult` carry `native: true`. Files are restored only
+by the rewind's own checkpoint step.
 Any refusal, a missing turn id or point, a missing or changed session file, or another
 engine falls back to the handoff above.
 
@@ -3746,7 +3772,7 @@ every method, path and which routes need a credential.
 | `POST /api/settings/projects/icon` | `ChangeProjectIcon` → `Project[]`; selected structured icon/reset with membership and metadata revision compare-and-set |
 | `POST /api/settings/projects/rename` | `RenameSelectedProjects` → `Project[]`; selected names with membership and raw-name compare-and-set |
 | `POST /api/settings/project-scopes` | `ProjectScopesQuery` → `ProjectScopeCatalog`; full-app read, stale selections remain unavailable |
-| `POST /api/projects/clone`, `/create` | Make a folder, by default under `repo/`, or at `path`; `create` takes `readme` for a first commit |
+| `POST /api/projects/clone`, `/create` | Make a folder, by default under `repo/`, or at `path`; `create` takes `readme` for a first commit. Before filesystem or audit changes, `create` rejects names with path separators or control characters, empty names and dot components; Windows additionally rejects reserved characters and device names and names ending in a dot or space, checking the actual default slug or chosen folder leaf |
 | `PATCH /api/projects/:id` | `RenameProject`: the name shown; the folder stays |
 | `DELETE /api/projects/:id?delete_files=&confirm=` | `ProjectRemoval`: unregisters; `delete_files` is `400` unless Orbyn made the folder, and can be `409 project_has_work` |
 | `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home. Folders only, never a `.`-named one, and on Windows never one marked hidden or system and never a junction or link, which a person does not pick as a project and some of which loop when opened. A filesystem root, a Windows drive or a share, also lists the mounted drives that can be read, first, because nothing is above a root |
@@ -3871,7 +3897,7 @@ every method, path and which routes need a credential.
 | `GET /api/threads/:id/commits` | `CommitInfo[]`, newest 100 |
 | `GET /api/threads/:id/checkpoints` | `Checkpoint[]` |
 | `POST /api/threads/:id/restore` | `RestoreWorkspace`; `409 shared_directory`, `409 thread_busy` |
-| `POST /api/threads/:id/rewind` | `RewindThread`: continue from before a run |
+| `POST /api/threads/:id/rewind` | `RewindThread` to `RewindResult` (`200`): continue from before a run, `native` or `handoff` |
 | `POST /api/threads/:id/fork` | `ForkThread`: a child thread with the log up to a run |
 | `POST /api/threads/:id/switch-engine` | `SwitchEngine`: hand the conversation to another engine, with an optional selection |
 | `GET, POST /api/threads/:id/previews` | `PreviewTab[]`; `OpenPreview` |

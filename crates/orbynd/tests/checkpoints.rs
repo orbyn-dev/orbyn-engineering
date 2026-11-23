@@ -253,9 +253,10 @@ async fn rewind_drops_the_session_and_hands_the_earlier_conversation_on_once() {
             json!({ "run_id": second, "restore_files": true }),
         )
         .await;
-    assert_eq!(code, 204, "{body}");
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["native"], false);
+    assert_eq!(body["mode"], "handoff");
     assert!(!dir.path().join("library/repo/project/one.txt").exists());
-
     run(&service, &thread, "third thing").await;
     run(&service, &thread, "fourth thing").await;
     let log = std::fs::read_to_string(dir.path().join("launches")).unwrap();
@@ -279,6 +280,23 @@ async fn rewind_drops_the_session_and_hands_the_earlier_conversation_on_once() {
     );
     let events = service.all_events(&thread).await;
     assert!(!events.is_empty());
+
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/rewind"),
+            json!({ "run_id": "missing", "restore_files": false }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+    assert_eq!(body["message"], "This run was not found in this thread.");
+    let (code, body) = service
+        .send(
+            "/api/threads/missing/rewind",
+            json!({ "run_id": "missing", "restore_files": false }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+    assert_eq!(body["message"], "This thread was not found.");
 }
 
 #[tokio::test]
@@ -295,7 +313,9 @@ async fn a_codex_rewind_reverts_its_own_session_and_keeps_it() {
             json!({ "run_id": second, "restore_files": true }),
         )
         .await;
-    assert_eq!(code, 204, "{body}");
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["native"], true);
+    assert_eq!(body["mode"], "native");
     assert!(!dir.path().join("library/repo/project/one.txt").exists());
     run(&service, &thread, "fourth thing").await;
 
@@ -379,7 +399,8 @@ async fn a_handoff_survives_a_failed_run_and_goes_only_with_a_finished_one() {
             json!({ "run_id": second, "restore_files": false }),
         )
         .await;
-    assert_eq!(code, 204, "{body}");
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["mode"], "handoff");
     // A bare command has no way to carry the earlier conversation.
     let (code, body) = service
         .send(

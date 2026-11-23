@@ -450,9 +450,8 @@ where
             return Err(DeviceError::Unauthorized);
         };
         let gone = |error| match error {
-            dc::DeviceError::InvalidInput(_) | dc::DeviceError::ApprovalExpired => {
-                DeviceError::RequestGone
-            }
+            // The request's own clock ended it: `map` keeps that apart from one a person ended.
+            dc::DeviceError::InvalidInput(_) => DeviceError::RequestGone,
             other => map(other),
         };
         if confirmed {

@@ -53,6 +53,9 @@ type FileTotals = BTreeMap<(String, String, String), Tokens>;
 
 pub const STANDARD_TIER: &str = "standard";
 
+/// The engine whose spend is billed to its account instead of written to a local history.
+pub(crate) const CURSOR: &str = "cursor";
+
 /// The tiers history names. Anything else is counted as `other`, never dropped.
 fn tier_of(name: Option<&str>) -> String {
     match name.map(str::trim).filter(|name| !name.is_empty()) {
@@ -526,9 +529,20 @@ fn period_start(days: u32) -> String {
     (today - time::Duration::days(i64::from(days.max(1)) - 1)).to_string()
 }
 
-fn summarize(
+/// One row of a history, before it is priced and summed.
+struct Entry {
+    day: String,
+    model: String,
+    tier: String,
+    tokens: Tokens,
+}
+
+fn summarize_entries(
     engine: &str,
-    (status, scanned, skipped, totals): (String, u32, u32, FileTotals),
+    status: String,
+    scanned: u32,
+    skipped: u32,
+    entries: impl Iterator<Item = Entry>,
     settings: &ServerSettings,
     since: Option<&str>,
 ) -> EngineUsage {
@@ -542,11 +556,19 @@ fn summarize(
     let mut models: BTreeMap<String, BTreeMap<String, Tokens>> = BTreeMap::new();
     let mut model_days: BTreeMap<String, BTreeMap<String, Day>> = BTreeMap::new();
     let mut days: BTreeMap<String, Day> = BTreeMap::new();
-    for ((day, model, tier), tokens) in totals {
+    for Entry {
+        day,
+        model,
+        tier,
+        tokens,
+    } in entries
+    {
         if since.is_some_and(|since| day.as_str() < since) {
             continue;
         }
         let model = resolve(&model);
+        // One source of cost for every engine: the configured price table. An amount the account
+        // reports is not mixed in here, since a day row and its model row would then disagree.
         let cost =
             price_for(settings, &model, &tier).map(|price| split_total(&cost_split(tokens, price)));
         model_days
@@ -579,6 +601,47 @@ fn summarize(
     }
 }
 
+fn summarize(
+    engine: &str,
+    (status, scanned, skipped, totals): (String, u32, u32, FileTotals),
+    settings: &ServerSettings,
+    since: Option<&str>,
+) -> EngineUsage {
+    let entries = totals
+        .into_iter()
+        .map(|((day, model, tier), tokens)| Entry {
+            day,
+            model,
+            tier,
+            tokens,
+        });
+    summarize_entries(engine, status, scanned, skipped, entries, settings, since)
+}
+
+/// Cursor reports no local history: its spend is billed to the account, and the account's billed
+/// events are what the store holds. Its counters arrive separate, so nothing is folded together.
+/// The report is only asked for when the store holds events at all, so an engine with no history
+/// is absent rather than an empty row, and a period with no events is a scanned engine of nothing.
+fn summarize_billed(
+    engine: &str,
+    totals: Vec<crate::store::BilledTotal>,
+    settings: &ServerSettings,
+    since: Option<&str>,
+) -> EngineUsage {
+    let entries = totals.into_iter().map(|total| Entry {
+        tokens: Tokens {
+            input: total.input,
+            output: total.output,
+            cache_read: total.cache_read,
+            cache_write: total.cache_write,
+        },
+        day: total.day,
+        model: total.model,
+        tier: STANDARD_TIER.to_owned(),
+    });
+    summarize_entries(engine, "scanned".to_owned(), 0, 0, entries, settings, since)
+}
+
 pub struct UsageCenter {
     host_id: String,
     cache: Arc<Mutex<ScanCache>>,
@@ -606,8 +669,11 @@ impl UsageCenter {
 
     /// Scans off the async threads, since history can run to gigabytes. Unchanged
     /// files come from memory, so a scan is cheap and a price change shows at once.
+    /// `store` holds the engines whose spend only their account reports; without one
+    /// their history is simply empty.
     pub async fn report(
         &self,
+        store: Option<&crate::store::Store>,
         settings: &ServerSettings,
         days: Option<u32>,
     ) -> Result<UsageReport> {
@@ -625,13 +691,24 @@ impl UsageCenter {
         .await
         .map_err(|error| CoreError::Internal(error.to_string()))?;
         let since = days.map(period_start);
+        let mut engines: Vec<EngineUsage> = scans
+            .into_iter()
+            .map(|(name, scan)| summarize(name, scan, settings, since.as_deref()))
+            .collect();
+        // Cursor's account reports its own billed events, which the store keeps. No store, or a
+        // store that never recorded an event, is no history at all and no row: another engine's
+        // empty row would show spend that does not exist. A store with events but none in this
+        // period is a scanned engine of nothing, which is a different state from no history.
+        if let Some(store) = store
+            && store.billed_event_count(CURSOR)? > 0
+        {
+            let billed = store.billed_totals(CURSOR, since.as_deref())?;
+            engines.push(summarize_billed(CURSOR, billed, settings, since.as_deref()));
+        }
         Ok(UsageReport {
             host_id: self.host_id.clone(),
             scanned_at: now(),
-            engines: scans
-                .into_iter()
-                .map(|(name, scan)| summarize(name, scan, settings, since.as_deref()))
-                .collect(),
+            engines,
         })
     }
 
@@ -1271,6 +1348,72 @@ mod tests {
         let dir = crate::testing::TempDir::new();
         let first = UsageCenter::new(dir.path()).unwrap().host_id;
         assert_eq!(UsageCenter::new(dir.path()).unwrap().host_id, first);
+    }
+
+    /// Cursor keeps no local history, so its spend comes from the account's billed events in the
+    /// store. No store, an empty store and a period with nothing in it are three states: the first
+    /// two have no row at all, and the third is a scanned engine of nothing.
+    #[tokio::test]
+    async fn a_billed_store_feeds_the_report_only_when_it_holds_events() {
+        let dir = crate::testing::TempDir::new();
+        let center = UsageCenter::new(dir.path()).unwrap();
+        let settings = crate::store::default_settings();
+        let cursor_row = |report: &UsageReport| {
+            report
+                .engines
+                .iter()
+                .find(|row| row.engine == CURSOR)
+                .cloned()
+        };
+
+        // No store at all, and a store that never recorded an event: no row, so no spend shown.
+        assert!(cursor_row(&center.report(None, &settings, None).await.unwrap()).is_none());
+        let store = crate::store::Store::open(&dir.path().join("orbyn.db"), "epoch-a").unwrap();
+        assert!(cursor_row(&center.report(Some(&store), &settings, None).await.unwrap()).is_none());
+
+        let events = crate::store::parse_billed_events(
+            CURSOR,
+            &json!({ "usageEventsDisplay": [{
+                "timestamp": "1791691200000",
+                "model": "claude-4.5",
+                "conversationId": "conversation-a",
+                "tokenUsage": {
+                    "inputTokens": 100,
+                    "cacheReadTokens": 900,
+                    "cacheWriteTokens": 0,
+                    "outputTokens": 40,
+                    "totalCents": 125,
+                },
+            }]}),
+        );
+        assert_eq!(store.record_billed_events(&events).unwrap().new, 1);
+
+        // The events are on 2026-10-11. A one-day period that ends today holds none of them, which
+        // is a scanned engine of nothing rather than no history.
+        let past = center
+            .report(Some(&store), &settings, Some(1))
+            .await
+            .unwrap();
+        let row = cursor_row(&past).expect("a store with events reports the engine");
+        assert_eq!(row.status, "scanned");
+        assert!(row.models.is_empty(), "nothing in this period");
+
+        let all = center.report(Some(&store), &settings, None).await.unwrap();
+        let row = cursor_row(&all).expect("the engine is reported");
+        assert_eq!(row.status, "scanned");
+        assert_eq!(row.models.len(), 1);
+        assert_eq!(row.models[0].model, "claude-4.5");
+        assert_eq!(row.models[0].input_tokens, 100);
+        assert_eq!(row.models[0].cache_read_tokens, 900);
+        assert_eq!(row.models[0].output_tokens, 40);
+        // One source of cost for every engine: the price table, which prices nothing here, so the
+        // tokens are reported as unpriced rather than costed from the account's own cents. That is
+        // the same answer the day row and the model row give.
+        assert!(row.models[0].estimated_cost.is_none());
+        assert_eq!(row.models[0].unpriced_tokens, 1040);
+        assert_eq!(row.days.len(), 1);
+        assert_eq!(row.days[0].tokens, 1040);
+        assert_eq!(row.days[0].estimated_cost, None);
     }
 
     #[tokio::test]
