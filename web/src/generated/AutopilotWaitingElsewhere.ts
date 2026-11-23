@@ -2,6 +2,7 @@
 import type { NeedsYouKind } from "./NeedsYouKind";
 
 /**
- * One kind of wait the Review queue does not answer, and how many: the Inbox's items, from the one needs-you field.
+ * One kind of wait the Review queue does not answer, and how many: the Inbox's items this queue does not answer, from the
+ * one needs-you field.
  */
 export type AutopilotWaitingElsewhere = { kind: NeedsYouKind, count: number, };

@@ -1039,3 +1039,167 @@ async fn the_live_row_reads_the_one_needs_you_field_and_the_one_working_function
         "the window is not the live row"
     );
 }
+/// KC3 F5: the live row is one repository's. Another project's working task is not in this answer's Working count, and this
+/// project's waits are not in the other project's.
+#[tokio::test]
+async fn the_live_row_counts_only_this_projects_workers_and_waits() {
+    use orbyn_contracts::NeedsYouKind;
+
+    let mut r = rig().await;
+    // This project: one running worker (the rig hangs every worker) and one could-not-start wait.
+    r.merge("src/live", NOW, "alpha", with_usage(None, None, None))
+        .await;
+    let (answer, error) =
+        r.w.start(
+            brief(json!({
+                "engine": { "id": "ghost", "assigned_by": "lead" },
+                "files": [{ "path": "src/ghost/**", "mode": "write" }]
+            })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+
+    // Another project with a crew task of its own, running.
+    let folder = r.w.repo.parent().unwrap().join("live-elsewhere");
+    std::fs::create_dir_all(&folder).unwrap();
+    let other =
+        r.w.core
+            .store
+            .add_project(crate::store::NewProject {
+                path: folder.to_str().unwrap(),
+                name: "live-elsewhere",
+                is_git: false,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+    let thread =
+        r.w.core
+            .store
+            .create_thread(crate::store::NewThread {
+                project_id: other.id.clone(),
+                title: "Elsewhere".into(),
+                engine: "alpha".into(),
+                model: None,
+                cwd: folder.to_str().unwrap().to_owned(),
+                worktree: None,
+                skill_profile: None,
+                parent_thread_id: None,
+                relation: None,
+                scratch: false,
+            })
+            .unwrap();
+    let mut stamper = super::fake::stamper();
+    stamper.crew_id = orbyn_contracts::CrewId::new(thread.id.clone()).unwrap();
+    let other_brief = stamper
+        .brief(&super::fake::draft(json!({ "outcome": "Elsewhere." })))
+        .unwrap();
+    let other_key = stamper.answer_key(&key(), &other_brief.id).unwrap();
+    let other_task =
+        r.w.core
+            .store
+            .create_crew_task(&other_brief, &other_key, "run-elsewhere")
+            .unwrap();
+    r.w.core
+        .store
+        .add_crew_run(other_task.id.as_str(), &thread.id, "worker-elsewhere")
+        .unwrap();
+    r.w.core
+        .store
+        .move_crew_task(other_task.id.as_str(), "routed", None)
+        .unwrap();
+    r.w.core
+        .store
+        .move_crew_task(other_task.id.as_str(), "running", None)
+        .unwrap();
+
+    let live = r.read(Some(30), 0, NOW).live;
+    assert_eq!(
+        live.working,
+        vec![wire::CrewDashboardWorking {
+            why: wire::FlowWorking::Running,
+            count: 1
+        }],
+        "only this project's running worker"
+    );
+    assert_eq!(
+        live.needs_you,
+        vec![wire::CrewDashboardWaiting {
+            kind: NeedsYouKind::CouldNotStart,
+            count: 1
+        }]
+    );
+    // The other project sees its own worker and none of this project's waits.
+    let other_live =
+        r.w.core
+            .crew_dashboard(&other.id, Some(30), 0, NOW)
+            .unwrap()
+            .live;
+    assert_eq!(
+        other_live.working,
+        vec![wire::CrewDashboardWorking {
+            why: wire::FlowWorking::Running,
+            count: 1
+        }]
+    );
+    assert!(other_live.needs_you.is_empty(), "{other_live:?}");
+}
+/// KC3 F5: a passed task whose latest fix has not finished is Working (Fix) in the live row, from the one function, and stops
+/// reading Working when the fix ends. The truth table answers for the surface too, not only for the pure function.
+#[tokio::test]
+async fn a_fix_in_flight_reads_working_in_the_live_row() {
+    let r = rig().await;
+    // A task of this project that already passed, and a fix of a review finding that has not started.
+    let parent = r.task_with_outcome("A fix waits.", 1);
+    let stamper = super::fake::stamper();
+    let fix_brief = stamper
+        .brief(&super::fake::draft(
+            json!({ "outcome": "Fix the finding." }),
+        ))
+        .unwrap();
+    let fix_key = stamper.answer_key(&key(), &fix_brief.id).unwrap();
+    r.w.core
+        .store
+        .create_crew_task(&fix_brief, &fix_key, "run-fix-1")
+        .unwrap();
+    let finding = format!("sha256:{}", "f".repeat(64));
+    {
+        let conn = r.w.core.store.reader();
+        conn.execute(
+            "UPDATE crew_tasks SET state='passed' WHERE id = ?1",
+            [parent.as_str()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO crew_findings (id, task_id, subject_id, lane, round, fingerprint, body)
+             VALUES (?1, ?2, ?2, 'correctness', 1, 'fp', '{}')",
+            rusqlite::params![finding, parent],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO crew_fixes (finding_id, subject_id, fix_task_id, fingerprint, created_at)
+             VALUES (?1, ?2, ?3, 'fp', '2026-11-12T09:00:00Z')",
+            rusqlite::params![finding, parent, fix_brief.id.as_str()],
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        r.read(Some(30), 0, NOW).live.working,
+        vec![wire::CrewDashboardWorking {
+            why: wire::FlowWorking::Fix,
+            count: 1
+        }]
+    );
+
+    // The fix ends: the same read counts no worker.
+    r.w.core
+        .store
+        .reader()
+        .execute(
+            "UPDATE crew_tasks SET state='passed' WHERE id = ?1",
+            [fix_brief.id.as_str()],
+        )
+        .unwrap();
+    assert!(r.read(Some(30), 0, NOW).live.working.is_empty());
+}

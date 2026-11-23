@@ -54,7 +54,8 @@ fn fix_in_flight(state: &str) -> bool {
 
 /// Whether `state` — a task's state, a background run's state, or a crew's own state — means a worker owns live
 /// work, and why. `fix_state` is the state of the task's latest fix, when it has one; it is read only when the
-/// task itself has not ended, because a fix outlives the state of the work it fixes.
+/// task's own state owns no work (it has ended, or is queued or waiting), because a fix outlives the state of the
+/// work it fixes: a passed task whose latest fix is queued, running or verifying is Working.
 pub(crate) fn working(state: &str, fix_state: Option<&str>) -> Option<Working> {
     match state {
         "running" => return Some(Working::Running),
@@ -145,6 +146,12 @@ mod tests {
                 "a fix retries",
             ),
             (
+                "passed",
+                Some("changed_approach"),
+                Some(Working::Fix),
+                "a fix changes its approach",
+            ),
+            (
                 "stopped",
                 Some("running"),
                 Some(Working::Fix),
@@ -169,15 +176,9 @@ mod tests {
                 None,
                 "an unreadable fix state owns nothing",
             ),
-            // A reviewer lane's round is a task of its own; its state is the state.
-            ("running", None, Some(Working::Running), "a lane in flight"),
-            // A background run and a background crew carry their own words through the same function.
-            (
-                "running",
-                None,
-                Some(Working::Running),
-                "a background run in flight",
-            ),
+            // Not a duplicate of the "running" row above: the vocabulary this function is asked about is wider than a
+            // task's. A reviewer's lane round is a task of its own (so "running" is its state too), and a background run
+            // passes its own words through the same function; the rows below are those words, not a second rule.
             (
                 "needs_review",
                 None,

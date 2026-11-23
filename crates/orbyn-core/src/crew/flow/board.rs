@@ -3,10 +3,12 @@
 //! about checks is two counts, passed and run, for a passed task (any other state has none). Nothing here writes. A reviewer's run and
 //! a fix are lanes and rounds of their task in Flow, not cards. The two flags are advisory; the write routes decide.
 //!
-//! KC3: the Needs you column is the one needs-you field, not the task's run state. The board reads the one needs-you list and a
-//! card sits there exactly when the field names it (a task that waits on a person, a merge that waits, a trip-wire stop), so the
-//! board, the Inbox and the dashboard agree and a dismissed stop is not put back by a second rule. A card's Working line comes from
-//! the one `working` function (`crew/working.rs`), never from a copy of its truth table.
+//! KC3: the Needs you column reads the one needs-you field, not the task's run state. A card sits there when the field names it
+//! (a task that waits on a person, a merge that waits, a trip-wire stop), with the field's kind and reason. A task whose
+//! dismissible wait was dismissed on this device keeps its card, because its run state is still `needs_person` and the board never
+//! hides a task that still cannot run: it has no field kind and no reason, so it draws no sentence, and the Inbox and dashboard
+//! (which read only the field) do not list it. The board reads the same field they do, not necessarily the same count. A card's
+//! Working line comes from the one `working` function (`crew/working.rs`), never from a copy of its truth table.
 
 use std::collections::BTreeMap;
 
@@ -102,9 +104,10 @@ fn facets(counts: std::collections::BTreeMap<String, u32>) -> Vec<wire::FlowFace
 
 impl Core {
     /// One card, and whether it is urgent in the Needs you column. `wait` is the one needs-you field's item for this task,
-    /// when the field names it: the column it sits in, its kind and its reason all come from that field, never from a
-    /// second rule. The reason is the field's own line: the task's scrubbed `needs_person` result for a task that waits on
-    /// a person, the core's fixed words for a merge that waits.
+    /// when the field names it: the column, the kind and the reason then come from that field, never from a second rule. The
+    /// reason is the field's own line (a task's scrubbed result, or the core's fixed words for a merge or a stop). A card the
+    /// field does not name, because its dismissible wait was dismissed here, has no kind and no reason: its run state puts it in
+    /// Needs you and it draws no sentence.
     fn board_card(
         &self,
         facts: &Facts,
@@ -254,7 +257,8 @@ impl Core {
                     continue;
                 }
             }
-            // The field decides the column when it names the card; otherwise the task's run state does.
+            // The field decides the column when it names the card; otherwise the task's run state does. A task whose dismissible
+            // wait was dismissed still reads needs_person and stays in Needs you, with no field kind and no sentence.
             let at = if card.needs_you.is_some() {
                 COLUMNS
                     .iter()

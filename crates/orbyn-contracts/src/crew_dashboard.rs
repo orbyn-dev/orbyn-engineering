@@ -64,9 +64,10 @@ wire! {
 /// The page draws one tile for `needs_you` (split by kind) and one for `working` (split by why).
 /// Nothing here is windowed and nothing is stored: it is read from the records on every request.
 pub struct CrewDashboardLive {
-    /// What waits for the person now in this repository, by kind: the rows of `Core::crew_needs_you`
-    /// whose project is this one, most items first then by kind. Only kinds with at least one item, so
-    /// their sum is the page's Needs you count and the Inbox's count. A dismissed item is not here.
+    /// What waits for the person now in this repository, by kind: the one needs-you list narrowed to this
+    /// project, most items first then by kind, only kinds with at least one item. The same field the Inbox
+    /// and the Taskboard read, not necessarily the same count: a background run's item has no card on the
+    /// board and another repository's items are not here. A dismissed item is not here.
     pub needs_you: Vec<CrewDashboardWaiting>,
     /// The workers of this repository that own live work now (KC3), by why, most first then by why;
     /// their sum is the page's Working count. Not served: Idle. The store keeps no crew member that

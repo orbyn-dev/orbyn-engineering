@@ -3,7 +3,8 @@
 //! off hides them. No test depends on the clock: two tasks that start together get briefs of their own.
 
 use orbyn_contracts::{
-    CrewObject, FlowBoard, FlowColumnId as Column, FlowWorking, NeedsYouKind, object_id,
+    CrewObject, FlowBoard, FlowColumnId as Column, FlowWorking, NeedsYouKind, ResultState,
+    object_id,
 };
 use serde_json::{Value, json};
 
@@ -310,7 +311,13 @@ async fn a_task_that_needs_the_person_carries_its_reason() {
 
 #[tokio::test]
 async fn a_reason_that_quotes_another_tasks_check_is_withheld() {
-    let w = crew(arc(|_, root| built(root))).await;
+    // A real TaskNeedsPerson task, not a could-not-start one: the reason under test is the task's own scrubbed
+    // `needs_person` result, which is the path a held question takes.
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => Turn::Hang,
+    }))
+    .await;
     // The first task's key has a check of its own; a second task, held for a person, will quote it.
     let other_check = format!("echo {}", nonce("board-check"));
     let other_key = json!({
@@ -320,12 +327,19 @@ async fn a_reason_that_quotes_another_tasks_check_is_withheld() {
     });
     let done = built_another(&w, "First task.", other_key).await;
     let crew_id = w.task(&done).crew_id;
-    let ghost = brief(
-        json!({ "outcome": "Second task.", "engine": { "id": "ghost", "assigned_by": "lead" } }),
-    );
-    let (answer, error) = w.start(ghost, key()).await;
+    let second = brief(json!({
+        "outcome": "Second task.",
+        "files": [{ "path": "src/held/**", "mode": "write" }]
+    }));
+    let (answer, error) = w.start(second, key()).await;
     assert!(!error, "the second task did not start");
     let held = answer["task"].as_str().unwrap().to_owned();
+    w.core
+        .store
+        .begin_crew_verification(&held, "engine-run-1", None)
+        .unwrap();
+    w.core.crew_needs_person(&held, "A person decides.", false);
+    assert_eq!(w.task(&held).state, "needs_person");
 
     // The stored reason of the held task is rewritten to quote the first task's check.
     let task = w.task(&held);
@@ -341,6 +355,7 @@ async fn a_reason_that_quotes_another_tasks_check_is_withheld() {
 
     let view = board(&w, &crew_id);
     let card = &column(&view, Column::NeedsYou).cards[0];
+    assert_eq!(card.needs_you, Some(NeedsYouKind::TaskNeedsPerson));
     let reason = card.reason.clone().unwrap_or_default();
     assert!(reason.contains("ran"), "the reason is read");
     assert!(
@@ -480,4 +495,94 @@ async fn the_needs_you_column_is_the_one_field_and_a_live_card_is_working() {
     assert!(needs.cards.iter().all(|c| c.id != stopped));
     assert_eq!(column(&view, Column::StoppedCancelled).count, 1);
     assert_eq!(column(&view, Column::StoppedCancelled).cards[0].id, stopped);
+}
+/// KC3 F1, the product decision: a dismissed could-not-start wait leaves the Inbox and the dashboard (they read the one field), but
+/// not the Taskboard. The task still cannot run, so its card stays in Needs you with no field kind and no sentence: the board never
+/// hides a task that still needs the person, and it does not invent a wait the field no longer names.
+#[tokio::test]
+async fn a_dismissed_could_not_start_card_keeps_its_place_without_a_sentence() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let (answer, error) = w
+        .start(
+            brief(json!({ "engine": { "id": "ghost", "assigned_by": "lead" } })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let crew_id = w.task(&id).crew_id;
+    let view = board(&w, &crew_id);
+    let card = &column(&view, Column::NeedsYou).cards[0];
+    assert_eq!(card.needs_you, Some(NeedsYouKind::CouldNotStart));
+    assert!(card.reason.as_ref().is_some_and(|r| !r.is_empty()));
+
+    w.core
+        .crew_needs_you_dismiss(NeedsYouKind::CouldNotStart, &id, "user")
+        .unwrap();
+    // The field no longer names it, so the Inbox and the dashboard drop it.
+    assert!(
+        w.core
+            .crew_needs_you()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| item.id != id)
+    );
+
+    // The card keeps its place, with no field kind and no sentence.
+    let view = board(&w, &crew_id);
+    let needs = column(&view, Column::NeedsYou);
+    assert_eq!(needs.count, 1, "the task still cannot run");
+    let card = needs.cards.iter().find(|card| card.id == id).unwrap();
+    assert_eq!(card.state, "needs_person");
+    assert!(card.could_not_start);
+    assert_eq!(card.needs_you, None);
+    assert_eq!(card.reason, None);
+}
+
+/// KC3 F2: a could-not-start card carries the task's own scrubbed refusal, not only the kind's fixed words, because the one
+/// needs-you list now reads the task's latest `needs_person` result for every task kind.
+#[tokio::test]
+async fn a_could_not_start_card_carries_its_own_refusal() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let (answer, error) = w
+        .start(
+            brief(json!({ "engine": { "id": "ghost", "assigned_by": "lead" } })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let crew_id = w.task(&id).crew_id;
+    let stored = w.core.store.crew_results(&id).unwrap();
+    let refusal = stored
+        .iter()
+        .rev()
+        .find(|result| result.state == ResultState::NeedsPerson)
+        .expect("the start refusal is a needs_person result")
+        .summary
+        .clone();
+    let first_word = refusal.split_whitespace().next().expect("a refusal");
+
+    let view = board(&w, &crew_id);
+    let card = &column(&view, Column::NeedsYou).cards[0];
+    let reason = card.reason.clone().expect("the refusal is carried");
+    assert!(
+        reason.contains(first_word),
+        "{reason} does not hold {refusal}"
+    );
+    assert_ne!(
+        reason, "The worker never ran.",
+        "the fixed words replaced the task's refusal"
+    );
+    // The Inbox row carries the same scrubbed sentence: it is one field.
+    let item = w
+        .core
+        .crew_needs_you()
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|item| item.id == id)
+        .unwrap();
+    assert_eq!(item.reason.as_deref(), Some(reason.as_str()));
 }

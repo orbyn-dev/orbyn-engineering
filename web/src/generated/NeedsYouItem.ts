@@ -26,7 +26,8 @@ since: string,
  */
 dismissible: boolean, 
 /**
- * One redacted line, at most 160 characters, never task content: the core's fixed words for the kind, or, for a task that
- * waits on a person, the task's latest scrubbed reason.
+ * One redacted line, at most 160 characters, never task content: a task's own latest scrubbed `needs_person` reason when
+ * it has one (the question, the refusal that kept it from starting, a manual check), and the core's fixed words for a
+ * kind whose task has none (a merge that waits, a background run's review, a stop).
  */
 reason?: string | null, };

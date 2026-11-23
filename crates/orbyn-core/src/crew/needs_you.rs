@@ -7,11 +7,13 @@
 //! A task appears once. The first rule that matches wins, in this order: a task waiting on a person, then a merge waiting on
 //! the person, then a background run waiting for review, then a stopped task with a trip wire, then a stopped task whose worker
 //! stopped twice. Other stopped and cancelled tasks are not items. Every text is one line, redacted and capped at 160
-//! characters; only a task that waits on a person carries its own scrubbed reason, every other kind carries fixed core words.
+//! characters; a task carries its own scrubbed reason when its latest `needs_person` result has one (the question, the refusal
+//! that kept it from starting, a manual check), and every other kind carries fixed core words.
 //!
 //! Since KC3 PR2 this list is the one field: the Taskboard's Needs you column, the Review queue's `waiting_elsewhere` and the
-//! dashboard's `live` row call `needs_you_list` (the same items `crew_needs_you` answers with) instead of deriving their own
-//! rule, so a dismissal hides the wait on every surface at once and no two counts can disagree.
+//! dashboard's `live` row read `needs_you_list` (the same items `crew_needs_you` answers with) instead of deriving their own
+//! rule, so a dismissal hides the wait wherever the field is read. They read the same list, not necessarily equal counts: the
+//! board cards only work tasks and the dashboard narrows to one repository.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -34,7 +36,7 @@ const CAP: usize = 200;
 /// The longest reason, in characters.
 const REASON_MAX: usize = 160;
 
-/// The fixed reason of a kind. A task waiting on a person has its own scrubbed reason instead.
+/// The fixed reason of a kind, used when the task behind it has no scrubbed reason of its own.
 fn fixed_reason(kind: wire::NeedsYouKind) -> Option<&'static str> {
     match kind {
         wire::NeedsYouKind::TaskNeedsPerson => None,
@@ -73,7 +75,9 @@ fn line(text: String) -> Option<String> {
 }
 
 impl Core {
-    /// The scrubbed reason of a task that waits on a person: the latest `needs_person` result, as the Taskboard reads it.
+    /// A task's own scrubbed reason: its latest `needs_person` result. A task that could not start has the refusal there, a
+    /// manual check has its own words, and a question has the briefer's sentence; the kind's fixed words stand in when this is
+    /// empty, so the CouldNotStart item carries the task's refusal rather than "The worker never ran." alone.
     fn needs_you_reason(&self, facts: &Facts, scrub: &Scrub) -> Result<Option<String>> {
         Ok(self
             .store
@@ -112,16 +116,19 @@ impl Core {
             } else {
                 wire::NeedsYouKind::TaskNeedsPerson
             };
-            let reason = if kind == wire::NeedsYouKind::TaskNeedsPerson {
+            // The task's own scrubbed result first: for a task that could not start, that result is the refusal the person
+            // acts on, and taking a kind's fixed words instead was hiding it from the Board card and the Inbox row.
+            let reason = {
                 let scrub = match scrubs.entry(place.task.crew_id.clone()) {
                     Entry::Occupied(entry) => entry.into_mut(),
                     Entry::Vacant(entry) => {
                         entry.insert(Scrub::of_crew(self, &person, &place.task.crew_id)?)
                     }
                 };
-                self.needs_you_reason(&facts, scrub)?
-            } else {
-                fixed_reason(kind).map(str::to_owned)
+                match self.needs_you_reason(&facts, scrub)? {
+                    Some(reason) => Some(reason),
+                    None => fixed_reason(kind).map(str::to_owned),
+                }
             };
             if seen.insert(place.task.id.clone()) {
                 items.push(wire::NeedsYouItem {

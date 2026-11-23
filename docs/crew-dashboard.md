@@ -44,7 +44,7 @@ Answer:
 | `areas` | array, at most 50 | `{name, merges, unaided, reverted}`. The first two folders of a path, as in Autopilot by area. No cost: one area's work can use engines counted in different units. |
 | `reverts` | array, at most 20, newest first | `{title, at, by, certain}`; `by` is `person` or `auto`; `certain` is a boolean or `null`. |
 | `recent` | array, at most 20, newest first | `{title, engine, at, needed, checks}`; `needed` is `nothing`, `answer`, `approval` or `other`; `checks` is `passed`, `failed` or `none`. The page lists these only for a repository under `min_rate_sample` merges. |
-| `live` | object | The "Right now" row (KC3): a live count of now, not a figure over the window, so `days` never narrows it. `needs_you` is `[{kind, count}]` from the one needs-you read (`GET /api/crew/needs-you`) for this repository, dismissed items left out, most items first then by kind; the counts sum to the Inbox's count. `working` is `[{why, count}]` from the one `working` function: the workers of this repository that own live work now, by why (`running`, `verifying`, `retry`, `fix`), most first then by why. `truncated` is true when the working read hit its 500-worker bound, so `working` covers the newest workers only. Idle is not served: the store keeps no crew member that holds no task, so an idle tile would be invented. |
+| `live` | object | The "Right now" row (KC3): a live count of now, not a figure over the window, so `days` never narrows this block while it does narrow every figure above it. `needs_you` is `[{kind, count}]` from the one needs-you field (`GET /api/crew/needs-you`) narrowed to this repository, dismissed items left out, most items first then by kind: the same field the Inbox and the Taskboard read, though not necessarily the same count (a background run's wait has no board card, and another repository's items are not here). `working` is `[{why, count}]` from the one `working` function: the workers of this repository that own live work now, by why (`running`, `verifying`, `retry`, `fix`), most first then by why. `truncated` is true when the working read hit its 500-worker bound, so `working` covers the newest workers only. Idle is not served: the store keeps no crew member that holds no task, so an idle tile would be invented. |
 | `truncated` | boolean | A list above had more rows than it holds. |
 
 Rules the service keeps and the page relies on:
@@ -100,8 +100,9 @@ The service answers them from records it already keeps (`crates/orbyn-core/src/c
   the window's tasks are each read once, not once per merge. A store read that fails answers `500 history_unreadable`, as the contract says.
 - `merge_checks` and `not_verified` are not part of this read: it sends the task's own checks as `passed`, `failed` or `none`, and the proof itself stays
   in the Review queue reads.
-- KC3 (the live row): `live` is read after the window and is not narrowed by it. `needs_you` is `Core::crew_needs_you` filtered to this
-  repository, so a device-local dismissal hides the item here and in the Inbox together; `working` is the one `working` function
+- KC3 (the live row): `live` is read after the window and is not narrowed by it, unlike every figure in the answer. `needs_you` comes
+  from the one needs-you field (`Core::crew_needs_you`) narrowed to this repository, so a device-local dismissal hides the item here
+  and in the Inbox together; the same field, not a second rule and not a count that must equal the Inbox's. `working` is the one `working` function
   (`crates/orbyn-core/src/crew/working.rs`) over this repository's tasks, with the latest fix of a finished task as the only work that outlives
   the task's state. It reads at most 500 workers, which `truncated` reports, and it writes nothing. `needed` counts a `tripwire` ledger row as
   `other`: a task the trip wire stopped and a person then merged by hand did not need nothing. Tests: the `working` truth table,

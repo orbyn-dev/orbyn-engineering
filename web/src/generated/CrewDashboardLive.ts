@@ -9,9 +9,10 @@ import type { CrewDashboardWorking } from "./CrewDashboardWorking";
  */
 export type CrewDashboardLive = { 
 /**
- * What waits for the person now in this repository, by kind: the rows of `Core::crew_needs_you`
- * whose project is this one, most items first then by kind. Only kinds with at least one item, so
- * their sum is the page's Needs you count and the Inbox's count. A dismissed item is not here.
+ * What waits for the person now in this repository, by kind: the one needs-you list narrowed to this
+ * project, most items first then by kind, only kinds with at least one item. The same field the Inbox
+ * and the Taskboard read, not necessarily the same count: a background run's item has no card on the
+ * board and another repository's items are not here. A dismissed item is not here.
  */
 needs_you: Array<CrewDashboardWaiting>, 
 /**

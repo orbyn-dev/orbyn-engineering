@@ -15,8 +15,9 @@ background_runs?: Array<AutopilotBackgroundReviewItem>,
  */
 background_total?: number, 
 /**
- * The waits the one needs-you field (KC3) names that this queue does not answer: the Inbox's items, by kind, most
- * first then by kind. The page says "N more wait for you in the Inbox" from these, and it is the same field the Inbox
- * and the Taskboard read. A review wait this queue owns is not here, and neither is a dismissed one.
+ * The waits the one needs-you field (KC3) names that this queue does not answer: the Inbox's items this queue does not
+ * answer, by kind, most first then by kind. The page says "N more wait for you in the Inbox" from these, and it is the
+ * same field the Inbox and the Taskboard read (not necessarily the same count: the board cards only work tasks). A review
+ * wait this queue owns is not here, and neither is a dismissed one.
  */
 waiting_elsewhere?: Array<AutopilotWaitingElsewhere>, now_unix: number, };

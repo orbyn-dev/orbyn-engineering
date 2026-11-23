@@ -24,13 +24,17 @@ effort?: string | null, state: string, stop_reason?: string | null,
  */
 updated_at: string, 
 /**
- * Why the task needs the person, for a task in Needs you.
+ * The one needs-you field's line for this card (one redacted line, at most 160 characters): the task's own scrubbed
+ * result for a task that waits on a person or could not start, or the core's fixed words for a merge that waits. `null`
+ * when the field does not name the card, which is the case for a task whose dismissible wait was dismissed on this device:
+ * it still sits in Needs you because its run state is `needs_person`, and it draws no sentence.
  */
 reason?: string | null, 
 /**
  * The worker never ran: the task was refused at its start (an engine the app cannot restrict, no route, a setting that
- * blocks it) and waits in Needs you only so the person can retry or dismiss it. Not an approval: nothing is asked of the
- * person but that choice. `reason` holds the refusal in the core's words.
+ * blocks it) and waits so the person can retry or dismiss it. Not an approval: nothing is asked of the person but that
+ * choice. `reason` holds the refusal while the one needs-you field names the card; after a dismissal the card keeps its
+ * place in Needs you (the task still cannot run) and carries no reason.
  */
 could_not_start: boolean, 
 /**
@@ -47,8 +51,9 @@ can_rerun: boolean,
  */
 checks?: FlowChecks | null, 
 /**
- * The wait this card answers, when the one needs-you field names it (KC3): the kind decides the shared sentence, and the
- * card sits in Needs you because the field says so, not because of its run state. `null` when nothing waits.
+ * The wait this card answers, when the one needs-you field names it (KC3): the kind decides the shared sentence. `null` when
+ * the field does not name the card — a task whose dismissible wait was dismissed on this device still sits in Needs you
+ * because its run state is `needs_person`, and it carries no kind and no reason.
  */
 needs_you?: NeedsYouKind | null, 
 /**

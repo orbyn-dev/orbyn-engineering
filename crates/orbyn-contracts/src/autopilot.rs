@@ -208,9 +208,10 @@ pub struct AutopilotReviewQueue {
     #[serde(default)]
     #[ts(optional, as = "Option<u32>")]
     pub background_total: u32,
-    /// The waits the one needs-you field (KC3) names that this queue does not answer: the Inbox's items, by kind, most
-    /// first then by kind. The page says "N more wait for you in the Inbox" from these, and it is the same field the Inbox
-    /// and the Taskboard read. A review wait this queue owns is not here, and neither is a dismissed one.
+    /// The waits the one needs-you field (KC3) names that this queue does not answer: the Inbox's items this queue does not
+    /// answer, by kind, most first then by kind. The page says "N more wait for you in the Inbox" from these, and it is the
+    /// same field the Inbox and the Taskboard read (not necessarily the same count: the board cards only work tasks). A review
+    /// wait this queue owns is not here, and neither is a dismissed one.
     #[serde(default)]
     #[ts(optional, as = "Option<Vec<AutopilotWaitingElsewhere>>")]
     pub waiting_elsewhere: Vec<AutopilotWaitingElsewhere>,
@@ -220,7 +221,8 @@ pub struct AutopilotReviewQueue {
 }
 
 wire! {
-/// One kind of wait the Review queue does not answer, and how many: the Inbox's items, from the one needs-you field.
+/// One kind of wait the Review queue does not answer, and how many: the Inbox's items this queue does not answer, from the
+/// one needs-you field.
 pub struct AutopilotWaitingElsewhere {
     pub kind: NeedsYouKind,
     pub count: u32,

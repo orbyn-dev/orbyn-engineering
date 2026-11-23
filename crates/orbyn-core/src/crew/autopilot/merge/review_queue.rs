@@ -50,9 +50,10 @@ pub struct ReviewQueue {
     pub merges: Vec<ReviewItem>,
     /// The background runs waiting for the person, oldest first.
     pub background: Vec<BackgroundReview>,
-    /// The waits the one needs-you field (KC3) names that this queue does not answer: the Inbox's items, by kind, most
-    /// first then by kind. The page says "N more wait for you in the Inbox" from this, and it is the same field the
-    /// Inbox and the Taskboard read, so the counts agree. A review wait this queue owns is not here.
+    /// The waits the one needs-you field (KC3) names that this queue does not answer: the Inbox's items this queue does not
+    /// answer, by kind, most first then by kind. The page says "N more wait for you in the Inbox" from this, and it is the
+    /// same field the Inbox and the Taskboard read, not a second rule (the counts need not be equal: the board cards only
+    /// work tasks and this read is not scoped to one repository). A review wait this queue owns is not here.
     pub waiting_elsewhere: Vec<(wire::NeedsYouKind, u32)>,
 }
 
