@@ -10,6 +10,8 @@ import type { FlowCard } from "../../../generated/FlowCard";
 import { modeName, plural } from "../autopilot/approvals/areas";
 import { stopOf } from "../autopilot/approvals/ledger";
 import type { ApprovalRow, Risk } from "../autopilot/approvals/model";
+import type { WatchNeedsItem } from "../autopilot/approvals/watchTypes";
+import { whenLong } from "../autopilot/approvals/when";
 import { diskLowOf, diskSentence, NO_WORKER_RAN } from "../tool";
 import { KIND_FILTER, NEEDS_KINDS, type NeedsItem, type NeedsKind, type NeedsView } from "./model";
 
@@ -192,6 +194,38 @@ export function backgroundItems(runs: { crew: BackgroundCrew; runs: BackgroundRu
         };
       }),
   );
+}
+
+/** The streak a could-not-run reason opens with ("3 checks in a row could not run: timed out."), as read; null when it has none. */
+const STREAK = /^(\d+) checks? in a row/;
+
+/**
+ * The two watch rows of the Needs you read (KC6, watch-needsyou): a watch whose command turned failing and asked for the
+ * person, and one whose last three checks in a row could not run. Both settle themselves on a check that runs again, so
+ * neither is dismissible; each action opens the watch itself. The core's one redacted line is the reason, and the design's
+ * sentence says how it settles. A watch whose crew is not in the list keeps its id's row without a name it cannot learn.
+ */
+export function watchItems(read: { items: WatchNeedsItem[]; names: Record<string, string> }): NeedsItem[] {
+  return read.items.map((item) => {
+    const name = read.names[item.crew_id ?? item.id] ?? item.id;
+    const reason = item.reason?.trim() || (item.kind === "watch_failing" ? "The watch’s command is failing." : "Checks in a row could not run.");
+    const streak = item.kind === "watch_could_not_run" ? STREAK.exec(reason)?.[1] : undefined;
+    const failing = item.kind === "watch_failing";
+    return {
+      id: `watch:${item.id}`,
+      kind: "background" as const,
+      title: failing ? `Watch failing: ${name}` : `Watch could not run: ${name}`,
+      risk: null,
+      undo: null,
+      from: `Watch · ${name} · ${failing ? "turned failing" : streak ? `${streak} checks in a row, since` : "since"} ${whenLong(item.since)}`,
+      cost: failing
+        ? `${reason} This is raised once for this change and is meant not to repeat while the check keeps failing. It resolves itself when a check passes.`
+        : `${reason} One row for the whole stretch: it is updated at each later check, not repeated, and it resolves itself when a check passes.`,
+      since: time(item.since),
+      actions: [{ key: "open" as const, label: "Open", primary: true }],
+      ref: item.crew_id ?? item.id,
+    };
+  });
 }
 
 const RISK_RANK: Record<Risk, number> = { high: 0, medium: 1, low: 2 };

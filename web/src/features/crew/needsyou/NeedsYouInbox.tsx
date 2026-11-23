@@ -3,6 +3,7 @@ import { navigate } from "../../../product/state/route";
 import { ErrorState, Loading } from "../../../product/ui/states";
 import { Button } from "../../../ui/controls";
 import { useAreaOverride } from "../autopilot/approvals/areaOverride";
+import { useWatchFocus } from "../autopilot/approvals/watchFocus";
 import { useRepo } from "../autopilot/approvals/AutonomyAreas";
 import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { HELD } from "../autopilot/approvals/copy";
@@ -60,7 +61,11 @@ function Inbox() {
       else if (action.key === "dismiss") state.dismiss(item.id);
       else if (action.key === "sign-in") navigate({ name: "settings", section: "providers" });
       else if (action.key === "deny") state.hold(item.ref)?.deny();
-      else if (action.key === "approve" || action.key === "open") navigate({ name: "crew", tab: item.kind === "background" ? "background" : "approvals" });
+      else if (action.key === "approve" || action.key === "open") {
+        // A watch row opens that watch's own page on the Background tab; a background run opens the list it waits on.
+        if (item.id.startsWith("watch:")) useWatchFocus.getState().ask(item.ref);
+        navigate({ name: "crew", tab: item.kind === "background" ? "background" : "approvals" });
+      }
     },
     off(item, action) {
       if (item.kind === "could_not_start") {

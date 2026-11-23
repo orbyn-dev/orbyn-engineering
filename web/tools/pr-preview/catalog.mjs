@@ -918,6 +918,95 @@ export const FRAMES = {
     ],
   },
 
+  /** Crew KC6 watches (Crew Designs v121, the watch-* frames), on the real Background routes over the mock's
+   *  crew-background-watch* scenarios. The list mixes watches with the other crews; the create dialog gains Watch and
+   *  its two actions; each watch's page is the state its scenario holds. watch-history is the one section frame and draws
+   *  in the Preview chunk; watch-needsyou is the live inbox with the two watch rows beside a background run. */
+  "watch-list": { route: "#/crew/background", scenario: "crew-background-watch" },
+  "watch-setup": {
+    route: "#/crew/background",
+    scenario: "crew-background-watch",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "Watch"),
+      { do: "fill", label: "Name", value: "Redirect tests", exact: true },
+      { do: "fill", label: "Command", value: "npm test web/nav/redirect" },
+      { do: "fill", label: "Every N hours", value: "1" },
+    ],
+  },
+  "watch-setup-template": {
+    route: "#/crew/background",
+    scenario: "crew-background-watch",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "Watch"),
+      click("radio", "Start the crew template"),
+      { do: "fill", label: "Name", value: "Redirect tests", exact: true },
+      { do: "fill", label: "Command", value: "npm test web/nav/redirect" },
+      { do: "fill", label: "Every N hours", value: "1" },
+    ],
+  },
+  "watch-setup-error": {
+    route: "#/crew/background",
+    scenario: "crew-background-watch",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "Watch"),
+      { do: "fill", label: "Name", value: "Redirect tests", exact: true },
+      { do: "fill", label: "Command", value: "" },
+      { do: "fill", label: "Every N hours", value: "0" },
+    ],
+  },
+  "watch-setup-refused": {
+    route: "#/crew/background",
+    scenario: "crew-background-watch",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "Watch"),
+      { do: "fill", label: "Name", value: "Redirect tests", exact: true },
+      { do: "fill", label: "Command", value: "git push --force origin main" },
+      { do: "fill", label: "Every N hours", value: "1" },
+      click("button", "Create background crew"),
+    ],
+    wait: 700,
+  },
+  "watch-setup-narrow": {
+    route: "#/crew/background",
+    scenario: "crew-background-watch",
+    width: 520,
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "Watch"),
+      { do: "fill", label: "Name", value: "Redirect tests", exact: true },
+      { do: "fill", label: "Command", value: "npm test web/nav/redirect" },
+      { do: "fill", label: "Every N hours", value: "1" },
+    ],
+  },
+  "watch-setup-saved": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "Watch"),
+      { do: "fill", label: "Name", value: "Redirect tests", exact: true },
+      { do: "fill", label: "Command", value: "npm test web/nav/redirect" },
+      { do: "fill", label: "Every N hours", value: "1" },
+      click("button", "Create background crew"),
+    ],
+    wait: 900,
+  },
+  "watch-passing": { route: "#/crew/background", scenario: "crew-background-watch-passing", steps: [click("button", "Open the Redirect tests watch")] },
+  "watch-failing": { route: "#/crew/background", scenario: "crew-background-watch-failing", steps: [click("button", "Open the Redirect tests watch")] },
+  "watch-still-failing": { route: "#/crew/background", scenario: "crew-background-watch-still-failing", steps: [click("button", "Open the Redirect tests watch")] },
+  "watch-recovered": { route: "#/crew/background", scenario: "crew-background-watch-recovered", steps: [click("button", "Open the Redirect tests watch")] },
+  "watch-paused": { route: "#/crew/background", scenario: "crew-background-watch-paused", steps: [click("button", "Open the Docs links watch")] },
+  "watch-command-error": { route: "#/crew/background", scenario: "crew-background-watch-could-not-run", steps: [click("button", "Open the Lockfile check watch")] },
+  "watch-failing-template": { route: "#/crew/background", scenario: "crew-background-watch-template", steps: [click("button", "Open the Main build watch")] },
+  /** The change table alone, the one KC6 frame that is a section of a page (watch-history). */
+  "watch-history": { route: "#/preview/crew/watch-history", scenario: "crew-background-watch-failing" },
+  /** The inbox with the two watch rows (watch-needsyou), on the app's own Inbox tab. */
+  "watch-needsyou": { route: "#/crew/inbox", scenario: "crew-background-watch-needsyou" },
+
   /** Crew, the escape log (Crew Designs v79), on the real escape routes over the mock's crew-escapes scenarios. A detail
    *  frame names its escape in the hash; escape-gap opens the same escape with its Set-the-gap dialog. */
   "escape-log": { route: "#/preview/crew/escape-log", scenario: "crew-escapes", wait: 2500 },

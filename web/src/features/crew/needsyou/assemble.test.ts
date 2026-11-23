@@ -6,7 +6,7 @@ import type { BackgroundCrew } from "../../../generated/BackgroundCrew";
 import type { BackgroundRun } from "../../../generated/BackgroundRun";
 import { heldRow } from "../autopilot/approvals/held";
 import type { AutopilotAreaRow } from "../../../generated/AutopilotAreaRow";
-import { autonomyItems, backgroundItems, heldItems, mainItems, only, rank, stopItems, viewOf } from "./assemble";
+import { autonomyItems, backgroundItems, heldItems, mainItems, only, rank, stopItems, viewOf, watchItems } from "./assemble";
 import type { NeedsItem } from "./model";
 
 const NOW = Date.parse("2026-11-12T15:04:00");
@@ -64,6 +64,26 @@ describe("each source becomes one inbox row", () => {
       ["background:r4", "background", "Needs approval", "Checks failed twice", "Background crew · Fix failing CI", "bg"],
     ]);
     expect(items.every((one) => one.risk === null)).toBe(true);
+  });
+
+  it("a watch that turned failing and one whose checks could not run are two rows, each opened at its own watch", () => {
+    const items = watchItems({
+      items: [
+        { id: "bg-watch-redirect", kind: "watch_failing", project_id: "p", crew_id: "bg-watch-redirect", since: "2026-11-07T14:02:00Z", dismissible: false, reason: "The watch’s command is failing." },
+        { id: "bg-watch-lock", kind: "watch_could_not_run", project_id: "p", crew_id: "bg-watch-lock", since: "2026-11-07T12:02:00Z", dismissible: false, reason: "3 checks in a row could not run: timed out." },
+      ],
+      names: { "bg-watch-redirect": "Redirect tests", "bg-watch-lock": "Lockfile check" },
+    });
+    expect(items.map((one) => [one.id, one.kind, one.title, one.ref])).toEqual([
+      ["watch:bg-watch-redirect", "background", "Watch failing: Redirect tests", "bg-watch-redirect"],
+      ["watch:bg-watch-lock", "background", "Watch could not run: Lockfile check", "bg-watch-lock"],
+    ]);
+    expect(items[0]?.from).toMatch(/^Watch · Redirect tests · turned failing /);
+    expect(items[1]?.from).toMatch(/^Watch · Lockfile check · 3 checks in a row, since /);
+    expect(items[0]?.cost).toBe("The watch’s command is failing. This is raised once for this change and is meant not to repeat while the check keeps failing. It resolves itself when a check passes.");
+    expect(items[1]?.cost).toBe("3 checks in a row could not run: timed out. One row for the whole stretch: it is updated at each later check, not repeated, and it resolves itself when a check passes.");
+    expect(items.map((one) => one.actions)).toEqual([[{ key: "open", label: "Open", primary: true }], [{ key: "open", label: "Open", primary: true }]]);
+    expect(items.every((one) => one.risk === null && one.undo === null)).toBe(true);
   });
 
   it("a daily-cap stop shows the core's reason verbatim and says to wait for the reset; the lifetime stop keeps its words", () => {

@@ -311,7 +311,7 @@ describe("the Needs you inbox on live data", () => {
 
   it("is an error when nothing could be read, and retrying reads again", async () => {
     mock.reset("crew");
-    for (const path of ["/api/crew/stops", "/api/crew/autopilot/review", "/api/crew/background", "/api/crew/approvals/held", "/api/crew/approvals/second-engine", "/api/crew/flow/crews"]) mock.fail(path, 1, 503, "unavailable");
+    for (const path of ["/api/crew/stops", "/api/crew/autopilot/review", "/api/crew/background", "/api/crew/approvals/held", "/api/crew/approvals/second-engine", "/api/crew/flow/crews", "/api/crew/needs-you"]) mock.fail(path, 1, 503, "unavailable");
     const user = userEvent.setup();
     render(<NeedsYouInbox />);
     expect(await screen.findByText("Can’t read what needs you")).toBeVisible();
@@ -384,6 +384,44 @@ describe("answering from the inbox", () => {
     await list();
     const labels = screen.getAllByRole("button").map((one) => (one.textContent ?? "").trim());
     for (const label of labels) expect(label).toMatch(/^(Open|Approve|Deny|Dismiss|Try again|Needs you \d+|Approvals \d+|Background \d+|Main \d+|Stops \d+)$/);
+  });
+});
+
+describe("the watch rows (KC6)", () => {
+  it("lists a failing watch and one whose checks could not run beside a background run, and Open asks the Background tab for that watch", async () => {
+    oneGitProject();
+    const { user } = await open("crew-background-watch-needsyou");
+    const items = within(await list()).getAllByRole("listitem");
+    expect(items.map((one) => one.textContent)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Watch could not run: Lockfile check"),
+        expect.stringContaining("Watch failing: Redirect tests"),
+        expect.stringContaining("Needs approval"),
+      ]),
+    );
+    const failing = items.find((one) => one.textContent?.includes("Watch failing: Redirect tests"))!;
+    expect(failing).toHaveTextContent("Watch · Redirect tests · turned failing");
+    expect(failing).toHaveTextContent("This is raised once for this change and is meant not to repeat while the check keeps failing.");
+    const couldNotRun = items.find((one) => one.textContent?.includes("Watch could not run: Lockfile check"))!;
+    expect(couldNotRun).toHaveTextContent("3 checks in a row could not run: timed out.");
+    expect(couldNotRun).toHaveTextContent("One row for the whole stretch");
+    const bar = screen.getByRole("group", { name: "Filter the inbox" });
+    expect(within(bar).getAllByRole("button").map((one) => one.textContent)).toEqual(["Needs you 3", "Background 3"]);
+    const { useWatchFocus } = await import("../autopilot/approvals/watchFocus");
+    useWatchFocus.setState({ id: null });
+    await user.click(within(failing).getByRole("button", { name: "Open: Watch failing: Redirect tests" }));
+    expect(useWatchFocus.getState().id).toBe("bg-watch-redirect");
+  });
+
+  it("draws no watch row when the shared Needs you read is not served: a 404 is a service without watches, not an error", async () => {
+    oneGitProject();
+    mock.reset("crew-held-account");
+    mock.fail("/api/crew/needs-you", 1, 404, "not_found", "Not found.");
+    render(<NeedsYouInbox />);
+    const items = within(await list()).getAllByRole("listitem");
+    expect(items.some((one) => one.textContent?.includes("Watch failing:"))).toBe(false);
+    expect(items.some((one) => one.textContent?.includes("Watch could not run:"))).toBe(false);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 

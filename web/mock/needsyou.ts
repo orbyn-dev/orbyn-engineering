@@ -1,7 +1,8 @@
 /**
- * The mock's Needs you reads: the after-merge Review queue and the background crews with their runs, which `mock/crew.ts` does not
- * serve. They answer in the Crew scenarios (`crew`, `crew-<state>`) and nowhere else, so the default scenario keeps every Crew route at
- * 404 as the service does with Crew Preview off. `crew-empty` has nothing waiting. Reads only.
+ * The mock's Needs you reads: the after-merge Review queue, the background crews with their runs, and the watch rows of the
+ * shared Needs you read (KC6), which `mock/crew.ts` does not serve. They answer in the Crew scenarios (`crew`,
+ * `crew-<state>`) and nowhere else, so the default scenario keeps every Crew route at 404 as the service does with Crew
+ * Preview off. `crew-empty` has nothing waiting. Reads only.
  */
 import type { AutopilotReviewItem } from "../src/generated/AutopilotReviewItem.ts";
 import type { AutopilotReviewQueue } from "../src/generated/AutopilotReviewQueue.ts";
@@ -62,10 +63,36 @@ const run = (): BackgroundRun => ({
   ended_at: "2026-11-07T14:00:00Z",
 });
 
+/** The two watch rows the Needs you read carries in `crew-background-watch-needsyou` (watch-needsyou). */
+const watchRows = () => [
+  {
+    id: "bg-watch-redirect",
+    kind: "watch_failing" as const,
+    project_id: "p-app",
+    crew_id: "bg-watch-redirect",
+    since: "2026-11-07T14:02:00Z",
+    dismissible: false,
+    reason: "The watch’s command is failing.",
+  },
+  {
+    id: "bg-watch-lock",
+    kind: "watch_could_not_run" as const,
+    project_id: "p-app",
+    crew_id: "bg-watch-lock",
+    since: "2026-11-07T12:02:00Z",
+    dismissible: false,
+    reason: "3 checks in a row could not run: timed out.",
+  },
+];
+
 /** The answer for a Needs you read, or null when the route is not one of these (or Crew is off) and the Crew mock answers. */
 export function needsYouMock(scenario: string, method: string, path: string): MockResponse | null {
   if (method !== "GET" || !(scenario === "crew" || scenario.startsWith("crew-"))) return null;
-  const empty = scenario === "crew-empty";
+  const empty = scenario === "crew-empty" || scenario.startsWith("crew-background-watch");
+  if (path === "/api/crew/needs-you") {
+    const items = scenario === "crew-background-watch-needsyou" ? watchRows() : [];
+    return { status: 200, body: { items, count: items.length } };
+  }
   if (path === "/api/crew/autopilot/review") {
     const body: AutopilotReviewQueue = { items: empty ? [] : [reviewItem()], total: empty ? 0 : 1, next_offset: null, now_unix: NOW };
     return { status: 200, body };
