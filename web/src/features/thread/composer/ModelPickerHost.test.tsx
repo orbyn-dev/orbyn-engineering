@@ -1,29 +1,31 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api } from "../../../api/client";
+import { installMockFetch } from "../../../test-support";
 import type { EngineModels, EngineStatus } from "../../../api/types";
 import { useModelStore } from "../../../product/state/modelStore";
 import { createEngineHostMock } from "../../../../mock/engineHost";
 import { setEngineHostApi, type HostRow } from "../../enginehost";
 import { ModelPickerTrigger } from "./ModelPicker";
 
-vi.mock("../../../api/client", async (original) => {
-  const actual = await original<typeof import("../../../api/client")>();
-  return { ...actual, api: { ...actual.api, models: vi.fn() } };
-});
-
 const engine = (id: string, name: string, patch: Partial<EngineStatus> = {}) => ({ id, name, installed: true, capabilities: { managed: true }, ...patch }) as EngineStatus;
 const engines = [engine("claude", "Claude Code"), engine("codex", "Codex"), engine("cursor", "Cursor"), engine("opencode", "OpenCode"), engine("pi", "Pi")];
 const models = (id: string): EngineModels => ({ engine: id, source: "engine", checked_at: "fixture", error: null, fallback: false,
   models: [{ id: `${id}-m`, label: `${id} model`, description: null, is_default: true, custom: false, options: [] }], options: [], agents: [], output_styles: [] });
+let mock: ReturnType<typeof installMockFetch>;
 const row = (id: string, patch: Partial<HostRow>): HostRow => ({ id, name: id, state: "running", can_retry: false, ...patch });
 
 beforeEach(() => {
-  vi.mocked(api.models).mockImplementation(async (id: string) => models(id));
+  mock = installMockFetch();
+  // The sample service adds custom models to Claude's list; these tests count the engines' own.
+  mock.handle("PUT", "/api/preferences", { values: { custom_models: [] } });
+  for (const e of engines) mock.setEngineModels(e.id, models(e.id));
   useModelStore.setState({ byEngine: Object.fromEntries(engines.map((e) => [e.id, models(e.id)])), loading: {}, errors: {} });
 });
-afterEach(() => setEngineHostApi(null));
+afterEach(() => {
+  setEngineHostApi(null);
+  vi.unstubAllGlobals();
+});
 
 async function open() {
   const user = userEvent.setup();
@@ -70,6 +72,7 @@ it("Try again is one write, however fast the clicks", async () => {
 
 it("names SDK missing, not installed and sign in again; the CLI path still offers its model", async () => {
   const list = [engine("claude", "Claude Code"), engine("cursor", "Cursor", { installed: false }), engine("muse", "Muse Code")];
+  for (const e of list) mock.setEngineModels(e.id, models(e.id));
   useModelStore.setState({ byEngine: Object.fromEntries(list.map((e) => [e.id, models(e.id)])), loading: {}, errors: {} });
   setEngineHostApi(createEngineHostMock({ hosts: [row("claude", { sdk_missing: true, has_driver: true }), row("muse", { last_error: { kind: "auth", message: "401", causes: [] } })] }));
   const user = userEvent.setup();

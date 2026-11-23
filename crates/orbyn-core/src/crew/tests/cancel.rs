@@ -236,8 +236,19 @@ async fn cancelling_while_verifying_drops_the_claim_and_never_settles_as_passed(
     assert_eq!(intent.detail["previous_state"], "verifying");
     assert_eq!(intent.detail["verification_claimed"], true);
     // A verification that finishes later cannot pass, fail or move it, and a new one is not claimed.
-    assert!(w.core.store.pass_crew_task(&id, &[]).is_err());
-    assert!(w.core.store.fail_crew_verification(&id, "f").is_err());
+    for (attempt, to) in [
+        (w.core.store.pass_crew_task(&id, &[]).map(|_| ()), "passed"),
+        (
+            w.core.store.fail_crew_verification(&id, "f").map(|_| ()),
+            "failed",
+        ),
+    ] {
+        let refused = attempt.unwrap_err();
+        assert!(
+            matches!(&refused, CoreError::InvalidTransition { from, to: moved } if (from.as_str(), moved.as_str()) == ("cancelled", to)),
+            "{refused:?}"
+        );
+    }
     assert!(!w.core.store.claim_crew_verification(&id).unwrap());
     w.core.verify_crew_task(&id).await;
     assert_eq!(w.task(&id).state, "cancelled");

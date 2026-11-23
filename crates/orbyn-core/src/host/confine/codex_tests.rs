@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use super::Confinement;
 use super::codex::{self, AUTH_REFUSED, AuthKind};
+use super::tests::{assert_refused, refused};
 
 struct Fixture {
     _dir: crate::testing::TempDir,
@@ -59,7 +60,11 @@ const TASK: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 #[test]
 fn only_a_single_safe_task_id_can_name_a_home() {
     for bad in ["", ".", "..", "a/b", "a\\b", "a b", "a.b", "a\0b"] {
-        assert!(codex::home_name(bad).is_err(), "{bad:?}");
+        let message = refused(codex::home_name(bad));
+        assert!(
+            message.contains("its task id is not usable"),
+            "{bad:?}: {message}"
+        );
     }
     let name = codex::home_name(TASK).unwrap();
     assert!(!name.contains('/') && !name.contains('\\'), "{name}");
@@ -221,30 +226,27 @@ fn a_linked_or_plain_file_home_path_is_refused() {
     let elsewhere = f.base.join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
     std::os::unix::fs::symlink(&elsewhere, f.data.join("crew")).unwrap();
-    assert!(
-        rules(&f.data)
-            .with_codex_worker_home_at(TASK, &f.real)
-            .is_err()
+    assert_refused(
+        rules(&f.data).with_codex_worker_home_at(TASK, &f.real),
+        "is not a private folder",
     );
     // A linked home for this task.
     let f = fixture();
     let root = f.data.join("crew/codex-homes");
     std::fs::create_dir_all(&root).unwrap();
     std::os::unix::fs::symlink(&elsewhere, root.join(codex::home_name(TASK).unwrap())).unwrap();
-    assert!(
-        rules(&f.data)
-            .with_codex_worker_home_at(TASK, &f.real)
-            .is_err()
+    assert_refused(
+        rules(&f.data).with_codex_worker_home_at(TASK, &f.real),
+        "is not a private folder",
     );
     // A plain file where the home goes.
     let f = fixture();
     let root = f.data.join("crew/codex-homes");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join(codex::home_name(TASK).unwrap()), "not a folder").unwrap();
-    assert!(
-        rules(&f.data)
-            .with_codex_worker_home_at(TASK, &f.real)
-            .is_err()
+    assert_refused(
+        rules(&f.data).with_codex_worker_home_at(TASK, &f.real),
+        "is not a private folder",
     );
 }
 
@@ -286,11 +288,11 @@ fn a_worker_home_cannot_be_its_real_home_or_escape_its_private_folder() {
     for path in [f.real.clone(), f.real.join("nested")] {
         std::fs::create_dir_all(&path).unwrap();
         base.codex_home = Some(path);
-        assert!(base.codex_home().is_err());
+        assert_refused(base.codex_home(), "outside its private folder");
     }
     // Outside the private folder.
     base.codex_home = Some(outside);
-    assert!(base.codex_home().is_err());
+    assert_refused(base.codex_home(), "outside its private folder");
     // A valid private home is accepted.
     let configured = rules(&f.data)
         .with_codex_worker_home_at(TASK, &f.real)
@@ -314,7 +316,7 @@ fn a_worker_home_that_is_a_link_outside_its_private_folder_is_refused() {
     let mut base = rules(&f.data);
     base.closed = vec![f.real.clone()];
     base.codex_home = Some(link);
-    assert!(base.codex_home().is_err());
+    assert_refused(base.codex_home(), "resolves through a link");
 }
 
 #[test]
