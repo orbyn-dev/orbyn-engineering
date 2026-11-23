@@ -121,8 +121,10 @@ The app bundle ships it in the `sdk` folder beside the host (see Single executab
   starts the whole host under the prefix instead. `confinement.env` is not applied per session either (the host's own environment is
   the SDK's); its keys are logged as `confinementEnvNotApplied`, never the values.
 - **Credentials.** The host reads no keychain or token store. The key, if any, is `CURSOR_API_KEY` in the environment the core passes
-  at spawn, handed to `Agent.create`/`resume` as `apiKey`; it is redacted out of every error and is never in a frame or log. A key in
-  a request (`options.apiKey`) is refused as `invalid_request`.
+  at spawn, handed to `Agent.create`/`resume` as `apiKey`; the host redacts it out of every error and stack it sends, and never puts
+  it in a request frame or a log line itself. A key in a request (`options.apiKey`) is refused as `invalid_request`. Deltas are
+  forwarded untouched, so output an SDK tool produces (`shell` stdout, a `read` file body) is stored as the SDK sent it; the core
+  does not redact engine deltas.
 - **No approvals.** The Cursor SDK raises no interactive approval or question (T3's adapter declares none), so this family never sends
   a `permission` or `question` frame and `respond` only logs. Sessions default to the SDK's own sandbox on (`local.sandboxOptions.enabled`);
   the core's `options.local` wins. Policy for Cursor is therefore the sandbox and the core's confinement of the host, not `ApprovalGate`.
@@ -144,7 +146,8 @@ Not done, so Planned: any run against the real `@cursor/sdk` (the transcripts we
 the `session_lost` message match and the `CURSOR_API_KEY` handoff are unverified); loading the SDK from disk in the single executable
 (its webpack chunks and native binaries; T3 loads it with `createRequire`); background shells as `background` frames (T3 reads an
 SDK-internal hook, no transcript covers it) and `stopTask`; `readHistory`, `rollback`, `fork`; attachments;
-subagent, todo and plan transcripts (`proposed_plan` was not copied: it holds a personal path); per-session confinement; Windows.
+subagent, todo and plan transcripts (`proposed_plan`'s recorded personal folder was scrubbed to `/home/user`); per-session
+confinement; Windows.
 
 ## OpenCode family
 

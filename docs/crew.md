@@ -23,6 +23,7 @@ Contents:
 - [Verification without limits](#verification-without-limits)
 - [Prototype slices](#prototype-slices)
 - [Warp features](#warp-features)
+- [Kiro Crew features](#kiro-crew-features)
 - [Beta cut](#beta-cut)
 - [Open risks](#open-risks)
 - [Appendices](#appendices)
@@ -1090,36 +1091,44 @@ background crew is per device and is not shared through git. A repository's own 
 - **Runs and state:** a run is `running`, `stopped` (with a reason: `budget`, `repeated_failure`, `engine_error`, `disabled`) or
   `needs_review`, with turns and minutes spent against the budget it was given. At most one run per crew is running, and a run opens only for
   an enabled crew. A crew's state, first match wins: `running` while a run is
-  running; `needs_review` when its newest run finished with work to review; `stopped` when its newest run stopped for the budget or a
+  running; `needs_review` while its newest run waits for the person's review; `stopped` when its newest run stopped for the budget or a
   failure (`budget`, `repeated_failure`, `engine_error`), even with older reviews waiting; `needs_review` when the crew has no run or its
-  newest run was stopped as `disabled` while an older review still waits; otherwise `idle` (never ran, or the newest run was stopped by the
-  person's own switch and nothing waits). Spending to either number of the budget stops the run with the reason `budget` and puts it in
-  the review queue (`review_waiting`). Turning a crew off stops its run with the reason `disabled`, logged as the person. **Delete is
-  refused only while a run is in progress**; a crew with waiting reviews can be deleted (nothing clears a waiting review yet), its runs
+  newest run was stopped as `disabled` while an older review still waits; otherwise `idle` (never ran, the newest run was stopped by the
+  person's own switch and nothing waits, or the person acknowledged the newest run's review). Spending to either number of the budget
+  stops the run with the reason `budget` and puts it in the review queue (`review_waiting`). Turning a crew off stops its run with the reason `disabled`, logged as the person. **Delete is
+  refused only while a run is in progress**; a crew with waiting reviews can be deleted (a waiting review is settled by the person's acknowledgement), its runs
   and waiting reviews are removed with it, and the audit row records `runs_removed` and `reviews_waiting_removed`.
-- **Audit:** create, update, enable, disable, delete, and each run's start, spend, stop and review write an `audit_events` row in the same
-  transaction as the change (rule 6), before the row it describes changes (a spend that reaches the budget writes the spend row, then the
-  stop row, then updates the run once); a failed audit row rolls the change back, and the rows stay after a crew is deleted. A person's
-  disable, and the stop it causes, are logged with the person as actor and source; a run's start, spend and other ends as `crew`.
+- **Audit:** create, update, enable, disable, delete, and each run's start, spend, stop, review and acknowledgement write an `audit_events`
+  row in the same transaction as the change (rule 6), before the row it describes changes (a spend that reaches the budget writes the spend
+  row, then the stop row, then updates the run once; an acknowledgement writes its row with the run, its state, its stop reason and the
+  reason the review kept, then clears the wait); a failed audit row rolls the change back, and the rows stay after a crew is deleted. A
+  person's disable, the stop it causes and an acknowledgement are logged with the person as actor and source; a run's start, spend and
+  other ends as `crew`.
 - **Routes**, all under `/api/crew/background`, behind the Preview flag like every Crew route (404 with it off, 401 without the token, writes
   refused for a remote viewer and listed in `crew::changes` so N1 refuses an agent's request): reads `GET /` (`project`, `limit`, `offset`),
   `GET /{id}`, `GET /{id}/runs`; writes, local only (a Person route: a remote viewer gets 403 `local_only`, an agent is refused by N1),
   `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`, and `/{id}/run-now`, which starts one run of an enabled
   crew by hand (the `manual` event: `crew_background_run_now`, one run and its lead thread, as a Low Crew-started task that the daily
-  budget and review capacity may refuse; a refusal stores no run). There is no route that spends, merges or reverts.
+  budget and review capacity may refuse; a refusal stores no run), and `/runs/{id}/acknowledge`, which settles one waiting review
+  (`background_acknowledge_review`: one write clears `review_waiting` and returns the run with its reason, state, stop reason and spend
+  unchanged; a run that is not waiting is refused plainly). There is no route that spends, merges or reverts.
 - **In the Review queue.** A run that stops without a merge waits on its own run row (`needs_review`, or `stopped` for the budget or a
   failure), and `GET /api/crew/autopilot/review` lists it beside the merges as `background_runs`, oldest first, in the same `limit`/`offset`
   window as the merges, with `background_total` counting all of them (`next_offset` is set while either list has more): the run's state,
   stop reason, plain reason, spend and budget. It carries no merge, commit or risk, because it has none, and it is not listed while running or
-  when the person's own switch stopped it. **The person's answer to one is not built:** no route settles or dismisses a waiting background
-  review, so that row is read-only.
+  when the person's own switch stopped it. **The person's answer to one is acknowledge-only (owner ruling, 2026-11-20):**
+  `POST /api/crew/background/runs/{id}/acknowledge` clears the run's wait and returns it with its reason, state, stop reason and spend
+  unchanged, so the run keeps why it waited for the record; the crew's `reviews_waiting` drops, the same crew may run again, and the run
+  leaves the queue (`background_total` no longer counts it). It changes nothing else and a run that is not waiting is refused plainly. A
+  run that stopped for a failure still appears (it has nothing to review and nothing to acknowledge), and the Review screen itself is not
+  in the beta.
 
 What is not built: **a run starts** when a person presses Run now (`POST /api/crew/background/{id}/run-now`, the `manual` event of
 [the engine start](crew/background-engine-start.md)), when a listener fires (next paragraph) or when a test calls the run functions. A start creates one Crew
-worker task for the run; the lead thread of the run runs no engine and takes no message. Turning the crew off cancels that task. The person's
-answer to a waiting run, and a background crew with merge authority, wait for later work (every merge of a background run waits for a
-person). Known limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone); crews are per
-device; a template's prompt and checks are code-owned and defined only for the four templates a run can start (`background_start.rs`);
+worker task for the run; the lead thread of the run runs no engine and takes no message. Turning the crew off cancels that task. A
+background crew with merge authority waits for later work (every merge of a background run waits for a person); the person's answer is
+the acknowledgement above. Known limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone);
+crews are per device; a template's prompt and checks are code-owned and defined only for the four templates a run can start (`background_start.rs`);
 any other template is refused.
 
 **As built (slice 4h, listeners, migration 59):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
@@ -1698,7 +1707,7 @@ with approvals, skills, CLI agents in a terminal (engine console, G14), PR flow,
 - Notebooks (runnable Markdown) and .ipynb viewing.
 - Conversation export and import.
 - Voice input on desktop.
-- Agent memory across threads. Review memory (slice 4g) comes first.
+- Agent memory across threads. Review memory (slice 4g) comes first; Crew lessons (KC5) are the Crew-only part, in the beta behind Crew Preview.
 - Triggers from Slack, Linear, Jira, GitHub and GitLab for background crews.
 - Local control, so outside tools can drive Orbyn through the `orbyn` CLI.
 
@@ -1709,6 +1718,36 @@ with approvals, skills, CLI agents in a terminal (engine console, G14), PR flow,
 - A quake-style drop-down window.
 - Default-terminal registration.
 - Computer use, already covered by our gated Computer action.
+
+## Kiro Crew features
+
+Source: Kiro Crew's README and its crew-mode, dev-fleet and shared-crew specs (github.com/kirodotdev/KiroCrew, read
+2026-11-23). Owner ruling (2026-11-23): take the ideas, copy no code or text, and Crew runs on **this device only**.
+
+- **Licence:** Apache-2.0. We take ideas only; a pull request that uses one says "Sources: Kiro Crew docs, reviewed for
+  ideas, nothing copied".
+- **Already have:** scheduled and CI-failure background crews with budgets and a daily per-engine cap, Run now, live
+  steering on the bus, a person's cancel, restart recovery, the dashboard, review stages, Autopilot and the escape log.
+  Kiro has no hidden-key verification, no multi-vendor router and no merge trust record.
+
+Every row stays behind Crew Preview, keeps the Crew rules (code decides pass or fail, the answer key never reaches a
+worker, the secret scan on the way in and out) and builds no screen before its frame is merged.
+
+| # | Feature | What you get | Owner | Parity |
+| --- | --- | --- | --- | --- |
+| KC1 | Steer, never queue | A lead's follow-up to a busy worker reaches its running turn. The bus already does this (`hand_over` to `steer_live`, `held` otherwise); the work is tests per message kind | E2 | M21 |
+| KC2 | Closing the lead closes its workers | Closing or archiving a lead thread runs the person's cancel for each live task it started; the answer lists what closed and what did not | E3, E2 | M22 |
+| KC3 | One "needs you" | One service field says whether a task, run or merge waits for the person; the board, inbox, Review queue and dashboard read only it. A worker that owns live work reads Working | E3, E1 | M23 |
+| KC4 | Disk guard | A worker start is refused when the volume holding the lead's folder is under a floor (5 GB, person-settable), with the free space in the reason. No prune: tasks run in the lead's folder and correction checkouts are already retired | E3 | M24 |
+| KC5 | Lessons | Repository or global lessons from a repeated failure fingerprint (2 tasks in 60 days), a confirmed escape or revert, and a person's typed correction. The person sees, edits, disables, deletes and promotes them; a "use lessons" switch per repository. At most 5 reach a brief as data; the key, route, lease and checks are proven unchanged. Recorded in `EvalHistory`, which the router does not read yet. Design: Eng 2's note, ruled 2026-11-23 | E2 | M25 |
+| KC6 | Watches | A background crew kind `watch`: a fixed command on a schedule with no model call; it acts once when the result turns failing | E4 | M26 |
+| KC7 | The missing listeners | `issue_label` and `dependency_update` background crews get listeners (refused today) | E4 | M27 |
+| KC8 | Resume after restart | A task whose worker died in a restart resumes once from its last verified round with the same key and budget, then stops as today | E2 | M28 |
+| KC9 | Skill proposals | Three lessons with the same pattern propose a skill in the skills workspace; nothing installs without the person | E2, E4 | M29 |
+| KC10 | Device notifications | A desktop notification the first time something needs the person, once per item | E3, E1 | M30 |
+
+**Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
+(our router never swaps an engine) and release channels.
 
 ## Beta cut
 

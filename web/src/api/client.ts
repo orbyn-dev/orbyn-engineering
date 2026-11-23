@@ -4,6 +4,7 @@ import { forgetPersonKey, personKeyHeaders } from "./personKey";
 import { readToken } from "./token";
 import { inBackground, inLane, laneFor } from "./lanes";
 import type { CreateBranch } from "../generated/CreateBranch";
+import type { RewindResult } from "../generated/RewindResult";
 import type { SwitchBranch } from "../generated/SwitchBranch";
 import type { StartRun } from "../generated/StartRun";
 import type { SteerResult } from "../generated/SteerResult";
@@ -459,7 +460,7 @@ export const api = {
   runChanges: (threadId: string, runId: string, signal?: AbortSignal) =>
     request<RunChanges>("GET", `/api/threads/${q(threadId)}/runs/${q(runId)}/changes`, undefined, signal),
   rewindThread: (threadId: string, runId: string, restoreFiles: boolean) =>
-    request<void>("POST", `/api/threads/${q(threadId)}/rewind`, { run_id: runId, restore_files: restoreFiles }),
+    request<RewindResult>("POST", `/api/threads/${q(threadId)}/rewind`, { run_id: runId, restore_files: restoreFiles }),
   forkThread: (threadId: string, runId: string) =>
     request<Thread>("POST", `/api/threads/${q(threadId)}/fork`, { run_id: runId }),
   forkBefore: (threadId: string, runId: string) =>

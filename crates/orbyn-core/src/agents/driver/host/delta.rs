@@ -1,6 +1,8 @@
 //! `delta` frames to timeline events. The host passes the engine's own event through
 //! untouched, so each family brings its own mapping, kept apart from the transport.
 
+use std::path::Path;
+
 use serde_json::Value;
 
 use crate::agents::driver::EngineEvent;
@@ -64,6 +66,22 @@ impl DeltaMapper {
                 }
                 events
             }
+        }
+    }
+
+    /// Gives the mapper the run's working folder, for families whose tool results name paths.
+    #[must_use]
+    pub fn with_cwd(self, cwd: &Path) -> Self {
+        match self {
+            Self::Cursor(mapper) => Self::Cursor(mapper.with_cwd(cwd)),
+            other => other,
+        }
+    }
+
+    /// The host's `runDone.result.usage`, when it carried one.
+    pub fn note_result_usage(&mut self, usage: Option<&Value>) {
+        if let Self::Cursor(mapper) = self {
+            mapper.note_result_usage(usage);
         }
     }
 

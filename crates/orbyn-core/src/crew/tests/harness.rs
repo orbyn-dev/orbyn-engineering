@@ -719,8 +719,8 @@ pub fn key() -> Value {
             { "id": "chk-run", "kind": "command",
               "params": { "run": format!("echo {KEY_MARKER}") },
               "proves": "The command exits 0." },
-            { "id": "chk-probe", "kind": "http_probe",
-              "params": { "url": "http://127.0.0.1:9/health", "expect_status": 200 },
+            { "id": "chk-probe", "kind": "preview",
+              "params": { "url": "http://127.0.0.1:9/health" },
               "proves": "The service answers." }
         ],
         "protected_paths": ["tests/**"]

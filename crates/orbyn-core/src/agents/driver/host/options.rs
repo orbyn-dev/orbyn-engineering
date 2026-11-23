@@ -61,6 +61,28 @@ pub fn claude(spec: &RunSpec, claude_path: Option<&Path>) -> Value {
     Value::Object(options)
 }
 
+/// Cursor: the SDK's `AgentOptions`/`SendOptions` fields this host reads. The model is the
+/// SDK's `{id}` selection, mode is `agent` or `plan`, and the run's MCP endpoint is an HTTP
+/// server the host hands to the SDK. There is no context field in the recorded calls, so
+/// none is invented here.
+pub fn cursor(spec: &RunSpec) -> Value {
+    let mut options = Map::new();
+    if let Some(model) = &spec.model {
+        options.insert("model".into(), json!({ "id": model }));
+    }
+    options.insert(
+        "mode".into(),
+        json!(if spec.plan { "plan" } else { "agent" }),
+    );
+    if let Some(url) = &spec.mcp_url {
+        options.insert(
+            "mcpServers".into(),
+            json!({ (MCP_SERVER_NAME): { "type": "http", "url": url } }),
+        );
+    }
+    Value::Object(options)
+}
+
 /// ACP: the agent the core resolved, the turn's model, effort and mode, and the run's MCP
 /// servers. Policy stays in Rust: no autopilot value is ever sent, and the host's own
 /// session rules decide the rest.

@@ -21,7 +21,7 @@ use super::stamp::Stamper;
 use super::tool::{LEAD_MEMBER, invalid, stamp_now};
 use crate::agents::driver::worker_identity::TASK_TRAILER;
 use crate::app::Core;
-use crate::settings::preferences::CREW_TURN_BUDGET;
+use crate::settings::preferences::{CREW_MIN_FREE_GB, CREW_TURN_BUDGET};
 use crate::tools::mcp::McpBinding;
 
 /// What a person and the lead read when the crew-wide turn budget is spent. Code-owned text: no
@@ -141,6 +141,24 @@ pub(super) enum Caller {
         task: Box<crate::store::CrewTask>,
         run: Box<crate::store::CrewRun>,
     },
+}
+
+/// Why a worker cannot start on the volumes it uses: the first volume below `floor` names itself.
+/// A volume whose free space cannot be read never blocks.
+pub(super) fn low_disk_reason(volumes: &[(&str, Option<u64>)], floor: u64) -> Option<String> {
+    for &(label, free) in volumes {
+        let Some(free) = free else {
+            continue;
+        };
+        if free < floor {
+            return Some(format!(
+                "Not enough free disk space to start a worker: {:.1} GB free on {label}; at least {:.1} GB are needed. Free some space, then start the task again.",
+                crate::host::disk::gib(free),
+                crate::host::disk::gib(floor)
+            ));
+        }
+    }
+    None
 }
 
 impl Core {
@@ -731,8 +749,9 @@ impl Core {
         prompt: Option<String>,
         base: Option<&str>,
     ) -> Result<Value, CrewError> {
-        // Before anything is started: a worker that cannot be restricted is refused, and the task
-        // shows the reason in the "refused by the app" item.
+        // Before anything is started: the worker's folder needs room, and a worker that cannot be
+        // restricted is refused; the task shows the reason in the "refused by the app" item.
+        self.refuse_low_disk(lead).await?;
         self.refuse_unrestricted_worker(&decision.engine).await?;
         let prompt = match prompt {
             Some(text) => text,
@@ -858,6 +877,40 @@ impl Core {
             ));
         }
         Ok(thread)
+    }
+
+    /// Refuses a worker when the project's volume has less free space than the
+    /// `crew_min_free_gb` preference (default 5 GB; 0 is no floor). A volume that cannot be read
+    /// does not block the start.
+    async fn refuse_low_disk(&self, lead: &orbyn_contracts::Thread) -> Result<(), CrewError> {
+        let gigabytes = match self.preference(CREW_MIN_FREE_GB, None) {
+            Ok(value) => value.as_u64(),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "the crew disk floor could not be read, so 5 GB is the floor"
+                );
+                None
+            }
+        }
+        .unwrap_or(5);
+        if gigabytes == 0 {
+            return Ok(());
+        }
+        let floor = gigabytes.saturating_mul(1024 * 1024 * 1024);
+        let project_dir = std::path::PathBuf::from(&lead.cwd);
+        let volumes = tokio::task::spawn_blocking(move || {
+            [(
+                "the project folder",
+                crate::host::disk::free_bytes(&project_dir),
+            )]
+        })
+        .await
+        .map_err(|error| invalid(error.to_string()))?;
+        match low_disk_reason(&volumes, floor) {
+            Some(reason) => Err(CrewError::new(ErrorCode::NotAuthorized, reason)),
+            None => Ok(()),
+        }
     }
 
     /// A worker runs as the person, so its process starts under a restriction that keeps it

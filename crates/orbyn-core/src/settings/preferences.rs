@@ -141,6 +141,7 @@ const DEFINITIONS: &[Definition] = defs![
     "provider_instances" Kind::List, [], false;
     "crew_digest" Kind::Object, {"time": "17:00"}, false;
     "crew_turn_budget" Kind::Number, 0, false;
+    "crew_min_free_gb" Kind::Number, 5, false;
     "claude_engine_path" Kind::OneOf(&["sdk", "cli"]), "sdk", false;
 ];
 
@@ -153,8 +154,20 @@ pub(crate) const CREW_DIGEST: &str = "crew_digest";
 /// The crew-wide turn budget's catalog key. Its value is whole turns; 0 is no crew budget.
 pub(crate) const CREW_TURN_BUDGET: &str = "crew_turn_budget";
 
+/// The free gigabytes a Crew worker needs on the lead thread's volume; 0 is no floor.
+pub(crate) const CREW_MIN_FREE_GB: &str = "crew_min_free_gb";
+
 /// Keys the service writes itself; a client edit names them only through their owner.
 const SERVICE_OWNED: &[&str] = &["default_theme_set_at"];
+
+/// The minutes-apart settings whose field in Settings › General shows a minimum of 1.
+const BACKGROUND_INTERVALS: [&str; 2] = [
+    "automatic_git_fetch_minutes",
+    "provider_health_refresh_minutes",
+];
+
+/// The fewest minutes those fields accept, matching the `min` each row draws.
+const INTERVAL_MIN_MINUTES: f64 = 1.0;
 
 /// A catalog key a client may write.
 fn writable(key: &str) -> Result<&'static Definition> {
@@ -243,6 +256,16 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
             "A crew turn budget is a whole number of turns, or 0 for no budget.".into(),
         ));
     }
+    if fits
+        && definition.key == CREW_MIN_FREE_GB
+        && value.as_u64().is_none_or(|gigabytes| gigabytes > 1000)
+    {
+        // Whole gigabytes from 0 to 1000; 0 is no floor.
+        return Err(CoreError::Invalid(
+            "The crew disk floor is a whole number of gigabytes from 0 to 1000, or 0 for none."
+                .into(),
+        ));
+    }
     if fits && definition.key == crate::agents::attention::QUIET_PREFERENCE {
         let allowed = value.as_u64().is_some_and(|seconds| {
             (crate::agents::attention::QUIET_MIN_SECS..=crate::agents::attention::QUIET_MAX_SECS)
@@ -253,6 +276,18 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
                 "Quiet time is a whole number of seconds from 10 to 120.".into(),
             ));
         }
+    }
+    if fits
+        && BACKGROUND_INTERVALS.contains(&definition.key)
+        && value
+            .as_f64()
+            .is_some_and(|minutes| minutes < INTERVAL_MIN_MINUTES)
+    {
+        // The rows in Settings show `min: 1` on their fields; a client that sends 0
+        // would be stored and read back as a pause the field cannot show.
+        return Err(CoreError::Invalid(format!(
+            "The shortest background interval is {INTERVAL_MIN_MINUTES} minute."
+        )));
     }
     if fits {
         Ok(())
@@ -614,6 +649,39 @@ mod tests {
         assert!(check(budget, &json!(1.5)).is_err());
         assert!(check(budget, &json!("30")).is_err());
         assert!(check(budget, &json!(-1)).is_err());
+    }
+
+    #[test]
+    fn a_crew_disk_floor_defaults_to_five_gigabytes() {
+        assert_eq!((definition(CREW_MIN_FREE_GB).unwrap().default)(), json!(5));
+    }
+
+    #[test]
+    fn a_crew_disk_floor_is_whole_gigabytes_from_zero_to_a_thousand() {
+        let floor = definition(CREW_MIN_FREE_GB).unwrap();
+        assert!(check(floor, &json!(5)).is_ok());
+        assert!(check(floor, &json!(0)).is_ok(), "0 is no floor");
+        assert!(check(floor, &json!(1000)).is_ok());
+        assert!(check(floor, &json!(-1)).is_err());
+        assert!(check(floor, &json!(1.5)).is_err());
+        assert!(check(floor, &json!(1001)).is_err());
+    }
+
+    #[test]
+    fn a_background_interval_is_at_least_a_minute() {
+        for key in BACKGROUND_INTERVALS {
+            let interval = definition(key).unwrap();
+            assert!(check(interval, &json!(0)).is_err(), "{key} accepted 0");
+            assert!(check(interval, &json!(-5)).is_err(), "{key} accepted -5");
+            assert!(
+                check(interval, &json!(1)).is_ok(),
+                "{key} refused its own min"
+            );
+            assert!(
+                check(interval, &json!(5)).is_ok(),
+                "{key} refused a normal value"
+            );
+        }
     }
 
     #[test]

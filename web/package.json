@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build && node scripts/assert-no-mock.mjs && node scripts/assert-no-previews.mjs && node scripts/assert-no-inlined-fonts.mjs",
+    "build": "tsc --noEmit && vite build && node scripts/assert-no-mock.mjs && node scripts/assert-no-previews.mjs && node scripts/assert-no-inlined-fonts.mjs && node scripts/precompress.mjs",
     "preview": "vite preview",
     "check": "tsc --noEmit && eslint . && node scripts/arch-check.mjs",
     "arch:update": "node scripts/arch-check.mjs --update",

@@ -45,6 +45,7 @@ mod core;
 mod could_not_start;
 mod crew_refusal;
 mod dashboard;
+mod disk;
 mod draft;
 mod escape_check;
 mod escape_scan;

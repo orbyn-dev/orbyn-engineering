@@ -267,6 +267,7 @@ impl ZoneWorker {
                 | DeviceError::WrongPassword
                 | DeviceError::InvalidCode
                 | DeviceError::RequestGone
+                | DeviceError::ApprovalExpired
                 | DeviceError::WrongDigits { .. }
                 | DeviceError::DigitsLocked
                 | DeviceError::ProofFailed
