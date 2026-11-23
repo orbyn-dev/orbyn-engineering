@@ -463,6 +463,24 @@ async fn a_watch_reads_its_state_and_history_and_run_now_still_refuses_it() {
         answer["message"],
         "A watch crew's command runs on its schedule; Run now does not start a run for it."
     );
+
+    // Turning it off is recorded in the history the read serves, in the same switch.
+    let (status, _) = app
+        .call("POST", &format!("/api/crew/background/{id}/disable"), None)
+        .await;
+    assert_eq!(status, 200);
+    let (status, history) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/{id}/watch/changes"),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{history}");
+    assert_eq!(history["total"], 1);
+    assert_eq!(history["changes"][0]["kind"], "turned_off");
+    assert_eq!(history["changes"][0]["action"], "none");
+    assert!(history["changes"][0]["exit_code"].is_null());
 }
 
 /// Run now starts one run by hand: the route hands the core's own refusal and plain reason back, and every refusal leaves no
@@ -584,6 +602,8 @@ fn an_agent_is_refused_every_background_change_by_path() {
         "/api/crew/background",
         "/api/crew/background/t-1",
         "/api/crew/background/t-1/runs",
+        "/api/crew/background/t-1/watch",
+        "/api/crew/background/t-1/watch/changes",
     ] {
         assert!(!changes_crew_state(path), "{path}");
     }
