@@ -1,7 +1,7 @@
 import { recordUserPrompt } from "../../workspace";
 import { useDraftModelDefaults } from "../useDraftModelDefaults";
 import { useDraftCheckout } from "../useDraftCheckout";
-import { ArrowUp, Bot, Folder, GitBranch, Paperclip, ShieldOff, X } from "lucide-react";
+import { ArrowUp, Bot, ChevronDown, Folder, GitBranch, Paperclip, ShieldOff, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useCommand } from "../../../product/shell/shortcuts";
@@ -289,6 +289,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                       onClick={(event) => setPicker(event.currentTarget.getBoundingClientRect())}
                     >
                       {project.name}
+                      <ChevronDown size={14} aria-hidden />
                     </button>
                     ?
                   </>
@@ -310,6 +311,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                     onClick={(event) => setPicker(event.currentTarget.getBoundingClientRect())}
                   >
                     No project
+                    <ChevronDown size={14} aria-hidden />
                   </button>
                 )}
               </p>

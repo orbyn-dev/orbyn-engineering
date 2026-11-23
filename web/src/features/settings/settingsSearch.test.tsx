@@ -21,6 +21,12 @@ it("finds a specific label regardless of word order and excludes desktop control
   expect(new Set(SETTINGS.map((item) => item.id)).size).toBe(SETTINGS.length);
 });
 
+it("finds the macOS-only quit confirmation on macOS and nowhere else", () => {
+  expect(searchSettings("quit confirmation", true, undefined, true).map((item) => item.id)).toEqual(["general-quit-confirmation"]);
+  expect(searchSettings("quit confirmation", true, undefined, false)).toEqual([]);
+  expect(searchSettings("quit confirmation", true)).toEqual([]);
+});
+
 it("navigates from an exact result to an asynchronously loaded row", async () => {
   const user = userEvent.setup();
   vi.mocked(request).mockImplementation(async (_method, path) => {

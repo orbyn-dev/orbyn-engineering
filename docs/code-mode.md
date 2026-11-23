@@ -475,6 +475,23 @@ route below answers `404`.
   body-less Person-class write in `ENFORCED`, `PERSON_ROUTES`, `routes.json` and `web/src/api/personKey.ts`.
 - **Not built.** The web UI's Stop button (the route is the web owner's to draw).
 
+### Tested against the real service
+
+`crates/orbynd/tests/code_mode_switch.rs` drives the switch and read routes over HTTP against a real
+`orbynd`: `the_switch_is_off_by_default_for_a_known_engine_and_an_unknown_one`,
+`the_switch_writes_what_it_stored_and_survives_a_restart`, `a_refused_switch_write_is_not_stored`,
+`an_extra_field_is_ignored_by_the_switch_write`,
+`a_shell_less_service_answers_desktop_required_and_writes_nothing`,
+`with_code_mode_off_every_client_route_is_not_offered`,
+`a_thread_with_no_runs_and_an_unknown_thread_both_answer_an_empty_list`,
+`unknown_and_malformed_run_ids_are_404_not_500` and
+`a_real_run_is_listed_and_read_with_the_contract_shape`. The last creates a run through the
+service's own `/mcp/{token}` endpoint and its real QuickJS executor. The read routes check an id's
+shape, not what it names: an unknown engine id with a valid shape answers `200 {"enabled":false}`
+and an unknown thread id answers `200 {"runs":[]}`. The `PUT` body is not strict: serde ignores an
+extra field, so that write succeeds; a missing or non-bool `enabled` is `400 invalid_input`, as is a
+body over the router's 4 MiB limit.
+
 ## As built: web UI
 
 The web side is in `web/src/features/codemode/`, built from the Engineer frames `codemode-*`. It reads the service's own routes (see
