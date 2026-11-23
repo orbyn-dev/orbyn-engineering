@@ -698,6 +698,55 @@ async fn full_access(service: &Service, thread: &str) {
 }
 
 #[tokio::test]
+async fn browser_preference_controls_agent_preview_tools() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, engines(), "codex").await;
+    full_access(&service, &thread).await;
+    let mut seen = None;
+
+    tool(
+        &service,
+        &thread,
+        &mut seen,
+        "orbyn_environment_preferences_update",
+        json!({ "values": { "enable_agent_browser_access": false } }),
+    )
+    .await;
+    for (name, args) in [
+        ("orbyn_preview_list", json!({})),
+        (
+            "orbyn_preview_open",
+            json!({ "url": "http://127.0.0.1:1/" }),
+        ),
+    ] {
+        let reply = tool_turn(&service, &thread, &mut seen, name, args).await;
+        assert!(reply.contains("tool error=true"), "{name}: {reply}");
+        assert!(reply.contains("turned off in Settings"), "{name}: {reply}");
+    }
+
+    // A full-access agent can change this project preference through the normal
+    // tool policy. This is not a person-only grant.
+    tool(
+        &service,
+        &thread,
+        &mut seen,
+        "orbyn_environment_preferences_update",
+        json!({ "values": { "enable_agent_browser_access": true } }),
+    )
+    .await;
+    let reply = tool(
+        &service,
+        &thread,
+        &mut seen,
+        "orbyn_preview_list",
+        json!({}),
+    )
+    .await;
+    assert_eq!(reply_of(&reply), json!([]));
+    service.stop().await;
+}
+
+#[tokio::test]
 async fn an_agent_starts_threads_changes_project_preferences_and_renames_only_its_own_project() {
     let dir = TempDir::new();
     let (service, thread) = setup(&dir, engines(), "codex").await;

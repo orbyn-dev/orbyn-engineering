@@ -9,6 +9,8 @@ export function registerNavigationGuard(ask: (resume: NavigationResume) => void,
     cancelAttempt() { if (active?.token === token) active.generation += 1; },
   };
 }
+/** Whether an editor still holds navigation: after its Discard it does not, even before it unmounts. */
+export const navigationGuarded = (): boolean => active !== null;
 export function deferNavigation(resume: () => void): boolean {
   if (!active) return false;
   const owner = active, generation = ++owner.generation;

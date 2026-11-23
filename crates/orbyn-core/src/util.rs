@@ -81,6 +81,31 @@ pub fn account_home() -> Option<PathBuf> {
     None
 }
 
+/// Every mounted drive root, such as `C:\`, in the order Windows reports them.
+/// Empty elsewhere: one Unix tree already reaches every folder.
+#[cfg(windows)]
+pub fn drive_roots() -> Vec<PathBuf> {
+    use windows_sys::Win32::Storage::FileSystem::GetLogicalDrives;
+    // SAFETY: GetLogicalDrives takes no arguments and writes no memory this
+    // process owns; a zero answer means the call failed and names no drive.
+    let mask = unsafe { GetLogicalDrives() };
+    drive_roots_from_mask(mask)
+}
+
+#[cfg(not(windows))]
+pub fn drive_roots() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+/// The drive roots a `GetLogicalDrives` bitmap names, bit 0 being `A:`. Windows
+/// has 26 letters, so higher bits name nothing.
+pub fn drive_roots_from_mask(mask: u32) -> Vec<PathBuf> {
+    (0..26u8)
+        .filter(|letter| mask & (1 << letter) != 0)
+        .map(|letter| PathBuf::from(format!("{}:\\", char::from(b'A' + letter))))
+        .collect()
+}
+
 pub fn new_id() -> String {
     ulid::Ulid::generate().to_string().to_lowercase()
 }
@@ -510,6 +535,57 @@ mod tests {
         assert_eq!(strip_verbatim(r"\\?\C:\repo"), r"C:\repo");
         assert_eq!(strip_verbatim(r"\\?\UNC\host\share"), r"\\host\share");
         assert_eq!(strip_verbatim("/usr/bin"), "/usr/bin");
+    }
+
+    #[test]
+    fn drive_roots_follow_the_bitmap() {
+        assert!(drive_roots_from_mask(0).is_empty());
+        assert_eq!(
+            drive_roots_from_mask(0b111),
+            [
+                PathBuf::from(r"A:\"),
+                PathBuf::from(r"B:\"),
+                PathBuf::from(r"C:\"),
+            ]
+        );
+        assert_eq!(
+            drive_roots_from_mask((1 << 2) | (1 << 7) | (1 << 25)),
+            [
+                PathBuf::from(r"C:\"),
+                PathBuf::from(r"H:\"),
+                PathBuf::from(r"Z:\"),
+            ]
+        );
+        assert!(drive_roots_from_mask(1 << 26).is_empty());
+        assert_eq!(drive_roots_from_mask(u32::MAX).len(), 26);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn one_unix_tree_has_no_drive_roots() {
+        assert!(drive_roots().is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn every_mounted_drive_root_is_the_root_of_its_drive() {
+        let roots = drive_roots();
+        let cwd = canonicalize(&std::env::current_dir().expect("current directory"))
+            .expect("canonical current directory");
+        let current = cwd.ancestors().last().expect("drive root").to_path_buf();
+        assert!(
+            roots.contains(&current),
+            "{roots:?} misses the current drive root {}",
+            current.display()
+        );
+        let mut named: Vec<String> = Vec::new();
+        for root in &roots {
+            assert!(root.is_absolute(), "{root:?} is not absolute");
+            assert_eq!(root.parent(), None, "{root:?} is not a root");
+            let text = root.to_string_lossy().into_owned();
+            assert!(!named.contains(&text), "{text} is listed twice");
+            named.push(text);
+        }
     }
 
     #[test]

@@ -30,7 +30,11 @@ pub(crate) const RUN_TOOL: &str = "orbyn_code_run";
 
 const MAX_DESCRIBE: usize = 16;
 const MAX_SOURCE_BYTES: usize = 64 * 1024;
-const LOST: &str = "This run was lost when Orbyn restarted. Call orbyn_code_run again with the same code and run_id to replay it.";
+pub(super) const LOST: &str = "This run was lost when Orbyn restarted. Call orbyn_code_run again with the same code and run_id to replay it.";
+/// The one text a cancelled run ends, resumes and replays with.
+pub(super) const CANCELLED: &str = "The run was cancelled.";
+/// The one text a cancel of a run that already ended answers with.
+pub(super) const RUN_FINISHED: &str = "This run already ended.";
 
 pub(crate) fn is_tool(name: &str) -> bool {
     [SEARCH_TOOL, DESCRIBE_TOOL, RUN_TOOL].contains(&name)
@@ -202,12 +206,48 @@ impl Core {
         };
         let slice = slice_for(self.code_runs.slice());
         let answer = match live.wait(slice).await {
-            Some(step) => reply::finished(&run_id, &step, super::MAX_RESULT_BYTES),
-            None => {
-                if let Err(error) = self.store.code_run_set_status(&run_id, "paused", false) {
-                    tracing::warn!(%error, "could not record a pause");
+            Some(step) => {
+                // A cancel that won the record while this step was already on its way wins the reply
+                // too: the engine must not read `completed` for a run the person ended.
+                let cancelled = self
+                    .store
+                    .code_run(&run_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|run| {
+                        run.error
+                            .as_deref()
+                            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                            .is_some_and(|error| error["kind"] == "cancelled")
+                    });
+                if cancelled {
+                    reply::cancelled(&run_id)
+                } else {
+                    reply::finished(&run_id, &step, super::MAX_RESULT_BYTES)
                 }
-                reply::paused(&run_id, &live.pending())
+            }
+            None => {
+                // A cancel drops the run's task, which ends the wait without a Step. The record is
+                // the truth: the outer call answers the same cancelled reply a resume does.
+                let cancelled = self
+                    .store
+                    .code_run(&run_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|run| {
+                        run.error
+                            .as_deref()
+                            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                            .is_some_and(|error| error["kind"] == "cancelled")
+                    });
+                if cancelled {
+                    reply::cancelled(&run_id)
+                } else {
+                    if let Err(error) = self.store.code_run_set_status(&run_id, "paused", false) {
+                        tracing::warn!(%error, "could not record a pause");
+                    }
+                    reply::paused(&run_id, &live.pending())
+                }
             }
         };
         (answer.to_string(), false)
@@ -247,6 +287,8 @@ impl Core {
                 )
                 .to_string()
             }
+            // A cancelled run cannot be resumed or replayed, before or after a restart.
+            "error" if error["kind"] == "cancelled" => reply::cancelled(run_id).to_string(),
             "error" if error["kind"] != "lost" => json!({
                 "status": "error", "runId": run_id, "error": error, "logs": run.logs, "truncated": run.truncated })
             .to_string(),
@@ -312,12 +354,17 @@ impl Core {
         let Some(run) = stored else {
             return Err((reply::lost(run_id, LOST).to_string(), false));
         };
-        let lost = run
+        let error: Value = run
             .error
             .as_deref()
-            .and_then(|text| serde_json::from_str::<Value>(text).ok())
-            .is_some_and(|error| error["kind"] == "lost");
+            .and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or(Value::Null);
+        let lost = error["kind"] == "lost";
         if run.status != "error" || !lost {
+            // A cancelled run is never replayed; it answers the same fixed copy a resume does.
+            if run.status == "error" && error["kind"] == "cancelled" {
+                return Err((reply::cancelled(run_id).to_string(), false));
+            }
             return Err((
                 "That run did not end as lost. Start a new run with `code`, or resume it with run_id alone."
                     .into(),
@@ -331,8 +378,14 @@ impl Core {
             Ok(calls) => calls.into_iter().map(|c| (c.idx, c)).collect(),
             Err(error) => return Err((error.public_message(), true)),
         };
-        if let Err(error) = self.store.code_run_restart(run_id) {
-            tracing::warn!(%error, "could not record a replay");
+        let restarted = match self.store.code_run_restart(run_id) {
+            Ok(restarted) => restarted,
+            Err(error) => return Err((error.public_message(), true)),
+        };
+        if !restarted {
+            // A slower replay lost the compare-and-set: the run was cancelled, taken by another
+            // replay, or otherwise ended between the read and the restart.
+            return Err((self.code_replay_taken(run_id), false));
         }
         let seed = RunSeed {
             start_ms: run.seed_start_ms,
@@ -342,6 +395,28 @@ impl Core {
         self.code_begin_task(binding, run_id, code, seed, calls, crew_worker)
             .await
             .map(|live| (run_id.to_owned(), live))
+    }
+
+    /// The answer for a replay whose restart lost the compare-and-set: it never says `completed`;
+    /// a cancelled row answers cancelled, anything else stays lost.
+    pub(crate) fn code_replay_taken(&self, run_id: &str) -> String {
+        let cancelled = self
+            .store
+            .code_run(run_id)
+            .ok()
+            .flatten()
+            .is_some_and(|run| {
+                run.error
+                    .as_deref()
+                    .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                    .is_some_and(|error| error["kind"] == "cancelled")
+            });
+        if cancelled {
+            reply::cancelled(run_id)
+        } else {
+            reply::lost(run_id, LOST)
+        }
+        .to_string()
     }
 
     async fn code_begin_task(
@@ -369,7 +444,7 @@ impl Core {
                 crew_worker,
                 code,
                 seed,
-                move |pending| {
+                move |pending, cancelled| {
                     Arc::new(host::RunHost::new(
                         &host_core,
                         &host_binding,
@@ -378,34 +453,15 @@ impl Core {
                         &host_script,
                         replay,
                         host_failure,
+                        cancelled,
                     ))
                 },
-                move |step| {
+                move |step, cancelled| {
                     let message = failure
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .clone();
-                    let step = match (message, step) {
-                        (
-                            Some(message),
-                            Step::Done {
-                                logs, truncated, ..
-                            }
-                            | Step::Failed {
-                                logs, truncated, ..
-                            },
-                        ) => Step::Failed {
-                            error: RunError {
-                                kind: ErrorKind::Runtime,
-                                message,
-                                line: None,
-                                code: Some("lost".into()),
-                            },
-                            logs,
-                            truncated,
-                        },
-                        (_, step) => step,
-                    };
+                    let step = settle(step, cancelled, message);
                     if let Some(core) = weak.upgrade() {
                         core.code_run_finished(&finish_run, &step);
                     }
@@ -422,6 +478,10 @@ impl Core {
                 Err((message, true))
             }
             Err(runs::Refused::Duplicate(message)) => Err((message, true)),
+            Err(runs::Refused::Cancelled) => {
+                // The person cancelled while `prepare` was still running; the task never started.
+                Err((reply::cancelled(run_id).to_string(), false))
+            }
             Err(runs::Refused::Script(error)) => {
                 self.code_run_finished(
                     run_id,
@@ -529,6 +589,52 @@ fn replace_identifier(text: &str, name: &str, replacement: &str) -> String {
 
 fn is_ident(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// The end a script's finish writes. A cancel wins over whatever the drive returned; a replay that
+/// could not go on ends as `lost` with the message the host kept.
+fn settle(step: Step, cancelled: bool, failure: Option<String>) -> Step {
+    if cancelled {
+        return match step {
+            Step::Done {
+                logs, truncated, ..
+            }
+            | Step::Failed {
+                logs, truncated, ..
+            } => Step::Failed {
+                error: RunError {
+                    kind: ErrorKind::Runtime,
+                    message: CANCELLED.into(),
+                    line: None,
+                    code: Some("cancelled".into()),
+                },
+                logs,
+                truncated,
+            },
+            Step::Yielded => Step::Yielded,
+        };
+    }
+    match (failure, step) {
+        (
+            Some(message),
+            Step::Done {
+                logs, truncated, ..
+            }
+            | Step::Failed {
+                logs, truncated, ..
+            },
+        ) => Step::Failed {
+            error: RunError {
+                kind: ErrorKind::Runtime,
+                message,
+                line: None,
+                code: Some("lost".into()),
+            },
+            logs,
+            truncated,
+        },
+        (_, step) => step,
+    }
 }
 
 /// The slice, kept under the outer call's own deadline when it has one.

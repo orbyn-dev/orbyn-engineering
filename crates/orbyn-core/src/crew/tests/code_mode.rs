@@ -4,12 +4,17 @@
 use super::harness::{Turn, World, brief, key, world};
 use super::review_support::lead_binding;
 use crate::crew::workers::allowed;
+use crate::store::Admission;
+use crate::store::code_runs::CodeRunEnd;
 use crate::tools::mcp::McpBinding;
 use crate::tools::mcp::code::{DESCRIBE_TOOL, RUN_TOOL, SEARCH_TOOL, fake::Fake, is_inner_tool};
-use orbyn_contracts::CreateThread;
+use async_trait::async_trait;
+use orbyn_code_sandbox::{CodeExecutor, Limits, Run, RunError, RunSeed, ToolHost};
+use orbyn_contracts::{ApprovalState, CodeRunStatus, CreateThread, RunState};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 
 fn parse(answer: (String, bool)) -> (Value, bool) {
     (
@@ -896,6 +901,751 @@ async fn code_mode_is_listed_only_for_an_engine_whose_switch_is_on() {
     assert!(!w.core.code_mode_on("codex"), "another engine is unchanged");
     w.core.set_code_mode("claude", false).unwrap();
     assert!(!w.core.code_mode_on("claude"));
+}
+
+/// A script line that asks the gate for one thread change, so a test has a pending approval.
+fn organize(w: &World, pinned: bool) -> String {
+    format!(
+        "call orbyn_thread_organize {{\"thread_id\":\"{}\",\"pinned\":{pinned}}}",
+        w.lead
+    )
+}
+
+/// The lead's binding with a real, non-terminal conversation run, which the gate needs to record an
+/// approval of a script's inner call.
+fn effect_binding(w: &World) -> McpBinding {
+    let lead = lead_binding(w);
+    let run = w
+        .core
+        .store
+        .admit_run(Admission {
+            thread_id: &w.lead,
+            prompt: "script",
+            actor: "test",
+        })
+        .unwrap();
+    McpBinding {
+        scope: crate::governance::approvals::RunScope {
+            run_id: run.id,
+            ..lead.scope.clone()
+        },
+        ..lead
+    }
+}
+
+/// A fake whose `prepare` waits for a permit, so a test can cancel while a start is still starting.
+struct GatePrepare {
+    gate: Arc<Semaphore>,
+}
+
+#[async_trait]
+impl CodeExecutor for GatePrepare {
+    async fn prepare(
+        &self,
+        source: &str,
+        limits: Limits,
+        seed: RunSeed,
+        host: Arc<dyn ToolHost>,
+    ) -> Result<Box<dyn Run>, RunError> {
+        self.gate.acquire().await.unwrap().forget();
+        Fake.prepare(source, limits, seed, host).await
+    }
+}
+
+async fn next_pending_for(w: &World, thread: &str, run_id: &str) -> orbyn_contracts::Approval {
+    for _ in 0..200 {
+        if let Some(approval) = w
+            .core
+            .store
+            .pending_for_thread(thread)
+            .unwrap()
+            .into_iter()
+            .find(|approval| {
+                approval
+                    .via
+                    .as_ref()
+                    .is_some_and(|via| via.code_run == run_id)
+            })
+        {
+            return approval;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("no approval became pending for {run_id}");
+}
+
+async fn next_pending(w: &World, thread: &str) -> orbyn_contracts::Approval {
+    for _ in 0..200 {
+        if let Some(approval) = w.core.store.pending_for_thread(thread).unwrap().pop() {
+            return approval;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("no approval became pending for {thread}");
+}
+
+fn cancelled_error(record: &orbyn_contracts::CodeRunRecord) {
+    assert_eq!(record.status, CodeRunStatus::Error, "{record:?}");
+    let error = record.error.as_ref().expect("a cancelled run has an error");
+    assert_eq!(error.kind, "cancelled", "{record:?}");
+    assert_eq!(error.message, "The run was cancelled.", "{record:?}");
+}
+
+#[tokio::test]
+async fn a_paused_run_with_a_pending_approval_is_cancelled_and_the_approval_is_denied() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(50));
+    let lead = effect_binding(&w);
+    let code = organize(&w, true);
+    let paused = run_text(&w, &lead, json!({ "code": code })).await;
+    assert_eq!(paused["status"], "paused", "{paused}");
+    let run_id = paused["runId"].as_str().unwrap().to_owned();
+    let approval = next_pending(&w, &w.lead).await;
+    assert_eq!(
+        approval.via.as_ref().map(|via| via.code_run.as_str()),
+        Some(run_id.as_str())
+    );
+
+    let record = w.core.code_run_cancel(&run_id).await.unwrap();
+    cancelled_error(&record);
+    assert_eq!(record.calls.len(), 1, "{record:?}");
+    assert_eq!(record.calls[0].status, "failed", "{record:?}");
+    assert!(
+        record.calls[0]
+            .preview
+            .as_deref()
+            .unwrap()
+            .contains("The run was cancelled."),
+        "{record:?}"
+    );
+    assert!(record.pending.is_empty(), "{record:?}");
+    assert!(
+        w.core.store.pending_for_thread(&w.lead).unwrap().is_empty(),
+        "the approval is gone from the queue"
+    );
+    let decided = w.core.store.approval(&approval.id).unwrap();
+    assert_eq!(decided.state, ApprovalState::Denied);
+    assert_eq!(decided.decided_by.as_deref(), Some("user"));
+    let audits = w.core.store.list_audit(Some(&w.lead), 100).unwrap();
+    assert_eq!(
+        audits
+            .iter()
+            .filter(|row| row.action == "code_run.cancel" && row.target == run_id)
+            .count(),
+        1
+    );
+
+    // Cancelling twice answers the same record and writes nothing new.
+    let again = w.core.code_run_cancel(&run_id).await.unwrap();
+    assert_eq!(again, record);
+    assert_eq!(
+        w.core
+            .store
+            .list_audit(Some(&w.lead), 100)
+            .unwrap()
+            .iter()
+            .filter(|row| row.action == "code_run.cancel")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_running_run_is_cancelled_while_its_outer_call_is_still_waiting() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_secs(10));
+    let lead = lead_binding(&w);
+    let core = w.core.clone();
+    let binding = lead.clone();
+    let outer = tokio::spawn(async move {
+        core.code_tool_text(&binding, RUN_TOOL, &json!({ "code": "sleep 60000" }))
+            .await
+    });
+    let mut run_id = None;
+    for _ in 0..200 {
+        if let Some(row) = w.core.code_runs_list(&w.lead).unwrap().runs.first()
+            && row.status == CodeRunStatus::Running
+        {
+            run_id = Some(row.run_id.clone());
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let run_id = run_id.expect("the run is still running inside its outer call");
+    let record = w.core.code_run_cancel(&run_id).await.unwrap();
+    cancelled_error(&record);
+    // The outer call returns promptly with the same cancelled reply a resume gives; a run that was
+    // not aborted would hold the call until its 10 s slice passed.
+    let answer = tokio::time::timeout(Duration::from_secs(2), outer)
+        .await
+        .expect("the aborted run ends its outer call")
+        .unwrap();
+    let reply: Value = serde_json::from_str(&answer.0).unwrap();
+    assert_eq!(reply["status"], "error", "{reply}");
+    assert_eq!(reply["error"]["kind"], "cancelled", "{reply}");
+    cancelled_error(&w.core.code_run_record(&run_id).unwrap());
+}
+
+#[tokio::test]
+async fn a_cancel_during_prepare_never_spawns_the_script_and_releases_the_slot() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let gate = Arc::new(Semaphore::new(0));
+    w.core.code_runs.set_executor(
+        Arc::new(GatePrepare { gate: gate.clone() }),
+        Duration::from_secs(10),
+    );
+    let lead = lead_binding(&w);
+    let core = w.core.clone();
+    let binding = lead.clone();
+    let outer = tokio::spawn(async move {
+        core.code_tool_text(&binding, RUN_TOOL, &json!({ "code": "return 1" }))
+            .await
+    });
+    let mut run_id = None;
+    for _ in 0..200 {
+        if let Some(row) = w.core.code_runs_list(&w.lead).unwrap().runs.first() {
+            run_id = Some(row.run_id.clone());
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let run_id = run_id.expect("the row is written before prepare");
+
+    let record = w.core.code_run_cancel(&run_id).await.unwrap();
+    cancelled_error(&record);
+    gate.add_permits(1);
+    let answer = tokio::time::timeout(Duration::from_secs(2), outer)
+        .await
+        .expect("the cancelled prepare returns promptly")
+        .unwrap();
+    let reply: Value = serde_json::from_str(&answer.0).unwrap();
+    assert_eq!(reply["error"]["kind"], "cancelled", "{reply}");
+    cancelled_error(&w.core.code_run_record(&run_id).unwrap());
+
+    // The preparing start released its reservation: the thread can start another run.
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_secs(10));
+    let next = run_text(&w, &lead, json!({ "code": "return 1" })).await;
+    assert_eq!(next["status"], "completed", "{next}");
+}
+
+#[tokio::test]
+async fn two_concurrent_cancels_answer_the_record_once() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(50));
+    let lead = effect_binding(&w);
+    let paused = run_text(&w, &lead, json!({ "code": organize(&w, true) })).await;
+    assert_eq!(paused["status"], "paused", "{paused}");
+    let run_id = paused["runId"].as_str().unwrap().to_owned();
+    let _approval = next_pending_for(&w, &w.lead, &run_id).await;
+
+    let (first, second) = tokio::join!(
+        w.core.code_run_cancel(&run_id),
+        w.core.code_run_cancel(&run_id)
+    );
+    cancelled_error(&first.unwrap());
+    cancelled_error(&second.unwrap());
+    assert_eq!(
+        w.core
+            .store
+            .list_audit(Some(&w.lead), 100)
+            .unwrap()
+            .iter()
+            .filter(|row| row.action == "code_run.cancel")
+            .count(),
+        1,
+        "only the cancel that did the work audits"
+    );
+    assert!(
+        w.core.store.pending_for_thread(&w.lead).unwrap().is_empty(),
+        "the queued approval is denied"
+    );
+}
+
+#[tokio::test]
+async fn a_crew_workers_run_is_cancelled_by_the_person() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let (started, _) = w.start(brief(json!({})), key()).await;
+    let id = started["task"].as_str().unwrap().to_owned();
+    let (_worker, binding) = worker_binding(&w, &id);
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(50));
+    let paused = run_text(&w, &binding, json!({ "code": "sleep 60000" })).await;
+    assert_eq!(paused["status"], "paused", "{paused}");
+    let run_id = paused["runId"].as_str().unwrap().to_owned();
+    let record = w.core.code_run_cancel(&run_id).await.unwrap();
+    cancelled_error(&record);
+    assert!(record.crew_worker, "{record:?}");
+}
+
+#[tokio::test]
+async fn a_late_call_answer_after_a_cancel_changes_nothing() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(50));
+    let lead = effect_binding(&w);
+    let paused = run_text(&w, &lead, json!({ "code": organize(&w, true) })).await;
+    let run_id = paused["runId"].as_str().unwrap().to_owned();
+    let _approval = next_pending(&w, &w.lead).await;
+    let record = w.core.code_run_cancel(&run_id).await.unwrap();
+    cancelled_error(&record);
+    assert!(
+        !w.core
+            .store
+            .code_call_begin(&run_id, 2, "orbyn_environment_read", "digest", false)
+            .unwrap(),
+        "no call can begin after the run ended"
+    );
+
+    // A call's own end and the task's own finish both arrive late: neither flips the record.
+    w.core
+        .store
+        .code_call_end(&run_id, 1, "ok", "{\"late\":true}", 1)
+        .unwrap();
+    let end = CodeRunEnd {
+        status: "completed",
+        ended_at: crate::util::now(),
+        error: None,
+        result: Some("{\"late\":true}".into()),
+        logs: vec!["late".into()],
+        logs_total: 1,
+        truncated: false,
+    };
+    w.core.store.code_run_end(&run_id, &end).unwrap();
+    let record = w.core.code_run_record(&run_id).unwrap();
+    cancelled_error(&record);
+    assert_eq!(record.calls[0].status, "failed", "{record:?}");
+    assert_eq!(record.result, None, "{record:?}");
+    assert_eq!(record.logs, Vec::<String>::new(), "{record:?}");
+}
+
+#[tokio::test]
+async fn a_finished_run_is_not_cancellable_and_unknown_or_lost_runs_are_not() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_secs(10));
+    let lead = lead_binding(&w);
+    let done = run_text(&w, &lead, json!({ "code": "call orbyn_environment_read" })).await;
+    let run_id = done["runId"].as_str().unwrap().to_owned();
+    let error = w.core.code_run_cancel(&run_id).await.unwrap_err();
+    assert_eq!((error.status(), error.code()), (409, "run_finished"));
+    assert_eq!(error.public_message(), "This run already ended.");
+
+    for id in ["", "../x", "a b", &"x".repeat(65), "no-such-run"] {
+        let error = w.core.code_run_cancel(id).await.unwrap_err();
+        assert_eq!((error.status(), error.code()), (404, "not_found"), "{id:?}");
+    }
+
+    // A lost run is not live and cannot be cancelled; it keeps its lost record.
+    let (lost_id, _) = lost_run(&w, &lead).await;
+    let error = w.core.code_run_cancel(&lost_id).await.unwrap_err();
+    assert_eq!((error.status(), error.code()), (409, "run_finished"));
+    assert_eq!(
+        w.core
+            .code_run_record(&lost_id)
+            .unwrap()
+            .error
+            .unwrap()
+            .kind,
+        "lost"
+    );
+}
+
+#[tokio::test]
+async fn a_cancelled_run_cannot_be_resumed_or_replayed_even_after_a_restart() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(50));
+    let lead = effect_binding(&w);
+    let code = organize(&w, true);
+    let paused = run_text(&w, &lead, json!({ "code": code })).await;
+    let run_id = paused["runId"].as_str().unwrap().to_owned();
+    let _approval = next_pending(&w, &w.lead).await;
+    w.core.code_run_cancel(&run_id).await.unwrap();
+    assert!(
+        !w.core.store.code_run_restart(&run_id).unwrap(),
+        "a cancelled run cannot be restarted by a replay"
+    );
+
+    for restart in [false, true] {
+        if restart {
+            w.core.code_runs.forget_all();
+            w.core.code_runs_recover();
+        }
+        for args in [
+            json!({ "run_id": run_id }),
+            json!({ "code": code, "run_id": run_id }),
+        ] {
+            let reply = run_text(&w, &lead, args).await;
+            assert_eq!(reply["status"], "error", "restart {restart}: {reply}");
+            assert_eq!(
+                reply["error"]["kind"], "cancelled",
+                "restart {restart}: {reply}"
+            );
+            assert_eq!(
+                reply["error"]["message"], "The run was cancelled.",
+                "restart {restart}: {reply}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_cancel_releases_the_slot_for_a_new_start_at_the_cap() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(50));
+    let lead = lead_binding(&w);
+    let mut ids = Vec::new();
+    for _ in 0..4 {
+        let paused = run_text(&w, &lead, json!({ "code": "sleep 60000" })).await;
+        assert_eq!(paused["status"], "paused", "{paused}");
+        ids.push(paused["runId"].as_str().unwrap().to_owned());
+    }
+    w.core.code_run_cancel(&ids[0]).await.unwrap();
+    let next = run_text(&w, &lead, json!({ "code": "sleep 60000" })).await;
+    assert_eq!(next["status"], "paused", "{next}");
+}
+
+#[tokio::test]
+async fn no_tool_or_script_can_cancel_a_run() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    assert!(
+        !crate::tools::mcp::code::specs()
+            .iter()
+            .any(|spec| spec["name"].as_str().unwrap_or_default().contains("cancel"))
+    );
+    assert!(!is_inner_tool("orbyn_code_run_cancel"));
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_secs(10));
+    let lead = lead_binding(&w);
+    let reply = run_text(&w, &lead, json!({ "code": "call orbyn_code_run_cancel" })).await;
+    assert_eq!(reply["status"], "error", "{reply}");
+    assert!(
+        reply["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not available to scripts"),
+        "{reply}"
+    );
+}
+
+#[tokio::test]
+async fn waited_ms_sums_two_approvals_and_survives_a_pause() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(50));
+    let lead = effect_binding(&w);
+    let code = format!("{}\n{}", organize(&w, true), organize(&w, false));
+    let paused = run_text(&w, &lead, json!({ "code": code })).await;
+    assert_eq!(paused["status"], "paused", "{paused}");
+    let run_id = paused["runId"].as_str().unwrap().to_owned();
+    let first = next_pending(&w, &w.lead).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    w.core
+        .gate
+        .decide_with(&first.id, true, false, None, "test-person")
+        .unwrap();
+    let paused_again = run_text(&w, &lead, json!({ "run_id": run_id })).await;
+    assert_eq!(paused_again["status"], "paused", "{paused_again}");
+    let mid = w.core.code_run_record(&run_id).unwrap();
+    assert!(mid.waited_ms.unwrap() >= 100, "{mid:?}");
+    let second = next_pending(&w, &w.lead).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    w.core
+        .gate
+        .decide_with(&second.id, true, false, None, "test-person")
+        .unwrap();
+    let done = run_text(&w, &lead, json!({ "run_id": run_id })).await;
+    assert_eq!(done["status"], "completed", "{done}");
+    let record = w.core.code_run_record(&run_id).unwrap();
+    assert_eq!(record.status, CodeRunStatus::Completed);
+    let waited = record.waited_ms.expect("a waited run has a number");
+    assert!((200..=2_000).contains(&waited), "{record:?}");
+    let summary = w
+        .core
+        .code_runs_list(&w.lead)
+        .unwrap()
+        .runs
+        .into_iter()
+        .find(|run| run.run_id == run_id)
+        .unwrap();
+    assert_eq!(summary.waited_ms, Some(waited));
+}
+
+#[tokio::test]
+async fn waited_ms_counts_an_approval_that_expires_with_its_run() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(50));
+    let lead = effect_binding(&w);
+    let run_id = lead.scope.run_id.clone();
+    let paused = run_text(&w, &lead, json!({ "code": organize(&w, true) })).await;
+    assert_eq!(paused["status"], "paused", "{paused}");
+    let code_run = paused["runId"].as_str().unwrap().to_owned();
+    let approval = next_pending_for(&w, &w.lead, &code_run).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let (_, expired) = w
+        .core
+        .store
+        .finish_run(&run_id, RunState::Cancelled, None)
+        .unwrap();
+    assert_eq!(expired.len(), 1);
+    assert_eq!(
+        w.core.store.approval(&approval.id).unwrap().state,
+        ApprovalState::Expired
+    );
+    let waited = w
+        .core
+        .code_run_record(&code_run)
+        .unwrap()
+        .waited_ms
+        .expect("an expiry records the wait");
+    assert!((100..=2_000).contains(&waited), "{waited}");
+}
+
+#[tokio::test]
+async fn waited_ms_counts_only_the_approvals_of_the_run_that_asked() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(50));
+    let lead = effect_binding(&w);
+    let first = run_text(&w, &lead, json!({ "code": organize(&w, true) })).await;
+    let second = run_text(&w, &lead, json!({ "code": organize(&w, false) })).await;
+    assert_eq!(first["status"], "paused", "{first}");
+    assert_eq!(second["status"], "paused", "{second}");
+    let first_id = first["runId"].as_str().unwrap().to_owned();
+    let second_id = second["runId"].as_str().unwrap().to_owned();
+    let first_approval = next_pending_for(&w, &w.lead, &first_id).await;
+    let second_approval = next_pending_for(&w, &w.lead, &second_id).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    w.core
+        .gate
+        .decide_with(&first_approval.id, true, false, None, "test-person")
+        .unwrap();
+    let first_record = w.core.code_run_record(&first_id).unwrap();
+    let first_waited = first_record.waited_ms.expect("the first run waited");
+    assert!((100..=2_000).contains(&first_waited), "{first_record:?}");
+    assert_eq!(
+        w.core.code_run_record(&second_id).unwrap().waited_ms,
+        Some(0),
+        "the second run's pending approval is not counted under the first"
+    );
+    w.core
+        .gate
+        .decide_with(&second_approval.id, true, false, None, "test-person")
+        .unwrap();
+    let second_waited = w
+        .core
+        .code_run_record(&second_id)
+        .unwrap()
+        .waited_ms
+        .expect("the second run waited");
+    assert!((100..=2_000).contains(&second_waited), "{second_waited}");
+    assert_eq!(
+        w.core.code_run_record(&first_id).unwrap().waited_ms,
+        Some(first_waited)
+    );
+}
+
+#[tokio::test]
+async fn an_old_null_run_that_gets_an_approval_stays_null() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(50));
+    let lead = effect_binding(&w);
+    let paused = run_text(&w, &lead, json!({ "code": organize(&w, true) })).await;
+    assert_eq!(paused["status"], "paused", "{paused}");
+    let run_id = paused["runId"].as_str().unwrap().to_owned();
+    let approval = next_pending_for(&w, &w.lead, &run_id).await;
+    w.core.store.code_run_set_waited(&run_id, None).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    w.core
+        .gate
+        .decide_with(&approval.id, true, false, None, "test-person")
+        .unwrap();
+    assert_eq!(w.core.code_run_record(&run_id).unwrap().waited_ms, None);
+}
+
+#[tokio::test]
+async fn waited_ms_is_capped_and_a_failed_wait_write_never_rolls_back_the_decision() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(50));
+    let lead = effect_binding(&w);
+    let paused = run_text(&w, &lead, json!({ "code": organize(&w, true) })).await;
+    assert_eq!(paused["status"], "paused", "{paused}");
+    let run_id = paused["runId"].as_str().unwrap().to_owned();
+    let approval = next_pending_for(&w, &w.lead, &run_id).await;
+    let cap = (i64::MAX / 2) as u64;
+    w.core
+        .store
+        .code_run_set_waited(&run_id, Some(cap - 1))
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    w.core
+        .gate
+        .decide_with(&approval.id, true, false, None, "test-person")
+        .unwrap();
+    assert_eq!(
+        w.core.code_run_record(&run_id).unwrap().waited_ms,
+        Some(cap),
+        "the column is capped below i64::MAX and stays an integer"
+    );
+
+    // A broken wait update is logged but the approval decision still stands.
+    let paused = run_text(&w, &lead, json!({ "code": organize(&w, true) })).await;
+    assert_eq!(paused["status"], "paused", "{paused}");
+    let run_id = paused["runId"].as_str().unwrap().to_owned();
+    let approval = next_pending_for(&w, &w.lead, &run_id).await;
+    w.core.store.code_run_break_waits().unwrap();
+    w.core
+        .gate
+        .decide_with(&approval.id, true, false, None, "test-person")
+        .unwrap();
+    assert_eq!(
+        w.core.store.approval(&approval.id).unwrap().state,
+        ApprovalState::Allowed,
+        "the decision is committed even when the derived wait fails"
+    );
+    assert_eq!(w.core.code_run_record(&run_id).unwrap().waited_ms, Some(0));
+}
+
+#[tokio::test]
+async fn a_lost_run_is_restarted_once_and_a_cancelled_run_is_never_revived() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(80));
+    let lead = lead_binding(&w);
+    let (run_id, _) = lost_run(&w, &lead).await;
+    // Replay A reads the lost row and restarts it. The person then cancels A.
+    assert!(w.core.store.code_run_restart(&run_id).unwrap());
+    w.core.store.code_run_mark_cancelled(&run_id).unwrap();
+    // Replay B had read the lost row too; its restart must not revive the cancelled run.
+    assert!(
+        !w.core.store.code_run_restart(&run_id).unwrap(),
+        "a slower replay cannot take a cancelled run"
+    );
+    let record = w.core.code_run_record(&run_id).unwrap();
+    cancelled_error(&record);
+}
+
+#[tokio::test]
+async fn a_replay_that_lost_the_restart_answers_cancelled_or_lost() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(50));
+    let lead = effect_binding(&w);
+    let paused = run_text(&w, &lead, json!({ "code": organize(&w, true) })).await;
+    let cancelled_id = paused["runId"].as_str().unwrap().to_owned();
+    let _approval = next_pending_for(&w, &w.lead, &cancelled_id).await;
+    w.core.code_run_cancel(&cancelled_id).await.unwrap();
+    let cancelled: Value = serde_json::from_str(&w.core.code_replay_taken(&cancelled_id)).unwrap();
+    assert_eq!(cancelled["error"]["kind"], "cancelled", "{cancelled}");
+
+    let (lost_id, _) = lost_run(&w, &lead).await;
+    let lost: Value = serde_json::from_str(&w.core.code_replay_taken(&lost_id)).unwrap();
+    assert_eq!(lost["error"]["kind"], "lost", "{lost}");
+}
+
+#[tokio::test]
+async fn a_run_that_never_waited_is_zero_and_an_old_row_stays_null() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_secs(10));
+    let lead = lead_binding(&w);
+    let done = run_text(&w, &lead, json!({ "code": "call orbyn_environment_read" })).await;
+    let run_id = done["runId"].as_str().unwrap().to_owned();
+    let record = w.core.code_run_record(&run_id).unwrap();
+    assert_eq!(record.waited_ms, Some(0));
+    let summary = w
+        .core
+        .code_runs_list(&w.lead)
+        .unwrap()
+        .runs
+        .into_iter()
+        .find(|run| run.run_id == run_id)
+        .unwrap();
+    assert_eq!(summary.waited_ms, Some(0));
+    w.core.store.code_run_set_waited(&run_id, None).unwrap();
+    assert_eq!(w.core.code_run_record(&run_id).unwrap().waited_ms, None);
+    let summary = w
+        .core
+        .code_runs_list(&w.lead)
+        .unwrap()
+        .runs
+        .into_iter()
+        .find(|run| run.run_id == run_id)
+        .unwrap();
+    assert_eq!(summary.waited_ms, None);
+}
+
+#[tokio::test]
+async fn waited_ms_survives_a_replay() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(50));
+    let lead = effect_binding(&w);
+    let code = format!(
+        "{}\nsleep 1000\ncall orbyn_environment_read",
+        organize(&w, true)
+    );
+    let paused = run_text(&w, &lead, json!({ "code": &code })).await;
+    assert_eq!(paused["status"], "paused", "{paused}");
+    let run_id = paused["runId"].as_str().unwrap().to_owned();
+    let approval = next_pending(&w, &w.lead).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    w.core
+        .gate
+        .decide_with(&approval.id, true, false, None, "test-person")
+        .unwrap();
+    // The call's own answer must be recorded before the restart, or the replay would see an
+    // effect in flight and end as lost instead of answering from the record.
+    for _ in 0..200 {
+        if w.core.store.code_calls(&run_id).unwrap()[0].status == "ok" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    w.core.code_runs.forget_all();
+    w.core.code_runs_recover();
+    let lost = w.core.code_run_record(&run_id).unwrap();
+    let waited = lost
+        .waited_ms
+        .expect("the wait was recorded before the loss");
+    assert!(waited >= 100, "{lost:?}");
+    assert_eq!(lost.error.unwrap().kind, "lost");
+
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_secs(10));
+    let replayed = run_text(&w, &lead, json!({ "code": code, "run_id": run_id })).await;
+    assert_eq!(replayed["status"], "completed", "{replayed}");
+    let record = w.core.code_run_record(&run_id).unwrap();
+    assert_eq!(record.status, CodeRunStatus::Completed);
+    assert_eq!(record.waited_ms, Some(waited));
 }
 
 #[tokio::test]

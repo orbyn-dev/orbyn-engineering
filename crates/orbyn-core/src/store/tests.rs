@@ -792,11 +792,44 @@ fn migration_versions_run_from_one_with_no_gap_through_the_account_owner() {
             "migration {version} is missing"
         );
     }
-    let (_, owner) = migrations::MIGRATIONS
+    // A database from before the owner column, with a sync zone already in it, upgraded through the store's own path:
+    // the zone has no owner until one is claimed, so migration 35 must not invent one by defaulting the column.
+    let dir = TempDir::new();
+    let path = dir.path().join("before-the-owner.db");
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)",
+    )
+    .unwrap();
+    for (version, sql) in migrations::MIGRATIONS
         .iter()
-        .find(|(version, _)| *version == 35)
+        .filter(|(version, _)| *version <= 34)
+    {
+        conn.execute_batch(sql).unwrap();
+        conn.execute(
+            "INSERT INTO schema_migrations VALUES (?1, 'fixture')",
+            [version],
+        )
         .unwrap();
-    assert!(owner.contains("account_sync") && owner.contains("account TEXT"));
+    }
+    conn.execute(
+        "INSERT INTO account_sync (zone, capture, device) VALUES ('zone-1', 1, 'device-1')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    let store = Store::open(&path, "epoch-b").unwrap();
+    assert_eq!(
+        store.account_owner("zone-1").unwrap(),
+        None,
+        "a zone from before the owner column has no owner, not a defaulted one"
+    );
+    store.account_claim("zone-1", "account-1").unwrap();
+    assert_eq!(
+        store.account_owner("zone-1").unwrap().as_deref(),
+        Some("account-1"),
+        "the column migration 35 adds holds the owner once one is claimed"
+    );
 }
 
 #[test]
