@@ -17,6 +17,7 @@ use super::frames::{ErrorKind, HostSdk};
 use super::process::{ConnectError, HostSpec, Transport, handshake};
 use super::state::{CrashInfo, HostState, Ledger, Restart, Timings};
 use crate::credentials::SpawnSecret;
+use crate::error::CoreError;
 
 /// Hands out the engine's key for one spawn, when the person opted in. It is called for
 /// every start, because a restart needs it again; the value goes into the child's
@@ -114,7 +115,9 @@ pub struct Pool {
     sessions: std::sync::Mutex<HashMap<(String, String), String>>,
     /// The message a Claude rewind resumes at, by engine and its session id: `revert_session`
     /// names the session, not the thread, and the store hands a point only for the thread's
-    /// current session. One next `open` takes it.
+    /// current session. One next `open` takes it, and it waits with no expiry: the core hides
+    /// the rewound messages immediately, so the engine must roll them back whenever the
+    /// thread next sends.
     resume_at: std::sync::Mutex<HashMap<(String, String), String>>,
     shutdown: CancellationToken,
     connections: AtomicU64,
@@ -248,8 +251,14 @@ impl Pool {
         if session.is_empty() {
             return;
         }
-        if let Ok(mut sessions) = self.sessions.lock() {
-            sessions.insert((engine.to_owned(), thread.to_owned()), session.to_owned());
+        let previous = if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.insert((engine.to_owned(), thread.to_owned()), session.to_owned())
+        } else {
+            return;
+        };
+        // The thread speaks in a new session now; a point noted for the old one is stale.
+        if let Some(previous) = previous.filter(|previous| previous.as_str() != session) {
+            self.forget_resume_at(engine, &previous);
         }
     }
 
@@ -283,26 +292,78 @@ impl Pool {
     }
 
     /// Keeps the message a Claude rewind resumes at. The next run that resumes this
-    /// engine session takes it once; a later run never sees it.
-    pub fn note_resume_at(&self, engine: &str, session: &str, at: &str) {
-        if session.is_empty() || at.is_empty() {
-            return;
+    /// engine session takes it once; a later run never sees it. It waits with no expiry,
+    /// however late that send comes. A store that cannot record the point is an error, so
+    /// the rewind leaves its handoff instead of claiming a native rollback that no run
+    /// will apply.
+    pub fn note_resume_at(
+        &self,
+        engine: &str,
+        session: &str,
+        at: &str,
+    ) -> crate::error::Result<()> {
+        if session.is_empty() {
+            return Err(CoreError::Invalid(
+                "A Claude rewind needs a session id.".into(),
+            ));
         }
-        if let Ok(mut resume_at) = self.resume_at.lock() {
-            resume_at.insert((engine.to_owned(), session.to_owned()), at.to_owned());
+        if !crate::agents::claude_history::valid_uuid(at) {
+            return Err(CoreError::Invalid(
+                "A Claude rewind needs a message id.".into(),
+            ));
         }
+        let mut resume_at = self
+            .resume_at
+            .lock()
+            .map_err(|_| CoreError::Internal("The rewind point store is unavailable.".into()))?;
+        resume_at.insert((engine.to_owned(), session.to_owned()), at.to_owned());
+        Ok(())
     }
 
     /// The rewind point for this engine session, if one is waiting. Taking it consumes it,
-    /// so an `open` that fails, or a run that reports its session, leaves it used.
+    /// so an `open` that fails, or a run that reports its session, leaves it used. Nothing
+    /// ages it out: it stays until the next resume takes it or a clear drops it.
     pub fn take_resume_at(&self, engine: &str, session: &str) -> Option<String> {
         if session.is_empty() {
             return None;
         }
-        self.resume_at
-            .lock()
-            .ok()?
-            .remove(&(engine.to_owned(), session.to_owned()))
+        let mut resume_at = self.resume_at.lock().ok()?;
+        resume_at.remove(&(engine.to_owned(), session.to_owned()))
+    }
+
+    /// Drops every waiting point for an engine: a create starts a new session, so no point
+    /// noted for an older one can be the next run's.
+    pub(super) fn clear_resume_at(&self, engine: &str) {
+        if let Ok(mut resume_at) = self.resume_at.lock() {
+            resume_at.retain(|(point_engine, _), _| point_engine.as_str() != engine);
+        }
+    }
+
+    /// Drops one waiting point, when the thread's session id changed under it.
+    pub(super) fn forget_resume_at(&self, engine: &str, session: &str) {
+        if let Ok(mut resume_at) = self.resume_at.lock() {
+            resume_at.remove(&(engine.to_owned(), session.to_owned()));
+        }
+    }
+
+    /// Drops every waiting point for an engine except one session's: a run that resumes
+    /// another session has left the older point behind.
+    pub(super) fn clear_resume_at_except(&self, engine: &str, session: &str) {
+        if let Ok(mut resume_at) = self.resume_at.lock() {
+            resume_at.retain(|(point_engine, point_session), _| {
+                point_engine.as_str() != engine || point_session.as_str() == session
+            });
+        }
+    }
+
+    /// Poisons the rewind store so a test can see `note_resume_at` refuse it.
+    #[cfg(test)]
+    pub(super) fn poison_resume_at(&self) {
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = self.resume_at.lock().expect("the store starts unpoisoned");
+            panic!("poison the rewind point store");
+        }));
+        assert!(poisoned.is_err(), "the rewind store was not poisoned");
     }
 
     fn set(&self, state: HostState) {

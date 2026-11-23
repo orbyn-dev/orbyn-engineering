@@ -927,3 +927,611 @@ mod forgejo {
         );
     }
 }
+
+mod azure {
+    use super::*;
+    use crate::issues::Azure;
+    use crate::issues::fake_http::{Reply, Seen, Server};
+    use base64::Engine as _;
+    use serde_json::{Value, json};
+    use std::time::Duration;
+
+    fn row(_req: &Seen, id: u64) -> Value {
+        json!({ "id": id, "fields": {
+            "System.Title": format!("Work item {id}"),
+            "System.State": "New",
+            "System.Description": "Body",
+            "System.CreatedBy": { "uniqueName": "ann@example.test" },
+            "System.CreatedDate": "2026-11-01T00:00:00Z",
+            "System.ChangedDate": "2026-11-02T00:00:00Z"
+        } })
+    }
+
+    fn basic(token: &str) -> String {
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!(":{token}"))
+        )
+    }
+
+    /// An Azure DevOps connection whose reader talks to the fake server. The stored host is https.
+    async fn connected(server: &Server) -> super::super::harness::World {
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        w.core.issues.set_source(
+            TrackerKind::AzureDevops,
+            Arc::new(Azure::for_test(
+                &server.base,
+                "azure-secret789",
+                Duration::from_secs(5),
+            )),
+        );
+        w.core
+            .connect_issue_tracker(
+                TrackerKind::AzureDevops,
+                ConnectTracker {
+                    host: Some("https://dev.azure.com/org".into()),
+                    scope: Some("org/proj".into()),
+                    token: Some("azure-secret789".into()),
+                },
+            )
+            .await
+            .unwrap();
+        w
+    }
+
+    fn key(scope: &str) -> IssueKey {
+        IssueKey {
+            tracker: TrackerKind::AzureDevops,
+            scope: scope.into(),
+            key: "1".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_scope_outside_the_connection_is_refused_with_no_request_sent() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/comments") {
+                Reply::json(&json!({ "count": 0, "comments": [] }))
+            } else if req.path().ends_with("/wiql") {
+                Reply::json(&json!({ "workItems": [{ "id": 1 }] }))
+            } else if req.path().ends_with("/workitems") {
+                Reply::json(&json!({ "count": 1, "value": [row(req, 1)] }))
+            } else {
+                Reply::json(&row(req, 1))
+            }
+        })
+        .await;
+        let w = connected(&server).await;
+        let outside = w.core.issue(&key("other/proj")).await;
+        assert!(matches!(outside, Err(CoreError::Invalid(_))), "{outside:?}");
+        let link = w.core.issue_draft(&key("org/other")).await;
+        assert!(matches!(link, Err(CoreError::Invalid(_))));
+        assert!(server.seen().is_empty(), "nothing was sent");
+        let detail = w.core.issue(&key("org/proj")).await.unwrap();
+        assert_eq!(detail.summary.display_key, "#1");
+        assert!(
+            server
+                .seen()
+                .iter()
+                .any(|r| r.path() == "/org/proj/_apis/wit/workitems/1")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_forged_azure_cursor_is_a_listing_error_not_a_failed_tracker() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/wiql") {
+                Reply::json(&json!({ "workItems": [{ "id": 1 }] }))
+            } else {
+                Reply::json(&json!({ "count": 1, "value": [row(req, 1)] }))
+            }
+        })
+        .await;
+        let w = connected(&server).await;
+        let before = server.seen().len();
+        let forged = w
+            .core
+            .list_issues(&IssueQuery {
+                tracker: Some(TrackerKind::AzureDevops),
+                cursors: [(
+                    "azure_devops org/proj".to_owned(),
+                    "50.0000000000000000".to_owned(),
+                )]
+                .into(),
+                ..IssueQuery::default()
+            })
+            .await;
+        assert!(
+            matches!(&forged, Err(CoreError::Invalid(_))),
+            "a cursor we did not issue is a 400, not a failed tracker: {forged:?}"
+        );
+        assert_eq!(server.seen().len(), before, "nothing was sent");
+        let unnamed = w
+            .core
+            .list_issues(&IssueQuery {
+                tracker: Some(TrackerKind::AzureDevops),
+                cursors: [("azure_devops org/elsewhere".to_owned(), "50.x".to_owned())].into(),
+                ..IssueQuery::default()
+            })
+            .await
+            .unwrap();
+        assert!(unnamed.issues.is_empty() && unnamed.failed.is_empty());
+        assert_eq!(server.seen().len(), before, "an unnamed scope is not read");
+    }
+
+    #[tokio::test]
+    async fn azure_source_needs_a_connection_and_refuses_a_stored_plain_http_host() {
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        let missing = w.core.azure_source().err().expect("no connection");
+        assert!(
+            matches!(missing, CoreError::TrackerNotConnected(_)),
+            "{missing:?}"
+        );
+        w.core
+            .connect_issue_tracker(
+                TrackerKind::AzureDevops,
+                ConnectTracker {
+                    host: Some("https://dev.azure.com/org".into()),
+                    scope: Some("org/proj".into()),
+                    token: Some("azure-secret789".into()),
+                },
+            )
+            .await
+            .unwrap();
+        w.core
+            .store
+            .put_tracker(
+                &TrackerConnection {
+                    tracker: TrackerKind::AzureDevops,
+                    host: Some("http://dev.azure.com/org".into()),
+                    scopes: vec!["org/proj".into()],
+                },
+                "2026-11-01T00:00:00Z",
+            )
+            .unwrap();
+        let plain = w.core.azure_source().err().expect("a plain http host");
+        assert!(matches!(plain, CoreError::Invalid(_)), "{plain:?}");
+    }
+
+    #[tokio::test]
+    async fn azure_source_sends_the_keychain_token_to_the_stored_connection_host() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/wiql") {
+                Reply::json(&json!({ "workItems": [{ "id": 1 }] }))
+            } else {
+                Reply::json(&json!({ "count": 1, "value": [row(req, 1)] }))
+            }
+        })
+        .await;
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        w.core
+            .connect_issue_tracker(
+                TrackerKind::AzureDevops,
+                ConnectTracker {
+                    host: Some("https://dev.azure.com/org".into()),
+                    scope: Some("org/proj".into()),
+                    token: Some("azure-secret789".into()),
+                },
+            )
+            .await
+            .unwrap();
+        w.core.issues.set_azure_test_base(&server.base);
+        let source = w.core.azure_source().expect("an Azure DevOps source");
+        source
+            .list("org/proj", &IssueQuery::default())
+            .await
+            .unwrap();
+        let seen = server.seen();
+        assert!(!seen.is_empty(), "the source sent a request");
+        assert!(
+            seen.iter()
+                .all(|r| r.header("authorization") == Some(basic("azure-secret789").as_str())),
+            "{seen:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failing_azure_is_reported_with_fixed_copy_and_a_wait_when_rate_limited() {
+        let server = Server::start(|_| Reply::status(500)).await;
+        let w = connected(&server).await;
+        let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
+        assert!(list.issues.is_empty());
+        assert_eq!(list.failed.len(), 1);
+        assert_eq!(list.failed[0].tracker, TrackerKind::AzureDevops);
+        assert_eq!(list.failed[0].message, "Azure DevOps did not answer.");
+        let limited = Server::start(|_| Reply::status(429).header("retry-after", "42")).await;
+        w.core.issues.set_source(
+            TrackerKind::AzureDevops,
+            Arc::new(Azure::for_test(
+                &limited.base,
+                "azure-secret789",
+                Duration::from_secs(5),
+            )),
+        );
+        let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
+        assert!(list.failed[0].message.contains("42 seconds"), "{list:?}");
+        let text = format!("{list:?}");
+        assert!(!text.contains("secret"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_bad_azure_host_or_scope_is_refused_at_connect_and_saves_nothing() {
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        for (host, scope) in [
+            ("https://dev.azure.com.evil.com", "org/proj"),
+            ("https://dev.azure.com/org/proj", "org/proj"),
+            ("https://dev.azure.com/org", "org/.."),
+            ("https://dev.azure.com/org", "org/proj/extra"),
+        ] {
+            let error = w
+                .core
+                .connect_issue_tracker(
+                    TrackerKind::AzureDevops,
+                    ConnectTracker {
+                        host: Some(host.into()),
+                        scope: Some(scope.into()),
+                        token: Some("azure-secret789".into()),
+                    },
+                )
+                .await;
+            assert!(
+                matches!(error, Err(CoreError::Invalid(_))),
+                "{host} {scope}: {error:?}"
+            );
+        }
+        assert!(w.core.store.tracker_connections().unwrap().is_empty());
+        w.core
+            .connect_issue_tracker(
+                TrackerKind::AzureDevops,
+                ConnectTracker {
+                    host: Some("https://dev.azure.com/org".into()),
+                    scope: Some("org/proj".into()),
+                    token: Some("azure-secret789".into()),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(w.core.store.tracker_connections().unwrap().len(), 1);
+    }
+}
+
+mod linear {
+    use super::*;
+    use crate::issues::fake_http::{Reply, Seen, Server};
+    use serde_json::{Value, json};
+
+    const TOKEN: &str = "lin-secret789";
+
+    fn row(identifier: &str, updated: &str) -> Value {
+        json!({
+            "identifier": identifier,
+            "title": format!("Issue {identifier}"),
+            "description": "Body",
+            "url": format!("https://linear.app/orbyn/issue/{identifier}"),
+            "createdAt": "2026-11-01T00:00:00Z",
+            "updatedAt": updated,
+            "completedAt": null,
+            "canceledAt": null,
+            "state": { "name": "In Progress", "type": "started" },
+            "creator": { "name": "ann", "displayName": "Ann" },
+            "assignee": { "name": "bo", "displayName": "Bo" },
+            "labels": { "nodes": [{ "name": "bug" }] }
+        })
+    }
+
+    fn query_of(req: &Seen) -> String {
+        req.json()
+            .and_then(|body| body.get("query").and_then(Value::as_str).map(str::to_owned))
+            .unwrap_or_default()
+    }
+
+    fn team_of(req: &Seen) -> String {
+        req.json()
+            .and_then(|body| {
+                body.get("variables")?
+                    .get("team")?
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .unwrap_or_default()
+    }
+
+    /// Team keys for a connection with no scope, and one issue in each team.
+    fn answer(req: &Seen) -> Reply {
+        let query = query_of(req);
+        if query.contains("OrbynTeams") {
+            return Reply::json(&json!({
+                "data": { "teams": { "nodes": [{ "key": "ENG" }, { "key": "OPS" }] } }
+            }));
+        }
+        let team = team_of(req);
+        let (identifier, updated) = if team == "OPS" {
+            ("OPS-2", "2026-11-03T00:00:00Z")
+        } else {
+            ("ENG-1", "2026-11-02T00:00:00Z")
+        };
+        if query.contains("OrbynIssue(") {
+            let mut issue = row(identifier, updated);
+            issue["description"] = json!("It breaks.");
+            issue["comments"] = json!({ "nodes": [] });
+            return Reply::json(&json!({ "data": { "issue": issue } }));
+        }
+        Reply::json(&json!({
+            "data": {
+                "issues": {
+                    "nodes": [row(identifier, updated)],
+                    "pageInfo": { "hasNextPage": false, "endCursor": null }
+                }
+            }
+        }))
+    }
+
+    fn connect_linear(scope: Option<&str>) -> ConnectTracker {
+        ConnectTracker {
+            host: None,
+            scope: scope.map(str::to_owned),
+            token: Some(TOKEN.to_owned()),
+        }
+    }
+
+    async fn connected(server: &Server, scope: Option<&str>) -> super::super::harness::World {
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        w.core
+            .connect_issue_tracker(TrackerKind::Linear, connect_linear(scope))
+            .await
+            .unwrap();
+        w.core.issues.set_linear_test_base(&server.base);
+        w
+    }
+
+    fn key(scope: &str, value: &str) -> IssueKey {
+        IssueKey {
+            tracker: TrackerKind::Linear,
+            scope: scope.into(),
+            key: value.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_refuses_a_scope_that_is_not_a_team_key_before_saving_anything() {
+        let memory = Arc::new(Memory::default());
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(memory.clone(), "test"));
+        for scope in ["eng", "ENG-1", "ENG 1", "ABCDEFGHIJK", "ÉNG"] {
+            let refused = w
+                .core
+                .connect_issue_tracker(TrackerKind::Linear, connect_linear(Some(scope)))
+                .await;
+            assert!(
+                matches!(refused, Err(CoreError::Invalid(_))),
+                "{scope}: {refused:?}"
+            );
+        }
+        assert!(w.core.store.tracker_connections().unwrap().is_empty());
+        assert!(memory.0.lock().unwrap().is_empty(), "no token was saved");
+        let saved = w
+            .core
+            .connect_issue_tracker(TrackerKind::Linear, connect_linear(Some("ENG")))
+            .await
+            .unwrap();
+        assert_eq!(saved.scope.as_deref(), Some("ENG"));
+    }
+
+    #[tokio::test]
+    async fn a_connection_with_no_scope_reads_teams_once_in_the_cache_window() {
+        let server = Server::start(answer).await;
+        let w = connected(&server, None).await;
+        let teams = || {
+            server
+                .seen()
+                .iter()
+                .filter(|request| query_of(request).contains("OrbynTeams"))
+                .count()
+        };
+        w.core.issue(&key("ENG", "ENG-1")).await.unwrap();
+        assert_eq!(teams(), 1);
+        w.core.issue(&key("ENG", "ENG-1")).await.unwrap();
+        assert_eq!(teams(), 1, "one detail makes at most one teams read in 30s");
+        let found = w.core.find_issues("1").await.unwrap();
+        assert!(found.is_empty());
+        assert_eq!(teams(), 1, "a bare-number find shares the cached teams");
+        w.core
+            .connect_issue_tracker(TrackerKind::Linear, connect_linear(None))
+            .await
+            .unwrap();
+        w.core.issue(&key("ENG", "ENG-1")).await.unwrap();
+        assert_eq!(teams(), 2, "connect clears the cached teams");
+    }
+
+    #[tokio::test]
+    async fn a_scope_outside_the_connection_is_refused_with_no_request_sent() {
+        let server = Server::start(answer).await;
+        let w = connected(&server, Some("ENG")).await;
+        for scope in ["OPS", "eng", "ENG-1"] {
+            let outside = w.core.issue(&key(scope, "ENG-1")).await;
+            assert!(matches!(outside, Err(CoreError::Invalid(_))), "{scope}");
+            let draft = w.core.issue_draft(&key(scope, "ENG-1")).await;
+            assert!(
+                matches!(draft, Err(CoreError::Invalid(_))),
+                "a draft is refused the same way: {scope}"
+            );
+        }
+        assert!(server.seen().is_empty(), "nothing was sent");
+        let detail = w.core.issue(&key("ENG", "ENG-1")).await.unwrap();
+        assert_eq!(detail.summary.display_key, "ENG-1");
+        assert_eq!(detail.body, "It breaks.");
+        assert!(
+            server
+                .seen()
+                .iter()
+                .any(|r| query_of(r).contains("OrbynIssue("))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_forged_linear_cursor_is_a_listing_error_not_a_failed_tracker() {
+        let server = Server::start(answer).await;
+        let w = connected(&server, Some("ENG")).await;
+        let before = server.seen().len();
+        let forged = w
+            .core
+            .list_issues(&IssueQuery {
+                tracker: Some(TrackerKind::Linear),
+                cursors: [("linear ENG".to_owned(), "0000000000000000.end-1".to_owned())].into(),
+                ..IssueQuery::default()
+            })
+            .await;
+        assert!(
+            matches!(&forged, Err(CoreError::Invalid(_))),
+            "a cursor we did not issue is a 400, not a failed tracker: {forged:?}"
+        );
+        assert_eq!(server.seen().len(), before, "nothing was sent");
+        let unnamed = w
+            .core
+            .list_issues(&IssueQuery {
+                tracker: Some(TrackerKind::Linear),
+                cursors: [("linear OTHER".to_owned(), "0000000000000000.x".to_owned())].into(),
+                ..IssueQuery::default()
+            })
+            .await
+            .unwrap();
+        assert!(unnamed.issues.is_empty() && unnamed.failed.is_empty());
+        assert_eq!(server.seen().len(), before, "an unnamed scope is not read");
+    }
+
+    #[tokio::test]
+    async fn a_failing_linear_is_reported_with_fixed_copy_and_a_wait_when_rate_limited() {
+        let server = Server::start(|_| Reply::status(500)).await;
+        let w = connected(&server, Some("ENG")).await;
+        let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
+        assert!(list.issues.is_empty());
+        assert_eq!(list.failed.len(), 1);
+        assert_eq!(list.failed[0].tracker, TrackerKind::Linear);
+        assert_eq!(list.failed[0].message, "Linear did not answer.");
+        let text = format!("{list:?}");
+        assert!(!text.contains("secret"), "{text}");
+
+        let limited = Server::start(|_| Reply::status(429).header("retry-after", "42")).await;
+        w.core.issues.set_linear_test_base(&limited.base);
+        let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
+        assert_eq!(list.failed.len(), 1);
+        assert!(list.failed[0].message.contains("42 seconds"), "{list:?}");
+        let one = w.core.issue(&key("ENG", "ENG-1")).await;
+        assert!(matches!(one, Err(CoreError::TrackerRateLimited(_))));
+    }
+
+    #[tokio::test]
+    async fn linear_source_needs_a_connection_and_refuses_a_stored_plain_http_host() {
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        let missing = w.core.linear_source().err().expect("no connection");
+        assert!(
+            matches!(missing, CoreError::TrackerNotConnected(_)),
+            "{missing:?}"
+        );
+        w.core
+            .connect_issue_tracker(TrackerKind::Linear, connect_linear(Some("ENG")))
+            .await
+            .unwrap();
+        w.core
+            .store
+            .put_tracker(
+                &TrackerConnection {
+                    tracker: TrackerKind::Linear,
+                    host: Some("http://api.linear.app".into()),
+                    scopes: vec!["ENG".into()],
+                },
+                "2026-11-01T00:00:00Z",
+            )
+            .unwrap();
+        let plain = w.core.linear_source().err().expect("a plain http host");
+        assert!(matches!(plain, CoreError::Invalid(_)), "{plain:?}");
+    }
+
+    #[tokio::test]
+    async fn linear_source_sends_the_keychain_token_to_the_request() {
+        let server = Server::start(|req| {
+            assert!(query_of(req).contains("OrbynIssues("), "{:?}", req.body);
+            Reply::json(&json!({
+                "data": { "issues": {
+                    "nodes": [row("ENG-1", "2026-11-02T00:00:00Z")],
+                    "pageInfo": { "hasNextPage": false, "endCursor": null }
+                } }
+            }))
+        })
+        .await;
+        let w = connected(&server, Some("ENG")).await;
+        let source = w.core.linear_source().expect("a Linear source");
+        source.list("ENG", &IssueQuery::default()).await.unwrap();
+        let seen = server.seen();
+        assert!(!seen.is_empty(), "the source sent a request");
+        assert!(
+            seen.iter()
+                .all(|r| r.header("authorization") == Some(TOKEN)),
+            "{seen:?}"
+        );
+        assert!(
+            seen.iter().all(|r| !r
+                .header("authorization")
+                .unwrap_or_default()
+                .starts_with("Bearer ")),
+            "Linear personal keys take no Bearer prefix"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_connection_with_no_scope_lists_each_team_its_key_can_see() {
+        let server = Server::start(answer).await;
+        let w = connected(&server, None).await;
+        let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
+        let keys: Vec<&str> = list.issues.iter().map(|i| i.key.as_str()).collect();
+        assert_eq!(keys, ["OPS-2", "ENG-1"], "newest update first across teams");
+        assert_eq!(list.counts, None, "Linear's totals are Planned");
+        assert!(list.failed.is_empty());
+        assert!(
+            server
+                .seen()
+                .iter()
+                .any(|r| query_of(r).contains("OrbynTeams")),
+            "the teams fallback ran"
+        );
+        let mut teams: Vec<String> = server
+            .seen()
+            .iter()
+            .filter(|r| query_of(r).contains("OrbynIssues("))
+            .map(team_of)
+            .collect();
+        teams.sort();
+        assert_eq!(teams, ["ENG", "OPS"]);
+
+        let server = Server::start(answer).await;
+        let w = connected(&server, Some("ENG")).await;
+        w.core.list_issues(&IssueQuery::default()).await.unwrap();
+        assert!(
+            !server
+                .seen()
+                .iter()
+                .any(|r| query_of(r).contains("OrbynTeams")),
+            "a stored team key needs no teams read"
+        );
+    }
+}

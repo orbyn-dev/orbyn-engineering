@@ -75,67 +75,82 @@ fn slugs_are_plain_and_never_a_worktree_root() {
     assert_eq!(name_from_url("https://x.test/a/b/"), Some("b"));
 }
 
-#[tokio::test]
-async fn a_project_name_the_folder_cannot_hold_is_refused_before_anything_is_made() {
-    let dir = TempDir::new();
-    let core = core(&dir).await;
-    let repo = core.workspace.repo_dir().unwrap();
-    for (name, expected) in [
-        (
-            "bad:name*?<x",
-            "A project name cannot contain / \\ : * ? \" < > |.",
-        ),
-        (
-            "../x|y",
-            "A project name cannot contain / \\ : * ? \" < > |.",
-        ),
-        (r"a\b", "A project name cannot contain / \\ : * ? \" < > |."),
-        ("a/b", "A project name cannot contain / \\ : * ? \" < > |."),
-        (".hidden", "A project name cannot start with a dot."),
-        ("trailing.", "A project name cannot end with a dot."),
-        ("nul", "Windows reserves that project name."),
-        ("  ", "Name the project."),
+#[test]
+fn project_name_checks_host_specific_rules() {
+    for name in [
+        "bad:name*?<x",
+        "CONIN$",
+        "conout$",
+        "CON",
+        "con.txt",
+        "COM1",
+        "Lpt³.txt",
+        "name.",
+        "name ",
     ] {
-        match core.new_project(name, false, None).await {
-            Err(CoreError::Invalid(message)) => assert_eq!(message, expected, "name {name:?}"),
-            Err(other) => panic!("{name:?} was refused for another reason: {other}"),
-            Ok(project) => panic!("{name:?} was accepted as {}", project.path),
-        }
-        assert!(!repo.join(name).exists(), "{name:?} made a folder");
+        assert!(validate_new_project_name(name, true).is_err(), "{name:?}");
     }
-    // The names a folder can hold still work, so the check is not a blanket refusal.
-    assert!(core.new_project("My Project", false, None).await.is_ok());
+    for name in ["Café Notes", "My project", "a.b", "widget-1"] {
+        assert!(validate_new_project_name(name, true).is_ok(), "{name:?}");
+        assert!(validate_new_project_name(name, false).is_ok(), "{name:?}");
+    }
+    assert!(validate_new_project_name("bad:name", false).is_ok());
+}
+
+#[test]
+fn new_project_destination_checks_windows_folder_name_after_normalization() {
+    for name in [" CON", "CON!", "😺CON", "lpt1!"] {
+        assert!(
+            validate_new_project_destination(name, None, true).is_err(),
+            "{name:?}"
+        );
+    }
+    assert!(validate_new_project_destination("Café Notes", None, true).is_ok());
+    assert!(validate_new_project_destination(" CON", Some("/tmp/safe"), true).is_ok());
+    assert!(validate_new_project_destination("safe", Some("/tmp/CON.txt"), true).is_err());
+    assert!(validate_new_project_destination("safe", Some("/tmp/conin$"), true).is_err());
+    assert!(validate_new_project_destination("safe", Some("/tmp/CONOUT$"), true).is_err());
+    assert!(validate_new_project_destination("safe", Some("/tmp/CON!"), true).is_ok());
+    assert!(validate_new_project_destination("safe", Some("/tmp/CON.txt"), false).is_ok());
 }
 
 #[tokio::test]
-async fn a_chosen_base_directory_keeps_the_new_project_inside_it() {
+async fn new_project_rejects_path_components_before_any_creation() {
     let dir = TempDir::new();
     let core = core(&dir).await;
-    // A folder outside the skills library, which is where a base directory points.
-    let outside = TempDir::new();
-    let base = outside.path().join("base");
-    std::fs::create_dir_all(&base).unwrap();
-    let escaping = base.join("../x|y");
-    assert!(
-        core.new_project("../x|y", false, escaping.to_str())
+    let base = dir.path().join("base");
+    std::fs::create_dir(&base).unwrap();
+    for name in [
+        "../escape",
+        "nested/name",
+        r"nested\name",
+        ".",
+        "..",
+        "bad\nname",
+    ] {
+        let chosen = base.join(name);
+        let error = core
+            .new_project(name, false, Some(chosen.to_str().unwrap()))
             .await
-            .is_err(),
-        "a name cannot step out of the base directory"
-    );
-    assert!(
-        !outside.path().join("x|y").exists(),
-        "nothing was made beside the base directory"
-    );
-    let chosen = base.join("Notes");
+            .unwrap_err();
+        assert!(matches!(error, CoreError::Invalid(_)), "{name:?}: {error}");
+        assert!(
+            error.to_string().contains("project name"),
+            "{name:?}: {error}"
+        );
+        assert!(
+            core.new_project(name, false, None).await.is_err(),
+            "{name:?}"
+        );
+    }
+    assert!(!dir.path().join("escape").exists());
+    assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0);
+    let chosen = base.join("Café Notes");
     let project = core
-        .new_project("Notes", false, chosen.to_str())
+        .new_project("Café Notes", false, Some(chosen.to_str().unwrap()))
         .await
         .unwrap();
-    assert_eq!(
-        PathBuf::from(&project.path),
-        chosen,
-        "the name is the folder"
-    );
+    assert_eq!(PathBuf::from(project.path), chosen);
 }
 
 #[tokio::test]
@@ -335,6 +350,70 @@ async fn a_new_project_can_start_with_a_readme_and_first_commit() {
         std::fs::read_to_string(path.join("README.md")).unwrap(),
         "# Notes\n"
     );
+}
+
+#[tokio::test]
+async fn the_readme_first_commit_is_recorded_as_the_persons() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let project = core.new_project("Notes", true, None).await.unwrap();
+    let path = Path::new(&project.path);
+    let recorded = core.store.crew_person_commits(&project.id).unwrap();
+    match git(path, &["rev-parse", "--verify", "HEAD"]).await {
+        // Git had an identity to make the commit, so the app must have recorded exactly that commit: the one it
+        // made on the person's action, holding nothing but the README it wrote.
+        Ok(head) => {
+            let head = text(&head);
+            assert_eq!(recorded.as_slice(), std::slice::from_ref(&head));
+            assert_eq!(
+                text(
+                    &git(path, &["show", "--name-only", "--format=", &head])
+                        .await
+                        .unwrap()
+                ),
+                "README.md",
+                "the recorded commit is the README commit, not later work"
+            );
+            let audits: i64 = core
+                .store
+                .reader()
+                .query_row(
+                    "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.person_commit' AND target = ?1",
+                    [&head],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(audits, 1, "one audit row, in the same transaction");
+        }
+        // No Git identity: the app makes no commit, so nothing may be recorded for one.
+        Err(_) => assert!(
+            recorded.is_empty(),
+            "a project without a commit records no person commit: {recorded:?}"
+        ),
+    }
+}
+
+#[tokio::test]
+async fn a_project_with_no_readme_records_no_person_commit() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let project = core.new_project("Plain", false, None).await.unwrap();
+    assert!(
+        core.store
+            .crew_person_commits(&project.id)
+            .unwrap()
+            .is_empty()
+    );
+    let audits: i64 = core
+        .store
+        .reader()
+        .query_row(
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.person_commit'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(audits, 0);
 }
 
 #[tokio::test]

@@ -7,6 +7,7 @@ mod builtin;
 pub mod changes;
 mod custom;
 mod literal;
+mod prefilter;
 mod redactor;
 mod settings;
 

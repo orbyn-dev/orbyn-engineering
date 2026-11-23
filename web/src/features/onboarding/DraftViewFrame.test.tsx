@@ -1,4 +1,5 @@
 import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { EngineStatus, Project } from "../../api/types";
 import { useWorkspace } from "../../product/state/workspace";
@@ -76,4 +77,41 @@ it("shows the visible Unmanaged word on the draft's engine chip and in place of 
   expect(screen.getAllByText("Unmanaged").length).toBeGreaterThanOrEqual(2);
   expect(screen.getByText("Orbyn cannot ask before Kiro acts.")).toBeVisible();
   expect(screen.queryByRole("button", { name: /^Permissions:/ })).toBeNull();
+});
+
+it("makes the heading's project name a real switcher: tabbable, marked as a picker, opened with Enter", async () => {
+  const user = userEvent.setup();
+  useWorkspace.setState({
+    projects: { data: [{ id: "a", name: "Fixture", trusted: true, is_git: true, path: "/fixture/a" } as Project], loading: false, error: null },
+    engines: { data: [], loading: false, error: null },
+    threads: {},
+    managed: { data: null, loading: false, error: null },
+  });
+  render(<DraftView projectId="a" />);
+  const hero = screen.getByRole("button", { name: "Fixture" });
+  expect(hero).toHaveAttribute("aria-haspopup", "listbox");
+  expect(hero).toHaveAttribute("aria-expanded", "false");
+  // The designs draw a picker with a down chevron; the button carries it and it stays out of the accessible name.
+  expect(hero.querySelector("svg")).not.toBeNull();
+  hero.focus();
+  expect(hero).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(await screen.findByRole("listbox", { name: "Projects" })).toBeVisible();
+  expect(hero).toHaveAttribute("aria-expanded", "true");
+});
+
+it("draws an engine value that is not a control as a span, so it is neither tabbable nor a button", () => {
+  useWorkspace.setState({
+    projects: { data: [{ id: "a", name: "Fixture", trusted: true, is_git: true, path: "/fixture/a" } as Project], loading: false, error: null },
+    engines: { data: [], loading: false, error: null },
+    threads: {},
+    managed: { data: null, loading: false, error: null },
+  });
+  render(<DraftView projectId="a" />);
+  // With no engine installed the composer shows "No engine": a value, not something to press.
+  const value = screen.getByText("No engine");
+  expect(value.classList.contains("composer-control")).toBe(true);
+  expect(value.closest("button")).toBeNull();
+  expect(value.closest("[tabindex]")).toBeNull();
+  expect(screen.queryByRole("button", { name: /No engine/ })).toBeNull();
 });

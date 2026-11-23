@@ -27,7 +27,9 @@ pub(super) fn map(error: dc::DeviceError) -> DeviceError {
         dc::DeviceError::InviteInvalid => DeviceError::InviteRequired,
         dc::DeviceError::NotSignedIn | dc::DeviceError::SessionExpired => DeviceError::Unauthorized,
         dc::DeviceError::StoreNotEmpty => DeviceError::AlreadySignedIn,
-        dc::DeviceError::ApprovalExpired => DeviceError::RequestGone,
+        // Its own clock ended the request: it is not one a person or a trusted device ended, so it
+        // keeps its own error and the new device closes it as expired rather than denied.
+        dc::DeviceError::ApprovalExpired => DeviceError::ApprovalExpired,
         dc::DeviceError::ApprovalMismatch => DeviceError::ApprovalRefused,
         dc::DeviceError::LastTrustedDevice => DeviceError::LastTrustedDevice,
         dc::DeviceError::ApprovalNotReady | dc::DeviceError::NoZoneKey => {

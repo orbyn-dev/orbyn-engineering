@@ -641,6 +641,7 @@
   .pulls-searchrow {
     flex: none;
     order: -1;
+    max-width: 100%;
   }
   .pulls-searchrow .pulls-inp {
     height: 36px;
@@ -663,6 +664,8 @@
   }
   .pulls-tbp,
   .pulls-sels {
+    width: calc(100% + 32px);
+    max-width: calc(100% + 32px);
     margin-inline: -16px;
   }
   .pulls-pill,

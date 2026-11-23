@@ -15,7 +15,7 @@ pub enum CodeRunStatus {
 }
 
 wire! {
-/// Why a run ended badly. `kind` is `syntax`, `runtime`, `limit`, `denied` or `lost`.
+/// Why a run ended badly. `kind` is `syntax`, `runtime`, `limit`, `denied`, `lost` or `cancelled`.
 pub struct CodeRunError {
     pub kind: String,
     pub message: String,
@@ -107,6 +107,11 @@ pub struct CodeRunSummary {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub script_head: Option<String>,
+    /// The total time the run waited for a person, in milliseconds; `null` for a run stored before
+    /// waits were recorded.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub waited_ms: Option<u64>,
 }
 }
 

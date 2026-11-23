@@ -3,7 +3,7 @@ import { codeRun } from "../../../mock/codemode";
 import type { MockApi } from "../../../mock/api";
 import { ApiFailure } from "../../api/client";
 import { installMockFetch } from "../../test-support";
-import { getCodeMode, getCodeRun, listCodeRuns, putCodeMode } from "./api";
+import { cancelCodeRun, getCodeMode, getCodeRun, listCodeRuns, putCodeMode } from "./api";
 
 let mock: MockApi;
 beforeEach(() => {
@@ -27,9 +27,17 @@ describe("the Code Mode client on the service's own routes", () => {
     mock.codeMode.putRun(codeRun({ run_id: "run_new", status: "running", started_at: "2026-11-21T11:00:00.000Z", script: "x".repeat(300) }));
     const runs = await listCodeRuns("t-1");
     expect(runs?.map((run) => run.run_id)).toEqual(["run_new", "run_old"]);
-    expect(runs?.[0]).toEqual({ run_id: "run_new", status: "running", started_at: "2026-11-21T11:00:00.000Z", ended_at: null, calls: 0, script_head: "x".repeat(120) });
+    expect(runs?.[0]).toEqual({ run_id: "run_new", status: "running", started_at: "2026-11-21T11:00:00.000Z", ended_at: null, calls: 0, script_head: "x".repeat(120), waited_ms: null });
     expect(runs?.[1]).toMatchObject({ status: "completed", ended_at: "2026-11-21T10:00:03.000Z", calls: 1, script_head: "return 1;" });
     expect(calls()).toEqual(["GET /api/threads/t-1/code-runs"]);
+  });
+
+  it("cancels a run with one POST to /api/code-runs/{id}/cancel, the id encoded, and answers the updated record", async () => {
+    mock.codeMode.putRun(codeRun({ run_id: "run_1", status: "running", started_at: "2026-11-21T10:00:00.000Z", ended_at: null }));
+    const record = await cancelCodeRun("run_1");
+    expect(record).toMatchObject({ run_id: "run_1", status: "error", error: { kind: "cancelled", message: "The run was cancelled." } });
+    expect(await cancelCodeRun("a b/c")).toBeNull();
+    expect(calls()).toEqual(["POST /api/code-runs/run_1/cancel", "POST /api/code-runs/a%20b%2Fc/cancel"]);
   });
 
   it("reads and writes the engine's switch, one request each", async () => {
@@ -51,6 +59,7 @@ describe("the Code Mode client on the service's own routes", () => {
 
   it("answers null for a run that is gone while the service is on", async () => {
     expect(await getCodeRun("run_gone")).toBeNull();
+    expect(await cancelCodeRun("run_gone")).toBeNull();
   });
 
   it("throws every other failure as it is, so a screen can say it", async () => {

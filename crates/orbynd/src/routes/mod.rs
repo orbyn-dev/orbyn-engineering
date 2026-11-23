@@ -30,6 +30,7 @@ mod issues;
 mod library;
 mod mcp_apps;
 mod media;
+mod precompressed;
 mod preview;
 mod profiles;
 mod projects;
@@ -45,6 +46,7 @@ mod skills;
 mod source_control;
 mod stream;
 mod terminal;
+mod text_generators;
 mod threads;
 mod ui;
 mod updates;
@@ -112,6 +114,8 @@ mod photo_conversion_tests;
 #[cfg(test)]
 mod profiles_tests;
 #[cfg(test)]
+mod projects_tests;
+#[cfg(test)]
 mod secrets_tests;
 #[cfg(test)]
 mod snapshot_tests;
@@ -169,6 +173,7 @@ pub fn router(state: AppState) -> Router {
         .merge(governance::routes())
         .merge(stream::routes())
         .merge(terminal::routes())
+        .merge(text_generators::routes())
         .route_layer(from_fn_with_state(state.clone(), note_activity))
         .route_layer(from_fn_with_state(access.clone(), classes::require_person))
         .route_layer(from_fn_with_state(access.clone(), access::require_auth));

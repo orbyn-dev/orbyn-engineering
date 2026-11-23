@@ -8,8 +8,7 @@ import { useWorkspace } from "../../../product/state/workspace";
 import { Button } from "../../../ui/controls";
 import { Dialog } from "../../../ui/Dialog";
 import { FolderBrowser } from "../../../product/ui/FolderBrowser";
-import { dropTrailingSlash, expandHome, replaceHomePrefix, shortenHome, splitPath, withSlash } from "./pathInput";
-import { projectNameProblem } from "./projectName";
+import { dropTrailingSlash, expandHome, homePrefix, pathName, replaceHomePrefix, shortenHome, splitPath, withSlash } from "./pathInput";
 import { trackClone } from "../app-chrome/CloneJobs";
 import "../addProject.css";
 
@@ -85,6 +84,11 @@ function Folders({
 
   const { dir, leaf } = splitPath(value);
   const expanded = home === null ? null : expandHome(dir, home);
+  // The `~` root is shown in the home folder's own style, so a Windows field reads `~\` and not `~/`.
+  useEffect(() => {
+    if (home === null) return;
+    setValue((current) => (current === "~/" || current === "~\\" ? homePrefix(home) : current));
+  }, [home]);
   const listing = useAsync(`palette-browse:${expanded ?? ""}`, (signal) =>
     expanded === null ? Promise.resolve(null) : api.browse(expanded, signal),
   );
@@ -94,6 +98,8 @@ function Folders({
   }, [listing.data, leaf]);
   const parent = listing.data?.parent ?? null;
   const folderRows = entries.length + (parent ? 1 : 0);
+  // A folder with no subfolders says so, whether or not it also has a row going back up.
+  const noFolders = listing.status === "ready" && listing.data !== null && entries.length === 0;
   const actions = [
     { key: "new", run: onNew },
     { key: "clone", run: onClone },
@@ -173,8 +179,6 @@ function Folders({
       ) : null}
       <div className="palette-list">
         {listing.status === "error" ? <p className="sidebar-empty">{listing.error.message}</p> : null}
-        {/* Until the home folder is known nothing was listed, so nothing is empty yet. */}
-        {listing.status === "ready" && listing.data !== null && folderRows === 0 ? <p className="sidebar-empty">No folders here</p> : null}
         {added.length > 0 ? (
           <>
             <div className="palette-group">Added</div>
@@ -192,9 +196,10 @@ function Folders({
         {parent ? (
           <button type="button" data-active={active === 0 || undefined} onMouseMove={() => setActive(0)} onClick={() => enter(parent)}>
             <ArrowUp size={16} aria-hidden />
-            <span className="palette-title">..</span>
+            <span className="palette-title">{pathName(parent)}</span>
           </button>
         ) : null}
+        {noFolders ? <p className="sidebar-empty">{leaf ? "No results" : "No folders here"}</p> : null}
         {entries.map((entry, at) => {
           const row = at + (parent ? 1 : 0);
           return (
@@ -243,7 +248,6 @@ function AddDialog({
   confirm,
   mono,
   hint,
-  check,
   submit,
   onCancel,
 }: {
@@ -252,15 +256,12 @@ function AddDialog({
   confirm: string;
   mono?: boolean;
   hint: ReactNode;
-  /** Why this value cannot be submitted, or null; the same words the service refuses it with. */
-  check?(value: string): string | null;
   submit(value: string): Promise<void>;
   onCancel(): void;
 }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const problem = check ? check(value) : null;
   const live = useRef(true);
   useEffect(
     () => () => {
@@ -270,7 +271,7 @@ function AddDialog({
   );
   const send = async () => {
     const text = value.trim();
-    if (!text || busy || problem) return;
+    if (!text || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -292,7 +293,7 @@ function AddDialog({
           <Button onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <Button tone="primary" busy={busy} disabled={!value.trim() || problem !== null} onClick={() => void send()}>
+          <Button tone="primary" busy={busy} disabled={!value.trim()} onClick={() => void send()}>
             {confirm}
           </Button>
         </>
@@ -315,12 +316,11 @@ function AddDialog({
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
-          aria-invalid={problem ? true : undefined}
           onChange={(event) => setValue(event.target.value)}
         />
-        {problem ?? error ? (
+        {error ? (
           <p className="field-error" role="alert">
-            {problem ?? error}
+            {error}
           </p>
         ) : hint ? (
           <span className="add-project-note">{hint}</span>
@@ -374,7 +374,6 @@ export function AddProjectPalette({
           title="New project"
           label="Name"
           confirm="Create project"
-          check={projectNameProblem}
           hint={
             <>
               {base ? (

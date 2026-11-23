@@ -193,6 +193,33 @@
 .cb-note {
   border-top: 0;
 }
+/* A running full-screen program's one-line strip, in place of its block. No actions. */
+.cb-strip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+.cb-strip b {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+.cb-strip span {
+  flex: none;
+  margin-left: auto;
+  color: var(--color-muted);
+}
 .cb-head + .cb-note {
   border-top: 1px solid var(--color-border);
 }

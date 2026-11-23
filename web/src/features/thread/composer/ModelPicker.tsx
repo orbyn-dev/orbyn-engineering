@@ -573,7 +573,8 @@ export function ModelPickerTrigger({
         {engine ? <EngineGlyph name={engine.name} /> : null}
         <span>{name}</span>
         <UnmanagedLabel engine={engine} />
-        {engines.length === 0 ? <ChevronDown size={12} aria-hidden /> : null}
+        {/* The designs draw the model chip with its down chevron (`#i-down`), so a picker says it opens one. */}
+        <ChevronDown size={12} aria-hidden />
       </button>
       <Presence>
       {anchor ? (

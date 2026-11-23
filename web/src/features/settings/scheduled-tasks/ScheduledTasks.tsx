@@ -1,7 +1,7 @@
 import { chooseDraftEngine } from "../../../product/engines/draftEngine";
 import { AlertTriangle, Check, CloudOff, Plus, RefreshCw, X } from "lucide-react";
 import "../ScheduledTasks.css";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { NETWORK_ERROR, deleteScheduledTask, listScheduledTasks, saveScheduledTask, setScheduledTaskEnabled } from "../api";
 import type { ScheduledTask, WebhookFilter } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -21,6 +21,15 @@ import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { Empty, Loading } from "../../../product/ui/states";
 
 const listTasks = (signal?: AbortSignal) => listScheduledTasks(signal);
+const MAX_INTERVAL = 2 ** 32 - 1;
+function intervalMinutes(value: string, fallback: number) {
+  if (value === "") return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  if (number < 1) return 1;
+  if (number > MAX_INTERVAL) return fallback;
+  return Number.isInteger(number) ? number : fallback;
+}
 
 type TaskKind = "interval" | "fixed_time" | "webhook" | "after_thread";
 
@@ -163,6 +172,7 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
   const [touched, setTouched] = useState(false);
   const [prompt, setPrompt] = useState(task?.prompt ?? "");
   const [minutes, setMinutes] = useState(String(task?.schedule.every_minutes ?? 60));
+  const lastValidMinutes = useRef(intervalMinutes(String(task?.schedule.every_minutes ?? 60), 60));
   const [kind, setKind] = useState<TaskKind>((task?.schedule.kind as TaskKind | undefined) ?? "interval");
   const [time, setTime] = useState(task?.schedule.time ?? "09:00");
   const [weekdays, setWeekdays] = useState<number[]>(task?.schedule.weekdays ?? []);
@@ -237,7 +247,7 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
         schedule: {
           ...task?.schedule,
           kind,
-          every_minutes: kind === "interval" ? Number(minutes) : null,
+          every_minutes: kind === "interval" ? intervalMinutes(minutes, lastValidMinutes.current) : null,
           time: kind === "fixed_time" ? time : null,
           weekdays: kind === "fixed_time" ? weekdays : [],
           utc_offset_minutes: -new Date().getTimezoneOffset(),
@@ -301,7 +311,16 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
       {kind === "interval" ? (
         <Field label="Every (minutes)">
           {(props) => (
-            <input {...props} type="number" min="1" value={minutes} onChange={(event) => setMinutes(event.target.value)} />
+            <input {...props} type="number" min="1" value={minutes} onChange={(event) => {
+              const value = event.target.value;
+              const number = Number(value);
+              if (value !== "" && Number.isInteger(number) && number >= 1 && number <= MAX_INTERVAL) lastValidMinutes.current = number;
+              setMinutes(value);
+            }} onBlur={() => {
+              const value = intervalMinutes(minutes, lastValidMinutes.current);
+              lastValidMinutes.current = value;
+              setMinutes(String(value));
+            }} />
           )}
         </Field>
       ) : null}

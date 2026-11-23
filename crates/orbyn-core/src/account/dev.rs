@@ -37,7 +37,7 @@ use super::api::{
     PendingApproval, SessionInfo, SignInOutcome,
 };
 use super::device_api::DeviceError;
-use super::digits::{self, Check, Issued};
+use super::digits::{Check, Issued};
 use super::fake::FakeDeviceApi;
 
 pub const INVITE: &str = "K7QM2XWH9QXA3C2D";
@@ -70,6 +70,9 @@ pub enum Answer {
 struct Mine {
     id: String,
     email: String,
+    /// When the new device made the request. Its digits die with the request, so their clock starts
+    /// here rather than when a trusted device answers.
+    asked: Instant,
     answer: Option<Answer>,
     /// The digits the trusted device showed, once it allowed the request.
     issued: Option<Issued>,
@@ -95,6 +98,13 @@ struct State {
     session: Option<String>,
     removed: Vec<String>,
     wrong_passwords: u8,
+    /// Makes the next digits check fail with this error, so a test can tell one the server answered
+    /// from one that never reached it.
+    #[cfg(test)]
+    digits_failure: Option<DeviceError>,
+    /// How many emailed codes reached the stand-in, so a test can see what the app refused to send.
+    #[cfg(test)]
+    code_calls: u32,
     /// How many times the Engine was told to end this device's session.
     #[cfg(test)]
     sign_outs: usize,
@@ -178,10 +188,13 @@ pub fn handle() -> (Backend, Arc<DevAccount>) {
 }
 
 /// A trusted device answering: allowing shows the canned digits for this device's own request.
-fn decide(mine: &mut Mine, answer: Answer) {
+/// The digits last as long as the request they were issued for (`life` from when it was made), not
+/// `life` from the allowance: a trusted device that answers late does not lengthen them.
+fn decide(mine: &mut Mine, answer: Answer, life: Duration) {
     mine.answer = Some(answer);
     if answer == Answer::Allow && mine.issued.is_none() {
-        mine.issued = Some(Issued::new(DEV_DIGITS.to_owned(), digits::LIFETIME));
+        let left = life.saturating_sub(mine.asked.elapsed());
+        mine.issued = Some(Issued::new(DEV_DIGITS.to_owned(), left));
     }
 }
 
@@ -260,8 +273,9 @@ impl DevAccount {
     /// [`DEV_DIGITS`], as a test reads them with [`Self::shown_digits`].
     #[cfg(test)]
     pub fn answer(&self, answer: Answer) {
+        let life = self.incoming_life();
         if let Some(mine) = self.lock().mine.as_mut() {
-            decide(mine, answer);
+            decide(mine, answer, life);
         }
     }
 
@@ -288,8 +302,43 @@ impl DevAccount {
             && let Some(old) = mine.issued.take()
         {
             let digits = old.shown().map(str::to_owned).unwrap_or_default();
-            mine.issued = Some(Issued::new(digits, digits::LIFETIME));
+            mine.issued = Some(Issued::new(digits, super::digits::LIFETIME));
         }
+    }
+
+    /// Whether the digits of this device's request have run out, on the life it was made with.
+    #[cfg(test)]
+    pub fn digits_expired(&self) -> bool {
+        self.lock()
+            .mine
+            .as_ref()
+            .and_then(|mine| mine.issued.as_ref())
+            .is_some_and(Issued::is_expired)
+    }
+
+    /// Plays digits that ran out on the server's clock: the next entry finds them expired rather
+    /// than wrong, so the new device has to close the request as expired.
+    #[cfg(test)]
+    pub fn expire_digits(&self) {
+        if let Some(mine) = self.lock().mine.as_mut()
+            && let Some(old) = mine.issued.take()
+        {
+            let digits = old.shown().map(str::to_owned).unwrap_or_default();
+            mine.issued = Some(Issued::new(digits, Duration::ZERO));
+        }
+    }
+
+    /// Makes the next digits check fail with `error`: something the server answered, or a request
+    /// that never reached it, so a test can see which one gives its try back.
+    #[cfg(test)]
+    pub fn fail_next_digits_with(&self, error: DeviceError) {
+        self.lock().digits_failure = Some(error);
+    }
+
+    /// How many emailed codes reached the stand-in.
+    #[cfg(test)]
+    pub fn code_calls(&self) -> u32 {
+        self.lock().code_calls
     }
 
     /// The digits this device showed as a trusted one when it allowed `id`.
@@ -442,7 +491,14 @@ impl AccountApi for DevAccount {
     }
 
     async fn verify_email_code(&self, code: &str) -> Result<SessionInfo, DeviceError> {
+        // The Engine is asked over the network: the answer is never there before another entry
+        // could be made.
+        tokio::task::yield_now().await;
         let mut state = self.lock();
+        #[cfg(test)]
+        {
+            state.code_calls += 1;
+        }
         let Some(signup) = state.signup.as_mut() else {
             return Err(DeviceError::InvalidCode);
         };
@@ -517,6 +573,7 @@ impl AccountApi for DevAccount {
             state.mine = Some(Mine {
                 id: "req-mine".to_owned(),
                 email: email.to_owned(),
+                asked: Instant::now(),
                 answer: None,
                 issued: None,
                 auto: canned.map(|answer| (Instant::now() + delay, answer)),
@@ -542,6 +599,7 @@ impl AccountApi for DevAccount {
     }
 
     async fn approval_status(&self, request_id: &str) -> Result<ApprovalStatus, DeviceError> {
+        let life = self.incoming_life();
         let mut state = self.lock();
         let Some(mine) = state.mine.as_mut().filter(|m| m.id == request_id) else {
             return Err(DeviceError::RequestGone);
@@ -549,7 +607,7 @@ impl AccountApi for DevAccount {
         if let (None, Some((at, answer))) = (mine.answer, mine.auto)
             && Instant::now() >= at
         {
-            decide(mine, answer);
+            decide(mine, answer, life);
         }
         // Allowing never signs the new device in: only the right digits do.
         let locked = mine
@@ -613,6 +671,10 @@ impl AccountApi for DevAccount {
         request_id: &str,
         digits: &ApprovalDigits,
     ) -> Result<SessionInfo, DeviceError> {
+        #[cfg(test)]
+        if let Some(error) = self.lock().digits_failure.take() {
+            return Err(error);
+        }
         let mut state = self.lock();
         let Some(mine) = state.mine.as_mut().filter(|m| m.id == request_id) else {
             return Err(DeviceError::RequestGone);
@@ -630,7 +692,9 @@ impl AccountApi for DevAccount {
             }
             Check::Wrong { tries_left } => Err(DeviceError::WrongDigits { tries_left }),
             Check::Locked => Err(DeviceError::DigitsLocked),
-            Check::Expired => Err(DeviceError::RequestGone),
+            // The request's own clock ended it, which the new device shows as expired rather than
+            // as one a person or a trusted device ended.
+            Check::Expired => Err(DeviceError::ApprovalExpired),
         }
     }
 

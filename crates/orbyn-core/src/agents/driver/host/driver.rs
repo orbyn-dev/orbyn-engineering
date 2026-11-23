@@ -191,7 +191,7 @@ fn begin_failed(family: &str, resume: bool, engine_id: &str, error: RequestError
 async fn begin(
     connection: &Arc<Connection>,
     spec: &RunSpec,
-    options: Value,
+    options: (Value, Value),
     confinement: Option<Value>,
     send_id: u64,
     message_id: &str,
@@ -202,11 +202,12 @@ async fn begin(
     } else {
         "create"
     };
+    let (open_options, send_options) = options;
     let mut open = json!({
         "operation": operation,
         "sessionId": spec.run_id,
         "cwd": spec.cwd,
-        "options": options,
+        "options": open_options,
     });
     if let Some(resume) = &spec.resume {
         open["engineSessionId"] = json!(resume);
@@ -226,7 +227,12 @@ async fn begin(
         .request_accepting(
             send_id,
             "send",
-            json!({ "sessionId": spec.run_id, "message": HostDriver::message(spec), "messageId": message_id }),
+            json!({
+                "sessionId": spec.run_id,
+                "message": HostDriver::message(spec),
+                "messageId": message_id,
+                "options": send_options,
+            }),
             send_id,
         )
         .await?;
@@ -345,14 +351,26 @@ impl EngineDriver for HostDriver {
         spec: RunSpec,
         events: mpsc::Sender<EngineEvent>,
     ) -> Result<RunHandle> {
+        let cli = (self.path)()? == EnginePath::Cli;
+        let family = self.pool.family.clone();
+        let engine = self.inner.descriptor().id;
+        // A run that is not the rewound resume makes a waiting point stale: a create starts
+        // a new session, and any other session is not the one the point names.
+        if family == "claude" {
+            match spec.resume.as_deref() {
+                Some(session) if !cli => self.pool.clear_resume_at_except(&engine, session),
+                _ => self.pool.clear_resume_at(&engine),
+            }
+        }
         // The person chose the CLI: the run is the Rust driver's, as if no host were here. Never a fallback.
-        if (self.path)()? == EnginePath::Cli {
+        if cli {
             return self.inner.start_run(spec, events).await;
         }
-        let family = self.pool.family.clone();
-        let mapper = DeltaMapper::for_family(&family).ok_or_else(|| {
-            CoreError::EngineUnavailable("This engine has no engine host mapping yet.".into())
-        })?;
+        let mapper = DeltaMapper::for_family(&family)
+            .ok_or_else(|| {
+                CoreError::EngineUnavailable("This engine has no engine host mapping yet.".into())
+            })?
+            .with_cwd(&spec.cwd);
         // Refused here, before any process: a restriction that cannot be built is no run.
         let confinement = confinement::build(&spec, &family)?;
         let claude_path = self.engine_path()?;
@@ -369,7 +387,6 @@ impl EngineDriver for HostDriver {
                     "The engine host is stopping. Send your message again.".into(),
                 )
             })?;
-        let engine = self.inner.descriptor().id;
         let message_id = crate::agents::driver::claude::prompt_uuid();
         // A rewind is one open, on the Claude family and a resume only. Taking it here
         // consumes it, so a failed open or a later run never sends it again.
@@ -384,6 +401,7 @@ impl EngineDriver for HostDriver {
         };
         let options = match family.as_str() {
             "claude" => options::claude(&spec, claude_path.as_deref()),
+            "cursor" => options::cursor(&spec),
             "acp" => match self.acp.as_ref() {
                 Some(agent) => options::acp(&spec, agent)?,
                 None => {
@@ -394,10 +412,17 @@ impl EngineDriver for HostDriver {
             },
             _ => json!({}),
         };
+        // Cursor's model and mode are per-send overrides as well as per-agent options; the
+        // host hands them to `agent.send`.
+        let send_options = if family == "cursor" {
+            options.clone()
+        } else {
+            json!({})
+        };
         let (opened, accepted) = match begin(
             &connection,
             &spec,
-            options,
+            (options, send_options),
             confinement,
             send_id,
             &message_id,
@@ -557,12 +582,19 @@ impl EngineDriver for HostDriver {
                 before_turn,
                 Some(cwd),
             )?;
-            self.pool.note_resume_at(&engine, session, &at);
+            self.pool.note_resume_at(&engine, session, &at)?;
             return Ok(());
         }
         let at = crate::agents::claude_history::resume_point(session, before_turn, Some(cwd))?;
-        self.pool.note_resume_at(&engine, session, &at);
-        Ok(())
+        self.pool.note_resume_at(&engine, session, &at)
+    }
+
+    async fn forget_revert(&self, _cwd: &Path, session: &str) {
+        if self.pool.family != "claude" {
+            return;
+        }
+        let engine = self.inner.descriptor().id;
+        self.pool.forget_resume_at(&engine, session);
     }
 
     async fn catalog_key(&self) -> Option<String> {
