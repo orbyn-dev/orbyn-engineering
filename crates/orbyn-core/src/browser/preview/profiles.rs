@@ -10,6 +10,10 @@ use std::path::PathBuf;
 
 pub(super) const PROFILE_NAME_LIMIT: usize = 64;
 
+/// Held across each read-change-save of the profile list, so two overlapping creates, renames or deletes cannot save a stale list
+/// over each other's change.
+static PROFILE_LIST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The name rule create and rename share, so both refuse with the same sentence.
 fn checked_profile_name(name: &str) -> Result<&str> {
     let name = name.trim();
@@ -84,6 +88,7 @@ impl Core {
     /// Only the stored name changes, so a profile open in a tab can be renamed.
     pub fn rename_browser_profile(&self, id: &str, name: &str) -> Result<BrowserProfile> {
         let name = checked_profile_name(name)?;
+        let _list = lock(&PROFILE_LIST);
         let mut profiles = self.stored_profiles()?;
         let index = profiles
             .iter()
@@ -100,6 +105,7 @@ impl Core {
 
     pub fn create_browser_profile(&self, name: &str) -> Result<BrowserProfile> {
         let name = checked_profile_name(name)?;
+        let _list = lock(&PROFILE_LIST);
         let mut profiles = self.stored_profiles()?;
         let id = new_id();
         profiles.push((id.clone(), name.to_owned()));
@@ -133,6 +139,7 @@ impl Core {
 
     pub fn delete_browser_profile(&self, id: &str) -> Result<()> {
         self.release_profile(id)?;
+        let _list = lock(&PROFILE_LIST);
         let mut profiles = self.stored_profiles()?;
         profiles.retain(|(known, _)| known != id);
         self.save_profiles(&profiles)

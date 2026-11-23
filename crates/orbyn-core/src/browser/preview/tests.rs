@@ -934,3 +934,32 @@ fn the_page_expressions_quote_what_they_carry() {
         "the page is the target when no selector is named"
     );
 }
+
+/// Creates, renames and deletes that overlap each save the whole profile list; none may save a stale one over another's change.
+#[test]
+fn overlapping_profile_changes_lose_no_update() {
+    use crate::testing::TempDir;
+    let dir = TempDir::new();
+    let mut config = crate::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+    config.engines.lookup_latest = false;
+    let core = Arc::new(crate::app::Core::open(config).unwrap());
+    let first = core.create_browser_profile("Seed").unwrap();
+    let workers: Vec<_> = (0..8)
+        .map(|n| {
+            let core = core.clone();
+            let seed = first.id.clone();
+            std::thread::spawn(move || {
+                for round in 0..10 {
+                    core.create_browser_profile(&format!("p{n}-{round}")).unwrap();
+                    core.rename_browser_profile(&seed, &format!("Seed {n}-{round}"))
+                        .unwrap();
+                }
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+    let all = core.browser_profiles().unwrap();
+    assert_eq!(all.len(), 1 + 8 * 10, "a create was lost: {all:?}");
+}
