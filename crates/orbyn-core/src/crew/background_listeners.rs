@@ -111,11 +111,13 @@ impl Core {
         if stop.is_cancelled() {
             return Ok(());
         }
-        self.crew_background_watch_tick(now, stop).await;
+        self.crew_background_ci_tick(rotation, stop).await;
         if stop.is_cancelled() {
             return Ok(());
         }
-        self.crew_background_ci_tick(rotation, stop).await;
+        // Last: a watch's command runs in the project and may take minutes, so it must not delay the other listeners in
+        // this pass. Its own bucket claim keeps the next pass from repeating it.
+        self.crew_background_watch_tick(now, stop).await;
         if stop.is_cancelled() {
             return Ok(());
         }
@@ -426,7 +428,8 @@ impl Core {
                 }
             }
             let check = if project.trusted {
-                // Between firings only: a check that has begun is not cut short, so its claim and its row cannot disagree.
+                // A stop before the check begins skips it; a stop while it runs cancels the run, and its claimed bucket then has
+                // no state row (the next bucket checks again). There is no partial write: the row is written once the check ends.
                 tokio::select! {
                     biased;
                     _ = stop.cancelled() => return,
