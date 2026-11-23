@@ -972,3 +972,59 @@ async fn a_command_that_prints_far_more_than_the_cap_is_stopped_and_could_not_ru
     );
     assert_eq!(check.tail, None, "{check:?}");
 }
+
+#[test]
+fn a_check_that_could_not_run_keeps_the_exit_code_of_the_last_check_that_ran() {
+    let ran_once = plan(&blank("crew"), &ran(true, Some(0), None), false, false, 10).next;
+    let failed = plan(
+        &ran_once,
+        &ran(false, Some(3), Some("boom")),
+        false,
+        false,
+        20,
+    )
+    .next;
+    assert_eq!(failed.last_exit_code, Some(3));
+    let timed_out = plan(&failed, &missing(CouldNotRun::TimedOut), false, false, 30).next;
+    assert_eq!(timed_out.last_state, "could_not_run");
+    assert_eq!(timed_out.last_exit_code, Some(3));
+}
+
+#[tokio::test]
+async fn a_watch_changed_to_needs_you_during_a_check_does_not_start_its_template() {
+    let w = world(true, hung()).await;
+    let id = watch(&w, "Template", "git diff --exit-code", "template").await;
+    tick(&w, NOW).await;
+    // The tick read this row before the command ran.
+    let stale = w
+        .core
+        .store
+        .background_crews_of_kind("watch")
+        .unwrap()
+        .remove(0);
+    // The person changes what a failure does while the check is running.
+    let update: wire::BackgroundCrewUpdate = serde_json::from_value(json!({
+        "trigger": { "kind": "watch", "command": "git diff --exit-code", "every_hours": HOURS, "on_failing": "needs_you" }
+    }))
+    .unwrap();
+    w.core.background_update(&id, &update).await.unwrap();
+
+    w.core
+        .record_watch_check(
+            &stale,
+            "watch:1",
+            ran(false, Some(1), Some("x")),
+            NOW + BUCKET,
+        )
+        .await
+        .unwrap();
+    assert!(
+        runs(&w, &id).is_empty(),
+        "no run after the person chose needs_you"
+    );
+    assert_eq!(
+        changes(&w, &id)[0].action,
+        wire::BackgroundWatchChangeAction::NeedsYou
+    );
+    assert_eq!(w.core.crew_needs_you().unwrap().items.len(), 1);
+}

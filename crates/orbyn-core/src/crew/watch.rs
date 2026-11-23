@@ -166,7 +166,10 @@ pub fn plan(
 ) -> Planned {
     let mut next = previous.clone();
     next.last_checked_unix = Some(at);
-    next.last_exit_code = check.exit_code();
+    // The exit code is the last check that ran: a check that could not run has none and leaves it.
+    if matches!(check.found, WatchFound::Ran { .. }) {
+        next.last_exit_code = check.exit_code();
+    }
     next.tail = check.tail.clone();
     match check.found {
         WatchFound::CouldNotRun(_) => {
@@ -346,7 +349,11 @@ impl Core {
             .store
             .watch_state(&crew.id)?
             .unwrap_or_else(|| blank_state(&crew.id));
-        let on_failing_template = crew.trigger_settings["on_failing"].as_str() == Some("template");
+        // What a failure does is read now, not from the row the tick loaded before a command that may have run for minutes: a
+        // person who switched it to `needs_you` meanwhile gets a Needs you row, not a started template.
+        let on_failing_template = self
+            .background_row(&crew.id)
+            .is_ok_and(|now| now.trigger_settings["on_failing"].as_str() == Some("template"));
         // A pass resolves only a row that was raised: the newest result change (a turn-off is history, not a result) must be the
         // failing change action `needs_you`. A failing baseline or a started template recovers with no action.
         let raised = self
