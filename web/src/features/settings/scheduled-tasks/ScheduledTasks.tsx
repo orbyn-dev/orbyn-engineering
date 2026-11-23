@@ -207,7 +207,8 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
   /** Why Save is off, in words, so the disabled state is never silent. */
   const saveReasonId = useId();
   /**
-   * A whole number these fields draw with `min="1"`, below it or not a number at all.
+   * A whole number these fields draw with `min="1"`, below it or not a number at all. The interval is not
+   * listed: it clamps to one minute on blur and on save.
    * Left out of the request instead of being sent, because the service refuses it.
    */
   const belowOne = (text: string) => text.trim() !== "" && !(Number(text) >= 1);
@@ -216,7 +217,6 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
     !prompt.trim() ? "what the agent should do" : "",
     !projectChosen ? "a project" : "",
     kind === "after_thread" && !after ? "a thread to follow" : "",
-    kind === "interval" && belowOne(minutes) ? "a time of at least 1 minute" : "",
     kind === "webhook" && hook.dedupe.trim() && belowOne(hook.window) ? "a window of at least 1 second" : "",
     kind === "webhook" && belowOne(hook.maxAge) ? "a skip time of at least 1 second" : "",
   ].filter(Boolean);
