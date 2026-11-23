@@ -50,6 +50,8 @@ const MAX_LINES: u64 = 2000;
 /// The longest sentence kept as why a run waits, in characters.
 const WHY_MAX: usize = 300;
 /// The `reason_code` of a run the disk guard refused: the volume holding the project was under the person's floor, so no worker ran.
+/// It is the wire spelling of `ErrorCode::DiskLow` (the `wire_enum` macro serializes `snake_case`); a literal because the enum derives
+/// no string accessor, and the contract test that reads `"disk_low"` pins the spelling.
 const DISK_LOW: &str = "disk_low";
 
 /// What a template asks for, in the words of the task. Code-owned: no repository text and no event text is part of it.
@@ -289,6 +291,8 @@ impl Core {
                 // Every other refusal before a task still takes the run and the thread back.
                 if error.code == ErrorCode::DiskLow {
                     let why = redact(&error.message);
+                    // A run ended meanwhile (the person turned the crew off) leaves nothing to keep; the person still gets the
+                    // refusal, as for any other refusal before a task.
                     self.store
                         .end_background_run_not_started(&thread.id, DISK_LOW, &why, "crew")?;
                     return Err(refusal(error));

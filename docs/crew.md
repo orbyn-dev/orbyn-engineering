@@ -1091,13 +1091,16 @@ background crew is per device and is not shared through git. A repository's own 
   visibly identical names built from different code points (for example a precomposed and a combining accent) are still two names.
 - **Budget:** `turns` 1 to 1000 and `minutes` 1 to 1440 per run, **set at creation and never changed**: an update takes only the name and
   the trigger, and the table refuses a change of budget, template or project, and (schema 42) a run's copy of the budget. A template and trigger kind may be combined freely.
-- **Runs and state:** a run is `running`, `stopped` (with a reason: `budget`, `repeated_failure`, `engine_error`, `disabled`) or
-  `needs_review`, with turns and minutes spent against the budget it was given. At most one run per crew is running, and a run opens only for
+- **Runs and state:** a run is `running`, `needs_review`, or `stopped` — with a stop reason (`budget`, `repeated_failure`,
+  `engine_error`, `disabled`) or, when the disk guard refused its start before it began, with `reason_code` `disk_low` and no stop
+  reason — with turns and minutes spent against the budget it was given. At most one run per crew is running, and a run opens only for
   an enabled crew. A crew's state, first match wins: `running` while a run is
   running; `needs_review` while its newest run waits for the person's review; `stopped` when its newest run stopped for the budget or a
-  failure (`budget`, `repeated_failure`, `engine_error`), even with older reviews waiting; `needs_review` when the crew has no run or its
-  newest run was stopped as `disabled` while an older review still waits; otherwise `idle` (never ran, the newest run was stopped by the
-  person's own switch and nothing waits, or the person acknowledged the newest run's review). Spending to either number of the budget
+  failure (`budget`, `repeated_failure`, `engine_error`), even with older reviews waiting; `needs_review` when the crew has no run, its
+  newest run was stopped as `disabled`, or its newest run never started because the disk guard refused it, while an older review still
+  waits; otherwise `idle` (never ran, the newest run was stopped by the
+  person's own switch and nothing waits, the newest run never started and nothing waits, or the person acknowledged the newest run's
+  review). Spending to either number of the budget
   stops the run with the reason `budget` and puts it in the review queue (`review_waiting`). Turning a crew off stops its run with the reason `disabled`, logged as the person. **Delete is
   refused only while a run is in progress**; a crew with waiting reviews can be deleted (a waiting review is settled by the person's acknowledgement), its runs
   and waiting reviews are removed with it, and the audit row records `runs_removed` and `reviews_waiting_removed`.
@@ -1112,7 +1115,8 @@ background crew is per device and is not shared through git. A repository's own 
   `GET /{id}`, `GET /{id}/runs`; writes, local only (a Person route: a remote viewer gets 403 `local_only`, an agent is refused by N1),
   `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`, and `/{id}/run-now`, which starts one run of an enabled
   crew by hand (the `manual` event: `crew_background_run_now`, one run and its lead thread, as a Low Crew-started task that the daily
-  budget and review capacity may refuse; a refusal stores no run), and `/runs/{id}/acknowledge`, which settles one waiting review
+  budget and review capacity may refuse; a disk refusal keeps one stopped history row with `reason_code` `disk_low` and no stop reason,
+  and every other refusal stores no run), and `/runs/{id}/acknowledge`, which settles one waiting review
   (`background_acknowledge_review`: one write clears `review_waiting` and returns the run with its reason, state, stop reason and spend
   unchanged; a run that is not waiting is refused plainly). There is no route that spends, merges or reverts.
 - **In the Review queue.** A run that stops without a merge waits on its own run row (`needs_review`, or `stopped` for the budget or a

@@ -524,8 +524,8 @@ async fn a_project_that_is_not_trusted_is_refused_and_nothing_is_made() {
     assert_eq!(w.core.background_runs(&id, page).unwrap().total, 0);
 }
 
-/// The disk guard (KC4 PR B): a background start it refuses keeps one stopped history row and no thread, and the person
-/// still gets the sentence. Faked free space lets this run on any machine.
+/// The disk guard (KC4 PR B): a background start it refuses keeps one stopped history row and no thread, the person still
+/// gets the sentence, and the crew reads idle because it never ran. Faked free space lets this run on any machine.
 #[tokio::test]
 async fn a_background_start_refused_for_low_disk_keeps_one_stopped_history_row() {
     const GIB: u64 = 1024 * 1024 * 1024;
@@ -563,6 +563,11 @@ async fn a_background_start_refused_for_low_disk_keeps_one_stopped_history_row()
     assert_eq!((run.turns_spent, run.minutes_spent), (0, 0));
     assert_eq!((run.budget.turns, run.budget.minutes), (10, 30));
     assert!(run.ended_at.is_some());
+    // The crew never ran, so it reads idle: the stopped row is only the history of the refused start.
+    assert_eq!(
+        w.core.background_get(&id).unwrap().state,
+        wire::BackgroundState::Idle
+    );
     // The refusal is audited with its code in the same transaction.
     let audits = w.core.store.list_audit(None, 500).unwrap();
     let refusal = audits

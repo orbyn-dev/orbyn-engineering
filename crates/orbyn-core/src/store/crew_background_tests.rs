@@ -1404,9 +1404,9 @@ fn migration_82_keeps_background_rows_and_lets_a_run_never_start() {
     )
     .unwrap();
     conn.execute(
-        "INSERT INTO crew_background_runs (id, background_id, state, stop_reason, turns_spent, minutes_spent,
+        "INSERT INTO crew_background_runs (rowid, id, background_id, state, stop_reason, turns_spent, minutes_spent,
          budget_turns, budget_minutes, review_waiting, review_reason, started_at, updated_at, ended_at)
-         VALUES ('run-1', 'old', 'stopped', 'budget', 10, 30, 10, 30, 1, 'budget', 'started', 'updated', 'ended')",
+         VALUES (7, 'run-1', 'old', 'stopped', 'budget', 10, 30, 10, 30, 1, 'budget', 'started', 'updated', 'ended')",
         [],
     )
     .unwrap();
@@ -1436,6 +1436,8 @@ fn migration_82_keeps_background_rows_and_lets_a_run_never_start() {
             run.reason_code.as_deref(),
             run.turns_spent,
             run.minutes_spent,
+            run.budget_turns,
+            run.budget_minutes,
             run.review_waiting,
             run.review_reason.as_deref(),
             run.started_at.as_str(),
@@ -1448,11 +1450,26 @@ fn migration_82_keeps_background_rows_and_lets_a_run_never_start() {
             None,
             10,
             30,
+            10,
+            30,
             true,
             Some("budget"),
             "started",
             Some("ended"),
         )
+    );
+    assert_eq!(run.updated_at, "updated");
+    let rowid: i64 = store
+        .reader()
+        .query_row(
+            "SELECT rowid FROM crew_background_runs WHERE id = 'run-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        rowid, 7,
+        "the runs page's tie-break rowid survived the rebuild"
     );
     // The daily ledger's run link survived the rebuild of both tables, and still cascades.
     let daily: u32 = store
@@ -1464,6 +1481,19 @@ fn migration_82_keeps_background_rows_and_lets_a_run_never_start() {
         )
         .unwrap();
     assert_eq!(daily, 10);
+    store
+        .writer()
+        .execute("DELETE FROM crew_background_runs WHERE id = 'run-1'", [])
+        .unwrap();
+    let left: u32 = store
+        .reader()
+        .query_row(
+            "SELECT COUNT(*) FROM crew_background_daily WHERE run_id = 'run-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(left, 0, "the recreated ledger link still cascades");
 
     // A run that never started is stopped with the code alone: no stop reason, nothing spent, nobody waiting.
     store
