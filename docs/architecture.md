@@ -3257,7 +3257,9 @@ A tab's zoom, appearance and phone layout are set with `/view`. Zoom keeps the f
 same size and lays the page out smaller, 0.25 to 3 times. New tabs start from the
 `preview_zoom` and `preview_appearance` settings. A tab with no named profile ends with its
 profile. A named profile lives in `<data>/browser-profiles`, survives restarts, and holds
-one tab at a time because a browser locks its profile folder. A private tab only stays
+one tab at a time because a browser locks its profile folder. A profile can be renamed
+while a tab has it open: only the stored name changes, never the folder, so its cookies
+and history stay. A private tab only stays
 out of the UI's history. `/previews/file` opens a file inside the checkout as `file:`,
 which agents and the address bar cannot reach. Picking an element reads it and changes
 nothing, and what it returns comes from the page, so the UI quotes it into the draft for a
@@ -3913,6 +3915,7 @@ every method, path and which routes need a credential.
 | `POST .../previews/:tab/view`, `/reload`, `/clear`, `/pick` | `PreviewView`; `ReloadPreview`; `ClearPreview`; `PickPreview` to `PickedElement` |
 | `GET, POST /api/browser-profiles` | `BrowserProfile[]`; `CreateBrowserProfile` |
 | `DELETE /api/browser-profiles/:id`, `POST .../clear` | Remove, or empty, a profile no tab has open |
+| `POST /api/browser-profiles/:id/rename` | `RenameBrowserProfile` to `BrowserProfile`: only the stored name changes, never the folder, so a profile open in a tab can be renamed |
 | `GET /ws/preview/:thread_id/:tab` | Base64 JPEG text frames |
 | `GET /api/threads/:id/servers`, `POST .../servers/:pid/stop` | `LocalServer[]`; stop one in this checkout, otherwise `404` |
 | `POST /api/threads/:id/console` | Opens the engine's own console on the thread's session |
