@@ -548,7 +548,11 @@ next run. A rewind does the same unless the engine rolls its own session back. D
 stays until a run that carried it completes, so a failed start, a stop or a restart
 leaves it pending, and until then `/compact` and `/goal`, which reach an engine bare, are
 `422 unsupported`. The log stays whole; a rewind is logged as `CUSTOM
-thread.rewound` for clients to hide what follows.
+thread.rewound` for clients to hide what follows. The event carries the `through` position
+and `native: true` only when the engine point was noted. That point waits in memory until
+the thread's next send, however late: a service restart before that send loses it, and the
+run then resumes with the engine's full history while the view and the event still say the
+rewind was native.
 
 Each run keeps the engine session and the first turn id it spoke in; for the Claude host
 the turn it keeps is the prompt's message id, because the host's own turn id is a counter
@@ -560,9 +564,10 @@ that run's turn, which keeps only the earlier turns. Rewinding a Claude thread w
 went through the engine host reads the session file by the stored session id and names the
 nearest top-level assistant ancestor of the run's prompt, falling back to the last one
 before it in file order when the file has no parent links; the next run's `open` carries it
-as `resumeAt` once, within two minutes, and a create, a different session or a changed
-thread session drops it. The session then goes on, nothing is handed off, and the event and
-audit carry `native: true`. Files are restored only by the rewind's own checkpoint step.
+as `resumeAt` once, on the thread's next send however late, and a create, a different
+session or a changed thread session drops it. The session then goes on, nothing is handed
+off, and the event, audit and `RewindResult` carry `native: true`. Files are restored only
+by the rewind's own checkpoint step.
 Any refusal, a missing turn id or point, a missing or changed session file, or another
 engine falls back to the handoff above.
 
@@ -3864,7 +3869,7 @@ every method, path and which routes need a credential.
 | `GET /api/threads/:id/commits` | `CommitInfo[]`, newest 100 |
 | `GET /api/threads/:id/checkpoints` | `Checkpoint[]` |
 | `POST /api/threads/:id/restore` | `RestoreWorkspace`; `409 shared_directory`, `409 thread_busy` |
-| `POST /api/threads/:id/rewind` | `RewindThread`: continue from before a run |
+| `POST /api/threads/:id/rewind` | `RewindThread` to `RewindResult` (`200`): continue from before a run, `native` or `handoff` |
 | `POST /api/threads/:id/fork` | `ForkThread`: a child thread with the log up to a run |
 | `POST /api/threads/:id/switch-engine` | `SwitchEngine`: hand the conversation to another engine, with an optional selection |
 | `GET, POST /api/threads/:id/previews` | `PreviewTab[]`; `OpenPreview` |

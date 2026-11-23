@@ -4,7 +4,7 @@
 use orbyn_contracts::{AgUiEvent, Checkpoint, ModelSelection, Thread};
 use rusqlite::{OptionalExtension, Row, params};
 
-use super::{NewThread, Store, thread_row, with_run_state};
+use super::{AuditRecord, NewThread, Store, insert_audit, insert_event, thread_row, with_run_state};
 use crate::error::{CoreError, Result};
 use crate::util::{new_id, now};
 
@@ -155,6 +155,47 @@ impl Store {
             tx.execute(
                 "UPDATE threads SET handoff = ?2, engine_session = NULL WHERE id = ?1",
                 params![thread_id, handoff],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Records a rewind in one transaction: its audit row, its handoff when the engine
+    /// could not roll back, taking the hidden messages out of search, and the event clients
+    /// read. A failure leaves none of it, so the thread is either rewound or untouched.
+    pub fn record_rewind(
+        &self,
+        thread_id: &str,
+        through: i64,
+        handoff: Option<&str>,
+        audit: &AuditRecord,
+        native: bool,
+    ) -> Result<()> {
+        self.commit(|tx, appended| {
+            insert_audit(tx, audit)?;
+            if let Some(handoff) = handoff {
+                tx.execute(
+                    "UPDATE threads SET handoff = ?2, engine_session = NULL WHERE id = ?1",
+                    params![thread_id, handoff],
+                )?;
+            }
+            tx.execute(
+                "DELETE FROM thread_messages WHERE thread_id = ?1 AND seq > ?2",
+                params![thread_id, through],
+            )?;
+            let mut value = serde_json::json!({ "through": through });
+            if native {
+                value["native"] = serde_json::json!(true);
+            }
+            insert_event(
+                tx,
+                appended,
+                thread_id,
+                None,
+                &AgUiEvent::Custom {
+                    name: "thread.rewound".into(),
+                    value,
+                },
             )?;
             Ok(())
         })
