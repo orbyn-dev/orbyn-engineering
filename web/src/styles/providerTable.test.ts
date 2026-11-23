@@ -53,7 +53,7 @@ it("keeps the six-column Providers template by default, with a readable name col
   expect(rule(".set-tbl.prov")).toMatch(/container-type:\s*inline-size/);
   expect(rule(".set-tbl.prov .set-tr")).toMatch(/grid-template-columns:\s*var\(--prov-columns\)/);
   expect(tracks(templateOf(rule(".set-tbl.prov")))).toEqual([
-    "28px", "minmax(120px, 1fr)", "90px", "minmax(130px, auto)", "60px", "88px",
+    "28px", "minmax(120px, 1fr)", "90px", "130px", "60px", "88px",
   ]);
 });
 
@@ -64,7 +64,7 @@ it("hides the Version cell and drops its 90px column below 800px, keeping Status
   expect(template).not.toBe("");
   expect(template).not.toContain("90px");
   expect(tracks(template)).toEqual([
-    "28px", "minmax(120px, 1fr)", "minmax(130px, auto)", "60px", "88px",
+    "28px", "minmax(120px, 1fr)", "130px", "60px", "88px",
   ]);
 });
 
