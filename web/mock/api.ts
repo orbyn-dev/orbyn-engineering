@@ -15,6 +15,7 @@ import type {
   AgUiEvent,
   ApplyAllResult,
   Approval,
+  EngineModels,
   EngineStatus,
   Project,
   ProjectFileView,
@@ -231,6 +232,8 @@ export function createMockApi(options: MockOptions = {}) {
   const questionsMock = createQuestionsMock();
   /** What a test changes in the service's `/api/info` answer (the build channel, the version). */
   let infoPatch: Partial<ServerInfo> = {};
+  /** The model lists a test gives an engine, in place of the sample ones. */
+  let modelLists: Record<string, EngineModels> = {};
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
   /** Kiro, an ACP engine the service says Orbyn cannot gate, for the engine picker and unmanaged-thread screens. */
@@ -276,6 +279,7 @@ export function createMockApi(options: MockOptions = {}) {
     questionsMock.reset();
     signedIn = false;
     infoPatch = {};
+    modelLists = {};
     idCounter = 0;
     preferenceValues = {};
     preferenceOverrides = {};
@@ -1037,6 +1041,9 @@ export function createMockApi(options: MockOptions = {}) {
       }
       case "GET /api/keybindings":
         return { status: 200, body: keybindingsView() };
+      // No engine host is reported: the real client reads a 404 as "nothing reported".
+      case "GET /api/engine-host":
+        return err(404, "not_found", "Not found.");
       case "GET /api/info":
         return { status: 200, body: { ...fixtures.info, ...infoPatch, remote: scenario === "remote", ...(scenario === "crew" || scenario.startsWith("crew-") ? { crew_preview: true } : {}) } };
       case "POST /auth/session":
@@ -1275,7 +1282,7 @@ export function createMockApi(options: MockOptions = {}) {
         if (seg[3] === "tools") return { status: 200, body: fixtures.engineTools(seg[2] ?? "claude") };
         if (seg[3] === "models") {
           // The service merges the person's custom models into the list it returns.
-          const listing = fixtures.engineModels(seg[2] ?? "");
+          const listing = modelLists[seg[2] ?? ""] ?? fixtures.engineModels(seg[2] ?? "");
           const custom = (Array.isArray(preferenceValues.custom_models) ? preferenceValues.custom_models : [])
             .flatMap((entry) => entry && typeof entry === "object" && !Array.isArray(entry) && entry.engine === seg[2] && typeof entry.id === "string"
               ? [{ id: entry.id, label: typeof entry.label === "string" ? entry.label : entry.id, description: null, is_default: false, custom: true, options: [] }] : []);
@@ -1554,6 +1561,10 @@ export function createMockApi(options: MockOptions = {}) {
     /** Changes what `/api/info` answers from now on, such as the build `channel` or `version`. */
     patchInfo(patch: Partial<ServerInfo>) {
       infoPatch = { ...infoPatch, ...patch };
+    },
+    /** Gives an engine this model list (the service merges the person's custom models into it). */
+    setEngineModels(engine: string, models: EngineModels) {
+      modelLists = { ...modelLists, [engine]: models };
     },
     patchUpdates(patch: Partial<UpdateStatus>) {
       updates = { ...updates, ...patch };
