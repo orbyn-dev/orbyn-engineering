@@ -66,6 +66,15 @@ fn fixture_tab(session: BrowserSession, control: &str) -> Arc<Tab> {
     })
 }
 
+/// A tab holding `profile`, for a test that needs a profile in use without launching a browser.
+pub(super) async fn fixture_profile_tab(profile: &str) -> Arc<Tab> {
+    let (session, server) = fixture_session(true).await;
+    let tab = fixture_tab(session, "none");
+    lock(&tab.info).profile = Some(profile.to_owned());
+    drop(server);
+    tab
+}
+
 async fn fixture_session(
     safe_focus: bool,
 ) -> (BrowserSession, tokio::task::JoinHandle<Vec<Value>>) {
