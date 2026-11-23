@@ -2,35 +2,18 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createIssuesMock } from "../../../mock/issues";
+import type { MockApi } from "../../../mock/api";
+import { installMockFetch } from "../../test-support";
+import { wire, wireWrites } from "../../wire.test-support";
 import type { EngineStatus, Project, Thread } from "../../api/types";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
 import { setIssuesApi } from "../issues/api";
 import { WelcomePage } from "./WelcomePage";
 
-const writes: unknown[] = [];
-let failWrite = false;
-vi.mock("../../api/client", async (original) => {
-  const actual = await original<typeof import("../../api/client")>();
-  return {
-    ...actual,
-    request: vi.fn(async (method: string, path: string, body?: unknown) => {
-      if (path === "/api/settings/preferences/query")
-        return {
-          catalog: { version: "v1" },
-          rows: ["default_engine", "default_model", "default_effort", "default_model_options"].map((key) => ({ key, value: key === "default_model_options" ? {} : "", revision: `r-${key}` })),
-        };
-      if (path === "/api/settings/preferences" && method === "PUT") {
-        if (failWrite) throw new actual.ApiFailure("unavailable", "The service did not answer.", 503);
-        writes.push(body);
-        return { catalog: { version: "v2" }, rows: [] };
-      }
-      // The Issues flag is off: the real client reads this 404 as "this service reports no issues".
-      if (path === "/api/issues/trackers") throw new actual.ApiFailure("not_found", "Not found.", 404);
-      return [];
-    }),
-  };
-});
+let mock: MockApi;
+/** The saved-default writes the page sent, as the service received them. */
+const writes = () => wireWrites().filter((call) => call.method === "PUT" && call.path === "/api/settings/preferences");
 
 const engine = (patch: Partial<EngineStatus>) =>
   ({ id: "claude", name: "Claude Code", tier: "managed", installed: true, auth: "logged_in", version: "2.1.318", sign_in_command: "claude login", ...patch }) as EngineStatus;
@@ -44,19 +27,18 @@ function load(engines: EngineStatus[] | null, projects: Project[] = [], threads:
     projects: { data: projects, loading: false, error: null },
     threads: Object.fromEntries(threads.map((entry) => [entry.id, entry])),
     managed: { data: null, loading: false, error: null },
-    refreshEngines: vi.fn(async () => undefined),
   } as never);
 }
 
 beforeEach(() => {
-  writes.length = 0;
-  failWrite = false;
+  mock = installMockFetch();
   useUi.setState({ toasts: [] });
   window.location.hash = "";
   useUi.getState().setPalette(null);
 });
 afterEach(() => {
   setIssuesApi(null);
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -148,8 +130,10 @@ describe("agents", () => {
     const user = userEvent.setup();
     render(<WelcomePage />);
     expect(screen.getByText(/No engine is ready/)).toBeInTheDocument();
+    const engineReads = () => wire().filter((call) => call.method === "GET" && call.path === "/api/engines").length;
+    const before = engineReads();
     await user.click(screen.getByRole("button", { name: "Check again" }));
-    expect(useWorkspace.getState().refreshEngines).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(engineReads()).toBe(before + 1));
   });
 
   it("has no banner while an engine is ready", () => {
@@ -163,10 +147,12 @@ describe("agents", () => {
     const user = userEvent.setup();
     render(<WelcomePage />);
     await waitFor(() => expect(screen.getAllByRole("button", { name: "Use for new threads" })[0]).toBeEnabled());
-    expect(writes).toHaveLength(0);
+    expect(writes()).toHaveLength(0);
     await user.click(screen.getAllByRole("button", { name: "Use for new threads" })[1]!);
-    await waitFor(() => expect(writes).toHaveLength(1));
-    expect(writes[0]).toMatchObject({ scope: {}, membership_version: "v1", edits: { default_engine: { op: "set", value: "codex" }, default_model: { op: "set", value: "" } } });
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    const version = (mock.handle("POST", "/api/settings/preferences/query", { scope: {}, keys: ["default_engine"] }).body as { catalog: { version: string } }).catalog.version;
+    expect(writes()[0]?.body).toMatchObject({ scope: {}, membership_version: version, edits: { default_engine: { op: "set", value: "codex" }, default_model: { op: "set", value: "" } } });
+    expect(Object.keys((writes()[0]?.body as { edits: object }).edits).sort()).toEqual(["default_effort", "default_engine", "default_model", "default_model_options"]);
   });
 
   it("names the section Agents and says in a toast which engine new threads now start on", async () => {
@@ -184,12 +170,14 @@ describe("agents", () => {
     const user = userEvent.setup();
     render(<WelcomePage />);
     await waitFor(() => expect(screen.getAllByRole("button", { name: "Use for new threads" })[1]).toBeEnabled());
-    failWrite = true;
+    mock.fail("/api/settings/preferences", 1, 503, "unavailable", "The service did not answer.");
     await user.click(screen.getAllByRole("button", { name: "Use for new threads" })[1]!);
     await waitFor(() => expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual(["Couldn't change the engine. The service did not answer."]));
     await waitFor(() => expect(screen.getAllByRole("button", { name: "Use for new threads" })).toHaveLength(2));
     expect(screen.getAllByRole("button", { name: "Use for new threads" })[1]).toBeEnabled();
-    expect(writes).toHaveLength(0);
+    expect(writes()).toHaveLength(1);
+    const stored = mock.handle("POST", "/api/settings/preferences/query", { scope: {}, keys: ["default_engine"] }).body as { rows: { key: string; value: unknown }[] };
+    expect(stored.rows.find((row) => row.key === "default_engine")?.value).toBe("");
   });
 
   it("copies the sign-in command on a click and tells the person to run it", async () => {
@@ -241,6 +229,6 @@ describe("Issue trackers section", () => {
     await user.click(within(rows[1]!).getByRole("button", { name: "Replace the token for GitLab" }));
     expect(window.location.hash).toBe("#/settings/source-control");
     expect(within(rows[0]!).queryByRole("button")).toBeNull();
-    expect(writes).toHaveLength(0);
+    expect(writes()).toHaveLength(0);
   });
 });

@@ -1,50 +1,20 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiFailure, request } from "../../../api/client";
-import type { PullRequest } from "../../../api/types";
 import { threads } from "../../../../mock/fixtures";
+import type { MockApi } from "../../../../mock/api";
+import { installMockFetch } from "../../../test-support";
+import { wire } from "../../../wire.test-support";
 import { useWorkspace } from "../../../product/state/workspace";
 import { pullChecks, pullPreviewPlacement, pullReview, pullState } from "./PullLinkPreview";
 import { pullNumberOf, pullRepositoryLabel, samePullRequest } from "./pullLink";
 import { Markdown } from "./Markdown";
 import { previewProjectId } from "./MarkdownLink";
 
-vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
-const mock = vi.mocked(request);
+// Pull request 203 of the mock service's "pulls" scenario: opened by riley, checks passing, review required.
+const servedHref = "https://github.com/orbyn-dev/orbyn-engineering/pull/203";
 const href = "https://github.com/acme/orbyn/pull/42";
-
-const pull = (over: Partial<PullRequest> = {}): PullRequest => ({
-  number: 42,
-  title: "Fix the hover card",
-  url: href,
-  state: "open",
-  head: "fix",
-  base: "main",
-  author: "ada",
-  draft: false,
-  updated_at: new Date().toISOString(),
-  labels: [],
-  review_state: "review_required",
-  checks_state: "pass",
-  ...over,
-});
-
-const respond = (entry = pull()) =>
-  mock.mockResolvedValue({
-    pull: entry,
-    body: "",
-    checks: null,
-    comments: null,
-    mergeable: null,
-    reviewers: [],
-    head_sha: null,
-    base_sha: null,
-    additions: null,
-    deletions: null,
-    changed_files: null,
-    maintainer_can_modify: null,
-    auto_merge: false,
-  } as never);
+let mock: MockApi;
+const pullReads = () => wire().filter((call) => /\/pulls\//.test(call.path));
 
 const hover = async (link: HTMLElement, ms = 350) => {
   fireEvent.pointerEnter(link, { pointerType: "mouse" });
@@ -55,14 +25,18 @@ const hover = async (link: HTMLElement, ms = 350) => {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  mock.mockReset();
+  mock = installMockFetch();
+  mock.reset("pulls");
   useWorkspace.setState({
     threads: Object.fromEntries(threads().map((thread) => [thread.id, thread])),
   });
   window.location.hash = "#/threads/t-approval";
 });
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe("pull link addresses", () => {
   it("reads the number, repository and host from a host's address", () => {
@@ -83,39 +57,37 @@ describe("pull link addresses", () => {
 
 describe("pull link preview", () => {
   it("shows the title, state, author and checks after a short hover", async () => {
-    respond();
-    render(<Markdown text={`See [the fix](${href}).`} projectId="p-app" />);
+    render(<Markdown text={`See [the fix](${servedHref}).`} projectId="p-app" />);
     const link = screen.getByRole("link", { name: "the fix" });
     fireEvent.pointerEnter(link, { pointerType: "mouse" });
     act(() => {
       vi.advanceTimersByTime(349);
     });
-    expect(mock).not.toHaveBeenCalled();
+    expect(pullReads()).toEqual([]);
     expect(screen.queryByRole("tooltip")).toBeNull();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1);
     });
-    expect(mock).toHaveBeenCalledWith("GET", "/api/projects/p-app/pulls/42", undefined, expect.anything(), { priority: "foreground" });
+    expect(pullReads()).toEqual([{ method: "GET", path: "/api/projects/p-app/pulls/203" }]);
     const card = screen.getByRole("tooltip");
-    expect(card).toHaveTextContent("Fix the hover card");
-    expect(card).toHaveTextContent("acme/orbyn#42 · Open");
-    expect(card).toHaveTextContent("ada");
+    expect(card).toHaveTextContent("Return to the page people came from");
+    expect(card).toHaveTextContent("orbyn-dev/orbyn-engineering#203 · Open");
+    expect(card).toHaveTextContent("riley");
     expect(card).toHaveTextContent("Checks passing");
     expect(card).toHaveTextContent("Awaiting review");
   });
 
   it("uses the current thread's project when the prose has no project", async () => {
-    respond();
-    render(<Markdown text={`See [the fix](${href}).`} />);
+    render(<Markdown text={`See [the fix](${servedHref}).`} />);
     await hover(screen.getByRole("link", { name: "the fix" }));
-    expect(mock).toHaveBeenCalledWith("GET", "/api/projects/p-app/pulls/42", undefined, expect.anything(), { priority: "foreground" });
-    expect(screen.getByRole("tooltip")).toHaveTextContent("Fix the hover card");
+    expect(pullReads()).toEqual([{ method: "GET", path: "/api/projects/p-app/pulls/203" }]);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Return to the page people came from");
   });
 
   it("leaves before the delay without a request or a card", async () => {
     const link = (() => {
-      render(<Markdown text={`See [the fix](${href}).`} projectId="p-app" />);
+      render(<Markdown text={`See [the fix](${servedHref}).`} projectId="p-app" />);
       return screen.getByRole("link", { name: "the fix" });
     })();
     fireEvent.pointerEnter(link, { pointerType: "mouse" });
@@ -126,43 +98,44 @@ describe("pull link preview", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
     });
-    expect(mock).not.toHaveBeenCalled();
+    expect(pullReads()).toEqual([]);
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
 
   it("stays quiet for other links, touch pointers and routes without a project", async () => {
     render(<Markdown text={"[docs](https://example.com/docs)"} projectId="p-app" />);
     await hover(screen.getByRole("link", { name: "docs" }));
-    expect(mock).not.toHaveBeenCalled();
+    expect(pullReads()).toEqual([]);
 
     const pr = (() => {
-      render(<Markdown text={`[the fix](${href})`} projectId="p-app" />);
+      render(<Markdown text={`[the fix](${servedHref})`} projectId="p-app" />);
       return screen.getByRole("link", { name: "the fix" });
     })();
     fireEvent.pointerEnter(pr, { pointerType: "touch" });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
     });
-    expect(mock).not.toHaveBeenCalled();
+    expect(pullReads()).toEqual([]);
 
     window.location.hash = "#/pulls";
-    render(<Markdown text={`[other](${href})`} />);
+    render(<Markdown text={`[other](${servedHref})`} />);
     await hover(screen.getByRole("link", { name: "other" }));
-    expect(mock).not.toHaveBeenCalled();
+    expect(pullReads()).toEqual([]);
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
 
   it("hides the card when the project answers with another pull request", async () => {
-    respond(pull({ url: "https://github.com/acme/other/pull/42" }));
-    render(<Markdown text={`[the fix](${href})`} projectId="p-app" />);
+    // The service answers pull request 203 of orbyn-dev/orbyn-engineering, not this repository's.
+    render(<Markdown text="[the fix](https://github.com/acme/other/pull/203)" projectId="p-app" />);
     await hover(screen.getByRole("link", { name: "the fix" }));
+    expect(pullReads()).toHaveLength(1);
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
 
   it("hides the card when the pull request cannot be read", async () => {
-    mock.mockRejectedValue(new ApiFailure("not_found", "No such pull request.", 404));
-    render(<Markdown text={`[the fix](${href})`} projectId="p-app" />);
+    render(<Markdown text="[the fix](https://github.com/orbyn-dev/orbyn-engineering/pull/999)" projectId="p-app" />);
     await hover(screen.getByRole("link", { name: "the fix" }));
+    expect(pullReads()).toEqual([{ method: "GET", path: "/api/projects/p-app/pulls/999" }]);
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
 });

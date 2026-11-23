@@ -308,7 +308,9 @@ async fn committed_oversized_and_linked_policy_is_refused_without_following_it()
         &w.repo,
         &format!(r#"{{"bus":{{}},"pad":"{}"}}"#, "x".repeat(65536)),
     );
-    assert!(w.core.crew_repo_limits(&lead).await.is_err());
+    let oversized = w.core.crew_repo_limits(&lead).await.unwrap_err();
+    assert_eq!(oversized.code, orbyn_contracts::ErrorCode::InvalidObject);
+    assert!(oversized.message.contains("over 64 KiB"), "{oversized:?}");
     // Create Git tree entries directly: this covers Windows too, without symlink privileges.
     for path in [".orbyn/crew.json", ".orbyn"] {
         run_git(&w.repo, &["rm", "-r", "-q", "--cached", ".orbyn"]);
@@ -343,7 +345,14 @@ async fn committed_oversized_and_linked_policy_is_refused_without_following_it()
                 "link",
             ],
         );
-        assert!(w.core.crew_repo_limits(&lead).await.is_err());
+        let linked = w.core.crew_repo_limits(&lead).await.unwrap_err();
+        assert_eq!(linked.code, orbyn_contracts::ErrorCode::InvalidObject);
+        assert!(
+            linked
+                .message
+                .contains(&format!("{path} is a symlink in the repository")),
+            "{linked:?}"
+        );
     }
     w.core.shutdown().await;
 }
