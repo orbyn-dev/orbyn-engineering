@@ -138,3 +138,95 @@ fn migration_74_applies_through_store_open_and_reopening_is_a_no_op() {
         "reopening an already migrated store writes no migration"
     );
 }
+
+/// The list row names how a run ended badly, so the runs list can tell a cancelled run from a failed one.
+#[test]
+fn the_runs_list_carries_the_error_kind_of_a_run_that_ended_badly() {
+    use super::code_runs::{CodeRunEnd, NewCodeRun};
+    use super::{NewProject, NewThread};
+    let dir = TempDir::new();
+    let store = Store::open(&dir.path().join("db"), "epoch-a").unwrap();
+    let project = store
+        .add_project(NewProject {
+            path: "/repo",
+            name: "repo",
+            is_git: true,
+            managed: false,
+            scratch: false,
+        })
+        .unwrap();
+    let thread = store
+        .create_thread(NewThread {
+            project_id: project.id,
+            title: "t".into(),
+            engine: "fake".into(),
+            model: None,
+            cwd: "/repo".into(),
+            worktree: None,
+            skill_profile: None,
+            parent_thread_id: None,
+            relation: None,
+            scratch: false,
+        })
+        .unwrap()
+        .id;
+    let begin = |run_id: &str, at: &str| {
+        store
+            .code_run_begin(&NewCodeRun {
+                run_id: run_id.to_owned(),
+                thread_id: thread.clone(),
+                script: "return 1".to_owned(),
+                script_sha256: "sha".to_owned(),
+                seed_start_ms: 0,
+                seed: 1,
+                started_at: at.to_owned(),
+                crew_worker: false,
+            })
+            .unwrap();
+    };
+    let end = |run_id: &str, status: &'static str, error: Option<&str>| {
+        store
+            .code_run_end(
+                run_id,
+                &CodeRunEnd {
+                    status,
+                    ended_at: "2026-11-23T10:00:00Z".to_owned(),
+                    error: error.map(str::to_owned),
+                    result: None,
+                    logs: Vec::new(),
+                    logs_total: 0,
+                    truncated: false,
+                },
+            )
+            .unwrap();
+    };
+    begin("a-cancelled", "2026-11-23T09:00:01Z");
+    end(
+        "a-cancelled",
+        "error",
+        Some(r#"{"kind":"cancelled","message":"The run was cancelled."}"#),
+    );
+    begin("b-failed", "2026-11-23T09:00:02Z");
+    end(
+        "b-failed",
+        "error",
+        Some(r#"{"kind":"runtime","message":"boom","line":1}"#),
+    );
+    begin("c-unreadable", "2026-11-23T09:00:03Z");
+    end("c-unreadable", "error", Some("not json"));
+    begin("d-done", "2026-11-23T09:00:04Z");
+    end("d-done", "completed", None);
+
+    let rows = store.code_runs_of(&thread, 10).unwrap();
+    let kind = |id: &str| {
+        rows.iter()
+            .find(|row| row.run_id == id)
+            .unwrap()
+            .error_kind
+            .clone()
+    };
+    assert_eq!(kind("a-cancelled").as_deref(), Some("cancelled"));
+    assert_eq!(kind("b-failed").as_deref(), Some("runtime"));
+    assert_eq!(kind("c-unreadable"), None, "an error row with no kind is null");
+    assert_eq!(kind("d-done"), None, "a run that did not fail has none");
+}

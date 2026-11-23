@@ -36,6 +36,7 @@ const SUMMARY_KEYS: &[&str] = &[
     "calls",
     "script_head",
     "waited_ms",
+    "error_kind",
 ];
 /// `web/src/generated/CodeRunRecord.ts`. Every optional field is `null` here, never absent.
 const RECORD_KEYS: &[&str] = &[
@@ -456,6 +457,7 @@ async fn a_real_run_is_listed_and_read_with_the_contract_shape() {
     assert_eq!(summary["calls"], 1);
     assert_eq!(summary["script_head"], script);
     assert_eq!(summary["waited_ms"], 0);
+    assert!(summary["error_kind"].is_null(), "{summary}");
     assert!(summary["started_at"].is_string(), "{summary}");
     assert!(summary["ended_at"].is_string(), "{summary}");
 

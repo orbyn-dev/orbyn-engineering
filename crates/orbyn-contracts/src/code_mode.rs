@@ -112,6 +112,11 @@ pub struct CodeRunSummary {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub waited_ms: Option<u64>,
+    /// How the run ended badly: `syntax`, `runtime`, `limit`, `denied`, `lost` or `cancelled`. `null` for a run that did not
+    /// end in an error, and for an error row whose kind was not recorded.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub error_kind: Option<String>,
 }
 }
 
