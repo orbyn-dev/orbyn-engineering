@@ -98,9 +98,12 @@ impl Core {
             .await
     }
 
-    /// One pass of both listeners. A pass never fails on one crew's trouble: each item is logged and the pass goes on,
-    /// so one unreadable forge or project cannot stop the other events. `rotation` moves which CI crews are watched
-    /// when there are more than `CI_CREWS_MAX`. `stop` is checked between firings only.
+    /// One pass of the listeners: the schedule timer, the CI-failure watch, the file triggers and the watch timer, in that
+    /// order. A pass never fails on one crew's trouble: each item is logged and the pass goes on, so one unreadable forge or
+    /// project cannot stop the other events. The ticks run one after another, so a slow watch command can hold the pass (each
+    /// check is bounded by its five-minute cap, but a pass has no overall cap yet; a per-pass cap is a follow-up, #1354).
+    /// `rotation` moves which CI crews are watched when there are more than `CI_CREWS_MAX`. `stop` is checked between firings
+    /// only.
     pub(crate) async fn crew_background_listeners_pass(
         self: &Arc<Self>,
         now: i64,
@@ -115,13 +118,13 @@ impl Core {
         if stop.is_cancelled() {
             return Ok(());
         }
-        // Last: a watch's command runs in the project and may take minutes, so it must not delay the other listeners in
-        // this pass. Its own bucket claim keeps the next pass from repeating it.
-        self.crew_background_watch_tick(now, stop).await;
+        self.crew_background_file_tick().await;
         if stop.is_cancelled() {
             return Ok(());
         }
-        self.crew_background_file_tick().await;
+        // Last: a watch's command runs in the project and may take minutes, so it must not delay the other events in this
+        // pass. Its own bucket claim keeps the next pass from repeating it.
+        self.crew_background_watch_tick(now, stop).await;
         Ok(())
     }
 
@@ -381,7 +384,9 @@ impl Core {
     /// never runs, so a clock that moves back checks nothing. A crew that is off is never looked at and spends no claim. A check
     /// writes its own state and history and only starts a run (through `crew_background_start`, with the event in the held
     /// row's key) when a result turns failing with `on_failing` = `template`; a start that is refused is audited like the other
-    /// listeners' refusals and leaves the Needs you row raised. Nothing here calls a model.
+    /// listeners' refusals and leaves the Needs you row raised. Nothing here calls a model. This tick runs last in a pass,
+    /// after the other listeners and the file triggers; the checks of one pass run one after another, bounded per check by the
+    /// five-minute cap and, for now, by nothing for the pass as a whole (#1354).
     async fn crew_background_watch_tick(self: &Arc<Self>, now: i64, stop: &CancellationToken) {
         let crews = self
             .store

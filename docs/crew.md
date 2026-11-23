@@ -1145,17 +1145,18 @@ given (they must be in range, and no model run follows); `template` validates th
 **As built (KC6 slices 2 and 3, service only):** the listener's watch tick runs each enabled watch's stored command once per
 `every_hours` bucket, in the project's checkout, for at most five minutes, and claims `watch:<crew>:<bucket>` before it runs so a
 crash mid-check does not repeat it. The command is screened again before every check (the always-denied list and the blast-radius
-guard, whose lists may have changed since the crew was made). Its last 20 lines and 2 KiB are kept, redacted through the locked
-redactor; nothing else of its output is stored. **The first check that runs is a baseline and raises nothing** (a failing baseline is
+guard, whose lists may have changed since the crew was made). Its last 20 lines and at most 2 KiB are kept, redacted through the
+locked redactor; nothing else of its output is stored. **The first check that runs is a baseline and raises nothing** (a failing baseline is
 recorded as failing); after it, only a turn between passing and failing is a change. A turn to failing writes one change row and either
 raises one Needs you row (`on_failing` = `needs_you`) or starts the crew's template once through `crew_background_start`
 (`template`); a turn to passing writes "Passing again" and resolves the row. A different failure while it stays failing updates the last
 exit code and tail and writes no row. A check that could not run (it timed out, could not start, the screen refuses the command now, or
-the folder is not trusted) counts a streak: three in a row raise one Needs you row, and a check that runs again resolves it. A command
+the folder is not trusted) counts a streak: three in a row raise one Needs you row, and a check that runs again resolves it. A single command
 that could not run never raises by itself, and no model is called while the result stays the same. A template start the listener is
 refused (a run already in progress, the daily budget, no engine, review capacity) leaves the Needs you row raised and writes one
 `crew.background.listener.refused` audit row; the refusal's sentence is not stored. Run now still refuses a watch: its command runs on
-its own schedule. Reads: `GET /api/crew/background/{id}/watch` (its state, last check time, exit code and reason, and the redacted
+its own schedule; turning it off writes one `turned_off` change row (action `none`) in the same transaction as the switch, so
+the history says the checks stopped. Reads: `GET /api/crew/background/{id}/watch` (its state, last check time, exit code and reason, and the redacted
 tail) and `GET /api/crew/background/{id}/watch/changes` (the change history, newest first, paged); the Needs you inbox lists a failing
 watch and one that could not run three times in a row, beside the Review queue's background runs. No migration was needed: migration
 77's two tables hold the state and the history. No screen is built in these slices, and the "Not built yet" chip stays until the web
@@ -1178,7 +1179,8 @@ narrowed by its optional workflow filter. Every firing first claims a row in `cr
 never fires again (a clock that moves back starts nothing). **One firing per crew per pass**: a head with several failing checks fires the first and leaves the others for a later pass.
 A firing refused for review capacity, the daily budget, an untrusted folder, no engine or a run already in progress is **dropped, not retried**: its claim stays, capacity also leaves its held row,
 and every refusal writes one `crew.background.listener.refused` audit row (the crew, the listener, a fixed reason word; the actor is the constant `crew`). **Text from outside never reaches the prompt**:
-a check's name, a head sha and a `.orbyn/crew.json` trigger's name only decide whether a run starts; the brief, the worker's prompt, the lead thread and the audit stay code-owned. A stop is
+a check's name, a head sha and a `.orbyn/crew.json` trigger's name only decide whether a run starts; the brief, the worker's prompt, the lead thread and the audit stay code-owned. The ticks of one pass run one after another: a slow watch command can hold them (each check is bounded by its five-minute cap,
+but a pass has no overall cap yet; a per-pass cap is a follow-up, #1354). A stop is
 looked at between firings, never inside a start, and a run a crash leaves is settled when the core opens. A trigger in the file with no stored crew is ignored. At most 64 CI crews are watched per pass, from a rotating start.
 `crew_background_events` is not pruned yet.
 
@@ -1788,7 +1790,7 @@ writes `crew.task.resumed` in the same transaction as the state, attempt and res
 `crew.task.restart_stopped` with `why` (`reviewer`, `already_resumed`, `not_resumable` or `send_failed`) in
 the same transaction as its `stopped`/`engine_error` move.
 
-**As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342); its core route is not built. KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slices 1 to 3 (#1343 slice 1; slices 2 and 3 service only, no web). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
+**As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342); its core route is not built. KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
 
 **Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
 (our router never swaps an engine) and release channels.

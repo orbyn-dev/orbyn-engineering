@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::{AuditRecord, CrewTask, Store, insert_audit};
 use crate::error::{CoreError, Result};
-use crate::util::{new_id, now};
+use crate::util::{new_id, now, unix_now};
 
 /// The most background crews one project may have, so the list stays readable and a loop cannot fill the table.
 pub const PER_PROJECT_MAX: u32 = 50;
@@ -532,8 +532,9 @@ impl Store {
         })
     }
 
-    /// Turns a crew on or off. Turning it off stops a run in progress with the reason `disabled`, its stop row written as `actor` (the person who turned it off).
-    /// Audited in the same transaction.
+    /// Turns a crew on or off. Turning it off stops a run in progress with the reason `disabled`, its stop row written as `actor`
+    /// (the person who turned it off), and writes one `turned_off` row to a watch's change history (`action` = `none`), so the
+    /// history says the checks stopped. A repeat turn-off writes nothing. Audited in the same transaction.
     pub fn set_background_enabled(
         &self,
         id: &str,
@@ -560,6 +561,15 @@ impl Store {
                 "UPDATE crew_background SET enabled = ?2, updated_at = ?3 WHERE id = ?1",
                 params![id, i64::from(enabled), now()],
             )?;
+            // A watch's history records the turn-off, once per enabled-to-off step, in this transaction with the switch and
+            // its audit. The state row is left as the last check wrote it: nothing ran.
+            if !enabled && current.enabled && current.trigger_kind == "watch" {
+                tx.execute(
+                    "INSERT INTO crew_watch_changes (background_id, kind, at_unix, action)
+                     VALUES (?1, 'turned_off', ?2, 'none')",
+                    params![id, unix_now()],
+                )?;
+            }
             crew_in(tx, id)
         })
     }
@@ -817,8 +827,9 @@ impl Store {
         })
     }
 
-    /// The background crews of one trigger kind, by name. The listeners' observation set; a kind nothing can start
-    /// (issue labels, dependency updates, watches) has no listener and is never listed by one.
+    /// The background crews of one trigger kind, by name. The listeners' observation set: `schedule`, `ci_failure` and
+    /// `watch` each have their own tick; a kind nothing can start yet (`issue_label`, `dependency_update`) has no listener and
+    /// is never listed by one.
     pub fn background_crews_of_kind(&self, kind: &str) -> Result<Vec<BackgroundRow>> {
         let conn = self.reader();
         let mut statement =
@@ -1401,8 +1412,10 @@ impl Store {
     }
 
     /// The watches that ask for the person now, with the newest change each wrote: one whose last check could not run three
-    /// times in a row, and one that turned failing and asked for the person. A failing watch that started its template, or that
-    /// only had a failing baseline (a first check never raises), asks for nothing; a watch that is off asks for nothing either,
+    /// times in a row, and one that turned failing and asked for the person. A failing watch stays raised through its first one
+    /// or two checks that could not run (the last result that ran is still a failure and its last change asked for the person),
+    /// and the could-not-run row takes over once the streak reaches three; a failing watch that started its template, or that
+    /// only had a failing baseline (a first check never raises), asks for nothing. A watch that is off asks for nothing either,
     /// because nothing will check it until it is turned back on.
     pub fn watch_raised(&self) -> Result<Vec<WatchRaisedRow>> {
         let conn = self.reader();
@@ -1415,7 +1428,7 @@ impl Store {
                 ON ch.id = (SELECT MAX(id) FROM crew_watch_changes WHERE background_id = s.background_id)
              WHERE c.trigger_kind = 'watch' AND c.enabled = 1
                AND ((s.last_state = 'could_not_run' AND s.error_streak >= 3)
-                    OR (s.last_state = 'failing' AND ch.kind = 'failing' AND ch.action = 'needs_you'))
+                    OR (s.last_result = 'fail' AND ch.kind = 'failing' AND ch.action = 'needs_you'))
              ORDER BY s.background_id",
         )?;
         let rows = statement

@@ -184,7 +184,9 @@ impl Core {
             if !seen.insert(watch.crew_id.clone()) {
                 continue;
             }
-            let could_not_run = watch.last_state == "could_not_run";
+            // The could-not-run kind is the raised one only once the streak reaches three; before that a kept failing row is
+            // still the failing kind.
+            let could_not_run = watch.last_state == "could_not_run" && watch.error_streak >= 3;
             let kind = if could_not_run {
                 wire::NeedsYouKind::WatchCouldNotRun
             } else {
@@ -203,10 +205,13 @@ impl Core {
             } else {
                 fixed_reason(kind).map(str::to_owned)
             };
-            let at = watch
-                .change_at
-                .or(watch.last_checked_unix)
-                .unwrap_or_default();
+            // A could-not-run row began with its latest check; a failing row began with the change that raised it.
+            let at = if could_not_run {
+                watch.last_checked_unix.or(watch.change_at)
+            } else {
+                watch.change_at.or(watch.last_checked_unix)
+            }
+            .unwrap_or_default();
             items.push(wire::NeedsYouItem {
                 id: watch.crew_id.clone(),
                 kind,

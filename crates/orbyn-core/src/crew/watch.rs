@@ -391,13 +391,14 @@ impl Core {
     }
 }
 
-/// The event key the watch tick fires a start with: `watch:<bucket>`, so the start's held-row key is
-/// `<crew>:watch:<bucket>` and the claim is `watch:<crew>:<bucket>`.
+/// The event the watch tick fires a start with: `watch:<bucket>`. The tick passes it to `crew_background_start`, which builds
+/// the held row's key as `<crew>:<event>` (so `<crew>:watch:<bucket>`); the bucket claim is `watch:<crew>:<bucket>`.
 pub fn event_key(bucket: i64) -> String {
     format!("watch:{bucket}")
 }
 
-/// The watch's own schedule bucket, which the tick claims and names its event with.
+/// The watch's own schedule bucket, which the tick claims (`watch:<crew>:<bucket>`) and names its event with
+/// (`watch:<bucket>`).
 pub fn bucket_of(now: i64, hours: u32) -> i64 {
     now.div_euclid(i64::from(hours) * 3600)
 }

@@ -1,6 +1,7 @@
 //! Crew (Preview) over HTTP: the Preview flag, background crews' state (`/api/crew/background`: list, read, create, update, on, off,
-//! delete, the runs, Run now, which starts one run by hand, and the acknowledgement that settles a run's waiting review; nothing
-//! fires a trigger on its own), Autopilot's modes, trust, risk, the Review queue, the merge queue, the watch on
+//! delete, the runs, a watch's last check and change history, Run now, which starts one run by hand, and the acknowledgement that
+//! settles a run's waiting review; nothing fires a trigger on its own), Autopilot's modes, trust, risk, the Review queue, the
+//! merge queue, the watch on
 //! main, the digest, the approval ledger, the trip wires and the guards, and three reads of the repository's data classes (`/api/crew/classes`,
 //! `/api/crew/classes/test`, `/api/crew/route/{task}`). Transport only: `orbyn_core::crew` builds every view and
 //! owns every rule.

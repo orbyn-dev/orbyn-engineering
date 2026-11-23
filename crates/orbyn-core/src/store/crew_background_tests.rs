@@ -1230,7 +1230,10 @@ fn migration_77_keeps_background_rows_and_adds_the_watch_tables() {
     assert_eq!((crew.daily_runs, crew.daily_turns), (2, 40));
     assert_eq!(crew.utc_offset_minutes, 600);
     assert!(crew.enabled);
-    assert_eq!((crew.created_at.as_str(), crew.updated_at.as_str()), ("created", "updated"));
+    assert_eq!(
+        (crew.created_at.as_str(), crew.updated_at.as_str()),
+        ("created", "updated")
+    );
     let run = store.background_run("run-1").unwrap().unwrap();
     assert_eq!(
         (
@@ -1370,4 +1373,66 @@ fn migration_77_keeps_background_rows_and_adds_the_watch_tables() {
             .unwrap();
         assert_eq!(left, 0, "{table}");
     }
+}
+#[test]
+fn a_watch_turned_off_writes_one_turned_off_row_in_the_switch() {
+    let dir = TempDir::new();
+    let store = store(&dir);
+    let settings = json!({ "command": "cargo test", "every_hours": 6, "on_failing": "needs_you" });
+    let crew = store
+        .create_background_crew(
+            &NewBackground {
+                project_id: "project-1",
+                name: "Watch",
+                template: "fix_failing_ci",
+                trigger_kind: "watch",
+                trigger_settings: &settings,
+                budget_turns: 10,
+                budget_minutes: 30,
+                daily_runs: 4,
+                daily_turns: 40,
+                utc_offset_minutes: 600,
+            },
+            "user",
+        )
+        .unwrap();
+    assert!(!crew.enabled);
+
+    // An off crew turned off again, or an on crew turned on, writes nothing.
+    store
+        .set_background_enabled(&crew.id, false, "user")
+        .unwrap();
+    store
+        .set_background_enabled(&crew.id, true, "user")
+        .unwrap();
+    assert_eq!(store.watch_changes_page(&crew.id, 10, 0).unwrap().1, 0);
+
+    // The person's Off writes one turned_off row in the same transaction as the switch.
+    store
+        .set_background_enabled(&crew.id, false, "user")
+        .unwrap();
+    let (rows, total) = store.watch_changes_page(&crew.id, 10, 0).unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(
+        (rows[0].kind.as_str(), rows[0].action.as_str()),
+        ("turned_off", "none")
+    );
+    assert_eq!(rows[0].exit_code, None);
+    assert_eq!(rows[0].tail, None);
+
+    // A second off writes no second row, and a crew that is not a watch gets no watch row.
+    store
+        .set_background_enabled(&crew.id, false, "user")
+        .unwrap();
+    assert_eq!(store.watch_changes_page(&crew.id, 10, 0).unwrap().1, 1);
+    let plain = store
+        .create_background_crew(&new_crew("Plain", &json!({})), "user")
+        .unwrap();
+    store
+        .set_background_enabled(&plain.id, true, "user")
+        .unwrap();
+    store
+        .set_background_enabled(&plain.id, false, "user")
+        .unwrap();
+    assert_eq!(store.watch_changes_page(&plain.id, 10, 0).unwrap().1, 0);
 }
