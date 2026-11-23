@@ -22,6 +22,7 @@ mod background_daily;
 mod background_listeners;
 mod background_review;
 mod background_start;
+mod background_watch;
 mod backtest_api;
 mod backtest_escapes;
 mod bus;

@@ -1141,24 +1141,47 @@ is 1 to 720, and `on_failing` is required. A project holds at most 10 watches, c
 is screened at create and update with the always-denied list (N1 to N10) and the blast-radius guard, with the project's folder as the
 worktree; a refusal names the rule in one fixed sentence and never repeats the command. `needs_you` stores the template and budgets as
 given (they must be in range, and no model run follows); `template` validates them like any other crew. The command is stored redacted.
-Nothing runs a watch yet: there is no listener, no command execution, no model call and no UI, and Run now refuses one.
+
+**As built (KC6 slices 2 and 3, service only):** the listener's watch tick runs each enabled watch's stored command once per
+`every_hours` window, in the project's checkout, for at most five minutes (and at most 1 MiB printed on each stream: a command over it is stopped and could not run, `printed too much`), and claims `watch:<crew>:<start>` (the window's start in unix seconds, so a changed `every_hours` never waits on the old interval's claims) before it runs so a
+crash mid-check does not repeat it. The crew is read again just before its claim, so a watch turned off or changed during a long pass is not run on the old row. The command is screened again before every check (the always-denied list and the blast-radius
+guard, whose lists may have changed since the crew was made). Its last 20 lines and at most 2 KiB are kept, redacted through the
+locked redactor; nothing else of its output is stored. **The first check that runs is a baseline and raises nothing** (a failing baseline is
+recorded as failing); after it, only a turn between passing and failing is a change. A turn to failing writes one change row and either
+raises one Needs you row (`on_failing` = `needs_you`) or starts the crew's template once through `crew_background_start`
+(`template`); a turn to passing writes "Passing again" and resolves a raised row, or writes the `passing` row with action `none` when the
+failure was a baseline or a started template, so nothing claims to resolve a row that never existed. A different failure while it stays failing updates the last
+exit code and tail and writes no row. A check that could not run (it timed out, could not start, the screen refuses the command now, or
+the folder is not trusted) counts a streak: three in a row raise one Needs you row, and a check that runs again resolves it. A single command
+that could not run never raises by itself, and no model is called while the result stays the same. A template start the listener is
+refused (a run already in progress, the daily budget, no engine, review capacity) leaves the Needs you row raised and writes one
+`crew.background.listener.refused` audit row; the refusal's sentence is not stored. Run now still refuses a watch: its command runs on
+its own schedule; turning it off writes one `turned_off` change row (action `none`) in the same transaction as the switch, so
+the history says the checks stopped. Reads: `GET /api/crew/background/{id}/watch` (its state, last check time, exit code and reason, and the redacted
+tail) and `GET /api/crew/background/{id}/watch/changes` (the change history, newest first, paged); the Needs you inbox lists a failing
+watch and one that could not run three times in a row, beside the Review queue's background runs. No migration was needed: migration
+77's two tables hold the state and the history. No screen is built in these slices, and the "Not built yet" chip stays until the web
+slice.
 
 **As built (slice 4h, listeners, migration 59):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
 service starts behind the Preview flag **only when it sets an interval** (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60 s to 24 h; unset means no pass, not even at
 startup) and awaits on shutdown. Each pass fires what is due for the crews that are on (a crew that is off is not read from the forge and spends no event):
-a `schedule` crew once per `every_hours` bucket, and a `ci_failure` crew on a failed check run at its branch head (its branch setting, else the project default),
+a `schedule` crew once per `every_hours` bucket, a `watch` crew's command once per `every_hours` bucket (see "Watches" above), and a
+`ci_failure` crew on a failed check run at its branch head (its branch setting, else the project default),
 narrowed by its optional workflow filter. Every firing first claims a row in `crew_background_events` (first write wins) and then starts a run through the same seam as Run now:
 
 | Event | Claim | Held-start key |
 | --- | --- | --- |
 | schedule | `schedule:<crew>:<bucket>` | `<crew>:schedule:<bucket>` |
+| watch | `watch:<crew>:<start>` (the window's start, in unix seconds) | `<crew>:watch:<start>` |
 | CI failure | `ci:<crew>:<head>:<hash>` | `<crew>:ci:<head>:<hash>` |
 
 `<hash>` is the first 16 hex characters of the SHA-256 of the failing check's name. A repeat of an event starts nothing new, and a bucket at or before the newest claimed one
 never fires again (a clock that moves back starts nothing). **One firing per crew per pass**: a head with several failing checks fires the first and leaves the others for a later pass.
 A firing refused for review capacity, the daily budget, an untrusted folder, no engine or a run already in progress is **dropped, not retried**: its claim stays, capacity also leaves its held row,
 and every refusal writes one `crew.background.listener.refused` audit row (the crew, the listener, a fixed reason word; the actor is the constant `crew`). **Text from outside never reaches the prompt**:
-a check's name, a head sha and a `.orbyn/crew.json` trigger's name only decide whether a run starts; the brief, the worker's prompt, the lead thread and the audit stay code-owned. A stop is
+a check's name, a head sha and a `.orbyn/crew.json` trigger's name only decide whether a run starts; the brief, the worker's prompt, the lead thread and the audit stay code-owned. The ticks of one pass run one after another: a slow watch command can hold them (each check is bounded by its five-minute cap,
+but a pass has no overall cap yet; a per-pass cap is a follow-up, #1354). A stop is
 looked at between firings, never inside a start, and a run a crash leaves is settled when the core opens. A trigger in the file with no stored crew is ignored. At most 64 CI crews are watched per pass, from a rotating start.
 `crew_background_events` is not pruned yet.
 
