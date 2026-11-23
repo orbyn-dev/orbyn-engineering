@@ -166,9 +166,14 @@ describe("pull request popover", () => {
     serve(three);
     vi.spyOn(pullsApi, "unlink").mockResolvedValue(undefined);
     const user = await open();
+    await screen.findByRole("button", { name: /^#3 / });
+    const rest = three.filter((one) => one.number !== 3);
+    vi.mocked(pullsApi.linked).mockResolvedValue(rest);
+    vi.mocked(pullsApi.refreshLinked).mockResolvedValue(rest);
     await user.click(await screen.findByRole("button", { name: "Unlink #3" }));
     expect(pullsApi.unlink).toHaveBeenCalledWith("t1", 3);
-    await waitFor(() => expect(pullsApi.linked).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^#3 / })).toBeNull());
+    expect(screen.getByRole("button", { name: /^#142 / })).toBeVisible();
   });
 
   it("puts every control in the Tab order: the row, its switch and Unlink are siblings", async () => {
@@ -314,11 +319,11 @@ describe("pull request cache", () => {
     const row = render(<PullsRow thread={thread} />);
     await screen.findAllByRole("button", { name: "Pull requests" });
     chip.unmount();
+    // Real wait: the entry must stay while the row still shows the thread, and a drop would come after a pause.
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(useThreadPulls.getState().byThread["t1"]?.pulls).toHaveLength(3);
     row.unmount();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(useThreadPulls.getState().byThread["t1"]).toBeUndefined();
+    await waitFor(() => expect(useThreadPulls.getState().byThread["t1"]).toBeUndefined());
   });
 });
 
@@ -373,7 +378,6 @@ describe("pull request store", () => {
     const { unmount } = render(<PullChip thread={thread} />);
     await screen.findByRole("button", { name: "Pull requests" });
     unmount();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(useThreadPulls.getState().byThread["t1"]).toBeUndefined();
+    await waitFor(() => expect(useThreadPulls.getState().byThread["t1"]).toBeUndefined());
   });
 });

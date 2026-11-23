@@ -724,6 +724,11 @@ impl Core {
         let commit = self
             .crew_answer_review(task_id, answer, &target, now)
             .await?;
+        // A person's local revert is a lesson of its own (source 2), written after the branch moved; a forge revert
+        // only queues the corrective PR, so nothing is reverted yet and nothing is learned. Neither can fail the act.
+        if matches!(answering, Answering::Revert) && commit.is_some() {
+            self.learn_person_merge_revert(task_id);
+        }
         // A forge revert queues a corrective PR: show exactly which commit will be pushed onto which base.
         let correction = if matches!(answering, Answering::Revert) {
             self.store.crew_forge_correction(task_id)?

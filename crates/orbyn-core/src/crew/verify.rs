@@ -26,10 +26,35 @@ const ZERO_COMMIT: &str = "0000000000000000000000000000000000000000";
 const NOT_PROVEN: &str = "Anything this check does not run.";
 const DIRTY: &str = "The checkout had uncommitted changes, so this commit is not exactly what ran.";
 
+/// What a failure names, in words a worker may read: a check's kind (never its id, its command or any other
+/// part of the key), or the core's own words for a failure no check ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureKind {
+    /// A check in the answer key, by the kind it declares. The word is the protocol's own kind name, so a new
+    /// kind gains its word with the contract.
+    Check(CheckKind),
+    /// A failure the core raises itself before any check runs, named by its own fixed words.
+    Core(&'static str),
+}
+
+impl FailureKind {
+    /// The word a stored lesson may name: the check's kind, never its id.
+    pub fn word(self) -> String {
+        match self {
+            Self::Check(kind) => super::wire_name(&kind),
+            Self::Core(word) => word.to_owned(),
+        }
+    }
+}
+
 /// One check that did not pass.
 #[derive(Clone, Debug)]
 pub struct Failed {
+    /// The check's id, or the core's own name for a synthetic failure. Internal to the core: a fingerprint and
+    /// the loop guard use it, and it never reaches a lesson, a brief or a worker.
     pub id: String,
+    /// What the failure names in words a worker may read: the check's kind, never its id (H1).
+    pub kind: FailureKind,
     pub outcome: CheckOutcome,
     pub exit_code: Option<u32>,
     /// What failed, by name. The fingerprint is made of these and not of the output.
@@ -349,6 +374,7 @@ impl Core {
             if !touched.is_empty() {
                 verdict.failures.push(Failed {
                     id: "protected_paths".to_owned(),
+                    kind: FailureKind::Core("protected paths"),
                     outcome: CheckOutcome::Fail,
                     exit_code: None,
                     names: touched,
@@ -391,6 +417,7 @@ impl Core {
             if !hidden.is_empty() {
                 verdict.failures.push(Failed {
                     id: "index_flags".to_owned(),
+                    kind: FailureKind::Core("index flags"),
                     outcome: CheckOutcome::Fail,
                     exit_code: None,
                     names: hidden,
@@ -537,6 +564,7 @@ impl Core {
                 CheckOutcome::Skipped => verdict.not_verified.push(ran.command.clone()),
                 CheckOutcome::Fail | CheckOutcome::Error => verdict.failures.push(Failed {
                     id: check.id.as_str().to_owned(),
+                    kind: FailureKind::Check(check.kind),
                     outcome: ran.outcome,
                     exit_code: ran.exit_code,
                     names: ran.names.clone(),

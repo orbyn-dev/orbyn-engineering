@@ -213,6 +213,7 @@ describe("Filters popover focus", () => {
   it("an OS window blur does not close it", async () => {
     const { panel } = await open();
     fireEvent.blur(window);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(panel).not.toHaveAttribute("inert");
     expect(panel).not.toHaveAttribute("data-closing");

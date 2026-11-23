@@ -48,3 +48,19 @@ it("returns typed model defaults and the same scoped override sources to the dra
   expect(read().find((row) => row.key === "default_model")).toMatchObject({ value: "environment", source: "global" });
   api.reset();
 });
+
+it("reads and saves a checkout's preferences through the legacy routes when checkouts of one repository are grouped", () => {
+  const api = createMockApi();
+  api.reset("settings-checkouts");
+  for (const project of ["p-app", "p-app-fix"]) {
+    const read = api.handle("GET", `/api/preferences?project_id=${project}`);
+    expect(read.status, `GET for ${project}`).toBe(200);
+    const saved = api.handle("PUT", `/api/projects/${project}/preferences`, { values: { branch_name_prefix: `hot-${project}` } });
+    expect(saved.status, `PUT for ${project}`).toBe(200);
+    expect((saved.body as PreferenceView[]).find((view) => view.key === "branch_name_prefix")).toMatchObject({ value: `hot-${project}`, source: "project" });
+  }
+  // A project that is its own group keeps working the same way, and an unknown one is still not found.
+  expect(api.handle("GET", "/api/preferences?project_id=p-site").status).toBe(200);
+  expect(api.handle("GET", "/api/preferences?project_id=nope").status).toBe(404);
+  api.reset();
+});

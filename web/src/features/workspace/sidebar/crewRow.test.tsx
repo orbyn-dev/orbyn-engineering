@@ -86,6 +86,7 @@ describe("the Crew row of the left bar", () => {
     mock.fail("/api/info", 20);
     render(createElement(App));
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/api/info"))).toBe(true));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByRole("link", { name: /^Crew/ })).toBeNull();
     expect(useConnection.getState().crewPreview).toBe(false);

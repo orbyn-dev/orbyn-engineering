@@ -27,10 +27,11 @@ const pick = async (user: ReturnType<typeof userEvent.setup>, trigger: HTMLEleme
 };
 
 it("draws nothing and asks only once when the service has no profiles route", async () => {
-  const fetching = vi.fn(async () => new Response(JSON.stringify({ code: "not_found", message: "x" }), { status: 404 }));
+  const fetching = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ code: "not_found", message: "x" }), { status: 404 }));
   vi.stubGlobal("fetch", fetching);
   const first = render(<ProfilePicker thread={thread()} disabled={false} onError={vi.fn()} />);
   await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
+  expect(String(fetching.mock.calls[0]?.[0])).toMatch(/\/api\/profiles/);
   expect(first.container).toBeEmptyDOMElement();
   const second = render(<ProfilePicker thread={thread()} disabled={false} onError={vi.fn()} />);
   await act(async () => { await Promise.resolve(); });

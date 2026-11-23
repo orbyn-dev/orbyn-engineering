@@ -80,6 +80,7 @@ it("uploads a dropped transcript as an ordinary attachment when no client is ins
   render(<Composer thread={thread} engine={null} showContext />);
   fireEvent.drop(box(), { dataTransfer: { types: ["Files"], getData: () => "", files: [new File(["x"], "a.orbyn.json")] } });
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+  expect(upload.mock.calls[0]?.[1].name).toBe("a.orbyn.json");
 });
 
 it("keeps a HEIC photo's send held until it is converted, then sends the converted file's id", async () => {

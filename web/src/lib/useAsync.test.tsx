@@ -60,6 +60,7 @@ describe("useAsync", () => {
     act(() => resolvers.b?.("b result"));
     await waitFor(() => expect(result.current.data).toBe("b result"));
     act(() => resolvers.a?.("a result"));
+    // Real wait: one macrotask turn lets already-resolved promises settle; no clock is involved.
     await new Promise((resolve) => setTimeout(resolve));
     expect(result.current.data).toBe("b result");
   });
