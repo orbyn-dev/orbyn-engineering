@@ -22,6 +22,8 @@ use crate::util::{new_id, now, parse_time};
 pub const REPO_CAP: u32 = 50;
 /// How many global lessons this device keeps visible.
 pub const GLOBAL_CAP: u32 = 20;
+/// The most evidence ids one lesson keeps, whichever path wrote it; the first ones are kept.
+pub const EVIDENCE_MAX: usize = 5;
 
 /// One id a lesson came from, never its content.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,7 +189,8 @@ fn write_lesson(tx: &Transaction<'_>, new: &NewCrewLesson) -> Result<Option<Crew
     )?;
     let id = format!("les_{}", new_id());
     let at = now();
-    let evidence = serde_json::to_value(&new.evidence)?;
+    let kept = &new.evidence[..new.evidence.len().min(EVIDENCE_MAX)];
+    let evidence = serde_json::to_value(kept)?;
     let detail = json!({
         "scope": new.scope,
         "project": new.project_id,
@@ -221,7 +224,7 @@ fn write_lesson(tx: &Transaction<'_>, new: &NewCrewLesson) -> Result<Option<Crew
             new.source,
             new.text,
             new.fingerprint,
-            serde_json::to_string(&new.evidence)?,
+            serde_json::to_string(kept)?,
             i64::from(new.edited_by_person),
             i64::from(new.names_path),
             at,

@@ -360,3 +360,46 @@ async fn the_person_write_path_refuses_empty_long_and_secret_words() {
         "a refused lesson is not stored"
     );
 }
+
+#[tokio::test]
+async fn a_global_lesson_refuses_every_way_of_naming_a_path() {
+    let w = person_world().await;
+    for words in [
+        "Update parser.c before the build.",
+        "Keep lessons.h in sync.",
+        "Check /etc/hosts first.",
+        "Look in ../secrets/notes first.",
+    ] {
+        let refused = w
+            .core
+            .crew_lesson_from_person_correction(LessonScope::Global, words, Vec::new())
+            .unwrap_err();
+        assert!(refused.to_string().contains("path"), "{words}: {refused}");
+    }
+    // An abbreviation is not a file name, and a path class stays allowed.
+    for words in [
+        "Prefer small commits, e.g. one per fix.",
+        "Mind the test folders, i.e. all of them.",
+    ] {
+        let lesson = w
+            .core
+            .crew_lesson_from_person_correction(LessonScope::Global, words, Vec::new())
+            .unwrap();
+        assert!(!lesson.names_path, "{words}");
+    }
+}
+
+#[tokio::test]
+async fn a_lesson_keeps_at_most_five_evidence_ids_on_every_write_path() {
+    let w = person_world().await;
+    let project = project_of(&w);
+    let six: Vec<LessonEvidence> = (0..6)
+        .map(|n| evidence("task", &format!("sha256:{n}")))
+        .collect();
+    let lesson = w
+        .core
+        .crew_lesson_from_person_correction(LessonScope::Repo(project.clone()), "Use pnpm.", six)
+        .unwrap();
+    assert_eq!(lesson.evidence.len(), 5, "{:?}", lesson.evidence);
+    assert_eq!(lesson.evidence[0], evidence("task", "sha256:0"));
+}

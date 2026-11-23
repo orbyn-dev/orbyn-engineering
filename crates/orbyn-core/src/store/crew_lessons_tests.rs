@@ -441,3 +441,30 @@ fn the_same_fingerprint_is_found_only_in_one_repository_and_within_sixty_days() 
         .unwrap();
     assert_eq!(peers, [format!("sha256:{:064x}", 2)]);
 }
+
+#[test]
+fn a_write_keeps_at_most_five_evidence_ids_in_the_row_and_the_audit() {
+    let (_dir, store) = open();
+    let mut new = lesson("repo", Some("p1"), "person", "Use pnpm.", None);
+    new.evidence = (0..6)
+        .map(|n| LessonEvidence {
+            kind: "task".to_owned(),
+            id: format!("sha256:{n}"),
+        })
+        .collect();
+    let written = store.write_crew_lesson(new).unwrap().unwrap();
+    assert_eq!(written.evidence.len(), EVIDENCE_MAX);
+    assert_eq!(written.evidence[4].id, "sha256:4");
+    let detail: String = store
+        .reader()
+        .query_row(
+            "SELECT detail FROM audit_events WHERE action = 'crew.lesson.learn'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        detail.contains("sha256:4") && !detail.contains("sha256:5"),
+        "{detail}"
+    );
+}

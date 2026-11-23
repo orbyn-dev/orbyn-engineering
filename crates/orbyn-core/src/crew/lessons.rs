@@ -18,7 +18,9 @@ use orbyn_contracts::{EscapeSource, EscapeState};
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
-use crate::store::{CrewLesson, CrewTask, EscapeRecord, LessonEvidence, NewCrewLesson};
+use crate::store::{
+    CrewLesson, CrewTask, EVIDENCE_MAX, EscapeRecord, LessonEvidence, NewCrewLesson,
+};
 use crate::util::{parse_time, sha256_hex, unix_now};
 
 use super::verify::{Failed, Judgement};
@@ -32,8 +34,6 @@ pub const WINDOW_SECS: i64 = 60 * 24 * 60 * 60;
 /// The refusal the secret scan gives, word for word (docs/crew-lessons.md).
 pub const SECRET_REFUSAL: &str =
     "Not saved: this looks like it holds a secret. Edit it and save again.";
-/// The most evidence ids one lesson keeps.
-const EVIDENCE_MAX: usize = 5;
 /// The escape log's own sentence for a revert; the lesson already says it was reverted.
 const REVERT_DEFAULT_REASON: &str = "The merge was reverted.";
 
@@ -381,7 +381,9 @@ fn names_path(text: &str) -> bool {
                 return false;
             }
             if token.contains('/') {
-                return super::classes::path_problem(token).is_none();
+                // Path syntax of any kind names a path: a rejected one (absolute, `..`) is still not path-free text,
+                // and a global lesson may not carry it.
+                return true;
             }
             file_name(token)
         })
@@ -397,8 +399,10 @@ fn file_name(token: &str) -> bool {
     let Some((stem, extension)) = token.rsplit_once('.') else {
         return false;
     };
+    let letters = extension.chars().count();
+    // One letter is an extension only after a stem of two or more (`parser.c`), which keeps `e.g.` and `i.e.` out.
     !stem.is_empty()
-        && (2..=10).contains(&extension.chars().count())
+        && (2..=10).contains(&letters) | (letters == 1 && stem.chars().count() >= 2)
         && extension.chars().all(|c| c.is_ascii_alphabetic())
 }
 
