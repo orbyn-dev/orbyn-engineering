@@ -39,7 +39,7 @@ pub(crate) const TOOL_BUDGET: Duration = Duration::from_secs(45);
 /// The budget a tool call gets in a test build. A test is not an engine: it calls the service on a machine shared with
 /// other work, and nothing on the other side gives up, so the engine-facing 45 seconds would let a loaded machine decide
 /// the test. Crew tools run real git and real checks and live under this cap, so a shared box could turn their work into
-/// `did not finish in time` (#1063). Production keeps 45 seconds; only the test build gets its own clock.
+/// `did not finish in time` on a shared box. Production keeps 45 seconds; only the test build gets its own clock.
 #[cfg(test)]
 pub(crate) const TOOL_BUDGET: Duration = Duration::from_secs(10 * 60);
 
@@ -58,7 +58,7 @@ pub(crate) fn call_deadline() -> Option<std::time::Instant> {
 /// permission prompt, on the approval timeout rather than this.
 #[cfg(not(test))]
 const GATED_BUDGET: Duration = Duration::from_secs(240);
-/// The test build gets its own clock here too: a person-based wait in a test has no person on the other side either (#1063).
+/// The test build gets its own clock here too: a person-based wait in a test has no person on the other side either.
 #[cfg(test)]
 const GATED_BUDGET: Duration = Duration::from_secs(10 * 60);
 /// The largest reply a tool sends back, in bytes.
@@ -597,7 +597,7 @@ mod tests {
     }
 
     /// The test build's budgets are its own: a test calls the service directly and shares the machine, so the
-    /// engine-facing 45 seconds must never be what ends its tool call (#1063). Production keeps 45 and 240.
+    /// engine-facing 45 seconds must never be what ends its tool call. Production keeps 45 and 240.
     #[test]
     fn the_test_build_gives_every_call_its_own_clock() {
         assert!(

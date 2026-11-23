@@ -3313,7 +3313,7 @@ and stays on `ORBYN_APPROVAL_TIMEOUT_SECS`. `orbyn_thread_wait` waits at most 40
 and reports `ended: false`. `crew_review` paces itself by that timer's own deadline: it stops starting lanes in time and its
 error lists the lanes that started, waited on a person, were refused and were not reached. A request can be 512 KiB and a reply is cut at 256 KiB.
 A test build gives every call ten minutes instead: a test calls the service directly and shares the machine with other work,
-so no engine is waiting on the other side and a loaded box must not decide a test with the production cut (#1063).
+so no engine is waiting on the other side and a loaded box must not decide a test with the production cut.
 
 ## Service access
 
