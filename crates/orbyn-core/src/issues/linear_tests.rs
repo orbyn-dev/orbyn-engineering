@@ -429,6 +429,24 @@ async fn a_cursor_carries_to_the_next_page_and_only_for_its_own_team_and_filters
 }
 
 #[tokio::test]
+async fn an_empty_page_has_no_next_cursor() {
+    let server = Server::start(|_| list_reply(Vec::new(), false, Some("end-of-list"))).await;
+    let page = reader(&server)
+        .list("ENG", &IssueQuery::default())
+        .await
+        .unwrap();
+    assert!(page.issues.is_empty());
+    assert_eq!(
+        page.next, None,
+        "hasNextPage decides, not an endCursor on the last page"
+    );
+    let sent = list_request(&server);
+    assert_eq!(sent.line, "POST /graphql HTTP/1.1");
+    assert_eq!(variables_of(&sent)["after"], Value::Null);
+    assert_eq!(variables_of(&sent)["first"], 50);
+}
+
+#[tokio::test]
 async fn the_request_is_a_fixed_query_with_the_values_only_in_variables() {
     let evil = "\"; } { issues { nodes { identifier } } } #";
     let server = Server::start(|_| list_reply(vec![row("ENG-1")], false, None)).await;

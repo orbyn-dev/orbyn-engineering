@@ -1,8 +1,10 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiFailure, api } from "../../api/client";
+import type { MockApi } from "../../../mock/api";
+import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
+import { installMockFetch } from "../../test-support";
 import { useWorkspace } from "../../product/state/workspace";
 import * as actions from "../workspace/sidebar/threadActions";
 import * as clipboard from "../../product/ui/copyText";
@@ -18,7 +20,6 @@ vi.mock("../workspace/sidebar/threadActions", async (original) => ({
   ...(await original<typeof import("../workspace/sidebar/threadActions")>()),
   archiveThreads: vi.fn(),
   unarchiveThread: vi.fn(),
-  deleteThreadNow: vi.fn(),
   settleThreads: vi.fn(),
   unsettleThreads: vi.fn(),
   snoozeThreads: vi.fn(),
@@ -43,12 +44,17 @@ const open = async (thread: Thread) => {
   return { user, menu: await screen.findByRole("menu", { name: "Thread menu" }) };
 };
 
+/** Every DELETE the page sent, in order, so a cancel can be told from a confirmed delete. */
+const deletes = () =>
+  vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "DELETE").map(([url]) => String(url));
+
+let mock: MockApi;
 beforeEach(() => {
+  mock = installMockFetch();
   vi.mocked(actions.archiveThreads).mockClear();
   vi.mocked(actions.unarchiveThread).mockClear();
   vi.mocked(clipboard.copyText).mockClear();
   vi.mocked(transcriptExport.startTranscriptExport).mockClear();
-  vi.mocked(actions.deleteThreadNow).mockReset();
   useWorkspace.setState({ threads: { t: base } });
 });
 
@@ -153,7 +159,7 @@ describe("the thread header menu", () => {
   });
 
   it("asks first, says side chats and children go too, and keeps the dialog open with the error when the service refuses", async () => {
-    vi.mocked(actions.deleteThreadNow).mockRejectedValue(new ApiFailure("thread_busy", "A thread in this family is running.", 409));
+    mock.fail("/api/threads/t", 1, 409, "thread_busy", "A thread in this family is running.");
     const { user, menu } = await open(base);
     await user.click(within(menu).getByRole("menuitem", { name: "Delete thread" }));
     const dialog = await screen.findByRole("dialog", { name: /Delete “Fix login”/ });
@@ -161,15 +167,39 @@ describe("the thread header menu", () => {
     await user.click(within(dialog).getByRole("button", { name: "Delete thread" }));
     await waitFor(() => expect(dialog).toHaveTextContent("A thread in this family is running."));
     expect(screen.getByRole("dialog", { name: /Delete “Fix login”/ })).toBeInTheDocument();
+    expect(deletes()).toEqual(["/api/threads/t"]);
   });
 
   it("closes the dialog only after the delete succeeds", async () => {
-    vi.mocked(actions.deleteThreadNow).mockResolvedValue(undefined);
     const { user, menu } = await open(base);
     await user.click(within(menu).getByRole("menuitem", { name: "Delete thread" }));
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete thread" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(actions.deleteThreadNow).toHaveBeenCalledWith(base);
+    expect(deletes()).toEqual(["/api/threads/t"]);
+  });
+
+  it("sends no DELETE when the person cancels and only the selected thread's id when they confirm", async () => {
+    const other: Thread = { ...base, id: "t-other", title: "Keep this thread" };
+    useWorkspace.setState({ threads: { t: base, "t-other": other } });
+    const { user, menu } = await open(base);
+
+    await user.click(within(menu).getByRole("menuitem", { name: "Delete thread" }));
+    const ask = await screen.findByRole("dialog", { name: /Delete “Fix login”/ });
+    await user.click(within(ask).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(deletes()).toHaveLength(0);
+    expect(useWorkspace.getState().threads["t"]).toEqual(base);
+
+    await user.click(screen.getByRole("button", { name: "Thread menu" }));
+    const again = await screen.findByRole("menu", { name: "Thread menu" });
+    await user.click(within(again).getByRole("menuitem", { name: "Delete thread" }));
+    const confirm = await screen.findByRole("dialog", { name: /Delete “Fix login”/ });
+    await user.click(within(confirm).getByRole("button", { name: "Delete thread" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    expect(deletes()).toEqual(["/api/threads/t"]);
+    expect(useWorkspace.getState().threads["t"]).toBeUndefined();
+    expect(useWorkspace.getState().threads["t-other"]).toEqual(other);
   });
 });
 
