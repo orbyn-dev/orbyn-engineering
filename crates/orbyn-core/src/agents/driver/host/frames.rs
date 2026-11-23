@@ -225,6 +225,9 @@ pub struct RunDone {
     /// `reusable`, `broken`, or anything else (read as unknown).
     pub disposition: Option<String>,
     pub retry: Option<RetryHint>,
+    /// The run's result usage, when the host reports one. Cursor sends it; other families
+    /// may too, and only their own mapper decides what to do with it.
+    pub usage: Option<Value>,
 }
 
 /// A frame the host sent.
@@ -343,6 +346,7 @@ fn run_done(object: &Map<String, Value>) -> Result<RunDone, FrameError> {
             .and_then(Value::as_str)
             .map(str::to_owned),
         retry,
+        usage: field(object, "usage").cloned(),
     })
 }
 

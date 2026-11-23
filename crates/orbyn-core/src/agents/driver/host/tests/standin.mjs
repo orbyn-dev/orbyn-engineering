@@ -179,8 +179,183 @@ function acpQuestion(sendId) {
 }
 
 function cursorPlay(sendId, text) {
-  if (text.includes("[cursor-hang]")) return;
   const emit = (update) => write({ type: "delta", sendId, update });
+  if (text.includes("[cursor-hang]")) {
+    emit({
+      type: "tool-call-started",
+      callId: "call-shell",
+      toolCall: { type: "shell", args: { command: "sleep 30" } },
+    });
+    return;
+  }
+  if (text.includes("[cursor-fail]")) {
+    emit({
+      type: "tool-call-started",
+      callId: "call-shell",
+      toolCall: { type: "shell", args: { command: "false" } },
+    });
+    emit({
+      type: "tool-call-completed",
+      callId: "call-shell",
+      toolCall: {
+        type: "shell",
+        args: { command: "false" },
+        result: {
+          status: "success",
+          value: { exitCode: 1, signal: "", stdout: "out", stderr: "boom", executionTime: 1 },
+        },
+      },
+    });
+    emit({
+      type: "tool-call-completed",
+      callId: "call-error",
+      toolCall: {
+        type: "read",
+        args: { path: "missing.txt" },
+        result: { status: "error", error: { message: "missing file" } },
+      },
+    });
+    emit({
+      type: "tool-call-completed",
+      callId: "call-mcp",
+      toolCall: {
+        type: "mcp",
+        args: { toolName: "search" },
+        result: {
+          status: "success",
+          value: { content: [{ text: { text: "the server said no" } }], isError: true },
+        },
+      },
+    });
+    return done(sendId);
+  }
+  if (text.includes("[cursor-write]")) {
+    const write = (callId, path, result) => {
+      emit({
+        type: "tool-call-completed",
+        callId,
+        toolCall: { type: result.type, args: { path }, result: result.value },
+      });
+    };
+    write("call-write", "/workspace/repo/app/src/written.txt", {
+      type: "write",
+      value: { status: "success", value: { path: "/workspace/repo/app/src/written.txt", linesCreated: 2, fileSize: 8 } },
+    });
+    write("call-edit", "/workspace/repo/app/src/edited.txt", {
+      type: "edit",
+      value: { status: "success", value: { linesAdded: 1, linesRemoved: 1, diffString: "-old\n+new" } },
+    });
+    write("call-delete", "/workspace/repo/app/src/deleted.txt", {
+      type: "delete",
+      value: { status: "success", value: { fileSize: 4 } },
+    });
+    write("call-outside", "/tmp/outside.txt", {
+      type: "write",
+      value: { status: "success", value: { path: "/tmp/outside.txt", linesCreated: 1, fileSize: 2 } },
+    });
+    return done(sendId);
+  }
+  if (text.includes("[cursor-dup]")) {
+    const call = {
+      type: "read",
+      args: { path: "a.txt" },
+      result: { status: "success", value: { content: "body", totalLines: 1, fileSize: 4 } },
+    };
+    emit({ type: "tool-call-started", callId: "call-read", toolCall: { type: "read", args: { path: "a.txt" } } });
+    emit({ type: "tool-call-completed", callId: "call-read", toolCall: call });
+    emit({ type: "tool-call-completed", callId: "call-read", toolCall: call });
+    emit({ type: "tool-call-started", callId: "call-read", toolCall: { type: "read", args: { path: "a.txt" } } });
+    return done(sendId);
+  }
+  if (text.includes("[cursor-huge]")) {
+    emit({ type: "text-delta", text: "x".repeat(200_000) });
+    return done(sendId);
+  }
+  if (text.includes("[cursor-plan]")) {
+    const plan = "# Plan\n\nShip the cursor fix.";
+    emit({
+      type: "tool-call-started",
+      callId: "call-plan",
+      toolCall: { type: "createPlan", args: { plan } },
+    });
+    emit({
+      type: "tool-call-completed",
+      callId: "call-plan",
+      toolCall: { type: "createPlan", args: { plan }, result: { status: "success", value: {} } },
+    });
+    const todos = [{ content: "write the test", status: "in_progress" }];
+    emit({
+      type: "tool-call-started",
+      callId: "call-todos",
+      toolCall: { type: "updateTodos", args: { todos } },
+    });
+    emit({
+      type: "tool-call-completed",
+      callId: "call-todos",
+      toolCall: {
+        type: "updateTodos",
+        args: { todos },
+        result: { status: "success", value: { todos, totalCount: 1 } },
+      },
+    });
+    emit({ type: "summary", summary: "this summary is not shown" });
+    return done(sendId);
+  }
+  if (text.includes("[cursor-subagent]")) {
+    const args = { description: "Read package.json", agentId: "agent-1", prompt: "read it" };
+    emit({
+      type: "tool-call-started",
+      callId: "call-task",
+      toolCall: { type: "task", args },
+    });
+    emit({
+      type: "tool-call-delta",
+      callId: "call-task",
+      modelCallId: "m",
+      taskUpdate: { type: "text-delta", text: "y".repeat(10_000) },
+    });
+    emit({
+      type: "tool-call-delta",
+      callId: "call-task",
+      modelCallId: "m",
+      taskUpdate: {
+        type: "tool-call-started",
+        callId: "nested-read",
+        modelCallId: "n",
+        toolCall: { type: "read", args: { path: "a.txt" } },
+      },
+    });
+    emit({
+      type: "tool-call-completed",
+      callId: "call-task",
+      toolCall: {
+        type: "task",
+        args,
+        result: {
+          status: "success",
+          value: { conversationSteps: [], agentId: "agent-1", isBackground: false, backgroundReason: "unspecified" },
+        },
+      },
+    });
+    return done(sendId);
+  }
+  if (text.includes("[cursor-usage]")) {
+    emit({
+      type: "turn-ended",
+      usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 90, cacheWriteTokens: 0 },
+    });
+    write({
+      type: "runDone",
+      sendId,
+      ok: true,
+      result: {
+        reason: "completed",
+        threadDisposition: "reusable",
+        usage: { inputTokens: 200, outputTokens: 20, cacheReadTokens: 180, cacheWriteTokens: 0 },
+      },
+    });
+    return;
+  }
   emit({ type: "thinking-delta", text: "Looking" });
   emit({ type: "token-delta", tokens: 4 });
   emit({ type: "thinking-completed", thinkingDurationMs: 1 });
@@ -383,7 +558,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     engineSessionId: request.engineSessionId,
     resumeAt: request.resumeAt,
     confinement: Boolean(request.confinement),
-    ...(family === "acp" ? { options: request.options, sessionId: request.sessionId, agent: request.agent, cwd: request.cwd } : {}),
+    ...((family === "acp" || family === "cursor") ? { options: request.options, sessionId: request.sessionId, agent: request.agent, cwd: request.cwd } : {}),
   });
   const handler = handlers[request.type];
   try {
