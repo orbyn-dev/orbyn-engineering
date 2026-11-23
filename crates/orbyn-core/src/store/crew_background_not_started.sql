@@ -1,4 +1,4 @@
--- Migration 82: a background run refused by the disk guard keeps one history row (KC4 PR B). A run that never
+-- Migration 81: a background run refused by the disk guard keeps one history row (KC4 PR B). A run that never
 -- started is `stopped` with no stop reason and a `reason_code` (`disk_low`); the runs table's CHECK requires a stop
 -- reason for a stopped row, and a CHECK cannot be altered in place, so the table is rebuilt with every column and
 -- row. Its dependent daily ledger is rebuilt in the same shape too: migrations run inside a transaction, where

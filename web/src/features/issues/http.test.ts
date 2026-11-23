@@ -228,7 +228,7 @@ describe("the routes", () => {
     service(() => new Response("", { status: 405 }));
     expect(await createHttpIssuesApi().offers()).toBe(false);
     service(() => { throw new TypeError("offline"); });
-    await expect(createHttpIssuesApi().offers()).rejects.toThrow();
+    await expect(createHttpIssuesApi().offers()).rejects.toThrow(/reach the Orbyn service/);
     // Every probe is a read: nothing was written.
     expect(calls.every((call) => call.method === "GET")).toBe(true);
   });
@@ -269,8 +269,8 @@ describe("the client the app starts with", () => {
     expect(await api.list({ tracker: null, state: "open", labels: [], assignee: "any", text: "" })).toMatchObject({ issues: [], next_cursors: {} });
     expect(await api.trackers()).toBeNull();
     await expect(api.link("t", REF)).rejects.toThrow("not reported");
-    await expect(api.startThread(REF, { message: "m", project_id: "p" })).rejects.toThrow();
-    await expect(api.connect("gitlab", { token: TOKEN })).rejects.toThrow();
+    await expect(api.startThread(REF, { message: "m", project_id: "p" })).rejects.toThrow(/not reported/);
+    await expect(api.connect("gitlab", { token: TOKEN })).rejects.toThrow(/not reported/);
     expect(calls.map((call) => `${call.method} ${call.url.pathname}`)).toEqual(["GET /api/issues/trackers"]);
   });
 
@@ -288,9 +288,9 @@ describe("the client the app starts with", () => {
     service(() => json({ code: "not_found", message: "Not found." }, 404));
     const absent = createLiveIssuesApi();
     expect(await absent.offers()).toBe(false);
-    await expect(absent.update(REF, { body: "x" })).rejects.toThrow();
-    await expect(absent.setState(REF, { category: "open", name: "Open" })).rejects.toThrow();
-    await expect(absent.candidates(REF)).rejects.toThrow();
+    await expect(absent.update(REF, { body: "x" })).rejects.toThrow(/not reported/);
+    await expect(absent.setState(REF, { category: "open", name: "Open" })).rejects.toThrow(/not reported/);
+    await expect(absent.candidates(REF)).rejects.toThrow(/not reported/);
     expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
   });
 

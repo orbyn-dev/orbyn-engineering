@@ -1373,12 +1373,12 @@ fn migration_77_keeps_background_rows_and_adds_the_watch_tables() {
 }
 
 #[test]
-fn migration_82_keeps_background_rows_and_lets_a_run_never_start() {
+fn migration_81_keeps_background_rows_and_lets_a_run_never_start() {
     let versions: Vec<i64> = migrations::MIGRATIONS.iter().map(|(v, _)| *v).collect();
-    assert!(versions.contains(&82));
+    assert!(versions.contains(&81));
     let before = *versions
         .iter()
-        .filter(|version| **version < 82)
+        .filter(|version| **version < 81)
         .max()
         .unwrap();
 
@@ -1386,7 +1386,7 @@ fn migration_82_keeps_background_rows_and_lets_a_run_never_start() {
     let path = dir.path().join("old.db");
     let conn = Connection::open(&path).unwrap();
     conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)").unwrap();
-    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v < 82) {
+    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v < 81) {
         conn.execute_batch(sql).unwrap();
         conn.execute(
             "INSERT INTO schema_migrations VALUES (?1,'fixture')",

@@ -56,7 +56,7 @@ pub(super) fn parse_wire<T: DeserializeOwned>(text: &str) -> Result<T> {
 /// selectors, line and paragraph separators, the deprecated format controls and interlinear annotation marks. A name or trigger text
 /// the person types has no use for any of them; the tripwire reads agent text, where some are legitimate, so it keeps its own list.
 /// Emoji variation selectors are allowed.
-fn invisible(c: char) -> bool {
+pub(super) fn invisible(c: char) -> bool {
     matches!(c, '\u{00ad}' | '\u{034f}' | '\u{061c}' | '\u{115f}'..='\u{1160}' | '\u{17b4}'..='\u{17b5}' | '\u{180b}'..='\u{180f}'
         | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{2800}' | '\u{3164}' | '\u{feff}' | '\u{ffa0}'
         | '\u{fff9}'..='\u{fffb}' | '\u{e0000}'..='\u{e007f}')
