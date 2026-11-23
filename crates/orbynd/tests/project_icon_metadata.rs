@@ -390,6 +390,7 @@ async fn future_stored_variants_fall_back_without_name_writes_erasing_them_but_k
     .unwrap();
     drop(conn);
     let store = orbyn_core::store::Store::open(&database, "fixture-next").unwrap();
+    // The store wraps the stored-icon parse failure in its row-conversion error, whose text is not a stable contract.
     assert!(store.project(id).is_err());
 }
 
