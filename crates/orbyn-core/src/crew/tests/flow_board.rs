@@ -586,3 +586,48 @@ async fn a_could_not_start_card_carries_its_own_refusal() {
         .unwrap();
     assert_eq!(item.reason.as_deref(), Some(reason.as_str()));
 }
+
+#[tokio::test]
+async fn the_board_names_every_wait_of_its_crew_past_the_inboxs_two_hundred() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let mut ids = Vec::new();
+    // Two hundred and one tasks that could not start: the Inbox shows the newest 200, the board of their crew all of them.
+    for n in 0..201 {
+        let (answer, error) = w
+            .start(
+                brief(json!({
+                    "outcome": format!("Wait number {n}."),
+                    "engine": { "id": "ghost", "assigned_by": "lead" }
+                })),
+                key(),
+            )
+            .await;
+        assert!(!error, "{answer}");
+        ids.push(answer["task"].as_str().unwrap().to_owned());
+    }
+    let crew_id = w.task(&ids[0]).crew_id;
+    assert_eq!(w.core.crew_needs_you().unwrap().items.len(), 200);
+    // The Needs you column, past the Inbox's 200: its last page holds the oldest waits, which the Inbox no longer lists.
+    let view = w
+        .core
+        .crew_flow_board(
+            &crew_id,
+            None,
+            None,
+            None,
+            Some("needs_you"),
+            None,
+            Page::new(Some(50), Some(190)).unwrap(),
+        )
+        .unwrap();
+    let needs = column(&view, Column::NeedsYou);
+    assert_eq!(needs.count, 201);
+    assert_eq!(needs.cards.len(), 11);
+    assert!(
+        needs
+            .cards
+            .iter()
+            .all(|card| card.needs_you == Some(NeedsYouKind::CouldNotStart)),
+        "a wait past the Inbox's cap lost its field kind on the board"
+    );
+}

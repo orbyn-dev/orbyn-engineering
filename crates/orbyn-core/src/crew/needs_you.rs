@@ -221,10 +221,10 @@ impl Core {
         Ok(items)
     }
 
-    /// The items a person sees: dismissed waits removed, newest first, ties by id, at most 200. The same list `crew_needs_you`
-    /// answers with; the KC3 reads that draw a "needs you" count (the dashboard's live row, the Review queue digest) call
-    /// this so they agree with the Inbox without going through the route's gate twice.
-    pub(super) fn needs_you_list(&self) -> Result<Vec<wire::NeedsYouItem>> {
+    /// Every wait a person has not dismissed, newest first, ties by id, with no cap. The reads that scope the field to one
+    /// crew or one repository (the Taskboard, the dashboard, the Review queue digest) take this, so another crew's newer waits
+    /// can never push this one's out of its own count; a presentation cap belongs after that scoping.
+    pub(super) fn needs_you_all(&self) -> Result<Vec<wire::NeedsYouItem>> {
         let mut items = self.needs_you_items()?;
         let mut dismissed: BTreeMap<(String, String), String> = BTreeMap::new();
         for row in self.store.crew_needs_you_dismissals()? {
@@ -242,6 +242,12 @@ impl Core {
                 .cmp(&parse_time(&a.since).unwrap_or(i64::MIN));
             at.then_with(|| a.id.cmp(&b.id))
         });
+        Ok(items)
+    }
+
+    /// The items the Inbox shows: `needs_you_all`, at most 200.
+    fn needs_you_list(&self) -> Result<Vec<wire::NeedsYouItem>> {
+        let mut items = self.needs_you_all()?;
         items.truncate(CAP);
         Ok(items)
     }

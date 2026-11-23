@@ -384,12 +384,12 @@ impl Core {
     }
 
     /// What waits and what works right now, for one repository (KC3): the dashboard's "Right now" row. Both
-    /// counts come from one place: the one needs-you list (`needs_you_list`, which `crew_needs_you` answers with)
+    /// counts come from one place: the one needs-you list (`needs_you_all`, the field `crew_needs_you` answers from, before its 200 cap)
     /// for the waits, so it agrees with the Inbox and the Taskboard including dismissals, and the one `working`
     /// function over this project's tasks for the workers. It is not windowed, writes nothing and starts nothing.
     fn dashboard_live(&self, project: &str) -> Result<wire::CrewDashboardLive> {
         let mut waits: BTreeMap<String, (wire::NeedsYouKind, u32)> = BTreeMap::new();
-        for item in self.needs_you_list()? {
+        for item in self.needs_you_all()? {
             if item.project_id.as_deref() != Some(project) {
                 continue;
             }

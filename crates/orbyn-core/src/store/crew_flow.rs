@@ -75,6 +75,7 @@ impl Store {
              )
              LEFT JOIN crew_tasks ft ON ft.id = f.fix_task_id
              WHERE th.project_id = ?1
+               AND t.id NOT IN (SELECT fix_task_id FROM crew_fixes)
                AND (t.state IN ('running', 'verifying', 'failed', 'changed_approach')
                     OR (ft.state IS NOT NULL AND ft.state NOT IN ('passed', 'stopped', 'cancelled')))
              ORDER BY t.updated_at DESC, t.rowid DESC LIMIT ?2",

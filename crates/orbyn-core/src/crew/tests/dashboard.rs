@@ -1192,6 +1192,28 @@ async fn a_fix_in_flight_reads_working_in_the_live_row() {
         }]
     );
 
+    // The fix is a task of its own with its own run, and it is running: still one worker, counted once, as a fix
+    // (the fix task's own row must not add a second "running").
+    r.w.core
+        .store
+        .add_crew_run(fix_brief.id.as_str(), &r.w.lead, "worker-fix")
+        .unwrap();
+    r.w.core
+        .store
+        .reader()
+        .execute(
+            "UPDATE crew_tasks SET state='running' WHERE id = ?1",
+            [fix_brief.id.as_str()],
+        )
+        .unwrap();
+    assert_eq!(
+        r.read(Some(30), 0, NOW).live.working,
+        vec![wire::CrewDashboardWorking {
+            why: wire::FlowWorking::Fix,
+            count: 1
+        }]
+    );
+
     // The fix ends: the same read counts no worker.
     r.w.core
         .store
