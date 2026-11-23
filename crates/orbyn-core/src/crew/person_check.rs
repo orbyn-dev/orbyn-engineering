@@ -74,6 +74,16 @@ impl Core {
         note: Option<&str>,
         actor: &str,
     ) -> Result<Vec<String>, CrewError> {
+        // A person's note ends up in a worker's reason, so it is cleaned like every text a person types: no control or hidden
+        // character, redacted, 1 to `NOTE_MAX` characters. A blank note is no note.
+        let note = match note.map(str::trim).filter(|text| !text.is_empty()) {
+            Some(text) => Some(
+                super::background::text("note", text, crate::store::MANUAL_CHECK_NOTE_MAX)
+                    .map_err(|why| invalid(why.to_string()))?,
+            ),
+            None => None,
+        };
+        let note = note.as_deref();
         let task = self
             .store
             .crew_task(task_id)

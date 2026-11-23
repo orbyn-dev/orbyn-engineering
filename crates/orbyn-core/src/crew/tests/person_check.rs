@@ -254,3 +254,22 @@ async fn a_repeat_answer_finishes_a_decision_and_other_answers_are_refused() {
         .unwrap_err();
     assert!(refused.to_string().contains("already"), "{refused}");
 }
+
+#[tokio::test]
+async fn a_note_that_hides_text_is_refused_and_decides_nothing() {
+    let w = crew(arc(|_, root| built(root))).await;
+    let id = started(&w).await;
+    // The note reaches a worker's reason, so a zero-width character or a control one is refused like any text a person types.
+    for note in ["a\u{200b}b", "a\u{0007}b", &"x".repeat(201)] {
+        let refused = w
+            .core
+            .crew_decide_manual_check(&id, "chk-manual", false, Some(note), "user")
+            .await;
+        assert!(refused.is_err(), "{note:?} was accepted");
+    }
+    assert_eq!(w.task(&id).state, "needs_person");
+    assert_eq!(
+        w.core.store.crew_manual_checks_waiting(&id).unwrap(),
+        ["chk-manual"]
+    );
+}
