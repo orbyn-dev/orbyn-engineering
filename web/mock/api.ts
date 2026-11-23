@@ -223,6 +223,8 @@ export function createMockApi(options: MockOptions = {}) {
   /** Projects settings treats as checkouts of one repository, so a group selection has several members. */
   /** Programs the service found on the computer besides the engines it lists, as the provider list reports them. */
   let foundPrograms: ProviderEntry[] = [];
+  /** What a test set for how many saved conversations an engine keeps, by engine. */
+  const nativeCounts = new Map<string, { count: number; truncated: boolean }>();
   let groupedProjects: string[] = [];
   /** The model lists a test replaced, by engine. */
   const modelLists = new Map<string, ModelInfo[]>();
@@ -325,6 +327,7 @@ export function createMockApi(options: MockOptions = {}) {
     nativeDeleted.clear();
     diagnosticsPatch = {};
     groupedProjects = [];
+    nativeCounts.clear();
     foundPrograms = [];
     modelLists.clear();
     cloneError = null;
@@ -1373,7 +1376,7 @@ export function createMockApi(options: MockOptions = {}) {
       }
       case "GET /api/engines":
         if (seg[3] === "native-sessions" && seg[4] === "count") {
-          return { status: 200, body: { engine: seg[2], count: fixtures.nativeSessionCounts[seg[2] ?? ""] ?? 0, truncated: false } };
+          return { status: 200, body: { engine: seg[2], ...(nativeCounts.get(seg[2] ?? "") ?? { count: fixtures.nativeSessionCounts[seg[2] ?? ""] ?? 0, truncated: false }) } };
         }
         // An ACP agent's own saved conversations: the mock agent lists one and says it can load and delete it.
         if (seg[3] === "native-sessions" && seg[4] === "capabilities") return { status: 200, body: { can_list: true, can_load: true, can_resume: false, can_delete: true } };
@@ -1547,8 +1550,12 @@ export function createMockApi(options: MockOptions = {}) {
         return { status: 200, body: outcomes };
       }
       if (seg[1] === "engines" && seg[2] === "probe-binary") {
+        // As probe.rs answers: a relative path is refused with a sentence, a missing file is just not found, and a program whose version command fails is found with a problem.
         const path = String(data.path ?? "");
-        return { status: 200, body: path.endsWith("/claude") ? { exists: true, path, version: "2.1.318", problem: null } : { exists: false, path: null, version: null, problem: "No file at this path." } };
+        if (!path.startsWith("/")) return { status: 200, body: { exists: false, path: null, version: null, problem: "Give the full path to the program." } };
+        if (path.endsWith("/claude")) return { status: 200, body: { exists: true, path, version: "2.1.318", problem: null } };
+        if (path.endsWith("/broken")) return { status: 200, body: { exists: true, path, version: null, problem: "Its version command failed." } };
+        return { status: 200, body: { exists: false, path: null, version: null, problem: null } };
       }
       if (seg[1] === "shell" && seg[2] === "actions") return { status: 202 };
       if (seg[1] === "engines" && seg[2] === "custom") {
@@ -1734,6 +1741,10 @@ export function createMockApi(options: MockOptions = {}) {
     /** Replaces the extra programs the provider list reports (rows for what is on the computer but is not an engine). */
     setFoundPrograms(entries: ProviderEntry[]) {
       foundPrograms = entries;
+    },
+    /** Sets how many saved conversations an engine keeps; `truncated` says the folder was too large to count to the end. */
+    setNativeSessionCount(engine: string, count: number, truncated = false) {
+      nativeCounts.set(engine, { count, truncated });
     },
     /** Settings treats these projects as checkouts of one repository: one group, selected as `mock:group:<ids joined by +>`. */
     groupProjects(ids: string[]) {
