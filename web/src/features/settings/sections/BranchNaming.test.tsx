@@ -1,17 +1,20 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
-import { request } from "../../../api/client";
+import { beforeEach, expect, it } from "vitest";
+import type { MockApi } from "../../../../mock/api";
+import { installMockFetch } from "../../../test-support";
 import { WorktreesSection } from "./WorktreesSection";
-import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
+import { sentEdits } from "../rows/preferenceWrites.test-support";
 
-vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+let mock: MockApi;
+beforeEach(() => {
+  mock = installMockFetch();
+  window.location.hash = "";
+});
 
-const view = (key: string, value: unknown) => ({ key, value, default: value, source: "default", project_scoped: true }) as never;
-const serve = (mode: string, prefix = "orbyn") => vi.mocked(request).mockImplementation(async () =>
-  scopedFixture([view("branch_naming_mode", mode), view("branch_name_prefix", prefix), view("branch_name_instructions", "")]) as never);
-
-beforeEach(() => vi.mocked(request).mockReset());
+/** The service with this naming mode and prefix already saved. */
+const serve = (mode: string, prefix = "orbyn") =>
+  mock.handle("PUT", "/api/preferences", { values: { branch_naming_mode: mode, branch_name_prefix: prefix } });
 
 it("says what the chosen naming mode does, and shows the instructions only for Custom", async () => {
   serve("static");
@@ -41,6 +44,5 @@ it("keeps the prefix without a slash, says the branch name it makes, and saves i
   fireEvent.change(field, { target: { value: "feat/" } });
   field.focus();
   await user.tab();
-  await waitFor(() => expect(request).toHaveBeenCalledWith("PUT", "/api/settings/preferences", expect.objectContaining({
-    edits: { branch_name_prefix: { op: "set", value: "feat" } } })));
+  await waitFor(() => expect(sentEdits()).toEqual([{ branch_name_prefix: { op: "set", value: "feat" } }]));
 });

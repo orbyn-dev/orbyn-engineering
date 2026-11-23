@@ -46,6 +46,7 @@ describe("the Crew map on the map route", () => {
     mock.reset("default");
     const { container } = render(<MapView />);
     await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
     expect(calls("/api/crew/flow")).toHaveLength(0);
@@ -355,6 +356,7 @@ describe("the conversation lanes on the message and fact routes", () => {
     mock.reset("default");
     const { container } = render(<LanesView />);
     await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
   });
@@ -394,8 +396,10 @@ describe("the conversation lanes on the message and fact routes", () => {
   it("pages messages with +N more, and a double call sends one read", async () => {
     mock.reset("crew-map-many-messages");
     const real = vi.mocked(fetch).getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
     vi.mocked(fetch).mockImplementation(async (input, init) => {
-      if (String(input).includes("offset=50")) await new Promise((resolve) => setTimeout(resolve, 60));
+      if (String(input).includes("offset=50")) await gate;
       return real(input, init);
     });
     const { result } = renderHook(() => useCrewMessages(MOCK_CREW, null));
@@ -404,6 +408,7 @@ describe("the conversation lanes on the message and fact routes", () => {
       void result.current.showMore();
       void result.current.showMore();
     });
+    release();
     await waitFor(() => expect(result.current.rows).toHaveLength(60));
     expect(calls("offset=50")).toHaveLength(1);
   });

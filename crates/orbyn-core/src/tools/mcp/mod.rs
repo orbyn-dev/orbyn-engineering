@@ -33,7 +33,15 @@ pub(crate) const OWN_TOOL_PREFIX: &str = "mcp__orbyn_engineering__";
 /// Engines give up on a tool call at about a minute, so a reply has to be sent first. `crew_review` keeps
 /// inside this itself: it reads the call's own deadline (`call_deadline`), stops starting lanes in time and
 /// names the lanes it started.
+#[cfg(not(test))]
 pub(crate) const TOOL_BUDGET: Duration = Duration::from_secs(45);
+
+/// The budget a tool call gets in a test build. A test is not an engine: it calls the service on a machine shared with
+/// other work, and nothing on the other side gives up, so the engine-facing 45 seconds would let a loaded machine decide
+/// the test. Crew tools run real git and real checks and live under this cap, so a shared box could turn their work into
+/// `did not finish in time`. Production keeps 45 seconds; only the test build gets its own clock.
+#[cfg(test)]
+pub(crate) const TOOL_BUDGET: Duration = Duration::from_secs(10 * 60);
 
 tokio::task_local! {
     /// When the `within` timer of the running tool call fires: the same instant, so a tool that paces itself
@@ -48,7 +56,18 @@ pub(crate) fn call_deadline() -> Option<std::time::Instant> {
 /// A tool that can wait on a person gets longer, and a late answer does nothing: the
 /// wait is dropped, which expires the approval. Claude's `approve` is a run's own
 /// permission prompt, on the approval timeout rather than this.
+#[cfg(not(test))]
 const GATED_BUDGET: Duration = Duration::from_secs(240);
+/// The test build gets its own clock here too: a person-based wait in a test has no person on the other side either.
+#[cfg(test)]
+const GATED_BUDGET: Duration = Duration::from_secs(10 * 60);
+/// The production budgets are part of the contract and a test build cannot see them, so this pins them at compile time:
+/// a change to 45 or 240 seconds fails the build instead of slipping through a filtered test run.
+#[cfg(not(test))]
+const _: () = {
+    assert!(TOOL_BUDGET.as_secs() == 45);
+    assert!(GATED_BUDGET.as_secs() == 240);
+};
 /// The largest reply a tool sends back, in bytes.
 const MAX_RESULT_BYTES: usize = 256 * 1024;
 /// The largest request accepted, in bytes. A prompt can be 120,000 characters.
@@ -582,6 +601,20 @@ mod tests {
         let reply = within(Duration::from_millis(5), std::future::pending()).await;
         let reply = reply.unwrap();
         assert_eq!(reply["isError"], true);
+    }
+
+    /// The test build's budgets are its own: a test calls the service directly and shares the machine, so the
+    /// engine-facing 45 seconds must never be what ends its tool call. Production keeps 45 and 240.
+    #[test]
+    fn the_test_build_gives_every_call_its_own_clock() {
+        assert!(
+            TOOL_BUDGET >= Duration::from_secs(10 * 60),
+            "{TOOL_BUDGET:?}"
+        );
+        assert!(
+            GATED_BUDGET >= Duration::from_secs(10 * 60),
+            "{GATED_BUDGET:?}"
+        );
     }
 
     #[test]

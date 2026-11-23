@@ -14,9 +14,9 @@ it("preserves the whole map and exact saved pins rather than repinning untouched
   expect(draft["other-acp"]!.model).toBe("other-default");
 });
 it("refuses absent/ambiguous defaults, unknown or duplicate engines and never infers tiers", () => {
-  for (const defaults of [[], ["one", "two"]]) {
-    const view = exampleTierView(); view.engines[2]!.defaults = defaults;
-    expect(() => tierSave(view.settings, copyTiers(view.settings.assignments), view)).toThrow();
+  for (const [defaults, message] of [[[], /no available default model/], [["one", "two"], /more than one default model/]] as const) {
+    const view = exampleTierView(); view.engines[2]!.defaults = [...defaults];
+    expect(() => tierSave(view.settings, copyTiers(view.settings.assignments), view)).toThrow(message);
   }
   const view = exampleTierView(), draft = copyTiers(view.settings.assignments);
   draft["unknown"] = { tier: "lead", model: "sounds-powerful" };

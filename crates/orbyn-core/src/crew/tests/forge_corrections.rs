@@ -567,11 +567,14 @@ async fn seed_broken_forge_merge(
             .await
             .unwrap();
     let mut intent = s.w.core.store.crew_forge_merge(&s.task).unwrap().unwrap();
-    let tree = gitq(
+    // The candidate's tree with the rules the repository holds at the merge's base: a merge keeps the repository's own
+    // checks, and a rollback to the base then touches only what the merge changed.
+    let rules = gitq(
         &s.w.repo,
-        &["rev-parse", &format!("{}^{{tree}}", entry.candidate)],
+        &["rev-parse", &format!("{}:.orbyn/crew.json", intent.base)],
     )
     .await;
+    let tree = tree_with_rules(s, &entry.candidate, &rules);
     let merge = gitq(
         &s.w.repo,
         &[
@@ -670,10 +673,77 @@ async fn broken_world() -> Setup {
     }))
     .await;
     let good = gitq(&w.repo, &["rev-parse", "HEAD"]).await;
+    // The task starts under a check it passes: a task that writes inherits the repository's checks (issue #795), so a
+    // check that rejected the regression would fail the task itself. The stricter rules arrive on the forge's branch
+    // after the task passed, as a commit on the commit the task started from, which is the base the merge is watched
+    // from. The accepted merge is the fixture of a regression the repository's check can now see.
+    let s = setup_world(r#"{"checks":[{"run":"echo repository-check"}]}"#, w).await;
     // No quote characters: the check runs under `cmd /C` on Windows, where `'` is a literal and a `"` is re-escaped.
     let rules =
         json!({"checks":[{"run":format!("git diff --exit-code {good} HEAD -- . :!.orbyn")}]});
-    setup_world(&rules.to_string(), w).await
+    let started_from = gitq(
+        s.remote.path(),
+        &["rev-parse", &format!("refs/heads/{}", s.target.branch)],
+    )
+    .await;
+    let file = s.remote.path().join("strict.json");
+    std::fs::write(&file, rules.to_string()).unwrap();
+    let blob = git_plumbing(&s, &["hash-object", "-w", &file.to_string_lossy()], None);
+    let tree = tree_with_rules(&s, &started_from, &blob);
+    let strict = git_plumbing(
+        &s,
+        &[
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit-tree",
+            &tree,
+            "-p",
+            &started_from,
+            "-m",
+            "stricter repository checks",
+        ],
+        None,
+    );
+    run_git(
+        &s.w.repo,
+        &[
+            "push",
+            "-q",
+            "origin",
+            &format!("{strict}:refs/heads/{}", s.target.branch),
+        ],
+    );
+    s
+}
+
+/// Runs plumbing in the repository, on a throwaway index when one is given so the checkout's own index is untouched.
+fn git_plumbing(s: &Setup, args: &[&str], index: Option<&std::path::Path>) -> String {
+    let mut command = std::process::Command::new("git");
+    command.args(args).current_dir(&s.w.repo);
+    if let Some(index) = index {
+        command.env("GIT_INDEX_FILE", index);
+    }
+    let out = command.output().unwrap();
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+/// The tree of `from` with `.orbyn/crew.json` replaced by `blob`.
+fn tree_with_rules(s: &Setup, from: &str, blob: &str) -> String {
+    let index = s.remote.path().join("scratch.index");
+    git_plumbing(s, &["read-tree", from], Some(&index));
+    git_plumbing(
+        s,
+        &[
+            "update-index",
+            "--cacheinfo",
+            &format!("100644,{blob},.orbyn/crew.json"),
+        ],
+        Some(&index),
+    );
+    git_plumbing(s, &["write-tree"], Some(&index))
 }
 
 const READY: &str = "A verified corrective PR is ready. Choose Revert to publish it.";

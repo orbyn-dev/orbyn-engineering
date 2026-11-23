@@ -157,6 +157,7 @@ describe("Cancel on a Taskboard card", () => {
     await user.click(await screen.findByRole("button", { name: "Cancel task" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(`${message}Dismiss`);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(posts()).toHaveLength(1);
     await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
@@ -229,6 +230,7 @@ describe("Re-run checks", () => {
     await rerun(user);
     await user.dblClick(await screen.findByRole("button", { name: "Re-run checks" }));
     expect(await screen.findByText("Re-running the checks. This can take up to 30 minutes.")).toBeVisible();
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 80));
     expect(posts()).toHaveLength(1);
     release();
@@ -241,6 +243,7 @@ describe("Re-run checks", () => {
     await rerun(user);
     await user.click(await screen.findByRole("button", { name: "Re-run checks" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Another re-run is running. Try again in 7 seconds.");
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(posts()).toHaveLength(1);
   });
