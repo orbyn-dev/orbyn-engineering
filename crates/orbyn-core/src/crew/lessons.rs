@@ -142,9 +142,10 @@ impl Core {
         if peers.len() + 1 < THRESHOLD {
             return;
         }
+        // Five ids in all: the peers, then the task this lesson was learned on.
         let mut evidence: Vec<LessonEvidence> = peers
             .iter()
-            .take(EVIDENCE_MAX)
+            .take(EVIDENCE_MAX.saturating_sub(1))
             .map(|id| LessonEvidence {
                 kind: "task".to_owned(),
                 id: id.clone(),
