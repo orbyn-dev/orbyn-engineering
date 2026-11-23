@@ -85,14 +85,14 @@ export const demotedMedium: RiskReport = {
   tier: "medium",
   title: "Add a rate limit to the login route",
   reasons: [
-    { icon: "paths", label: "Paths", value: "web/auth/login.ts (an auth path)", effect: "raises" },
+    { icon: "paths", label: "Paths", value: "web/server/rate-limit.ts", effect: "none" },
     { icon: "size", label: "Size", value: "2 files · +31 −3", effect: "none" },
-    { icon: "revert-rate", label: "Revert rate", value: "web/auth · 2 of 15 · last 60 days", effect: "none" },
-    { icon: "area-mode", label: "Area mode", value: "Area web/auth is on On: 2 reverts in 14 days · 9 merges", effect: "planned" },
+    { icon: "revert-rate", label: "Revert rate", value: "web/server · 2 of 15 · last 60 days", effect: "none" },
+    { icon: "area-mode", label: "Area mode", value: "Area web/server is on On: 2 reverts in 14 days · 9 merges", effect: "planned" },
   ],
   outcome: {
     heading: "Merges by itself · review within 24 hours",
-    text: "web/auth is on On after 2 reverts in 14 days, so a High risk diff in web/auth waits for you at the merge gate. The risk tier is unchanged: it stays Medium.",
+    text: "web/server is on On after 2 reverts in 14 days, so a High risk diff in web/server waits for you at the merge gate. The risk tier is unchanged: it stays Medium.",
   },
 };
 
