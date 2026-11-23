@@ -72,7 +72,7 @@ describe("project preference inheritance", () => {
     const user = userEvent.setup();
     render(<PreferenceGroups groups={groups} projectId={A} />);
     await screen.findByRole("switch");
-    mock.fail("/api/settings/preferences", 1, 503, ...UNAVAILABLE);
+    mock.fail("/api/settings/preferences", 1, 503, ...UNAVAILABLE, "PUT");
     await user.click(screen.getByRole("button", { name: "Reset Auto pull to default" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The service is unavailable.");
     expect(screen.getByRole("switch")).not.toBeChecked(); expect(stored(A)).toMatchObject({ value: false, source: "project" });

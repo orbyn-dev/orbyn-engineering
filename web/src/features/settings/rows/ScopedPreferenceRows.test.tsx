@@ -35,7 +35,7 @@ describe("a failed preference save says so on the row that failed", () => {
     const user = userEvent.setup();
     render(<PreferenceGroups groups={[{ title: "", rows: ROWS }]} />);
     const toggle = await screen.findByRole("switch", { name: "Check providers for updates" });
-    mock.fail("/api/settings/preferences", 1, 403, "desktop_required", DESKTOP_ONLY_REFUSED);
+    mock.fail("/api/settings/preferences", 1, 403, "desktop_required", DESKTOP_ONLY_REFUSED, "PUT");
     await user.click(toggle);
 
     // The negative half is the point: the other row must stay clean, so a message that merely
@@ -54,7 +54,7 @@ describe("a failed preference save says so on the row that failed", () => {
     const field = await screen.findByRole("spinbutton", { name: "Git fetch interval" });
     await user.clear(field);
     await user.type(field, "9");
-    mock.fail("/api/settings/preferences", 1, 400, "invalid_input", GIT_FETCH_REFUSED);
+    mock.fail("/api/settings/preferences", 1, 400, "invalid_input", GIT_FETCH_REFUSED, "PUT");
     await user.tab();
 
     const failedRow = rowOf("Git fetch interval");
@@ -68,14 +68,14 @@ describe("a failed preference save says so on the row that failed", () => {
     const user = userEvent.setup();
     render(<PreferenceGroups groups={[{ title: "", rows: ROWS }]} />);
     const toggle = await screen.findByRole("switch", { name: "Check providers for updates" });
-    mock.fail("/api/settings/preferences", 1, 403, "desktop_required", DESKTOP_ONLY_REFUSED);
+    mock.fail("/api/settings/preferences", 1, 403, "desktop_required", DESKTOP_ONLY_REFUSED, "PUT");
     await user.click(toggle);
     expect(await within(rowOf("Check providers for updates")).findByRole("alert")).toBeVisible();
 
     const field = screen.getByRole("spinbutton", { name: "Git fetch interval" });
     await user.clear(field);
     await user.type(field, "9");
-    mock.fail("/api/settings/preferences", 1, 400, "invalid_input", GIT_FETCH_REFUSED);
+    mock.fail("/api/settings/preferences", 1, 400, "invalid_input", GIT_FETCH_REFUSED, "PUT");
     await user.tab();
 
     expect(await within(rowOf("Git fetch interval")).findByRole("alert")).toHaveTextContent(GIT_FETCH_REFUSED);

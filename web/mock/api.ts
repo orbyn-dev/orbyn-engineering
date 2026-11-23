@@ -4,6 +4,8 @@ import type { ScopedPreferencesResult } from "../src/generated/ScopedPreferences
 import type { ScopedPreferencesChange } from "../src/generated/ScopedPreferencesChange.ts";
 import type { JsonValue } from "../src/api/types.ts";
 import type { InstallOutcome } from "../src/generated/InstallOutcome.ts";
+import type { KeybindingRule } from "../src/generated/KeybindingRule.ts";
+import type { KeybindingsView } from "../src/generated/KeybindingsView.ts";
 import type { ModelInfo } from "../src/generated/ModelInfo.ts";
 import type { TextGeneratorEngine } from "../src/generated/TextGeneratorEngine.ts";
 import type { TextGenerators } from "../src/generated/TextGenerators.ts";
@@ -16,6 +18,7 @@ import type {
   ApplyAllResult,
   Approval,
   EngineModels,
+  CleanupPreview,
   EngineStatus,
   Project,
   ProjectFileView,
@@ -23,6 +26,7 @@ import type {
   ScheduledTask,
   ServerInfo,
   ServerSettings,
+  ShellStatus,
   Thread,
   UpdateStatus,
   UpdateThread,
@@ -36,6 +40,7 @@ import { createCapacityMock } from "./capacity.ts";
 import { createCodeModeMock } from "./codemode.ts";
 import { createCrewMock } from "./crew.ts";
 import { createEscapesMock } from "./escapes.ts";
+import { createKeybindingsMock } from "./keybindings.ts";
 import { createLessonsMock } from "./lessons.ts";
 import { boardMock } from "./board.ts";
 import { flowMock } from "./flow.ts";
@@ -123,6 +128,7 @@ type Subscriber = (event: WireThreadEvent) => void;
 
 interface Failure {
   path: string;
+  method?: string | undefined;
   remaining: number;
   status: number;
   code: string;
@@ -153,6 +159,8 @@ const TEXT_GENERATOR_SAMPLES: { engine: string; name: string; models: ModelInfo[
     textModel("team-tuned-mini", "team-tuned-mini", { custom: true }),
   ] },
   { engine: "opencode", name: "OpenCode", models: [] },
+  // Off in the default list (it is in `disabled_engines`): it lists a model, and none of them is small.
+  { engine: "cursor", name: "Cursor", models: [textModel("composer-1", "Composer 1")] },
 ];
 
 /** The engine's small model, recognised by family name as the service does. */
@@ -194,6 +202,8 @@ export function createMockApi(options: MockOptions = {}) {
   let failNextSetup = false;
   let updates: UpdateStatus = fixtures.updateStatus(2);
   let settings: ServerSettings = fixtures.serverSettings();
+  /** What Delete now would remove, when a screen needs a different dry run than the default (`cleanupSummary`). */
+  let cleanupPreviewOverride: CleanupPreview | null = null;
   let failStep: string | null = null;
   let queued: QueuedMessage[] = [];
   /** Files the editor saved, by thread and path, with the revision the next save must start from. */
@@ -240,6 +250,7 @@ export function createMockApi(options: MockOptions = {}) {
   let infoPatch: Partial<ServerInfo> = {};
   /** The model lists a test gives an engine, in place of the sample ones. */
   let modelLists: Record<string, EngineModels> = {};
+  const keybindingsMock = createKeybindingsMock();
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
   /** Kiro, an ACP engine the service says Orbyn cannot gate, for the engine picker and unmanaged-thread screens. */
@@ -284,6 +295,8 @@ export function createMockApi(options: MockOptions = {}) {
     terminalsMock.reset();
     questionsMock.reset();
     foldersMock.reset();
+    keybindingsMock.reset();
+    cleanupPreviewOverride = null;
     signedIn = false;
     infoPatch = {};
     modelLists = {};
@@ -917,7 +930,9 @@ export function createMockApi(options: MockOptions = {}) {
         const projectMap = projectId === null ? {} : (preferenceOverrides[projectId]?.text_generation_models ?? {}) as Record<string, JsonValue>;
         const globalLegacy = preferenceValues.text_generation_model ?? "";
         const projectLegacy = projectId === null ? globalLegacy : preferenceOverrides[projectId]?.text_generation_model ?? globalLegacy;
-        const engines: TextGeneratorEngine[] = TEXT_GENERATOR_SAMPLES.map((sample) => {
+        // Only the engines that are on for the project, as the service lists them.
+        const disabled = (preferenceOverrides[projectId ?? ""]?.disabled_engines ?? preferenceValues.disabled_engines ?? preferenceDefaults.disabled_engines) as string[];
+        const engines: TextGeneratorEngine[] = TEXT_GENERATOR_SAMPLES.filter((sample) => !disabled.includes(sample.engine)).map((sample) => {
           const global = resolveTextModel(sample.engine, sample.models, globalMap, globalLegacy);
           return {
             engine: sample.engine, name: sample.name, models: structuredClone(sample.models),
@@ -959,8 +974,11 @@ export function createMockApi(options: MockOptions = {}) {
         return { status: 200, body: diagnostics(Date.now()) };
       case "POST /api/diagnostics":
         return seg[2] === "otlp" ? { status: 200, body: { ok: true, status: 200, message: null } } : { status: 204 };
+      // No desktop app is attached to this service.
+      case "GET /api/shell":
+        return { status: 200, body: { attached: false, windows: 0, facts: { cli: null, permissions: [] } } satisfies ShellStatus };
       case "GET /api/storage":
-        if (seg[2] === "cleanup" && seg[3] === "preview") return { status: 200, body: cleanupSummary() };
+        if (seg[2] === "cleanup" && seg[3] === "preview") return { status: 200, body: cleanupPreviewOverride ?? cleanupSummary() };
         return { status: 200, body: null };
       case "POST /api/storage":
         return { status: 200, body: query.get("dry_run") === "true" ? cleanupPreview(Date.now()) : { ...cleanupPreview(Date.now()), dry_run: false } };
@@ -1060,7 +1078,9 @@ export function createMockApi(options: MockOptions = {}) {
         return { status: 200, body: made };
       }
       case "GET /api/keybindings":
-        return { status: 200, body: keybindingsView() };
+        return { status: 200, body: keybindingsMock.get() };
+      case "POST /api/keybindings":
+        return keybindingsMock.save(data as unknown as KeybindingRule);
       // No engine host is reported: the real client reads a 404 as "nothing reported".
       case "GET /api/engine-host":
         return err(404, "not_found", "Not found.");
@@ -1522,16 +1542,16 @@ export function createMockApi(options: MockOptions = {}) {
     get threads() {
       return threads;
     },
-    /** Queues a failure for the next `times` requests under `path`. */
-    fail(path: string, times: number, status = 500, code = "internal", message = "Something went wrong.") {
-      failures.push({ path, remaining: times, status, code, message });
+    /** Queues a failure for the next `times` requests under `path` (only those with this `method`, when one is given). */
+    fail(path: string, times: number, status = 500, code = "internal", message = "Something went wrong.", method?: string) {
+      failures.push({ path, remaining: times, status, code, message, method });
     },
     handle(method: string, url: string, body?: unknown, confirm?: string): MockResponse {
       const parsed = new URL(url, "http://mock.local");
       if (scenario === "offline" && parsed.pathname.startsWith("/api")) {
         return err(503, "unavailable", "The service is unavailable.");
       }
-      const failure = failures.find((f) => parsed.pathname.startsWith(f.path) && f.remaining > 0);
+      const failure = failures.find((f) => parsed.pathname.startsWith(f.path) && f.remaining > 0 && (f.method === undefined || f.method === method));
       if (failure) {
         failure.remaining -= 1;
         return err(failure.status, failure.code, failure.message);
@@ -1553,6 +1573,14 @@ export function createMockApi(options: MockOptions = {}) {
     folders: foldersMock,
     /** The Code Mode stand-in (mock/codemode.ts): seed a run record, read the writes, switch the routes off (404). */
     codeMode: codeModeMock,
+    /** Sets what the next dry run of Delete now finds. */
+    setCleanupPreview(preview: CleanupPreview) {
+      cleanupPreviewOverride = preview;
+    },
+    /** Seeds the Keybindings page with a view it cannot reach by clicking (a clash, a rule with a context). */
+    setKeybindings(view: KeybindingsView) {
+      keybindingsMock.set(view);
+    },
     /** Changes the account has waiting to upload, for the offline and paused wording. */
     setAccountWaiting(count: number) {
       accountMock.setWaiting(count);
@@ -1606,18 +1634,3 @@ export function createMockApi(options: MockOptions = {}) {
 }
 
 export type MockApi = ReturnType<typeof createMockApi>;
-
-/** Fixed shortcuts for the Keybindings page: one clash, no issues. */
-function keybindingsView() {
-  const rule = (key: string, command: string) => ({ key, command, when: null, remove: false });
-  return {
-    path: "~/.orbyn/keybindings.json",
-    rules: [
-      rule("mod+n", "thread.new"), rule("mod+k", "commandPalette.toggle"), rule("mod+shift+b", "threadPanel.toggle"),
-      rule("ctrl+`", "terminal.toggle"), rule("mod+enter", "approval.allow"), rule("alt+down", "thread.nextNeedsYou"),
-      rule("mod+f", "chat.find"), rule("mod+backspace", "thread.archive"),
-    ],
-    issues: [],
-    conflicts: [{ key: "mod+backspace", when: null, commands: ["thread.archive", "Delete"] }],
-  };
-}
