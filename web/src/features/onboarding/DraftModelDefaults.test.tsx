@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, expect, it } from "vitest";
 import type { MockApi } from "../../../mock/api";
 import type { EngineStatus, Project } from "../../api/types";
 import { installMockFetch } from "../../test-support";
@@ -13,11 +13,6 @@ import { DraftView } from "./DraftView";
 import { createReposMock } from "../../../mock/repos";
 import { setReposApi } from "../repos";
 
-vi.mock("../thread/composer/ModelPicker", () => ({ ModelPickerTrigger: ({ selected, onPick }: {
-  selected: { engine: string; model: string | null }; onPick(choice: { engine: string; model: string }): void;
-}) => <button type="button" onClick={() => onPick({ engine: "codex", model: "explicit" })}>
-  Model {selected.engine}/{selected.model ?? "automatic"}</button> }));
-
 let mock: MockApi;
 /** Saves the project's default engine and model the way Settings does, and answers what the draft reads. */
 const saveDefaults = (model: string, engine = "codex") =>
@@ -26,6 +21,9 @@ const created = () => wireWrites().filter((call) => call.method === "POST" && ca
 const runs = () => wireWrites().filter((call) => /^\/api\/threads\/[^/]+\/runs$/.test(call.path));
 beforeEach(() => {
   mock = installMockFetch();
+  const model = (id: string, label: string) => ({ id, label, description: null, is_default: false, custom: false, options: [] });
+  mock.setEngineModels("codex", { engine: "codex", source: "engine", checked_at: "fixture", error: null, fallback: false, options: [], agents: [], output_styles: [],
+    models: [model("remembered", "Remembered"), model("explicit", "Explicit"), model("late-default", "Late default"), model("project-model", "Project model")] });
   useWorkspace.setState({
     projects: { data: [{ id: "p-app", name: "Fixture", trusted: true, is_git: true, path: "/fixture/a" } as Project], loading: false, error: null },
     engines: { data: [{ id: "codex", name: "Codex", auth: "logged_in", installed: true, capabilities: { managed: true } } as EngineStatus], loading: false, error: null },
@@ -52,10 +50,11 @@ it("keeps an explicit draft model when defaults arrive later, then sends that ex
   render(<DraftView projectId="p-app" />);
   const user = userEvent.setup();
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "Model codex/remembered" }));
+  await user.click(screen.getByRole("button", { name: "Remembered" }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Choose a model" })).getByRole("option", { name: /Explicit/ }));
   await act(async () => held[0]!.release());
   await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
-  expect(screen.getByRole("button", { name: "Model codex/explicit" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Explicit" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(created()).toHaveLength(1));
   expect(created()[0]?.body).toMatchObject({ model: "explicit" });
@@ -68,7 +67,8 @@ it("keeps a missing configured provider blocked until the person explicitly choo
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   expect(created()).toHaveLength(0);
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Model codex/automatic" }));
+  await user.click(screen.getByRole("button", { name: "Remembered" }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Choose a model" })).getByRole("option", { name: /Explicit/ }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(created()).toHaveLength(1));
