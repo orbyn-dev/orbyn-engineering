@@ -310,6 +310,7 @@ describe("an unchanged poll", () => {
     expect(calls).toEqual([true]);
     forced.resolve({ marker: 1 } as never);
     await running;
+    // Real wait: one macrotask turn lets already-resolved promises settle; no clock is involved.
     await new Promise((resolve) => setTimeout(resolve, 0));
     // The person's read landed and stays; the quiet read ran after it and its failure showed nothing.
     expect(calls).toEqual([true, false]);

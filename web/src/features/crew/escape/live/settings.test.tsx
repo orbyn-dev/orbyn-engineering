@@ -87,6 +87,7 @@ describe("the escape constants on the real thresholds read", () => {
     await waitFor(() => expect(calls.some(({ url }) => url.includes("/api/crew/preview"))).toBe(true));
     // The preview call was answered 404: let its response settle and the screen react before asserting, so a screen that drew anyway fails here.
     await act(async () => {
+      // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
     expect(container).toBeEmptyDOMElement();

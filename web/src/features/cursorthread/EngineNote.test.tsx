@@ -23,6 +23,7 @@ describe("the Engine row of Details", () => {
     expect(screen.getByText("Engine")).toBeVisible();
     expect(screen.getByText("Claude Code")).toBeVisible();
     expect(screen.getByText("Opus 5.5")).toBeVisible();
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((done) => setTimeout(done, 10));
     expect(screen.queryByText(/does not ask/)).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
@@ -31,12 +32,14 @@ describe("the Engine row of Details", () => {
   it("adds the notice only for an engine that has one and only once it has been answered", async () => {
     setCursorThreadApi(createCursorThreadMock({ acknowledged: false }));
     const before = render(<EngineNote projectId="p" engine="cursor" engineName="Cursor" />);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((done) => setTimeout(done, 10));
     expect(screen.getByText("Cursor")).toBeVisible();
     expect(screen.queryByText(/does not ask/)).toBeNull();
     before.unmount();
     setCursorThreadApi(null);
     render(<EngineNote projectId="p" engine="cursor" engineName="Cursor" />);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((done) => setTimeout(done, 10));
     expect(screen.getByText("Engine")).toBeVisible();
     expect(screen.queryByText(/does not ask/)).toBeNull();

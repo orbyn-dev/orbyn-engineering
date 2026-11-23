@@ -40,12 +40,12 @@ it("requires explicit acceptance of a changed default before a tier edit can sav
 });
 it("reconciles a lost response, blocks blind retry on a CAS conflict and preserves the old choice for comparison", async () => {
   const view = exampleTierView(); const current = exampleTierView(); current.settings.revision = 3;
-  const read = vi.mocked(reviewControlApi.tiers).mockResolvedValueOnce(view).mockResolvedValue(current);
+  vi.mocked(reviewControlApi.tiers).mockResolvedValueOnce(view).mockResolvedValue(current);
   const send = vi.spyOn(reviewControlApi, "saveTiers").mockRejectedValue(new Error("reply lost"));
   render(<EngineTiers />); const user = await edit(); await user.selectOptions(screen.getByLabelText("Tier · Example ACP"), "scout"); await user.click(screen.getByRole("button", { name: "Save tiers" }));
   await user.click(await screen.findByRole("button", { name: "Reload mappings" }));
   expect(await screen.findByText(/Previous choice: Scout/)).toBeVisible();
-  expect(screen.getByLabelText("Tier · Example ACP")).toHaveValue("worker"); expect(send).toHaveBeenCalledTimes(1); expect(read).toHaveBeenCalledTimes(3);
+  expect(screen.getByLabelText("Tier · Example ACP")).toHaveValue("worker"); expect(send).toHaveBeenCalledTimes(1); expect(send.mock.calls[0]?.[0]).toMatchObject({ assignments: [{ engine: "example-acp", tier: "scout" }] });
 });
 it("retains an uncertain write across unmount, offers reads only and never posts it twice", async () => {
   const savedView = exampleTierView(); savedView.settings = { revision: 2, assignments: { "example-acp": { tier: "lead", model: "example-model-id" } } };
