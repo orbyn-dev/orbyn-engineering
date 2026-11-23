@@ -54,7 +54,10 @@ pub fn free_bytes(path: &std::path::Path) -> Option<u64> {
     }
     // SAFETY: the call returned zero, so it initialized every field of `stats`, which is read here as plain data.
     let stats = unsafe { stats.assume_init() };
-    Some((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
+    // The two fields are u32 on macOS and u64 on Linux, so the casts are needed on one and the same type on the other.
+    #[allow(clippy::unnecessary_cast)]
+    let (blocks, size) = (stats.f_bavail as u64, stats.f_frsize as u64);
+    Some(blocks.saturating_mul(size))
 }
 
 /// Bytes available to this user on the volume that holds `path`, or `None` when the volume
