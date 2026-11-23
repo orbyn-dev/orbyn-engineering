@@ -133,7 +133,7 @@ describe("codex feedback", () => {
   it("offers the action only where the route exists", async () => {
     mock.engines = [engine({ id: "claude", name: "Claude" })];
     render(<ProvidersSection />);
-    await userEvent.click(await screen.findByRole("button", { name: "Claude" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Claude (SDK)" }));
 
     expect(await screen.findByRole("heading", { name: "Claude" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Send feedback" })).toBeNull();

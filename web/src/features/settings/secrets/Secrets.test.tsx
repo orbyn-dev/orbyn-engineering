@@ -36,14 +36,14 @@ describe("Settings › Secrets", () => {
     expect(screen.getByText(/Crew blocks every recognised format/)).toBeVisible();
     expect(screen.queryByText(/Reveal/)).toBeNull();
     expect(screen.queryByText(/apply to new output/)).toBeNull();
-    expect(screen.getByText(/They apply to the Crew ledger when you read it, old rows included, and to what agents read/)).toBeVisible();
+    expect(screen.getByText(/They apply to the Crew ledger when you read it, old rows included, and to what agents read and to terminal blocks/)).toBeVisible();
     expect(screen.getByText("On, locked")).toBeVisible();
     expect(screen.queryByRole("switch", { name: /Crew ledger/ })).toBeNull();
     expect(screen.getByText("None. Redaction is on in every project.")).toBeVisible();
-    // What is not built is said so, not promised.
-    expect(screen.getByRole("status")).toHaveTextContent("not applied yet");
-    expect(screen.getAllByText("Not applied yet")).toHaveLength(1);
-    expect(screen.getAllByText(/Not applied yet to terminal blocks/)).toHaveLength(1);
+    // Terminal blocks are masked by the service (store.rs `a_secret_printed_across_two_reads_is_never_stored_or_answered`): nothing says "not applied yet".
+    expect(screen.queryByText(/not applied yet/i)).toBeNull();
+    expect(screen.getByText(/Terminal blocks are masked as well/)).toBeVisible();
+    expect(screen.getByText(/They apply to terminal blocks and to what agents read/)).toBeVisible();
     for (const format of view().formats) expect(row(format.label)).toBeChecked();
     expect(screen.getByText("Environment values named like a secret", { selector: ".setting-line-title" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Add pattern" })).toBeVisible();

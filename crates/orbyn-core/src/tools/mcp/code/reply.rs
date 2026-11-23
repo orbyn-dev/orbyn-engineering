@@ -14,6 +14,7 @@ pub(super) fn error_json(error: &RunError) -> Value {
         ErrorKind::Limit => "limit",
         ErrorKind::Runtime if error.code.as_deref() == Some("denied") => "denied",
         ErrorKind::Runtime if error.code.as_deref() == Some("lost") => "lost",
+        ErrorKind::Runtime if error.code.as_deref() == Some("cancelled") => "cancelled",
         ErrorKind::Runtime => "runtime",
     };
     let mut out = json!({ "kind": kind, "message": error.message });
@@ -26,6 +27,12 @@ pub(super) fn error_json(error: &RunError) -> Value {
 pub(super) fn lost(run_id: &str, message: &str) -> Value {
     json!({ "status": "error", "runId": run_id, "logs": [],
         "error": { "kind": "lost", "message": message } })
+}
+
+/// A cancelled run answers the same way a resume of it does: it ended, and it will not continue.
+pub(super) fn cancelled(run_id: &str) -> Value {
+    json!({ "status": "error", "runId": run_id, "logs": [],
+        "error": { "kind": "cancelled", "message": super::CANCELLED } })
 }
 
 pub(super) fn failed(run_id: &str, error: &RunError) -> Value {

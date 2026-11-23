@@ -106,6 +106,19 @@ describe("capturing", () => {
     await vi.waitFor(() => expect(mock.calls.some((call) => call.command === "snapshot_capture")).toBe(true));
   });
 
+  it("starts one capture when the button is clicked twice before the shell answers", async () => {
+    await start();
+    useUi.getState().setPrefs({ snapshotEnabled: true });
+    await vi.waitFor(() => expect(useSnapshot.getState().state?.enabled).toBe(true));
+    const { target } = recordingTarget();
+    useSnapshot.getState().registerTarget(target);
+    await Promise.all([
+      useSnapshot.getState().captureFromPerson(),
+      useSnapshot.getState().captureFromPerson(),
+    ]);
+    expect(mock.calls.filter((call) => call.command === "snapshot_capture")).toHaveLength(1);
+  });
+
   it("does not capture while the setting is off", async () => {
     await start();
     const { target } = recordingTarget();
@@ -156,6 +169,68 @@ describe("capturing", () => {
     expect(delivered).toEqual([]);
     expect(useSnapshot.getState().capture).toBeNull();
     expect(mock.calls).toContainEqual({ command: "snapshot_discard", args: { id } });
+  });
+
+  it("settles a failure that arrives before snapshot_capture answers the id", async () => {
+    const base = createSnapshotMock({ manual: true });
+    installSnapshotTransport({
+      async invoke(command, args) {
+        if (command === "snapshot_capture") {
+          base.emit("snapshot://started", { id: "snap-early" });
+          base.emit("snapshot://failed", { id: "snap-early", reason: "permission" });
+          return { id: "snap-early" };
+        }
+        return base.invoke(command, args);
+      },
+      listen: (event, handler) => base.listen(event, handler),
+    });
+    await start();
+    useUi.getState().setPrefs({ snapshotEnabled: true });
+    await vi.waitFor(() => expect(useSnapshot.getState().state?.enabled).toBe(true));
+    const { target, phases } = recordingTarget();
+    useSnapshot.getState().registerTarget(target);
+    await useSnapshot.getState().captureFromPerson();
+    expect(useSnapshot.getState().capture).toBeNull();
+    expect(phases.at(-1)).toBeNull();
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("Screen Recording is not allowed");
+    expect(useUi.getState().toasts.at(-1)?.kind).toBe("failed");
+  });
+
+  it("replays a ready that arrived before snapshot_capture answered the id", async () => {
+    const base = createSnapshotMock({ manual: true, take: takeOf() });
+    installSnapshotTransport({
+      async invoke(command, args) {
+        if (command === "snapshot_capture") {
+          base.emit("snapshot://started", { id: "snap-early" });
+          base.emit("snapshot://ready", { id: "snap-early" });
+          return { id: "snap-early" };
+        }
+        return base.invoke(command, args);
+      },
+      listen: (event, handler) => base.listen(event, handler),
+    });
+    await start();
+    useUi.getState().setPrefs({ snapshotEnabled: true });
+    await vi.waitFor(() => expect(useSnapshot.getState().state?.enabled).toBe(true));
+    const { target, delivered, phases } = recordingTarget();
+    useSnapshot.getState().registerTarget(target);
+    await useSnapshot.getState().captureFromPerson();
+    await vi.waitFor(() => expect(delivered).toHaveLength(1));
+    expect(delivered[0]).toMatchObject({ captureId: "snap-early", source: expect.objectContaining({ app_name: "Safari" }) });
+    expect(useSnapshot.getState().capture).toBeNull();
+    expect(phases.at(-1)).toBeNull();
+  });
+
+  it("does not offer setup from a permission failure while setup is Planned", async () => {
+    await start();
+    useUi.getState().setPrefs({ snapshotEnabled: true });
+    await vi.waitFor(() => expect(useSnapshot.getState().state?.enabled).toBe(true));
+    const { target } = recordingTarget();
+    useSnapshot.getState().registerTarget(target);
+    await useSnapshot.getState().captureFromPerson();
+    mock.emit("snapshot://failed", { id: useSnapshot.getState().capture!.id, reason: "permission" });
+    await vi.waitFor(() => expect(useUi.getState().toasts.at(-1)?.text).toContain("Screen Recording is not allowed"));
+    expect(useUi.getState().toasts.at(-1)?.action).toBeUndefined();
   });
 
   it("accepts the test capture's own id, which snapshot_capture did not return", async () => {
@@ -212,6 +287,27 @@ describe("failures and exclusions", () => {
     expect(useUi.getState().toasts.at(-1)?.kind).toBe("failed");
     expect(delivered).toEqual([]);
     expect(useSnapshot.getState().capture).toBeNull();
+  });
+
+  it("clears the capture only for an excluded event that names it", async () => {
+    await start();
+    useUi.getState().setPrefs({ snapshotEnabled: true });
+    await vi.waitFor(() => expect(useSnapshot.getState().state?.enabled).toBe(true));
+    const { target, phases } = recordingTarget();
+    useSnapshot.getState().registerTarget(target);
+    await useSnapshot.getState().captureFromPerson();
+    const id = useSnapshot.getState().capture!.id;
+    const toasts = useUi.getState().toasts.length;
+    mock.emit("snapshot://excluded", { id: "another-capture", app_name: "1Password" });
+    await Promise.resolve();
+    expect(useSnapshot.getState().capture?.id).toBe(id);
+    expect(phases.at(-1)).toBe("capturing");
+    expect(useUi.getState().toasts).toHaveLength(toasts);
+
+    mock.emit("snapshot://excluded", { id, app_name: "1Password" });
+    await vi.waitFor(() => expect(useUi.getState().toasts.at(-1)?.text).toContain("Not captured: 1Password"));
+    expect(useSnapshot.getState().capture).toBeNull();
+    expect(phases.at(-1)).toBeNull();
   });
 
   it("names only the excluded app, never the window", async () => {

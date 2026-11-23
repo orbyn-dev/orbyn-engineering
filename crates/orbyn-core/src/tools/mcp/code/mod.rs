@@ -11,6 +11,7 @@ mod reply;
 mod runs;
 mod search;
 
+pub(crate) use host::is_inner_tool;
 pub(crate) use runs::CodeRuns;
 
 use crate::app::Core;
@@ -29,7 +30,11 @@ pub(crate) const RUN_TOOL: &str = "orbyn_code_run";
 
 const MAX_DESCRIBE: usize = 16;
 const MAX_SOURCE_BYTES: usize = 64 * 1024;
-const LOST: &str = "This run was lost when Orbyn restarted. Call orbyn_code_run again with the same code and run_id to replay it.";
+pub(super) const LOST: &str = "This run was lost when Orbyn restarted. Call orbyn_code_run again with the same code and run_id to replay it.";
+/// The one text a cancelled run ends, resumes and replays with.
+pub(super) const CANCELLED: &str = "The run was cancelled.";
+/// The one text a cancel of a run that already ended answers with.
+pub(super) const RUN_FINISHED: &str = "This run already ended.";
 
 pub(crate) fn is_tool(name: &str) -> bool {
     [SEARCH_TOOL, DESCRIBE_TOOL, RUN_TOOL].contains(&name)
@@ -78,7 +83,7 @@ impl Core {
         if let Err(error) = self.note_tool(binding, tool) {
             tracing::warn!(%error, "could not record a tool call");
         }
-        // A crew worker gets these only once the allow list names them.
+        // The same allow list runs here and on every inner call (`call_orbyn_tool`).
         if let Err(error) = self.refuse_for_crew_worker(binding, tool, args) {
             return (error.public_message(), true);
         }
@@ -89,14 +94,26 @@ impl Core {
         }
     }
 
-    /// The specs a script of this caller may call: never Code Mode, and for a Crew worker only its allow list.
+    /// The specs a script of this caller may call: never Code Mode, and for a Crew worker only its
+    /// allow list. For a worker every string in a spec is redacted of names it may not use, so search
+    /// and describe never name one; for anything else the specs come back unmodified.
     fn code_callable(&self, binding: &McpBinding) -> Vec<Value> {
-        let own = json!({ "thread_id": binding.scope.thread_id });
-        crate::tools::mcp_tools::tool_specs()
+        let specs = crate::tools::mcp_tools::tool_specs()
+            .filter(|spec| spec["name"].as_str().is_some_and(is_inner_tool));
+        if !self.is_crew_worker(binding).unwrap_or(true) {
+            return specs.collect();
+        }
+        let own = binding.scope.thread_id.as_str();
+        let args = json!({ "thread_id": own });
+        let hidden = hidden_names(own);
+        specs
             .filter(|spec| {
                 let name = spec["name"].as_str().unwrap_or_default();
-                host::is_inner_tool(name)
-                    && self.refuse_for_crew_worker(binding, name, &own).is_ok()
+                crate::crew::worker_refusal(name, &args, own).is_none()
+            })
+            .map(|mut spec| {
+                redact_tool_names(&mut spec, &hidden);
+                spec
             })
             .collect()
     }
@@ -135,6 +152,7 @@ impl Core {
         for path in paths.iter().filter_map(Value::as_str) {
             match callable.iter().find(|spec| spec["name"] == path) {
                 Some(spec) => known.push(declare::declaration(spec)),
+                // The caller's own input: describe never adds a name the caller did not send.
                 None => unknown.push(path.to_owned()),
             }
         }
@@ -188,12 +206,48 @@ impl Core {
         };
         let slice = slice_for(self.code_runs.slice());
         let answer = match live.wait(slice).await {
-            Some(step) => reply::finished(&run_id, &step, super::MAX_RESULT_BYTES),
-            None => {
-                if let Err(error) = self.store.code_run_set_status(&run_id, "paused", false) {
-                    tracing::warn!(%error, "could not record a pause");
+            Some(step) => {
+                // A cancel that won the record while this step was already on its way wins the reply
+                // too: the engine must not read `completed` for a run the person ended.
+                let cancelled = self
+                    .store
+                    .code_run(&run_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|run| {
+                        run.error
+                            .as_deref()
+                            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                            .is_some_and(|error| error["kind"] == "cancelled")
+                    });
+                if cancelled {
+                    reply::cancelled(&run_id)
+                } else {
+                    reply::finished(&run_id, &step, super::MAX_RESULT_BYTES)
                 }
-                reply::paused(&run_id, &live.pending())
+            }
+            None => {
+                // A cancel drops the run's task, which ends the wait without a Step. The record is
+                // the truth: the outer call answers the same cancelled reply a resume does.
+                let cancelled = self
+                    .store
+                    .code_run(&run_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|run| {
+                        run.error
+                            .as_deref()
+                            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                            .is_some_and(|error| error["kind"] == "cancelled")
+                    });
+                if cancelled {
+                    reply::cancelled(&run_id)
+                } else {
+                    if let Err(error) = self.store.code_run_set_status(&run_id, "paused", false) {
+                        tracing::warn!(%error, "could not record a pause");
+                    }
+                    reply::paused(&run_id, &live.pending())
+                }
             }
         };
         (answer.to_string(), false)
@@ -233,6 +287,8 @@ impl Core {
                 )
                 .to_string()
             }
+            // A cancelled run cannot be resumed or replayed, before or after a restart.
+            "error" if error["kind"] == "cancelled" => reply::cancelled(run_id).to_string(),
             "error" if error["kind"] != "lost" => json!({
                 "status": "error", "runId": run_id, "error": error, "logs": run.logs, "truncated": run.truncated })
             .to_string(),
@@ -253,6 +309,7 @@ impl Core {
             seed: (ulid::Ulid::generate().random() & 0xffff_ffff) as u32,
         };
         self.code_runs_prune();
+        let crew_worker = self.is_crew_worker(binding).unwrap_or(true);
         let record = NewCodeRun {
             run_id: run_id.clone(),
             thread_id: thread.clone(),
@@ -261,17 +318,12 @@ impl Core {
             seed_start_ms: seed.start_ms,
             seed: seed.seed,
             started_at: crate::util::now(),
-            crew_worker: self
-                .store
-                .crew_task_for_worker(thread)
-                .ok()
-                .flatten()
-                .is_some(),
+            crew_worker,
         };
         if let Err(error) = self.store.code_run_begin(&record) {
             tracing::warn!(%error, "could not record a script run");
         }
-        self.code_begin_task(binding, &run_id, code, seed, HashMap::new())
+        self.code_begin_task(binding, &run_id, code, seed, HashMap::new(), crew_worker)
             .await
             .map(|live| (run_id, live))
     }
@@ -285,7 +337,9 @@ impl Core {
         code: &str,
     ) -> Result<(String, Arc<runs::Live>), (String, bool)> {
         let thread = &binding.scope.thread_id;
-        if self.code_runs.is_running(run_id) {
+        // Filter by owner first: another thread's live run answers like an unknown id, not with the
+        // news that it exists.
+        if self.code_runs.get(run_id, thread).is_some() && self.code_runs.is_running(run_id) {
             return Err((
                 "That run is still running. Resume it with run_id alone.".into(),
                 true,
@@ -300,12 +354,17 @@ impl Core {
         let Some(run) = stored else {
             return Err((reply::lost(run_id, LOST).to_string(), false));
         };
-        let lost = run
+        let error: Value = run
             .error
             .as_deref()
-            .and_then(|text| serde_json::from_str::<Value>(text).ok())
-            .is_some_and(|error| error["kind"] == "lost");
+            .and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or(Value::Null);
+        let lost = error["kind"] == "lost";
         if run.status != "error" || !lost {
+            // A cancelled run is never replayed; it answers the same fixed copy a resume does.
+            if run.status == "error" && error["kind"] == "cancelled" {
+                return Err((reply::cancelled(run_id).to_string(), false));
+            }
             return Err((
                 "That run did not end as lost. Start a new run with `code`, or resume it with run_id alone."
                     .into(),
@@ -319,16 +378,45 @@ impl Core {
             Ok(calls) => calls.into_iter().map(|c| (c.idx, c)).collect(),
             Err(error) => return Err((error.public_message(), true)),
         };
-        if let Err(error) = self.store.code_run_restart(run_id) {
-            tracing::warn!(%error, "could not record a replay");
+        let restarted = match self.store.code_run_restart(run_id) {
+            Ok(restarted) => restarted,
+            Err(error) => return Err((error.public_message(), true)),
+        };
+        if !restarted {
+            // A slower replay lost the compare-and-set: the run was cancelled, taken by another
+            // replay, or otherwise ended between the read and the restart.
+            return Err((self.code_replay_taken(run_id), false));
         }
         let seed = RunSeed {
             start_ms: run.seed_start_ms,
             seed: run.seed,
         };
-        self.code_begin_task(binding, run_id, code, seed, calls)
+        let crew_worker = self.is_crew_worker(binding).unwrap_or(true);
+        self.code_begin_task(binding, run_id, code, seed, calls, crew_worker)
             .await
             .map(|live| (run_id.to_owned(), live))
+    }
+
+    /// The answer for a replay whose restart lost the compare-and-set: it never says `completed`;
+    /// a cancelled row answers cancelled, anything else stays lost.
+    pub(crate) fn code_replay_taken(&self, run_id: &str) -> String {
+        let cancelled = self
+            .store
+            .code_run(run_id)
+            .ok()
+            .flatten()
+            .is_some_and(|run| {
+                run.error
+                    .as_deref()
+                    .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                    .is_some_and(|error| error["kind"] == "cancelled")
+            });
+        if cancelled {
+            reply::cancelled(run_id)
+        } else {
+            reply::lost(run_id, LOST)
+        }
+        .to_string()
     }
 
     async fn code_begin_task(
@@ -338,6 +426,7 @@ impl Core {
         code: &str,
         seed: RunSeed,
         replay: HashMap<u32, StoredCodeCall>,
+        crew_worker: bool,
     ) -> Result<Arc<runs::Live>, (String, bool)> {
         let failure: host::ReplayFailure = Arc::default();
         let host_core = self.clone();
@@ -352,9 +441,10 @@ impl Core {
             .start(
                 run_id,
                 &binding.scope.thread_id,
+                crew_worker,
                 code,
                 seed,
-                move |pending| {
+                move |pending, cancelled| {
                     Arc::new(host::RunHost::new(
                         &host_core,
                         &host_binding,
@@ -363,34 +453,15 @@ impl Core {
                         &host_script,
                         replay,
                         host_failure,
+                        cancelled,
                     ))
                 },
-                move |step| {
+                move |step, cancelled| {
                     let message = failure
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .clone();
-                    let step = match (message, step) {
-                        (
-                            Some(message),
-                            Step::Done {
-                                logs, truncated, ..
-                            }
-                            | Step::Failed {
-                                logs, truncated, ..
-                            },
-                        ) => Step::Failed {
-                            error: RunError {
-                                kind: ErrorKind::Runtime,
-                                message,
-                                line: None,
-                                code: Some("lost".into()),
-                            },
-                            logs,
-                            truncated,
-                        },
-                        (_, step) => step,
-                    };
+                    let step = settle(step, cancelled, message);
                     if let Some(core) = weak.upgrade() {
                         core.code_run_finished(&finish_run, &step);
                     }
@@ -405,6 +476,11 @@ impl Core {
                     tracing::warn!(%error, "could not drop a refused script run");
                 }
                 Err((message, true))
+            }
+            Err(runs::Refused::Duplicate(message)) => Err((message, true)),
+            Err(runs::Refused::Cancelled) => {
+                // The person cancelled while `prepare` was still running; the task never started.
+                Err((reply::cancelled(run_id).to_string(), false))
             }
             Err(runs::Refused::Script(error)) => {
                 self.code_run_finished(
@@ -435,6 +511,129 @@ impl Core {
         if let Err(error) = self.store.append_audit(&record) {
             tracing::warn!(%error, "could not record a code run");
         }
+    }
+}
+
+/// Every name a worker may not use in a script, from the whole tool universe, longest first.
+fn hidden_names(own: &str) -> Vec<String> {
+    let args = json!({ "thread_id": own });
+    let mut names: Vec<String> = super::tool_list(false)
+        .into_iter()
+        .chain(crate::tools::mcp::code::specs())
+        .chain(crate::crew::tool_specs())
+        .filter_map(|spec| spec["name"].as_str().map(str::to_owned))
+        .collect();
+    names.push("approve".to_owned());
+    names.retain(|name| {
+        !is_inner_tool(name) || crate::crew::worker_refusal(name, &args, own).is_some()
+    });
+    names.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    names.dedup();
+    names
+}
+
+/// Replaces hidden tool names in every string value of a spec, including nested schema strings.
+/// Object keys are untouched: they are schema structure, not text a reader sees.
+fn redact_tool_names(value: &mut Value, hidden: &[String]) {
+    let mut hidden: Vec<&str> = hidden.iter().map(String::as_str).collect();
+    hidden.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    redact_value(value, &hidden);
+}
+
+fn redact_value(value: &mut Value, hidden: &[&str]) {
+    match value {
+        Value::String(text) => {
+            let mut redacted = text.clone();
+            for name in hidden {
+                redacted = replace_identifier(&redacted, name, "another tool");
+            }
+            *text = redacted;
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_value(item, hidden);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                redact_value(item, hidden);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Replaces `name` only when both neighbours are outside `[A-Za-z0-9_]`, so a name that is a prefix
+/// of a longer allowed name does not corrupt it.
+fn replace_identifier(text: &str, name: &str, replacement: &str) -> String {
+    if name.is_empty() {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(name) {
+        let after = at + name.len();
+        let before_edge = rest[..at].chars().next_back().is_none_or(|c| !is_ident(c));
+        let after_edge = rest[after..].chars().next().is_none_or(|c| !is_ident(c));
+        if before_edge && after_edge {
+            out.push_str(&rest[..at]);
+            out.push_str(replacement);
+        } else {
+            out.push_str(&rest[..after]);
+        }
+        rest = &rest[after..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn is_ident(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// The end a script's finish writes. A cancel wins over whatever the drive returned; a replay that
+/// could not go on ends as `lost` with the message the host kept.
+fn settle(step: Step, cancelled: bool, failure: Option<String>) -> Step {
+    if cancelled {
+        return match step {
+            Step::Done {
+                logs, truncated, ..
+            }
+            | Step::Failed {
+                logs, truncated, ..
+            } => Step::Failed {
+                error: RunError {
+                    kind: ErrorKind::Runtime,
+                    message: CANCELLED.into(),
+                    line: None,
+                    code: Some("cancelled".into()),
+                },
+                logs,
+                truncated,
+            },
+            Step::Yielded => Step::Yielded,
+        };
+    }
+    match (failure, step) {
+        (
+            Some(message),
+            Step::Done {
+                logs, truncated, ..
+            }
+            | Step::Failed {
+                logs, truncated, ..
+            },
+        ) => Step::Failed {
+            error: RunError {
+                kind: ErrorKind::Runtime,
+                message,
+                line: None,
+                code: Some("lost".into()),
+            },
+            logs,
+            truncated,
+        },
+        (_, step) => step,
     }
 }
 

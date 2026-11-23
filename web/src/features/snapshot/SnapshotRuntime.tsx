@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useSnapshot } from "./runtime";
 import { SnapshotSetupDialog } from "./SnapshotSetupDialog";
+import { SNAPSHOT_SETUP_AVAILABLE } from "./types";
 import "./snapshot.css";
 
 /**
@@ -15,7 +16,7 @@ export function SnapshotRuntime() {
   }, [start]);
   return (
     <>
-      <SnapshotSetupDialog />
+      {SNAPSHOT_SETUP_AVAILABLE ? <SnapshotSetupDialog /> : null}
       {flashing ? <div className="snapshot-flash" aria-hidden /> : null}
     </>
   );

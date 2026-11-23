@@ -87,6 +87,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/tasks/{id}/retry-elsewhere"],
   // Engines, updates, workspace and the shell.
   ["POST", "/api/acp/registry/{id}"],
+  ["POST", "/api/devices/{id}/actions"],
   ["POST", "/api/engine-host/{family}/restart"],
   ["POST", "/api/engine-host/{family}/stop"],
   ["POST", "/api/engines/custom"],
@@ -193,8 +194,9 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/projects/{id}/repo-threads"],
   ["POST", "/api/threads/{id}/repos"],
   ["DELETE", "/api/threads/{id}/repos/{repo_id}"],
-  // Code Mode (docs/code-mode.md): switching an engine's Code Mode changes what the engine may call.
+  // Code Mode (docs/code-mode.md): switching an engine's Code Mode changes what the engine may call; cancelling a run is the person's stop.
   ["PUT", "/api/engines/{id}/code-mode"],
+  ["POST", "/api/code-runs/{id}/cancel"],
   // The personal library (docs/execution-profiles-and-library.md, Part 2): every write is Person-class, a workflow run included. The reads, the two renders and the export are Local.
   ["POST", "/api/library/workflows"],
   ["PATCH", "/api/library/workflows/{id}"],
@@ -222,7 +224,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
 ];
 
 /**
- * Person routes of service slices that are not merged: the multi-repository writes of docs/multi-repo.md and the device actions of docs/devices.md. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
+ * Person routes of service slices that are not merged: the multi-repository writes of docs/multi-repo.md. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
  * holds to that table exactly. They send the key all the same, so the day the service enforces them the page already does.
  * `personKey.test.ts` fails once `routes.json` lists one: move that line into `PERSON_ROUTES` then.
  */
@@ -234,8 +236,6 @@ export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern:
   ["POST", "/api/issues/item/state"],
   // Multi-repository projects (docs/multi-repo.md, PR #923): every write is Person-class. The reads (`GET .../repos`) are not.
   // Folder scan and `.code-workspace` import (docs/multi-repo.md, "Folder scan"): Person-class although it writes nothing, because it reads a folder the person picked.
-  // Devices (docs/devices.md, provisional): every write is one action route, all types (screenshot and power off included). The reads are not Person-class.
-  ["POST", "/api/devices/{id}/actions"],
 ];
 
 /** The service's route pattern as a matcher: each `{name}` is one non-empty path segment. */

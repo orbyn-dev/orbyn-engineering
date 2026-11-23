@@ -53,30 +53,38 @@ it("keeps the six-column Providers template by default, with a readable name col
   expect(rule(".set-tbl.prov")).toMatch(/container-type:\s*inline-size/);
   expect(rule(".set-tbl.prov .set-tr")).toMatch(/grid-template-columns:\s*var\(--prov-columns\)/);
   expect(tracks(templateOf(rule(".set-tbl.prov")))).toEqual([
-    "28px", "minmax(120px, 1fr)", "90px", "minmax(130px, auto)", "60px", "72px",
+    "28px", "minmax(120px, 1fr)", "90px", "minmax(130px, auto)", "60px", "88px",
   ]);
 });
 
-it("hides the Version cell and drops its 90px column below 900px, keeping Status and In use", () => {
-  const narrow = container(900);
+it("hides the Version cell and drops its 90px column below 800px, keeping Status and In use", () => {
+  const narrow = container(799);
   expect(narrow).toMatch(/\.set-tbl\.prov \.set-tr > :nth-child\(3\)\s*\{\s*display:\s*none;/);
   const template = templateOf(narrow);
   expect(template).not.toBe("");
   expect(template).not.toContain("90px");
   expect(tracks(template)).toEqual([
-    "28px", "minmax(120px, 1fr)", "minmax(130px, auto)", "60px", "72px",
+    "28px", "minmax(120px, 1fr)", "minmax(130px, auto)", "60px", "88px",
   ]);
+});
+
+it("keeps Version on every wide window: the settings body caps the table at 864px, above the 800px threshold", () => {
+  // 920px body minus 28px padding on each side; the threshold must sit below it or Version never shows.
+  const widest = 920 - 2 * 28;
+  const threshold = Number(/@container\s*\(max-width:\s*(\d+)px\)/.exec(css)?.[1]) + 1;
+  expect(threshold).toBe(800);
+  expect(threshold).toBeLessThanOrEqual(widest);
 });
 
 it("lets the Status cell wrap and never squeezes it below its minimum", () => {
   expect(rule(".set-tbl.prov .set-states")).toMatch(/min-width:\s*0/);
   expect(rule(".set-tbl.prov .set-states")).toMatch(/white-space:\s*normal/);
   expect(rule(".set-tbl.prov .set-states")).not.toMatch(/white-space:\s*nowrap/);
-  // The budget at 528px is in the stylesheet: 28 + 60 + 72 fixed + 4 gaps of 12 + 8 padding
-  // leaves the name 182px and Status 130px, both at least 120px. The template keeps the name at 120px.
+  // The budget at 528px is in the stylesheet: 28 + 60 + 88 fixed + 4 gaps of 12 + 8 padding
+  // leaves the name 166px and Status 130px, both at least 120px. The template keeps the name at 120px.
   const budget = /Budget at 528, 628, 852px:([^*]+)/.exec(raw);
   expect(budget, "the stylesheet states the 528/628/852 budget").not.toBeNull();
-  expect(budget?.[1]).toMatch(/528[^;]*182/);
-  expect(budget?.[1]).toMatch(/628[^;]*282/);
-  expect(budget?.[1]).toMatch(/852[^;]*506/);
+  expect(budget?.[1]).toMatch(/528[^;]*166/);
+  expect(budget?.[1]).toMatch(/628[^;]*266/);
+  expect(budget?.[1]).toMatch(/852[^;]*490/);
 });

@@ -79,7 +79,8 @@ it("reads the grant state without changing it", async () => {
   setDevicesPlannedApi(mock);
   render(<AgentAccessSetting />);
   const toggle = await screen.findByRole("switch", { name: "Let agents use devices" });
-  expect(toggle).toHaveAttribute("aria-checked", "true");
+  // The switch exists while the read is pending (off, disabled); it turns on when the state arrives.
+  await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
   expect(mock.accessWrites).toEqual([]);
   expect(screen.getByText("On. An agent can use a device when a run asks.")).toBeVisible();
 });
