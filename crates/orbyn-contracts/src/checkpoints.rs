@@ -47,6 +47,25 @@ pub struct RewindThread {
 }
 }
 
+wire_enum! {
+/// How a rewind carried the conversation back.
+pub enum RewindMode {
+    /// The engine rolls its own session back, and the next run resumes at the noted point.
+    Native,
+    /// The session ends and its earlier text is handed to the next run.
+    Handoff,
+}
+}
+
+wire! {
+/// What a rewind did, and how the next run will carry it.
+pub struct RewindResult {
+    /// The engine's own rollback was applied, so the next run resumes natively.
+    pub native: bool,
+    pub mode: RewindMode,
+}
+}
+
 wire! {
 /// Files a run's engine said it wrote. Nothing is inferred from the checkout, so a
 /// thread sharing the folder adds nothing here. A command's own writes are not known.
