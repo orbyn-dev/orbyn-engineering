@@ -287,20 +287,33 @@ async fn browse(Query(query): Query<BrowseQuery>) -> ApiResult<Json<FsListing>> 
         .map_err(|_| CoreError::Invalid(format!("{} cannot be opened.", requested.display())))?;
     let reader = std::fs::read_dir(&path)
         .map_err(|_| CoreError::Invalid(format!("{} cannot be read.", path.display())))?;
+    // A folder row is where the picker goes next. A drive root has no file name,
+    // so it keeps its whole path as the name.
+    let row = |folder: &FsPath| FsEntry {
+        name: folder
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| folder.to_string_lossy().into_owned()),
+        is_git: orbyn_core::source_control::git::is_git_repo(folder),
+        path: folder.to_string_lossy().into_owned(),
+    };
     let mut entries: Vec<FsEntry> = reader
         .filter_map(Result::ok)
         .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
         .filter(is_listed_folder)
-        .map(|entry| {
-            let full = entry.path();
-            FsEntry {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                is_git: orbyn_core::source_control::git::is_git_repo(&full),
-                path: full.to_string_lossy().into_owned(),
-            }
-        })
+        .map(|entry| row(&entry.path()))
         .collect();
     entries.sort_by_key(|entry| entry.name.to_lowercase());
+    if path.parent().is_none() {
+        // Nothing is above a root, so a drive root also offers the mounted
+        // drives: that is how a person leaves the drive they started on. A
+        // drive that cannot be read, an empty card reader, is no way in.
+        let drives = orbyn_core::util::drive_roots()
+            .into_iter()
+            .filter(|drive| drive != &path && std::fs::read_dir(drive).is_ok())
+            .map(|drive| row(&drive));
+        entries.splice(0..0, drives);
+    }
     Ok(Json(FsListing {
         parent: path
             .parent()
