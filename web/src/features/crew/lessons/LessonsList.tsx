@@ -3,7 +3,7 @@ import { NETWORK_ERROR, type ApiFailure } from "../../../api/client";
 import type { Project } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
 import { Button } from "../../../ui/controls";
-import { navigate } from "../../../product/state/route";
+import { navigate, routeHref } from "../../../product/state/route";
 import type { Lesson, LessonFilter } from "./types";
 import { dayOf } from "../autopilot/approvals/ledger";
 import { ProjectChip } from "../escape/live/parts";
@@ -11,6 +11,7 @@ import { Frame } from "../shared/Frame";
 import { Ic } from "../shared/parts";
 import { lessonsApi } from "./api";
 import { useLessons, type LessonsReady } from "./useLessons";
+import { ProposalsSection } from "./proposals/ProposalsSection";
 import { Loading } from "../../../product/ui/states";
 import "./lessons.css";
 
@@ -167,12 +168,26 @@ function SwitchRow({ read, project, name }: { read: LessonsReady; project: strin
 
 /** One lesson: its text, where it came from, when it was learned, what it reached, and the state it is in. */
 function LessonRow({ lesson, project, hidden }: { lesson: Lesson; project: string; hidden: boolean }) {
-  const used = lesson.last_used_at
-    ? `Used in ${lesson.uses} ${lesson.uses === 1 ? "brief" : "briefs"} · last ${dayOf(lesson.last_used_at)}`
-    : "Not used yet";
+  const briefs = `${lesson.uses} ${lesson.uses === 1 ? "brief" : "briefs"}`;
+  // A lesson that became a skill stops going into briefs while the skill exists, so its line says so instead of "last".
+  const used = lesson.skill
+    ? lesson.last_used_at
+      ? `Used in ${briefs} · not used now, it is a skill`
+      : "Not used now, it is a skill"
+    : lesson.last_used_at
+      ? `Used in ${briefs} · last ${dayOf(lesson.last_used_at)}`
+      : "Not used yet";
   return (
     <div className="cx-lsrow">
       <div className="cx-lsmain">
+        {lesson.skill ? (
+          <span className="cx-lsskill">
+            <span className="cx-apchip cx-skill">Now a skill</span>{" "}
+            <a className="cx-lsskillname" href={routeHref({ name: "skills", skill: lesson.skill.name })}>
+              {lesson.skill.name}
+            </a>
+          </span>
+        ) : null}
         <b>{lesson.text}</b>
         <div className="cx-lsmeta">
           <span>{SOURCE_WORD[lesson.source]}</span>
@@ -277,6 +292,12 @@ function Ready({
           </Button>
         </span>
       </div>
+      <ProposalsSection
+        project={project}
+        name={name}
+        lessons={filter === "all" ? list.lessons : undefined}
+        onLessonsChanged={() => void read.reload()}
+      />
       {list.lessons.length === 0 ? (
         filter === "hidden" ? (
           <div className="cx-cwstate" style={{ margin: "32px auto 0" }}>

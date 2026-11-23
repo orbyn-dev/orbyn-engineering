@@ -35,6 +35,7 @@ import { createCodeModeMock } from "./codemode.ts";
 import { createCrewMock } from "./crew.ts";
 import { createEscapesMock } from "./escapes.ts";
 import { createLessonsMock } from "./lessons.ts";
+import { createSkillProposalsMock } from "./skillProposals.ts";
 import { boardMock } from "./board.ts";
 import { flowMock } from "./flow.ts";
 import { createReviewControlsMock } from "./reviewControls.ts";
@@ -70,7 +71,7 @@ export type Scenario =
   /** Settings › Crew › Daily digest: "crew-digest-unsaved" has the 17:00 default with no offset yet (it sends nothing), "crew-digest-save-fail" refuses the save. */
   /** Live review fixtures: "crew-review-consent", "crew-review-same", "crew-review-full", "crew-review-remove". Background crews: "crew-background" (the four the designs draw), "crew-background-empty". */
   /** Escape log, Crew Designs v79: "crew-escapes" (the design’s six rows), "crew-escapes-checks" (the check frames’ escapes), "crew-escapes-limit" (5,000 in all), "crew-escapes-empty", "crew-escapes-low", "crew-escapes-unreadable", "crew-escapes-stale", "crew-escapes-stored" (a person’s stored thresholds). */
-  /** Lessons, KC5: "crew-lessons" (five sample lessons, one disabled and one over the cap), "crew-lessons-empty", "crew-lessons-unreadable", "crew-lessons-off" (the repository switch off, every lesson still readable). */
+  /** Lessons, KC5: "crew-lessons" (five sample lessons, one disabled and one over the cap), "crew-lessons-empty", "crew-lessons-unreadable", "crew-lessons-off" (the repository switch off, every lesson still readable). Skill proposals, KC9: "crew-proposals" (one open proposal from the design's three repeated failures), "crew-proposals-none", "crew-proposals-stale" (a source lesson turned off, so Approve is off), "crew-proposals-approved" (the skill exists and its lessons carry it), "crew-proposals-secret" (the scan refuses a text holding a key) and "crew-proposals-approve-fails" (skills-local refuses the write). */
   /** Review capacity and the coverage map, Crew Designs v77: "crew-capacity" (a limit of 8 saved, pausing off, every batch reviewed) and "crew-capacity-save-fails" (every save refused with 403 person_required). */
   /** Reviewer backtest, Crew Designs v23: "crew-backtest" (the estimate and a finished last run), "crew-backtest-report" (the finished run "run-4n"), "crew-backtest-stopped" (the stopped run "run-stopped"), "crew-backtest-kind-none" (a lane whose kind was not recorded), "crew-backtest-budget-none" (one engine has no budget), "crew-backtest-none" (the project never ran a backtest), "crew-backtest-failed" (a failed last run) and "crew-backtest-running" (a stored run in progress). */
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-empty", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
@@ -221,6 +222,7 @@ export function createMockApi(options: MockOptions = {}) {
   const capacityMock = createCapacityMock();
   const escapesMock = createEscapesMock();
   const lessonsMock = createLessonsMock();
+  const proposalsMock = createSkillProposalsMock({ onApproved: (name, lessons) => lessonsMock.approveSkill(name, lessons) });
   const backtestMock = createBacktestMock();
   const backgroundMock = createBackgroundMock();
   const reviewControlsMock = createReviewControlsMock();
@@ -261,6 +263,7 @@ export function createMockApi(options: MockOptions = {}) {
     capacityMock.reset(next);
     escapesMock.reset(next);
     lessonsMock.reset(next);
+    proposalsMock.reset(next);
     backtestMock.reset(next);
     backgroundMock.reset(next);
     reviewControlsMock.reset(next);
@@ -1499,7 +1502,7 @@ export function createMockApi(options: MockOptions = {}) {
       }
       if (parsed.pathname.startsWith("/api/account")) return accountMock.handle(method, parsed.pathname, body);
       if (parsed.pathname.startsWith("/api/settings/secrets")) return secretsMock.handle(method, parsed.pathname, body);
-      if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? backgroundMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? needsYouMock(scenario, method, parsed.pathname) ?? escapesMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? lessonsMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? backtestMock.handle(method, parsed.pathname) ?? capacityMock.handle(scenario, method, parsed.pathname, body) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
+      if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? backgroundMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? needsYouMock(scenario, method, parsed.pathname) ?? escapesMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? lessonsMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? proposalsMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? backtestMock.handle(method, parsed.pathname) ?? capacityMock.handle(scenario, method, parsed.pathname, body) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
     /** The Code Mode stand-in (mock/codemode.ts): seed a run record, read the writes, switch the routes off (404). */
