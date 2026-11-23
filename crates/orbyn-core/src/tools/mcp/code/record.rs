@@ -3,6 +3,7 @@
 use super::reply;
 use crate::app::Core;
 use crate::error::{CoreError, Result};
+use crate::store::AuditRecord;
 use crate::store::code_runs::{CodeRunEnd, FULL_RESULT_BYTES, MAX_LOG_LINES, StoredCodeRun, head};
 use orbyn_code_sandbox::Step;
 use orbyn_contracts::{
@@ -90,6 +91,12 @@ impl Core {
         }
     }
 
+    /// The flag check a route makes before it reads a body, so a service with Code Mode off has no
+    /// cancel route at all, even for a malformed request.
+    pub fn code_mode_required(&self) -> Result<()> {
+        self.code_mode_flag()
+    }
+
     /// One run, as the run log draws it. A run id that is not one of ours is not found.
     pub fn code_run_record(&self, run_id: &str) -> Result<CodeRunRecord> {
         self.code_mode_flag()?;
@@ -124,6 +131,126 @@ impl Core {
         Ok(record_of(run, calls, pending))
     }
 
+    /// The person's cancel: ends a live run as `error: cancelled`, denies the approvals it waits on
+    /// through the same path a person's denial takes, stops its task and keeps its calls. A second
+    /// cancel answers the same record; a run that already ended, or is no longer live, is `409`.
+    pub async fn code_run_cancel(&self, run_id: &str) -> Result<CodeRunRecord> {
+        self.code_mode_flag()?;
+        if !valid_run_id(run_id) {
+            return Err(CoreError::NotFound("run".into()));
+        }
+        let run = self
+            .store
+            .code_run(run_id)?
+            .ok_or_else(|| CoreError::NotFound("run".into()))?;
+        let error: Value = run
+            .error
+            .as_deref()
+            .and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or(Value::Null);
+        let call_text = json!({ "code": "failed", "message": super::CANCELLED }).to_string();
+        if run.status == "error" && error["kind"] == "cancelled" {
+            // Cancelling twice is the same answer. Even here, finish any task or queued approval
+            // that a concurrent cancel has not yet released.
+            self.cancel_finish(run_id, &run.thread_id, &call_text).await;
+            return self.code_run_record(run_id);
+        }
+        if run.status != "running" && run.status != "paused" {
+            return Err(run_finished());
+        }
+        if self.code_runs.begin_cancel(run_id).is_none() {
+            // A record that says running or paused but has no live task or preparing start cannot be
+            // cancelled: it was never live here (a restart, or a task that outlived its slot).
+            return Err(run_finished());
+        }
+        let error_text = json!({ "kind": "cancelled", "message": super::CANCELLED }).to_string();
+        let ended =
+            match self
+                .store
+                .code_run_cancel(run_id, &crate::util::now(), &error_text, &call_text)
+            {
+                Ok(ended) => ended,
+                Err(error) => {
+                    self.cancel_finish(run_id, &run.thread_id, &call_text).await;
+                    return Err(error);
+                }
+            };
+        if !ended {
+            // A finish already in progress may have written its own end first. Release the task and
+            // answer that record when it is the cancelled one; a completed or lost end is 409.
+            self.cancel_finish(run_id, &run.thread_id, &call_text).await;
+            if let Ok(Some(stored)) = self.store.code_run(run_id) {
+                let error: Value = stored
+                    .error
+                    .as_deref()
+                    .and_then(|text| serde_json::from_str(text).ok())
+                    .unwrap_or(Value::Null);
+                if stored.status == "error" && error["kind"] == "cancelled" {
+                    return self.code_run_record(run_id);
+                }
+            }
+            return Err(run_finished());
+        }
+        // The person's denial path: the same write, the same wake-up, with the fixed reason. Doing it
+        // before the task stops lets the waiter hear a denial instead of an abandoned expiry.
+        self.cancel_finish(run_id, &run.thread_id, &call_text).await;
+        self.audit_code_run_cancel(&run);
+        self.code_run_record(run_id)
+    }
+
+    /// Stops whatever the run has in memory, denies its queued approvals, and fails every call still
+    /// running after the task dropped. Safe to call twice and when nothing is live.
+    async fn cancel_finish(&self, run_id: &str, thread_id: &str, call_text: &str) {
+        self.deny_code_run_approvals(run_id, thread_id);
+        self.code_runs.finish_cancel(run_id).await;
+        // A call may have reached the store while the task was dropping; fail it and any approval
+        // that appeared in the same window.
+        self.deny_code_run_approvals(run_id, thread_id);
+        if let Err(error) = self.store.code_calls_fail_running(run_id, call_text) {
+            tracing::warn!(%error, "could not fail a script call left by a cancel");
+        }
+    }
+
+    fn deny_code_run_approvals(&self, run_id: &str, thread_id: &str) {
+        let Ok(pending) = self.store.pending_for_thread(thread_id) else {
+            return;
+        };
+        for approval in pending {
+            if approval
+                .via
+                .as_ref()
+                .is_none_or(|via| via.code_run != run_id)
+            {
+                continue;
+            }
+            if let Err(error) = self.gate.decide_with(
+                &approval.id,
+                false,
+                false,
+                Some(super::CANCELLED.into()),
+                "user",
+            ) {
+                tracing::warn!(%error, approval = %approval.id, "could not deny an approval of a cancelled run");
+            }
+        }
+    }
+
+    fn audit_code_run_cancel(&self, run: &StoredCodeRun) {
+        let record = AuditRecord {
+            actor: "user".into(),
+            action: "code_run.cancel".into(),
+            target: run.run_id.clone(),
+            decision: None,
+            source: "user".into(),
+            thread_id: Some(run.thread_id.clone()),
+            run_id: None,
+            detail: json!({ "status": run.status }),
+        };
+        if let Err(error) = self.store.append_audit(&record) {
+            tracing::warn!(%error, "could not record a code run cancel");
+        }
+    }
+
     pub fn code_runs_list(&self, thread_id: &str) -> Result<CodeRunList> {
         self.code_mode_flag()?;
         let runs = self
@@ -137,6 +264,7 @@ impl Core {
                 ended_at: row.ended_at,
                 calls: row.calls,
                 script_head: Some(row.script_head),
+                waited_ms: row.waited_ms,
             })
             .collect();
         Ok(CodeRunList { runs })
@@ -195,6 +323,16 @@ impl Core {
     }
 }
 
+/// A run that ended before the cancel, or is not live here, cannot be cancelled.
+fn run_finished() -> CoreError {
+    CoreError::Refused {
+        status: 409,
+        code: "run_finished",
+        message: super::RUN_FINISHED.into(),
+        detail: Value::Null,
+    }
+}
+
 fn newest(logs: &[String]) -> Vec<String> {
     logs[logs.len().saturating_sub(MAX_LOG_LINES)..].to_vec()
 }
@@ -235,7 +373,7 @@ fn record_of(
         pending,
         truncated: run.truncated,
         resumes: run.resumes,
-        waited_ms: None,
+        waited_ms: run.waited_ms,
         crew_worker: run.crew_worker,
     }
 }

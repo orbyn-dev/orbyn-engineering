@@ -171,7 +171,7 @@ backoff timer wakes it.
 
 **Merge.** The client gives conflicts back as plain records. The app merges them field by field with `orbyn-sync`:
 per-field hybrid logical clock, the larger stamp wins, ties break by canonical JSON. **The apply path applies only the allowlist.** Today `check` in
-`preferences.rs` accepts all 65 catalog keys, and the Engine crate drops only its never-synced keys, passing the rest
+`preferences.rs` accepts all 68 catalog keys, and the Engine crate drops only its never-synced keys, passing the rest
 through as unknown. So a peer could send `default_project_scripts`, which would run commands on the person's other
 computers, and a compromised device could use that. The rule: the sync apply path (a private path that does not queue
 fields again) applies **only the 11 allowlisted keys plus keybindings**, each through `check` and the per-key rules
@@ -265,7 +265,7 @@ field name or a rule itself. What follows is the app's side of the agreement.
 - `default_theme` syncs; `default_theme_set_at` does not. It stays the local "apply once" stamp
   ([EnvironmentTheme](../crates/orbyn-contracts/src/settings.rs)) and is set when a remote theme is applied.
 
-**Synced keys** (11 of the 65 in the catalog in `preferences.rs`, plus keybindings). This is the list agreed with
+**Synced keys** (11 of the 68 in the catalog in `preferences.rs`, plus keybindings). This is the list agreed with
 Engineering 1, narrowed by the [rule below](#what-never-syncs). Only the person-level value of a key syncs.
 
 | Group | Keys |
@@ -285,21 +285,21 @@ path above ignores them.
 
 ### Never synced
 
-Twenty-eight keys, by decision:
+Thirty-one keys, by decision:
 
 | Why | Keys |
 | --- | --- |
-| Describes this computer | `environment_icon`, `keep_awake_during_runs`, `background_activity_profile`, `add_project_base_directory` |
+| Describes this computer | `environment_icon`, `keep_awake_during_runs`, `background_activity_profile`, `add_project_base_directory`, `terminal_attention_enabled`, `terminal_attention_quiet_seconds` |
 | Programs, paths, endpoints | `provider_instances`, `custom_models`, `observability`, `storage_cleanup`, `worktree_cleanup` |
 | Per-computer update and polling | `app_update_mode`, `automatic_git_fetch_minutes`, `provider_health_refresh_minutes` |
 | Login and engine availability | `prefer_saved_login`, `disabled_engines` |
 | Escalation: what agents may do or run | `default_permission_mode`, `default_project_scripts`, `enable_agent_browser_access`, `enable_agent_device_access`: a loosened permission, a command or an access grant must not cross devices |
-| Cost or reach: another device could pick a costlier engine, model or effort, or widen where agents work ([rule](#what-never-syncs)) | `default_engine` (which vendor and price tier a task starts under), `default_model`, `fallback_model`, `text_generation_model`, `default_effort`, `default_model_options` (inert in v1, and every option raises cost or reach), `default_thread_env_mode` (`local` widens where agents work), `auto_thread_titles` and `branch_naming_mode` (a peer could turn model calls back on) |
+| Cost or reach: another device could pick a costlier engine, model or effort, or widen where agents work ([rule](#what-never-syncs)) | `default_engine` (which vendor and price tier a task starts under), `default_model`, `fallback_model`, `text_generation_model`, `text_generation_models`, `default_effort`, `default_model_options` (inert in v1, and every option raises cost or reach), `default_thread_env_mode` (`local` widens where agents work), `auto_thread_titles` and `branch_naming_mode` (a peer could turn model calls back on) |
 | Service-owned stamp | `default_theme_set_at` |
 
 ### Not in v1, may sync later
 
-The other 26 keys are not synced in v1, so 11 + 28 + 26 = 65:
+The other 26 keys are not synced in v1, so 11 + 31 + 26 = 68:
 
 | Key | Reason |
 | --- | --- |
@@ -384,7 +384,7 @@ Dropped from the allowlist under this rule, and why:
 kept in code for it. The tests that cover it are the by-name tests in the allowlist suite: each moved and escalating key
 arrives from a peer with a value that passes the value check, is kept in the record, and is not applied.
 
-The rule also moved `default_engine`, `default_model`, `fallback_model`, `text_generation_model`, `default_effort`,
+The rule also moved `default_engine`, `default_model`, `fallback_model`, `text_generation_model`, `text_generation_models`, `default_effort`,
 `default_thread_env_mode`, `auto_thread_titles` and `branch_naming_mode` to [Never synced](#never-synced).
 
 ## Record rules the apply path enforces

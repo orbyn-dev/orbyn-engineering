@@ -194,8 +194,9 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/projects/{id}/repo-threads"],
   ["POST", "/api/threads/{id}/repos"],
   ["DELETE", "/api/threads/{id}/repos/{repo_id}"],
-  // Code Mode (docs/code-mode.md): switching an engine's Code Mode changes what the engine may call.
+  // Code Mode (docs/code-mode.md): switching an engine's Code Mode changes what the engine may call; cancelling a run is the person's stop.
   ["PUT", "/api/engines/{id}/code-mode"],
+  ["POST", "/api/code-runs/{id}/cancel"],
   // The personal library (docs/execution-profiles-and-library.md, Part 2): every write is Person-class, a workflow run included. The reads, the two renders and the export are Local.
   ["POST", "/api/library/workflows"],
   ["PATCH", "/api/library/workflows/{id}"],
