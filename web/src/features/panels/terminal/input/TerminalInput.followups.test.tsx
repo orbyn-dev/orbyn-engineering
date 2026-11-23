@@ -1,82 +1,79 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../../../../api/client";
+import type { MockApi } from "../../../../../mock/api";
 import type { WireThreadEvent } from "../../../../api/types";
 import { useConnection } from "../../../../product/state/connection";
 import { useThreadLogs } from "../../../../product/state/threadLogs";
 import { useUi } from "../../../../product/state/ui";
 import { useWorkspace } from "../../../../product/state/workspace";
+import { installMockFetch } from "../../../../test-support";
+import { holdFetch, wire } from "../../../../wire.test-support";
+import { useExplorer } from "../../../workspace";
 import { registerTerminal } from "../terminalControls";
 import { recordCommand } from "./history";
 import { offerProposal, useProposalSource } from "./proposal";
 import { TerminalInput } from "./TerminalInput";
 
-vi.mock("../../../../api/client", async (original) => {
-  const real = await original<{ api: object }>();
-  return { ...real, api: { ...real.api, startRun: vi.fn(), enqueue: vi.fn(), cancelRun: vi.fn(), removeQueued: vi.fn(), refreshEngines: vi.fn() } };
-});
-const pathState = vi.hoisted(() => ({ state: "idle" as "idle" | "loading" | "failed" }));
-vi.mock("./useInputContext", async (original) => {
-  const real = await original<typeof import("./useInputContext")>();
-  return { ...real, usePathListing: () => ({ listDir: () => null, state: pathState.state }) };
-});
-
-const KEY = "th:main";
+// Idle threads of the mock service: two of the app project and one of the site project.
+const THREAD = "t-done";
+const SIBLING = "t-tools";
+const ELSEWHERE = "t-unmanaged";
+const KEY = `${THREAD}:main`;
+let mock: MockApi;
+const prompts = () => wire().filter((call) => call.method === "POST" && call.path === `/api/threads/${THREAD}/runs`);
+const cancels = () => wire().filter((call) => call.method === "POST" && /^\/api\/runs\/[^/]+\/cancel$/.test(call.path));
+const removals = () => wire().filter((call) => call.method === "DELETE" && call.path.startsWith("/api/queue/"));
+const toasts = () => useUi.getState().toasts.map((toast) => toast.text);
+/** The run the mock service started for the editor's last prompt. */
+const startedRun = () => mock.threads.find((thread) => thread.id === THREAD)?.active_run?.id ?? "";
 const write = vi.fn();
-const toast = vi.fn();
 let stop = () => undefined as void;
-let afterRefresh = () => undefined as void;
 
 const setup = (over: { auth?: "logged_in" | "logged_out"; active?: boolean; signIn?: string | null } = {}) => {
   useWorkspace.setState({
     threads: {
-      th: { id: "th", project_id: "p", engine: "claude", model: "Sonnet", active_run: over.active ? { id: "r0" } : null },
-      th2: { id: "th2", project_id: "p", engine: "claude", model: "Sonnet", active_run: null },
-      other: { id: "other", project_id: "q", engine: "claude", model: "Sonnet", active_run: null },
+      [THREAD]: { id: THREAD, project_id: "p-app", engine: "claude", model: "Sonnet", active_run: over.active ? { id: "r0" } : null },
+      [SIBLING]: { id: SIBLING, project_id: "p-app", engine: "claude", model: "Sonnet", active_run: null },
+      [ELSEWHERE]: { id: ELSEWHERE, project_id: "p-site", engine: "claude", model: "Sonnet", active_run: null },
     },
     engines: { data: [{ id: "claude", name: "Claude", installed: true, auth: over.auth ?? "logged_in", sign_in_command: over.signIn === undefined ? "claude login" : over.signIn }] },
-    refreshThread: vi.fn(() => Promise.resolve()),
-    refreshEngines: vi.fn(() => Promise.resolve()),
   } as never);
-  render(<TerminalInput threadId="th" keyOf={KEY} />);
+  render(<TerminalInput threadId={THREAD} keyOf={KEY} />);
   return { field: screen.getByLabelText("Terminal input") as HTMLTextAreaElement, user: userEvent.setup() };
 };
 
 const answer = (text: string, runId = "r1") =>
   act(() => {
-    useThreadLogs.setState({ logs: { th: { items: [{ kind: "message", role: "assistant", text, done: true, runId, key: "m1", seq: 2, ts: "" }] } } } as never);
+    useThreadLogs.setState({ logs: { [THREAD]: { items: [{ kind: "message", role: "assistant", text, done: true, runId, key: "m1", seq: 2, ts: "" }] } } } as never);
   });
 
 beforeEach(() => {
   write.mockReset();
-  toast.mockReset();
-  pathState.state = "idle";
-  afterRefresh = () => undefined;
-  useUi.setState({ pushToast: toast } as never);
+  // A long step keeps the run the editor starts alive, so Undo has a run to stop.
+  mock = installMockFetch({ stepMs: 60_000 });
+  useUi.setState({ toasts: [] });
+  // The folders listed for path completion are kept in the explorer's cache, which a test starts without.
+  useExplorer.setState({ worktrees: {}, levels: {} });
   useThreadLogs.setState({ logs: {} });
   useProposalSource.getState().reset();
-  vi.mocked(api.startRun).mockReset().mockResolvedValue({ id: "r1" } as never);
-  vi.mocked(api.cancelRun).mockReset().mockResolvedValue(undefined as never);
-  vi.mocked(api.enqueue).mockReset().mockResolvedValue({ id: "q1" } as never);
-  vi.mocked(api.removeQueued).mockReset().mockResolvedValue(undefined as never);
-  vi.mocked(api.refreshEngines).mockReset().mockImplementation(async () => {
-    afterRefresh();
-    return [] as never;
-  });
   useConnection.setState({ offline: false, serviceDown: false });
   stop = registerTerminal(KEY, { write, clear: vi.fn(), interrupt: vi.fn(), output: () => "", find: vi.fn(), onResults: () => () => undefined });
 });
-afterEach(() => stop());
+afterEach(() => {
+  stop();
+  vi.unstubAllGlobals();
+});
 
 describe("Undo after the engine started", () => {
   it("says it stops the run, really cancels it and tells the person it did", async () => {
     const { field, user } = setup();
     await user.type(field, "why is it slow?{Enter}");
     expect(await screen.findByText(/Undo stops the run that started/)).toBeTruthy();
+    const runId = startedRun();
     await user.click(screen.getByRole("button", { name: "Undo" }));
-    await waitFor(() => expect(api.cancelRun).toHaveBeenCalledExactlyOnceWith("r1"));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Stopped the run that started. Your text is back in the line."));
+    await waitFor(() => expect(cancels().map((call) => call.path)).toEqual([`/api/runs/${runId}/cancel`]));
+    await waitFor(() => expect(toasts()).toContain("Stopped the run that started. Your text is back in the line."));
     expect(field.value).toBe("why is it slow?");
   });
   it("says a queued message is only taken out of the queue", async () => {
@@ -84,26 +81,27 @@ describe("Undo after the engine started", () => {
     await user.type(field, "why is it slow?{Enter}");
     expect(await screen.findByText(/Undo takes it out of the queue/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Undo" }));
-    await waitFor(() => expect(api.removeQueued).toHaveBeenCalledWith("q1"));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Took it out of the queue. Your text is back in the line."));
+    await waitFor(() => expect(removals()).toHaveLength(1));
+    await waitFor(() => expect(toasts()).toContain("Took it out of the queue. Your text is back in the line."));
   });
   it("does not claim the run stopped when stopping failed", async () => {
-    vi.mocked(api.cancelRun).mockRejectedValue(new Error("gone"));
     const { field, user } = setup();
     await user.type(field, "why is it slow?{Enter}");
+    await screen.findByText(/Undo stops the run that started/);
+    mock.fail("/api/runs/", 1, 500, "internal", "Something went wrong.");
     await user.click(await screen.findByRole("button", { name: "Undo" }));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Couldn't stop the run/)));
-    expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/^Stopped the run/));
+    await waitFor(() => expect(toasts().some((text) => /^Couldn't stop the run/.test(text))).toBe(true));
+    expect(toasts().some((text) => /^Stopped the run/.test(text))).toBe(false);
   });
 });
 
 describe("the service proposes a command (typed field)", () => {
   let nextSeq = 1;
-  const propose = (command: string, note = "Lists the files changed. It does not change files.", runId = "r1") =>
-    act(() => offerProposal("th", runId, { command, note }));
-  const arrived = (value: unknown, runId: string | null = "r1") => {
-    const event = { seq: nextSeq++, thread_id: "th", run_id: runId, ts: "", event: { type: "CUSTOM", name: "orbyn.proposal", value } } as unknown as WireThreadEvent;
-    act(() => useThreadLogs.getState().ingest("th", [event]));
+  const propose = (command: string, note = "Lists the files changed. It does not change files.", runId = startedRun()) =>
+    act(() => offerProposal(THREAD, runId, { command, note }));
+  const arrived = (value: unknown, runId: string | null = startedRun()) => {
+    const event = { seq: nextSeq++, thread_id: THREAD, run_id: runId, ts: "", event: { type: "CUSTOM", name: "orbyn.proposal", value } } as unknown as WireThreadEvent;
+    act(() => useThreadLogs.getState().ingest(THREAD, [event]));
   };
   const asked = async () => {
     const view = setup();
@@ -229,7 +227,7 @@ describe("the service proposes a command (typed field)", () => {
 
 describe("path completion while the listing is read", () => {
   it("shows a quiet loading row only after a moment, and leaves the line alone", async () => {
-    pathState.state = "loading";
+    const slow = holdFetch("GET", /^\/api\/projects\/p-app\/worktrees\/[^/]+\/tree/);
     const { field, user } = setup();
     await user.type(field, "cat src/");
     expect(screen.queryByText(/Reading files/)).toBeNull();
@@ -237,20 +235,23 @@ describe("path completion while the listing is read", () => {
     expect(field.value).toBe("cat src/");
     await user.keyboard("{Enter}");
     expect(write).toHaveBeenCalledWith("cat src/\r");
+    slow.release();
   });
   it("says when the folder could not be read", async () => {
-    pathState.state = "failed";
+    // The worktree root is listed first, then the folder the line names: both reads are refused.
+    mock.fail("/api/projects/p-app/worktrees/p-app-main/tree", 2, 404, "not_found", "That worktree's folder is gone.");
     const { field, user } = setup();
     await user.type(field, "cat src/");
     expect(await screen.findByText(/Couldn't read this folder/)).toBeTruthy();
     expect(field.value).toBe("cat src/");
   });
   it("shows nothing for a word that is not a path", async () => {
-    pathState.state = "loading";
+    const slow = holdFetch("GET", /^\/api\/projects\/p-app\/worktrees\/[^/]+\/tree/);
     const { field, user } = setup();
     await user.type(field, "cat ");
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(screen.queryByText(/Reading files/)).toBeNull();
+    slow.release();
   });
 });
 
@@ -262,8 +263,8 @@ describe("Sign in and Try again", () => {
     await user.type(field, "why is it slow?");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
     expect(writeText).toHaveBeenCalledExactlyOnceWith("claude login");
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Copied the Claude sign-in command. Run it in a terminal."));
-    expect(api.startRun).not.toHaveBeenCalled();
+    await waitFor(() => expect(toasts()).toContain("Copied the Claude sign-in command. Run it in a terminal."));
+    expect(prompts()).toHaveLength(0);
     expect(write).not.toHaveBeenCalled();
     expect(field.value).toBe("why is it slow?");
   });
@@ -274,14 +275,20 @@ describe("Sign in and Try again", () => {
   });
   it("Try again checks once per click and sends the line when the engine is back", async () => {
     useConnection.setState({ offline: true });
-    afterRefresh = () => useConnection.setState({ offline: false });
+    // The device is reachable again by the time the service answers the check.
+    const service = fetch;
+    vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
+      if (url === "/api/engines/refresh") useConnection.setState({ offline: false });
+      return service(url, init);
+    }));
     const { field, user } = setup();
     await user.type(field, "why is it slow?");
     const again = screen.getByRole("button", { name: "Try again" });
     fireEvent.click(again);
     fireEvent.click(again);
-    await waitFor(() => expect(api.startRun).toHaveBeenCalledExactlyOnceWith("th", "why is it slow?", [], { purpose: "terminal_proposal" }));
-    expect(api.refreshEngines).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(prompts()).toHaveLength(1));
+    expect(prompts()[0]?.body).toEqual({ prompt: "why is it slow?", purpose: "terminal_proposal" });
+    expect(wire().filter((call) => call.path === "/api/engines/refresh")).toHaveLength(1);
     expect(write).not.toHaveBeenCalled();
   });
   it("Try again sends nothing and says so while the engine is still out of reach", async () => {
@@ -289,8 +296,8 @@ describe("Sign in and Try again", () => {
     const { field, user } = setup();
     await user.type(field, "why is it slow?");
     await user.click(screen.getByRole("button", { name: "Try again" }));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.stringMatching(/still can't be reached/)));
-    expect(api.startRun).not.toHaveBeenCalled();
+    await waitFor(() => expect(toasts().some((text) => /still can't be reached/.test(text))).toBe(true));
+    expect(prompts()).toHaveLength(0);
     expect(field.value).toBe("why is it slow?");
   });
 });
@@ -298,8 +305,8 @@ describe("Sign in and Try again", () => {
 describe("history across the project", () => {
   it("Shift+Ctrl+R widens to this project's terminals, with how long ago each ran", async () => {
     recordCommand(KEY, "git status", Date.now() - 4 * 60_000);
-    recordCommand("th2:main", "npm test", Date.now() - 2 * 3_600_000);
-    recordCommand("other:main", "secret project cmd", Date.now());
+    recordCommand(`${SIBLING}:main`, "npm test", Date.now() - 2 * 3_600_000);
+    recordCommand(`${ELSEWHERE}:main`, "secret project cmd", Date.now());
     const { field, user } = setup();
     fireEvent.keyDown(field, { key: "R", ctrlKey: true });
     expect(await screen.findByText("This shell")).toBeTruthy();
