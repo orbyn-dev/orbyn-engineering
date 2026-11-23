@@ -23,6 +23,7 @@ Contents:
 - [Verification without limits](#verification-without-limits)
 - [Prototype slices](#prototype-slices)
 - [Warp features](#warp-features)
+- [Kiro Crew features](#kiro-crew-features)
 - [Beta cut](#beta-cut)
 - [Open risks](#open-risks)
 - [Appendices](#appendices)
@@ -1699,7 +1700,7 @@ with approvals, skills, CLI agents in a terminal (engine console, G14), PR flow,
 - Notebooks (runnable Markdown) and .ipynb viewing.
 - Conversation export and import.
 - Voice input on desktop.
-- Agent memory across threads. Review memory (slice 4g) comes first.
+- Agent memory across threads. Review memory (slice 4g) comes first; Crew lessons (KC5) are the Crew-only part, in the beta behind Crew Preview.
 - Triggers from Slack, Linear, Jira, GitHub and GitLab for background crews.
 - Local control, so outside tools can drive Orbyn through the `orbyn` CLI.
 
@@ -1710,6 +1711,36 @@ with approvals, skills, CLI agents in a terminal (engine console, G14), PR flow,
 - A quake-style drop-down window.
 - Default-terminal registration.
 - Computer use, already covered by our gated Computer action.
+
+## Kiro Crew features
+
+Source: Kiro Crew's README and its crew-mode, dev-fleet and shared-crew specs (github.com/kirodotdev/KiroCrew, read
+2026-11-23). Owner ruling (2026-11-23): take the ideas, copy no code or text, and Crew runs on **this device only**.
+
+- **Licence:** Apache-2.0. We take ideas only; a pull request that uses one says "Sources: Kiro Crew docs, reviewed for
+  ideas, nothing copied".
+- **Already have:** scheduled and CI-failure background crews with budgets and a daily per-engine cap, Run now, live
+  steering on the bus, a person's cancel, restart recovery, the dashboard, review stages, Autopilot and the escape log.
+  Kiro has no hidden-key verification, no multi-vendor router and no merge trust record.
+
+Every row stays behind Crew Preview, keeps the Crew rules (code decides pass or fail, the answer key never reaches a
+worker, the secret scan on the way in and out) and builds no screen before its frame is merged.
+
+| # | Feature | What you get | Owner | Parity |
+| --- | --- | --- | --- | --- |
+| KC1 | Steer, never queue | A lead's follow-up to a busy worker reaches its running turn. The bus already does this (`hand_over` to `steer_live`, `held` otherwise); the work is tests per message kind | E2 | M21 |
+| KC2 | Closing the lead closes its workers | Closing or archiving a lead thread runs the person's cancel for each live task it started; the answer lists what closed and what did not | E3, E2 | M22 |
+| KC3 | One "needs you" | One service field says whether a task, run or merge waits for the person; the board, inbox, Review queue and dashboard read only it. A worker that owns live work reads Working | E3, E1 | M23 |
+| KC4 | Disk guard | A worker start is refused when the volume holding the lead's folder is under a floor (5 GB, person-settable), with the free space in the reason. No prune: tasks run in the lead's folder and correction checkouts are already retired | E3 | M24 |
+| KC5 | Lessons | Repository or global lessons from a repeated failure fingerprint (2 tasks in 60 days), a confirmed escape or revert, and a person's typed correction. The person sees, edits, disables, deletes and promotes them; a "use lessons" switch per repository. At most 5 reach a brief as data; the key, route, lease and checks are proven unchanged. Recorded in `EvalHistory`, which the router does not read yet. Design: Eng 2's note, ruled 2026-11-23 | E2 | M25 |
+| KC6 | Watches | A background crew kind `watch`: a fixed command on a schedule with no model call; it acts once when the result turns failing | E4 | M26 |
+| KC7 | The missing listeners | `issue_label` and `dependency_update` background crews get listeners (refused today) | E4 | M27 |
+| KC8 | Resume after restart | A task whose worker died in a restart resumes once from its last verified round with the same key and budget, then stops as today | E2 | M28 |
+| KC9 | Skill proposals | Three lessons with the same pattern propose a skill in the skills workspace; nothing installs without the person | E2, E4 | M29 |
+| KC10 | Device notifications | A desktop notification the first time something needs the person, once per item | E3, E1 | M30 |
+
+**Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
+(our router never swaps an engine) and release channels.
 
 ## Beta cut
 
