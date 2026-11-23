@@ -214,6 +214,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/tasks/{id}/checks/{check}/decide",
+        "core crew_decide_manual_check: the person's answer to a `manual` check of a task that waits for it; the task must be needs_person and the id must be a manual check of its key that is still waiting, else invalid; the audit row first, then the check's row from awaiting to passed or failed (a repeat writes nothing, the opposite is refused), then the person's own checks-stage Gate; when no check of the task waits any more it goes back to verifying and the key runs again in its own checkout, so a pass ends the task and a denial is the worker's reason through the ordinary loop guard; the answer is the checks still waiting; no command, output or key text reaches the caller; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
         "/api/crew/backtest/start",
         "core crew_backtest_start: a person's choice only; a request with a lane, an engine and a model each, a token budget for every engine (tokens per engine, never summed) and no other field, a review or check lane and never a builder, no money field; one run at a time (a second start while one runs is refused, check and insert in one transaction); refused while no replay engine is connected; no scheduler or tool reaches it; local only",
     ),
@@ -363,6 +368,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .merge(super::crew_capacity::writes())
         .merge(super::crew_escapes::writes())
         .route("/api/crew/tasks/{id}/rerun-checks", post(rerun_checks))
+        .route(
+            "/api/crew/tasks/{id}/checks/{check}/decide",
+            post(decide_manual_check),
+        )
         .route(
             "/api/crew/tasks/{id}/retry-elsewhere",
             post(retry_elsewhere),
@@ -1097,4 +1106,51 @@ async fn rerun_checks(
             .crew_rerun_checks(&id, body.reason.as_deref(), "user")
             .await?,
     ))
+}
+
+/// A person's answer to one `manual` check of a task: `{ "decision": "pass" | "deny", "note": "..." }`, the note optional. The answer
+/// is the checks of that task still waiting for a person, empty when it has carried on.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManualDecision {
+    decision: String,
+    #[serde(default)]
+    note: Option<String>,
+}
+
+/// A person passes or denies a `manual` check that holds a task. The route is classed `Person` (`routes/classes.rs`), so a caller
+/// without this launch's person key never reaches it, and the core refuses a reply that would be an instruction to a worker.
+async fn decide_manual_check(
+    State(state): State<AppState>,
+    Path((id, check)): Path<(String, String)>,
+    body: Bytes,
+) -> ApiResult<impl IntoResponse> {
+    // The flag first: with it off nothing here exists, and the body is not even read.
+    if !state.core.config.crew_preview {
+        return Err(CoreError::NotFound("route".into()).into());
+    }
+    if body.iter().all(u8::is_ascii_whitespace) {
+        return Err(CoreError::Invalid(
+            "the body names a decision: { \"decision\": \"pass\" | \"deny\" }".into(),
+        )
+        .into());
+    }
+    let asked: ManualDecision = serde_json::from_slice(&body).map_err(|_| {
+        CoreError::Invalid(
+            "the body is { \"decision\": \"pass\" | \"deny\", \"note\": text }".into(),
+        )
+    })?;
+    let pass = match asked.decision.as_str() {
+        "pass" => true,
+        "deny" => false,
+        _ => {
+            return Err(CoreError::Invalid("decision: pass or deny".into()).into());
+        }
+    };
+    let waiting = state
+        .core
+        .crew_decide_manual_check(&id, &check, pass, asked.note.as_deref(), "user")
+        .await
+        .map_err(|why| CoreError::Invalid(why.to_string()))?;
+    Ok(Json(serde_json::json!({ "waiting": waiting })))
 }

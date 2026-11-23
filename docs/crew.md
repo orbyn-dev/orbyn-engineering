@@ -394,11 +394,14 @@ retries with the reason. The same failure twice means one change of approach, an
       inside the budget every check gets, and a value shorter than that is the key author's
       decision. Nothing here starts the service a `url` names; the key's author does, before
       verification.
-  - **Check kinds this version does not run** (`preview`, `visual_compare`, `manual`,
-    `screenshot_only`, `accessibility_audit`, `performance_budget`, `licence_scan`) report `skipped` and are listed as
-    not verified. The page kinds need the app's browser; `manual` needs a
-    person's Gate, which no route writes yet; `licence_scan` needs a licence policy and an offline source of
-    dependency licences. A key with nothing it can run goes to `needs_person`.
+  - `manual`: the check a person makes. No command runs: the check parks, the task holds in `needs_person`, and the
+    person passes or denies it (`POST /api/crew/tasks/{id}/checks/{check}/decide`, a `Person` route). Their answer is
+    recorded as their own `checks`-stage Gate and the task goes back to `verifying`, where the check passes or fails from
+    that answer. A task never passes while one of its manual checks is still waiting. `name` and `note` are labels.
+  - **Check kinds this version does not run** (`preview`, `visual_compare`, `screenshot_only`, `accessibility_audit`,
+    `performance_budget`, `licence_scan`) report `skipped` and are listed as not verified. The page kinds need the app's
+    browser; `licence_scan` needs a licence policy and an offline source of dependency licences. A key with nothing it can
+    run goes to `needs_person`.
 
 **Harness-to-harness communication** (the new part)
 

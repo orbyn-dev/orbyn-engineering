@@ -83,6 +83,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/review/{task_id}/remove-lane"],
   ["POST", "/api/crew/settings/engine-tiers/save"],
   ["POST", "/api/crew/tasks/{id}/cancel"],
+  ["POST", "/api/crew/tasks/{id}/checks/{check}/decide"],
   ["POST", "/api/crew/tasks/{id}/merge"],
   ["POST", "/api/crew/tasks/{id}/rerun-checks"],
   ["POST", "/api/crew/tasks/{id}/retry-elsewhere"],

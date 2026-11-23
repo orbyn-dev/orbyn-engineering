@@ -111,6 +111,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/cancel"),
     ("POST", "/api/crew/tasks/{id}/merge"),
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
+    ("POST", "/api/crew/tasks/{id}/checks/{check}/decide"),
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
     // Code Mode: stopping a live script run is the person's own stop button (docs/code-mode.md).
     ("POST", "/api/code-runs/{id}/cancel"),
@@ -664,6 +665,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/tasks/{id}/rerun-checks",
         "Crew write behind local_only: the person's re-run of a task's checks",
+    ),
+    (
+        "POST",
+        "/api/crew/tasks/{id}/checks/{check}/decide",
+        "Crew write behind local_only: the person passes or denies a manual check that holds the task",
     ),
     (
         "POST",

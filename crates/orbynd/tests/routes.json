@@ -329,6 +329,7 @@
     ["POST","/api/crew/review/{task_id}/remove-lane","person"],
     ["POST","/api/crew/settings/engine-tiers/save","person"],
     ["POST","/api/crew/tasks/{id}/cancel","person"],
+    ["POST","/api/crew/tasks/{id}/checks/{check}/decide","person"],
     ["POST","/api/crew/tasks/{id}/merge","person"],
     ["POST","/api/crew/tasks/{id}/rerun-checks","person"],
     ["POST","/api/crew/tasks/{id}/retry-elsewhere","person"],

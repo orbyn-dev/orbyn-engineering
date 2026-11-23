@@ -67,6 +67,7 @@ mod lifecycle;
 mod merging_recovery;
 mod model_ids;
 mod overrides;
+mod person_check;
 mod protect;
 mod provider_facts;
 mod reviewer_only;
