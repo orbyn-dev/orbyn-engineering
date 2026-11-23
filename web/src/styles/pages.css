@@ -30,6 +30,7 @@
   color: var(--color-muted);
 }
 .settings-search > svg {
+  flex-shrink: 0;
   color: var(--color-faint);
 }
 .settings-search input {
@@ -118,6 +119,8 @@
   align-self: center;
 }
 .settings-scroll {
+  /* Keep visually hidden loading labels inside this scroller's clipping boundary. */
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -578,13 +581,16 @@ kbd {
   white-space: nowrap;
 }
 .browser-list {
-  max-height: 320px;
-  overflow: auto;
   padding: 4px;
 }
-.browser > .loading,
-.browser > .empty,
-.browser > .error-state {
+/* One height in every state, so the centred dialog cannot grow or shrink and Up stays under the cursor. */
+.browser-body {
+  height: 320px;
+  overflow: auto;
+}
+.browser-body > .loading,
+.browser-body > .empty,
+.browser-body > .error-state {
   margin: 8px;
 }
 .browser-list button {
@@ -686,7 +692,7 @@ button.folder-row:hover {
     grid-template-rows: auto minmax(0, 1fr);
   }
   .settings-side {
-    max-height: 132px;
+    max-height: 140px;
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
   }
@@ -695,7 +701,13 @@ button.folder-row:hover {
   }
   .settings-nav {
     flex-direction: row;
+    flex-shrink: 0;
     overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .settings-nav::-webkit-scrollbar {
+    display: none;
   }
   .settings-group-list {
     flex: none;

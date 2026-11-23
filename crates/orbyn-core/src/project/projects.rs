@@ -15,7 +15,7 @@ use crate::error::{CoreError, Result};
 use crate::project::workspace::{ProjectRoot, guard_library, resolve_project};
 use crate::source_control::git::{git, is_git_repo, linked_worktrees, text};
 use crate::store::{AuditRecord, NewProject};
-use crate::util::{canonicalize, new_id, now};
+use crate::util::{canonicalize, new_id, now, unix_now};
 
 const WORKTREE_SUFFIX: &str = "-wt";
 
@@ -54,6 +54,22 @@ async fn strings(cwd: &Path, args: &[&str]) -> Result<Vec<String>> {
         .lines()
         .map(str::to_owned)
         .collect())
+}
+
+/// The full id of the "Initial commit" `new_project` makes for its README, or `None` when Git has no identity to
+/// make it: then the file still stands and the person commits it themselves, so no commit is recorded.
+async fn initial_commit(path: &Path) -> Option<String> {
+    if let Err(error) = git(path, &["commit", "-q", "-m", "Initial commit"]).await {
+        tracing::debug!(%error, "could not make the first commit");
+        return None;
+    }
+    match git(path, &["rev-parse", "HEAD"]).await {
+        Ok(id) => Some(text(&id)),
+        Err(error) => {
+            tracing::debug!(%error, "could not read the first commit's id");
+            None
+        }
+    }
 }
 
 /// Local branches with commits no remote has. `current` is left out when asked.
@@ -405,15 +421,30 @@ impl Core {
         init_repository(&path).await?;
         let root = self.workspace.root()?;
         let resolved = resolve_project(&root, &path).await?;
-        if readme {
+        let first_commit = if readme {
             std::fs::write(path.join("README.md"), format!("# {name}\n"))?;
             git(&path, &["add", "README.md"]).await?;
             // With no Git identity the file still stands, and the person commits it.
-            if let Err(error) = git(&path, &["commit", "-q", "-m", "Initial commit"]).await {
-                tracing::debug!(%error, "could not make the first commit");
-            }
+            initial_commit(&path).await
+        } else {
+            None
+        };
+        let project = self.register_project(&resolved, &slug, true)?;
+        // This first commit is the one commit the app makes on a person's action, so it is the one positive
+        // person signal merge provenance accepts (`docs/crew/provenance-person-signal.md`). It is recorded only
+        // after the project row exists, because the row references it, and a record that does not land never
+        // fails project creation: the commit stands, and an unrecorded commit reads `unknown`, which coverage
+        // counts as agent rather than crediting a person. The commit holds nothing but the README this call
+        // wrote: no worker can have touched a folder that is not a project yet, which is the check a future
+        // path that stages other work has to make for itself.
+        if let Some(commit) = first_commit
+            && let Err(error) =
+                self.store
+                    .record_person_commit(&project.id, &commit, "project.readme", unix_now())
+        {
+            tracing::warn!(%error, "the first commit was not recorded as a person's");
         }
-        self.register_project(&resolved, &slug, true)
+        Ok(project)
     }
 
     /// Forgets a project and archives its threads, which stay. The folder stays, always, unless Orbyn
