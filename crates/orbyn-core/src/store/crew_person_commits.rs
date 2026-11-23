@@ -2,10 +2,11 @@
 //! provenance reads (`docs/crew/provenance-person-signal.md`). A row is written in the same transaction as its audit
 //! row. A commit the person makes outside the app is never listed, and nothing is inferred from an author or email.
 //!
-//! No app path commits on a person's action today (the optional README "Initial commit" at project creation is not
-//! recorded), so nothing calls `record_person_commit` yet and the list is empty: every line reads `agent` or
-//! `unknown`. A future path that does must refuse to record a commit that contains a worker-written change (workers
-//! write into the person's own checkout): that check belongs to the path, which knows what it staged.
+//! No app path commits on a person's action except the optional README "Initial commit" at project creation, which
+//! `project/projects.rs` records as `project.readme` once the project row exists (the row references it). Everything
+//! else stays out: the list holds only what the app itself did, never a person's manual commit. A future path that
+//! records one must refuse a commit that contains a worker-written change (workers write into the person's own
+//! checkout): that check belongs to the path, which knows what it staged.
 
 use rusqlite::params;
 

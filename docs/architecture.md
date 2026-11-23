@@ -249,6 +249,7 @@ EXIF location. The input is capped at 50 MiB, refused from the declared length b
 body is read, and at 100 megapixels with a 512 MiB decoder allocation, checked from the
 header before a decoder allocates. A HEIC, HEIF or WebP is refused as `415 unsupported_type`
 until a decoder this build can carry is chosen, and the route reads no path from the request.
+At most two photo conversions decode and encode at once across the service; others wait.
 
 The composer edits a fenced code block as plain text: Tab and Shift+Tab move the
 selected block's lines by two spaces, Enter from the block's empty last line closes
@@ -490,7 +491,13 @@ fresh once, logging `CUSTOM engine.session_lost`. A second loss fails the run.
 `UsageCenter` reads local session history and nothing else: `projects/**/*.jsonl`
 under `~/.claude` (or `CLAUDE_CONFIG_DIR`), `sessions/**/*.jsonl` under `~/.codex`
 (or `CODEX_HOME`), and `sessions/**/session.jsonl` under Muse's home
-(`$XDG_DATA_HOME/muse`, else `~/.local/share/muse`). It keeps only timestamps, models
+(`$XDG_DATA_HOME/muse`, else `~/.local/share/muse`). Each launch reads its own profile
+and not one it inherited: a relocated path is this launch's only when it lies outside a
+sandbox the environment declares, or when the launch declares that profile itself
+(`ORBYN_LAUNCH_PROFILE=smoke` with the harness's `ORBYN_SMOKE_SANDBOX` root). Any other
+launch that inherits those variables reads the person's own home, the account's own home
+from the user database when the inherited one is the sandbox's, so a personal build never
+reports the harness's empty sandbox. It keeps only timestamps, models
 and token counts, and never opens a credential file. Claude rewrites an entry as it
 streams, so each message counts once. Codex repeats its running total, so an
 unchanged total counts once. Muse writes one log per session, counts its cached
@@ -547,7 +554,8 @@ next run. A rewind does the same unless the engine rolls its own session back. D
 stays until a run that carried it completes, so a failed start, a stop or a restart
 leaves it pending, and until then `/compact` and `/goal`, which reach an engine bare, are
 `422 unsupported`. The log stays whole; a rewind is logged as `CUSTOM
-thread.rewound` for clients to hide what follows.
+thread.rewound` for clients to hide what follows. The web hides events between `through` and
+the rewound event, and says "went back" only on `native: true`.
 
 Each run keeps the engine session and the first turn id it spoke in; for the Claude host
 the turn it keeps is the prompt's message id, because the host's own turn id is a counter
@@ -605,9 +613,11 @@ refuse the action. A reply may be bare JSON or one Markdown fence around it. Gen
 needs Git 2.40 or later, which honours `GIT_ATTR_SOURCE`; older Git could apply
 the working tree's clean filters while the diff is read, so it falls back instead.
 
-Writing uses the selected thread engine and the configured text-generation model,
-or the thread's explicit model when that setting is empty. It never chooses another
-provider or guesses a smaller model. Only the guarded Claude one-shot path supports
+Writing uses the selected thread engine and the one-shot model resolved for that
+engine ([Text generators](#text-generators)): the per-engine choice, then the legacy
+setting, then the engine's small model, then the thread's model. A name the engine
+does not list is passed over, never sent, and it never chooses another provider.
+Only the guarded Claude one-shot path supports
 repository-derived text: an owned temporary folder, empty tools, strict empty MCP
 configuration, disabled hooks/cloud MCP/IDE connections and slash commands,
 `dontAsk`, and no session persistence. Rejected flags fail without a retry.
@@ -621,8 +631,7 @@ remote's tracking ref (the branch's configured remote, else `origin`) when it
 exists, else the local base branch; the staleness check uses the same ref. The
 checked snapshot includes the symbolic branch name (a fixed marker on a detached
 HEAD), so switching branches at the same commit during generation is refused.
-Existing title calls retain their separate model policy and
-Codex path; this change does not qualify that path as tool-free. No credential
+Existing title calls share that model policy; the Codex path is still not qualified as tool-free writing. No credential
 configuration or MCP server list is read to implement writing. Prompts and patches
 are not saved by the generation audit, which records purpose, engine and model.
 
@@ -1575,6 +1584,39 @@ client may stop reading early. Both routes share one scanner, so the stream neve
 a different set or order, and a message written while a streamed search runs may not be
 in it.
 
+## Text generators
+
+Two one-shot calls spend engine usage for text a person did not ask a model for: a
+thread's first-message title and a confirmed Git action's commit or pull request text.
+Both go through one resolver: the model `text_generation_models` names for the thread's
+engine when that engine lists it, then the legacy `text_generation_model` when that
+engine lists it, then the engine's small model (a `haiku`, `luna`, `mini`, `flash` or
+`small` family name), then the thread's model. The reason travels with the choice
+(`chosen`, `legacy`, `small` or `thread`), and a name an engine does not list is passed
+over, never sent. A failed model-list read is an empty list, so the next fallback applies
+instead of failing the call.
+
+`text_generation_models` is a JSON object of engine id to model id, global or per
+project, at most 64 entries. An engine id is at most 64 letters, digits, `-` and `_`,
+starting with a letter or digit; a model id is at most 256 plain characters and cannot
+start with `-`. A write always checks that shape, and when the engine has already listed
+its models, it refuses a model that list does not offer. An engine that has not answered
+yet cannot say, so the write is accepted and the run's own start check still applies. The
+key never syncs ([account](account.md#never-synced)), and the old `text_generation_model`
+stays as the fallback with no data migration.
+
+`GET /api/text-generators` is a read. It lists every known engine that is not turned
+off for the scope, with its display name, up to 200 of the models its catalog returned (a
+failed listing is an empty list, not an error), the global chosen model or null, and the
+resolved model with its reason or null. `?project=<id>` adds the project's effective
+chosen and resolved choice. A write goes through the ordinary preferences routes
+(`PUT /api/preferences`, `PUT /api/projects/{id}/preferences` or the scoped settings
+route); there is no text-generator write route.
+
+Branch names and cleanup have no generator in the service yet: branch names come from
+`branch_name_prefix`, and the stored `branch_naming_mode` semantic and custom modes are
+not called, so no branch or cleanup call reaches the resolver.
+
 ## Automatic requests
 
 `GET /api/network` and `crates/orbyn-core/src/governance/network.rs` list every outbound request
@@ -1584,9 +1626,10 @@ The two-minute pull request poll has its own, `poll_pull_requests`. Engines make
 
 A thread's first message also spends one short engine call on its title, in the
 background, unless `auto_thread_titles` is off. It sees only that message and goes through
-the thread's own engine with no tools and no session. The model is
-`text_generation_model` when that engine lists it, otherwise the engine's small model,
-otherwise the thread's. A thread with a chosen title, a delegated thread, and a goal
+the thread's own engine with no tools and no session. The model is the one
+[Text generators](#text-generators) resolves for that engine: its per-engine choice,
+then `text_generation_model`, then its small model, then the thread's. A thread with a
+chosen title, a delegated thread, and a goal
 command are left alone. A failure keeps the default title, and a rename that lands first
 wins.
 
@@ -3706,7 +3749,7 @@ every method, path and which routes need a credential.
 | `POST /api/projects/clone`, `/create` | Make a folder, by default under `repo/`, or at `path`; `create` takes `readme` for a first commit |
 | `PATCH /api/projects/:id` | `RenameProject`: the name shown; the folder stays |
 | `DELETE /api/projects/:id?delete_files=&confirm=` | `ProjectRemoval`: unregisters; `delete_files` is `400` unless Orbyn made the folder, and can be `409 project_has_work` |
-| `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home |
+| `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home. Folders only, never a `.`-named one, and on Windows never one marked hidden or system and never a junction or link, which a person does not pick as a project and some of which loop when opened. A filesystem root, a Windows drive or a share, also lists the mounted drives that can be read, first, because nothing is above a root |
 | `GET /api/threads?project_id=&archived=`, `POST /api/threads`, `GET, DELETE /api/threads/:id` | Threads; no `project_id` on create makes a scratch folder |
 | `GET /api/threads/:id/family` | `ThreadFamily`: the topmost thread and every thread below it, so any member answers the same tree; the stored edge is `parent_thread_id` with its `fork`, `side` or `subagent` relation, and archived members stay |
 | `POST /api/threads/batch` | `BatchThreads` to `BatchThreadResult[]`; at most 100 entries, oversized batches return `400 invalid_input` before creating any thread; one item failure does not stop an accepted batch |

@@ -4,6 +4,9 @@ import type { ScopedPreferencesResult } from "../src/generated/ScopedPreferences
 import type { ScopedPreferencesChange } from "../src/generated/ScopedPreferencesChange.ts";
 import type { JsonValue } from "../src/api/types.ts";
 import type { InstallOutcome } from "../src/generated/InstallOutcome.ts";
+import type { ModelInfo } from "../src/generated/ModelInfo.ts";
+import type { TextGeneratorEngine } from "../src/generated/TextGeneratorEngine.ts";
+import type { TextGenerators } from "../src/generated/TextGenerators.ts";
 /**
  * createMockApi: an in-memory service with the architecture's HTTP contract.
  * The dev-server plugin and the tests both drive it through `handle`.
@@ -125,6 +128,41 @@ const err = (status: number, code: string, message: string, detail?: unknown): M
   body: detail === undefined ? { code, message } : { code, message, detail },
 });
 
+const textModel = (id: string, label: string, extra: Partial<ModelInfo> = {}): ModelInfo => ({
+  id, label, description: null, is_default: false, custom: false, options: [], ...extra,
+});
+
+/** The three engines K58 draws when the dev mock answers: a legacy fallback, a default model and no list. */
+const TEXT_GENERATOR_SAMPLES: { engine: string; name: string; models: ModelInfo[] }[] = [
+  { engine: "claude", name: "Claude Code", models: [textModel("haiku-5-5", "Haiku 5.5")] },
+  { engine: "codex", name: "Codex", models: [
+    textModel("gpt-5.2-mini", "GPT-5.2 mini"),
+    textModel("gpt-5.2-codex", "GPT-5.2 Codex"),
+    textModel("gpt-5.2-codex-max", "GPT-5.2 Codex Max", { is_default: true }),
+    textModel("team-tuned-mini", "team-tuned-mini", { custom: true }),
+  ] },
+  { engine: "opencode", name: "OpenCode", models: [] },
+];
+
+/** The engine's small model, recognised by family name as the service does. */
+function smallTextModel(models: ModelInfo[]): string | null {
+  for (const family of ["haiku", "luna", "mini", "flash", "small"]) {
+    const found = models.find((model) => model.id.toLowerCase().includes(family));
+    if (found) return found.id;
+  }
+  return null;
+}
+
+/** What one engine resolves to for one map, and why. */
+function resolveTextModel(engine: string, models: ModelInfo[], map: Record<string, JsonValue>, legacy: JsonValue) {
+  const named = typeof map[engine] === "string" && map[engine] !== "" ? String(map[engine]) : null;
+  if (named !== null && models.some((model) => model.id === named)) return { chosen: named, resolved: named, reason: "chosen" as const };
+  if (typeof legacy === "string" && legacy !== "" && models.some((model) => model.id === legacy)) return { chosen: named, resolved: legacy, reason: "legacy" as const };
+  const small = smallTextModel(models);
+  if (small !== null) return { chosen: named, resolved: small, reason: "small" as const };
+  return { chosen: named, resolved: null, reason: null };
+}
+
 export function createMockApi(options: MockOptions = {}) {
   const stepMs = options.stepMs ?? 90;
 
@@ -156,6 +194,8 @@ export function createMockApi(options: MockOptions = {}) {
   const hooks = new Set<string>(["task-hook"]);
   let failures: Failure[] = [];
   let clones: unknown[] = [];
+  /** Why the next clone ends failed, or null while clones succeed. */
+  let cloneError: string | null = null;
   /** The notes of the reviews sent from a pull request page, by number. */
   const reviewsSent = new Map<number, string[]>();
   /** The details reads since the scenario began: the limited scenarios answer the first in full and then hit the limit. */
@@ -227,6 +267,7 @@ export function createMockApi(options: MockOptions = {}) {
     preferenceOverrides = {};
     failures = [];
     clones = [];
+    cloneError = null;
     reviewsSent.clear();
     detailsReads = 0;
     delayMs = 0;
@@ -300,7 +341,12 @@ export function createMockApi(options: MockOptions = {}) {
         ? { ...thread, project_id: "p-app", engine: "kiro", model: "sonnet", lifecycle: { ...(thread.lifecycle ?? fixtures.lifecycle()), permission_mode: "auto" } }
         : thread);
     }
-    if (!blank) preferenceValues = { ...preferenceValues, provider_instances: structuredClone(providerInstances), custom_models: structuredClone(customModels) };
+    if (!blank) {
+      preferenceValues = { ...preferenceValues, text_generation_model: "haiku-5-5", provider_instances: structuredClone(providerInstances), custom_models: structuredClone(customModels) };
+      // The project scope's own Codex choice, as the textgen-list frame draws it.
+      const firstProject = projects[0]?.id;
+      if (firstProject) preferenceOverrides[firstProject] = { text_generation_models: { codex: "gpt-5.2-codex" } };
+    }
   }
   reset();
 
@@ -573,6 +619,21 @@ export function createMockApi(options: MockOptions = {}) {
     }) };
   }
 
+  /** The legacy preference view list, as GET /api/preferences and the two write routes answer it. */
+  function preferenceViews(scope: ProjectScopesQuery) {
+    return scopedPreferences(scope, Object.keys(preferenceDefaults)).rows.map((row) => row.members[0]?.view ?? row.environment);
+  }
+
+  /** The direct preferences routes merge a top-level object key (the text generator map) and replace the rest. */
+  function writePreferences(projectId: string | null, values: Record<string, JsonValue>) {
+    const target = projectId === null ? preferenceValues : (preferenceOverrides[projectId] ??= {});
+    for (const [key, value] of Object.entries(values)) {
+      const kept = target[key];
+      target[key] = value !== null && typeof value === "object" && !Array.isArray(value) && kept !== null && typeof kept === "object" && !Array.isArray(kept)
+        ? { ...kept, ...value } : value;
+    }
+  }
+
   function route(method: string, path: string, query: URLSearchParams, body: unknown): MockResponse {
     const seg = path.split("/").filter(Boolean).map(decodeURIComponent);
     const key = `${method} /${seg.slice(0, 2).join("/")}`;
@@ -795,14 +856,46 @@ export function createMockApi(options: MockOptions = {}) {
       case "GET /api/preferences": {
         const projectId = query.get("project_id");
         const scope: ProjectScopesQuery = projectId ? { selection: { kind: "checkout", group_key: `mock:${projectId}`, project_id: projectId } } : {};
-        const result = scopedPreferences(scope, Object.keys(preferenceDefaults));
-        if (result.catalog.selection.kind === "unavailable") return err(404, "not_found", "Project not found.");
-        const rows = result.rows.map((row) => row.members[0]?.view ?? row.environment);
+        if (scopedPreferences(scope, []).catalog.selection.kind === "unavailable") return err(404, "not_found", "Project not found.");
+        const rows = preferenceViews(scope);
         // The credits setting on, for the read-only merge dialog frame (pr-detail-merge-dialog-credits-readonly-on).
         if (scenario === "pulls-credits-on") {
           return { status: 200, body: rows.map((view) => (view.key === "remove_agent_credits_on_merge" ? { ...view, value: true } : view)) };
         }
         return { status: 200, body: rows };
+      }
+      case "PUT /api/preferences": {
+        writePreferences(null, (data.values ?? {}) as Record<string, JsonValue>);
+        return { status: 200, body: preferenceViews({}) };
+      }
+      case "GET /api/text-generators": {
+        const projectId = query.get("project");
+        if (projectId !== null && !projects.some((project) => project.id === projectId)) return err(404, "not_found", "Project not found.");
+        const globalMap = (preferenceValues.text_generation_models ?? {}) as Record<string, JsonValue>;
+        const projectMap = projectId === null ? {} : (preferenceOverrides[projectId]?.text_generation_models ?? {}) as Record<string, JsonValue>;
+        const globalLegacy = preferenceValues.text_generation_model ?? "";
+        const projectLegacy = projectId === null ? globalLegacy : preferenceOverrides[projectId]?.text_generation_model ?? globalLegacy;
+        const engines: TextGeneratorEngine[] = TEXT_GENERATOR_SAMPLES.map((sample) => {
+          const global = resolveTextModel(sample.engine, sample.models, globalMap, globalLegacy);
+          return {
+            engine: sample.engine, name: sample.name, models: structuredClone(sample.models),
+            chosen: global.chosen, resolved: global.resolved, reason: global.reason,
+            ...(projectId === null ? {} : {
+              project: (() => {
+                const choice = resolveTextModel(sample.engine, sample.models, { ...globalMap, ...projectMap }, projectLegacy);
+                return { project_id: projectId, chosen: choice.chosen, resolved: choice.resolved, reason: choice.reason };
+              })(),
+            }),
+          };
+        });
+        return { status: 200, body: { engines } satisfies TextGenerators };
+      }
+      case "PUT /api/projects": {
+        if (seg[3] !== "preferences") break;
+        const projectId = seg[2] ?? "";
+        if (!projects.some((project) => project.id === projectId)) return err(404, "not_found", "Project not found.");
+        writePreferences(projectId, (data.values ?? {}) as Record<string, JsonValue>);
+        return { status: 200, body: preferenceViews({ selection: { kind: "checkout", group_key: `mock:${projectId}`, project_id: projectId } }) };
       }
       case "POST /api/settings":
         if (seg[2] === "project-scopes") return { status: 200, body: scopeCatalog(data as ProjectScopesQuery) };
@@ -1034,6 +1127,13 @@ export function createMockApi(options: MockOptions = {}) {
       case "GET /api/clones":
         return { status: 200, body: clones };
       case "POST /api/clones": {
+        // A bad URL fails as the job starts, which is when the toast has to announce it.
+        if (cloneError !== null) {
+          const failed = { id: `c-${clones.length}`, url: data.url, name: null, path: null, state: "failed", project: null, error: cloneError, used_https: false, started_at: now() };
+          cloneError = null;
+          clones = [...clones, failed];
+          return { status: 202, body: failed };
+        }
         const project = newProject(String(data.url ?? "repo").split("/").at(-1)?.replace(".git", "") ?? "repo");
         const job = { id: `c-${clones.length}`, url: data.url, name: null, state: "done", project, error: null, used_https: false, started_at: now() };
         clones = [...clones, job];
@@ -1420,6 +1520,10 @@ export function createMockApi(options: MockOptions = {}) {
     /** Makes the next setup attempt end in the failed state. */
     failSetup() {
       failNextSetup = true;
+    },
+    /** Makes the next clone end failed, with the Git error a bad URL answers. */
+    failClone(message = "fatal: repository 'bad url with spaces' does not exist") {
+      cloneError = message;
     },
     /** Fails the given step of the next apply, once. */
     failUpdateStep(id: string) {

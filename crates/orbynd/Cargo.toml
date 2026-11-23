@@ -26,6 +26,7 @@ orbyn-contracts = { path = "../orbyn-contracts" }
 orbyn-core = { path = "../orbyn-core", features = ["engine-credentials", "code-mode"] }
 axum.workspace = true
 clap.workspace = true
+flate2 = "1"
 futures-util.workspace = true
 getrandom.workspace = true
 reqwest.workspace = true

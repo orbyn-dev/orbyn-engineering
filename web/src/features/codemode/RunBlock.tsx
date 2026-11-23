@@ -1,14 +1,18 @@
 import { Loader2 } from "lucide-react";
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import "./codemode.css";
+import { canSendPersonKey } from "../../api/personKey";
 import { callDuration } from "../../lib/format";
+import { toFailure } from "../../lib/useAsync";
 import { useNow } from "../../lib/useNow";
 import { parsed } from "../../product/timeline/toolTrace";
 import type { ToolItem } from "../../product/timeline/types";
+import { Button } from "../../ui/controls";
+import { cancelCodeRun } from "./api";
 import { CallList } from "./CallList";
 import { boundedLines, callWord, capText, codeToolOf, runAnchorId, MAX_SCRIPT_CHARS, LIMITS, readReply, resumedWords, rowSummary, runMs, runView, type RowTone } from "./model";
 import { ScriptBox } from "./ScriptBox";
-import { useCodeRun } from "./useCodeRun";
+import { applyCodeRun, refreshCodeRun, useCodeRun } from "./useCodeRun";
 import type { RunView } from "./types";
 
 /**
@@ -104,6 +108,9 @@ function Footer({ view, now, inspect }: { view: RunView; now: number; inspect: R
     add(time);
     if (view.hasRecord) add(callWord(calls));
     if (view.waitedMs !== null && view.waitedMs > 0) add(`waited ${callDuration(view.waitedMs)} for you`);
+  } else if (view.error?.kind === "cancelled") {
+    parts.push("Cancelled");
+    if (view.hasRecord) add(callWord(calls));
   } else if (view.error?.kind === "lost") {
     parts.push("Lost");
     // A call that was in flight when the core restarted is not a recorded call.
@@ -134,6 +141,10 @@ function Footer({ view, now, inspect }: { view: RunView; now: number; inspect: R
 export function CodeRunBlock({ item, live, inspect }: { item: ToolItem; live: boolean; inspect: ReactNode }) {
   const view = useRunView(item, live);
   const now = useNow(view?.status === "running");
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  // One click, one write: a second press while the first is out is not another request.
+  const cancelPending = useRef(false);
   if (!view) {
     // Not a reply this screen understands: show the arguments' script and the raw text, as plain text.
     const args = parsed(item.args);
@@ -146,6 +157,34 @@ export function CodeRunBlock({ item, live, inspect }: { item: ToolItem; live: bo
       </div>
     );
   }
+  // The service cancels a live run only, and only for the person: no button where the page has no key to send.
+  const canCancel = (view.status === "running" || view.status === "paused") && canSendPersonKey();
+  const cancel = async () => {
+    if (!view.runId || cancelPending.current) return;
+    const runId = view.runId;
+    cancelPending.current = true;
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      const updated = await cancelCodeRun(runId);
+      // The answer is the updated record: every block showing this run settles from it.
+      if (updated) applyCodeRun(updated);
+      else void refreshCodeRun(runId);
+    } catch (reason) {
+      const failure = toFailure(reason);
+      if (failure.code === "run_finished") {
+        setCancelError("This run already ended.");
+        void refreshCodeRun(runId);
+      } else if (failure.code === "person_required") {
+        setCancelError("This action needs the person at the desktop app.");
+      } else {
+        setCancelError(failure.message);
+      }
+    } finally {
+      cancelPending.current = false;
+      setCancelling(false);
+    }
+  };
   const logs = boundedLines(view.logs, LIMITS.logLines);
   // A reply cut for size sets `truncated` too, so it only means dropped log lines when the log is full.
   const lostLogs = logs.hidden > 0 || (view.logsTotal !== null && view.logsTotal > logs.shown.length) || (view.truncated && logs.shown.length >= LIMITS.logLines);
@@ -168,8 +207,14 @@ export function CodeRunBlock({ item, live, inspect }: { item: ToolItem; live: bo
             {suffix}
             {view.crewWorker ? " · Crew worker" : ""}
           </span>
+          {canCancel ? (
+            <Button small className="cm-cancel" busy={cancelling} onClick={() => void cancel()}>
+              {cancelling ? "Cancelling" : "Cancel run"}
+            </Button>
+          ) : null}
         </div>
       ) : null}
+      {cancelError ? <p className="field-error cm-cancel-error" role="alert">{cancelError}</p> : null}
       {showScript && view.script !== null ? <ScriptBox script={view.script} sha={view.scriptSha256} defaultOpen={error?.kind === "syntax"} /> : null}
       {view.status === "paused" ? <WaitingOn view={view} /> : view.hasRecord ? <CallList title="Calls" calls={view.calls} /> : null}
       {showLogs ? (

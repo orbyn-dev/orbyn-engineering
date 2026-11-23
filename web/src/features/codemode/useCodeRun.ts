@@ -38,6 +38,22 @@ export function resetCodeRuns() {
   useRuns.setState({ records: new Map(), missing: new Set() });
 }
 
+/** Puts the record a write answered into the store, so every block showing the run draws it at once. */
+export function applyCodeRun(record: CodeRunRecord): void {
+  useRuns.setState((state) => {
+    const records = new Map(state.records).set(record.run_id, record);
+    if (!state.missing.has(record.run_id)) return { records };
+    const missing = new Set(state.missing);
+    missing.delete(record.run_id);
+    return { records, missing };
+  });
+}
+
+/** Reads a run again now, as the two-second poll does. A failed read marks it missing and never throws. */
+export function refreshCodeRun(runId: string): Promise<void> {
+  return refresh(runId);
+}
+
 /**
  * The run record for a run id, read again every two seconds while the run is not over (or while `keepWatching`, for an
  * approval that waits on it). Null until it is read, and null for good when it cannot be: the caller draws from the engine's

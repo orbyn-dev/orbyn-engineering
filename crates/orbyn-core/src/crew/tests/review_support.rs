@@ -149,6 +149,21 @@ impl World {
             .collect()
     }
 
+    /// `crew_review` at a deadline the test controls, so how fast the lanes start cannot decide what it asserts: the
+    /// real MCP layer gives every call its own 45-second budget (`tools::mcp::budget_for`), and a test that reads one
+    /// answer must not race that clock (#1159). `Duration::ZERO` keeps no reserve, for the tests that ask for a cut.
+    pub async fn review_at(
+        &self,
+        args: Value,
+        deadline: std::time::Instant,
+        reserve: std::time::Duration,
+    ) -> Result<Value, orbyn_contracts::CrewError> {
+        let binding = lead_binding(self);
+        self.core
+            .crew_lanes_tool(&binding, &args, deadline, reserve)
+            .await
+    }
+
     pub fn status(&self, task: &str) -> Value {
         self.core.review_status(task).unwrap()
     }
