@@ -321,14 +321,21 @@ async fn the_daily_budget_is_set_at_creation_only() {
         }
     );
     // The wire refuses what the core would have to: a missing or foreign daily field.
-    for bad in [
-        json!({ "project_id": project(&w), "name": "No daily", "template": "fix_failing_ci",
-                "trigger": { "kind": "ci_failure" }, "budget": { "turns": 5, "minutes": 5 } }),
-        json!({ "project_id": project(&w), "name": "Tokens", "template": "fix_failing_ci",
-                "trigger": { "kind": "ci_failure" }, "budget": { "turns": 5, "minutes": 5 },
-                "daily": { "runs": 1, "turns": 1, "tokens": 9 }, "utc_offset_minutes": 0 }),
+    for (bad, why) in [
+        (
+            json!({ "project_id": project(&w), "name": "No daily", "template": "fix_failing_ci",
+                    "trigger": { "kind": "ci_failure" }, "budget": { "turns": 5, "minutes": 5 } }),
+            "missing field `daily`",
+        ),
+        (
+            json!({ "project_id": project(&w), "name": "Tokens", "template": "fix_failing_ci",
+                    "trigger": { "kind": "ci_failure" }, "budget": { "turns": 5, "minutes": 5 },
+                    "daily": { "runs": 1, "turns": 1, "tokens": 9 }, "utc_offset_minutes": 0 }),
+            "unknown field `tokens`",
+        ),
     ] {
-        assert!(serde_json::from_value::<wire::BackgroundCrewCreate>(bad).is_err());
+        let error = serde_json::from_value::<wire::BackgroundCrewCreate>(bad).unwrap_err();
+        assert!(error.to_string().contains(why), "{error}");
     }
 }
 

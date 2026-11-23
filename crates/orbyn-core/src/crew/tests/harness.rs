@@ -716,7 +716,14 @@ impl World {
             ..
         } = self;
         let config = core.config.clone();
+        // A process that dies takes its live scripts with it.
+        core.code_runs.forget_all();
         core.shutdown().await;
+        // An aborted script drops its hold on the core when the runtime next polls it.
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while Arc::strong_count(&core) > 1 && std::time::Instant::now() < until {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
         let old = Arc::downgrade(&core);
         drop(core);
         assert!(old.upgrade().is_none(), "the old core is gone");
