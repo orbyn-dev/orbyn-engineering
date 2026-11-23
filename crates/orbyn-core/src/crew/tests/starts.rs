@@ -474,40 +474,39 @@ async fn an_in_flight_task_is_not_killed_by_the_crew_budget() {
 }
 
 /// The disk guard (KC4): a start is refused, with the free space in the reason, when the lead's volume has less than the
-/// person's floor, and nothing is started. A floor of 0 turns it off. The largest floor a person can set is 1000 GB, so a
-/// machine with more than that free cannot show a refusal and the test ends there.
+/// person's floor, and nothing is started. The default floor is 5 GB; faked free space lets this run on any machine.
 #[tokio::test]
-async fn a_start_under_the_disk_floor_is_refused_and_a_zero_floor_turns_it_off() {
+async fn a_start_under_the_disk_floor_is_refused_with_the_free_space() {
+    const GIB: u64 = 1024 * 1024 * 1024;
     let w = quiet().await;
     let cwd = w.core.store.thread(&w.lead).unwrap().cwd;
-    let free = crate::host::disk::free_bytes(std::path::Path::new(&cwd));
-    if free.is_none_or(|bytes| bytes >= 1000 * 1024 * 1024 * 1024) {
-        return;
-    }
-    w.core
-        .set_preferences(
-            None,
-            &BTreeMap::from([("crew_min_free_gb".to_owned(), json!(1000))]),
-        )
-        .unwrap();
+    let path = std::path::Path::new(&cwd);
+    crate::host::disk::set_free_for_test(path, Some(7 * GIB / 2));
     let (refused, error) = w.start(leased("src/a.txt"), key()).await;
-    assert!(error && refused["code"] == "not_authorized", "{refused}");
-    let message = refused["message"].as_str().unwrap();
-    assert!(
-        message.starts_with("Not enough free disk space to start a worker:")
-            && message.contains("the project folder")
-            && message.contains("1000.0 GB are needed"),
-        "{message}"
+    assert!(error, "the start was not refused: {refused}");
+    assert_eq!(refused["code"], "disk_low");
+    assert_eq!(refused["free_bytes"].as_u64(), Some(7 * GIB / 2));
+    assert_eq!(refused["floor_gb"].as_u64(), Some(5));
+    assert_eq!(
+        refused["message"],
+        "Not started: 3.5 GB free, Crew needs 5 GB. Free space and try again."
     );
     assert!(w.prompts.lock().unwrap().is_empty(), "nothing was started");
-    w.core
-        .set_preferences(
-            None,
-            &BTreeMap::from([("crew_min_free_gb".to_owned(), json!(0))]),
-        )
-        .unwrap();
+
+    crate::host::disk::set_free_for_test(path, Some(640 * 1024 * 1024));
+    let (refused, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(error, "the start was not refused: {refused}");
+    assert_eq!(refused["code"], "disk_low");
+    assert_eq!(refused["free_bytes"].as_u64(), Some(640 * 1024 * 1024));
+    assert_eq!(refused["floor_gb"].as_u64(), Some(5));
+    let message = refused["message"].as_str().unwrap();
+    assert!(message.contains("640 MB free"), "{message}");
+    assert!(w.prompts.lock().unwrap().is_empty(), "nothing was started");
+
+    crate::host::disk::set_free_for_test(path, Some(20 * GIB));
     let (answer, error) = w.start(leased("src/a.txt"), key()).await;
     assert!(!error, "{answer}");
+    crate::host::disk::set_free_for_test(path, None);
 }
 
 /// The budget is a device-local number measured per crew: a second crew has its own allowance,

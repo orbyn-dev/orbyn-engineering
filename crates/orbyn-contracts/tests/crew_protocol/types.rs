@@ -171,6 +171,46 @@ fn the_error_object_round_trips() {
 }
 
 #[test]
+fn disk_low_round_trips() {
+    let error = CrewError::disk_low("m", 3_000_000_000, 5);
+    let value = serde_json::to_value(&error).unwrap();
+    assert_eq!(value["code"], "disk_low");
+    assert_eq!(value["free_bytes"].as_u64(), Some(3_000_000_000));
+    assert_eq!(value["floor_gb"].as_u64(), Some(5));
+    let keys: BTreeSet<&str> = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let expected: BTreeSet<&str> = ["v", "code", "message", "free_bytes", "floor_gb"]
+        .into_iter()
+        .collect();
+    assert_eq!(keys, expected);
+    assert_eq!(CrewError::parse(&value).unwrap(), error);
+    // Additive: a refusal from before the numbers existed writes neither key.
+    let plain = serde_json::to_value(CrewError::new(ErrorCode::NotAuthorized, "no")).unwrap();
+    assert!(plain.get("free_bytes").is_none());
+    assert!(plain.get("floor_gb").is_none());
+}
+
+#[test]
+fn an_older_reader_still_sees_a_refusal() {
+    #[derive(serde::Deserialize)]
+    struct OlderRefusal {
+        v: u8,
+        code: String,
+        message: String,
+    }
+
+    let value = serde_json::to_value(CrewError::disk_low("m", 3_000_000_000, 5)).unwrap();
+    let older: OlderRefusal = serde_json::from_value(value).unwrap();
+    assert_eq!(older.v, 0);
+    assert_eq!(older.code, "disk_low");
+    assert_eq!(older.message, "m");
+}
+
+#[test]
 fn a_float_is_refused_even_when_it_is_whole() {
     let mut brief = read_json(&protocol_dir().join("schemas/examples/brief.valid.basic.json"));
     brief["budget"]["minutes"] = json!(30.0);

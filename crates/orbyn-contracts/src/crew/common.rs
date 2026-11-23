@@ -59,6 +59,7 @@ pub enum ErrorCode {
     InvalidTransition,
     InvalidToken,
     UnknownMember,
+    DiskLow,
 }
 }
 
@@ -73,6 +74,12 @@ pub struct CrewError {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub object: Option<CrewHash>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub free_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub floor_gb: Option<u64>,
 }
 }
 
@@ -83,6 +90,18 @@ impl CrewError {
             code,
             message: message.into(),
             object: None,
+            free_bytes: None,
+            floor_gb: None,
+        }
+    }
+
+    /// The disk guard's refusal: the code, the sentence and the numbers it measured,
+    /// never a path.
+    pub fn disk_low(message: impl Into<String>, free_bytes: u64, floor_gb: u64) -> Self {
+        Self {
+            free_bytes: Some(free_bytes),
+            floor_gb: Some(floor_gb),
+            ..Self::new(ErrorCode::DiskLow, message)
         }
     }
 

@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
-use crate::store::Store;
+use crate::store::{AuditRecord, Store};
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -154,7 +154,7 @@ pub(crate) const CREW_DIGEST: &str = "crew_digest";
 /// The crew-wide turn budget's catalog key. Its value is whole turns; 0 is no crew budget.
 pub(crate) const CREW_TURN_BUDGET: &str = "crew_turn_budget";
 
-/// The free gigabytes a Crew worker needs on the lead thread's volume; 0 is no floor.
+/// The whole free gigabytes (1 to 500) a Crew worker needs on the lead thread's volume.
 pub(crate) const CREW_MIN_FREE_GB: &str = "crew_min_free_gb";
 
 /// Keys the service writes itself; a client edit names them only through their owner.
@@ -256,15 +256,13 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
             "A crew turn budget is a whole number of turns, or 0 for no budget.".into(),
         ));
     }
-    if fits
-        && definition.key == CREW_MIN_FREE_GB
-        && value.as_u64().is_none_or(|gigabytes| gigabytes > 1000)
+    if definition.key == CREW_MIN_FREE_GB
+        && value
+            .as_u64()
+            .is_none_or(|gigabytes| !(1..=500).contains(&gigabytes))
     {
-        // Whole gigabytes from 0 to 1000; 0 is no floor.
-        return Err(CoreError::Invalid(
-            "The crew disk floor is a whole number of gigabytes from 0 to 1000, or 0 for none."
-                .into(),
-        ));
+        // Whole gigabytes from 1 to 500; an old install's 0 no longer switches the floor off.
+        return Err(CoreError::Invalid("Enter a number from 1 to 500.".into()));
     }
     if fits && definition.key == crate::agents::attention::QUIET_PREFERENCE {
         let allowed = value.as_u64().is_some_and(|seconds| {
@@ -473,12 +471,27 @@ impl Core {
             if project_id.is_some() && !definition.project {
                 return Err(CoreError::Invalid(format!("{key} is not set per project.")));
             }
+            if key == CREW_MIN_FREE_GB && value.is_null() {
+                return Err(CoreError::Invalid("Enter a number from 1 to 500.".into()));
+            }
             if !value.is_null() {
                 check(definition, value)?;
                 refuse_agent_device_access(key, value)?;
                 if key == crate::agents::text_models::SETTING {
                     crate::agents::text_models::check_offered(&self.engines, value)?;
                 }
+            }
+            if key == CREW_MIN_FREE_GB {
+                self.store.append_audit(&AuditRecord {
+                    actor: "user".into(),
+                    action: "crew.disk_floor.set".into(),
+                    target: "crew_min_free_gb".into(),
+                    decision: None,
+                    source: "user".into(),
+                    thread_id: None,
+                    run_id: None,
+                    detail: json!({"gb": value}),
+                })?;
             }
             if key == crate::agents::engines::instances::PREFERENCE && !value.is_null() {
                 let list = crate::agents::engines::instances::parse(value)?;
@@ -657,14 +670,21 @@ mod tests {
     }
 
     #[test]
-    fn a_crew_disk_floor_is_whole_gigabytes_from_zero_to_a_thousand() {
+    fn a_crew_disk_floor_is_whole_gigabytes_from_one_to_five_hundred() {
         let floor = definition(CREW_MIN_FREE_GB).unwrap();
-        assert!(check(floor, &json!(5)).is_ok());
-        assert!(check(floor, &json!(0)).is_ok(), "0 is no floor");
-        assert!(check(floor, &json!(1000)).is_ok());
-        assert!(check(floor, &json!(-1)).is_err());
-        assert!(check(floor, &json!(1.5)).is_err());
-        assert!(check(floor, &json!(1001)).is_err());
+        for good in [1, 5, 500] {
+            assert!(check(floor, &json!(good)).is_ok(), "{good}");
+        }
+        for bad in [json!(0), json!(501), json!(-1), json!(1.5)] {
+            let error = check(floor, &bad).unwrap_err();
+            assert!(
+                matches!(
+                    &error,
+                    CoreError::Invalid(message) if message == "Enter a number from 1 to 500."
+                ),
+                "{bad}: {error:?}"
+            );
+        }
     }
 
     #[test]
@@ -1004,5 +1024,40 @@ mod scoped_consumer_tests {
                 .unwrap(),
             json!(false)
         );
+    }
+
+    #[test]
+    fn a_crew_disk_floor_cannot_be_cleared_and_a_change_is_audited() {
+        let dir = TempDir::new();
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        let error = core
+            .set_preferences(
+                None,
+                &BTreeMap::from([(CREW_MIN_FREE_GB.to_owned(), Value::Null)]),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            &error,
+            CoreError::Invalid(message) if message == "Enter a number from 1 to 500."
+        ));
+        assert_eq!(core.preference(CREW_MIN_FREE_GB, None).unwrap(), json!(5));
+        core.set_preferences(
+            None,
+            &BTreeMap::from([(CREW_MIN_FREE_GB.to_owned(), json!(7))]),
+        )
+        .unwrap();
+        assert_eq!(core.preference(CREW_MIN_FREE_GB, None).unwrap(), json!(7));
+        let audit = core.store.list_audit(None, 20).unwrap();
+        let row = audit
+            .iter()
+            .find(|row| row.action == "crew.disk_floor.set")
+            .expect("the floor change is audited");
+        assert_eq!(
+            (row.actor.as_str(), row.target.as_str(), row.source.as_str()),
+            ("user", "crew_min_free_gb", "user")
+        );
+        assert_eq!(row.detail, json!({"gb": 7}));
     }
 }

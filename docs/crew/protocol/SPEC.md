@@ -393,6 +393,7 @@ in this order, so a case has one expected answer:
 | `invalid_transition` | The lifecycle does not allow this move (H13) |
 | `invalid_token` | A join token is unknown, used or expired. Reserved for the join flow |
 | `unknown_member` | The addressee is not in the crew. Reserved for the router |
+| `disk_low` | The app refused to start a worker because the volume holding the lead thread's folder is below the person's free-space floor. Carries `free_bytes` and `floor_gb`, never a path. Raised by the app, not by the protocol model |
 
 ## 10. Not in v0
 
