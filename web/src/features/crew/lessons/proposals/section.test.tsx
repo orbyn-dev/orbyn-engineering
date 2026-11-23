@@ -52,7 +52,7 @@ describe("the Skill proposals section of the Lessons page", () => {
       within(region).getByText("Check where a redirect or returnTo link goes before changing code that follows it."),
     ).toBeInTheDocument();
     expect(
-      within(region).getByText("3 active lessons with the same source, check kind and path class"),
+      within(region).getByText("3 active lessons with the same source, check kind and path class", { selector: "b.cx-ppbasedline" }),
     ).toBeInTheDocument();
     expect(within(region).getByText("Applies to")).toBeInTheDocument();
     expect(within(region).getByText(/All your projects/)).toBeInTheDocument();
@@ -95,11 +95,12 @@ describe("the Skill proposals section of the Lessons page", () => {
     answers.proposals = { status: 200, body: { proposals: [proposal({ can_approve: false })] } };
     open();
     const region = await card();
-    expect(
-      within(region).getByText(
-        /Based on 2 active lessons now: needs 3\. A lesson it was based on was deleted or turned off, so the pattern no longer has three active ones\./,
-      ),
-    ).toBeInTheDocument();
+    const note = within(region)
+      .getByText("Based on 2 active lessons now: needs 3.", { selector: "b.cx-pplead" })
+      .parentElement as HTMLElement;
+    expect(note).toHaveTextContent(
+      /Based on 2 active lessons now: needs 3\. A lesson it was based on was deleted or turned off, so the pattern no longer has three active ones\./,
+    );
     expect(within(region).getByText("2 active lessons now")).toBeInTheDocument();
     expect(within(region).getByText("(3 when it was proposed)")).toBeInTheDocument();
     expect(within(region).getByRole("button", { name: "Approve" })).toBeDisabled();
@@ -144,6 +145,22 @@ describe("the Skill proposals section of the Lessons page", () => {
     expect(screen.getByText(/The 3 lessons it came from stay here and stop going into briefs while the skill exists\./)).toBeInTheDocument();
     // The line is drawn once: the mark is consumed, and a second mount does not draw it again.
     expect(takeSkillAdded()).toBeNull();
+  });
+  it("draws no lesson toggle for a stale proposal with no source lesson left", async () => {
+    answers.lessons = {
+      status: 200,
+      body: lessons({
+        counts: { active: 0, disabled: 3, hidden: 0 },
+        lessons: lessons().lessons.map((one) => ({ ...one, state: "disabled", in_next_brief: false })),
+      }),
+    };
+    answers.proposals = { status: 200, body: { proposals: [proposal({ can_approve: false })] } };
+    open();
+    const region = await card();
+    expect(within(region).getByText("Based on 0 active lessons now: needs 3.", { selector: "b.cx-pplead" })).toBeInTheDocument();
+    // Nothing is left to fold out, so the toggle is not drawn at all.
+    expect(within(region).queryByText(/^(Hide|Show) the /)).toBeNull();
+    expect(within(region).queryAllByRole("button", { name: "Open this lesson" })).toHaveLength(0);
   });
   it("approves through its confirm, sending the text as proposed once, and says the skill was added", async () => {
     answers.write = ({ method, url }) => {

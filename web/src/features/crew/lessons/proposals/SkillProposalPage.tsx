@@ -227,7 +227,7 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
               Adding {title} to skills-local.
             </span>
           ) : failure ? (
-            <span className="cx-hint">{REFUSED_FOOT}</span>
+            <span className="cx-hint">{failure.secret ? REVIEW_FOOT : REFUSED_FOOT}</span>
           ) : proposal.can_approve ? (
             <span className="cx-hint">{REVIEW_FOOT}</span>
           ) : null}

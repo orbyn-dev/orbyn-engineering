@@ -119,6 +119,9 @@ describe("the proposed skill's review page", () => {
     const box = screen.getByRole("textbox", { name: "Skill text" });
     expect(box).toHaveValue(`${SKILL_TEXT}\n4. Use the staging token sk-live-xxxxxxxxxxxx.`);
     expect(box).toHaveClass("cx-invalid");
+    // The scan refusal has no Try again, so the footer is the review foot, not the refused-write sentence.
+    expect(screen.getByText(/Approve saves the skill in skills-local on this device/)).toBeInTheDocument();
+    expect(screen.queryByText("Nothing was written. Approve or Try again sends the same text once more.")).toBeNull();
     expect(window.location.hash).toBe("");
   });
 
@@ -130,7 +133,7 @@ describe("the proposed skill's review page", () => {
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
     const note = screen.getByText(/^Approve is off:/).parentElement as HTMLElement;
     expect(note).toHaveTextContent(
-      "Approve is off: a lesson it was based on was deleted or turned off. You can still read the text or dismiss it.",
+      "Approve is off: a lesson it was based on was deleted or turned off. You can still read the text; go back to dismiss it.",
     );
     expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
     expect(screen.queryByText(/Approve saves the skill in skills-local/)).toBeNull();

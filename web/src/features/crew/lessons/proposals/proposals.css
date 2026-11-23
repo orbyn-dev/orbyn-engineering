@@ -73,3 +73,5 @@
 .cx-ppfoot .cx-hint { color: var(--color-muted); font-size: 12px; flex: 1; min-width: 200px; }
 .cx-ppfoot .cx-acts { margin-left: auto; display: flex; gap: 8px; }
 .cx-ppnames { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cx-pplead { font-weight: 500; }
+.cx-ppfkv b.cx-ppbasedline { font-weight: 500; }

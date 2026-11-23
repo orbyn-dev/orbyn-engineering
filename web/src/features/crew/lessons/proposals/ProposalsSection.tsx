@@ -254,6 +254,11 @@ function ProposalCard({
   const sources = sourceLessons(proposal, lessons).filter((one) => proposal.can_approve || one.state === "active");
   const shownCount = proposal.can_approve ? count : active;
   const preview = previewOf(text.lines);
+  // The design bolds only the leading sentence of the stale line: "Based on 2 active lessons now: needs 3."
+  const stale = staleWords(proposal, lessons);
+  const stop = stale.indexOf(". ");
+  const staleLead = stop < 0 ? stale : stale.slice(0, stop + 1);
+  const staleRest = stop < 0 ? "" : stale.slice(stop + 1);
   return (
     <div className="cx-ppcard" role="region" aria-label={`Proposed skill ${title}`}>
       <div className="cx-pphead">
@@ -266,13 +271,16 @@ function ProposalCard({
       {proposal.can_approve ? null : (
         <div className="cx-fbx cx-amber" role="status" style={{ flexDirection: "row", gap: "8px", alignItems: "flex-start" }}>
           <Ic n="alert" sm />
-          <span style={{ color: "var(--color-text)", fontSize: "12.5px" }}>{staleWords(proposal, lessons)}</span>
+          <span style={{ color: "var(--color-text)", fontSize: "12.5px" }}>
+            <b className="cx-pplead">{staleLead}</b>
+            {staleRest}
+          </span>
         </div>
       )}
       <div className="cx-ppfkv">
         <span>Based on</span>
         <div className="cx-ppbased">
-          <b>
+          <b className={proposal.can_approve ? "cx-ppbasedline" : undefined}>
             {proposal.can_approve ? (
               basedOnWords(proposal, lessons)
             ) : (
@@ -282,12 +290,14 @@ function ProposalCard({
               </>
             )}
           </b>
-          <button type="button" className="cx-pptoggle" aria-expanded={shown} onClick={() => setShown((open) => !open)}>
-            <Ic n="down" sm />
-            <span>
-              {shown ? "Hide" : "Show"} the {lessonsWord(shownCount)}
-            </span>
-          </button>
+          {sources.length > 0 ? (
+            <button type="button" className="cx-pptoggle" aria-expanded={shown} onClick={() => setShown((open) => !open)}>
+              <Ic n="down" sm />
+              <span>
+                {shown ? "Hide" : "Show"} the {lessonsWord(shownCount)}
+              </span>
+            </button>
+          ) : null}
           {shown && sources.length > 0 ? (
             <div className="cx-pprows">
               {sources.map((lesson) => (

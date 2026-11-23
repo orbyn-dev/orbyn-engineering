@@ -43,9 +43,10 @@ export const REVIEW_FOOT =
   "Approve saves the skill in skills-local on this device and lists it on the Skills page as Personal. Available to engines through Orbyn's skills tools. Applies to all your projects. Added to the Default selection. Cancel leaves the proposal where it is.";
 export const APPROVING_BANNER = "Adding the skill. It is not listed or used until the write has finished.";
 /** The review page while the proposal can no longer be approved: reading stays, Approve is off. */
+// Honest temporary copy: the copy is not drawn in a frame, and waits for the Designer's wording.
 export const STALE_APPROVE_OFF =
-  "Approve is off: a lesson it was based on was deleted or turned off. You can still read the text or dismiss it.";
-/** The footer once a write failed: the design's sentence, because a second click sends the same text again. */
+  "Approve is off: a lesson it was based on was deleted or turned off. You can still read the text; go back to dismiss it.";
+/** The refused-write frame's sentence: that frame offers Try again, so it is drawn on a failed write and not on the scan refusal. */
 export const REFUSED_FOOT = "Nothing was written. Approve or Try again sends the same text once more.";
 
 /** The dismiss confirm's questions. */
