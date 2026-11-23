@@ -6,7 +6,7 @@ import { routeHref } from "../../../../product/state/route";
 import { useUi } from "../../../../product/state/ui";
 import { useWorkspace } from "../../../../product/state/workspace";
 import { controlsOf } from "../terminalControls";
-import { useReportedCommands } from "../shellOutcomes";
+import { takeReportedCommands, useReportedCommands } from "../shellOutcomes";
 import { completeAt, applyCompletion, resolveDir } from "./completions";
 import { HistoryPop, type HistoryScope } from "./HistoryPop";
 import { historyAcross, recordCommand, recordExitCode, suggestion, useHistory } from "./history";
@@ -64,13 +64,13 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
 
   const history = useHistory(keyOf);
   /**
-   * How the shell said the lines it finished ended, from its own marks. Each report is given to the oldest
-   * line of this terminal still unknown that carries the same command, so a row shows a result only when the
-   * shell reported one. A shell that emits no marks reports nothing and the rows stay as they were.
+   * How the shell said the lines it finished ended, from its own marks. Each report is given once to the
+   * oldest line of this terminal still unknown that carries the same command, so a row shows a result only
+   * when the shell reported one. A shell that emits no marks reports nothing and the rows stay as they were.
    */
   const reported = useReportedCommands(keyOf);
   useEffect(() => {
-    for (const command of reported) {
+    for (const command of takeReportedCommands(keyOf, reported)) {
       if (command.exitCode !== null) recordExitCode(keyOf, command.command, command.exitCode);
     }
   }, [reported, keyOf]);
