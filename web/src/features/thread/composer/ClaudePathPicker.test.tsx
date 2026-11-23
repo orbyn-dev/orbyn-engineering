@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api } from "../../../api/client";
 import type { EngineModels, EngineStatus } from "../../../api/types";
 import type { HostRow } from "../../enginehost";
 import { setEngineHostApi } from "../../enginehost";
@@ -11,13 +10,9 @@ import { useModelStore } from "../../../product/state/modelStore";
 import { useWorkspace } from "../../../product/state/workspace";
 import { createEngineHostMock } from "../../../../mock/engineHost";
 import { installMockFetch } from "../../../test-support";
+import { wire } from "../../../wire.test-support";
 import { CLAUDE_CLI_NOTE, CLAUDE_SDK_NOTE } from "../../settings/providers/ClaudePathRows";
 import { ModelPickerTrigger } from "./ModelPicker";
-
-vi.mock("../../../api/client", async (original) => {
-  const actual = await original<typeof import("../../../api/client")>();
-  return { ...actual, api: { ...actual.api, models: vi.fn() } };
-});
 
 const engine = (id: string, name: string, patch: Partial<EngineStatus> = {}) =>
   ({ id, name, installed: true, auth: "logged_in", capabilities: { managed: true }, ...patch }) as EngineStatus;
@@ -38,9 +33,8 @@ const codexCatalog = catalog("codex");
 const engines = () => [engine("claude", "Claude Code"), engine("codex", "Codex")];
 const host = (patch: Partial<HostRow>): HostRow => ({ id: "claude", name: "Claude Code", state: "running", can_retry: false, ...patch });
 
-const putBodies = () => vi.mocked(fetch).mock.calls
-  .filter(([input, init]) => input === "/api/settings/preferences" && init?.method === "PUT")
-  .map(([, init]) => JSON.parse(String(init?.body)));
+let mock: ReturnType<typeof installMockFetch>;
+const putBodies = () => wire().filter((call) => call.method === "PUT" && call.path === "/api/settings/preferences").map((call) => call.body);
 
 async function open(selected = { engine: "claude", model: "opus" }, onPick = vi.fn()) {
   const user = userEvent.setup();
@@ -53,16 +47,18 @@ async function open(selected = { engine: "claude", model: "opus" }, onPick = vi.
 const group = (picker: HTMLElement, name: string) => within(picker).getByRole("group", { name });
 
 beforeEach(() => {
-  vi.mocked(api.models).mockImplementation(async (id: string) => (id === "claude" ? claudeCatalog : codexCatalog));
+  mock = installMockFetch();
+  mock.setEngineModels("claude", claudeCatalog);
+  mock.setEngineModels("codex", codexCatalog);
   useModelStore.setState({ byEngine: { claude: claudeCatalog, codex: codexCatalog }, loading: {}, errors: {} });
 });
 afterEach(() => {
   setEngineHostApi(null);
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 it("draws Claude (SDK) and Claude (CLI) with their one helper line, and the selected path's model is marked", async () => {
-  installMockFetch();
   setEngineHostApi(createEngineHostMock({ hosts: [host({})] }));
   const { picker } = await open();
   expect(within(picker).getAllByRole("button").filter((button) => button.hasAttribute("aria-pressed")).map((tab) => tab.textContent))
@@ -80,7 +76,6 @@ it("draws Claude (SDK) and Claude (CLI) with their one helper line, and the sele
 });
 
 it("picking the CLI row writes claude_engine_path once, with no dialog, and moves the mark", async () => {
-  installMockFetch();
   setEngineHostApi(createEngineHostMock({ hosts: [host({})] }));
   const { user, picker } = await open();
   await user.click(within(picker).getByRole("button", { name: "Claude (CLI) path" }));
@@ -92,16 +87,9 @@ it("picking the CLI row writes claude_engine_path once, with no dialog, and move
 });
 
 it("says nothing changed and keeps the old path when the write fails", async () => {
-  installMockFetch();
   setEngineHostApi(createEngineHostMock({ hosts: [host({})] }));
-  const inner = vi.mocked(fetch).getMockImplementation()!;
-  vi.mocked(fetch).mockImplementation(async (input, init) => {
-    if (input === "/api/settings/preferences" && init?.method === "PUT") {
-      return new Response(JSON.stringify({ code: "settings_conflict", message: "Settings changed. Reload before saving." }), { status: 409 });
-    }
-    return inner(input, init);
-  });
   const { user, picker } = await open();
+  mock.fail("/api/settings/preferences", 1, 409, "settings_conflict", "Settings changed. Reload before saving.");
   await user.click(within(picker).getByRole("button", { name: "Claude (CLI) path" }));
   expect(await within(picker).findByText("Nothing changed. Settings changed. Reload before saving.")).toBeVisible();
   expect(within(group(picker, "Claude (SDK)")).getByRole("option", { name: /Opus 5.5/ })).toHaveAttribute("aria-selected", "true");
@@ -109,7 +97,6 @@ it("says nothing changed and keeps the old path when the write fails", async () 
 });
 
 it("writes once when the path row is clicked twice", async () => {
-  installMockFetch();
   setEngineHostApi(createEngineHostMock({ hosts: [host({})] }));
   const { user, picker } = await open();
   const row = within(picker).getByRole("button", { name: "Claude (CLI) path" });
@@ -124,7 +111,6 @@ it("draws the path picker at the frame's 480 px, and 320 px in a narrow window",
 });
 
 it("picks a model on the CLI row while the SDK host is down, writing the path once", async () => {
-  installMockFetch();
   setEngineHostApi(createEngineHostMock({ hosts: [host({ state: "cant_start", can_retry: true, detail: "The engine host is unavailable." })] }));
   const pick = vi.fn();
   const { user, picker } = await open(undefined, pick);
@@ -135,9 +121,7 @@ it("picks a model on the CLI row while the SDK host is down, writing the path on
 });
 
 it("shows Not found in the same words on both rows, with the sentence and Check again in place of the models", async () => {
-  installMockFetch();
   setEngineHostApi(createEngineHostMock({ hosts: [host({})] }));
-  vi.mocked(api.models).mockImplementation(async (id: string) => (id === "claude" ? claudeCatalog : codexCatalog));
   const user = userEvent.setup();
   const list = [engine("claude", "Claude Code", { installed: false }), engine("codex", "Codex")];
   render(<ModelPickerTrigger engines={list} selected={{ engine: "claude", model: "opus" }} onPick={vi.fn()} />);
@@ -151,13 +135,11 @@ it("shows Not found in the same words on both rows, with the sentence and Check 
     expect(within(row).getByRole("button", { name: "Check again" })).toBeVisible();
     expect(within(row).queryAllByRole("option")).toHaveLength(0);
   }
-  const refresh = vi.spyOn(api, "refreshEngines").mockResolvedValue([]);
   await user.click(within(group(picker, "Claude (SDK)")).getByRole("button", { name: "Check again" }));
-  await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(wire().filter((call) => call.method === "POST" && call.path === "/api/engines/refresh")).toHaveLength(1));
 });
 
 it("shows Signed out in the same words on both rows, with no action", async () => {
-  installMockFetch();
   setEngineHostApi(createEngineHostMock({ hosts: [host({})] }));
   const user = userEvent.setup();
   render(<ModelPickerTrigger engines={[engine("claude", "Claude Code", { auth: "logged_out" })]} selected={{ engine: "claude", model: "opus" }} onPick={vi.fn()} />);
@@ -172,7 +154,6 @@ it("shows Signed out in the same words on both rows, with no action", async () =
 });
 
 it("shows the service's sentence with Use Claude (CLI) and Try again for a host that can't start, and the CLI row stays pickable", async () => {
-  installMockFetch();
   const reason = "The engine host is unavailable after repeated failures: the engine host closed its output";
   const mock = createEngineHostMock({ delayMs: 10, hosts: [host({ state: "cant_start", can_retry: true, detail: reason,
     last_error: { message: "The engine host closed its output", causes: [] } })] });
@@ -192,7 +173,6 @@ it("shows the service's sentence with Use Claude (CLI) and Try again for a host 
 });
 
 it("shows Use Claude (CLI) only while the host is restarting", async () => {
-  installMockFetch();
   setEngineHostApi(createEngineHostMock({ hosts: [host({ state: "restarting", detail: "The engine host stopped and is restarting." })] }));
   const { picker } = await open();
   expect(within(picker).getByText("The engine host stopped and is restarting.")).toBeVisible();
@@ -201,8 +181,6 @@ it("shows Use Claude (CLI) only while the host is restarting", async () => {
 });
 
 it("shows the mismatch sentence with Update Orbyn when an update is ready and Use Claude (CLI)", async () => {
-  installMockFetch();
-  const apply = vi.spyOn(api, "applyAppUpdate").mockResolvedValue(undefined as never);
   useWorkspace.setState({ updates: { data: { app: { phase: "ready", can_apply: true, release_id: "release-1", operation: 3 } } as never, error: null, loading: false } });
   setEngineHostApi(createEngineHostMock({ hosts: [host({ state: "version_mismatch", protocol: 2, app_protocol: 1,
     detail: "The engine host does not match this app version (app protocol 1, host protocol 2). Update Orbyn." })] }));
@@ -210,5 +188,5 @@ it("shows the mismatch sentence with Update Orbyn when an update is ready and Us
   expect(within(picker).getByText("The engine host does not match this app version (app protocol 1, host protocol 2). Update Orbyn.")).toBeVisible();
   expect(within(picker).getByRole("button", { name: "Use Claude (CLI)" })).toBeVisible();
   await user.click(within(picker).getByRole("button", { name: "Update Orbyn" }));
-  await waitFor(() => expect(apply).toHaveBeenCalledWith({ release_id: "release-1", operation: 3 }));
+  await waitFor(() => expect(wire().filter((call) => call.method === "POST" && call.path.startsWith("/api/updates"))).toEqual([expect.objectContaining({ body: { release_id: "release-1", operation: 3 } })]));
 });

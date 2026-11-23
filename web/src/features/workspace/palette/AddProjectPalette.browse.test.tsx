@@ -1,43 +1,19 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { FsListing } from "../../../api/types";
-
-/** The folders the service would list, one folder per path, with the home folder answering a bare ask. */
-const fs = vi.hoisted(() => ({ home: "C:\\Users\\me", tree: new Map<string, FsListing>() }));
-
-vi.mock("../../../api/client", async (original) => {
-  const actual = await original<typeof import("../../../api/client")>();
-  return {
-    ...actual,
-    request: vi.fn(async () => []),
-    api: {
-      ...actual.api,
-      browse: vi.fn(async (path: string | null) => {
-        const asked = path ?? fs.home;
-        const key = asked.replace(/[\\/]+$/, "") || asked;
-        return fs.tree.get(key) ?? { path: asked, parent: null, entries: [] };
-      }),
-    },
-  };
-});
-
-import { parentPath } from "../../../lib/fsPath";
+import type { MockApi } from "../../../../mock/api";
+import { installMockFetch } from "../../../test-support";
 import { AddProjectPalette } from "./AddProjectPalette";
 
-/** Fills the folders the service lists: each path gets the subfolders it holds, and its parent from its own text. */
-const given = (home: string, folders: Record<string, string[]>) => {
-  fs.home = home;
-  fs.tree = new Map(
-    Object.entries(folders).map(([path, names]) => [
-      path,
-      { path, parent: parentPath(path), entries: names.map((name) => ({ name, path: path.endsWith("\\") || path.endsWith("/") ? `${path}${name}` : `${path}${path.includes("\\") ? "\\" : "/"}${name}`, is_git: false })) },
-    ]),
-  );
-};
+let mock: MockApi;
+/** The folders the service lists: each path holds the subfolders named, and the home folder answers a bare ask. */
+const given = (home: string, folders: Record<string, string[]>) => mock.folders.set(home, folders);
 
-beforeEach(() => given("C:\\Users\\me", {}));
-afterEach(() => fs.tree.clear());
+beforeEach(() => {
+  mock = installMockFetch();
+  given("C:\\Users\\me", {});
+});
+afterEach(() => vi.unstubAllGlobals());
 
 const open = async () => {
   render(<AddProjectPalette onClose={() => {}} onSubdialog={() => {}} />);

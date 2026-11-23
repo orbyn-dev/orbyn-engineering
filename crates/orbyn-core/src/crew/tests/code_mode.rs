@@ -935,6 +935,85 @@ async fn a_run_replayed_after_a_real_restart_does_not_repeat_its_effect() {
     assert_eq!(after.result, Some(result), "the stored result is unchanged");
 }
 
+/// Only built with the `code-mode` feature (a workspace test run turns it on through `orbynd`).
+/// The same restart, with the real QuickJS executor instead of the scripted one: a replay of real
+/// JavaScript must reach the same calls in the same order, so the recorded first call answers from the
+/// record, the in-flight second call ends the run as lost, and the first effect is never written twice.
+#[cfg(feature = "code-mode")]
+#[tokio::test]
+async fn real_javascript_replay_reaches_the_in_flight_call_without_repeating_the_first() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core.code_runs.set_executor(
+        Arc::new(orbyn_code_sandbox::QuickJsExecutor),
+        Duration::from_millis(300),
+    );
+    let lead = effect_binding(&w);
+    let code = format!(
+        "const first = await tools.orbyn_attachment_add({{ thread_id: \"{thread}\", path: \"src/base.txt\" }});\n\
+         await tools.orbyn_thread_organize({{ thread_id: \"{thread}\", pinned: true }});\n\
+         return first;",
+        thread = w.lead
+    );
+    let paused = run_text(&w, &lead, json!({ "code": &code })).await;
+    assert_eq!(paused["status"], "paused", "{paused}");
+    let run_id = paused["runId"]
+        .as_str()
+        .expect("a paused run names its id")
+        .to_owned();
+    let first = next_pending_for(&w, &w.lead, &run_id).await;
+    w.core
+        .gate
+        .decide_with(&first.id, true, false, None, "test-person")
+        .expect("the person allows the first call");
+    // The second call now waits for the person: the run is live, with one finished call.
+    let second = loop {
+        let next = next_pending_for(&w, &w.lead, &run_id).await;
+        if next.id != first.id {
+            break next;
+        }
+    };
+    assert_eq!(second.via.as_ref().map(|via| via.call), Some(2));
+    assert_eq!(attachments(&w).len(), 1, "the first effect ran once");
+    let recorded = w
+        .core
+        .store
+        .code_calls(&run_id)
+        .expect("the run's calls read")
+        .remove(0);
+    assert_eq!(recorded.tool, "orbyn_attachment_add");
+    assert_eq!(recorded.status, "ok");
+
+    let w = w.restart().await;
+    w.core.code_runs.set_executor(
+        Arc::new(orbyn_code_sandbox::QuickJsExecutor),
+        Duration::from_millis(300),
+    );
+    let lead = lead_binding(&w);
+    let replayed = run_text(&w, &lead, json!({ "code": &code, "run_id": &run_id })).await;
+    // The first call answered from the record, so the replay reached the second call in the same order
+    // with the same arguments; that call was in flight with an effect, so the run ends as lost for that
+    // reason (a changed order or argument would end it as "not repeatable" instead).
+    assert_eq!(replayed["status"], "error", "{replayed}");
+    assert_eq!(replayed["error"]["kind"], "lost", "{replayed}");
+    assert!(
+        replayed["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("may have changed something")),
+        "{replayed}"
+    );
+    assert_eq!(attachments(&w).len(), 1, "the replay repeated no effect");
+    let after = w
+        .core
+        .store
+        .code_calls(&run_id)
+        .expect("the run's calls read")
+        .remove(0);
+    assert_eq!(
+        after.result, recorded.result,
+        "the first answer is the recorded one"
+    );
+}
+
 #[tokio::test]
 async fn a_replay_with_other_code_or_another_call_ends_as_lost() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
