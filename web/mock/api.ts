@@ -1071,6 +1071,8 @@ export function createMockApi(options: MockOptions = {}) {
       case "GET /api/browser-profiles":
         return scenario.startsWith("browser-profiles") ? { status: 200, body: browserProfiles } : err(404, "not_found", "Not found.");
       case "POST /api/browser-profiles": {
+        // `/api/browser-profiles/<id>/clear` is answered below.
+        if (seg[2]) break;
         const name = typeof data.name === "string" ? data.name.trim() : "";
         if (!name) return err(400, "invalid_input", "A profile needs a name.");
         const made = { id: `bp-${++idCounter}`, name, in_use: false };
@@ -1620,6 +1622,10 @@ export function createMockApi(options: MockOptions = {}) {
     },
     patchUpdates(patch: Partial<UpdateStatus>) {
       updates = { ...updates, ...patch };
+    },
+    /** Replaces what Settings › Browser lists (the "browser-profiles" scenario answers it), for ids and names the scenario does not hold. */
+    setBrowserProfiles(rows: { id: string; name: string; in_use: boolean }[]) {
+      browserProfiles = rows;
     },
     patchWorkspace(patch: Partial<WorkspaceStatus>) {
       managed = { ...managed, ...patch };
