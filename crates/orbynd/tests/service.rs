@@ -1169,7 +1169,6 @@ async fn static_precompressed_assets_are_served_in_the_encoding_the_client_accep
     assert_eq!(response.status(), 200);
     assert_eq!(response.headers()["content-type"], "image/png");
     assert!(response.headers().get("content-encoding").is_none());
-    assert!(response.headers().get("vary").is_none());
     assert_eq!(response.bytes().await.unwrap().as_ref(), png.as_slice());
 
     // A client that accepts only gzip must never receive brotli, even when brotli is

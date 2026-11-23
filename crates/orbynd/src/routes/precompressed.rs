@@ -55,7 +55,12 @@ pub fn compressible(path: &Path) -> bool {
 /// A compressed sibling is a transport artifact, never a resource: a request that
 /// names one must fall through instead of receiving the coded bytes as a file.
 pub fn is_sibling(path: &Path) -> bool {
-    path.extension()
+    // Windows drops trailing dots and spaces when it opens a name, so `app.js.br.` is the
+    // sibling `app.js.br`; read the name the way the file system will.
+    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+    let name = name.trim_end_matches(['.', ' ']);
+    Path::new(name)
+        .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
             ENCODINGS
@@ -134,9 +139,9 @@ fn stated_quality(headers: &HeaderMap, coding: &str) -> Option<u16> {
                 continue;
             }
             if name.eq_ignore_ascii_case(coding) {
-                stated = Some(stated.map_or(quality, |current| current.max(quality)));
+                stated = Some(stated.map_or(quality, |current| current.min(quality)));
             } else if name == "*" {
-                wildcard = Some(wildcard.map_or(quality, |current| current.max(quality)));
+                wildcard = Some(wildcard.map_or(quality, |current| current.min(quality)));
             }
         }
     }
@@ -164,7 +169,7 @@ fn qvalue(raw: &str) -> Option<u16> {
         return None;
     }
     let whole = u16::from(whole.as_bytes()[0] - b'0');
-    if whole > 1 {
+    if whole > 1 || (whole == 1 && fraction.bytes().any(|byte| byte != b'0')) {
         return None;
     }
     let mut scale = 100;
@@ -199,8 +204,11 @@ mod tests {
         assert_eq!(stated_quality(&headers("gzip"), "br"), None);
         assert_eq!(stated_quality(&headers("*;q=0.1"), "br"), Some(100));
         assert_eq!(stated_quality(&headers("*;q=0"), "br"), Some(0));
-        // Repeated entries keep the best one.
-        assert_eq!(stated_quality(&headers("br;q=0, br;q=1"), "br"), Some(1000));
+        // Repeated entries keep the most restrictive one, as the handler's own parser does.
+        assert_eq!(stated_quality(&headers("br;q=0, br;q=1"), "br"), Some(0));
+        // Above 1 is garbage, and 1 takes no fraction but zeros.
+        assert_eq!(stated_quality(&headers("br;q=1.5"), "br"), None);
+        assert_eq!(stated_quality(&headers("br;q=1.000"), "br"), Some(1000));
         // Garbage is not consent.
         assert_eq!(stated_quality(&headers("br;q=2"), "br"), None);
         assert_eq!(stated_quality(&headers("br;q=abc"), "br"), None);
@@ -251,6 +259,9 @@ mod tests {
             "assets/index-abc.js.br",
             "assets/index-abc.js.gz",
             "shell.HTML.BR",
+            // Windows opens these as the sibling itself.
+            "assets/index-abc.js.br.",
+            "assets/index-abc.js.gz ",
         ] {
             assert!(is_sibling(Path::new(path)), "{path}");
         }
