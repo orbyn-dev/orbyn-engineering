@@ -1,13 +1,13 @@
-import type { Lesson, LessonDeleted, LessonDetail, LessonFilter, LessonList, LessonScope, LessonSource } from "../src/features/crew/lessons/types.ts";
+import type { Evidence, Lesson, LessonDeleted, LessonDetail, LessonFilter, LessonList, LessonScope, LessonSource } from "../src/features/crew/lessons/types.ts";
 import type { MockResponse, Scenario } from "./api.ts";
 
 /**
- * The lessons mock (KC5): the routes the web client reads and the writes a person may send, over the design's sample
- * lessons. It stands in for the service and ships nowhere: `mock/plugin.ts` loads it in the dev server only, and the
- * production build assertions check that no mock reached the output. Scenarios: "crew-lessons" (five lessons: three in
- * the repository and two for all of them, one disabled and one hidden), "crew-lessons-empty" (nothing learned yet),
- * "crew-lessons-unreadable" (every read answers 500, as a damaged store does) and "crew-lessons-off" (the repository's
- * switch is off, every lesson still readable). Every other scenario answers an empty list.
+ * The lessons mock (KC5): the routes the web client reads and the writes a person may send, over five sample lessons
+ * that follow the design's states. It stands in for the service and ships nowhere: `mock/plugin.ts` loads it in the dev
+ * server only, and the production build assertions check that no mock reached the output. Scenarios: "crew-lessons" (five
+ * lessons: three in the repository and two for all of them, one disabled and one hidden), "crew-lessons-empty" (nothing
+ * learned yet), "crew-lessons-unreadable" (every read answers 500, as a damaged store does) and "crew-lessons-off" (the
+ * repository's switch is off, every lesson still readable). Every other scenario answers an empty list.
  */
 
 const T = "2026-11-07T17:00:00Z";
@@ -48,6 +48,7 @@ const seeds = (): Lesson[] => [
     source: "person",
     text: "Keep the auth cookie tests in tests/auth, not beside the route.",
     edited_by_person: true,
+    names_path: true,
     hidden_by_cap: true,
     in_next_brief: false,
     created_at: "2026-11-06T10:15:00Z",
@@ -124,13 +125,18 @@ export function createLessonsMock() {
     lessons: filtered(filter),
   });
 
-  // Evidence is ids only; the samples are the design's own (two tasks for a repeated failure, the escape or the merge
-  // behind the other two sources, and nothing behind a person's own correction).
+  // Evidence is ids only, and the ids are the design's own. A repeated failure carries the two tasks behind it, the other
+  // sources their escape or merge, and a seeded correction the task it was made on. A lesson added by hand has no task
+  // behind it, so it carries none: its id is not in this map.
+  const personTask: Record<string, Evidence[]> = {
+    "les-cookies": [{ kind: "task", id: "5d1c8e0" }],
+    "les-dates": [{ kind: "task", id: "91c4e07" }],
+  };
   const detail = (one: Lesson): LessonDetail => ({
     lesson: one,
     evidence:
       one.source === "person"
-        ? []
+        ? (personTask[one.id] ?? [])
         : one.source === "fingerprint"
           ? [
               { kind: "task", id: "5b2d8a3" },
