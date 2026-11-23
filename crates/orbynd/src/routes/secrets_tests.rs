@@ -42,10 +42,20 @@ async fn serve(name: &str, remote: bool) -> Served {
 
 impl Served {
     async fn call(&self, method: &str, path: &str, token: Option<&str>) -> (u16, Value) {
+        self.call_body(method, path, token, json!({})).await
+    }
+
+    async fn call_body(
+        &self,
+        method: &str,
+        path: &str,
+        token: Option<&str>,
+        body: Value,
+    ) -> (u16, Value) {
         let url = format!("http://127.0.0.1:{}{path}", self.port);
         let mut request = reqwest::Client::new()
             .request(method.parse().unwrap(), url)
-            .json(&json!({}));
+            .json(&body);
         if let Some(token) = token {
             request = request.bearer_auth(token);
         }
@@ -76,6 +86,9 @@ fn concrete(path: &str) -> String {
     path.replace("{id}", "x")
 }
 
+/// The write list is local-only. Of the reads, the saved pattern's text is local-only too, while the list and a
+/// pattern test stay open to a remote viewer: the loop pins each read's real answer instead of expecting every
+/// `READS` entry to be refused.
 #[tokio::test]
 async fn a_remote_viewer_cannot_change_or_read_a_pattern_s_text() {
     let app = serve("remote", true).await;
@@ -87,10 +100,32 @@ async fn a_remote_viewer_cannot_change_or_read_a_pattern_s_text() {
             "{method} {path}"
         );
     }
-    let (status, _) = app
-        .call("GET", "/api/settings/secrets", Some("token"))
-        .await;
-    assert_eq!(status, 200, "a remote viewer reads");
+    for (method, path) in READS {
+        let body = if *path == "/api/settings/secrets/patterns/test" {
+            json!({
+                "pattern": "secret",
+                "kind": "text",
+                "applies_to": "anywhere",
+                "sample": "a secret value",
+            })
+        } else {
+            json!({})
+        };
+        let (status, reply) = app
+            .call_body(method, &concrete(path), Some("token"), body)
+            .await;
+        match (*method, *path) {
+            ("GET", "/api/settings/secrets/patterns/{id}") => assert_eq!(
+                (status, reply["code"].as_str()),
+                (403, Some("local_only")),
+                "{method} {path}"
+            ),
+            ("GET", "/api/settings/secrets") | ("POST", "/api/settings/secrets/patterns/test") => {
+                assert_eq!(status, 200, "{method} {path}")
+            }
+            _ => panic!("a READS entry has no expected remote answer: {method} {path}"),
+        }
+    }
 }
 
 #[tokio::test]

@@ -342,7 +342,10 @@ mod photo_admission_tests {
         });
         started_rx.await.unwrap();
         task.abort();
-        assert!(semaphore.try_acquire().is_err());
+        assert!(matches!(
+            semaphore.try_acquire(),
+            Err(tokio::sync::TryAcquireError::NoPermits)
+        ));
         tokio::time::timeout(Duration::from_secs(5), tokio::task::spawn_blocking(|| 42))
             .await
             .unwrap()

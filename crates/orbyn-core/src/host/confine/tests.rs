@@ -4,6 +4,23 @@ use orbyn_contracts::EngineTier;
 
 use super::*;
 
+/// The message of a refusal to confine a worker; any other result fails the test.
+pub(super) fn refused<T: std::fmt::Debug>(result: Result<T>) -> String {
+    match result {
+        Err(CoreError::EngineUnavailable(message)) => message,
+        other => panic!("expected EngineUnavailable, got {other:?}"),
+    }
+}
+
+/// A refusal that says why: a refusal for another reason (a setup slip) does not pass.
+pub(super) fn assert_refused<T: std::fmt::Debug>(result: Result<T>, reason: &str) {
+    let message = refused(result);
+    assert!(
+        message.contains(reason),
+        "wanted {reason:?}, got {message:?}"
+    );
+}
+
 #[test]
 fn terminal_engines_and_codex_are_refused_and_others_are_not() {
     assert!(engine_refusal(EngineTier::Terminal, "any").is_some());
@@ -28,17 +45,23 @@ fn where_no_restriction_exists_nothing_is_wrapped_and_the_reason_is_plain() {
         prefix: Vec::new(),
         path: "engine".into(),
     };
-    assert!(rules.wrap(&mut command).is_err());
+    assert_refused(rules.wrap(&mut command), UNSUPPORTED_PLATFORM);
     assert_eq!(command.program, Path::new("engine"), "left as it was");
 }
 
 #[test]
 fn a_path_that_does_not_resolve_is_an_error() {
     let dir = crate::testing::TempDir::new();
-    assert!(Confinement::new(&dir.path().join("missing"), dir.path(), &[], &[]).is_err());
+    assert_refused(
+        Confinement::new(&dir.path().join("missing"), dir.path(), &[], &[]),
+        "did not resolve",
+    );
     let run = dir.path().join("runs");
     std::fs::create_dir_all(&run).unwrap();
-    assert!(Confinement::new(dir.path(), &run, &[&dir.path().join("missing")], &[]).is_err());
+    assert_refused(
+        Confinement::new(dir.path(), &run, &[&dir.path().join("missing")], &[]),
+        "did not resolve",
+    );
     assert!(Confinement::new(dir.path(), &run, &[], &[]).is_ok());
 }
 
@@ -50,9 +73,18 @@ fn an_allowance_that_contains_the_data_folder_is_refused() {
     std::fs::create_dir_all(&inner).unwrap();
     // Equal to, or above, the data folder: refused for every kind of allowance.
     for wide in [data.as_path(), dir.path()] {
-        assert!(Confinement::new(&data, &inner, &[wide], &[]).is_err());
-        assert!(Confinement::new(&data, &inner, &[], &[wide]).is_err());
-        assert!(Confinement::new(&data, wide, &[], &[]).is_err());
+        assert_refused(
+            Confinement::new(&data, &inner, &[wide], &[]),
+            "contains Orbyn's data folder",
+        );
+        assert_refused(
+            Confinement::new(&data, &inner, &[], &[wide]),
+            "contains Orbyn's data folder",
+        );
+        assert_refused(
+            Confinement::new(&data, wide, &[], &[]),
+            "contains Orbyn's data folder",
+        );
     }
     // Inside the data folder, such as the managed workspace, is fine.
     assert!(Confinement::new(&data, &inner, &[&inner], &[&inner]).is_ok());
@@ -139,45 +171,46 @@ fn transcript_rules_fail_closed_when_the_folder_or_the_id_is_unusable() {
     );
     // The configuration folder does not resolve, or is relative.
     let missing = dir.path().join("nowhere/projects");
-    assert!(
+    assert_refused(
         rules
             .clone()
-            .with_claude_transcripts(&missing, Some("own"), Path::new("/"))
-            .is_err()
+            .with_claude_transcripts(&missing, Some("own"), Path::new("/")),
+        "did not resolve",
     );
-    assert!(
+    assert_refused(
         rules
             .clone()
-            .with_claude_transcripts(Path::new("projects"), None, Path::new("/"))
-            .is_err()
+            .with_claude_transcripts(Path::new("projects"), None, Path::new("/")),
+        "is not an absolute folder",
     );
     // An id that could change the pattern, or is empty, is refused.
     for bad in ["", "a/b", "a.b", "a)b", "../x", "a b", "a*"] {
+        let message = refused(rules.clone().with_claude_transcripts(
+            &projects,
+            Some(bad),
+            Path::new("/"),
+        ));
         assert!(
-            rules
-                .clone()
-                .with_claude_transcripts(&projects, Some(bad), Path::new("/"))
-                .is_err(),
-            "{bad:?}"
+            message.contains("its Claude session id is not usable"),
+            "{bad:?}: {message}"
         );
     }
     // Folders that overlap the data folder in either direction are refused.
     let inside = data.join("claude/projects");
     std::fs::create_dir_all(&inside).unwrap();
-    assert!(
+    assert_refused(
         rules
             .clone()
-            .with_claude_transcripts(&inside, Some("own"), Path::new("/"))
-            .is_err()
+            .with_claude_transcripts(&inside, Some("own"), Path::new("/")),
+        "overlaps Orbyn's data folder",
     );
     let outer = dir.path().join("c2/projects");
     let inner = outer.join("data");
     std::fs::create_dir_all(inner.join("run")).unwrap();
     let above = Confinement::new(&inner, &inner.join("run"), &[], &[]).unwrap();
-    assert!(
-        above
-            .with_claude_transcripts(&outer, Some("own"), Path::new("/"))
-            .is_err()
+    assert_refused(
+        above.with_claude_transcripts(&outer, Some("own"), Path::new("/")),
+        "overlaps Orbyn's data folder",
     );
 }
 
@@ -197,13 +230,16 @@ fn a_linked_projects_folder_or_history_file_refuses_the_worker() {
     std::fs::remove_file(config.join("history.jsonl")).unwrap();
     std::os::unix::fs::symlink(elsewhere.join("hist"), config.join("history.jsonl")).unwrap();
     let projects = config.join("projects");
-    assert!(
+    assert_refused(
         rules
             .clone()
-            .with_claude_transcripts(&projects, Some("own"), Path::new("/"))
-            .is_err()
+            .with_claude_transcripts(&projects, Some("own"), Path::new("/")),
+        "is a link",
     );
-    assert!(rules.clone().with_closed_claude_folder(&projects).is_err());
+    assert_refused(
+        rules.clone().with_closed_claude_folder(&projects),
+        "is a link",
+    );
     std::fs::remove_file(config.join("history.jsonl")).unwrap();
     assert!(
         rules
@@ -214,13 +250,13 @@ fn a_linked_projects_folder_or_history_file_refuses_the_worker() {
     // A linked projects folder.
     std::fs::rename(&projects, dir.path().join("real-projects")).unwrap();
     std::os::unix::fs::symlink(dir.path().join("real-projects"), &projects).unwrap();
-    assert!(
+    assert_refused(
         rules
             .clone()
-            .with_claude_transcripts(&projects, Some("own"), Path::new("/"))
-            .is_err()
+            .with_claude_transcripts(&projects, Some("own"), Path::new("/")),
+        "is a link",
     );
-    assert!(rules.with_closed_claude_folder(&projects).is_err());
+    assert_refused(rules.with_closed_claude_folder(&projects), "is a link");
 }
 
 /// A link in front of the configuration folder, or above it, could be swapped for another
@@ -236,15 +272,22 @@ fn a_linked_configuration_folder_or_an_uncertain_start_folder_refuses_the_worker
     let real = claude_folder(dir.path());
     let linked = dir.path().join("linked-config");
     std::os::unix::fs::symlink(&real, &linked).unwrap();
-    for config in [linked.clone(), linked.join("nested")] {
+    // The link itself is refused; a config folder under the link does not resolve at all.
+    for (config, transcripts_reason) in [
+        (linked.clone(), "goes through a link"),
+        (linked.join("nested"), "did not resolve"),
+    ] {
         let projects = config.join("projects");
-        assert!(
+        assert_refused(
             rules
                 .clone()
-                .with_claude_transcripts(&projects, Some("own"), Path::new("/"))
-                .is_err()
+                .with_claude_transcripts(&projects, Some("own"), Path::new("/")),
+            transcripts_reason,
         );
-        assert!(rules.clone().with_closed_claude_folder(&projects).is_err());
+        assert_refused(
+            rules.clone().with_closed_claude_folder(&projects),
+            "goes through a link",
+        );
     }
     let projects = real.join("projects");
     assert!(
@@ -256,25 +299,24 @@ fn a_linked_configuration_folder_or_an_uncertain_start_folder_refuses_the_worker
     // A long start folder (Claude shortens the name) and a non-ASCII one are refused.
     let long = dir.path().join("x".repeat(210));
     std::fs::create_dir_all(&long).unwrap();
-    assert!(
+    assert_refused(
         rules
             .clone()
-            .with_claude_transcripts(&projects, Some("own"), &long)
-            .is_err()
+            .with_claude_transcripts(&projects, Some("own"), &long),
+        "is not certain",
     );
     let accent = dir.path().join("caf\u{e9}");
     std::fs::create_dir_all(&accent).unwrap();
-    assert!(
+    assert_refused(
         rules
             .clone()
-            .with_claude_transcripts(&projects, Some("own"), &accent)
-            .is_err()
+            .with_claude_transcripts(&projects, Some("own"), &accent),
+        "is not certain",
     );
     // A start folder that does not exist is refused too.
-    assert!(
-        rules
-            .with_claude_transcripts(&projects, Some("own"), &dir.path().join("nope"))
-            .is_err()
+    assert_refused(
+        rules.with_claude_transcripts(&projects, Some("own"), &dir.path().join("nope")),
+        "did not resolve",
     );
 }
 

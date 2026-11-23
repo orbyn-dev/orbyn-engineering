@@ -803,6 +803,217 @@ async fn a_lost_run_replays_its_recorded_calls_without_running_them_again() {
     assert_eq!(again["status"], "completed", "{again}");
 }
 
+/// The rows the tool wrote at its effect boundary: attachment rows on the lead thread. The audit
+/// rows a call writes are a separate record and never stand in for the effect.
+fn attachments(w: &World) -> Vec<orbyn_contracts::Attachment> {
+    w.core
+        .store
+        .list_attachments(&w.lead)
+        .expect("the lead thread's attachments read")
+        .into_iter()
+        .map(|(attachment, _)| attachment)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_run_replayed_after_a_real_restart_does_not_repeat_its_effect() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_millis(80));
+    let lead = effect_binding(&w);
+    // The first call is an effect tool, so its row is the effect boundary. The five seconds after it
+    // keep the first run live through a real restart; the same line runs on the replay, which then
+    // answers the recorded call from the record and finishes.
+    let code = format!(
+        "call orbyn_attachment_add {{\"thread_id\":\"{}\",\"path\":\"src/base.txt\"}}\nsleep 5000",
+        w.lead
+    );
+    let paused = run_text(&w, &lead, json!({ "code": &code })).await;
+    assert_eq!(paused["status"], "paused", "{paused}");
+    let run_id = paused["runId"]
+        .as_str()
+        .expect("a paused run names its id")
+        .to_owned();
+    assert_eq!(attachments(&w).len(), 0, "nothing ran before the approval");
+    let approval = next_pending_for(&w, &w.lead, &run_id).await;
+    w.core
+        .gate
+        .decide_with(&approval.id, true, false, None, "test-person")
+        .expect("the person allows the script's call");
+    w.until("the approved effect is recorded", |w| {
+        w.core
+            .store
+            .code_calls(&run_id)
+            .expect("the run's calls read")
+            .first()
+            .is_some_and(|call| call.status == "ok")
+    })
+    .await;
+
+    let written = attachments(&w);
+    assert_eq!(
+        written.len(),
+        1,
+        "the tool wrote exactly one attachment row"
+    );
+    let attachment_id = written
+        .into_iter()
+        .next()
+        .expect("the one attachment row")
+        .id;
+    let record = w
+        .core
+        .code_run_record(&run_id)
+        .expect("the paused run's record reads");
+    assert_eq!(record.status, CodeRunStatus::Paused, "{record:?}");
+    assert_eq!(record.calls.len(), 1, "{record:?}");
+    let before = w
+        .core
+        .store
+        .code_calls(&run_id)
+        .expect("the run's calls read")
+        .remove(0);
+    assert_eq!(before.tool, "orbyn_attachment_add");
+    assert_eq!(before.status, "ok");
+    assert!(before.effect, "the recorded call is an effect call");
+    let preview = before.preview;
+    let result = before.result.expect("a small result is kept whole");
+    let calls = tool_calls(&w);
+
+    // A real restart: the process's core goes away and a new one opens the same data folder.
+    let w = w.restart().await;
+    let recovered = w
+        .core
+        .code_run_record(&run_id)
+        .expect("the lost run's record reads");
+    assert_eq!(recovered.status, CodeRunStatus::Error, "{recovered:?}");
+    assert_eq!(
+        recovered.error.as_ref().map(|error| error.kind.as_str()),
+        Some("lost"),
+        "{recovered:?}"
+    );
+    assert_eq!(recovered.calls.len(), 1, "the record kept the call");
+    assert_eq!(recovered.calls[0].tool, "orbyn_attachment_add");
+    assert_eq!(recovered.calls[0].status, "ok");
+    assert_eq!(recovered.calls[0].preview, preview, "the same preview");
+    assert_eq!(attachments(&w).len(), 1, "the effect is still the one row");
+
+    // The replay gets the same code: the recorded call answers from the record, nothing runs it
+    // again, and the effect boundary stays at one.
+    w.core
+        .code_runs
+        .set_executor(Arc::new(Fake), Duration::from_secs(10));
+    let lead = lead_binding(&w);
+    let replayed = run_text(&w, &lead, json!({ "code": &code, "run_id": &run_id })).await;
+    assert_eq!(replayed["status"], "completed", "{replayed}");
+    assert_eq!(replayed["runId"], json!(run_id));
+    let recorded: Value = serde_json::from_str(&result).expect("the stored result is JSON");
+    assert_eq!(replayed["result"], json!([recorded]), "{replayed}");
+    let written = attachments(&w);
+    assert_eq!(written.len(), 1, "the replay repeated no effect");
+    assert_eq!(written[0].id, attachment_id, "the row is the first run's");
+    assert_eq!(
+        tool_calls(&w),
+        calls + 1,
+        "only the outer orbyn_code_run call ran; the recorded inner call did not"
+    );
+    let record = w
+        .core
+        .code_run_record(&run_id)
+        .expect("the replayed run's record reads");
+    assert_eq!(record.status, CodeRunStatus::Completed, "{record:?}");
+    assert_eq!(record.resumes, 1, "{record:?}");
+    assert_eq!(record.calls.len(), 1, "the replay added no call row");
+    assert_eq!(record.calls[0].preview, preview, "the same result answer");
+    let after = w
+        .core
+        .store
+        .code_calls(&run_id)
+        .expect("the run's calls read")
+        .remove(0);
+    assert_eq!(after.result, Some(result), "the stored result is unchanged");
+}
+
+/// Only built with the `code-mode` feature (a workspace test run turns it on through `orbynd`).
+/// The same restart, with the real QuickJS executor instead of the scripted one: a replay of real
+/// JavaScript must reach the same calls in the same order, so the recorded first call answers from the
+/// record, the in-flight second call ends the run as lost, and the first effect is never written twice.
+#[cfg(feature = "code-mode")]
+#[tokio::test]
+async fn real_javascript_replay_reaches_the_in_flight_call_without_repeating_the_first() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    w.core.code_runs.set_executor(
+        Arc::new(orbyn_code_sandbox::QuickJsExecutor),
+        Duration::from_millis(300),
+    );
+    let lead = effect_binding(&w);
+    let code = format!(
+        "const first = await tools.orbyn_attachment_add({{ thread_id: \"{thread}\", path: \"src/base.txt\" }});\n\
+         await tools.orbyn_thread_organize({{ thread_id: \"{thread}\", pinned: true }});\n\
+         return first;",
+        thread = w.lead
+    );
+    let paused = run_text(&w, &lead, json!({ "code": &code })).await;
+    assert_eq!(paused["status"], "paused", "{paused}");
+    let run_id = paused["runId"]
+        .as_str()
+        .expect("a paused run names its id")
+        .to_owned();
+    let first = next_pending_for(&w, &w.lead, &run_id).await;
+    w.core
+        .gate
+        .decide_with(&first.id, true, false, None, "test-person")
+        .expect("the person allows the first call");
+    // The second call now waits for the person: the run is live, with one finished call.
+    let second = loop {
+        let next = next_pending_for(&w, &w.lead, &run_id).await;
+        if next.id != first.id {
+            break next;
+        }
+    };
+    assert_eq!(second.via.as_ref().map(|via| via.call), Some(2));
+    assert_eq!(attachments(&w).len(), 1, "the first effect ran once");
+    let recorded = w
+        .core
+        .store
+        .code_calls(&run_id)
+        .expect("the run's calls read")
+        .remove(0);
+    assert_eq!(recorded.tool, "orbyn_attachment_add");
+    assert_eq!(recorded.status, "ok");
+
+    let w = w.restart().await;
+    w.core.code_runs.set_executor(
+        Arc::new(orbyn_code_sandbox::QuickJsExecutor),
+        Duration::from_millis(300),
+    );
+    let lead = lead_binding(&w);
+    let replayed = run_text(&w, &lead, json!({ "code": &code, "run_id": &run_id })).await;
+    // The first call answered from the record, so the replay reached the second call in the same order
+    // with the same arguments; that call was in flight with an effect, so the run ends as lost for that
+    // reason (a changed order or argument would end it as "not repeatable" instead).
+    assert_eq!(replayed["status"], "error", "{replayed}");
+    assert_eq!(replayed["error"]["kind"], "lost", "{replayed}");
+    assert!(
+        replayed["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("may have changed something")),
+        "{replayed}"
+    );
+    assert_eq!(attachments(&w).len(), 1, "the replay repeated no effect");
+    let after = w
+        .core
+        .store
+        .code_calls(&run_id)
+        .expect("the run's calls read")
+        .remove(0);
+    assert_eq!(
+        after.result, recorded.result,
+        "the first answer is the recorded one"
+    );
+}
+
 #[tokio::test]
 async fn a_replay_with_other_code_or_another_call_ends_as_lost() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;

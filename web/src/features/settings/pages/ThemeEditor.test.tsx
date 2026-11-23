@@ -1,14 +1,16 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it, vi } from "vitest";
-import { request } from "../../../api/client";
+import { beforeEach, expect, it, vi } from "vitest";
 import { useUi } from "../../../product/state/ui";
 import { displayColour, readThemeFile } from "../../../styles/themes";
 import { AppearanceSection } from "./Appearance";
 import { SettingsSubPageContext } from "../subPage";
 import { useRoute } from "../../../product/state/route";
-import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
-vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+import { installMockFetch } from "../../../test-support";
+
+beforeEach(() => {
+  installMockFetch();
+});
 
 /** What Settings does around the page: the address names the sub-page. */
 function Host() {
@@ -17,7 +19,6 @@ function Host() {
 }
 
 async function openEditor() {
-  vi.mocked(request).mockResolvedValue(scopedFixture([]));
   window.location.hash = "#/settings/appearance";
   const user = userEvent.setup();
   render(<Host />);
