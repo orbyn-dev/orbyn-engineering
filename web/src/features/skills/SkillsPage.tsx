@@ -32,6 +32,8 @@ export function SkillsPage({ skill }: { skill?: string }) {
   /** The card that was pressed, so going back lands on it. */
   const opened = useRef<string | null>(null);
   const grid = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const listScrollTop = useRef(0);
   const entries = result.data?.skills;
   const known = entries?.some((entry) => entry.name === skill);
   // A stale bookmark must not remain behind the catalog in the Back trail.
@@ -54,7 +56,17 @@ export function SkillsPage({ skill }: { skill?: string }) {
       return;
     }
     const card = opened.current ? grid.current?.querySelector<HTMLElement>(`[data-skill="${CSS.escape(opened.current)}"]`) : null;
-    (card ?? heading.current)?.focus();
+    (card ?? heading.current)?.focus({ preventScroll: true });
+    if (opened.current && content.current) {
+      const scroller = content.current;
+      scroller.scrollTop = listScrollTop.current;
+      if (card) {
+        const bounds = scroller.getBoundingClientRect();
+        const target = card.getBoundingClientRect();
+        if (target.top < bounds.top) scroller.scrollTop += target.top - bounds.top;
+        else if (target.bottom > bounds.bottom) scroller.scrollTop += target.bottom - bounds.bottom;
+      }
+    }
   }, [skill, ready, known]);
 
   if (!result.data && !result.error) {
@@ -150,7 +162,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
           </span>
         </label>
       </div>
-      <div className="skills-content">
+      <div className="skills-content" ref={content}>
         <div role="status">
           {shown.length === 0 ? (
             <div className="skills-empty">
@@ -174,6 +186,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
             <button type="button" className="skills-card" key={entry.name} data-skill={entry.name} data-autofocus={entry.name === opened.current || undefined} onClick={() => {
                 // Noted at the press, not when the page opens: going back may come before the page has drawn.
                 opened.current = entry.name;
+                listScrollTop.current = content.current?.scrollTop ?? 0;
                 navigate({ name: "skills", skill: entry.name });
               }}>
               <strong>{entry.name}</strong>

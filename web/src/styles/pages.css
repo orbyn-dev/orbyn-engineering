@@ -119,6 +119,8 @@
   align-self: center;
 }
 .settings-scroll {
+  /* Keep visually hidden loading labels inside this scroller's clipping boundary. */
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
