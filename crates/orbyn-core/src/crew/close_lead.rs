@@ -28,6 +28,9 @@ pub const REASON: &str = "The lead thread was closed.";
 /// The longest task name a confirm shows, in characters: the Flow board's card name is cut the same way.
 const NAME_MAX: usize = 160;
 
+/// How many times a close reads the live set again for a task admitted while it was cancelling the others.
+const PASSES: usize = 3;
+
 impl Core {
     /// The tasks a close of `thread_id` tries to cancel: the non-final tasks this thread leads, oldest first. The one selection
     /// both the live read and the close use.
@@ -77,17 +80,31 @@ impl Core {
     ) -> Result<wire::CrewLeadClosed> {
         self.crew_preview_only()?;
         valid_id(thread_id)?;
-        let tasks = self.live_tasks_led_by(thread_id)?;
         let mut closed = Vec::new();
         let mut failed = Vec::new();
-        for task in tasks {
-            match self.crew_cancel_task(&task.id, Some(REASON), actor).await {
-                Ok(_) => closed.push(task.id),
-                // It ended between the read and the try: already over is not a failure.
-                Err(CoreError::TaskEnded) => {}
-                Err(error) => {
-                    tracing::warn!(task = %task.id, %error, "a lead thread's close could not stop a crew task");
-                    failed.push(task.id);
+        // Each cancel awaits the worker's stop, and a task may be admitted on the thread meanwhile. A few passes read the live set
+        // again and try only what was not tried yet; a task admitted after the last pass is the person's to stop (it shows on the
+        // board and is cancelled by its own Stop), never silently left behind by a loop that cannot end.
+        let mut tried = std::collections::BTreeSet::new();
+        for _ in 0..PASSES {
+            let tasks: Vec<CrewTask> = self
+                .live_tasks_led_by(thread_id)?
+                .into_iter()
+                .filter(|task| !tried.contains(&task.id))
+                .collect();
+            if tasks.is_empty() {
+                break;
+            }
+            for task in tasks {
+                tried.insert(task.id.clone());
+                match self.crew_cancel_task(&task.id, Some(REASON), actor).await {
+                    Ok(_) => closed.push(task.id),
+                    // It ended between the read and the try: already over is not a failure.
+                    Err(CoreError::TaskEnded) => {}
+                    Err(error) => {
+                        tracing::warn!(task = %task.id, %error, "a lead thread's close could not stop a crew task");
+                        failed.push(task.id);
+                    }
                 }
             }
         }
