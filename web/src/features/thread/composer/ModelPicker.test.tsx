@@ -2,25 +2,27 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, expect, it, vi } from "vitest";
-import { api } from "../../../api/client";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { EngineModels, EngineStatus } from "../../../api/types";
 import { ModelPickerTrigger } from "./ModelPicker";
 import { useModelStore } from "../../../product/state/modelStore";
-import { setViewportWidth } from "../../../test-support";
+import { installMockFetch, setViewportWidth } from "../../../test-support";
 
-vi.mock("../../../api/client", async (original) => {
-  const actual = await original<typeof import("../../../api/client")>();
-  return { ...actual, api: { ...actual.api, models: vi.fn() } };
-});
 const engines = [{ id: "codex", name: "Codex", installed: true, capabilities: { managed: true } }] as EngineStatus[];
 const catalog: EngineModels = { engine: "codex", source: "engine", checked_at: "fixture", error: null, fallback: false,
   models: [{ id: "small", label: "Small model", description: null, is_default: true, custom: false, options: [] }],
   options: [], agents: [], output_styles: [] };
+let mock: ReturnType<typeof installMockFetch>;
+/** The model lists the service answers, and the ones the picker already holds, which are the same. */
+const lists = (byEngine: Record<string, EngineModels>) => {
+  for (const [id, models] of Object.entries(byEngine)) mock.setEngineModels(id, models);
+  useModelStore.setState({ byEngine, loading: {}, errors: {} });
+};
 beforeEach(() => {
-  vi.mocked(api.models).mockResolvedValue(catalog);
-  useModelStore.setState({ byEngine: { codex: catalog }, loading: {}, errors: {} });
+  mock = installMockFetch();
+  lists({ codex: catalog });
 });
+afterEach(() => vi.unstubAllGlobals());
 
 it("keeps the actual model picker inside its owning settings dialog and restores focus after choosing", async () => {
   const picked = vi.fn(); const user = userEvent.setup();
@@ -110,7 +112,7 @@ const two = [
   { id: "codex", name: "Codex", installed: true, capabilities: { managed: true } },
 ] as EngineStatus[];
 async function openTwo() {
-  useModelStore.setState({ byEngine: { claude, codex }, loading: {}, errors: {} });
+  lists({ claude, codex });
   const user = userEvent.setup();
   render(<ModelPickerTrigger engines={two} selected={{ engine: "codex", model: "small" }} onPick={vi.fn()} />);
   await user.click(screen.getByRole("button", { name: "Small model" }));
@@ -162,7 +164,7 @@ it("typing filters across all providers and drops a heading that has no match", 
 
 it("moves through the rows with the arrow keys, announces the active one, and picks it with Enter", async () => {
   const pick = vi.fn();
-  useModelStore.setState({ byEngine: { claude, codex }, loading: {}, errors: {} });
+  lists({ claude, codex });
   const user = userEvent.setup();
   render(<ModelPickerTrigger engines={two} selected={{ engine: "codex", model: "small" }} onPick={pick} />);
   await user.click(screen.getByRole("button", { name: "Small model" }));
@@ -199,7 +201,7 @@ it("takes every colour from the theme tokens, so Light, Dark and Dim all follow"
 
 it("has no hidden shortcuts: a modifier and a number does not pick, and Shift-click picks like a click", async () => {
   const pick = vi.fn();
-  useModelStore.setState({ byEngine: { claude, codex }, loading: {}, errors: {} });
+  lists({ claude, codex });
   const user = userEvent.setup();
   render(<ModelPickerTrigger engines={two} selected={{ engine: "codex", model: "small" }} onPick={pick} />);
   await user.click(screen.getByRole("button", { name: "Small model" }));
@@ -227,7 +229,7 @@ it("has no hidden shortcuts: a modifier and a number does not pick, and Shift-cl
 
 it("keeps a row highlighted when the search clears, so Enter picks what is shown as active", async () => {
   const pick = vi.fn();
-  useModelStore.setState({ byEngine: { claude, codex }, loading: {}, errors: {} });
+  lists({ claude, codex });
   const user = userEvent.setup();
   render(<ModelPickerTrigger engines={two} selected={{ engine: "codex", model: "small" }} onPick={pick} />);
   await user.click(screen.getByRole("button", { name: "Small model" }));
@@ -283,7 +285,7 @@ async function openWith(engines: EngineStatus[], selected: { engine: string; mod
 }
 
 it("shows the visible Unmanaged word on the trigger, the engine's chip and its list heading, and keeps the chip's accessible name", async () => {
-  useModelStore.setState({ byEngine: { kiro: kiroCatalog, codex: catalog }, loading: {}, errors: {} });
+  lists({ kiro: kiroCatalog, codex: catalog });
   const { picker, trigger } = await openWith([guarded, kiro], { engine: "kiro", model: "default" });
   expect(within(trigger).getByText("Unmanaged")).toBeVisible();
   const chip = within(picker).getByRole("button", { name: "Kiro (Unmanaged)" });
@@ -293,7 +295,7 @@ it("shows the visible Unmanaged word on the trigger, the engine's chip and its l
 });
 
 it("draws no visible Unmanaged word for a managed engine or one whose service omits the flag", async () => {
-  useModelStore.setState({ byEngine: { codex: catalog, mystery: mysteryCatalog }, loading: {}, errors: {} });
+  lists({ codex: catalog, mystery: mysteryCatalog });
   const { picker, trigger } = await openWith([guarded, unknown], { engine: "codex", model: "small" });
   expect(within(trigger).queryByText("Unmanaged")).toBeNull();
   expect(within(picker).queryByText("Unmanaged")).toBeNull();
@@ -303,7 +305,7 @@ it("draws no visible Unmanaged word for a managed engine or one whose service om
 
 it("keeps the visible Unmanaged word at phone width, where the trigger ellipsis gives way to it", async () => {
   setViewportWidth(320);
-  useModelStore.setState({ byEngine: { kiro: kiroCatalog, codex: catalog }, loading: {}, errors: {} });
+  lists({ kiro: kiroCatalog, codex: catalog });
   const { picker, trigger } = await openWith([guarded, kiro], { engine: "kiro", model: "default" });
   expect(within(trigger).getByText("Unmanaged")).toBeVisible();
   expect(within(picker).getByRole("button", { name: "Kiro (Unmanaged)" })).toHaveTextContent("Unmanaged");

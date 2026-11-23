@@ -15,11 +15,13 @@ import type {
   AgUiEvent,
   ApplyAllResult,
   Approval,
+  EngineModels,
   EngineStatus,
   Project,
   ProjectFileView,
   QueuedMessage,
   ScheduledTask,
+  ServerInfo,
   ServerSettings,
   Thread,
   UpdateStatus,
@@ -43,6 +45,9 @@ import { mapMock } from "./map.ts";
 import { needsYouMock } from "./needsyou.ts";
 import { createExplorerMock } from "./explorer.ts";
 import { createSecretsMock } from "./secrets.ts";
+import { createFoldersMock } from "./folders.ts";
+import { createQuestionsMock } from "./questions.ts";
+import { createTerminalsMock } from "./terminals.ts";
 import * as fixtures from "./fixtures.ts";
 import { acpRegistry, historyScan } from "./history.ts";
 import { customModels, instanceEngines, providerInstances } from "./instances.ts";
@@ -226,6 +231,13 @@ export function createMockApi(options: MockOptions = {}) {
   const backtestMock = createBacktestMock();
   const backgroundMock = createBackgroundMock();
   const reviewControlsMock = createReviewControlsMock();
+  const terminalsMock = createTerminalsMock();
+  const questionsMock = createQuestionsMock();
+  const foldersMock = createFoldersMock();
+  /** What a test changes in the service's `/api/info` answer (the build channel, the version). */
+  let infoPatch: Partial<ServerInfo> = {};
+  /** The model lists a test gives an engine, in place of the sample ones. */
+  let modelLists: Record<string, EngineModels> = {};
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
   /** Kiro, an ACP engine the service says Orbyn cannot gate, for the engine picker and unmanaged-thread screens. */
@@ -268,7 +280,12 @@ export function createMockApi(options: MockOptions = {}) {
     backgroundMock.reset(next);
     reviewControlsMock.reset(next);
     secretsMock.reset();
+    terminalsMock.reset();
+    questionsMock.reset();
+    foldersMock.reset();
     signedIn = false;
+    infoPatch = {};
+    modelLists = {};
     idCounter = 0;
     preferenceValues = {};
     preferenceOverrides = {};
@@ -652,6 +669,10 @@ export function createMockApi(options: MockOptions = {}) {
 
     const explored = explorerRoute(method, seg, query);
     if (explored) return explored;
+    const terminal = terminalsMock.handle(method, seg, body);
+    if (terminal) return terminal;
+    const question = questionsMock.handle(method, seg, query, body);
+    if (question) return question;
 
     if (method === "POST" && seg[1] === "projects" && seg[3] === "pulls" && seg[5] === "review" && scenario.startsWith("pulls") && fixtures.pageStates[Number(seg[4])]) {
       reviewsSent.set(Number(seg[4]), [...(reviewsSent.get(Number(seg[4])) ?? []), String(data.body ?? "")]);
@@ -1026,8 +1047,11 @@ export function createMockApi(options: MockOptions = {}) {
       }
       case "GET /api/keybindings":
         return { status: 200, body: keybindingsView() };
+      // No engine host is reported: the real client reads a 404 as "nothing reported".
+      case "GET /api/engine-host":
+        return err(404, "not_found", "Not found.");
       case "GET /api/info":
-        return { status: 200, body: { ...fixtures.info, remote: scenario === "remote", ...(scenario === "crew" || scenario.startsWith("crew-") ? { crew_preview: true } : {}) } };
+        return { status: 200, body: { ...fixtures.info, ...infoPatch, remote: scenario === "remote", ...(scenario === "crew" || scenario.startsWith("crew-") ? { crew_preview: true } : {}) } };
       case "POST /auth/session":
         if (data.key === "orbyn-demo-key") {
           signedIn = true;
@@ -1035,6 +1059,8 @@ export function createMockApi(options: MockOptions = {}) {
         }
         return err(401, "invalid_key", "That access key isn't valid.");
       case "GET /api/fs": {
+        const given = foldersMock.list(query.get("path"));
+        if (given) return { status: 200, body: given };
         const at = query.get("path") ?? "/Users/dev";
         const node = fixtures.fsTree[at];
         if (!node) return { status: 200, body: { path: at, parent: fixtures.fsTree[at.split("/").slice(0, -1).join("/")] ? at.split("/").slice(0, -1).join("/") : "/Users/dev", entries: [] } };
@@ -1264,7 +1290,7 @@ export function createMockApi(options: MockOptions = {}) {
         if (seg[3] === "tools") return { status: 200, body: fixtures.engineTools(seg[2] ?? "claude") };
         if (seg[3] === "models") {
           // The service merges the person's custom models into the list it returns.
-          const listing = fixtures.engineModels(seg[2] ?? "");
+          const listing = modelLists[seg[2] ?? ""] ?? fixtures.engineModels(seg[2] ?? "");
           const custom = (Array.isArray(preferenceValues.custom_models) ? preferenceValues.custom_models : [])
             .flatMap((entry) => entry && typeof entry === "object" && !Array.isArray(entry) && entry.engine === seg[2] && typeof entry.id === "string"
               ? [{ id: entry.id, label: typeof entry.label === "string" ? entry.label : entry.id, description: null, is_default: false, custom: true, options: [] }] : []);
@@ -1505,6 +1531,12 @@ export function createMockApi(options: MockOptions = {}) {
       if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? backgroundMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? needsYouMock(scenario, method, parsed.pathname) ?? escapesMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? lessonsMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? proposalsMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? backtestMock.handle(method, parsed.pathname) ?? capacityMock.handle(scenario, method, parsed.pathname, body) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
+    /** The thread terminals and their command blocks: seed what the service lists, read it back after a write. */
+    terminals: terminalsMock,
+    /** The engine's questions: put one in front of a thread, read how it was settled. */
+    questions: questionsMock,
+    /** The folders the browser lists, in place of the sample tree: `folders.set(home, { "/Users/me": ["Documents"] })`. */
+    folders: foldersMock,
     /** The Code Mode stand-in (mock/codemode.ts): seed a run record, read the writes, switch the routes off (404). */
     codeMode: codeModeMock,
     /** Changes the account has waiting to upload, for the offline and paused wording. */
@@ -1535,6 +1567,14 @@ export function createMockApi(options: MockOptions = {}) {
     /** Fails the given step of the next apply, once. */
     failUpdateStep(id: string) {
       failStep = id;
+    },
+    /** Changes what `/api/info` answers from now on, such as the build `channel` or `version`. */
+    patchInfo(patch: Partial<ServerInfo>) {
+      infoPatch = { ...infoPatch, ...patch };
+    },
+    /** Gives an engine this model list (the service merges the person's custom models into it). */
+    setEngineModels(engine: string, models: EngineModels) {
+      modelLists = { ...modelLists, [engine]: models };
     },
     patchUpdates(patch: Partial<UpdateStatus>) {
       updates = { ...updates, ...patch };
