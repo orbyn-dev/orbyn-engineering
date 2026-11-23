@@ -8,10 +8,11 @@
 //! into place, so a reader sees the old skill or the new one, never half a file. The
 //! revision makes an edit from a stale read fail instead of overwriting a newer text, and
 //! an edit carries the name it was read under, so rewriting the front-matter name cannot
-//! land on another skill. A create reclaims a folder a crash left empty; a folder that
-//! holds anything else is a damaged skill and stays refused. Only slug names are accepted,
-//! and every resolved path must stay inside the skill's own folder, so neither `..` nor a
-//! symlink can reach anything else. The stored file, its revision line included, is capped
+//! land on another skill. A create reclaims a folder a crash left empty or holding only
+//! the writer's own staging file; a folder that holds anything else is a damaged skill and
+//! stays refused. Only slug names are accepted, and every resolved path must stay inside
+//! the skill's own folder, so neither `..` nor a symlink can reach anything else. The
+//! stored file, its revision line included, is capped
 //! at [`MAX_SKILL_BYTES`], and that same cap applies when it is read back.
 //!
 //! A local skill is personal to this device and applies to every project; the repository a
@@ -232,9 +233,11 @@ impl LocalSkills {
         if !path.starts_with(&directory) {
             return Err(CoreError::NotFound("skill file".into()));
         }
-        // The skill file itself is capped however it is named, `None` or an
-        // explicit `Some("SKILL.md")`; a referenced file may be larger.
-        if relative == Path::new(SKILL_FILE) {
+        // The skill file itself is capped however it is named, `None` or an explicit
+        // spelling; compare the canonical target so a case-insensitive filesystem cannot
+        // read `SKILL.md` through `skill.md` uncapped. A referenced file may be larger.
+        let skill_file = canonicalize(&directory.join(SKILL_FILE)).ok();
+        if skill_file.as_deref() == Some(path.as_path()) {
             let size = std::fs::metadata(&path)?.len();
             if size > MAX_SKILL_BYTES as u64 {
                 return Err(too_large());
@@ -247,9 +250,10 @@ impl LocalSkills {
     /// atomic file. `reserved` is the shared library's own names: a local skill may not
     /// shadow one, so `skill_load` always has one answer.
     ///
-    /// A create reclaims a folder a crash left empty between making it and publishing its
-    /// file; a folder that holds anything else stays refused, so a damaged skill is never
-    /// overwritten. An edit must keep the name it was read under.
+    /// A create reclaims a folder a crash left empty, or holding only its own staging file,
+    /// between making it and publishing; a folder that holds anything else stays refused,
+    /// so a damaged skill is never overwritten. An edit must keep the name it was read
+    /// under.
     ///
     /// The audit row is appended before the rename, as rule 6 requires: a publish that
     /// fails after it can leave the attempt's row, while the file itself is unchanged. The
@@ -288,9 +292,9 @@ impl LocalSkills {
                     match self.get(&name) {
                         Ok(_) => return Err(name_taken_local(&name)),
                         // A crash between making the folder and publishing its file
-                        // leaves it empty with no skill in it; reclaim it.
-                        Err(_) if is_empty_directory(&directory) => {
-                            std::fs::remove_dir(&directory)?;
+                        // leaves it empty or holding only our staging file; reclaim it.
+                        Err(_) if is_reclaimable_orphan(&directory) => {
+                            std::fs::remove_dir_all(&directory)?;
                         }
                         Err(_) => return Err(name_taken_local(&name)),
                     }
@@ -395,7 +399,7 @@ struct Staging(Option<PathBuf>);
 
 impl Staging {
     fn stage(directory: &Path, bytes: &[u8]) -> Result<Self> {
-        let path = directory.join(format!(".{SKILL_FILE}.{}.tmp", new_id()));
+        let path = directory.join(staging_name(&new_id()));
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -559,12 +563,45 @@ fn name_taken_library(name: &str) -> CoreError {
     )
 }
 
-/// A folder a crash left behind between making it and publishing its file is empty; one
-/// with anything in it is a damaged skill and is never overwritten.
-fn is_empty_directory(path: &Path) -> bool {
-    std::fs::read_dir(path)
-        .map(|mut entries| entries.next().is_none())
-        .unwrap_or(false)
+/// The name a write stages its file under inside the skill's own folder.
+fn staging_name(id: &str) -> String {
+    format!(".{SKILL_FILE}.{id}.tmp")
+}
+
+/// Whether `name` is one of the writer's staging names, never a person's file.
+fn is_staging_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(&format!(".{SKILL_FILE}.")) else {
+        return false;
+    };
+    rest.strip_suffix(".tmp").is_some_and(|id| !id.is_empty())
+}
+
+/// Whether a folder holds only what a crash between making it and publishing its file can
+/// leave: nothing, or the writer's own staging file(s). Anything else is a damaged skill
+/// and is never overwritten.
+fn is_reclaimable_orphan(path: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return false;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let Ok(name) = entry.file_name().into_string() else {
+            return false;
+        };
+        if !is_staging_name(&name) {
+            return false;
+        }
+        if !entry
+            .file_type()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
+        {
+            return false;
+        }
+    }
+    true
 }
 
 fn stale() -> CoreError {

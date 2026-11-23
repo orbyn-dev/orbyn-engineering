@@ -617,6 +617,32 @@ fn the_skill_file_cap_applies_when_it_is_read_by_its_explicit_name() {
 }
 
 #[test]
+fn a_skill_file_spelled_differently_is_capped_by_its_canonical_target() {
+    let (_dir, _store, local) = fixture();
+    local.write(LocalSkillWrite::create(SKILL), &[]).unwrap();
+    let folder = local.root().join("redirect-checks");
+    let over = format!(
+        "{}{}",
+        with_name("redirect-checks"),
+        "y".repeat(MAX_SKILL_BYTES)
+    );
+    std::fs::write(folder.join("SKILL.md"), over).unwrap();
+    // A second name for the same canonical file: on a case-insensitive filesystem the
+    // variant simply opens SKILL.md; elsewhere a symbolic link models that.
+    #[cfg(unix)]
+    {
+        let _ = std::os::unix::fs::symlink("SKILL.md", folder.join("skill.md"));
+        let error = local.read("redirect-checks", Some("skill.md")).unwrap_err();
+        refusal(error, "invalid", 400);
+    }
+    // On macOS's default APFS and on NTFS the case variant resolves to the one file.
+    if std::fs::metadata(folder.join("Skill.md")).is_ok() {
+        let error = local.read("redirect-checks", Some("Skill.md")).unwrap_err();
+        refusal(error, "invalid", 400);
+    }
+}
+
+#[test]
 fn a_crash_orphaned_empty_folder_is_reclaimed_but_a_damaged_one_is_refused() {
     let (_dir, _store, local) = fixture();
     let root = local.root();
@@ -630,12 +656,28 @@ fn a_crash_orphaned_empty_folder_is_reclaimed_but_a_damaged_one_is_refused() {
     let damaged = root.join("damaged");
     std::fs::create_dir_all(&damaged).unwrap();
     std::fs::write(damaged.join("notes.txt"), "someone's work").unwrap();
+    // A staging file alone is recoverable, but any other content makes the folder damaged.
+    std::fs::write(damaged.join(".SKILL.md.crash.tmp"), "half a file").unwrap();
     let before = snapshot(root);
     let error = local
         .write(LocalSkillWrite::create(with_name("damaged")), &[])
         .unwrap_err();
     refusal(error, "name_taken", 409);
     assert_eq!(snapshot(root), before);
+}
+
+#[test]
+fn a_folder_left_with_only_a_staged_file_is_reclaimed() {
+    let (_dir, _store, local) = fixture();
+    let folder = local.root().join("staged");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join(".SKILL.md.crash.tmp"), "half a file").unwrap();
+    let skill = local
+        .write(LocalSkillWrite::create(with_name("staged")), &[])
+        .unwrap();
+    assert_eq!(skill.local_revision, 1);
+    assert!(local.read("staged", None).unwrap().contains("# staged"));
+    assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1);
 }
 
 #[test]

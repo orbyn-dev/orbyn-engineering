@@ -248,14 +248,19 @@ impl SkillService {
             .collect();
         let catalog = self.catalog()?;
         // The shared library wins a name it holds: a local skill of the same name is not
-        // listed a second time and is never the one an engine reads.
-        let local: Vec<LocalSkill> = self
-            .local
-            .list()?
-            .into_iter()
-            .filter(|skill| allowed.contains(&skill.name))
-            .filter(|skill| !catalog.iter().any(|library| library.name == skill.name))
-            .collect();
+        // listed a second time and is never the one an engine reads. A damaged local area
+        // never fails the search: it is logged and the library results are returned.
+        let local: Vec<LocalSkill> = match self.local.list() {
+            Ok(skills) => skills
+                .into_iter()
+                .filter(|skill| allowed.contains(&skill.name))
+                .filter(|skill| !catalog.iter().any(|library| library.name == skill.name))
+                .collect(),
+            Err(error) => {
+                tracing::warn!(%error, "the skills-local area could not be read; searching the library only");
+                Vec::new()
+            }
+        };
         let mut found: Vec<Value> = catalog
             .iter()
             .filter(|skill| allowed.contains(&skill.name))
@@ -649,5 +654,26 @@ Read this before changing how a redirect is followed.
             .route(&[SkillDelivery::McpSkillServer], None)
             .unwrap();
         assert_eq!(broken.tool_selection(&route).unwrap(), route.selection);
+    }
+
+    #[tokio::test]
+    async fn a_damaged_skills_local_area_does_not_fail_skill_search() {
+        let (dir, service) = fixture().await;
+        let broken = dir.path().join("broken-search-data");
+        std::fs::write(&broken, b"not a folder").unwrap();
+        let broken = SkillService::new(service.store.clone(), service.workspace.clone(), broken);
+        let route = broken
+            .route(&[SkillDelivery::McpSkillServer], None)
+            .unwrap();
+        // The local area cannot be read, so the library results are still served.
+        let found = broken.search("trace", &route.selection).unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0]["name"], "how");
+        assert!(
+            broken
+                .search("redirect", &route.selection)
+                .unwrap()
+                .is_empty()
+        );
     }
 }
