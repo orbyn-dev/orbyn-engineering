@@ -64,6 +64,16 @@ describe("the lessons list on the real route", () => {
     expect(screen.getByText("All repositories", { selector: ".cx-apchip" })).toBeInTheDocument();
   });
 
+  it("names a confirmed escape in the list as its card does", async () => {
+    answers.list = {
+      status: 200,
+      body: list({ counts: { active: 1, disabled: 0, hidden: 0 }, lessons: [lesson({ source: "escape" })] }),
+    };
+    render(<LiveLessons view="list" initial="p-app" />);
+    expect(await screen.findByText("Confirmed escape")).toBeInTheDocument();
+    expect(screen.queryByText("Escape")).toBeNull();
+  });
+
   it("keeps the head and the banner while loading, and draws no changing control", async () => {
     answers.list = "never";
     render(<LiveLessons view="list" />);

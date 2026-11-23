@@ -189,6 +189,7 @@ describe("an address that names no screen", () => {
 describe("closing Settings", () => {
   const settle = async () => {
     await act(async () => {
+      // Real wait: one macrotask turn lets already-resolved promises settle; no clock is involved.
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
   };

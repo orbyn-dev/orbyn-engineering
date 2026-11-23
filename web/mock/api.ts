@@ -4,7 +4,10 @@ import type { ScopedPreferencesResult } from "../src/generated/ScopedPreferences
 import type { ScopedPreferencesChange } from "../src/generated/ScopedPreferencesChange.ts";
 import type { JsonValue } from "../src/api/types.ts";
 import type { InstallOutcome } from "../src/generated/InstallOutcome.ts";
+import type { KeybindingRule } from "../src/generated/KeybindingRule.ts";
+import type { KeybindingsView } from "../src/generated/KeybindingsView.ts";
 import type { ModelInfo } from "../src/generated/ModelInfo.ts";
+import type { ProviderEntry } from "../src/generated/ProviderEntry.ts";
 import type { TextGeneratorEngine } from "../src/generated/TextGeneratorEngine.ts";
 import type { TextGenerators } from "../src/generated/TextGenerators.ts";
 /**
@@ -16,6 +19,8 @@ import type {
   ApplyAllResult,
   Approval,
   EngineModels,
+  CleanupPreview,
+  Diagnostics,
   EngineStatus,
   Project,
   ProjectFileView,
@@ -23,6 +28,7 @@ import type {
   ScheduledTask,
   ServerInfo,
   ServerSettings,
+  ShellStatus,
   Thread,
   UpdateStatus,
   UpdateThread,
@@ -36,6 +42,7 @@ import { createCapacityMock } from "./capacity.ts";
 import { createCodeModeMock } from "./codemode.ts";
 import { createCrewMock } from "./crew.ts";
 import { createEscapesMock } from "./escapes.ts";
+import { createKeybindingsMock } from "./keybindings.ts";
 import { createLessonsMock } from "./lessons.ts";
 import { createSkillProposalsMock } from "./skillProposals.ts";
 import { boardMock } from "./board.ts";
@@ -69,6 +76,10 @@ export type Scenario =
   | "remote"
   | "offline"
   | "reference"
+  /** The service on another computer, for the rows only macOS shows: "platform-windows", "platform-linux". */
+  | `platform-${"windows" | "linux"}`
+  /** Two checkouts of one repository (the app and a worktree of it) beside the other projects, so Settings can scope to the project or to one checkout. */
+  | "settings-checkouts"
   /** The sign-in gate is on, signed out; see `mock/account.ts` for the throwaway accounts. */
   | "account"
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
@@ -120,6 +131,7 @@ type Subscriber = (event: WireThreadEvent) => void;
 
 interface Failure {
   path: string;
+  method?: string | undefined;
   remaining: number;
   status: number;
   code: string;
@@ -150,6 +162,8 @@ const TEXT_GENERATOR_SAMPLES: { engine: string; name: string; models: ModelInfo[
     textModel("team-tuned-mini", "team-tuned-mini", { custom: true }),
   ] },
   { engine: "opencode", name: "OpenCode", models: [] },
+  // Off in the default list (it is in `disabled_engines`): it lists a model, and none of them is small.
+  { engine: "cursor", name: "Cursor", models: [textModel("composer-1", "Composer 1")] },
 ];
 
 /** The engine's small model, recognised by family name as the service does. */
@@ -191,6 +205,8 @@ export function createMockApi(options: MockOptions = {}) {
   let failNextSetup = false;
   let updates: UpdateStatus = fixtures.updateStatus(2);
   let settings: ServerSettings = fixtures.serverSettings();
+  /** What Delete now would remove, when a screen needs a different dry run than the default (`cleanupSummary`). */
+  let cleanupPreviewOverride: CleanupPreview | null = null;
   let failStep: string | null = null;
   let queued: QueuedMessage[] = [];
   /** Files the editor saved, by thread and path, with the revision the next save must start from. */
@@ -198,6 +214,19 @@ export function createMockApi(options: MockOptions = {}) {
   let tasks: ScheduledTask[] = [];
   let cursorSends = 0;
   let browserProfiles: { id: string; name: string; in_use: boolean }[] = [];
+  /** The thread each imported agent-history session became, by `engine:session_id`. */
+  const importedHistory = new Map<string, string>();
+  /** The thread each imported ACP-agent session became, and the ones deleted, by `engine:session_id`. */
+  const importedNative = new Map<string, string>();
+  const nativeDeleted = new Set<string>();
+  /** What a test changed of the diagnostics the service reports (events, processes, database). */
+  let diagnosticsPatch: Partial<Diagnostics> = {};
+  /** Projects settings treats as checkouts of one repository, so a group selection has several members. */
+  /** Programs the service found on the computer besides the engines it lists, as the provider list reports them. */
+  let foundPrograms: ProviderEntry[] = [];
+  /** What a test set for how many saved conversations an engine keeps, by engine. */
+  const nativeCounts = new Map<string, { count: number; truncated: boolean }>();
+  let groupedProjects: string[] = [];
   /** Tasks whose webhook has an address; the token itself is never kept, as in the service. */
   const hooks = new Set<string>(["task-hook"]);
   let failures: Failure[] = [];
@@ -238,6 +267,7 @@ export function createMockApi(options: MockOptions = {}) {
   let infoPatch: Partial<ServerInfo> = {};
   /** The model lists a test gives an engine, in place of the sample ones. */
   let modelLists: Record<string, EngineModels> = {};
+  const keybindingsMock = createKeybindingsMock();
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
   /** Kiro, an ACP engine the service says Orbyn cannot gate, for the engine picker and unmanaged-thread screens. */
@@ -283,6 +313,8 @@ export function createMockApi(options: MockOptions = {}) {
     terminalsMock.reset();
     questionsMock.reset();
     foldersMock.reset();
+    keybindingsMock.reset();
+    cleanupPreviewOverride = null;
     signedIn = false;
     infoPatch = {};
     modelLists = {};
@@ -291,6 +323,13 @@ export function createMockApi(options: MockOptions = {}) {
     preferenceOverrides = {};
     failures = [];
     clones = [];
+    importedHistory.clear();
+    importedNative.clear();
+    nativeDeleted.clear();
+    diagnosticsPatch = {};
+    groupedProjects = [];
+    nativeCounts.clear();
+    foundPrograms = [];
     cloneError = null;
     reviewsSent.clear();
     detailsReads = 0;
@@ -300,6 +339,10 @@ export function createMockApi(options: MockOptions = {}) {
     // Autopilot by area is drawn for one repository (the design has a separate frame for several): its scenarios keep the first project.
     if (next.startsWith("crew-areas")) projects = projects.slice(0, 1);
     threads = blank ? [] : fixtures.threads();
+    if (next === "settings-checkouts") {
+      projects = [...projects, { id: "p-app-fix", name: "orbyn-engineering-app (fix-login)", path: "/Users/dev/code/orbyn-engineering-app-wt/fix-login",
+        trusted: true, is_git: true, managed: false, scratch: false, created_at: fixtures.projects[0]!.created_at }];
+    }
     if (next === "transcript-imported") threads = [...threads, fixtures.importedThread()];
     approvals = blank ? [] : fixtures.pendingApprovals();
     tasks = blank ? [] : fixtures.scheduledTasks();
@@ -532,7 +575,9 @@ export function createMockApi(options: MockOptions = {}) {
       library: { ...updates.library, dirty, can_apply: libraryReason === null, blocked_reason: libraryReason },
       app: {
         ...updates.app,
-        blocked_reason: updates.app.mode === "server" ? updates.app.blocked_reason : runsReason,
+        // The desktop app says it in the service's words (operations/updates.rs); the other modes keep the count.
+        blocked_reason: updates.app.mode === "server" ? updates.app.blocked_reason
+          : updates.app.mode === "desktop" ? (runs > 0 ? "Finish or stop active runs first." : updates.app.blocked_reason) : runsReason,
       },
     };
   };
@@ -605,14 +650,38 @@ export function createMockApi(options: MockOptions = {}) {
     return project;
   }
 
+  /** The repository a checkout belongs to; every other project is its own group. */
+  const repositoryOf = (project: Project) => (scenario === "settings-checkouts" && project.id.startsWith("p-app") ? "orbyn-engineering-app" : null);
+  /** The catalog key of the group a project is in (`repo:` for checkouts of one repository, `mock:` for a project of its own). */
+  const groupKeyOf = (projectId: string) => {
+    const project = projects.find((entry) => entry.id === projectId);
+    const repository = project ? repositoryOf(project) : null;
+    return repository ? `repo:${repository}` : `mock:${projectId}`;
+  };
+
   function scopeCatalog(scope: ProjectScopesQuery): ProjectScopeCatalog {
-    const groups = projects.filter((project) => !project.scratch && project.path !== managed.library?.path).map((project) => ({
-      key: `mock:${project.id}`, label: project.name, members: [{
-        project_id: project.id, physical_key: `mock-physical:${project.id}`, name: project.name, path: project.path,
-        repository_key: null, repository_label: null, repository_relative_path: "", grouping_mode: "separate" as const,
-        metadata_complete: true, unavailable: null,
-      }],
-    }));
+    const member = (project: Project) => ({
+      project_id: project.id, physical_key: `mock-physical:${project.id}`, name: project.name, path: project.path,
+      repository_key: repositoryOf(project), repository_label: repositoryOf(project), repository_relative_path: "",
+      grouping_mode: repositoryOf(project) ? "repository" as const : "separate" as const,
+      metadata_complete: true, unavailable: null,
+    });
+    const listed = projects.filter((project) => !project.scratch && project.path !== managed.library?.path);
+    // Checkouts of one repository are one group; so are the projects a test asked to be grouped (`groupProjects`).
+    const asked = new Set(groupedProjects);
+    const togetherAll = listed.filter((project) => asked.has(project.id));
+    // A group that lost members down to one is that project's own group again.
+    const together = togetherAll.length > 1 ? togetherAll : [];
+    const grouped = new Map<string, Project[]>();
+    for (const project of listed.filter((entry) => !together.includes(entry))) {
+      const repository = repositoryOf(project);
+      const key = repository ? `repo:${repository}` : `mock:${project.id}`;
+      grouped.set(key, [...(grouped.get(key) ?? []), project]);
+    }
+    const groups = [
+      ...[...grouped].map(([key, members]) => ({ key, label: repositoryOf(members[0]!) ?? members[0]!.name, members: members.map(member) })),
+      ...(together.length > 1 ? [{ key: `mock:group:${together.map((project) => project.id).join("+")}`, label: together[0]?.name ?? "", members: together.map(member) }] : []),
+    ];
     const selection = scope.selection;
     const selected = selection && selection.kind !== "all_projects" ? groups.find((group) => group.key === selection.group_key) : undefined;
     const resolved: ProjectScopeCatalog["selection"] = !selection || selection.kind === "all_projects" ? { kind: "all_projects" }
@@ -656,6 +725,14 @@ export function createMockApi(options: MockOptions = {}) {
       target[key] = value !== null && typeof value === "object" && !Array.isArray(value) && kept !== null && typeof kept === "object" && !Array.isArray(kept)
         ? { ...kept, ...value } : value;
     }
+  }
+
+  /** The failure a test queued for this path, if one is still waiting, used up by one request. */
+  function takeFailure(pathname: string, method?: string): MockResponse | null {
+    const failure = failures.find((f) => pathname.startsWith(f.path) && f.remaining > 0 && (f.method === undefined || method === undefined || f.method === method));
+    if (!failure) return null;
+    failure.remaining -= 1;
+    return err(failure.status, failure.code, failure.message);
   }
 
   function route(method: string, path: string, query: URLSearchParams, body: unknown): MockResponse {
@@ -883,7 +960,7 @@ export function createMockApi(options: MockOptions = {}) {
         break;
       case "GET /api/preferences": {
         const projectId = query.get("project_id");
-        const scope: ProjectScopesQuery = projectId ? { selection: { kind: "checkout", group_key: `mock:${projectId}`, project_id: projectId } } : {};
+        const scope: ProjectScopesQuery = projectId ? { selection: { kind: "checkout", group_key: groupKeyOf(projectId), project_id: projectId } } : {};
         if (scopedPreferences(scope, []).catalog.selection.kind === "unavailable") return err(404, "not_found", "Project not found.");
         const rows = preferenceViews(scope);
         // The credits setting on, for the read-only merge dialog frame (pr-detail-merge-dialog-credits-readonly-on).
@@ -903,7 +980,9 @@ export function createMockApi(options: MockOptions = {}) {
         const projectMap = projectId === null ? {} : (preferenceOverrides[projectId]?.text_generation_models ?? {}) as Record<string, JsonValue>;
         const globalLegacy = preferenceValues.text_generation_model ?? "";
         const projectLegacy = projectId === null ? globalLegacy : preferenceOverrides[projectId]?.text_generation_model ?? globalLegacy;
-        const engines: TextGeneratorEngine[] = TEXT_GENERATOR_SAMPLES.map((sample) => {
+        // Only the engines that are on for the project, as the service lists them.
+        const disabled = (preferenceOverrides[projectId ?? ""]?.disabled_engines ?? preferenceValues.disabled_engines ?? preferenceDefaults.disabled_engines) as string[];
+        const engines: TextGeneratorEngine[] = TEXT_GENERATOR_SAMPLES.filter((sample) => !disabled.includes(sample.engine)).map((sample) => {
           const global = resolveTextModel(sample.engine, sample.models, globalMap, globalLegacy);
           return {
             engine: sample.engine, name: sample.name, models: structuredClone(sample.models),
@@ -923,7 +1002,7 @@ export function createMockApi(options: MockOptions = {}) {
         const projectId = seg[2] ?? "";
         if (!projects.some((project) => project.id === projectId)) return err(404, "not_found", "Project not found.");
         writePreferences(projectId, (data.values ?? {}) as Record<string, JsonValue>);
-        return { status: 200, body: preferenceViews({ selection: { kind: "checkout", group_key: `mock:${projectId}`, project_id: projectId } }) };
+        return { status: 200, body: preferenceViews({ selection: { kind: "checkout", group_key: groupKeyOf(projectId), project_id: projectId } }) };
       }
       case "POST /api/settings":
         if (seg[2] === "project-scopes") return { status: 200, body: scopeCatalog(data as ProjectScopesQuery) };
@@ -935,18 +1014,34 @@ export function createMockApi(options: MockOptions = {}) {
             : { status: 200, body: result };
         }
         break;
-      case "GET /api/history":
-        return { status: 200, body: historyScan(Date.now()) };
-      case "POST /api/history":
-        return { status: 200, body: { thread_id: nextId("t"), imported: true } };
+      case "GET /api/history": {
+        // As the service reads them: a session whose folder was added since sits under that project (importable once it is trusted), and an imported one names its thread.
+        const scan = historyScan(Date.now());
+        return { status: 200, body: { ...scan, sessions: scan.sessions.map((session) => {
+          const project = session.project_id === null ? projects.find((entry) => entry.path === session.cwd) : undefined;
+          const placed = project ? { ...session, project_id: project.id, importable: project.trusted } : session;
+          return { ...placed, thread_id: importedHistory.get(`${session.engine}:${session.session_id}`) ?? null };
+        }) } };
+      }
+      case "POST /api/history": {
+        const thread_id = nextId("t");
+        importedHistory.set(`${String(data.engine)}:${String(data.session_id)}`, thread_id);
+        return { status: 200, body: { thread_id, imported: true } };
+      }
       case "GET /api/acp":
         return { status: 200, body: acpRegistry };
+      // Installing or removing a registry agent: answered, but the mock keeps its engines as they are.
+      case "POST /api/acp":
+        return acpRegistry.some((entry) => entry.id === seg[3]) ? { status: 204 } : err(404, "not_found", "That agent is not in the registry.");
       case "GET /api/diagnostics":
-        return { status: 200, body: diagnostics(Date.now()) };
+        return { status: 200, body: { ...diagnostics(Date.now()), ...diagnosticsPatch } };
       case "POST /api/diagnostics":
         return seg[2] === "otlp" ? { status: 200, body: { ok: true, status: 200, message: null } } : { status: 204 };
+      // No desktop app is attached to this service.
+      case "GET /api/shell":
+        return { status: 200, body: { attached: false, windows: 0, facts: { cli: null, permissions: [] } } satisfies ShellStatus };
       case "GET /api/storage":
-        if (seg[2] === "cleanup" && seg[3] === "preview") return { status: 200, body: cleanupSummary() };
+        if (seg[2] === "cleanup" && seg[3] === "preview") return { status: 200, body: cleanupPreviewOverride ?? cleanupSummary() };
         return { status: 200, body: null };
       case "POST /api/storage":
         return { status: 200, body: query.get("dry_run") === "true" ? cleanupPreview(Date.now()) : { ...cleanupPreview(Date.now()), dry_run: false } };
@@ -1039,6 +1134,8 @@ export function createMockApi(options: MockOptions = {}) {
       case "GET /api/browser-profiles":
         return scenario.startsWith("browser-profiles") ? { status: 200, body: browserProfiles } : err(404, "not_found", "Not found.");
       case "POST /api/browser-profiles": {
+        // `/api/browser-profiles/<id>/clear` is answered below.
+        if (seg[2]) break;
         const name = typeof data.name === "string" ? data.name.trim() : "";
         if (!name) return err(400, "invalid_input", "A profile needs a name.");
         const made = { id: `bp-${++idCounter}`, name, in_use: false };
@@ -1046,12 +1143,14 @@ export function createMockApi(options: MockOptions = {}) {
         return { status: 200, body: made };
       }
       case "GET /api/keybindings":
-        return { status: 200, body: keybindingsView() };
+        return { status: 200, body: keybindingsMock.get() };
+      case "POST /api/keybindings":
+        return keybindingsMock.save(data as unknown as KeybindingRule);
       // No engine host is reported: the real client reads a 404 as "nothing reported".
       case "GET /api/engine-host":
         return err(404, "not_found", "Not found.");
       case "GET /api/info":
-        return { status: 200, body: { ...fixtures.info, ...infoPatch, remote: scenario === "remote", ...(scenario === "crew" || scenario.startsWith("crew-") ? { crew_preview: true } : {}) } };
+        return { status: 200, body: { ...fixtures.info, ...(scenario.startsWith("platform-") ? { platform: scenario.slice("platform-".length) } : {}), ...infoPatch, remote: scenario === "remote", ...(scenario === "crew" || scenario.startsWith("crew-") ? { crew_preview: true } : {}) } };
       case "POST /auth/session":
         if (data.key === "orbyn-demo-key") {
           signedIn = true;
@@ -1275,11 +1374,19 @@ export function createMockApi(options: MockOptions = {}) {
             skills: fixtures.skills,
           },
         };
-      case "GET /api/providers":
-        return { status: 200, body: providerList(engines) };
+      case "GET /api/providers": {
+        const list = providerList(engines);
+        return { status: 200, body: { ...list, providers: [...list.providers, ...foundPrograms] } };
+      }
       case "GET /api/engines":
         if (seg[3] === "native-sessions" && seg[4] === "count") {
-          return { status: 200, body: { engine: seg[2], count: fixtures.nativeSessionCounts[seg[2] ?? ""] ?? 0, truncated: false } };
+          return { status: 200, body: { engine: seg[2], ...(nativeCounts.get(seg[2] ?? "") ?? { count: fixtures.nativeSessionCounts[seg[2] ?? ""] ?? 0, truncated: false }) } };
+        }
+        // An ACP agent's own saved conversations: the mock agent lists one and says it can load and delete it.
+        if (seg[3] === "native-sessions" && seg[4] === "capabilities") return { status: 200, body: { can_list: true, can_load: true, can_resume: false, can_delete: true } };
+        if (seg[3] === "native-sessions" && !seg[4]) {
+          const chat = { session_id: "native-1", cwd: projects[0]?.path ?? "/Users/dev/code", additional_directories: [], title: "First chat", updated_at: now(), imported_thread_id: importedNative.get(`${seg[2]}:native-1`) ?? null };
+          return { status: 200, body: { sessions: nativeDeleted.has(`${seg[2]}:native-1`) ? [] : [chat], next_cursor: null, can_load: true, can_resume: false, can_delete: true } };
         }
         if (seg[3] === "installs") {
           // Only an engine that is not installed has the vendor's page.
@@ -1291,10 +1398,11 @@ export function createMockApi(options: MockOptions = {}) {
         if (seg[3] === "models") {
           // The service merges the person's custom models into the list it returns.
           const listing = modelLists[seg[2] ?? ""] ?? fixtures.engineModels(seg[2] ?? "");
+          const listed: ModelInfo[] = listing.models;
           const custom = (Array.isArray(preferenceValues.custom_models) ? preferenceValues.custom_models : [])
             .flatMap((entry) => entry && typeof entry === "object" && !Array.isArray(entry) && entry.engine === seg[2] && typeof entry.id === "string"
               ? [{ id: entry.id, label: typeof entry.label === "string" ? entry.label : entry.id, description: null, is_default: false, custom: true, options: [] }] : []);
-          return { status: 200, body: { ...listing, models: [...listing.models, ...custom] } };
+          return { status: 200, body: { ...listing, models: [...listed, ...custom] } };
         }
         return { status: 200, body: engines };
       default:
@@ -1413,9 +1521,51 @@ export function createMockApi(options: MockOptions = {}) {
         return decide(approval, data.allow === true);
       }
       if (seg[1] === "engines" && seg[2] === "refresh") return { status: 200, body: engines };
+      if (seg[1] === "engines" && seg[3] === "native-sessions" && seg[4] === "import") {
+        // The thread the answer names exists afterwards, in the project whose folder the chat was in.
+        const project = projects[0];
+        if (!project) return err(404, "not_found", "No project to import into.");
+        const thread_id = nextId("t");
+        importedNative.set(`${seg[2]}:${String(data.session_id)}`, thread_id);
+        threads = [...threads, {
+          scratch: false, id: thread_id, project_id: project.id, title: "First chat", engine: seg[2] ?? "", model: null, cwd: project.path,
+          worktree: null, skill_profile: null, active_run: null, last_run_state: null, created_at: now(), updated_at: now(),
+        }];
+        return { status: 200, body: { thread_id, imported: true } };
+      }
+      if (seg[1] === "engines" && seg[3] === "native-sessions" && seg[4] === "delete") {
+        nativeDeleted.add(`${seg[2]}:${String(data.session_id)}`);
+        return { status: 204 };
+      }
+      if (seg[1] === "engines" && seg[3] === "install-recommended") {
+        const engine = engines.find((e) => e.id === seg[2]);
+        if (!engine) return err(404, "not_found", "Engine not found.");
+        if (!engine.compatibility?.recommended_command) return err(422, "update_unavailable", `No recommended version is recorded for ${engine.id}.`);
+        engine.version = engine.compatibility.recommended_version ?? engine.version;
+        engine.support = "tested";
+        engine.compatibility = undefined;
+        return { status: 200, body: null };
+      }
+      // Codex reports a problem to OpenAI and answers with the thread it opened; no other engine has the route.
+      if (seg[1] === "engines" && seg[3] === "feedback") {
+        if (seg[2] !== "codex") return err(422, "unsupported", "This engine cannot send feedback.");
+        return { status: 200, body: { thread_id: nextId("report"), prompt_hash: null } };
+      }
+      // Updates every engine that owns an installer and has a newer version, one after another, as one update each would.
+      if (seg[1] === "engines" && seg[2] === "update-all") {
+        const outcomes = engines.filter((engine) => engine.installed && !engine.updating && !engine.instance_of && engine.update_command !== null && engine.latest !== null && engine.latest !== engine.version).map((engine) => {
+          const answer = takeFailure(`/api/engines/${engine.id}/update`, "POST") ?? route("POST", `/api/engines/${engine.id}/update`, new URLSearchParams(), {});
+          return answer.status < 400 ? { id: engine.id, name: engine.name, version: engine.latest ?? undefined } : { id: engine.id, name: engine.name, error: String((answer.body as { message?: string }).message) };
+        });
+        return { status: 200, body: outcomes };
+      }
       if (seg[1] === "engines" && seg[2] === "probe-binary") {
+        // As probe.rs answers: a relative path is refused with a sentence, a missing file is just not found, and a program whose version command fails is found with a problem.
         const path = String(data.path ?? "");
-        return { status: 200, body: path.endsWith("/claude") ? { exists: true, path, version: "2.1.318", problem: null } : { exists: false, path: null, version: null, problem: "No file at this path." } };
+        if (!path.startsWith("/")) return { status: 200, body: { exists: false, path: null, version: null, problem: "Give the full path to the program." } };
+        if (path.endsWith("/claude")) return { status: 200, body: { exists: true, path, version: "2.1.318", problem: null } };
+        if (path.endsWith("/broken")) return { status: 200, body: { exists: true, path, version: null, problem: "Its version command failed." } };
+        return { status: 200, body: { exists: false, path: null, version: null, problem: null } };
       }
       if (seg[1] === "shell" && seg[2] === "actions") return { status: 202 };
       if (seg[1] === "engines" && seg[2] === "custom") {
@@ -1481,6 +1631,7 @@ export function createMockApi(options: MockOptions = {}) {
         browserProfiles = browserProfiles.filter((entry) => entry.id !== seg[2]);
         return { status: 204 };
       }
+      if (seg[1] === "acp" && seg[2] === "registry") return { status: 204 };
       if (seg[1] === "engines" && seg[2] === "custom") {
         if (threads.some((t) => t.engine === seg[3] && t.active_run)) {
           return err(409, "engine_busy", `${seg[3]} has an active run or update`);
@@ -1508,20 +1659,17 @@ export function createMockApi(options: MockOptions = {}) {
     get threads() {
       return threads;
     },
-    /** Queues a failure for the next `times` requests under `path`. */
-    fail(path: string, times: number, status = 500, code = "internal", message = "Something went wrong.") {
-      failures.push({ path, remaining: times, status, code, message });
+    /** Queues a failure for the next `times` requests under `path` (only those with this `method`, when one is given). */
+    fail(path: string, times: number, status = 500, code = "internal", message = "Something went wrong.", method?: string) {
+      failures.push({ path, remaining: times, status, code, message, method });
     },
     handle(method: string, url: string, body?: unknown, confirm?: string): MockResponse {
       const parsed = new URL(url, "http://mock.local");
       if (scenario === "offline" && parsed.pathname.startsWith("/api")) {
         return err(503, "unavailable", "The service is unavailable.");
       }
-      const failure = failures.find((f) => parsed.pathname.startsWith(f.path) && f.remaining > 0);
-      if (failure) {
-        failure.remaining -= 1;
-        return err(failure.status, failure.code, failure.message);
-      }
+      const refused = takeFailure(parsed.pathname, method);
+      if (refused) return refused;
       if (parsed.pathname.startsWith("/api/code-runs") || /^\/api\/engines\/[^/]+\/code-mode$/.test(parsed.pathname) || /^\/api\/threads\/[^/]+\/code-runs$/.test(parsed.pathname)) {
         const answered = codeModeMock.handle(method, parsed.pathname, body);
         if (answered) return answered;
@@ -1539,6 +1687,14 @@ export function createMockApi(options: MockOptions = {}) {
     folders: foldersMock,
     /** The Code Mode stand-in (mock/codemode.ts): seed a run record, read the writes, switch the routes off (404). */
     codeMode: codeModeMock,
+    /** Sets what the next dry run of Delete now finds. */
+    setCleanupPreview(preview: CleanupPreview) {
+      cleanupPreviewOverride = preview;
+    },
+    /** Seeds the Keybindings page with a view it cannot reach by clicking (a clash, a rule with a context). */
+    setKeybindings(view: KeybindingsView) {
+      keybindingsMock.set(view);
+    },
     /** Changes the account has waiting to upload, for the offline and paused wording. */
     setAccountWaiting(count: number) {
       accountMock.setWaiting(count);
@@ -1573,11 +1729,37 @@ export function createMockApi(options: MockOptions = {}) {
       infoPatch = { ...infoPatch, ...patch };
     },
     /** Gives an engine this model list (the service merges the person's custom models into it). */
-    setEngineModels(engine: string, models: EngineModels) {
-      modelLists = { ...modelLists, [engine]: models };
+    setEngineModels(engine: string, models: EngineModels | ModelInfo[]) {
+      // A bare list keeps the engine's own default and options; a full listing replaces them.
+      const listing: EngineModels = Array.isArray(models) ? { ...fixtures.engineModels(engine), models: structuredClone(models) } : models;
+      modelLists = { ...modelLists, [engine]: listing };
     },
     patchUpdates(patch: Partial<UpdateStatus>) {
       updates = { ...updates, ...patch };
+    },
+    /** Replaces what Settings › Browser lists (the "browser-profiles" scenario answers it), for ids and names the scenario does not hold. */
+    setBrowserProfiles(rows: { id: string; name: string; in_use: boolean }[]) {
+      browserProfiles = rows;
+    },
+    /** Changes what Settings › Maintenance reads as the service's diagnostics, until the next reset. */
+    patchDiagnostics(patch: Partial<Diagnostics>) {
+      diagnosticsPatch = { ...diagnosticsPatch, ...patch };
+    },
+    /** Replaces the extra programs the provider list reports (rows for what is on the computer but is not an engine). */
+    setFoundPrograms(entries: ProviderEntry[]) {
+      foundPrograms = entries;
+    },
+    /** Sets how many saved conversations an engine keeps; `truncated` says the folder was too large to count to the end. */
+    setNativeSessionCount(engine: string, count: number, truncated = false) {
+      nativeCounts.set(engine, { count, truncated });
+    },
+    /** Settings treats these projects as checkouts of one repository: one group, selected as `mock:group:<ids joined by +>`. */
+    groupProjects(ids: string[]) {
+      groupedProjects = ids;
+    },
+    /** Replaces the engines the service reports, for states the fixtures do not hold (an engine below its supported range, one that cannot be updated). */
+    setEngines(next: EngineStatus[]) {
+      engines = structuredClone(next);
     },
     patchWorkspace(patch: Partial<WorkspaceStatus>) {
       managed = { ...managed, ...patch };
@@ -1592,18 +1774,3 @@ export function createMockApi(options: MockOptions = {}) {
 }
 
 export type MockApi = ReturnType<typeof createMockApi>;
-
-/** Fixed shortcuts for the Keybindings page: one clash, no issues. */
-function keybindingsView() {
-  const rule = (key: string, command: string) => ({ key, command, when: null, remove: false });
-  return {
-    path: "~/.orbyn/keybindings.json",
-    rules: [
-      rule("mod+n", "thread.new"), rule("mod+k", "commandPalette.toggle"), rule("mod+shift+b", "threadPanel.toggle"),
-      rule("ctrl+`", "terminal.toggle"), rule("mod+enter", "approval.allow"), rule("alt+down", "thread.nextNeedsYou"),
-      rule("mod+f", "chat.find"), rule("mod+backspace", "thread.archive"),
-    ],
-    issues: [],
-    conflicts: [{ key: "mod+backspace", when: null, commands: ["thread.archive", "Delete"] }],
-  };
-}

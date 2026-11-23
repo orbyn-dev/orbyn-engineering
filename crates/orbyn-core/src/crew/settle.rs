@@ -365,6 +365,11 @@ impl Core {
                 return;
             }
         };
+        // The lesson source 1 reads the guard's fingerprint after it is stored: the same failure on another task of
+        // this repository is what teaches it. It never changes the judgement or the task.
+        if let Some(judged) = judged {
+            self.learn_repeated_failure(&moved, fingerprint, judged);
+        }
         match next {
             Next::Stop => self.end_crew_task(
                 &moved,

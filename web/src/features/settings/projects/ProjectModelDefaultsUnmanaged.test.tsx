@@ -1,57 +1,46 @@
 import { render, screen, within } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
-import { request } from "../../../api/client";
-import type { EngineStatus, PreferenceView } from "../../../api/types";
+import { beforeEach, expect, it } from "vitest";
+import type { MockApi } from "../../../../mock/api";
+import type { EngineStatus } from "../../../api/types";
 import type { ProjectScopesQuery } from "../../../generated/ProjectScopesQuery";
-import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
+import { useWorkspace } from "../../../product/state/workspace";
+import { installMockFetch } from "../../../test-support";
+import { seedPreference } from "../rows/seedPreference.test-support";
 import { ProjectModelDefaults } from "./ProjectModelDefaults";
 
-let engines: EngineStatus[] = [];
-
-vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
-vi.mock("../../../product/state/workspace", () => ({
-  useWorkspace: (select: (state: { engines: { data: EngineStatus[] } }) => unknown) => select({ engines: { data: engines } }),
-}));
-vi.mock("../../../product/state/modelStore", async (original) => {
-  const actual = await original<typeof import("../../../product/state/modelStore")>();
-  return {
-    ...actual,
-    useEngineModels: () => null,
-    useModelStore: (select: (state: { byEngine: Record<string, never> }) => unknown) => select({ byEngine: {} }),
-  };
-});
-
-const checkout: ProjectScopesQuery = { selection: { kind: "checkout", group_key: "group-a", project_id: "a" } };
-const views = (engine: string): PreferenceView[] => [
-  { key: "default_engine", value: engine, default: "", source: "project", project_scoped: true },
-  { key: "default_model", value: "kiro-default", default: "", source: "project", project_scoped: true },
-  { key: "default_effort", value: "", default: "", source: "project", project_scoped: true },
-  { key: "default_model_options", value: {}, default: {}, source: "project", project_scoped: true },
-];
+let mock: MockApi;
+const checkout: ProjectScopesQuery = { selection: { kind: "checkout", group_key: "mock:p-app", project_id: "p-app" } };
 const engine = (capabilities: Record<string, unknown>): EngineStatus =>
   ({ id: "kiro", name: "Kiro", tier: "acp", installed: true, capabilities }) as unknown as EngineStatus;
 
+/** The service reports Kiro with these capabilities, and the person's default is Kiro's own model. */
+async function report(capabilities: Record<string, unknown>) {
+  mock.setEngines([engine(capabilities)]);
+  await useWorkspace.getState().refreshEngines();
+  seedPreference(mock, "default_engine", "kiro");
+  seedPreference(mock, "default_model", "kiro-default");
+}
+
 beforeEach(() => {
-  vi.mocked(request).mockReset();
-  vi.mocked(request).mockResolvedValue(scopedFixture(views("kiro"), undefined, "a") as never);
+  mock = installMockFetch();
 });
 
 it("shows the visible Unmanaged word on the project default model picker for an engine Orbyn cannot ask", async () => {
-  engines = [engine({ managed: false })];
+  await report({ managed: false });
   render(<ProjectModelDefaults query={checkout} />);
   const trigger = await screen.findByRole("button", { name: "kiro-default" });
   expect(within(trigger).getByText("Unmanaged")).toBeVisible();
 });
 
 it("draws no visible Unmanaged word for a managed engine", async () => {
-  engines = [engine({ managed: true })];
+  await report({ managed: true });
   render(<ProjectModelDefaults query={checkout} />);
   const trigger = await screen.findByRole("button", { name: "kiro-default" });
   expect(within(trigger).queryByText("Unmanaged")).toBeNull();
 });
 
 it("draws no visible Unmanaged word when the service omits the flag", async () => {
-  engines = [engine({})];
+  await report({});
   render(<ProjectModelDefaults query={checkout} />);
   const trigger = await screen.findByRole("button", { name: "kiro-default" });
   expect(within(trigger).queryByText("Unmanaged")).toBeNull();

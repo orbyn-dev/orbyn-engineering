@@ -1,12 +1,17 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it, vi } from "vitest";
-import { request } from "../../../api/client";
+import { beforeEach, expect, it, vi } from "vitest";
+import type { MockApi } from "../../../../mock/api";
 import type { EngineStatus } from "../../../api/types";
 import type { ProviderEntry } from "../../../generated/ProviderEntry";
+import { installMockFetch } from "../../../test-support";
+import { seedPreference } from "../rows/seedPreference.test-support";
 import { ProviderTable } from "./ProviderTable";
 
-vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+let mock: MockApi;
+beforeEach(() => {
+  mock = installMockFetch();
+});
 
 const store = { raw: [], instances: [], disabled: false, error: null, conflict: false, save: vi.fn(), reload: vi.fn() };
 const engine = (patch: Partial<EngineStatus>): EngineStatus => ({
@@ -16,9 +21,9 @@ const engine = (patch: Partial<EngineStatus>): EngineStatus => ({
 const entry = (patch: Partial<ProviderEntry>): ProviderEntry => ({ id: "claude", name: "Claude Code", group: "in_use", labels: [], registered: true, openable: true, ...patch });
 
 /** What the per-project switch holds: the engines turned off here. */
-function show(engines: EngineStatus[], providers: ProviderEntry[], off: string[] = []) {
-  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [{ key: "disabled_engines", revision: "r", value: off, mixed: false, default: [], project_scoped: true,
-    environment: { source: "default", value: off, default: [] }, members: [], overrides: [] }] } as never);
+/** `off` null leaves the setting unsaved, so the popover reads the service's default. */
+function show(engines: EngineStatus[], providers: ProviderEntry[], off: string[] | null = []) {
+  if (off !== null) seedPreference(mock, "disabled_engines", off);
   const open = vi.fn();
   render(<ProviderTable store={store} onOpen={open} onEdit={() => undefined} engines={engines} catalog={{ providers }} />);
   return open;
@@ -115,7 +120,7 @@ it("keeps the Version column in the DOM on a narrow table, where CSS alone hides
 });
 
 it("keeps the In use inheritance popover out of the table's width container", async () => {
-  show([engine({})], [entry({})]);
+  show([engine({})], [entry({})], null);
   await switches();
   await userEvent.click(screen.getByRole("button", { name: "Default" }));
   const popup = screen.getByRole("dialog", { name: "Providers in use" });
@@ -125,7 +130,6 @@ it("keeps the In use inheritance popover out of the table's width container", as
 
 it("keeps an engine whose program was not found, with its switch and Edit", async () => {
   const instance = engine({ id: "mine", name: "Claude Code · Mine", instance_of: "claude", installed: false, path: null, version: null });
-  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
   render(<ProviderTable store={{ ...store, instances: [{ id: "mine", driver: "claude", enabled: true }] }} onOpen={() => undefined} onEdit={() => undefined} engines={[instance]}
     catalog={{ providers: [entry({ id: "mine", name: "Claude Code · Mine", group: "not_found", labels: ["not_found"] })] }} />);
   const row = rowOf("Claude Code");
@@ -193,14 +197,12 @@ it("lists an engine that is not built as Planned, with no action", async () => {
 });
 
 it("falls back to one flat table of the engines until the service answers", () => {
-  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
   render(<ProviderTable store={store} onOpen={() => undefined} onEdit={() => undefined} engines={[engine({})]} />);
   expect(screen.getByRole("table", { name: "Providers" })).toBeVisible();
   expect(screen.queryAllByRole("rowgroup")).toHaveLength(0);
 });
 
 it("opens beta instances but keeps other families closed before catalog loading", async () => {
-  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
   const open = vi.fn();
   render(<ProviderTable store={store} onOpen={open} onEdit={() => undefined} engines={[
     engine({ id: "work", name: "OpenCode · Work", instance_of: "opencode", tier: "acp" }),

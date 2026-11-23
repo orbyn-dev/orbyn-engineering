@@ -17,4 +17,7 @@ export const acpRegistry: AcpRegistryEntry[] = [
   { id: "gemini", name: "Gemini CLI", version: "0.31.0", description: "Google", installable: ["npx"], engine: "gemini-acp" },
   { id: "goose", name: "Goose", version: "1.2.0", description: "Block", installable: ["binary"], engine: null },
   { id: "opencode", name: "OpenCode", version: "0.9.4", description: "SST", installable: ["npx"], engine: null },
+  { id: "kimi", name: "Kimi Code", version: "1.0.0", description: "Moonshot", installable: ["binary"], engine: null },
+  { id: "vibe", name: "Mistral Vibe", version: "0.4.0", description: "Mistral", installable: ["uvx"], engine: null },
+  { id: "legacy", name: "Legacy Agent", version: "0.1.0", description: "Nothing fits", installable: [], engine: null },
 ];
