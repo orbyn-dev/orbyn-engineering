@@ -38,7 +38,7 @@ export function LessonCardPage({ id, repo }: { id?: string; repo?: string }) {
   const named = repo !== undefined && repo !== "";
   const project = named ? projects.find((entry) => entry.id === repo) : projects[0];
   if (!project) return named ? null : <Card><Empty title="No project to show" /></Card>;
-  if (!id) return <Card><Empty title="No lesson to show" /></Card>;
+  if (!id) return null;
   // The service refuses an id outside its own shape, and the client throws on it: nothing is drawn, and nothing is read.
   if (!validLessonId(id)) return null;
   return <LessonCard key={`${project.id}:${id}`} id={id} repo={project.id} name={project.name} />;

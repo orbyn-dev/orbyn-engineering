@@ -129,8 +129,8 @@ export function createLessonsMock() {
   // sources their escape or merge, and a seeded correction the task it was made on. A lesson added by hand has no task
   // behind it, so it carries none: its id is not in this map.
   const personTask: Record<string, Evidence[]> = {
-    "les-cookies": [{ kind: "task", id: "5d1c8e0" }],
-    "les-dates": [{ kind: "task", id: "91c4e07" }],
+    "les-cookies": [{ kind: "task", id: "91c4e07" }],
+    "les-dates": [{ kind: "task", id: "5d1c8e0" }],
   };
   const detail = (one: Lesson): LessonDetail => ({
     lesson: one,

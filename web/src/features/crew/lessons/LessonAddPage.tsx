@@ -29,9 +29,9 @@ function Card({ children }: { children: ReactNode }) {
 
 /**
  * Add a lesson by hand (KC5, part B): the person's own words, up to 300 characters, for this repository or for all of them.
- * Nothing is drawn, and no lessons route is read, while Crew Preview is off, there is no repository to add to, or the route
- * names a repository the project list does not show (the contract answers 404 for an unknown repository). Saving is a
- * Person write and only the person's click sends it; a saved lesson opens its card, which says "Saved." once.
+ * Nothing is drawn, and no lessons route is read, while Crew Preview is off or the route names a repository the project
+ * list does not show (the contract answers 404 for an unknown repository); with no project at all it draws the empty state.
+ * Saving is a Person write and only the person's click sends it; a saved lesson opens its card, which says "Saved." once.
  */
 export function LessonAddPage({ repo }: { repo?: string }) {
   const on = useCrewPreview();

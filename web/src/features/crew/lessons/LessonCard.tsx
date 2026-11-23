@@ -281,7 +281,9 @@ function HowItIsUsed({ lesson }: { lesson: Lesson }) {
   if (lesson.left_out_of > 0) rows.push(["Left out", `${briefsWord(lesson.left_out_of)}. That task started without it`]);
   rows.push([
     "Given to",
-    `A worker, when it is in the next brief, as text added to its brief after the route is chosen, among at most ${BRIEF_LESSONS} lessons. The text is marked as data and grants no permission`,
+    lesson.in_next_brief
+      ? `A worker, as text added to its brief after the route is chosen, among at most ${BRIEF_LESSONS} lessons. The text is marked as data and grants no permission`
+      : `Not in the next brief, so no worker gets it yet. When one does, it is text added after the route is chosen, among at most ${BRIEF_LESSONS} lessons, marked as data and granting no permission`,
   ]);
   rows.push([
     "Checked",
