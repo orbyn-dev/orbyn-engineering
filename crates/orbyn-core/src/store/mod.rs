@@ -67,6 +67,7 @@ mod crew_provenance;
 #[cfg(test)]
 mod crew_provenance_tests;
 mod crew_rerun;
+mod crew_resume;
 mod crew_review;
 mod crew_review_controls;
 #[cfg(test)]
@@ -147,6 +148,7 @@ pub use crew_merge_forge::{ForgeMerge, ForgePhase, ForgeResolution};
 pub use crew_merges::{MergeEntry, MergeRecord, MergeStateMove, OPEN_MERGE_STATES};
 pub use crew_paused_starts::{PAUSED_STARTS_PER_PROJECT, PausedStartRow};
 pub use crew_provenance::StoredHunk;
+pub use crew_resume::ResumeOutcome;
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
 pub(crate) use crew_review_controls::{ReviewConsent, ReviewControl};
 pub(crate) use crew_review_publications::{Publication, PublicationState};

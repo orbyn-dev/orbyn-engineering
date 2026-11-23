@@ -31,6 +31,12 @@ pub struct CrewRun {
     pub verifying_since: Option<String>,
     /// The index entries hiding a change from git when the task started, as JSON.
     pub index_flags: Option<String>,
+    /// When the task resumed after a restart, if it ever did. A task resumes once in its life.
+    pub resumed_at: Option<String>,
+    /// 0 until the one resume after a restart, then 1.
+    pub resume_count: u32,
+    /// The time the app was off before that resume, which the task's budget does not pay for.
+    pub downtime_secs: i64,
 }
 
 fn run_row(row: &Row<'_>) -> rusqlite::Result<CrewRun> {
@@ -52,6 +58,9 @@ fn run_row(row: &Row<'_>) -> rusqlite::Result<CrewRun> {
         protected: row.get("protected")?,
         verifying_since: row.get("verifying_since")?,
         index_flags: row.get("index_flags")?,
+        resumed_at: row.get("resumed_at")?,
+        resume_count: row.get("resume_count")?,
+        downtime_secs: row.get("downtime_secs")?,
     })
 }
 

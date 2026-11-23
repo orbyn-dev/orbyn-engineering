@@ -78,6 +78,7 @@ fn flow_row(facts: &Facts, line: Vec<wire::FlowCell>, scrub: &Scrub) -> wire::Fl
         state: facts.task.state.clone(),
         could_not_start: facts.could_not_start(),
         round: round(facts),
+        resumed: facts.run.as_ref().is_some_and(|run| run.resume_count > 0),
         cells: line,
         created_at: facts.task.created_at.clone(),
         updated_at: facts.task.updated_at.clone(),

@@ -68,6 +68,7 @@ mod model_ids;
 mod overrides;
 mod protect;
 mod provider_facts;
+mod resume;
 mod reviewer_only;
 mod unmanaged;
 // The checks are shell commands (`touch`, `rm`, `sleep`, a loop), so these tests run where there is a POSIX shell.
