@@ -320,6 +320,7 @@ it("reads a project's files again, quietly, when the service says they changed",
   // Another project's files changed: nothing of this one is read.
   const now = reads().length;
   act(() => dataChanged("explorer:p-site"));
+  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
   await new Promise((done) => setTimeout(done, 400));
   expect(reads().length).toBe(now);
   stop();

@@ -177,6 +177,7 @@ describe("App against the mock API", () => {
       });
       render(<App />);
       await screen.findByRole("navigation", { name: "Workspace" });
+      // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(screen.queryByRole("button", { name: /updates? available/ })).toBeNull();
     });
@@ -748,11 +749,13 @@ describe("App against the mock API", () => {
     // A short tap opens nothing.
     touch("pointerdown");
     touch("pointerup");
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 650));
     expect(screen.queryByRole("menu")).toBeNull();
     // (A press that moves is covered by longPress.test.ts, with fake timers.)
     // A long press holds still and opens the menu with the same actions as the strip.
     touch("pointerdown");
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 650));
     expect(await screen.findByRole("menu")).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Settle thread" })).toBeInTheDocument();
@@ -783,6 +786,7 @@ describe("App against the mock API", () => {
     expect(await screen.findByRole("menu")).toBeInTheDocument();
     // The right-click focuses the row afterwards; that must not start the card again.
     row.focus();
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 700));
     expect(screen.queryByRole("tooltip")).toBeNull();
   });

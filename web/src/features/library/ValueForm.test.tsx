@@ -64,6 +64,7 @@ it("does one write for a double click and a repeated Enter", async () => {
   fireEvent.click(save);
   fireEvent.submit(field().closest("form")!);
   await waitFor(() => expect(mock.writes).toHaveLength(1));
+  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
   await new Promise((resolve) => setTimeout(resolve, 80));
   expect(mock.writes).toHaveLength(1);
 });
