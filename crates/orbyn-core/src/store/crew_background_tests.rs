@@ -1164,3 +1164,210 @@ fn an_acknowledgement_needs_its_audit_row() {
         "no effect without the audit row in the same transaction"
     );
 }
+
+#[test]
+fn migration_77_keeps_background_rows_and_adds_the_watch_tables() {
+    let versions: Vec<i64> = migrations::MIGRATIONS.iter().map(|(v, _)| *v).collect();
+    assert!(versions.contains(&77));
+    let before = *versions
+        .iter()
+        .filter(|version| **version < 77)
+        .max()
+        .unwrap();
+
+    let dir = TempDir::new();
+    let path = dir.path().join("old.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)").unwrap();
+    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v < 77) {
+        conn.execute_batch(sql).unwrap();
+        conn.execute(
+            "INSERT INTO schema_migrations VALUES (?1,'fixture')",
+            [version],
+        )
+        .unwrap();
+    }
+    // A crew from before the slice, with a run and its daily row.
+    conn.execute(
+        "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+         budget_turns, budget_minutes, enabled, created_at, updated_at, daily_runs, daily_turns, utc_offset_minutes)
+         VALUES ('old', 'project-1', 'Old', 'fix_failing_ci', 'schedule', '{\"every_hours\":6}',
+                 10, 30, 1, 'created', 'updated', 2, 40, 600)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO crew_background_runs (id, background_id, state, stop_reason, turns_spent, minutes_spent,
+         budget_turns, budget_minutes, review_waiting, review_reason, started_at, updated_at, ended_at)
+         VALUES ('run-1', 'old', 'stopped', 'budget', 10, 30, 10, 30, 1, 'budget', 'started', 'updated', 'ended')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO crew_background_daily (background_id, run_id, day, engine, turns_spent)
+         VALUES ('old', 'run-1', '2026-11-01', 'claude', 10)",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let store = Store::open(&path, "watch-upgrade").unwrap();
+    let upgrade = store.upgrade().expect("an upgrade");
+    assert_eq!(
+        (upgrade.from, upgrade.to),
+        (before, *versions.last().unwrap()),
+        "every later migration is applied too"
+    );
+
+    // Every column and row of the rebuilt table survived.
+    let crew = store.background_crew("old").unwrap().unwrap();
+    assert_eq!(crew.project_id, "project-1");
+    assert_eq!(crew.name, "Old");
+    assert_eq!(crew.template, "fix_failing_ci");
+    assert_eq!(crew.trigger_kind, "schedule");
+    assert_eq!(crew.trigger_settings, json!({ "every_hours": 6 }));
+    assert_eq!((crew.budget_turns, crew.budget_minutes), (10, 30));
+    assert_eq!((crew.daily_runs, crew.daily_turns), (2, 40));
+    assert_eq!(crew.utc_offset_minutes, 600);
+    assert!(crew.enabled);
+    assert_eq!((crew.created_at.as_str(), crew.updated_at.as_str()), ("created", "updated"));
+    let run = store.background_run("run-1").unwrap().unwrap();
+    assert_eq!(
+        (
+            run.background_id.as_str(),
+            run.state.as_str(),
+            run.stop_reason.as_deref(),
+            run.turns_spent,
+            run.minutes_spent,
+            run.budget_turns,
+            run.budget_minutes,
+            run.review_waiting,
+            run.review_reason.as_deref(),
+            run.started_at.as_str(),
+            run.updated_at.as_str(),
+            run.ended_at.as_deref(),
+        ),
+        (
+            "old",
+            "stopped",
+            Some("budget"),
+            10,
+            30,
+            10,
+            30,
+            true,
+            Some("budget"),
+            "started",
+            "updated",
+            Some("ended"),
+        )
+    );
+    let daily: u32 = store
+        .reader()
+        .query_row(
+            "SELECT turns_spent FROM crew_background_daily WHERE background_id = 'old' AND run_id = 'run-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(daily, 10);
+
+    // The rebuilt parent takes a watch, and its CHECK still refuses an unknown kind.
+    store
+        .writer()
+        .execute(
+            "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+             budget_turns, budget_minutes, created_at, updated_at)
+             VALUES ('watch', 'project-1', 'Watch', 'fix_failing_ci', 'watch',
+                     '{\"command\":\"cargo test\",\"every_hours\":6,\"on_failing\":\"needs_you\"}', 1, 1, 'c', 'u')",
+            [],
+        )
+        .unwrap();
+    assert!(
+        store
+            .writer()
+            .execute(
+                "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+                 budget_turns, budget_minutes, created_at, updated_at)
+                 VALUES ('bad', 'project-1', 'Bad', 'fix_failing_ci', 'webhook', '{}', 1, 1, 'c', 'u')",
+                [],
+            )
+            .is_err()
+    );
+
+    // The two tables exist, with the index later slices read.
+    let exists = |name: &str| -> bool {
+        store
+            .reader()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
+                [name],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    assert!(exists("crew_watch_state") && exists("crew_watch_changes"));
+    assert!(exists("crew_watch_changes_by_crew"));
+    store
+        .writer()
+        .execute(
+            "INSERT INTO crew_watch_state (background_id, last_result, baseline_done, error_streak, last_state)
+             VALUES ('watch', 'pass', 1, 2, 'passing')",
+            [],
+        )
+        .unwrap();
+    store
+        .writer()
+        .execute(
+            "INSERT INTO crew_watch_changes (background_id, kind, at_unix, exit_code, action, tail)
+             VALUES ('watch', 'baseline', 1, 0, 'none', 'ok')",
+            [],
+        )
+        .unwrap();
+
+    // The table's own rules still hold: the budget trigger and the case-folded name index.
+    assert!(
+        store
+            .writer()
+            .execute(
+                "UPDATE crew_background SET budget_turns = 99 WHERE id = 'old'",
+                []
+            )
+            .is_err()
+    );
+    assert!(
+        store
+            .writer()
+            .execute(
+                "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+                 budget_turns, budget_minutes, created_at, updated_at)
+                 VALUES ('same-name', 'project-1', 'OLD', 'fix_failing_ci', 'schedule', '{}', 1, 1, 'c', 'u')",
+                [],
+            )
+            .is_err()
+    );
+
+    // Deleting a crew cascades its runs, its daily rows and its watch rows.
+    store
+        .writer()
+        .execute("DELETE FROM crew_background WHERE id = 'old'", [])
+        .unwrap();
+    store
+        .writer()
+        .execute("DELETE FROM crew_background WHERE id = 'watch'", [])
+        .unwrap();
+    for table in [
+        "crew_background_runs",
+        "crew_background_daily",
+        "crew_watch_state",
+        "crew_watch_changes",
+    ] {
+        let left: u32 = store
+            .reader()
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(left, 0, "{table}");
+    }
+}

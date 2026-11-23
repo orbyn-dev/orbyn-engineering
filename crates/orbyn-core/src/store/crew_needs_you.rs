@@ -1,4 +1,4 @@
-//! The Crew "needs you" inbox at rest (migration 77): the person's dismissals, and the small reads the inbox joins.
+//! The Crew "needs you" inbox at rest (migration 78): the person's dismissals, and the small reads the inbox joins.
 //!
 //! A dismissal is a device-local choice, never a change to what it hides: the row keeps only the kind, the id and the item's
 //! `since`, so a later wait of the same kind and id is a new item and shows again. The table holds no reason, no task content

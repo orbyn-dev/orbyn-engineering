@@ -67,6 +67,7 @@ export const preferenceCatalog: Record<string, JsonValue> = {
   disabled_engines: [],
   provider_instances: [],
   crew_turn_budget: 0,
+  crew_min_free_gb: 5,
   claude_engine_path: "sdk",
 };
 

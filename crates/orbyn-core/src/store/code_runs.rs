@@ -83,6 +83,8 @@ pub(crate) struct CodeRunRow {
     pub calls: u32,
     pub script_head: String,
     pub waited_ms: Option<u64>,
+    /// The `kind` of the stored error, when the run has one.
+    pub error_kind: Option<String>,
 }
 
 /// The first `max` bytes of `text`, cut on a character boundary.
@@ -421,7 +423,8 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT r.run_id, r.status, r.started_at, r.ended_at,
                     (SELECT COUNT(*) FROM code_run_calls c WHERE c.run_id = r.run_id), substr(r.script, 1, 120),
-                    r.waited_ms
+                    r.waited_ms,
+                    CASE WHEN json_valid(r.error) THEN json_extract(r.error, '$.kind') END
              FROM code_runs r WHERE r.thread_id = ?1 ORDER BY r.started_at DESC, r.run_id DESC LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![thread_id, limit], |row| {
@@ -435,6 +438,7 @@ impl Store {
                 waited_ms: row
                     .get::<_, Option<i64>>(6)?
                     .and_then(|n| u64::try_from(n).ok()),
+                error_kind: row.get::<_, Option<String>>(7)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)

@@ -46,8 +46,11 @@ wire! {
 /// One project's effective one-shot text model choice for an engine.
 pub struct TextGeneratorProject {
     pub project_id: String,
-    /// The model the project's effective map names for this engine, or null.
+    /// The model the project's effective map names for this engine, or null: the project's own entry, else the global one.
     pub chosen: Option<String>,
+    /// Whether the project's own map names this engine. False means `chosen` is inherited from all projects.
+    #[serde(default)]
+    pub own: bool,
     /// The model a one-shot call resolves to in the project, or null.
     pub resolved: Option<String>,
     /// Why `resolved` was picked, or null when nothing resolves.

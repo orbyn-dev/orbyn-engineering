@@ -333,6 +333,63 @@ async fn a_bad_request_is_refused_and_stores_nothing() {
     }
 }
 
+/// A watch is stored with its command and action, and a command the screen refuses comes back as the rule's sentence, never the
+/// command itself, at create and update.
+#[tokio::test]
+async fn a_watch_is_stored_and_a_refused_command_keeps_the_command_out_of_the_error() {
+    let app = serve("watch").await;
+    let mut body = app.body("Watch");
+    body["trigger"] = json!({
+        "kind": "watch", "command": "cargo test", "every_hours": 6, "on_failing": "needs_you"
+    });
+    let (status, crew) = app
+        .call("POST", "/api/crew/background/create", Some(body))
+        .await;
+    assert_eq!(status, 200, "{crew}");
+    assert_eq!(crew["trigger"]["kind"], "watch");
+    assert_eq!(crew["trigger"]["command"], "cargo test");
+    assert_eq!(crew["trigger"]["every_hours"], 6);
+    assert_eq!(crew["trigger"]["on_failing"], "needs_you");
+
+    let mut refused = app.body("Force");
+    refused["trigger"] = json!({
+        "kind": "watch", "command": "git push --force origin main", "every_hours": 6, "on_failing": "template"
+    });
+    let (status, answer) = app
+        .call("POST", "/api/crew/background/create", Some(refused))
+        .await;
+    assert_eq!(status, 400, "{answer}");
+    assert_eq!(answer["code"], "invalid_input");
+    assert_eq!(
+        answer["message"],
+        "That command is not allowed: force-push, history rewrite or any push to main."
+    );
+    assert!(!answer.to_string().contains("origin main"));
+
+    let id = crew["id"].as_str().unwrap();
+    let (status, answer) = app
+        .call(
+            "POST",
+            &format!("/api/crew/background/{id}/update"),
+            Some(json!({
+                "trigger": { "kind": "watch", "command": "echo \"unclosed", "every_hours": 6, "on_failing": "needs_you" }
+            })),
+        )
+        .await;
+    assert_eq!(status, 400, "{answer}");
+    assert_eq!(
+        answer["message"],
+        "That command is empty or has an open quote."
+    );
+    assert!(!answer.to_string().contains("unclosed"));
+    let (_, stored) = app
+        .call("GET", &format!("/api/crew/background/{id}"), None)
+        .await;
+    assert_eq!(stored["trigger"]["command"], "cargo test");
+    let (_, listed) = app.call("GET", "/api/crew/background", None).await;
+    assert_eq!(listed["total"], 1, "the refusals stored nothing");
+}
+
 /// Run now starts one run by hand: the route hands the core's own refusal and plain reason back, and every refusal leaves no
 /// run behind.
 #[tokio::test]
@@ -458,9 +515,9 @@ fn an_agent_is_refused_every_background_change_by_path() {
 }
 
 /// A crew started by hand and stopped at its budget: one run waits for the person.
-fn waiting_run(app: &Served) -> (String, String) {
+async fn waiting_run(app: &Served) -> (String, String) {
     let body: wire::BackgroundCrewCreate = serde_json::from_value(app.body("Settled")).unwrap();
-    let crew = app.core.background_create(&body).unwrap();
+    let crew = app.core.background_create(&body).await.unwrap();
     app.core.background_set_enabled(&crew.id, true).unwrap();
     let run = app.core.crew_background_start_run(&crew.id).unwrap();
     let waiting = app.core.crew_background_spend(&run.id, 8, 0).unwrap();
@@ -473,7 +530,7 @@ fn waiting_run(app: &Served) -> (String, String) {
 #[tokio::test]
 async fn a_person_acknowledges_a_waiting_review_and_the_crew_may_run_again() {
     let app = serve("acknowledge").await;
-    let (crew_id, run_id) = waiting_run(&app);
+    let (crew_id, run_id) = waiting_run(&app).await;
     let crew_path = format!("/api/crew/background/{crew_id}");
     // Unacknowledged: the crew counts it and Review lists it.
     let (_, crew) = app.call("GET", &crew_path, None).await;
@@ -544,7 +601,7 @@ async fn acknowledging_a_run_that_is_not_waiting_is_refused_plainly() {
     assert_eq!((status, &body["code"]), (404, &json!("not_found")));
 
     let body: wire::BackgroundCrewCreate = serde_json::from_value(app.body("Running")).unwrap();
-    let crew = app.core.background_create(&body).unwrap();
+    let crew = app.core.background_create(&body).await.unwrap();
     app.core.background_set_enabled(&crew.id, true).unwrap();
     let run = app.core.crew_background_start_run(&crew.id).unwrap();
     let path = format!("/api/crew/background/runs/{}/acknowledge", run.id);
@@ -579,7 +636,7 @@ async fn acknowledging_a_run_that_is_not_waiting_is_refused_plainly() {
 #[tokio::test]
 async fn acknowledging_needs_the_person_key_and_changes_nothing_without_it() {
     let app = serve_keyed("acknowledge-key").await;
-    let (crew_id, run_id) = waiting_run(&app);
+    let (crew_id, run_id) = waiting_run(&app).await;
     let path = format!("/api/crew/background/runs/{run_id}/acknowledge");
     let (status, _) = app.call_as("POST", &path, None, None, None).await;
     assert_eq!(status, 401, "the service token comes first");

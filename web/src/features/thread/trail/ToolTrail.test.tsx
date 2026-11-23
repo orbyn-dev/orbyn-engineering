@@ -315,6 +315,49 @@ describe("the trail of tool calls", () => {
     expect(document.querySelector(".kvs")).toHaveTextContent("login redirect");
   });
 
+  it("draws a refused crew start as Start task, with Not started and the disk sentence from the numbers, never the answer's sentence", async () => {
+    const refusal = {
+      v: 0,
+      code: "disk_low",
+      message: "A different sentence that is not the disk one.",
+      free_bytes: 3_400_000_000,
+      floor_gb: 5,
+    };
+    render(
+      <Trail
+        items={[
+          make(
+            "mcp__orbyn_engineering__crew_start",
+            { brief: { outcome: "Rename returnTo to next in the session code" }, answer_key: {} },
+            { result: JSON.stringify(refusal), outcome: "failure" },
+          ),
+        ]}
+      />,
+    );
+    const row = rows()[0]!;
+    expect(row).toHaveTextContent(/Start task:\s*Rename returnTo to next in the session code/);
+    expect(row).toHaveTextContent("Not started");
+    await userEvent.click(row);
+    expect(screen.getByText("Not started: 3.1 GB free, Crew needs 5 GB. Free space and try again.")).toBeVisible();
+    expect(screen.queryByText(/A different sentence/)).toBeNull();
+  });
+
+  it("still writes the disk sentence when a refused crew start's own message is empty", async () => {
+    render(
+      <Trail
+        items={[
+          make(
+            "mcp__orbyn_engineering__crew_start",
+            { brief: { outcome: "Use next in the auth redirect" }, answer_key: {} },
+            { result: JSON.stringify({ v: 0, code: "disk_low", message: "", free_bytes: 640 * 1024 * 1024, floor_gb: 5 }), outcome: "failure" },
+          ),
+        ]}
+      />,
+    );
+    await userEvent.click(rows()[0]!);
+    expect(screen.getByText("Not started: 640 MB free, Crew needs 5 GB. Free space and try again.")).toBeVisible();
+  });
+
   it("shows a subagent's task, falling back to its prompt, and its result", async () => {
     render(<Trail items={[make("Task", { subagent_type: "Explore", description: "", prompt: "Find every reader" }, { result: "4 files" })]} />);
     await userEvent.click(rows()[0]!);

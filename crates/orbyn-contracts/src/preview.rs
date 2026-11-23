@@ -204,6 +204,12 @@ pub struct CreateBrowserProfile {
 }
 
 wire! {
+pub struct RenameBrowserProfile {
+    pub name: String,
+}
+}
+
+wire! {
 pub struct StepPreview {
     /// True goes back; false goes forward.
     pub back: bool,

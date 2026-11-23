@@ -13,8 +13,10 @@
 use orbyn_contracts as wire;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
+use std::path::Path;
 use std::sync::Arc;
 
+use super::autopilot::Screened;
 use super::{Page, redact, valid_id, wire_name};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -24,6 +26,8 @@ use crate::store::{BackgroundRow, BackgroundRunRow, NewBackground, RunEnd};
 pub const NAME_MAX: usize = 80;
 /// The longest text of a trigger setting, in characters.
 pub const SETTING_MAX: usize = 100;
+/// The longest command a watch may run, in characters.
+pub const WATCH_COMMAND_MAX: usize = 500;
 /// The widest gap of a schedule, in hours: 30 days.
 pub const EVERY_HOURS_MAX: u32 = 720;
 /// The largest budget of turns and of minutes a run may be given.
@@ -86,6 +90,55 @@ pub(super) fn text(label: &str, value: &str, max: usize) -> Result<String> {
     Ok(redacted)
 }
 
+/// The sentence an HTTP error carries for a watch command the screen refused. The screen only ever returns one of these ids, and
+/// the sentence names the rule without ever repeating the command; N1 to N10 keep the always-denied list's own short descriptions.
+const WATCH_REFUSALS: [(&str, &str); 12] = [
+    (
+        "N1",
+        "That command is not allowed: changing account, device or sign-in state.",
+    ),
+    (
+        "N2",
+        "That command is not allowed: reading or sending secrets and credentials.",
+    ),
+    (
+        "N3",
+        "That command is not allowed: network access to a host the repository has not allowed.",
+    ),
+    (
+        "N4",
+        "That command is not allowed: writing or deleting outside the worktree.",
+    ),
+    (
+        "N5",
+        "That command is not allowed: force-push, history rewrite or any push to main.",
+    ),
+    (
+        "N6",
+        "That command is not allowed: changing branch protection, permissions or settings.",
+    ),
+    (
+        "N7",
+        "That command is not allowed: editing answer keys, check files or .orbyn/crew.json.",
+    ),
+    ("N8", "That command is not allowed: production deploys."),
+    (
+        "N9",
+        "That command is not allowed: publishing or messaging outside the repository.",
+    ),
+    ("N10", "That command is not allowed: payments."),
+    ("blast", "That command could change too much at once."),
+    ("unreadable", "That command is empty or has an open quote."),
+];
+
+fn watch_refusal(rule: &str) -> String {
+    WATCH_REFUSALS
+        .iter()
+        .find(|(id, _)| *id == rule)
+        .map(|(_, sentence)| (*sentence).to_owned())
+        .unwrap_or_else(|| format!("That command is not allowed: {rule}."))
+}
+
 /// Which settings each trigger takes, and which it needs.
 fn allowed(
     kind: wire::BackgroundTriggerKind,
@@ -96,6 +149,10 @@ fn allowed(
         IssueLabel => (&["label"], &["label"]),
         Schedule => (&["every_hours"], &["every_hours"]),
         DependencyUpdate => (&["ecosystem"], &[]),
+        Watch => (
+            &["command", "every_hours", "on_failing"],
+            &["command", "every_hours", "on_failing"],
+        ),
     }
 }
 
@@ -107,14 +164,20 @@ fn trigger(trigger: &wire::BackgroundTrigger) -> Result<(String, Value)> {
         ("workflow", trigger.workflow.as_deref()),
         ("label", trigger.label.as_deref()),
         ("ecosystem", trigger.ecosystem.as_deref()),
+        ("command", trigger.command.as_deref()),
     ];
     for (name, value) in set {
         if let Some(value) = value {
-            settings.insert(
-                name.to_owned(),
-                Value::String(text(name, value, SETTING_MAX)?),
-            );
+            let max = if name == "command" {
+                WATCH_COMMAND_MAX
+            } else {
+                SETTING_MAX
+            };
+            settings.insert(name.to_owned(), Value::String(text(name, value, max)?));
         }
+    }
+    if let Some(action) = trigger.on_failing {
+        settings.insert("on_failing".into(), Value::String(wire_name(&action)));
     }
     if let Some(hours) = trigger.every_hours {
         if !(1..=EVERY_HOURS_MAX).contains(&hours) {
@@ -155,6 +218,11 @@ fn trigger_wire(kind: &str, settings: &Value) -> Result<wire::BackgroundTrigger>
             .as_u64()
             .and_then(|n| u32::try_from(n).ok()),
         ecosystem: get("ecosystem"),
+        command: get("command"),
+        on_failing: settings["on_failing"]
+            .as_str()
+            .map(parse_wire)
+            .transpose()?,
     })
 }
 
@@ -189,6 +257,18 @@ fn next_offset(page: Page, total: u32) -> Option<u32> {
 }
 
 impl Core {
+    /// Screens a watch's stored command the way the gate screens a command before it starts: the always-denied list (N1 to N10) and
+    /// the blast-radius guard. The refusal names the rule and never the command, and a command the screen cannot read is refused.
+    async fn screen_watch_command(&self, worktree: &str, command: &str) -> Result<()> {
+        if let Screened::Refused(rule) = self
+            .crew_screen_command(Path::new(worktree), None, &[], command)
+            .await
+        {
+            return Err(CoreError::Invalid(watch_refusal(rule)));
+        }
+        Ok(())
+    }
+
     fn background_wire(&self, crew: BackgroundRow) -> Result<wire::BackgroundCrew> {
         let (newest, waiting) = self.store.background_standing(&crew.id)?;
         // `idle`: nothing is running, nothing waits for the person, and the newest run did not stop for a reason that still needs them.
@@ -263,8 +343,9 @@ impl Core {
         self.background_wire(self.background_row(id)?)
     }
 
-    /// Creates a background crew, off. The project must be a live project; every bound is checked here and again by the table.
-    pub fn background_create(
+    /// Creates a background crew, off. The project must be a live project; every bound is checked here and again by the table. A
+    /// watch's command is screened here, before anything is stored.
+    pub async fn background_create(
         &self,
         create: &wire::BackgroundCrewCreate,
     ) -> Result<wire::BackgroundCrew> {
@@ -298,7 +379,14 @@ impl Core {
                 "utc_offset_minutes is -{OFFSET_MINUTES_MAX} to {OFFSET_MINUTES_MAX}"
             )));
         }
-        self.store.project(&create.project_id)?;
+        let project = self.store.project(&create.project_id)?;
+        if kind == "watch" {
+            self.screen_watch_command(
+                &project.path,
+                settings["command"].as_str().unwrap_or_default(),
+            )
+            .await?;
+        }
         let row = self.store.create_background_crew(
             &NewBackground {
                 project_id: &create.project_id,
@@ -317,14 +405,15 @@ impl Core {
         self.background_wire(row)
     }
 
-    /// Changes a crew's name and, or, trigger. The project, template and budget are fixed at creation.
-    pub fn background_update(
+    /// Changes a crew's name and, or, trigger. The project, template and budget are fixed at creation. A watch's command is screened
+    /// here too, before anything is stored.
+    pub async fn background_update(
         &self,
         id: &str,
         update: &wire::BackgroundCrewUpdate,
     ) -> Result<wire::BackgroundCrew> {
         self.crew_preview_only()?;
-        self.background_row(id)?;
+        let current = self.background_row(id)?;
         if update.name.is_none() && update.trigger.is_none() {
             return Err(CoreError::Invalid(
                 "send a name or a trigger to change".into(),
@@ -336,6 +425,16 @@ impl Core {
             .map(|name| text("name", name, NAME_MAX))
             .transpose()?;
         let trigger = update.trigger.as_ref().map(trigger).transpose()?;
+        if let Some((kind, settings)) = &trigger
+            && kind.as_str() == "watch"
+        {
+            let project = self.store.project(&current.project_id)?;
+            self.screen_watch_command(
+                &project.path,
+                settings["command"].as_str().unwrap_or_default(),
+            )
+            .await?;
+        }
         let row = self.store.update_background_crew(
             id,
             name.as_deref(),

@@ -6,9 +6,13 @@ import type { TextModelReason } from "./TextModelReason";
  */
 export type TextGeneratorProject = { project_id: string, 
 /**
- * The model the project's effective map names for this engine, or null.
+ * The model the project's effective map names for this engine, or null: the project's own entry, else the global one.
  */
 chosen: string | null, 
+/**
+ * Whether the project's own map names this engine. False means `chosen` is inherited from all projects.
+ */
+own: boolean, 
 /**
  * The model a one-shot call resolves to in the project, or null.
  */

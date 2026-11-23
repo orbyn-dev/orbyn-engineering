@@ -265,6 +265,7 @@ impl Core {
                 calls: row.calls,
                 script_head: Some(row.script_head),
                 waited_ms: row.waited_ms,
+                error_kind: row.error_kind,
             })
             .collect();
         Ok(CodeRunList { runs })

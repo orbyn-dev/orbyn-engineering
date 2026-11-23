@@ -47,8 +47,18 @@ describe("routes", () => {
     { name: "settings", section: "crew", crewPage: "backtest" },
     { name: "settings", section: "crew", crewPage: "estimate" },
     { name: "settings", section: "crew", crewPage: "report", id: "run-4n" },
+    { name: "settings", section: "crew", crewPage: "lessons", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "lesson", repo: "p/app", id: "les/1" },
+    { name: "settings", section: "crew", crewPage: "lesson-add", repo: "p/app" },
   ])("round-trips %j", (route) => {
     expect(parseRoute(routeHref(route))).toEqual(route);
+  });
+
+  it("puts the lessons list, one lesson and the add page at their own addresses", () => {
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "lessons", repo: "p/app" })).toBe("#/settings/crew/lessons?repo=p%2Fapp");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "lesson", repo: "p/app", id: "les/1" })).toBe("#/settings/crew/lessons/lesson?repo=p%2Fapp&id=les%2F1");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "lesson-add", repo: "p/app" })).toBe("#/settings/crew/lessons/add?repo=p%2Fapp");
+    expect(parseRoute("#/settings/crew/lessons/nope")).toEqual({ name: "settings", section: "crew", crewPage: "lessons" });
   });
 
   it("keeps the Crew entry pages at their own addresses and an unknown sub-page at its parent", () => {

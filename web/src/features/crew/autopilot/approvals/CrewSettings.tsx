@@ -15,8 +15,13 @@ import { ProductionTargets } from "./ProductionTargets";
 import { ProfilesSettings } from "../../../profiles";
 import { EngineTiers } from "./EngineTiers";
 import { WorkerProvider } from "./WorkerProvider";
+import { CrewDiskFloor } from "./CrewDiskFloor";
+import { LessonsEntry } from "../../lessons/LessonsEntry";
+import { LiveLessons } from "../../lessons/LiveLessons";
+import { LessonAddPage } from "../../lessons/LessonAddPage";
+import { LessonCardPage } from "../../lessons/LessonCardPage";
 
-/** Settings › Crew: Autopilot, the production-linked targets the guard watches, then the path classes of the repo. Autopilot by area, its thresholds, Review capacity (and its coverage map), the Dashboard, the escape log, the reviewer backtest and its estimate and report are pages of their own. */
+/** Settings › Crew: Autopilot, the production-linked targets the guard watches, then the path classes of the repo. Autopilot by area, its thresholds, Review capacity (and its coverage map), the Dashboard, the escape log, the lessons list, the reviewer backtest and its estimate and report are pages of their own. */
 export function CrewSettingsSection() {
   const route = useRoute();
   const page = route.name === "settings" ? route.crewPage : undefined;
@@ -50,6 +55,12 @@ export function CrewSettingsSection() {
           <LiveBacktest view="estimate" />
         ) : page === "report" ? (
           <LiveBacktest view="report" id={id} />
+        ) : page === "lessons" ? (
+          <LiveLessons view="list" initial={repo} />
+        ) : page === "lesson" ? (
+          <LessonCardPage id={id} repo={repo} />
+        ) : page === "lesson-add" ? (
+          <LessonAddPage repo={repo} />
         ) : (
           <>
             <ProfilesSettings />
@@ -58,8 +69,10 @@ export function CrewSettingsSection() {
             <CapacityEntry />
             <DashboardEntry />
             <EscapesEntry />
+            <LessonsEntry />
             <OracleEntry />
             <BacktestEntry />
+            <CrewDiskFloor />
             <WorkerProvider />
             <EngineTiers />
             <ProductionTargets />

@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use orbyn_contracts::{CrewPathPattern, LeaseMode};
+use orbyn_contracts::{CheckKind, CheckOutcome, CrewObject, CrewPathPattern, LeaseMode};
 use serde_json::{Value, json};
 
 use super::harness::{KEY_MARKER, Turn, World, bind, brief, key, report, world};
@@ -600,4 +600,242 @@ async fn a_task_whose_first_prompt_is_queued_counts_a_turn() {
     assert!(error, "a queued start was counted as free: {refusal}");
     assert_eq!(refusal["code"], "not_authorized");
     assert_eq!(count(&w, "crew_tasks"), 1);
+}
+
+/// Writes the repository's rules file and commits it, so it is part of the commit a task starts from.
+fn crew_json(w: &World, text: &str) {
+    std::fs::create_dir_all(w.repo.join(".orbyn")).unwrap();
+    std::fs::write(w.repo.join(".orbyn/crew.json"), text).unwrap();
+    crate::testing::run_git(&w.repo, &["add", "-f", ".orbyn/crew.json"]);
+    super::review_support::commit_all(&w.repo, "repository checks");
+}
+
+/// The key a task was started with, as the store holds it.
+fn stored_key(w: &World, task: &str) -> orbyn_contracts::AnswerKey {
+    w.core.store.crew_answer_key(task).unwrap().unwrap()
+}
+
+/// Issue #795: every task that writes inherits the repository's own checks at the commit it starts from, and
+/// the task runs them, so a lead does not have to declare one and a worker cannot lower the bar.
+#[tokio::test]
+async fn a_task_that_writes_inherits_the_repositorys_checks_at_its_start() {
+    let w = world(
+        true,
+        Arc::new(|_, root| {
+            std::fs::write(root.join("src/lib.txt"), "fn parse_duration() {}\n").unwrap();
+            Turn::Report(report("done"))
+        }),
+    )
+    .await;
+    crew_json(&w, r#"{"checks":[{"run":"echo repository-check"}]}"#);
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let stored = stored_key(&w, &id);
+    let inherited: Vec<_> = stored
+        .checks
+        .iter()
+        .filter(|check| matches!(check.kind, CheckKind::RepoRequired))
+        .collect();
+    assert_eq!(inherited.len(), 1, "{:?}", stored.checks);
+    assert_eq!(inherited[0].id.as_str(), "chk-repo-required");
+    assert_eq!(
+        inherited[0].params["name"], "inherited",
+        "the inherited check is not marked as inherited"
+    );
+    // Nothing the lead declared was dropped, and the key's id is the hash of what now runs.
+    assert_eq!(stored.checks.len(), 4, "{:?}", stored.checks);
+    assert_eq!(
+        stored.id,
+        CrewObject::AnswerKey(stored.clone()).computed_id().unwrap()
+    );
+    // The inherited check runs in the task and records its Evidence.
+    w.until_state(&id, "passed").await;
+    let evidence = w.core.store.crew_evidence(&id).unwrap();
+    let ran = evidence
+        .iter()
+        .find(|one| one.check.as_str() == "chk-repo-required")
+        .unwrap_or_else(|| panic!("the inherited check did not run: {evidence:?}"));
+    assert_eq!(ran.outcome, CheckOutcome::Pass);
+    assert_eq!(ran.command.as_str(), "repo_required: chk-repo-required");
+    assert!(
+        ran.excerpt.contains("echo repository-check"),
+        "the log does not show the repository's own check: {}",
+        ran.excerpt
+    );
+    w.core.shutdown().await;
+}
+
+/// Issue #795: a repository that declares no check, or no rules file at all, leaves the key as the lead sent it.
+#[tokio::test]
+async fn a_repository_that_declares_no_check_inherits_nothing() {
+    for rules in [None, Some(r#"{"checks":[]}"#)] {
+        let w = quiet().await;
+        if let Some(rules) = rules {
+            crew_json(&w, rules);
+        }
+        let (answer, error) = w.start(brief(json!({})), key()).await;
+        assert!(!error, "{answer}");
+        let id = answer["task"].as_str().unwrap().to_owned();
+        let stored = stored_key(&w, &id);
+        assert_eq!(stored.checks.len(), 3, "{rules:?}: {:?}", stored.checks);
+        assert!(
+            !stored
+                .checks
+                .iter()
+                .any(|check| matches!(check.kind, CheckKind::RepoRequired)),
+            "{rules:?}: an empty repository config added a check"
+        );
+        w.core.shutdown().await;
+    }
+}
+
+/// Issue #795: a key that already runs the repository's checks keeps its own check rather than gaining a second.
+#[tokio::test]
+async fn a_key_that_already_runs_the_repositorys_checks_gets_no_second_one() {
+    let w = quiet().await;
+    crew_json(&w, r#"{"checks":[{"run":"echo repository-check"}]}"#);
+    let mut declared = key();
+    declared["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-repo", "kind": "repo_required", "params": {},
+        "proves": "The repository's own checks pass.",
+    }));
+    let (answer, error) = w.start(brief(json!({})), declared).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let stored = stored_key(&w, &id);
+    let repo_required: Vec<_> = stored
+        .checks
+        .iter()
+        .filter(|check| matches!(check.kind, CheckKind::RepoRequired))
+        .collect();
+    assert_eq!(repo_required.len(), 1, "{:?}", stored.checks);
+    assert_eq!(
+        repo_required[0].id.as_str(),
+        "chk-repo",
+        "the start replaced the lead's own check"
+    );
+    w.core.shutdown().await;
+}
+
+/// Issue #795: repository rules only add or tighten (docs/crew.md, "Rules"), so a check the brief declares
+/// stays beside the inherited one and is never removed to make room for it.
+#[tokio::test]
+async fn a_briefs_own_check_coexists_with_the_inherited_one() {
+    let w = quiet().await;
+    crew_json(&w, r#"{"checks":[{"run":"echo repository-check"}]}"#);
+    let mut declared = key();
+    declared["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-same-line", "kind": "command",
+        "params": { "run": "echo repository-check" },
+        "proves": "The same line passes for the brief.",
+    }));
+    let (answer, error) = w.start(brief(json!({})), declared).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let stored = stored_key(&w, &id);
+    let ids: Vec<&str> = stored
+        .checks
+        .iter()
+        .map(|check| check.id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "chk-scope",
+            "chk-run",
+            "chk-probe",
+            "chk-same-line",
+            "chk-repo-required"
+        ],
+        "{ids:?}"
+    );
+    w.core.shutdown().await;
+}
+
+/// Issue #795: a review writes nothing, so it runs no repository check; the reviewed work's own key carries
+/// them. A key that already runs them needs no second one either.
+#[tokio::test]
+async fn a_review_task_inherits_no_repository_checks() {
+    use crate::crew::stamp::Stamper;
+    use crate::crew::start::needs_repo_checks;
+    use crate::crew::tool::stamp_now;
+    use orbyn_contracts::{CrewId, CrewMember, CrewToken};
+
+    let w = quiet().await;
+    let lead = w.core.store.thread(&w.lead).unwrap();
+    let stamper = Stamper {
+        crew_id: CrewId::new(lead.id.clone()).unwrap(),
+        engine: CrewToken::new("alpha").unwrap(),
+        member: CrewMember::new("lead-01").unwrap(),
+        now: stamp_now().unwrap(),
+    };
+    let writing = stamper.brief(&brief(json!({}))).unwrap();
+    let writing_key = stamper.answer_key(&key(), &writing.id).unwrap();
+    assert!(needs_repo_checks(&writing, &writing_key));
+    let review = stamper
+        .brief(&brief(
+            json!({ "kind": "review", "files": [], "allowed_effects": ["read_repo"] }),
+        ))
+        .unwrap();
+    let review_key = stamper.answer_key(&key(), &review.id).unwrap();
+    assert!(!needs_repo_checks(&review, &review_key));
+    let mut declared = key();
+    declared["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-repo", "kind": "repo_required", "params": {},
+        "proves": "The repository's own checks pass.",
+    }));
+    let declared_key = stamper.answer_key(&declared, &writing.id).unwrap();
+    assert!(!needs_repo_checks(&writing, &declared_key));
+    // A fix key's internal byte comparison has the same kind but runs no repository command: it does not count as coverage.
+    let mut fix = key();
+    fix["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-fix-touched", "kind": "repo_required", "params": { "name": "crew-fix-touched" },
+        "proves": "The fix touched what it said.",
+    }));
+    let fix_key = stamper.answer_key(&fix, &writing.id).unwrap();
+    assert!(needs_repo_checks(&writing, &fix_key));
+    w.core.shutdown().await;
+}
+
+/// Issue #795: a rules file that cannot be read refuses the start, rather than starting a task whose bar
+/// nobody can read (docs/crew.md: a broken rule file is never an empty rule set).
+#[tokio::test]
+async fn a_repository_check_file_that_cannot_be_read_refuses_the_start() {
+    let w = quiet().await;
+    crew_json(&w, "{");
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(error, "{answer}");
+    assert_eq!(answer["code"], "invalid_object");
+    assert!(
+        answer["message"]
+            .as_str()
+            .unwrap()
+            .contains(".orbyn/crew.json"),
+        "{answer}"
+    );
+    assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
+    w.core.shutdown().await;
+}
+
+/// Issue #795: a check that declares the `when` this version does not read refuses the start, so a condition is
+/// never silently dropped and its check never runs unconditionally.
+#[tokio::test]
+async fn a_repository_that_declares_a_check_condition_refuses_the_start() {
+    let w = quiet().await;
+    crew_json(
+        &w,
+        r#"{"checks":[{"run":"echo repository-check","when":{"paths":["src/**"]}}]}"#,
+    );
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(error, "{answer}");
+    assert!(
+        answer["message"]
+            .as_str()
+            .unwrap()
+            .contains("checks[].when"),
+        "{answer}"
+    );
+    assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
+    w.core.shutdown().await;
 }

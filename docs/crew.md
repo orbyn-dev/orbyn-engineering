@@ -380,11 +380,18 @@ retries with the reason. The same failure twice means one change of approach, an
       Symlinks and other non-regular changed files hold no bytes of the change and are not scanned.
     - `repo_required`: runs the repository's own checks from `.orbyn/crew.json` (`checks[].run`), in order, each
       passing on exit 0. The file is read at the commit the task started from, as the merge queue reads it, so a
-      worker's edit to that file cannot lower the bar. The commands still run in the checkout the worker left, so the scripts
+      worker's edit to that file cannot lower the bar. Every task that writes inherits one such check at its start
+      (`chk-repo-required`, named `inherited` in the log), so a lead need not declare it and a worker cannot remove
+      it: a key that already runs the repository's checks keeps its own, a review task runs none because it writes
+      nothing, a repository that declares no check adds none (a checkout with no commit has nothing declared), and a
+      file that cannot be read refuses the start. The
+      commands still run in the checkout the worker left, so the scripts
       and tests they call are guarded only by the key's `protected_paths`. A task with no recorded starting commit is an
       error. `name` and `note` are labels for the log. No declared
       checks is a pass with that fact in the log; a failing check is a finding that names the check, and a check
-      that cannot run is an error. `when` is not read, as the merge queue does not read it.
+      that cannot run is an error. `when` is not implemented: a check that declares one is refused with that reason,
+      by the verifier and by the merge queue alike, so an unread condition can never pass for a condition that was
+      met.
     - `http_probe`: `{url, expect_status}`. `url` is an `http://` URL on `127.0.0.1`, `localhost` or
       `[::1]` and `expect_status` is 100 to 599, so the probe never leaves the machine. One GET: the
       expected status is a pass, another status is a finding that names the answer observed, and a
@@ -600,7 +607,7 @@ stay in the [review README](../crates/orbyn-core/src/crew/review/README.md#decis
   - Agents never remove lanes.
 - **Rules:**
   - `.orbyn/crew.json` in the repository (`required`, `lanes` with `when` and `locked`, `checks` with `run` and
-    `when`).
+    `when`; a check's `when` is refused until it is read, so it never passes unenforced).
   - Repository rules can only add or tighten.
   - Personal defaults live in Settings.
 - **Replay** keeps the full hash-chained event log per task. Large artifacts can be pruned after 30 days with their
@@ -1127,6 +1134,15 @@ the acknowledgement above. Known limits: removing a project leaves its crews (a 
 crews are per device; a template's prompt and checks are code-owned and defined only for the four templates a run can start (`background_start.rs`);
 any other template is refused.
 
+**Watches (slice A1):** a background crew's trigger may be `watch`: `{ "kind": "watch", "command": "...", "every_hours": 6,
+"on_failing": "needs_you" | "template" }`. `command` is 1 to 500 characters and follows the same text rules as every other trigger
+setting (no control or invisible characters, the locked redactor; a redaction that would pass 500 characters is refused). `every_hours`
+is 1 to 720, and `on_failing` is required. A project holds at most 10 watches, counted in the same transaction as the insert. The command
+is screened at create and update with the always-denied list (N1 to N10) and the blast-radius guard, with the project's folder as the
+worktree; a refusal names the rule in one fixed sentence and never repeats the command. `needs_you` stores the template and budgets as
+given (they must be in range, and no model run follows); `template` validates them like any other crew. The command is stored redacted.
+Nothing runs a watch yet: there is no listener, no command execution, no model call and no UI, and Run now refuses one.
+
 **As built (slice 4h, listeners, migration 59):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
 service starts behind the Preview flag **only when it sets an interval** (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60 s to 24 h; unset means no pass, not even at
 startup) and awaits on shutdown. Each pass fires what is due for the crews that are on (a crew that is off is not read from the forge and spends no event):
@@ -1181,7 +1197,7 @@ looked at between firings, never inside a start, and a run a crash leaves is set
 - **Every problem at once:** `crew::triggers::parse_and_validate` returns all of them, each naming the field and the shape it wants, in
   the form `crew_start` uses.
 - **Not wired to the stored crew:** this section is policy a later slice will read, not the record. The stored background crew above keeps
-  its own vocabulary (`ci_failure`, `issue_label`, `schedule`, `dependency_update`, with `every_hours`), and it stays the record of what a
+  its own vocabulary (`ci_failure`, `issue_label`, `schedule`, `dependency_update`, `watch`, with `every_hours`), and it stays the record of what a
   crew is; the file uses the names this work starts with (`ci_failed`, `schedule`, `manual`, with `every_minutes`). A later slice maps a
   file trigger to the stored crew when it starts one. Nothing here writes, starts or records anything.
   Only `ci_failed` and `schedule` have a stored-crew match (`ci_failure`, and `schedule` with `every_hours`). **Planned:** `manual`
