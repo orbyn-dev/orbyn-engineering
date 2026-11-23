@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useUi } from "../../../../product/state/ui";
 import { useWorkspace } from "../../../../product/state/workspace";
-import { forgetSkillAdded } from "./marks";
+import { forgetSkillAdded, takeSkillAdded } from "./marks";
 import { SkillProposalPage } from "./SkillProposalPage";
 import { SKILL_TEXT, bodyOf, project, proposal, stubFetch, writes, type Answer, type Call, type Write } from "./support";
 
@@ -37,6 +37,13 @@ describe("the proposed skill's review page", () => {
     const { container } = open();
     await waitFor(() => expect(calls.some(({ url }) => url.includes("/api/crew/skill-proposals?"))).toBe(true));
     await waitFor(() => expect(container).toBeEmptyDOMElement());
+  });
+
+  it("draws nothing when the address names a repository the person cannot see", async () => {
+    const { container } = render(<SkillProposalPage id="prop-redirect-checks" repo="p-elsewhere" />);
+    await waitFor(() => expect(calls.some(({ url }) => url.includes("/api/crew/preview"))).toBe(true));
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    expect(calls.some(({ url }) => url.includes("/api/crew/skill-proposals"))).toBe(false);
   });
 
   it("draws nothing for a proposal that is already answered", async () => {
@@ -93,24 +100,42 @@ describe("the proposed skill's review page", () => {
     await waitFor(() => expect(window.location.hash).toBe("#/settings/crew/lessons?repo=p-app"));
     expect(writes(calls, "POST")).toHaveLength(1);
     expect(bodyOf(writes(calls, "POST")[0]?.init)).toEqual({ text: `${SKILL_TEXT}\nKeep the check first.`, rev: 1 });
+    // The Lessons page says "Added to skills-local" once, from this mark: the skill's name and its lesson count.
+    expect(takeSkillAdded()).toEqual({ name: "redirect-checks", lessons: 3 });
   });
 
-  it("keeps the edited text and says the scan refused it, in the design's exact sentence", async () => {
-    answers.write = () => ({
-      status: 400,
-      body: { code: "secret_refused", message: "Not added: this looks like it holds a secret. Edit it and approve again." },
-    });
+  it("keeps the edited text and relays the service's own secret refusal, never a placeholder", async () => {
+    // Distinct words on purpose: if the page hardcodes a sentence, this test cannot pass.
+    const refused = "Not saved: a token was found on line 4. Edit it and save again.";
+    answers.write = () => ({ status: 400, body: { code: "secret_refused", message: refused } });
     const user = userEvent.setup();
     open();
     const field = await loaded();
     await user.type(field, "\n4. Use the staging token sk-live-xxxxxxxxxxxx.");
     await user.click(screen.getByRole("button", { name: "Approve" }));
     const refusal = await screen.findByRole("alert");
-    expect(refusal).toHaveTextContent("Not added: this looks like it holds a secret. Edit it and approve again.");
-    expect(screen.getByRole("textbox", { name: "Skill text" })).toHaveValue(`${SKILL_TEXT}\n4. Use the staging token sk-live-xxxxxxxxxxxx.`);
+    expect(refusal).toHaveTextContent(refused);
+    expect(refusal).not.toHaveTextContent("Not added:");
+    const box = screen.getByRole("textbox", { name: "Skill text" });
+    expect(box).toHaveValue(`${SKILL_TEXT}\n4. Use the staging token sk-live-xxxxxxxxxxxx.`);
+    expect(box).toHaveClass("cx-invalid");
     expect(window.location.hash).toBe("");
   });
 
+  it("offers no Approve for a proposal whose pattern lost a lesson, and says why", async () => {
+    answers.proposals = { status: 200, body: { proposals: [proposal({ can_approve: false })] } };
+    open();
+    const field = await loaded();
+    expect(field).not.toHaveAttribute("readonly");
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    const note = screen.getByText(/^Approve is off:/).parentElement as HTMLElement;
+    expect(note).toHaveTextContent(
+      "Approve is off: a lesson it was based on was deleted or turned off. You can still read the text or dismiss it.",
+    );
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(screen.queryByText(/Approve saves the skill in skills-local/)).toBeNull();
+    expect(writes(calls, "POST")).toHaveLength(0);
+  });
   it("keeps the text when the write was refused, and Try again sends it again", async () => {
     answers.write = () => ({
       status: 500,
@@ -123,6 +148,8 @@ describe("the proposed skill's review page", () => {
     expect(await screen.findByText("Can’t add the skill")).toBeInTheDocument();
     expect(screen.getByText(/skills-local refused the write: redirect-checks could not be created \(permission denied\)\./)).toBeInTheDocument();
     expect(screen.getByText(/Nothing was added\. Your text is still here and the proposal is still open\./)).toBeInTheDocument();
+    expect(screen.getByText("Nothing was written. Approve or Try again sends the same text once more.")).toBeInTheDocument();
+    expect(screen.queryByText(/Approve saves the skill in skills-local/)).toBeNull();
     expect(screen.getByRole("textbox", { name: "Skill text" })).toHaveValue(SKILL_TEXT);
     answers.write = () => ({ status: 200, body: proposal({ state: "approved", skill: { name: "redirect-checks" }, rev: 2 }) });
     await user.click(screen.getByRole("button", { name: "Try again" }));

@@ -85,8 +85,11 @@ export function createSkillProposalsMock(options: { onApproved?: (name: string, 
     if (!one.can_approve) return bad("invalid", "This proposal can no longer be approved.");
     const text = typeof write.text === "string" ? write.text : "";
     if (!text.trim() || text.length > 600) return bad("invalid", "The skill text is 1 to 600 characters.");
+    // The contract fixes the scan sentence exactly (docs/crew-lessons.md, "Errors"): the screen relays it, never its own.
     if (secret && text.includes("sk-"))
-      return bad("secret_refused", "Not added: this looks like it holds a secret. Edit it and approve again.");
+      return bad("secret_refused", "Not saved: this looks like it holds a secret. Edit it and save again.");
+    // Sample-only failure kind: the contract defines 409 stale/not_open, 400 invalid/secret_refused and 403 desktop_required,
+    // and a skills-local write can also fail for reasons of its own, which this stands in for.
     if (unwritable)
       return bad("unwritable", `skills-local refused the write: ${nameOf(one)} could not be created (permission denied).`, 500);
     one.text = text;

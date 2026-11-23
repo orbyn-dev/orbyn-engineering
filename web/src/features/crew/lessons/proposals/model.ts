@@ -21,7 +21,7 @@ export const ADDED_EMPTY_LINE =
 
 /** The sentence under the Proposed card on the Skills page. */
 export const PROPOSED_GROUP_NOTE =
-  "Crew proposed this from 3 lessons on this device. Nothing is added until you review and approve it; Review opens the same page as on Lessons. Once added it is listed under “Added from lessons” as Personal. Available to engines through Orbyn's skills tools. Applies to all your projects. Added to the Default selection.";
+  "Crew proposed this from 3 or more active lessons on this device. Nothing is added until you review and approve it; Review opens the same page as on Lessons. Once added it is listed under “Added from lessons” as Personal. Available to engines through Orbyn's skills tools. Applies to all your projects. Added to the Default selection.";
 
 /** The card's three lines under the text preview. */
 export const NOTHING_ADDED =
@@ -42,21 +42,18 @@ export const REVIEW_NOTE_BUSY =
 export const REVIEW_FOOT =
   "Approve saves the skill in skills-local on this device and lists it on the Skills page as Personal. Available to engines through Orbyn's skills tools. Applies to all your projects. Added to the Default selection. Cancel leaves the proposal where it is.";
 export const APPROVING_BANNER = "Adding the skill. It is not listed or used until the write has finished.";
-
-/** The scan's refusal for a skill text, as the design states it. */
-export const SKILL_SECRET_REFUSED = "Not added: this looks like it holds a secret. Edit it and approve again.";
+/** The review page while the proposal can no longer be approved: reading stays, Approve is off. */
+export const STALE_APPROVE_OFF =
+  "Approve is off: a lesson it was based on was deleted or turned off. You can still read the text or dismiss it.";
+/** The footer once a write failed: the design's sentence, because a second click sends the same text again. */
+export const REFUSED_FOOT = "Nothing was written. Approve or Try again sends the same text once more.";
 
 /** The dismiss confirm's questions. */
-export const DISMISS_NOTE = "Nothing was added to skills-local. The three lessons it was based on stay as they are.";
+export const DISMISS_NOTE = "Nothing was added to skills-local. The lessons it was based on stay as they are.";
 
 /** The toast after a dismissal. The design draws “Crew won’t propose this pattern again” and an Undo; the contract carries
  *  neither a mute nor an undo route, so the web says only what it did. */
 export const DISMISSED_TOAST = "Proposal dismissed.";
-
-/** What one lesson row under a proposal shows: its source chip's word and the day it was learned. */
-export function lessonDay(lesson: Lesson): string {
-  return moment(lesson.created_at);
-}
 
 /** A moment as the design draws it: "Sat 7 Nov, 16:31". */
 export function moment(iso: string): string {

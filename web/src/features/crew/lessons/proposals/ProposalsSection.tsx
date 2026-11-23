@@ -247,10 +247,12 @@ function ProposalCard({
 }) {
   const text = skillText(proposal.text);
   const title = text.name ?? "Proposed skill";
-  const sources = sourceLessons(proposal, lessons);
   const [shown, setShown] = useState(true);
   const count = proposal.lessons.length;
   const active = activeLessons(proposal, lessons);
+  // A proposal whose pattern lost a lesson draws only the lessons still active: the others are gone from this pattern.
+  const sources = sourceLessons(proposal, lessons).filter((one) => proposal.can_approve || one.state === "active");
+  const shownCount = proposal.can_approve ? count : active;
   const preview = previewOf(text.lines);
   return (
     <div className="cx-ppcard" role="region" aria-label={`Proposed skill ${title}`}>
@@ -283,7 +285,7 @@ function ProposalCard({
           <button type="button" className="cx-pptoggle" aria-expanded={shown} onClick={() => setShown((open) => !open)}>
             <Ic n="down" sm />
             <span>
-              {shown ? "Hide" : "Show"} the {lessonsWord(count)}
+              {shown ? "Hide" : "Show"} the {lessonsWord(shownCount)}
             </span>
           </button>
           {shown && sources.length > 0 ? (

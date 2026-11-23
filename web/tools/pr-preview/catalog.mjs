@@ -1040,12 +1040,11 @@ export const FRAMES = {
   "transcript-imported-thread": { route: "#/threads/t-imported", scenario: "transcript-imported" },
 
   /** Crew, skill proposals (Crew Designs v121, KC9) on the real routes and the mock's crew-proposals scenarios: the proposal
-   *  waiting on the Lessons page and its narrow window, nothing proposed, the pattern that lost a lesson, the approve and
-   *  dismiss confirms, the review page and its narrow window, the refused edit, the write in flight, the refused write, the
-   *  Lessons page after an approve, the Proposed and Added from lessons groups on the Skills page (with its narrow window and
-   *  the line while nothing is added), and the skill added from lessons on its own page. */
+   *  waiting on the Lessons page, nothing proposed, the pattern that lost a lesson, the approve and dismiss confirms, the
+   *  review page, the refused edit, the write in flight, the refused write, the
+   *  Lessons page after an approve, the Proposed and Added from lessons groups on the Skills page (and the line while nothing
+   *  is added), and the skill added from lessons on its own page. */
   "kc9-skill-proposal-card": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals" },
-  "kc9-skill-proposal-card-narrow": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals", width: 640 },
   "kc9-skill-proposal-none": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals-none" },
   "kc9-skill-proposal-stale": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals-stale" },
   "kc9-skill-proposal-confirm": {
@@ -1067,11 +1066,6 @@ export const FRAMES = {
   "kc9-skill-proposal-review": {
     route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
     scenario: "crew-proposals",
-  },
-  "kc9-skill-proposal-review-narrow": {
-    route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
-    scenario: "crew-proposals",
-    width: 640,
   },
   "kc9-skill-proposal-review-refused": {
     route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
@@ -1096,7 +1090,6 @@ export const FRAMES = {
   "kc9-skill-proposal-skills-item": { route: "#/skills", scenario: "crew-proposals" },
   "kc9-skill-proposal-skill-added": { route: "#/skills/redirect-checks", scenario: "crew-proposals-approved" },
   "kc9-skills-added-group": { route: "#/skills", scenario: "crew-proposals-approved" },
-  "kc9-skills-added-group-narrow": { route: "#/skills", scenario: "crew-proposals-approved", width: 640 },
   "kc9-skills-added-group-empty": { route: "#/skills", scenario: "crew" },
 
 };

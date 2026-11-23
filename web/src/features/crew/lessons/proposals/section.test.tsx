@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useUi } from "../../../../product/state/ui";
+import { forgetSkillAdded, markSkillAdded, takeSkillAdded } from "./marks";
 import { moment } from "./model";
 import { ProposalsSection } from "./ProposalsSection";
 import {
@@ -27,6 +28,7 @@ beforeEach(() => {
   calls = [];
   answers = { proposals: { status: 200, body: { proposals: [proposal()] } } };
   stubFetch(answers, calls);
+  forgetSkillAdded();
   window.location.hash = "";
 });
 
@@ -103,8 +105,26 @@ describe("the Skill proposals section of the Lessons page", () => {
     expect(within(region).getByRole("button", { name: "Approve" })).toBeDisabled();
     expect(within(region).getByRole("button", { name: "Review" })).toBeEnabled();
     expect(within(region).getByRole("button", { name: "Dismiss" })).toBeEnabled();
+    // Only the two lessons still active are listed: the turned-off one is not part of the pattern any more.
+    expect(within(region).getByRole("button", { name: "Hide the 2 lessons" })).toBeInTheDocument();
+    expect(within(region).getAllByRole("button", { name: "Open this lesson" })).toHaveLength(2);
+    expect(within(region).queryByText(/a login link kept a returnTo from another host/)).toBeNull();
   });
 
+  it("names a lesson's source as the design draws it: a confirmed escape", async () => {
+    answers.lessons = {
+      status: 200,
+      body: lessons({
+        lessons: lessons().lessons.map((one) =>
+          one.id === "les-navcleanup" ? { ...one, source: "escape" } : one,
+        ),
+      }),
+    };
+    open();
+    const region = await card();
+    expect(within(region).getByText("Confirmed escape")).toBeInTheDocument();
+    expect(within(region).queryByText("Escape")).toBeNull();
+  });
   it("hides and shows the lessons it is based on", async () => {
     const user = userEvent.setup();
     open();
@@ -115,6 +135,16 @@ describe("the Skill proposals section of the Lessons page", () => {
     expect(within(region).queryAllByRole("button", { name: "Open this lesson" })).toHaveLength(0);
   });
 
+  it("draws the added line the review page hands over, once", async () => {
+    answers.proposals = { status: 200, body: { proposals: [proposal({ state: "approved", skill: { name: "redirect-checks" }, rev: 2 })] } };
+    markSkillAdded("redirect-checks", 3);
+    open();
+    expect(await screen.findByText("Added to skills-local.")).toBeInTheDocument();
+    expect(screen.getByText("redirect-checks", { selector: "a" })).toHaveAttribute("href", "#/skills/redirect-checks");
+    expect(screen.getByText(/The 3 lessons it came from stay here and stop going into briefs while the skill exists\./)).toBeInTheDocument();
+    // The line is drawn once: the mark is consumed, and a second mount does not draw it again.
+    expect(takeSkillAdded()).toBeNull();
+  });
   it("approves through its confirm, sending the text as proposed once, and says the skill was added", async () => {
     answers.write = ({ method, url }) => {
       if (method === "POST" && url === "/api/crew/skill-proposals/prop-redirect-checks/approve") {

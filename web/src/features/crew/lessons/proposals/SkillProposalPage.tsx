@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
-import { NETWORK_ERROR, type ApiFailure } from "../../../../api/client";
+import { NETWORK_ERROR } from "../../../../api/client";
 import { toFailure } from "../../../../lib/useAsync";
 import { navigate, routeHref } from "../../../../product/state/route";
 import { useVisibleProjects, useWorkspace } from "../../../../product/state/workspace";
@@ -14,12 +14,13 @@ import {
   ALL_PROJECTS,
   APPROVING_BANNER,
   DEFAULT_SELECTION_NOTE,
+  REFUSED_FOOT,
   REVIEW_BANNER,
   REVIEW_FOOT,
   REVIEW_NOTE,
   REVIEW_NOTE_BUSY,
   SKILLS_LOCAL,
-  SKILL_SECRET_REFUSED,
+  STALE_APPROVE_OFF,
   lessonsWord,
   proposalName,
   skillText,
@@ -70,7 +71,7 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
   const proposals = useProposals(repo);
   const [text, setText] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<{ secret: boolean; detail: string } | null>(null);
+  const [failure, setFailure] = useState<{ secret: boolean; message: string; code: string } | null>(null);
   const proposal = proposals.status === "ready" ? proposals.list.proposals.find((one) => one.id === id && one.state === "open") : undefined;
   // The person's own words start from the text the read carried, once it has answered.
   useEffect(() => {
@@ -126,7 +127,7 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
         return;
       }
       setBusy(false);
-      setFailure({ secret: one.code === "secret_refused", detail: refusal(one) });
+      setFailure({ secret: one.code === "secret_refused", message: one.message, code: one.code });
     }
   };
   return (
@@ -134,13 +135,18 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
       <div className="cx-cwsheet" style={{ maxWidth: "760px" }}>
         {head}
         {failure?.secret ? (
-          <SecretRefused />
+          <div className="cx-cwbn cx-red" role="alert" style={{ margin: "0", alignItems: "flex-start" }}>
+            <Ic n="alert" sm style={{ marginTop: "1px", color: "var(--color-danger)" }} />
+            <span>
+              <Lead colon>{failure.message}</Lead>
+            </span>
+          </div>
         ) : failure ? (
           <div className="cx-cwbn cx-red" role="alert" style={{ margin: "0", alignItems: "flex-start" }}>
             <Ic n="alert" sm style={{ marginTop: "1px", color: "var(--color-danger)" }} />
             <span className="cx-why">
               <b>Can’t add the skill</b>
-              <span>{failure.detail}</span>
+              <span>{refusal(failure)}</span>
             </span>
             <span className="cx-acts">
               <button type="button" className="cx-ghost" onClick={() => void send()}>
@@ -152,6 +158,13 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
           <div className="cx-cwbn" role="status" style={{ margin: "0" }}>
             <Ic n="info" sm />
             <span>{APPROVING_BANNER}</span>
+          </div>
+        ) : !proposal.can_approve ? (
+          <div className="cx-fbx cx-amber" role="status" style={{ flexDirection: "row", gap: "8px", alignItems: "flex-start" }}>
+            <Ic n="alert" sm />
+            <span style={{ color: "var(--color-text)", fontSize: "12.5px" }}>
+              <Lead colon>{STALE_APPROVE_OFF}</Lead>
+            </span>
           </div>
         ) : (
           <div className="cx-cwbn" role="status" style={{ margin: "0" }}>
@@ -192,7 +205,7 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
         <div className="cx-t12fl">
           <span className="cx-t12lb">Skill text (SKILL.md){busy ? "" : ". You can edit it."}</span>
           <textarea
-            className={["cx-pptext", "cx-input", busy ? "cx-readonly" : ""].filter(Boolean).join(" ")}
+            className={["cx-pptext", "cx-input", busy ? "cx-readonly" : "", failure?.secret ? "cx-invalid" : ""].filter(Boolean).join(" ")}
             aria-label="Skill text"
             aria-multiline="true"
             aria-readonly={busy || undefined}
@@ -213,9 +226,11 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
               <Loader2 size={14} className="spin" aria-hidden />
               Adding {title} to skills-local.
             </span>
-          ) : (
+          ) : failure ? (
+            <span className="cx-hint">{REFUSED_FOOT}</span>
+          ) : proposal.can_approve ? (
             <span className="cx-hint">{REVIEW_FOOT}</span>
-          )}
+          ) : null}
           <span className="cx-acts">
             <button
               type="button"
@@ -225,7 +240,13 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
             >
               Cancel
             </button>
-            <button type="button" className="cx-btn" disabled={busy} aria-busy={busy || undefined} onClick={() => void send()}>
+            <button
+              type="button"
+              className="cx-btn"
+              disabled={busy || !proposal.can_approve}
+              aria-busy={busy || undefined}
+              onClick={() => void send()}
+            >
               {busy ? "Adding…" : "Approve"}
             </button>
           </span>
@@ -255,21 +276,19 @@ function BackToLessons({ repo }: { repo: string }) {
   );
 }
 
-/** The scan's refusal, in the design's exact sentence. */
-function SecretRefused() {
-  const [lead, ...rest] = SKILL_SECRET_REFUSED.split(": ");
+/** The design bolds a sentence up to its colon ("Not saved:", "Approve is off:"); a sentence without one is drawn whole. */
+function Lead({ colon, children }: { colon?: boolean; children: string }) {
+  const at = colon ? children.indexOf(": ") : -1;
+  if (at < 0) return <>{children}</>;
   return (
-    <div className="cx-cwbn cx-red" role="alert" style={{ margin: "0", alignItems: "flex-start" }}>
-      <Ic n="alert" sm style={{ marginTop: "1px", color: "var(--color-danger)" }} />
-      <span>
-        <b>{lead}:</b> {rest.join(": ")}
-      </span>
-    </div>
+    <>
+      <b>{children.slice(0, at + 1)}</b> {children.slice(at + 2)}
+    </>
   );
 }
 
 /** What a failed approval says: the service's own words, then the drawn tail that nothing was added. */
-function refusal(failure: ApiFailure): string {
+function refusal(failure: { code: string; message: string }): string {
   return failure.code === NETWORK_ERROR
     ? "Check that the Orbyn service is running. Nothing was added. Your text is still here and the proposal is still open."
     : `${failure.message} Nothing was added. Your text is still here and the proposal is still open.`;

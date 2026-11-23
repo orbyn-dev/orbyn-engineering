@@ -48,9 +48,10 @@ export function useCrewSkills(): CrewSkillsRead {
   const added: AddedSkill[] = read.groups.flatMap((group) =>
     addedProposals(group.proposals).flatMap((proposal) => {
       const text = skillText(proposal.text);
-      // A skill is listed by the name its own text gives; a text without one is not listed, rather than guessed.
-      if (!text.name) return [];
-      return [{ name: text.name, description: text.description ?? "", lessons: proposal.lessons.length, repo: group.repo }];
+      // The skill the service wrote names itself; the text's front matter is only a fallback when the answer omits it.
+      const name = proposal.skill?.name ?? text.name;
+      if (!name) return [];
+      return [{ name, description: text.description ?? "", lessons: proposal.lessons.length, repo: group.repo }];
     }),
   );
   return { status: "ready", proposed, added };

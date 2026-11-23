@@ -3,6 +3,7 @@
    textSoft and muted = the two quiet text levels, blueSoft and blue = the Proposed chip. */
 
 .cx-apchip.cx-proposed { background: var(--color-blueSoft); color: var(--color-blue); }
+.cx-cwbn.cx-green { background: var(--color-greenSoft); }
 
 .cx-ppcard {
   display: flex;

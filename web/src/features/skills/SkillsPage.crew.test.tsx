@@ -123,7 +123,7 @@ it("draws a proposal waiting for the person as a Proposed card, and Review opens
   expect(within(card).getByText("Proposed")).toBeInTheDocument();
   expect(within(card).getByText("From 3 lessons · Personal")).toBeInTheDocument();
   expect(
-    screen.getByText(/Crew proposed this from 3 lessons on this device\. Nothing is added until you review and approve it;/),
+    screen.getByText(/Crew proposed this from 3 or more active lessons on this device\. Nothing is added until you review and approve it;/),
   ).toBeInTheDocument();
   await user.click(within(card).getByRole("button", { name: "Review" }));
   expect(window.location.hash).toBe("#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks");
@@ -204,4 +204,41 @@ it("keeps the Crew groups off a filtered page", async () => {
   expect(screen.getByText("3 built in")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "All" }));
   expect(await screen.findByRole("heading", { name: /^Proposed/ })).toBeInTheDocument();
+});
+it("names an added skill by the service's own skill name, not the text's front matter", async () => {
+  answers.proposals = {
+    status: 200,
+    body: {
+      proposals: [
+        proposal({
+          state: "approved",
+          skill: { name: "redirect-checks-v2" },
+          rev: 2,
+        }),
+      ],
+    },
+  };
+  render(<SkillsPage />);
+  const group = (await screen.findByRole("heading", { name: /^Added from lessons/ })).closest(".skills-group") as HTMLElement;
+  expect(within(group).getByText("redirect-checks-v2")).toBeInTheDocument();
+  expect(within(group).queryByText("redirect-checks")).toBeNull();
+  // The one line still comes from the SKILL.md text the proposal carries.
+  expect(
+    within(group).getByText("Check where a redirect or returnTo link goes before changing code that follows it."),
+  ).toBeInTheDocument();
+});
+
+it("lists no added skill when the proposal carries none", async () => {
+  answers.proposals = { status: 200, body: { proposals: [proposal({ state: "approved", skill: null, rev: 2 })] } };
+  render(<SkillsPage />);
+  expect(await screen.findByRole("heading", { name: /^Built in/ })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: /^Added from lessons/ })).toBeNull();
+  expect(screen.getByText(/Nothing added from lessons yet\./)).toBeInTheDocument();
+});
+
+it("draws no added-skill line while a proposal waits", async () => {
+  answers.proposals = { status: 200, body: { proposals: [proposal()] } };
+  render(<SkillsPage />);
+  expect(await screen.findByRole("heading", { name: /^Proposed/ })).toBeInTheDocument();
+  expect(screen.queryByText(/Nothing added from lessons yet\./)).toBeNull();
 });

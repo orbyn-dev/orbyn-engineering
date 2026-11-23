@@ -206,7 +206,9 @@ export function SkillsPage({ skill }: { skill?: string }) {
       <div className="skills-content" ref={content}>
         {showCrew && crew.proposed.length > 0 ? <ProposedGroup items={crew.proposed} /> : null}
         {showCrew && crew.added.length > 0 ? <AddedGroup items={crew.added} /> : null}
-        {showCrew && crew.added.length === 0 ? <p className="skills-group-note">{ADDED_EMPTY_LINE}</p> : null}
+        {showCrew && crew.added.length === 0 && crew.proposed.length === 0 ? (
+          <p className="skills-group-note">{ADDED_EMPTY_LINE}</p>
+        ) : null}
         {showCrew ? (
           <h5 className="skills-group-head">
             Built in
@@ -266,11 +268,16 @@ function ProposedGroup({ items }: { items: ProposedSkill[] }) {
           const text = skillText(proposal.text);
           const name = text.name ?? "Proposed skill";
           return (
-            <div className="skills-card skills-card-static" key={proposal.id} role="region" aria-label={`Proposed skill ${name}`}>
+            <div
+              className="skills-card skills-card-static skills-card-proposed"
+              key={proposal.id}
+              role="region"
+              aria-label={`Proposed skill ${name}`}
+            >
               <strong>{name}</strong>
               {text.description ? <span className="skills-description">{text.description}</span> : null}
               <span className="skills-foot skills-foot-col">
-                <span className="skills-status">Proposed</span>
+                <span className="skills-status skills-status-proposed">Proposed</span>
                 <span className="skills-source">{`From ${lessonsWord(proposal.lessons.length)} · Personal`}</span>
               </span>
               <div>
@@ -346,7 +353,7 @@ function PersonalSkill({ skill, heading }: { skill: AddedSkill; heading: RefObje
           </Button>
         </div>
       </header>
-      <div className="skills-detail">
+      <div className="skills-detail skills-detail-one">
         <section>
           <h2>What it does</h2>
           <p>{skill.description}</p>
@@ -354,17 +361,6 @@ function PersonalSkill({ skill, heading }: { skill: AddedSkill; heading: RefObje
         <section>
           <h2>Where it came from</h2>
           <p>Added by you.</p>
-          <p>
-            {`From ${lessonsWord(skill.lessons)} in `}
-            <button
-              type="button"
-              className="skills-source-link"
-              onClick={() => navigate({ name: "settings", section: "crew", crewPage: "lessons", repo: skill.repo.id })}
-            >
-              {skill.repo.name}
-            </button>
-            .
-          </p>
           <p>
             The lessons stay on the Lessons page, marked Now a skill. While the skill exists they do not go into briefs.{" "}
             {AVAILABLE}

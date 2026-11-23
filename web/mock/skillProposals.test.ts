@@ -80,8 +80,9 @@ describe("the skill-proposals mock", () => {
     });
     expect(answer.status).toBe(400);
     expect((answer.body as { code: string }).code).toBe("secret_refused");
+    // The contract's own sentence, exactly (docs/crew-lessons.md, "Errors").
     expect((answer.body as { message: string }).message).toBe(
-      "Not added: this looks like it holds a secret. Edit it and approve again.",
+      "Not saved: this looks like it holds a secret. Edit it and save again.",
     );
   });
 
