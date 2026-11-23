@@ -44,6 +44,7 @@ import { mapMock } from "./map.ts";
 import { needsYouMock } from "./needsyou.ts";
 import { createExplorerMock } from "./explorer.ts";
 import { createSecretsMock } from "./secrets.ts";
+import { createFoldersMock } from "./folders.ts";
 import { createQuestionsMock } from "./questions.ts";
 import { createTerminalsMock } from "./terminals.ts";
 import * as fixtures from "./fixtures.ts";
@@ -230,6 +231,7 @@ export function createMockApi(options: MockOptions = {}) {
   const reviewControlsMock = createReviewControlsMock();
   const terminalsMock = createTerminalsMock();
   const questionsMock = createQuestionsMock();
+  const foldersMock = createFoldersMock();
   /** What a test changes in the service's `/api/info` answer (the build channel, the version). */
   let infoPatch: Partial<ServerInfo> = {};
   /** The model lists a test gives an engine, in place of the sample ones. */
@@ -277,6 +279,7 @@ export function createMockApi(options: MockOptions = {}) {
     secretsMock.reset();
     terminalsMock.reset();
     questionsMock.reset();
+    foldersMock.reset();
     signedIn = false;
     infoPatch = {};
     modelLists = {};
@@ -1053,6 +1056,8 @@ export function createMockApi(options: MockOptions = {}) {
         }
         return err(401, "invalid_key", "That access key isn't valid.");
       case "GET /api/fs": {
+        const given = foldersMock.list(query.get("path"));
+        if (given) return { status: 200, body: given };
         const at = query.get("path") ?? "/Users/dev";
         const node = fixtures.fsTree[at];
         if (!node) return { status: 200, body: { path: at, parent: fixtures.fsTree[at.split("/").slice(0, -1).join("/")] ? at.split("/").slice(0, -1).join("/") : "/Users/dev", entries: [] } };
@@ -1527,6 +1532,8 @@ export function createMockApi(options: MockOptions = {}) {
     terminals: terminalsMock,
     /** The engine's questions: put one in front of a thread, read how it was settled. */
     questions: questionsMock,
+    /** The folders the browser lists, in place of the sample tree: `folders.set(home, { "/Users/me": ["Documents"] })`. */
+    folders: foldersMock,
     /** The Code Mode stand-in (mock/codemode.ts): seed a run record, read the writes, switch the routes off (404). */
     codeMode: codeModeMock,
     /** Changes the account has waiting to upload, for the offline and paused wording. */
