@@ -53,6 +53,7 @@ mod escapes;
 mod fake;
 mod filters;
 mod flow;
+mod flow_artifacts;
 mod flow_board;
 mod flow_map;
 mod forge_corrections;
