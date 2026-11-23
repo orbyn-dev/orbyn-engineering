@@ -187,9 +187,10 @@ async fn the_diff_lists_the_cap_of_a_larger_change_and_leaves_untracked_files_ou
 }
 
 #[tokio::test]
-async fn a_build_with_more_checks_than_the_cap_shows_the_cap() {
-    // 66 checks: two more than the 64 rows the read holds.
-    let checks: Vec<Value> = (0..66u32)
+async fn a_build_with_as_many_checks_as_a_gate_holds_shows_them_all() {
+    // 64 checks: the most a checks gate holds as evidence, so the most one verification can store. The read's own cap is the same
+    // number and is only a guard, so a real build is never cut.
+    let checks: Vec<Value> = (0..64u32)
         .map(|n| {
             json!({
                 "id": format!("chk-{n:02}"),
@@ -205,8 +206,8 @@ async fn a_build_with_more_checks_than_the_cap_shows_the_cap() {
     let subject = w.built_with(key).await;
 
     let view = w.core.crew_flow_task_artifacts(&subject).await.unwrap();
-    assert_eq!(view.checks.len(), 64, "the rows are cut at their cap");
-    assert!(view.truncated, "the cut is said");
+    assert_eq!(view.checks.len(), 64, "every row is shown");
+    assert!(!view.truncated, "nothing was cut");
 }
 
 #[tokio::test]
