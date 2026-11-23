@@ -110,6 +110,25 @@ pub(super) fn budget_left(created_at: &str, minutes: u64, now: i64) -> std::time
     std::time::Duration::from_secs(u64::try_from(end - now).unwrap_or(0))
 }
 
+/// What is left of a task's time budget after a restart: the time between its start and its last
+/// recorded event, less the downtime already excused, clamped to the budget. The app being off
+/// spends no minutes; `last_event` is a unix second from `Store::crew_task_last_event` (or now
+/// for a live check, where `downtime_secs` is the only part of the elapsed time excused).
+pub(super) fn budget_left_after_downtime(
+    created_at: &str,
+    minutes: u64,
+    last_event: i64,
+    downtime_secs: i64,
+) -> std::time::Duration {
+    let start = crate::util::parse_time(created_at).unwrap_or(last_event);
+    let budget = i64::try_from(minutes.saturating_mul(60)).unwrap_or(i64::MAX);
+    let spent = last_event
+        .saturating_sub(start)
+        .saturating_sub(downtime_secs)
+        .clamp(0, budget);
+    std::time::Duration::from_secs(u64::try_from(budget - spent).unwrap_or(0))
+}
+
 /// What a refused check records: that it did not run, and the rule, never the command.
 fn refused_check(check: &orbyn_contracts::CrewCheck, rule: &str) -> Ran {
     let why = format!("The check was not run: the command guard refused it ({rule}).");
@@ -272,7 +291,12 @@ impl Core {
         // A verification inside the task gets what is left of its budget; one the core runs
         // again after the run has ended gets a fresh one.
         let left = if live {
-            budget_left(&task.created_at, minutes, crate::util::unix_now())
+            budget_left_after_downtime(
+                &task.created_at,
+                minutes,
+                crate::util::unix_now(),
+                run.downtime_secs,
+            )
         } else {
             std::time::Duration::from_secs(minutes * 60)
         };

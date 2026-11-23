@@ -65,6 +65,17 @@ fn retry_prompt(reason: &str) -> String {
     )
 }
 
+/// What a worker is told when a restart lost its previous turn. It is the same brief a retry gets:
+/// no lesson, no hint, no check and no part of the key, and it keeps the same thread and budget.
+pub(super) fn resume_prompt(round: u32) -> String {
+    format!(
+        "Your previous turn was lost when Orbyn restarted. Read the repository state and continue \
+         from your last verified round (round {round}). When you are done, call crew_report again. \
+         The core runs the checks; you do not see them. Do not widen your changes beyond the paths \
+         you were given."
+    )
+}
+
 fn change_prompt(reason: &str) -> String {
     format!(
         "The same failure happened twice, so repeating the same approach will not help.\n\n{reason}\n\n\
@@ -432,8 +443,18 @@ impl Core {
         let Ok(Some(brief)) = self.store.crew_brief(&task.id) else {
             return None;
         };
-        let over_time = crate::util::parse_time(&task.created_at)
-            .is_some_and(|at| crate::util::unix_now() - at > i64::from(brief.budget.minutes) * 60);
+        let over_time = crate::util::parse_time(&task.created_at).is_some_and(|at| {
+            let downtime = self
+                .store
+                .crew_run(&task.id)
+                .ok()
+                .flatten()
+                .map_or(0, |run| run.downtime_secs);
+            crate::util::unix_now()
+                .saturating_sub(at)
+                .saturating_sub(downtime)
+                > i64::from(brief.budget.minutes) * 60
+        });
         if over_time {
             return Some("The task ran past its time budget.");
         }

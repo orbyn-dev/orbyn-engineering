@@ -1758,6 +1758,16 @@ worker, the secret scan on the way in and out) and builds no screen before its f
 | KC9 | Skill proposals | Three lessons with the same pattern propose a skill in the skills workspace; nothing installs without the person | E2, E4 | M29 |
 | KC10 | Device notifications | A desktop notification the first time something needs the person, once per item | E3, E1 | M30 |
 
+**Resume after restart (KC8).** A builder or fix task left `running` (or `changed_approach`) after a restart
+whose worker has no run and nothing queued resumes once in its life: it keeps the same worker thread, answer
+key and budget, its lost turn counts as an attempt, and it is told to read the repository and continue from
+its last verified round. Reviewer lanes never resume, and a second death or restart stops the task
+`engine_error` exactly as before. Time the app was off spends no budget: the timer counts only up to the
+task's last recorded event, and `downtime_secs` keeps that off time out of later budget checks. The resume
+writes `crew.task.resumed` in the same transaction as the state, attempt and resume counters; a stop writes
+`crew.task.restart_stopped` with `why` (`reviewer`, `already_resumed`, `not_resumable` or `send_failed`) in
+the same transaction as its `stopped`/`engine_error` move.
+
 **Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
 (our router never swaps an engine) and release channels.
 

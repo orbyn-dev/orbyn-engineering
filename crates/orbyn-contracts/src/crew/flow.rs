@@ -101,6 +101,8 @@ pub struct FlowTaskRow {
     /// The worker never ran because the task was refused at its start; the Build stage is `failed`, not `needs_you`.
     pub could_not_start: bool,
     pub round: u32,
+    /// The task resumed once after a restart (KC8).
+    pub resumed: bool,
     pub cells: Vec<FlowCell>,
     pub created_at: String,
     pub updated_at: String,

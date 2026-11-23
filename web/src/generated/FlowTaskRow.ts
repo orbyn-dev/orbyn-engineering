@@ -16,4 +16,8 @@ owner: string, state: string,
 /**
  * The worker never ran because the task was refused at its start; the Build stage is `failed`, not `needs_you`.
  */
-could_not_start: boolean, round: number, cells: Array<FlowCell>, created_at: string, updated_at: string, };
+could_not_start: boolean, round: number, 
+/**
+ * The task resumed once after a restart (KC8).
+ */
+resumed: boolean, cells: Array<FlowCell>, created_at: string, updated_at: string, };
