@@ -1998,7 +1998,8 @@ the person key were merged first (#1342).
 - **What a close tries.** The non-final tasks (`briefed`, `routed`, `running`, `verifying`, `failed`, `changed_approach`,
   `needs_person`) whose `crew_runs.lead_thread_id` is this thread, oldest first. A task another thread leads is never one and a task
   that already ended (`passed`, `stopped`, `cancelled`) is skipped. One private function chooses that list for both routes, so the
-  confirm's count is what the close tries when nothing starts in between. The close chooses again when it runs: a task that starts on
+  confirm's count is what the close tries when nothing starts or ends in between (a task that ended meanwhile is skipped, and a
+  task it tries may fail to stop: `closed` and `failed` answer which). The close chooses again when it runs: a task that starts on
   the thread after the confirm was read is cancelled too (`a_task_started_after_the_confirm_is_cancelled_by_the_close`).
 - **One by one, the audited cancel.** Each task runs the existing person's cancel (`crew_cancel_task`) with the reason
   "The lead thread was closed.": the intent row first, the worker's engine stopped and confirmed, then the state and its row, and the

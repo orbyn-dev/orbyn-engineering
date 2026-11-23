@@ -3,8 +3,8 @@
 //! `crew_runs.lead_thread_id` and the task states, and every cancel is the existing audited one, with a fixed reason.
 //!
 //! One rule for both routes: `live_tasks_led_by` is the only choice of what a close tries, so the confirm's count is what the
-//! close cancels when nothing starts in between. The close chooses again when it runs, so a task that started after the confirm
-//! was read is cancelled too. The thread's own close/archive is the caller's and proceeds whatever this answers; a task that
+//! close tries when nothing starts or ends in between. The close chooses again when it runs: a task that started after the
+//! confirm was read is tried too, and one that ended meanwhile is skipped. A try can fail, so `closed` and `failed` say which. The thread's own close/archive is the caller's and proceeds whatever this answers; a task that
 //! could not be stopped keeps its state and appears in the person's "needs you" inbox as `could_not_stop`.
 //!
 //! The lead is not told about the tasks this close cancelled: `tell_lead` skips a cancelled result whose cancel says
