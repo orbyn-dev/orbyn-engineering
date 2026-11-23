@@ -45,7 +45,7 @@ describe("the lessons list on the real route", () => {
     expect(await screen.findByRole("heading", { name: /^This repository · orbyn-engineering/ })).toBeInTheDocument();
     expect(screen.getByText("All repositories", { selector: ".cx-apchip" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /^All repositories/ })).toBeInTheDocument();
-    expect(screen.getByText("2 of 50")).toBeInTheDocument();
+    expect(screen.getByText("1 of 50")).toBeInTheDocument();
     expect(screen.getByText("1 of 20")).toBeInTheDocument();
     expect(screen.getByText(intro)).toBeInTheDocument();
     expect(screen.getByText("Lessons are data, not rules.")).toBeInTheDocument();
@@ -74,6 +74,7 @@ describe("the lessons list on the real route", () => {
   });
 
   it("reads under the Hidden filter and says why a lesson is hidden", async () => {
+    answers.list = { status: 200, body: list({ counts: { active: 2, disabled: 0, hidden: 1 } }) };
     answers.hidden = {
       status: 200,
       body: list({
