@@ -103,6 +103,8 @@ struct Issues {
     dependency: Mutex<DependencyFeed>,
     lists: AtomicUsize,
     dependency_reads: AtomicUsize,
+    /// The scope every listing asked for, in call order.
+    scopes: Mutex<Vec<String>>,
     unreadable: bool,
 }
 
@@ -113,6 +115,7 @@ impl Issues {
             dependency: Mutex::new(DependencyFeed::Cannot),
             lists: AtomicUsize::new(0),
             dependency_reads: AtomicUsize::new(0),
+            scopes: Mutex::new(Vec::new()),
             unreadable: false,
         })
     }
@@ -123,6 +126,7 @@ impl Issues {
             dependency: Mutex::new(DependencyFeed::Cannot),
             lists: AtomicUsize::new(0),
             dependency_reads: AtomicUsize::new(0),
+            scopes: Mutex::new(Vec::new()),
             unreadable: true,
         })
     }
@@ -132,6 +136,7 @@ impl Issues {
 impl IssueSource for Issues {
     async fn list(&self, scope: &str, query: &IssueQuery) -> Result<ScopeList> {
         self.lists.fetch_add(1, Ordering::SeqCst);
+        self.scopes.lock().unwrap().push(scope.to_owned());
         if self.unreadable {
             return Err(CoreError::TrackerUnavailable(
                 "The tracker did not answer.".into(),
@@ -229,6 +234,22 @@ async fn issue_crew(w: &World, name: &str, label: &str, on: bool) -> String {
         on,
     )
     .await
+}
+
+/// An issue-label crew in a named project, for the two-project isolation case.
+async fn issue_crew_in(w: &World, project: &str, name: &str, label: &str, on: bool) -> String {
+    let body: wire::BackgroundCrewCreate = serde_json::from_value(json!({
+        "project_id": project, "name": name, "template": "fix_failing_ci",
+        "trigger": { "kind": "issue_label", "label": label },
+        "budget": { "turns": 10, "minutes": 30 },
+        "daily": { "runs": 100, "turns": 1000 }, "utc_offset_minutes": 600
+    }))
+    .unwrap();
+    let crew = w.core.background_create(&body).await.unwrap();
+    if on {
+        w.core.background_set_enabled(&crew.id, true).unwrap();
+    }
+    crew.id
 }
 
 async fn dependency_crew(w: &World, name: &str, ecosystem: Option<&str>, on: bool) -> String {
@@ -719,6 +740,128 @@ async fn outside_issue_text_selects_the_run_and_never_becomes_its_prompt() {
         "the baseline marker and the issue's claim"
     );
     assert!(!claimed.iter().any(|identity| identity.contains(POISON)));
+}
+
+#[tokio::test]
+async fn an_untrusted_project_spends_nothing_on_the_issue_path() {
+    let w = world(true, hung()).await;
+    add_tracker_origin(&w).await;
+    let reader = Issues::new(vec![labelled("7", "Bug", &["bug"], "2026-11-01T00:00:00Z")]);
+    connect_reader(&w, reader.clone()).await;
+    let id = issue_crew(&w, "Untrusted", "bug", true).await;
+    w.core.store.untrust_project_for_test(&project(&w));
+    let before = threads(&w);
+    w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    assert_eq!(
+        reader.lists.load(Ordering::SeqCst),
+        0,
+        "an untrusted project is not read"
+    );
+    assert!(claims(&w).is_empty() && runs_of(&w, &id).is_empty());
+    assert!(audit_actions(&w.core, "crew.background.listener.refused").is_empty());
+    assert_eq!(threads(&w), before);
+}
+
+#[tokio::test]
+async fn a_reader_answers_only_for_its_own_project_scope() {
+    let w = world(true, hung()).await;
+    add_tracker_origin(&w).await;
+    // A second project on the same tracker host, with its own scope.
+    let other = w.core.new_project("other", false, None).await.unwrap();
+    w.core.store.trust_project(&other.id, "test").unwrap();
+    // The returned row is from before the trust; read it back so the trusted flag is the stored one.
+    let other = w.core.store.project(&other.id).unwrap();
+    let other_repo = std::path::PathBuf::from(&other.path);
+    run_git(
+        &other_repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://gitlab.example.test/team/other.git",
+        ],
+    );
+    let reader = Issues::new(vec![labelled("7", "Bug", &["bug"], "2026-11-01T00:00:00Z")]);
+    connect_reader(&w, reader.clone()).await;
+    let mine = issue_crew(&w, "Mine", "bug", true).await;
+    let theirs = issue_crew_in(&w, &other.id, "Theirs", "bug", true).await;
+
+    // Each reader is the project's own: the lead's checkout is team/app, the other project team/other.
+    let mine_project = w.core.store.project(&project(&w)).unwrap();
+    assert_eq!(
+        w.core
+            .project_issue_reader(&mine_project)
+            .await
+            .unwrap()
+            .unwrap()
+            .scope,
+        "team/app"
+    );
+    assert_eq!(
+        w.core
+            .project_issue_reader(&other)
+            .await
+            .unwrap()
+            .unwrap()
+            .scope,
+        "team/other"
+    );
+
+    w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    let mut scopes = reader.scopes.lock().unwrap().clone();
+    scopes.sort();
+    assert_eq!(
+        scopes,
+        ["team/app", "team/other"],
+        "each crew reads only its project's scope"
+    );
+    assert!(runs_of(&w, &mine).is_empty() && runs_of(&w, &theirs).is_empty());
+    assert_eq!(claims(&w).len(), 4, "two markers and one issue claim each");
+}
+
+#[tokio::test]
+async fn labels_added_while_a_crew_was_off_fire_once_per_pass_when_it_is_back_on() {
+    let w = world(true, good()).await;
+    add_tracker_origin(&w).await;
+    let reader = Issues::new(Vec::new());
+    connect_reader(&w, reader.clone()).await;
+    let id = issue_crew(&w, "Toggled", "bug", true).await;
+    // The first pass baselines an empty page: the marker only.
+    w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    assert_eq!(claims(&w), [baseline_identity(&id, "bug")]);
+
+    // Off, then two labels appear. Turning it back on does not baseline again: they fire, one per pass.
+    w.core.background_set_enabled(&id, false).unwrap();
+    reader.issues.lock().unwrap().extend([
+        labelled("8", "Newer", &["bug"], "2026-11-02T00:00:00Z"),
+        labelled("7", "Older", &["bug"], "2026-11-01T00:00:00Z"),
+    ]);
+    w.core.background_set_enabled(&id, true).unwrap();
+    w.core.issues.clear_cache();
+    w.core
+        .crew_background_listeners_tick(NOW + 60)
+        .await
+        .unwrap();
+    assert_eq!(runs_of(&w, &id).len(), 1, "one start per pass");
+    assert_eq!(
+        claims(&w),
+        [
+            baseline_identity(&id, "bug"),
+            issue_identity(&id, "8", "bug", &["bug"])
+        ]
+    );
+    let run = until_run(&w, &id, wire::BackgroundRunState::Running).await;
+    let task = task_of(&w, &run);
+    w.until_state(&task, "passed").await;
+    until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+
+    // The next pass reaches the second label event.
+    w.core
+        .crew_background_listeners_tick(NOW + 120)
+        .await
+        .unwrap();
+    assert_eq!(runs_of(&w, &id).len(), 2);
+    assert_eq!(claims(&w).len(), 3);
 }
 
 #[tokio::test]

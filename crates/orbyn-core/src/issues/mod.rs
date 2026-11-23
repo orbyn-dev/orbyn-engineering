@@ -302,6 +302,29 @@ pub(crate) fn github_repo_of_remote(url: &str) -> Option<String> {
         .then(|| format!("{owner}/{repo}"))
 }
 
+/// The scope one tracker names for a project's origin remote, or none when the remote is on another host or names no
+/// container. Shared by `issue_scopes` (a listing over every project the connection may read) and a listener's
+/// `project_issue_reader` (the one project behind a crew), so the two mappings cannot drift. Linear names a team key
+/// that a git remote cannot give, so it answers none.
+fn scope_of_remote(connection: &TrackerConnection, remote: &str) -> Option<String> {
+    let host = match connection.tracker {
+        TrackerKind::Github | TrackerKind::Gitlab => {
+            connection.host.as_deref().unwrap_or(GITLAB_DEFAULT_HOST)
+        }
+        TrackerKind::AzureDevops | TrackerKind::Forgejo => {
+            connection.host.as_deref().unwrap_or_default()
+        }
+        TrackerKind::Linear => return None,
+    };
+    match connection.tracker {
+        TrackerKind::Github => github_repo_of_remote(remote),
+        TrackerKind::Gitlab => gitlab::gitlab_path_of_remote(remote, host),
+        TrackerKind::AzureDevops => azure::azure_scope_of_remote(remote, host),
+        TrackerKind::Forgejo => forgejo::forgejo_path_of_remote(remote, host),
+        TrackerKind::Linear => None,
+    }
+}
+
 /// The issue reader that can answer for one project: the tracker its checkout's origin remote names, and the
 /// scope that remote maps to. Only a connected tracker whose host matches the remote can answer, and Linear reads
 /// team keys that no git remote names, so it never answers for a project.
@@ -345,24 +368,9 @@ impl Core {
                     host: None,
                     scopes: Vec::new(),
                 });
-            let scope = match row.tracker {
-                TrackerKind::Github => github_repo_of_remote(&remote),
-                TrackerKind::Gitlab => gitlab::gitlab_path_of_remote(
-                    &remote,
-                    connection.host.as_deref().unwrap_or(GITLAB_DEFAULT_HOST),
-                ),
-                TrackerKind::AzureDevops => azure::azure_scope_of_remote(
-                    &remote,
-                    connection.host.as_deref().unwrap_or_default(),
-                ),
-                TrackerKind::Forgejo => forgejo::forgejo_path_of_remote(
-                    &remote,
-                    connection.host.as_deref().unwrap_or_default(),
-                ),
-                // Linear's scope is a team key, which a git remote cannot name (docs/issues.md, "Linear as built").
-                TrackerKind::Linear => None,
-            };
-            if let Some(scope) = scope.filter(|scope| !scope.is_empty()) {
+            if let Some(scope) =
+                scope_of_remote(&connection, &remote).filter(|scope| !scope.is_empty())
+            {
                 return Ok(Some(ProjectReader {
                     tracker: row.tracker,
                     scope,
@@ -579,12 +587,6 @@ impl Core {
                 | TrackerKind::AzureDevops
                 | TrackerKind::Forgejo
         ) {
-            let host = match connection.tracker {
-                TrackerKind::Forgejo | TrackerKind::AzureDevops => {
-                    connection.host.as_deref().unwrap_or_default()
-                }
-                _ => connection.host.as_deref().unwrap_or(GITLAB_DEFAULT_HOST),
-            };
             for project in self.store.list_projects().unwrap_or_default() {
                 if project.scratch || !project.is_git {
                     continue;
@@ -596,13 +598,7 @@ impl Core {
                     continue;
                 };
                 let remote = crate::source_control::git::text(&url);
-                let path = match connection.tracker {
-                    TrackerKind::Github => github_repo_of_remote(&remote),
-                    TrackerKind::Gitlab => gitlab::gitlab_path_of_remote(&remote, host),
-                    TrackerKind::AzureDevops => azure::azure_scope_of_remote(&remote, host),
-                    _ => forgejo::forgejo_path_of_remote(&remote, host),
-                };
-                if let Some(path) = path
+                if let Some(path) = scope_of_remote(connection, &remote)
                     && !scopes.contains(&path)
                 {
                     scopes.push(path);

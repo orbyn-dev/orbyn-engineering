@@ -736,8 +736,9 @@ impl Store {
         })
     }
 
-    /// The background crews of one trigger kind, by name. The listeners' observation set; a kind nothing can start
-    /// (issue labels, dependency updates, watches) has no listener and is never listed by one.
+    /// The background crews of one trigger kind, by name. The listeners' observation set: the schedule timer, the CI
+    /// watch and the two issue-reader ticks read the enabled crews of their kind. A watch crew has no listener yet, so
+    /// a `watch` kind is never listed by one.
     pub fn background_crews_of_kind(&self, kind: &str) -> Result<Vec<BackgroundRow>> {
         let conn = self.reader();
         let mut statement =
@@ -789,8 +790,8 @@ impl Store {
     }
 
     /// A listener firing the start refused, as one audit row beside the refusal: which listener fired and a fixed category of the
-    /// refusal, never the refusal's text and never any event text. `kind` is `schedule` or `ci`, and `reason` is one of the
-    /// listener's own words.
+    /// refusal, never the refusal's text and never any event text. `kind` is the listener's own name (`schedule`, `ci`,
+    /// `issue_label` or `dependency_update`), and `reason` is one of the listener's own words.
     pub fn audit_background_listener_refusal(
         &self,
         crew: &str,

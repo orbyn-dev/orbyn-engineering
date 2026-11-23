@@ -5,15 +5,19 @@
 //! (`crew_background_start`), with the event in the start's `PausedTrigger` key instead of `:manual`, and is
 //! deduplicated by an event key that is kept in the store, so a repeat of the same firing starts nothing new and
 //! nothing is retried on a timer. At most one start is attempted per crew per pass, only enabled crews are read from
-//! the forge or the tracker or claimed, and a pass runs only when the service sets an interval.
+//! the forge or the tracker or claimed, and a pass runs only when the service sets an interval. Each pass reads at
+//! most 64 issue-label crews and separately 64 dependency-update crews from its rotation, like the 64 CI crews, so a
+//! store full of crews cannot turn one pass into unbounded tracker traffic.
 //!
 //! **What is watched.** A stored crew is the authority: the schedule timer reads each `schedule` crew's `every_hours`,
 //! the CI watch reads each `ci_failure` crew's branch (its setting, else the project's default) and its optional
 //! workflow filter, and the issue-label listener reads the open issues in the project's tracker scope that carry the
-//! crew's stored `label`. An issue-label crew starts with a baseline: its first pass claims the labelled issues
-//! already there and starts nothing, so turning a crew on never runs on old labels; only a later label-set change
-//! (while the crew's label is present) is a new event, and a removal and re-add is not (the readers give no per-label
-//! event time; a label feed is a reader follow-up). A project is read only through the one tracker reader that can answer for it (the connected
+//! crew's stored `label`. An issue-label crew starts with a baseline per stored label: its first pass claims the
+//! matching issues in the one page it reads and starts nothing. Only a later label-set change (while the crew's label
+//! is present) is a new event, and a removal and re-add is not (the readers give no per-label event time; a label feed
+//! is a reader follow-up); the baseline ignores the reader's next page, so an issue outside that page can fire when the
+//! tracker returns it, and re-enabling a crew does not baseline again, so labels added while it was off fire once per
+//! pass. A project is read only through the one tracker reader that can answer for it (the connected
 //! tracker its origin remote names; Linear names no project and answers none), so a project with no reader, an
 //! untrusted folder and a crew that is off spend no event and start nothing. A `dependency_update` crew has its tick
 //! and the same claim, start and refusal path, but no reader can report a dependency or advisory update yet, so that
@@ -23,12 +27,13 @@
 //! a diagnostic line ("found in .orbyn/crew.json, no matching crew") that no screen shows.
 //!
 //! **Event text never reaches a prompt (decision 6).** The only fields read from outside are: a check's name and state
-//! at a head commit, the head commit's sha, a tracker issue's key and whether it carries the stored label, the key of a
-//! dependency update once a reader has that feed, and a `.orbyn/crew.json` trigger's name and kind. Each of them only
-//! *selects* what to start: a name is compared with the crew's stored workflow filter, a sha decides which head is
-//! watched, a label decides which issue a crew watches, a file trigger's name decides only whether a diagnostic line
-//! is worth writing. They appear in the dedupe key, the `PausedTrigger` key (a hash of the outside fields, one event
-//! per issue, label and label set, or per head and failing check) and a diagnostic log, and never in the brief, the worker's
+//! at a head commit, the head commit's sha, a tracker issue's scope and key, its labels, the key of a dependency update
+//! once a reader has that feed, and a `.orbyn/crew.json` trigger's name and kind. Each of them only *selects* what to
+//! start: a name is compared with the crew's stored workflow filter, a sha decides which head is watched, a label
+//! decides which issue a crew watches, a file trigger's name decides only whether a diagnostic line is worth writing.
+//! They appear in the claim identity (the issue's raw scope and key, and hashes of its label and label set), the
+//! `PausedTrigger` key (hashes only, one event per issue, label and label set, or per head and failing check) and a
+//! diagnostic log, and never in the brief, the worker's
 //! prompt or any other text a model reads, which `crew_background_start` keeps code-owned. A check's output, an
 //! issue's title and body and a tracker's update text are never read.
 
@@ -54,6 +59,10 @@ use crate::store::{BackgroundRow, tracker_name};
 /// The most CI crews one tick observes, so a store full of crews cannot turn a tick into unbounded forge traffic.
 /// Each pass watches this many enabled crews from a rotating start, so every crew is reached over a few passes.
 const CI_CREWS_MAX: usize = 64;
+/// The most issue-label crews, and separately the most dependency-update crews, one tick reads. The tracker is
+/// slower than the forge, so a store full of crews must not turn one pass into unbounded tracker traffic; each tick
+/// starts from the pass's rotation, so every crew is reached over a few passes.
+const ISSUE_CREWS_MAX: usize = 64;
 /// The most minutes a schedule may be told apart, as hours: the same bound the stored crew already has.
 const HOURS_MAX: u32 = EVERY_HOURS_MAX;
 
@@ -112,8 +121,9 @@ impl Core {
     }
 
     /// One pass of every listener. A pass never fails on one crew's trouble: each item is logged and the pass goes on,
-    /// so one unreadable forge, tracker or project cannot stop the other events. `rotation` moves which CI crews are
-    /// watched when there are more than `CI_CREWS_MAX`. `stop` is checked between firings only.
+    /// so one unreadable forge, tracker or project cannot stop the other events. `rotation` moves which crews are
+    /// watched or read when there are more than `CI_CREWS_MAX` CI crews or `ISSUE_CREWS_MAX` issue-reader crews.
+    /// `stop` is checked between firings only, and the tracker reads are raced against it too.
     pub(crate) async fn crew_background_listeners_pass(
         self: &Arc<Self>,
         now: i64,
@@ -128,11 +138,12 @@ impl Core {
         if stop.is_cancelled() {
             return Ok(());
         }
-        self.crew_background_issue_label_tick(stop).await;
+        self.crew_background_issue_label_tick(rotation, stop).await;
         if stop.is_cancelled() {
             return Ok(());
         }
-        self.crew_background_dependency_update_tick(stop).await;
+        self.crew_background_dependency_update_tick(rotation, stop)
+            .await;
         if stop.is_cancelled() {
             return Ok(());
         }
@@ -305,10 +316,12 @@ impl Core {
     }
 
     /// The issue-label listener: an enabled `issue_label` crew fires on an open issue in its project's tracker scope
-    /// that carries the crew's stored `label` and that it has not seen before. On its first pass for a crew (no
-    /// `issue_label:<crew>:baseline` claim yet) it claims every matching issue the tracker reports right now and
-    /// starts nothing, so turning a crew on never starts runs for labels that were already there; it then keeps the
-    /// baseline claim for that label. A later pass fires only on an issue whose claim it does not have. The claim keeps
+    /// that carries the crew's stored `label` and that it has not seen before. On its first pass for a stored label
+    /// (no `issue_label:<crew>:baseline:<hash of label>` claim yet) it claims every matching issue in the one page it
+    /// reads and starts nothing, so the labels already on that page are never replayed; it then keeps the baseline
+    /// claim. The baseline reads one page (the reader's next page is ignored), so an issue outside it can fire when the
+    /// tracker later returns it, and re-enabling a crew does not baseline again, so labels added while it was off fire
+    /// once per pass. A later pass fires only on an issue whose claim it does not have. The claim keeps
     /// a hash of the issue's whole label set, because the readers give no per-label event time: an edit that leaves the
     /// labels alone is inert, adding the label or changing the set while it is present is a new event, and a label
     /// removed and added again returns to a set already claimed and does not fire (a reader-side label feed is the
@@ -317,7 +330,11 @@ impl Core {
     /// no event. The newest unseen issue wins, so one pass attempts at most one start per crew and the rest wait for a
     /// later pass. The issue's key only selects: the claim keeps it, the shorter start key keeps hashes, and the
     /// issue's title, body and comments are never read (decision 6).
-    async fn crew_background_issue_label_tick(self: &Arc<Self>, stop: &CancellationToken) {
+    async fn crew_background_issue_label_tick(
+        self: &Arc<Self>,
+        rotation: usize,
+        stop: &CancellationToken,
+    ) {
         let crews = self
             .store
             .background_crews_of_kind("issue_label")
@@ -325,11 +342,19 @@ impl Core {
                 tracing::warn!(%error, "the issue label crews could not be read");
                 Vec::new()
             });
-        for crew in crews.into_iter().filter(|crew| crew.enabled) {
+        let crews: Vec<BackgroundRow> = crews.into_iter().filter(|crew| crew.enabled).collect();
+        if crews.len() > ISSUE_CREWS_MAX {
+            tracing::warn!(
+                crews = crews.len(),
+                read = ISSUE_CREWS_MAX,
+                "more issue label crews than one pass reads; this pass reads {ISSUE_CREWS_MAX} and the rest come around on the next passes"
+            );
+        }
+        for crew in window(crews, rotation, ISSUE_CREWS_MAX) {
             if stop.is_cancelled() {
                 return;
             }
-            let Some(reader) = self.background_project_reader(&crew).await else {
+            let Some(reader) = self.background_project_reader(&crew, stop).await else {
                 continue;
             };
             let Some(label) = crew.trigger_settings["label"].as_str() else {
@@ -353,15 +378,16 @@ impl Core {
                 limit: MAX_LIMIT,
                 ..IssueQuery::default()
             };
-            let mut page = match self
-                .scope_issues(reader.tracker, &reader.scope, &query)
-                .await
-            {
-                Ok(page) => page,
-                Err(error) => {
-                    tracing::debug!(%error, crew = %crew.id, "the project's issues could not be read; nothing fired");
-                    continue;
-                }
+            let mut page = tokio::select! {
+                biased;
+                _ = stop.cancelled() => return,
+                page = self.scope_issues(reader.tracker, &reader.scope, &query) => match page {
+                    Ok(page) => page,
+                    Err(error) => {
+                        tracing::debug!(%error, crew = %crew.id, "the project's issues could not be read; nothing fired");
+                        continue;
+                    }
+                },
             };
             // Newest update first, and a stable order for a tie, so which issue wins is not the tracker's page order.
             page.issues.sort_by(|a, b| {
@@ -426,9 +452,14 @@ impl Core {
     /// The dependency-update listener: an enabled `dependency_update` crew fires on a dependency or advisory update
     /// its project's tracker reader reports, narrowed by the crew's optional `ecosystem` setting. No reader has such a
     /// feed yet ([`IssueSource::dependency_updates`]), so today every tracker answers [`DependencyFeed::Cannot`]:
-    /// the tick spends no event, starts nothing and writes no refusal for a tracker that cannot answer. The one
-    /// trace line per pass says so once, never once per update.
-    async fn crew_background_dependency_update_tick(self: &Arc<Self>, stop: &CancellationToken) {
+    /// the tick spends no event, starts nothing and writes no refusal for a tracker that cannot answer. It writes one
+    /// trace line per pass, only when at least one enabled dependency crew exists and none of the crews it read
+    /// answered with a feed; never one line per update.
+    async fn crew_background_dependency_update_tick(
+        self: &Arc<Self>,
+        rotation: usize,
+        stop: &CancellationToken,
+    ) {
         let crews = self
             .store
             .background_crews_of_kind("dependency_update")
@@ -436,25 +467,33 @@ impl Core {
                 tracing::warn!(%error, "the dependency update crews could not be read");
                 Vec::new()
             });
-        let mut observed = false;
+        let crews: Vec<BackgroundRow> = crews.into_iter().filter(|crew| crew.enabled).collect();
+        let observed = !crews.is_empty();
         let mut answered = false;
-        for crew in crews.into_iter().filter(|crew| crew.enabled) {
-            observed = true;
+        if crews.len() > ISSUE_CREWS_MAX {
+            tracing::warn!(
+                crews = crews.len(),
+                read = ISSUE_CREWS_MAX,
+                "more dependency update crews than one pass reads; this pass reads {ISSUE_CREWS_MAX} and the rest come around on the next passes"
+            );
+        }
+        for crew in window(crews, rotation, ISSUE_CREWS_MAX) {
             if stop.is_cancelled() {
                 return;
             }
-            let Some(reader) = self.background_project_reader(&crew).await else {
+            let Some(reader) = self.background_project_reader(&crew, stop).await else {
                 continue;
             };
-            let feed = match self
-                .tracker_dependency_updates(reader.tracker, &reader.scope)
-                .await
-            {
-                Ok(feed) => feed,
-                Err(error) => {
-                    tracing::debug!(%error, crew = %crew.id, "the project's dependency feed could not be read; nothing fired");
-                    continue;
-                }
+            let feed = tokio::select! {
+                biased;
+                _ = stop.cancelled() => return,
+                feed = self.tracker_dependency_updates(reader.tracker, &reader.scope) => match feed {
+                    Ok(feed) => feed,
+                    Err(error) => {
+                        tracing::debug!(%error, crew = %crew.id, "the project's dependency feed could not be read; nothing fired");
+                        continue;
+                    }
+                },
             };
             let DependencyFeed::Updates(mut updates) = feed else {
                 continue;
@@ -500,7 +539,11 @@ impl Core {
     /// The project behind a crew and the issue reader that can answer for it, or none. A crew whose project is gone
     /// or untrusted, or whose checkout no connected tracker can answer for, is never read: no event is spent and no
     /// refusal is written, because a tracker that cannot answer is not a refusal.
-    async fn background_project_reader(&self, crew: &BackgroundRow) -> Option<ProjectReader> {
+    async fn background_project_reader(
+        &self,
+        crew: &BackgroundRow,
+        stop: &CancellationToken,
+    ) -> Option<ProjectReader> {
         let project = match self.store.project(&crew.project_id) {
             Ok(project) => project,
             Err(error) => {
@@ -512,12 +555,16 @@ impl Core {
             tracing::debug!(crew = %crew.id, "a background crew's project is not trusted; nothing fired");
             return None;
         }
-        match self.project_issue_reader(&project).await {
-            Ok(reader) => reader,
-            Err(error) => {
-                tracing::debug!(%error, crew = %crew.id, "a background crew's tracker could not be read; nothing fired");
-                None
-            }
+        tokio::select! {
+            biased;
+            _ = stop.cancelled() => None,
+            reader = self.project_issue_reader(&project) => match reader {
+                Ok(reader) => reader,
+                Err(error) => {
+                    tracing::debug!(%error, crew = %crew.id, "a background crew's tracker could not be read; nothing fired");
+                    None
+                }
+            },
         }
     }
 

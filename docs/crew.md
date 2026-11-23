@@ -1150,7 +1150,7 @@ a `schedule` crew once per `every_hours` bucket, a `ci_failure` crew on a failed
 narrowed by its optional workflow filter, and an `issue_label` crew on an open issue in its project's tracker scope that carries the crew's stored `label`.
 Only the one connected tracker reader the project's `origin` remote names answers for a project (GitHub, GitLab, Azure DevOps or Forgejo; Linear reads team keys
 that no remote names): a project with no reader is not read, and a crew that is off, a project with no reader and a tracker that cannot answer all spend no event
-and start nothing. Every firing first claims a row in `crew_background_events` (first write wins) and then starts a run through the same seam as Run now:
+and start nothing. Every claim — each issue a baseline sees and every firing — writes one row in `crew_background_events` (first write wins); a firing then starts a run through the same seam as Run now:
 
 | Event | Claim | Held-start key |
 | --- | --- | --- |
@@ -1164,21 +1164,25 @@ and start nothing. Every firing first claims a row in `crew_background_events` (
 the label is the crew's own stored setting. A repeat of an event starts nothing new, and a bucket at or before the newest claimed one never fires again (a clock that
 moves back starts nothing). **One firing per crew per pass**: a head with several failing checks fires the first and leaves the others for a later pass, and the
 newest unclaimed labelled issue fires and leaves the rest unclaimed. **An issue-label crew starts with a baseline:** on its first sight of a stored
-label (no `issue_label:<crew>:baseline:<hash of label>` claim yet) it claims every open issue that carries that label right now and starts nothing, then keeps
-the baseline claim. So turning a crew on never starts runs for labels that were already there, a crew made or turned on later does not replay a repository's
-history, and changing a crew's stored label baselines the issues that already carry the new label instead of firing on them. A later pass fires only on an issue
-whose claim it does not have. The readers expose no per-label event time, so the claim keeps a hash of the issue's whole label set: an edit that leaves the labels
+label (no `issue_label:<crew>:baseline:<hash of label>` claim yet) it claims every matching issue in the one page it reads and starts nothing, then keeps
+the baseline claim; changing a crew's stored label baselines the issues that already carry the new label the same way. A later pass fires only on an issue whose
+claim it does not have. The claim keeps a hash of the issue's whole label set, because the readers expose no per-label event time: an edit that leaves the labels
 alone is inert, adding the label or changing the label set while it is present is a new event once, and a label removed and added again returns the issue to a set
-already claimed and **does not fire** - a limitation, not a decision, until a reader reports label events (a follow-up). The baseline covers the newest matching page
-(up to 100 issues); an older issue can only surface after its label set changes, which is a new event. A firing refused for review capacity, the daily budget, an untrusted folder, no engine or a run
+already claimed and **does not fire** - a limitation, not a decision, until a reader reports label events (a follow-up). **The baseline has limits.** It reads one
+page (`MAX_LIMIT`, 100 issues; the reader's `next` page is ignored - GitHub lists newest-created and has no next, GitLab lists newest-updated), so an issue
+outside that page can fire when the tracker later returns it, and re-enabling a crew does not baseline again: labels added while it was off fire once per pass,
+bounded by the one start per pass. So a crew made or turned on later does not replay the history the baseline could see, not the whole tracker. A firing refused for review capacity, the daily budget, an untrusted folder, no engine or a run
 already in progress is **dropped, not retried**: its claim stays, capacity also leaves its held row, and every refusal writes one `crew.background.listener.refused`
 audit row (the crew, the listener, a fixed reason word; the actor is the constant `crew`). A tracker that cannot answer is not a refusal: nothing is claimed and no
-audit row is written. **Text from outside never reaches the prompt**: a check's name, a head sha, an issue's key and label set (only as hashes), a
-`.orbyn/crew.json` trigger's name and (once a reader has that feed) a dependency update's key only decide whether a run starts; the brief, the worker's prompt, the lead thread and the audit stay code-owned. A
+audit row is written. **Text from outside never reaches the prompt**: a check's name, a head sha, a tracker issue's scope and key (kept raw only in the claim
+identity), its label and label set and the event key's hashes, a `.orbyn/crew.json` trigger's name and (once a reader has that feed) a dependency update's key
+only decide whether a run starts; the brief, the worker's prompt, the lead thread and the audit stay code-owned. A
 stop is looked at between firings, never inside a start, and a run a crash leaves is settled when the core opens. A trigger in the file with no stored crew is ignored.
-At most 64 CI crews are watched per pass, from a rotating start. `crew_background_events` is not pruned yet.
+At most 64 CI crews are watched per pass, and at most 64 issue-label crews and separately 64 dependency-update crews are read per pass, all from the pass's
+rotating start, so a store full of crews cannot turn one pass into unbounded forge or tracker traffic. `crew_background_events` is not pruned yet.
 **Not built: `dependency_update` detection.** The tick, its claim and its start/refusal path are built, but no issue reader reports a dependency or advisory update
-yet, so every tracker answers "cannot" and the kind starts nothing; the feed is follow-up #1360, and no feed or label convention was invented here.
+yet, so every tracker answers "cannot" and the kind starts nothing; the tick writes one trace line per pass only when at least one enabled dependency crew exists
+and none of the crews it read answered with a feed. The feed is follow-up #1360, and no feed or label convention was invented here.
 
 **As built (slice 4h, triggers — parsed only):** a repository can describe the background crews it would like Orbyn to run, in
 `background` of `.orbyn/crew.json`. Orbyn reads the file and never writes it (architecture rule 4).
@@ -1786,7 +1790,7 @@ writes `crew.task.resumed` in the same transaction as the state, attempt and res
 `crew.task.restart_stopped` with `why` (`reviewer`, `already_resumed`, `not_resumable` or `send_failed`) in
 the same transaction as its `stopped`/`engine_error` move.
 
-**As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342); its core route is not built. KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7's listeners' shared plumbing and `issue_label` detection are built; `dependency_update` detection is Planned (#1360). KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
+**As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342); its core route is not built. KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
 
 **Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
 (our router never swaps an engine) and release channels.

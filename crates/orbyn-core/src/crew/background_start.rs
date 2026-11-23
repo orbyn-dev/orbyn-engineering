@@ -147,8 +147,8 @@ impl Core {
     /// text a model reads, which stays code-owned exactly as the manual start's is. `actor` is written on the run's audit rows and is
     /// always a code-owned constant or the person's own actor, never event text. The run is Low priority and Crew-started, so
     /// review capacity may refuse it (nothing is stored then, and the refusal is a held `background` start); a crew that is off, a
-    /// trigger kind only its listener starts (issue label and dependency update; watch runs from the schedule), a crew that
-    /// already has a run in progress and a project that is not trusted are refused with a plain reason. Behind the Crew
+    /// trigger kind only its listener starts (issue label and dependency update), a watch crew (it has no listener yet), a crew
+    /// that already has a run in progress and a project that is not trusted are refused with a plain reason. Behind the Crew
     /// Preview flag.
     pub(crate) async fn crew_background_start(
         self: &Arc<Self>,
@@ -315,8 +315,7 @@ impl Core {
             "issue_label" | "dependency_update" => {}
             "watch" => {
                 return Err(CoreError::PolicyDenied(
-                    "A watch crew cannot run yet: Orbyn runs its command from the schedule, not on demand."
-                        .into(),
+                    "A watch crew cannot run yet: Orbyn does not run its command yet.".into(),
                 ));
             }
             kind => {
