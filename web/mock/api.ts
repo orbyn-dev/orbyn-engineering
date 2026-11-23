@@ -219,6 +219,10 @@ export function createMockApi(options: MockOptions = {}) {
   const nativeDeleted = new Set<string>();
   /** What a test changed of the diagnostics the service reports (events, processes, database). */
   let diagnosticsPatch: Partial<Diagnostics> = {};
+  /** Projects settings treats as checkouts of one repository, so a group selection has several members. */
+  let groupedProjects: string[] = [];
+  /** The model lists a test replaced, by engine. */
+  const modelLists = new Map<string, ModelInfo[]>();
   /** Tasks whose webhook has an address; the token itself is never kept, as in the service. */
   const hooks = new Set<string>(["task-hook"]);
   let failures: Failure[] = [];
@@ -317,6 +321,8 @@ export function createMockApi(options: MockOptions = {}) {
     importedNative.clear();
     nativeDeleted.clear();
     diagnosticsPatch = {};
+    groupedProjects = [];
+    modelLists.clear();
     cloneError = null;
     reviewsSent.clear();
     detailsReads = 0;
@@ -654,6 +660,17 @@ export function createMockApi(options: MockOptions = {}) {
         metadata_complete: true, unavailable: null,
       })),
     }));
+    const member = (project: Project) => ({
+      project_id: project.id, physical_key: `mock-physical:${project.id}`, name: project.name, path: project.path,
+      repository_key: null, repository_label: null, repository_relative_path: "", grouping_mode: "separate" as const,
+      metadata_complete: true, unavailable: null,
+    });
+    const listed = projects.filter((project) => !project.scratch && project.path !== managed.library?.path);
+    const together = listed.filter((project) => groupedProjects.includes(project.id));
+    const groups = [
+      ...listed.filter((project) => !groupedProjects.includes(project.id)).map((project) => ({ key: `mock:${project.id}`, label: project.name, members: [member(project)] })),
+      ...(together.length > 1 ? [{ key: `mock:group:${together.map((project) => project.id).join("+")}`, label: together[0]?.name ?? "", members: together.map(member) }] : []),
+    ];
     const selection = scope.selection;
     const selected = selection && selection.kind !== "all_projects" ? groups.find((group) => group.key === selection.group_key) : undefined;
     const resolved: ProjectScopeCatalog["selection"] = !selection || selection.kind === "all_projects" ? { kind: "all_projects" }
@@ -1368,10 +1385,12 @@ export function createMockApi(options: MockOptions = {}) {
         if (seg[3] === "models") {
           // The service merges the person's custom models into the list it returns.
           const listing = modelLists[seg[2] ?? ""] ?? fixtures.engineModels(seg[2] ?? "");
+          const listing = fixtures.engineModels(seg[2] ?? "");
+          const listed: ModelInfo[] = modelLists.get(seg[2] ?? "") ?? listing.models;
           const custom = (Array.isArray(preferenceValues.custom_models) ? preferenceValues.custom_models : [])
             .flatMap((entry) => entry && typeof entry === "object" && !Array.isArray(entry) && entry.engine === seg[2] && typeof entry.id === "string"
               ? [{ id: entry.id, label: typeof entry.label === "string" ? entry.label : entry.id, description: null, is_default: false, custom: true, options: [] }] : []);
-          return { status: 200, body: { ...listing, models: [...listing.models, ...custom] } };
+          return { status: 200, body: { ...listing, models: [...listed, ...custom] } };
         }
         return { status: 200, body: engines };
       default:
@@ -1705,6 +1724,14 @@ export function createMockApi(options: MockOptions = {}) {
     /** Changes what Settings › Maintenance reads as the service's diagnostics, until the next reset. */
     patchDiagnostics(patch: Partial<Diagnostics>) {
       diagnosticsPatch = { ...diagnosticsPatch, ...patch };
+    },
+    /** Settings treats these projects as checkouts of one repository: one group, selected as `mock:group:<ids joined by +>`. */
+    groupProjects(ids: string[]) {
+      groupedProjects = ids;
+    },
+    /** Replaces the models one engine lists, for lists the fixtures do not hold. */
+    setEngineModels(engine: string, models: ModelInfo[]) {
+      modelLists.set(engine, structuredClone(models));
     },
     /** Replaces the engines the service reports, for states the fixtures do not hold (an engine below its supported range, one that cannot be updated). */
     setEngines(next: EngineStatus[]) {
