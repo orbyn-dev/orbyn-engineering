@@ -224,7 +224,7 @@ describe("the PR comment", () => {
     expect(md).not.toMatch(/\/Users\/|file:/);
   });
   it("stays under the cap however many findings there are", () => {
-    const many = Array.from({ length: 200 }, (_, n) => ({ id: `f${n}`, lane: "code", round: 1, severity: "low", path: `src/file${n}.ts`, line: n, claim: "x".repeat(300), check: "confirmed", status: "open", blocks: true }));
+    const many = Array.from({ length: 200 }, (_, n) => ({ id: `f${n}`, lane: "code", round: 1, severity: "low", path: `src/file${n}.ts`, line: n, claim: "x".repeat(300), evidence: "", check: "confirmed", status: "open", blocks: true }));
     const big = runPageMarkdown(runPageModel(taskDetail({ findings: many }), NOW), null);
     expect(big.length).toBeLessThanOrEqual(RUN_COMMENT_CAP);
     expect(big).toMatch(/more/);
