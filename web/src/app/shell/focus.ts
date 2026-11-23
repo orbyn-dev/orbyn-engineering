@@ -64,6 +64,10 @@ export function useRouteFocus(routeKey: string, routeName: string, ready: boolea
     const root = main.current;
     if (!root) return;
     const before = previous.current;
+    // The screen only became ready: the phone's sheet closed over the same page, so nothing moved and
+    // focus stays where it was given (the title bar button, or the sheet's own Close). A page that
+    // changed is followed below.
+    if (!first.current && before.key === routeKey && before.name === routeName) return;
     previous.current = { key: routeKey, name: routeName };
     if (routeName === "settings" && before.name !== "settings") {
       const active = document.activeElement;

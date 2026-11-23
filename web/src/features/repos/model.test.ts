@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { repoFixtures } from "../../../mock/repos";
-import { groupByRepo, canJoinThread, checkCloneSource, cloneText, defaultTicks, isFolderName, isPublishName, plain, repoState, startLabel } from "./model";
+import { groupByRepo, canJoinThread, branchText, checkCloneSource, cloneText, defaultTicks, isFolderName, isPublishName, plain, repoState, startLabel } from "./model";
 
 describe("repository state", () => {
   it("reads trusted, not trusted and not a Git folder from the row", () => {
@@ -20,6 +20,13 @@ describe("repository state", () => {
     expect(canJoinThread(engine!)).toBe(false);
     expect(canJoinThread(notes!)).toBe(false);
     expect(canJoinThread({ ...engineering!, clone: { state: "cloning" } })).toBe(false);
+  });
+
+  it("names the branch where one is known, and says a folder has no Git where it is not a repository", () => {
+    expect(branchText({ is_git: true, trusted: true, branch: "main" })).toBe("main");
+    expect(branchText({ is_git: true, trusted: true, branch: null })).toBe("No branch");
+    expect(branchText({ is_git: false, trusted: true })).toBe("Not a Git repository");
+    expect(branchText({ is_git: true, trusted: false })).toBe("No branch");
   });
 
   it("ticks every trusted repository up to the limit and none beyond", () => {

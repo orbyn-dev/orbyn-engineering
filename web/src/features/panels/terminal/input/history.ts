@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import { looksSecret } from "./classify";
 import { agoWords } from "../../../../lib/format";
 
@@ -31,6 +32,12 @@ export function maskSecrets(text: string): string {
 
 /** A command on one row: the secret-looking words are already masked, each line break becomes a visible separator. */
 const oneRow = (text: string): string => text.replace(/\s*\n\s*/g, BREAK);
+
+/**
+ * A command as the shell may show it back: runs of whitespace and line breaks become one space, ends
+ * trimmed. The shell reports the line it ran, which is the editor's line with its own spacing.
+ */
+const collapsed = (text: string): string => text.replace(/\s+/g, " ").trim();
 
 const STORE_KEY = "orbyn.terminal.history.v1";
 const MAX_KEYS = 50;
@@ -128,20 +135,62 @@ export function recordCommand(key: string, command: string, now = Date.now()): v
   const text = command.trim();
   if (text === "" || looksSecret(text)) return;
   load();
-  const list = history.get(key) ?? [];
-  list.push({ command: text, ok: null, at: now });
-  if (list.length > KEPT) list.splice(0, list.length - KEPT);
+  // A new list, never the stored one changed in place: a row that reads it hears the change.
+  const list = [...(history.get(key) ?? []), { command: text, ok: null, at: now }].slice(-KEPT);
   // Re-insert so the least recently used terminal is first in line to age out.
   history.delete(key);
   history.set(key, list);
   while (history.size > MAX_KEYS) history.delete(history.keys().next().value as string);
   save();
+  changed();
 }
+
+/**
+ * Remembers how a command the editor ran ended, on the oldest line of this terminal's history that is
+ * still unknown and carries the same command. Takes the shell's own report (`shellOutcomes.ts`); a line the
+ * shell never reported keeps no result, and says only when it ran. Returns whether a line took it.
+ */
+export function recordExitCode(key: string, command: string, exitCode: number): boolean {
+  const wanted = collapsed(command);
+  if (wanted === "") return false;
+  load();
+  const list = history.get(key);
+  const at = list?.findIndex((entry) => entry.ok === null && collapsed(entry.command) === wanted) ?? -1;
+  if (!list || at < 0) return false;
+  const next = [...list];
+  next[at] = { ...(list[at] as HistoryEntry), ok: exitCode === 0 };
+  history.set(key, next);
+  save();
+  changed();
+  return true;
+}
+
+/** The store's readers, so a result that arrives after the last render still shows. */
+const listeners = new Set<() => void>();
+
+const changed = () => {
+  for (const listener of listeners) listener();
+};
+
+/** Calls back when a terminal's history gains a line or learns how a line ended. */
+export function subscribeHistory(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+const NOTHING: readonly HistoryEntry[] = [];
 
 export const historyOf = (key: string): readonly HistoryEntry[] => {
   load();
-  return history.get(key) ?? [];
+  return history.get(key) ?? NOTHING;
 };
+
+/** One terminal's history, for rendering: a row redrawn when the shell says how a line ended. */
+export function useHistory(key: string): readonly HistoryEntry[] {
+  return useSyncExternalStore(subscribeHistory, () => historyOf(key), () => NOTHING);
+}
 
 /** Newest first, one row per distinct command, filtered by a case-insensitive match on the masked text. */
 export function searchHistory(entries: readonly HistoryEntry[], query: string, limit = 8): HistoryMatch[] {
@@ -180,8 +229,12 @@ export function historyAcross(threadIds: readonly string[]): HistoryEntry[] {
   return out.sort((a, b) => a.at - b.at);
 }
 
-/** What a history row says about when and how a command ran. The result is shown only when the shell reported one. */
-export function rowWhen(entry: HistoryEntry, now = Date.now()): string {
+/**
+ * What a history row says after its result mark: when it ran, and the count of failed runs the design's
+ * `input-history` frame draws for a command that failed. A command the shell never reported says only when
+ * it ran, so nothing claims a result that was not seen.
+ */
+export function rowDetail(entry: HistoryEntry, now = Date.now()): string {
   const when = agoWords(entry.at, now);
-  return entry.ok === null ? when : `${entry.ok ? "ok" : "failed"} · ${when}`;
+  return entry.ok === false ? `${when} · 1 failed` : when;
 }
