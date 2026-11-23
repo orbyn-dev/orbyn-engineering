@@ -302,7 +302,7 @@ fn a_verification_gets_what_is_left_of_the_budget() {
 }
 
 /// A restart leaves tasks `running` or `verifying` with nothing driving them. The next start
-/// verifies the one that was being checked and resumes the builder whose worker is gone.
+/// verifies the one that was being checked and resumes the builder whose worker is gone, once.
 #[tokio::test]
 async fn a_restart_picks_up_tasks_left_running_or_verifying() {
     use crate::crew::tests::fake::stamper;
@@ -330,7 +330,7 @@ async fn a_restart_picks_up_tasks_left_running_or_verifying() {
         }
     };
     let mut made = Vec::new();
-    for (n, state) in [(1, "verifying")] {
+    for (n, state) in [(1, "verifying"), (2, "running")] {
         let s = stamper();
         let brief = s
             .brief(&super::harness::brief(
@@ -377,19 +377,18 @@ async fn a_restart_picks_up_tasks_left_running_or_verifying() {
         made.push(task.id);
     }
     w.core.recover_crew_tasks().await;
-    for id in &made {
-        eprintln!(
-            "after recover {id}: {:?} run {:?}",
-            w.task(id),
-            w.core.store.crew_run(id).unwrap()
-        );
-    }
     w.until_state(&made[0], "passed").await;
-    // The builder gets the one resume its life has: the task stays running and the lost turn counts.
-    let resumed = w.task(&made[1]);
-    assert_eq!(resumed.state, "running");
+    // The builder whose worker is gone gets the one resume its life has: it stays running, the lost
+    // turn counts, and a second restart stops it.
     let run = w.core.store.crew_run(&made[1]).unwrap().unwrap();
-    assert_eq!((run.resume_count, run.attempts), (1, 1));
+    assert_eq!(w.task(&made[1]).state, "running");
+    assert_eq!(run.resume_count, 1);
+    w.core.recover_crew_tasks().await;
+    w.until_state(&made[1], "stopped").await;
+    assert_eq!(
+        w.task(&made[1]).stop_reason.as_deref(),
+        Some("engine_error")
+    );
 }
 
 /// An attachment tool takes any thread of the project; a worker may use only its own.
