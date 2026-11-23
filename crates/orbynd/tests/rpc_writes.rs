@@ -180,6 +180,90 @@ async fn file_mutate_refuses_paths_outside_the_checkout_and_git_metadata() {
     assert!(!f.dir.path().join("stolen").exists());
 }
 
+#[tokio::test]
+async fn file_mutate_never_overwrites_an_existing_file_by_move() {
+    let f = git_fixture().await;
+    let route = format!("/api/threads/{}/files/mutate", f.thread);
+    std::fs::write(f.checkout.join("b.txt"), "keep me\n").unwrap();
+    let response = f
+        .service
+        .post(&route)
+        .json(&json!({"action": "move", "path": "a.txt", "destination": "b.txt"}))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    let text = response.text().await.unwrap();
+    assert_eq!(status, 400, "a move onto an existing file: {text}");
+    assert_eq!(
+        std::fs::read_to_string(f.checkout.join("a.txt")).unwrap(),
+        "one\n",
+        "the source is kept"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.checkout.join("b.txt")).unwrap(),
+        "keep me\n",
+        "the destination is not overwritten"
+    );
+}
+
+/// A link inside the checkout that points outside it: a delete or move through the link must not reach the
+/// outside file.
+#[cfg(unix)]
+#[tokio::test]
+async fn file_mutate_through_a_link_that_leaves_the_checkout_touches_nothing_outside() {
+    let f = git_fixture().await;
+    let route = format!("/api/threads/{}/files/mutate", f.thread);
+    let outside = f.dir.path().join("outside-dir");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("x"), "outside\n").unwrap();
+    std::os::unix::fs::symlink(&outside, f.checkout.join("link")).unwrap();
+
+    for action in [
+        json!({"action": "delete", "path": "link/x"}),
+        json!({"action": "move", "path": "a.txt", "destination": "link/a"}),
+        json!({"action": "move", "path": "link/x", "destination": "moved"}),
+        json!({"action": "create_file", "path": "link/new"}),
+    ] {
+        let response = f.service.post(&route).json(&action).send().await.unwrap();
+        let status = response.status().as_u16();
+        let text = response.text().await.unwrap();
+        assert_eq!(status, 400, "{action}: {text}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(outside.join("x")).unwrap(),
+        "outside\n"
+    );
+    assert!(!outside.join("a").exists());
+    assert!(!outside.join("new").exists());
+    assert_eq!(
+        std::fs::read_to_string(f.checkout.join("a.txt")).unwrap(),
+        "one\n"
+    );
+
+    // The link itself resolves outside the checkout, so the service refuses to delete it too: the refusal is the safe
+    // side, and the file it points at is untouched either way.
+    let response = f
+        .service
+        .post(&route)
+        .json(&json!({"action": "delete", "path": "link"}))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    let text = response.text().await.unwrap();
+    assert_eq!(status, 400, "deleting the link itself: {text}");
+    assert!(
+        std::fs::symlink_metadata(f.checkout.join("link")).is_ok(),
+        "the refused delete left the link"
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.join("x")).unwrap(),
+        "outside\n",
+        "the file it pointed at survives"
+    );
+}
+
 // ------------------------------------------------ person class for both writes
 
 #[tokio::test]

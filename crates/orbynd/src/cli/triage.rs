@@ -95,6 +95,9 @@ mod tests {
                 wanted
             );
         }
-        assert!(pick(&mut &b"bad\n"[..], &mut Vec::new()).is_err());
+        assert_eq!(
+            pick(&mut &b"bad\n"[..], &mut Vec::new()).unwrap_err(),
+            "No agent selected. Use --agent claude or --agent codex."
+        );
     }
 }
