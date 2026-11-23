@@ -15,7 +15,7 @@ use crate::error::Result;
 /// What one attempt to resume a task found.
 pub enum ResumeOutcome {
     /// The one resume is taken: the task is `running`, its lost turn counted.
-    Resumed { task: CrewTask, run: CrewRun },
+    Resumed { task: CrewTask, run: Box<CrewRun> },
     /// The task may not resume; nothing was written. `why` is the row's reason when the caller stops it.
     Refused(&'static str),
     /// The task is no longer `running` or `changed_approach` (a cancel or an end won), so nothing is written.
@@ -153,7 +153,7 @@ impl Store {
                 params![task_id, crate::util::format_unix(now), downtime],
             )?;
             let run = find_run(tx, task_id)?;
-            Ok(ResumeOutcome::Resumed { task, run })
+            Ok(ResumeOutcome::Resumed { task, run: Box::new(run) })
         })
     }
 
