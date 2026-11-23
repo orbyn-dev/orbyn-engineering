@@ -370,7 +370,7 @@ for a failed replay "The script changed or is not repeatable, so the recorded ca
 call that may have changed something was running when Orbyn restarted, so the run can't continue." A
 cancelled run ends, resumes and replays with "The run was cancelled."; cancelling a run that already ended
 answers `409 run_finished` with "This run already ended." The run record and the runs list API carry
-`waited_ms`; the list view itself shows run id, status, start and end, call count and the first 120
+`waited_ms`, and the runs list row also carries `error_kind` (`syntax`, `runtime`, `limit`, `denied`, `lost` or `cancelled`; `null` when the run did not fail), so a cancelled run is told from a failed one without opening it; the list view itself shows run id, status, start and end, call count and the first 120
 characters of the script, and the detail view adds the calls with their 4 KiB previews. A call's full
 result is fetched on its own.
 
