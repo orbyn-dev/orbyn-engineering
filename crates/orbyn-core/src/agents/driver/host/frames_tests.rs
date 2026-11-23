@@ -135,3 +135,24 @@ fn requests_carry_their_id_and_type() {
     assert!(is_gated("steer") && !is_gated("open"));
     assert!(is_gated("readSubagent"));
 }
+
+#[test]
+fn a_run_done_carries_the_result_usage_when_the_host_sends_it() {
+    let line = r#"{"type":"runDone","sendId":3,"ok":true,"result":{"reason":"completed","threadDisposition":"reusable","usage":{"inputTokens":200,"outputTokens":20,"cacheReadTokens":180,"cacheWriteTokens":0}}}"#;
+    let Incoming::RunDone(done) = decode(line).unwrap() else {
+        panic!("not a runDone");
+    };
+    assert_eq!(
+        done.usage,
+        Some(json!({
+            "inputTokens": 200, "outputTokens": 20,
+            "cacheReadTokens": 180, "cacheWriteTokens": 0
+        }))
+    );
+
+    let no_usage = r#"{"type":"runDone","sendId":3,"ok":true,"result":{"reason":"completed"}}"#;
+    let Incoming::RunDone(done) = decode(no_usage).unwrap() else {
+        panic!("not a runDone");
+    };
+    assert_eq!(done.usage, None);
+}

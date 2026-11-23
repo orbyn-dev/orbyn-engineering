@@ -60,7 +60,10 @@ const retry = async (id: string) => {
 
 const dismiss = (id: string) => put(useClones.getState().tracked.filter((entry) => entry.job.id !== id));
 
-/** What is cloning or stopped short, with the way forward. Stays until it is settled. */
+/** What is cloning or stopped short, with the way forward. Stays until it is settled.
+ *
+ * Drawn inside the toast stack rather than in a layer of its own: the stack is the designed toast
+ * position, and a failed clone is announced to assistive tech by that stack's live region. */
 export function CloneJobs() {
   const tracked = useClones((state) => state.tracked);
   if (tracked.length === 0) return null;

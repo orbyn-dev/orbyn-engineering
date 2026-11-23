@@ -48,3 +48,30 @@ fn absent_choices_are_left_out_and_extra_folders_are_the_library() {
     assert_eq!(sdk["additionalDirectories"], json!(["/workspace"]));
     assert!(options.get("claudePath").is_none());
 }
+
+#[test]
+fn cursor_options_are_model_mode_and_mcp_only() {
+    let mut spec = run_spec();
+    spec.model = Some("composer-2.5".into());
+    let options = super::cursor(&spec);
+    assert_eq!(
+        options,
+        json!({
+            "model": {"id": "composer-2.5"},
+            "mode": "agent",
+            "mcpServers": {
+                "orbyn_engineering": {"type": "http", "url": "http://127.0.0.1:1/mcp/x"}
+            }
+        })
+    );
+    assert!(
+        options.get("context").is_none(),
+        "the Cursor SDK takes no context option"
+    );
+
+    spec.plan = true;
+    assert_eq!(super::cursor(&spec)["mode"], "plan");
+
+    spec.mcp_url = None;
+    assert!(super::cursor(&spec).get("mcpServers").is_none());
+}

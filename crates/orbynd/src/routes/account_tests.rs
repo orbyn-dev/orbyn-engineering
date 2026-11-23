@@ -253,6 +253,8 @@ async fn no_route_outside_the_account_prefix_names_an_account_sign_in_sign_out_o
         .filter(|(_, path)| path != "/api/crew/projects/{id}/pinned-ref/confirm")
         // Confirming a possible escape: a person's ruling on a merge, nothing to do with the account.
         .filter(|(_, path)| path != "/api/crew/escapes/{id}/confirm")
+        // The agent devices service: a paired machine, nothing to do with the account.
+        .filter(|(_, path)| !path.starts_with("/api/devices"))
         .filter(|(_, path)| {
             [
                 "account", "sign-in", "sign-out", "signin", "signout", "device", "password",

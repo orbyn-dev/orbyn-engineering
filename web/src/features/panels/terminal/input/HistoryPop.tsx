@@ -1,5 +1,6 @@
+import { Check, X } from "lucide-react";
 import { useState, type KeyboardEvent } from "react";
-import { rowWhen, searchHistory, type HistoryEntry } from "./history";
+import { rowDetail, searchHistory, type HistoryEntry } from "./history";
 
 export type HistoryScope = "shell" | "project";
 
@@ -7,6 +8,9 @@ export type HistoryScope = "shell" | "project";
  * The history search: a list that narrows as the person types, with the matching part bold. The scope chip says
  * whose history it is, and widens from this shell to this project's terminals. The row text is masked; the real
  * command is what a pick returns.
+ *
+ * A row marks how the command ended once the shell has said so, with the check and cross of the design's
+ * `input-history` frame, and no mark while it has not: the result is the shell's to report.
  */
 export function HistoryPop({ shell, project, scope: first, onPick, onClose }: { shell: readonly HistoryEntry[]; project: readonly HistoryEntry[]; scope: HistoryScope; onPick(command: string): void; onClose(): void }) {
   const [scope, setScope] = useState(first);
@@ -45,6 +49,11 @@ export function HistoryPop({ shell, project, scope: first, onPick, onClose }: { 
       <ul role="listbox" aria-label="History">
         {found.map((hit, index) => (
           <li key={hit.entry.command} role="option" aria-selected={index === at}>
+            {hit.entry.ok === null ? null : (
+              <span className={hit.entry.ok ? "term-input-ok" : "term-input-bad"}>
+                {hit.entry.ok ? <Check size={12} aria-label="Succeeded" /> : <X size={12} aria-label="Failed" />}
+              </span>
+            )}
             <code>
               {hit.match ? (
                 <>
@@ -56,7 +65,7 @@ export function HistoryPop({ shell, project, scope: first, onPick, onClose }: { 
                 hit.shown
               )}
             </code>
-            <span className="term-input-when">{rowWhen(hit.entry)}</span>
+            <span className="term-input-when">{rowDetail(hit.entry)}</span>
           </li>
         ))}
       </ul>

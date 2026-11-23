@@ -259,7 +259,8 @@ code: the core then replays the script from the start with the recorded results.
 ### Cancel
 
 Only the person cancels, through `POST /api/code-runs/{id}/cancel` (Person-class, no body, over 1 KiB refused
-with "This route takes no body."). No MCP tool, script or Crew worker reaches it.
+with "This route takes no body."). No MCP tool, script or Crew worker reaches it. The web run block offers a
+Cancel run button to the person only, hidden where no person key can be sent (a plain browser tab).
 
 - A live run (`running` or `paused`) ends as `error: cancelled` with "The run was cancelled." Its task is
   aborted and its slot is released before the route answers, so a new start may take the place at the cap.
@@ -473,7 +474,25 @@ route below answers `404`.
   answers `409 run_finished`). Cancelling a cancelled run returns its record; a completed,
   errored or lost run is `409 run_finished`; an unknown id is `404 not_found`. The route is `POST /api/code-runs/{id}/cancel`, a
   body-less Person-class write in `ENFORCED`, `PERSON_ROUTES`, `routes.json` and `web/src/api/personKey.ts`.
-- **Not built.** The web UI's Stop button (the route is the web owner's to draw).
+- **Cancel in the web.** The run block draws the person's Cancel run button; no other web screen draws a stop, so the runs list
+  has no row action.
+
+### Tested against the real service
+
+`crates/orbynd/tests/code_mode_switch.rs` drives the switch and read routes over HTTP against a real
+`orbynd`: `the_switch_is_off_by_default_for_a_known_engine_and_an_unknown_one`,
+`the_switch_writes_what_it_stored_and_survives_a_restart`, `a_refused_switch_write_is_not_stored`,
+`an_extra_field_is_ignored_by_the_switch_write`,
+`a_shell_less_service_answers_desktop_required_and_writes_nothing`,
+`with_code_mode_off_every_client_route_is_not_offered`,
+`a_thread_with_no_runs_and_an_unknown_thread_both_answer_an_empty_list`,
+`unknown_and_malformed_run_ids_are_404_not_500` and
+`a_real_run_is_listed_and_read_with_the_contract_shape`. The last creates a run through the
+service's own `/mcp/{token}` endpoint and its real QuickJS executor. The read routes check an id's
+shape, not what it names: an unknown engine id with a valid shape answers `200 {"enabled":false}`
+and an unknown thread id answers `200 {"runs":[]}`. The `PUT` body is not strict: serde ignores an
+extra field, so that write succeeds; a missing or non-bool `enabled` is `400 invalid_input`, as is a
+body over the router's 4 MiB limit.
 
 ## As built: web UI
 

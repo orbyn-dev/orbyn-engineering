@@ -239,7 +239,7 @@ describe("an unchanged poll", () => {
   const poll = (answer: { projects: Project[]; threads: Thread[]; approvals: Approval[] }) => [
     vi.spyOn(api, "projects").mockResolvedValue(answer.projects),
     vi.spyOn(api, "threads").mockResolvedValue(answer.threads),
-    vi.spyOn(api, "allThreads").mockResolvedValue([]),
+    vi.spyOn(api, "allThreads").mockResolvedValue(answer.threads),
     vi.spyOn(api, "pendingApprovals").mockResolvedValue(answer.approvals),
   ];
 

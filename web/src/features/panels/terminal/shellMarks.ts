@@ -17,12 +17,22 @@ export interface Position {
 }
 
 export interface ShellCommand {
+  /** Tells two runs of the same command apart; increases within one terminal. */
+  seq: number;
   /** The command line, from an explicit 633;E mark or the text typed after the prompt. */
   command: string | null;
   outputStart: Row;
   /** Where the finish mark landed; null while the command still runs. */
   end: Position | null;
   /** Null while running, or when the shell reported no code. */
+  exitCode: number | null;
+}
+
+/** A command that has finished and said what it was, as plain data: no rows, so it can leave the terminal. */
+export interface FinishedCommand {
+  seq: number;
+  command: string;
+  /** What the shell said, or null when it reported no code. */
   exitCode: number | null;
 }
 
@@ -45,6 +55,7 @@ export class ShellMarks {
   private commands: ShellCommand[] = [];
   private commandStart: Position | null = null;
   private commandLine: string | null = null;
+  private next = 0;
 
   constructor(private readonly read: ReadText) {}
 
@@ -78,7 +89,8 @@ export class ShellMarks {
             ? this.read(start.row.line, start.col, here.row.line)
             : null);
         const command = typed?.trim() ? typed.trim() : null;
-        this.commands.push({ command, outputStart: here.row, end: null, exitCode: null });
+        this.commands.push({ seq: this.next, command, outputStart: here.row, end: null, exitCode: null });
+        this.next += 1;
         if (this.commands.length > KEPT) this.commands.splice(0, this.commands.length - KEPT);
         this.commandStart = null;
         this.commandLine = null;
@@ -101,6 +113,21 @@ export class ShellMarks {
   private closeRunning(at: () => Position) {
     const running = this.commands.at(-1);
     if (running && running.end === null) running.end = at();
+  }
+
+  /**
+   * The commands that have finished and said what they were, oldest first, as plain data: what the
+   * editor needs to remember how a line it ran ended. A command still running, or one whose line the
+   * shell never showed, is left out.
+   */
+  finished(): readonly FinishedCommand[] {
+    const out: FinishedCommand[] = [];
+    for (const command of this.commands) {
+      if (command.end !== null && command.command !== null) {
+        out.push({ seq: command.seq, command: command.command, exitCode: command.exitCode });
+      }
+    }
+    return out;
   }
 
   /**

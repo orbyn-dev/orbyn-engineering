@@ -3,7 +3,8 @@ import { posix, win32 } from "node:path";
 /**
  * Builds the packaged smoke profile without reading host configuration.
  * `codexBin` names a Codex the caller installed on purpose; the parent's own
- * provider overrides are never taken.
+ * provider overrides are never taken. The result declares itself the smoke launch and
+ * names its sandbox, so the app reads these paths only for this profile.
  */
 export function smokeAppEnvironment(parent, sandbox, platform = process.platform, { codexBin } = {}) {
   const { join, isAbsolute } = platform === "win32" ? win32 : posix;
@@ -38,6 +39,10 @@ export function smokeAppEnvironment(parent, sandbox, platform = process.platform
   const environment = {
     ...inherited,
     ...profile,
+    // The launch declares the profile it builds, so a build that only inherits this
+    // environment reads the person's own profile instead of this sandbox (#1105).
+    ORBYN_LAUNCH_PROFILE: "smoke",
+    ORBYN_SMOKE_SANDBOX: sandbox,
     // Built-in providers are registered even when optional discovery is empty.
     // Explicit missing overrides prevent them from resolving the host PATH.
     ORBYN_CLAUDE_BIN: join(sandbox, "absent-providers", "claude"),

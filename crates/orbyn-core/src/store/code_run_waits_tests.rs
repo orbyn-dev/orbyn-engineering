@@ -20,9 +20,13 @@ fn migration_74_follows_73_and_leaves_an_old_run_without_a_wait() {
         .iter()
         .map(|(version, _)| *version)
         .collect();
-    assert_eq!(versions[versions.len() - 2], 73);
-    assert_eq!(versions[versions.len() - 1], 74);
-    let (_, sql) = migrations::MIGRATIONS.last().unwrap();
+    // Later migrations may follow; 74 must come straight after 73.
+    let at = versions.iter().position(|version| *version == 74).unwrap();
+    assert_eq!(versions[at - 1], 73);
+    let (_, sql) = migrations::MIGRATIONS
+        .iter()
+        .find(|(version, _)| *version == 74)
+        .unwrap();
     assert!(sql.contains("ALTER TABLE code_runs ADD COLUMN waited_ms INTEGER"));
     assert!(sql.contains("ALTER TABLE approvals ADD COLUMN created_at_ms INTEGER"));
 

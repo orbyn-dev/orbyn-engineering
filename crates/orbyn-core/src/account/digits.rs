@@ -82,7 +82,7 @@ impl Issued {
         if self.spent || self.tries_left == 0 || self.digits.is_empty() {
             return Check::Locked;
         }
-        if Instant::now() >= self.expires {
+        if self.is_expired() {
             return Check::Expired;
         }
         if constant_time_eq(self.digits.as_bytes(), typed.as_bytes()) {
@@ -99,6 +99,12 @@ impl Issued {
                 tries_left: self.tries_left,
             }
         }
+    }
+
+    /// Whether the life they were issued for is over. They die with the request, so this is the
+    /// request's own clock, not one that starts when a trusted device answers.
+    pub fn is_expired(&self) -> bool {
+        Instant::now() >= self.expires
     }
 
     /// The digits for the trusted device to show; `None` once they are spent or locked.
