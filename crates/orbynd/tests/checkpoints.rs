@@ -173,6 +173,50 @@ async fn restore_returns_files_keeps_ignored_ones_and_can_be_undone() {
     assert_eq!(String::from_utf8(kept.stdout).unwrap(), "later");
 }
 
+/// The restore's safety ref is the user's way back: checking it out over the restored tree returns every later file and
+/// edit byte for byte, so a restore never loses work.
+#[tokio::test]
+async fn the_safety_ref_of_a_restore_returns_every_later_edit() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, options(&dir, false), "codex").await;
+    seed(&dir);
+    let checkout = dir.path().join("library/repo/project");
+    let id = run(&service, &thread, "[write:one.txt]").await;
+    std::fs::write(checkout.join("base.txt"), "later edit\r\nwith crlf\n").unwrap();
+    std::fs::write(checkout.join("later.txt"), "later").unwrap();
+    std::fs::create_dir_all(checkout.join("later-dir")).unwrap();
+    std::fs::write(checkout.join("later-dir/inner"), "inner").unwrap();
+
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/restore"),
+            json!({ "run_id": id, "point": "start" }),
+        )
+        .await;
+    assert_eq!(code, 204, "{body}");
+    assert!(!checkout.join("later.txt").exists());
+    assert!(!checkout.join("later-dir/inner").exists());
+
+    let audit = service.audit(&thread).await;
+    let safety = audit
+        .iter()
+        .find(|row| row["action"] == "workspace.restore")
+        .unwrap()["detail"]["safety"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    run_git(&checkout, &["checkout", &safety, "--", "."]);
+    assert_eq!(
+        std::fs::read(checkout.join("base.txt")).unwrap(),
+        b"later edit\r\nwith crlf\n"
+    );
+    assert_eq!(std::fs::read(checkout.join("later.txt")).unwrap(), b"later");
+    assert_eq!(
+        std::fs::read(checkout.join("later-dir/inner")).unwrap(),
+        b"inner"
+    );
+}
+
 #[tokio::test]
 async fn restored_bytes_match_the_checkpoint_whatever_git_would_convert() {
     let dir = TempDir::new();

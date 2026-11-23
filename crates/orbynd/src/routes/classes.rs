@@ -1436,13 +1436,28 @@ mod tests {
         assert!(rows.lock().unwrap().len() <= 1024);
     }
 
+    /// The status and `code` a refused `person_check_field` answers with.
+    fn refusal_code(result: Result<(), ApiFailure>) -> (u16, String) {
+        use axum::response::IntoResponse;
+        let response = result.expect_err("the call is refused").into_response();
+        let status = response.status().as_u16();
+        let body = futures_util::FutureExt::now_or_never(axum::body::to_bytes(
+            response.into_body(),
+            4096,
+        ))
+        .expect("body is ready")
+        .expect("body reads");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json body");
+        (status, json["code"].as_str().expect("code").to_owned())
+    }
+
     #[tokio::test]
     async fn a_handler_level_refusal_is_audited_by_field_and_a_failed_write_still_refuses() {
         let headers = axum::http::HeaderMap::new();
         let (_, rows, offset, access) = audited(Some("the-key"), false).await;
         for _ in 0..3 {
             let refused = access.person_check_field(&headers, "POST", "/r/{id}", "resume");
-            assert!(refused.is_err());
+            assert_eq!(refusal_code(refused), (403, "person_required".to_owned()));
         }
         let _ = access.person_check_field(&headers, "POST", "/r/{id}", "worktree");
         access.audit_person_refusal("POST", "/r/{id}", None, CallerClass::ServiceToken);
@@ -1457,7 +1472,11 @@ mod tests {
 
         let (_, rows, _, failing) = audited(Some("the-key"), true).await;
         let refused = failing.person_check_field(&headers, "POST", "/r/{id}", "resume");
-        assert!(refused.is_err(), "a failed audit write still refuses");
+        assert_eq!(
+            refusal_code(refused),
+            (403, "person_required".to_owned()),
+            "a failed audit write still refuses"
+        );
         assert!(rows.lock().unwrap().is_empty());
     }
 
