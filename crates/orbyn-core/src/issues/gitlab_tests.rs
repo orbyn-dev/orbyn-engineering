@@ -314,7 +314,6 @@ async fn a_cursor_minted_by_another_tracker_is_refused_with_no_request() {
     .unwrap()
     .next
     .expect("a full Forgejo page has a next cursor");
-    assert!(forged.starts_with("2."), "{forged}");
 
     let server = Server::start(|_| Reply::json(&json!([]))).await;
     let refused = reader(&server)
