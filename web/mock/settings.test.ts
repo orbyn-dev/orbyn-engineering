@@ -92,3 +92,16 @@ it("opens the thread a native-session import names, and leaves an engine already
   expect(api.handle("POST", "/api/engines/update-all", {}).body).toEqual([]);
   api.reset();
 });
+
+it("keeps a failure queued for GET on an engine's update route out of update-all, which sends POST", () => {
+  const api = createMockApi();
+  api.reset();
+  // An engine no thread is running on, so the update itself is allowed.
+  const engine = { ...(api.handle("GET", "/api/engines").body as { id: string }[])[0]!, id: "idle-engine" };
+  api.setEngines([{ ...engine, installed: true, updating: false, update_command: "npm i", version: "1.0.0", latest: "2.0.0", instance_of: null } as never]);
+  api.fail(`/api/engines/${engine.id}/update`, 1, 500, "boom", "Broke.", "GET");
+  const outcome = (api.handle("POST", "/api/engines/update-all", {}).body as { id: string; error?: string }[])[0];
+  expect(outcome?.error).toBeUndefined();
+  expect(api.handle("GET", `/api/engines/${engine.id}/update`).status).toBe(500);
+  api.reset();
+});

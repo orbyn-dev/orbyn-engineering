@@ -1551,7 +1551,7 @@ export function createMockApi(options: MockOptions = {}) {
       // Updates every engine that owns an installer and has a newer version, one after another, as one update each would.
       if (seg[1] === "engines" && seg[2] === "update-all") {
         const outcomes = engines.filter((engine) => engine.installed && !engine.updating && !engine.instance_of && engine.update_command !== null && engine.latest !== null && engine.latest !== engine.version).map((engine) => {
-          const answer = takeFailure(`/api/engines/${engine.id}/update`) ?? route("POST", `/api/engines/${engine.id}/update`, new URLSearchParams(), {});
+          const answer = takeFailure(`/api/engines/${engine.id}/update`, "POST") ?? route("POST", `/api/engines/${engine.id}/update`, new URLSearchParams(), {});
           return answer.status < 400 ? { id: engine.id, name: engine.name, version: engine.latest ?? undefined } : { id: engine.id, name: engine.name, error: String((answer.body as { message?: string }).message) };
         });
         return { status: 200, body: outcomes };
