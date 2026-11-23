@@ -3,12 +3,16 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure, NETWORK_ERROR, request } from "../../../api/client";
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
+import type { ScopedPreferenceOverride } from "../../../generated/ScopedPreferenceOverride";
+import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
 import type { TextGeneratorEngine } from "../../../generated/TextGeneratorEngine";
 import type { TextGenerators as TextGeneratorsView } from "../../../generated/TextGenerators";
 import { SettingsScopeProvider } from "../rows/SettingsScopeContext";
 import { TextGenerators } from "./TextGenerators";
 
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+
+const KEY = "text_generation_models";
 
 const model = (id: string, label: string, extra: Partial<TextGeneratorEngine["models"][number]> = {}) => ({
   id, label, description: null, is_default: false, custom: false, options: [], ...extra,
@@ -41,9 +45,66 @@ const noModels: TextGeneratorEngine = {
   chosen: null, resolved: null, reason: null,
 };
 
+const projectGroups: ProjectScopeCatalog["groups"] = [{
+  key: "g1", label: "Project one", members: [{
+    project_id: "p1", physical_key: "p1", name: "Project one", path: "/project-one",
+    repository_key: "p1", repository_label: "Project one", repository_relative_path: "",
+    grouping_mode: "separate", metadata_complete: true, unavailable: null,
+  }],
+}];
+const projectCatalog: ProjectScopeCatalog = {
+  version: "membership-1", metadata_complete: true,
+  selection: { kind: "checkout", group_key: "g1", project_id: "p1" },
+  groups: projectGroups,
+};
+const globalCatalog: ProjectScopeCatalog = {
+  version: "membership-1", metadata_complete: true,
+  selection: { kind: "all_projects" },
+  groups: [],
+};
+
 const view = (engines: TextGeneratorEngine[]): TextGeneratorsView => ({ engines });
+
+const preferences = (value: Record<string, string>, overrides: ScopedPreferenceOverride[] = [],
+  catalog = globalCatalog): ScopedPreferencesResult => ({
+  catalog,
+  rows: [{
+    key: KEY, value, mixed: false, default: {}, project_scoped: true, revision: "revision-1",
+    environment: { key: KEY, value, default: {}, source: "global", project_scoped: true },
+    members: [], overrides,
+  }],
+});
+
+/** The project's effective value is deliberately different from its own map, which is the override. */
+const projectPreferences = (own: Record<string, string>) => preferences(
+  { claude: "haiku-5-5", ghost: "global-ghost", ...own },
+  [{ project_id: "p1", name: "Project one", value: own }],
+  projectCatalog,
+);
+
 const requestMock = vi.mocked(request);
 const rowOf = (title: string) => screen.getByText(title).closest(".setting-line") as HTMLElement;
+
+function mockApi(engines: TextGeneratorEngine[], query: ScopedPreferencesResult,
+  options: { write?: ScopedPreferencesResult | Error; catalog?: ProjectScopeCatalog; onList?: () => void } = {}) {
+  const write = options.write ?? query;
+  requestMock.mockImplementation(async (method, path) => {
+    if (method === "GET" && path.startsWith("/api/text-generators")) {
+      options.onList?.();
+      return view(engines) as never;
+    }
+    if (method === "POST" && path === "/api/settings/project-scopes") {
+      if (!options.catalog) throw new Error(`unexpected ${method} ${path}`);
+      return options.catalog as never;
+    }
+    if (method === "POST" && path === "/api/settings/preferences/query") return query as never;
+    if (method === "PUT" && path === "/api/settings/preferences") {
+      if (write instanceof Error) throw write;
+      return write as never;
+    }
+    throw new Error(`unexpected ${method} ${path}`);
+  });
+}
 
 beforeEach(() => {
   requestMock.mockReset();
@@ -72,7 +133,7 @@ describe("Settings › Threads › Text generators", () => {
     expect(screen.queryByLabelText("Set for this project")).not.toBeInTheDocument();
   });
 
-  it("shows a saved choice as Your choice, ticks it, tags Default and Added in settings, and keeps Automatic disabled", async () => {
+  it("shows a saved choice as Your choice, ticks it, tags Default and Added in settings, and leaves Automatic selectable", async () => {
     const user = userEvent.setup();
     requestMock.mockResolvedValue(view([chosen, none]) as never);
     render(<TextGenerators />);
@@ -82,16 +143,16 @@ describe("Settings › Threads › Text generators", () => {
     await user.click(within(codexRow).getByRole("button", { name: "GPT-5.2 Codex" }));
 
     const automatic = screen.getByRole("menuitem", { name: "Automatic" });
-    expect(automatic).toHaveAttribute("aria-disabled", "true");
-    expect(automatic).toBeDisabled();
-    expect(automatic).toHaveAttribute("title", "Can’t be cleared yet");
+    expect(automatic).toBeEnabled();
+    expect(automatic).not.toHaveAttribute("title");
     expect(screen.getByRole("menuitem", { name: "GPT-5.2 Codex" })).toHaveAttribute("aria-current", "true");
     expect(screen.getByRole("menuitem", { name: "GPT-5.2 Codex Max" })).toHaveTextContent("Default");
     expect(screen.getByRole("menuitem", { name: "team-tuned-mini" })).toHaveTextContent("Added in settings");
   });
 
-  it("sends exactly one ordinary preferences write for a chosen model", async () => {
+  it("sends the full stored map when choosing a model, keeping engines the list leaves out", async () => {
     const user = userEvent.setup();
+    mockApi([claude, small, none], preferences({ claude: "haiku-5-5", ghost: "ghost-model" }));
     render(<TextGenerators />);
     await screen.findByText("Codex");
     const codexRow = rowOf("Codex");
@@ -99,20 +160,51 @@ describe("Settings › Threads › Text generators", () => {
     await user.click(screen.getByRole("menuitem", { name: "GPT-5.2 Codex" }));
 
     await waitFor(() => expect(requestMock.mock.calls.filter(([method]) => method === "PUT")).toHaveLength(1));
-    expect(requestMock).toHaveBeenCalledWith("PUT", "/api/preferences", {
-      values: { text_generation_models: { codex: "gpt-5.2-codex" } },
+    expect(requestMock).toHaveBeenCalledWith("POST", "/api/settings/preferences/query", {
+      scope: {}, keys: [KEY],
+    }, undefined);
+    expect(requestMock).toHaveBeenCalledWith("PUT", "/api/settings/preferences", {
+      scope: {},
+      membership_version: "membership-1",
+      if_match: { [KEY]: "revision-1" },
+      edits: { [KEY]: { op: "set", value: { claude: "haiku-5-5", ghost: "ghost-model", codex: "gpt-5.2-codex" } } },
     });
+  });
+
+  it("returns one engine to Automatic with one write that removes only its entry", async () => {
+    const user = userEvent.setup();
+    mockApi([chosen, none], preferences({ codex: "gpt-5.2-codex", claude: "haiku-5-5", ghost: "ghost-model" }));
+    render(<TextGenerators />);
+    await screen.findByText("Codex");
+    const codexRow = rowOf("Codex");
+    await user.click(within(codexRow).getByRole("button", { name: "GPT-5.2 Codex" }));
+    await user.click(screen.getByRole("menuitem", { name: "Automatic" }));
+
+    await waitFor(() => expect(requestMock.mock.calls.filter(([method]) => method === "PUT")).toHaveLength(1));
+    expect(requestMock).toHaveBeenCalledWith("PUT", "/api/settings/preferences", {
+      scope: {},
+      membership_version: "membership-1",
+      if_match: { [KEY]: "revision-1" },
+      edits: { [KEY]: { op: "set", value: { claude: "haiku-5-5", ghost: "ghost-model" } } },
+    });
+  });
+
+  it("does nothing when Automatic is picked while nothing is chosen", async () => {
+    const user = userEvent.setup();
+    render(<TextGenerators />);
+    await screen.findByText("Codex");
+    await user.click(within(rowOf("Codex")).getByRole("button", { name: "Automatic" }));
+    await user.click(screen.getByRole("menuitem", { name: "Automatic" }));
+
+    expect(requestMock.mock.calls.filter(([method]) => method !== "GET")).toEqual([]);
   });
 
   it("shows the service's refusal under that row, keeps its saved choice, and reloads the list", async () => {
     const user = userEvent.setup();
     let reads = 0;
-    requestMock.mockImplementation(async (method, path) => {
-      if (method === "GET" && path.startsWith("/api/text-generators")) { reads += 1; return view([chosen, none]) as never; }
-      if (method === "PUT" && path === "/api/preferences") {
-        throw new ApiFailure("invalid_input", "Codex does not list gpt-5.2-codex-max as a model.", 400);
-      }
-      throw new Error(`unexpected ${method} ${path}`);
+    mockApi([chosen, none], preferences({ codex: "gpt-5.2-codex" }), {
+      write: new ApiFailure("invalid_input", "Codex does not list gpt-5.2-codex-max as a model.", 400),
+      onList: () => { reads += 1; },
     });
     render(<TextGenerators />);
     await screen.findByText("Codex");
@@ -176,27 +268,13 @@ describe("Settings › Threads › Text generators", () => {
     expect(within(row).getByRole("button", { name: "No models listed" })).toBeDisabled();
   });
 
-  it("reads and writes the project scope when the settings scope is a checkout", async () => {
+  it("reads and writes the project's own map when the settings scope is a checkout", async () => {
     const user = userEvent.setup();
-    const catalog: ProjectScopeCatalog = {
-      version: "catalog", metadata_complete: true,
-      selection: { kind: "checkout", group_key: "g1", project_id: "p1" },
-      groups: [{ key: "g1", label: "Project one", members: [{
-        project_id: "p1", physical_key: "p1", name: "Project one", path: "/project-one",
-        repository_key: "p1", repository_label: "Project one", repository_relative_path: "",
-        grouping_mode: "separate", metadata_complete: true, unavailable: null,
-      }] }],
-    };
     const projectEngine: TextGeneratorEngine = {
       ...chosen,
-      project: { project_id: "p1", chosen: "gpt-5.2-codex-max", resolved: "gpt-5.2-codex-max", reason: "chosen" },
+      project: { project_id: "p1", chosen: "gpt-5.2-codex-max", own: true, resolved: "gpt-5.2-codex-max", reason: "chosen" },
     };
-    requestMock.mockImplementation(async (method, path) => {
-      if (method === "POST" && path === "/api/settings/project-scopes") return catalog as never;
-      if (method === "GET" && path.startsWith("/api/text-generators")) return view([projectEngine, claude]) as never;
-      if (method === "PUT" && path === "/api/projects/p1/preferences") return [] as never;
-      throw new Error(`unexpected ${method} ${path}`);
-    });
+    mockApi([projectEngine, claude], projectPreferences({ codex: "gpt-5.2-codex-max", ghost: "own-ghost" }), { catalog: projectCatalog });
     window.location.hash = "#/settings/threads?project=g1&checkout=p1";
     render(<SettingsScopeProvider section="threads"><TextGenerators /></SettingsScopeProvider>);
 
@@ -207,8 +285,53 @@ describe("Settings › Threads › Text generators", () => {
     expect(requestMock).toHaveBeenCalledWith("GET", "/api/text-generators?project=p1", undefined, expect.any(AbortSignal));
     await user.click(within(codexRow).getByRole("button", { name: "GPT-5.2 Codex Max" }));
     await user.click(screen.getByRole("menuitem", { name: "GPT-5.2 Codex" }));
-    await waitFor(() => expect(requestMock).toHaveBeenCalledWith("PUT", "/api/projects/p1/preferences", {
-      values: { text_generation_models: { codex: "gpt-5.2-codex" } },
+    await waitFor(() => expect(requestMock).toHaveBeenCalledWith("PUT", "/api/settings/preferences", {
+      scope: { selection: { kind: "checkout", group_key: "g1", project_id: "p1" } },
+      membership_version: "membership-1",
+      if_match: { [KEY]: "revision-1" },
+      edits: { [KEY]: { op: "set", value: { codex: "gpt-5.2-codex", ghost: "own-ghost" } } },
     }));
+  });
+
+  it("returns a project's own engine to Automatic without touching its other own entries", async () => {
+    const user = userEvent.setup();
+    const projectEngine: TextGeneratorEngine = {
+      ...chosen,
+      project: { project_id: "p1", chosen: "gpt-5.2-codex-max", own: true, resolved: "gpt-5.2-codex-max", reason: "chosen" },
+    };
+    mockApi([projectEngine], projectPreferences({ codex: "gpt-5.2-codex-max", ghost: "own-ghost" }), { catalog: projectCatalog });
+    window.location.hash = "#/settings/threads?project=g1&checkout=p1";
+    render(<SettingsScopeProvider section="threads"><TextGenerators /></SettingsScopeProvider>);
+
+    await screen.findByText("Codex");
+    const codexRow = rowOf("Codex");
+    await user.click(within(codexRow).getByRole("button", { name: "GPT-5.2 Codex Max" }));
+    await user.click(screen.getByRole("menuitem", { name: "Automatic" }));
+
+    await waitFor(() => expect(requestMock.mock.calls.filter(([method]) => method === "PUT")).toHaveLength(1));
+    expect(requestMock).toHaveBeenCalledWith("PUT", "/api/settings/preferences", {
+      scope: { selection: { kind: "checkout", group_key: "g1", project_id: "p1" } },
+      membership_version: "membership-1",
+      if_match: { [KEY]: "revision-1" },
+      edits: { [KEY]: { op: "set", value: { ghost: "own-ghost" } } },
+    });
+  });
+
+  it("draws the layers icon only when the project's own map names the engine", async () => {
+    const own: TextGeneratorEngine = {
+      ...chosen,
+      project: { project_id: "p1", chosen: "gpt-5.2-codex-max", own: true, resolved: "gpt-5.2-codex-max", reason: "chosen" },
+    };
+    const inherited: TextGeneratorEngine = {
+      ...claude,
+      project: { project_id: "p1", chosen: "haiku-5-5", own: false, resolved: "haiku-5-5", reason: "chosen" },
+    };
+    mockApi([own, inherited], projectPreferences({ codex: "gpt-5.2-codex-max" }), { catalog: projectCatalog });
+    window.location.hash = "#/settings/threads?project=g1&checkout=p1";
+    render(<SettingsScopeProvider section="threads"><TextGenerators /></SettingsScopeProvider>);
+
+    await screen.findByText("Codex");
+    expect(within(rowOf("Codex")).getByLabelText("Set for this project")).toBeVisible();
+    expect(within(rowOf("Claude Code")).queryByLabelText("Set for this project")).toBeNull();
   });
 });
