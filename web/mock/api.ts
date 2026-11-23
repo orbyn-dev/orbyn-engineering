@@ -20,6 +20,7 @@ import type {
   ProjectFileView,
   QueuedMessage,
   ScheduledTask,
+  ServerInfo,
   ServerSettings,
   Thread,
   UpdateStatus,
@@ -226,6 +227,8 @@ export function createMockApi(options: MockOptions = {}) {
   const backgroundMock = createBackgroundMock();
   const reviewControlsMock = createReviewControlsMock();
   const terminalsMock = createTerminalsMock();
+  /** What a test changes in the service's `/api/info` answer (the build channel, the version). */
+  let infoPatch: Partial<ServerInfo> = {};
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
   /** Kiro, an ACP engine the service says Orbyn cannot gate, for the engine picker and unmanaged-thread screens. */
@@ -269,6 +272,7 @@ export function createMockApi(options: MockOptions = {}) {
     secretsMock.reset();
     terminalsMock.reset();
     signedIn = false;
+    infoPatch = {};
     idCounter = 0;
     preferenceValues = {};
     preferenceOverrides = {};
@@ -1029,7 +1033,7 @@ export function createMockApi(options: MockOptions = {}) {
       case "GET /api/keybindings":
         return { status: 200, body: keybindingsView() };
       case "GET /api/info":
-        return { status: 200, body: { ...fixtures.info, remote: scenario === "remote", ...(scenario === "crew" || scenario.startsWith("crew-") ? { crew_preview: true } : {}) } };
+        return { status: 200, body: { ...fixtures.info, ...infoPatch, remote: scenario === "remote", ...(scenario === "crew" || scenario.startsWith("crew-") ? { crew_preview: true } : {}) } };
       case "POST /auth/session":
         if (data.key === "orbyn-demo-key") {
           signedIn = true;
@@ -1539,6 +1543,10 @@ export function createMockApi(options: MockOptions = {}) {
     /** Fails the given step of the next apply, once. */
     failUpdateStep(id: string) {
       failStep = id;
+    },
+    /** Changes what `/api/info` answers from now on, such as the build `channel` or `version`. */
+    patchInfo(patch: Partial<ServerInfo>) {
+      infoPatch = { ...infoPatch, ...patch };
     },
     patchUpdates(patch: Partial<UpdateStatus>) {
       updates = { ...updates, ...patch };
