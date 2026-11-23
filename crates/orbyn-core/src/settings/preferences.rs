@@ -481,22 +481,23 @@ impl Core {
                     crate::agents::text_models::check_offered(&self.engines, value)?;
                 }
             }
-            if key == CREW_MIN_FREE_GB {
-                self.store.append_audit(&AuditRecord {
-                    actor: "user".into(),
-                    action: "crew.disk_floor.set".into(),
-                    target: "crew_min_free_gb".into(),
-                    decision: None,
-                    source: "user".into(),
-                    thread_id: None,
-                    run_id: None,
-                    detail: json!({"gb": value}),
-                })?;
-            }
             if key == crate::agents::engines::instances::PREFERENCE && !value.is_null() {
                 let list = crate::agents::engines::instances::parse(value)?;
                 self.engines.check_instances(&list)?;
             }
+        }
+        // The whole batch has passed, so a refused batch never leaves a change in the log.
+        if let Some(floor) = values.get(CREW_MIN_FREE_GB) {
+            self.store.append_audit(&AuditRecord {
+                actor: "user".into(),
+                action: "crew.disk_floor.set".into(),
+                target: "crew_min_free_gb".into(),
+                decision: None,
+                source: "user".into(),
+                thread_id: None,
+                run_id: None,
+                detail: json!({"gb": floor}),
+            })?;
         }
         let _cleanup_policy =
             self.cleanup_policy_write(values.keys().map(String::as_str), project_id.is_none())?;
@@ -1059,5 +1060,28 @@ mod scoped_consumer_tests {
             ("user", "crew_min_free_gb", "user")
         );
         assert_eq!(row.detail, json!({"gb": 7}));
+    }
+
+    #[test]
+    fn a_refused_batch_leaves_no_floor_change_in_the_audit_log() {
+        let dir = TempDir::new();
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        // One valid floor and one key the catalog does not know: the batch is refused whole.
+        let error = core.set_preferences(
+            None,
+            &BTreeMap::from([
+                (CREW_MIN_FREE_GB.to_owned(), json!(7)),
+                ("no_such_preference".to_owned(), json!(1)),
+            ]),
+        );
+        assert!(error.is_err());
+        assert_eq!(core.preference(CREW_MIN_FREE_GB, None).unwrap(), json!(5));
+        let audit = core.store.list_audit(None, 20).unwrap();
+        assert!(
+            audit.iter().all(|row| row.action != "crew.disk_floor.set"),
+            "a refused batch must not be audited as a change"
+        );
     }
 }

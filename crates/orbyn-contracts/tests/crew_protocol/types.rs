@@ -196,6 +196,9 @@ fn disk_low_round_trips() {
 
 #[test]
 fn an_older_reader_still_sees_a_refusal() {
+    // The compatibility policy: a client that reads `code` as an opaque string (the web client and any tool-answer reader)
+    // keeps reading a refusal when a code is added. A reader compiled against a strict `ErrorCode` is built from this same
+    // crate, so it is never older than the service that sends the code.
     #[derive(serde::Deserialize)]
     struct OlderRefusal {
         v: u8,
