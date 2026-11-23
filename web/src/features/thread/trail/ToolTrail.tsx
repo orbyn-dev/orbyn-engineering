@@ -13,6 +13,7 @@ import { McpApp } from "../McpApp";
 import { SurfacedWorkflows, WorkflowCards } from "../WorkflowControls";
 import { useThreadOfTimeline } from "../timelineThread";
 import { callKind, callLabel, callMs, callState, runLabel, runOutcomes, type CallKind, type CallRun, type CallState } from "../toolCalls";
+import { crewStartDiskLow } from "../../crew";
 import { Block } from "./blocks/Block";
 import { useRunRow } from "../../codemode";
 
@@ -99,6 +100,7 @@ export function ToolCallRow({ item, live }: { item: ToolItem; live: boolean }) {
   const ms = callMs(item, running ? now : null);
   const kind = callKind(item);
   const label = codeRow ? { ...callLabel(item, cwd), note: codeRow.note } : callLabel(item, cwd);
+  const lowDisk = crewStartDiskLow(item);
   const Icon = KIND_ICONS[kind];
   const full = [label.verb, label.object, label.note].filter(Boolean).join(" ");
   const { tip, label: labelRef, props } = useTip();
@@ -127,6 +129,7 @@ export function ToolCallRow({ item, live }: { item: ToolItem; live: boolean }) {
                 </span>
               ) : null}
             </span>
+            {lowDisk ? <span className="crew-tool-state">Not started</span> : null}
             {codeRow ? (
               <span className="du">{codeRow.tone === "wait" ? <span className="am">{codeRow.due}</span> : codeRow.due}</span>
             ) : (

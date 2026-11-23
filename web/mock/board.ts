@@ -62,6 +62,18 @@ function couldNotStart(): Row[] {
   ];
 }
 
+/**
+ * `crew-could-not-start-disk`: the same two refused tasks, with the disk guard's structured answer:
+ * the code and both numbers, and a reason that deliberately is not the disk sentence.
+ */
+function couldNotStartDisk() {
+  const free = 3_400_000_000;
+  return [
+    card("needs_you", "b-refused1", "implement", "Rename returnTo to next in the session code", "codex", "GPT-5.5", "medium", "needs_person", 2, { could_not_start: true, reason: "A different sentence." }),
+    card("needs_you", "b-refused2", "implement", "Use next in the auth redirect when it points inside the app", "codex", "GPT-5.5", "medium", "needs_person", 3, { could_not_start: true, reason: "" }),
+  ].map((entry) => ({ ...entry, code: "disk_low", free_bytes: free, floor_gb: 5 }));
+}
+
 function many(): Row[] {
   return Array.from({ length: 12 }, (_, i) => card("running", `b-m${i}`, i % 2 ? "test" : "implement", `Running task ${i + 1}`, i % 3 ? "claude" : "codex", "Sonnet 5.5", "medium", "running", i));
 }
@@ -116,7 +128,7 @@ export function boardMock(scenario: string, method: string, path: string, query:
   const crew = query.get("crew");
   if (!crew) return invalid("crew is required");
   if (crew !== MOCK_CREW && crew !== MOCK_CREW_TWO) return { status: 404, body: { code: "not_found", message: "crew not found" } };
-  const all = scenario === "crew-board-empty" || crew === MOCK_CREW_TWO ? [] : scenario === "crew-board-many" ? many() : scenario.startsWith("crew-could-not-start") ? couldNotStart() : sample();
+  const all = scenario === "crew-board-empty" || crew === MOCK_CREW_TWO ? [] : scenario === "crew-board-many" ? many() : scenario === "crew-could-not-start-disk" ? couldNotStartDisk() : scenario.startsWith("crew-could-not-start") ? couldNotStart() : sample();
   const engine = query.get("engine");
   const kind = query.get("kind");
   const only = query.get("column") as FlowColumnId | null;

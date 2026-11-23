@@ -5,3 +5,5 @@ export { CrewNavRow } from "./flow/live/CrewNavRow";
 export { useCrewFlag } from "./flow/live/useCrewFlag";
 export { RunTab } from "./runpage/RunPage";
 export { runLinkClient, setRunLinkClient, type RunLink, type RunLinkClient } from "./runpage/link";
+export { crewStartDiskLow, crewStartOutcome, diskLowOf, diskSentence, floorText, freeText, isCrewStartTool, NO_WORKER_RAN, type DiskLow } from "./tool";
+export { CrewToolBlock } from "./thread/CrewToolBlock";
