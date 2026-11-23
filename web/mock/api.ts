@@ -715,8 +715,8 @@ export function createMockApi(options: MockOptions = {}) {
   }
 
   /** The failure a test queued for this path, if one is still waiting, used up by one request. */
-  function takeFailure(pathname: string): MockResponse | null {
-    const failure = failures.find((f) => pathname.startsWith(f.path) && f.remaining > 0);
+  function takeFailure(pathname: string, method?: string): MockResponse | null {
+    const failure = failures.find((f) => pathname.startsWith(f.path) && f.remaining > 0 && (f.method === undefined || method === undefined || f.method === method));
     if (!failure) return null;
     failure.remaining -= 1;
     return err(failure.status, failure.code, failure.message);
@@ -1648,12 +1648,7 @@ export function createMockApi(options: MockOptions = {}) {
       if (scenario === "offline" && parsed.pathname.startsWith("/api")) {
         return err(503, "unavailable", "The service is unavailable.");
       }
-      const failure = failures.find((f) => parsed.pathname.startsWith(f.path) && f.remaining > 0 && (f.method === undefined || f.method === method));
-      if (failure) {
-        failure.remaining -= 1;
-        return err(failure.status, failure.code, failure.message);
-      }
-      const refused = takeFailure(parsed.pathname);
+      const refused = takeFailure(parsed.pathname, method);
       if (refused) return refused;
       if (parsed.pathname.startsWith("/api/code-runs") || /^\/api\/engines\/[^/]+\/code-mode$/.test(parsed.pathname) || /^\/api\/threads\/[^/]+\/code-runs$/.test(parsed.pathname)) {
         const answered = codeModeMock.handle(method, parsed.pathname, body);
