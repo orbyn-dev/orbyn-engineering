@@ -40,6 +40,34 @@ fn resolve(root: &Path, url_path: &str) -> Option<PathBuf> {
         .then(|| root.join(relative))
 }
 
+/// Build output whose name carries its content hash can never change under that
+/// URL, so a client may keep it for a year without asking again.
+const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+
+/// `index.html` and every other file keep their URL across a deploy, so a client
+/// must revalidate them; otherwise a new shell would never reach a stale tab.
+const REVALIDATE: &str = "no-cache";
+
+/// Vite writes every chunk and asset into `assets/` with its content hash in the
+/// name, and copies unhashed `public/` files to the root, so the build-output
+/// directory is the contract: a file under it cannot change under that URL.
+///
+/// The name cannot be matched instead of the directory: hashes use the base64url
+/// alphabet, so they contain `-` themselves (`amphora-DCKmTK--.js`,
+/// `align-horizontal-justify-center-CW-XBPgq.js`), and no suffix rule separates
+/// the hash from the name it follows.
+fn cache_control(relative: &Path) -> &'static str {
+    let is_build_output = relative
+        .components()
+        .next()
+        .is_some_and(|part| part.as_os_str() == "assets");
+    if is_build_output {
+        IMMUTABLE
+    } else {
+        REVALIDATE
+    }
+}
+
 fn percent_decode(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -78,8 +106,13 @@ pub async fn serve(State(state): State<AppState>, request: Request) -> Response 
         .unwrap_or_else(|| root.join("index.html"));
     match tokio::fs::read(&target).await {
         Ok(bytes) => {
+            let relative = target.strip_prefix(root).unwrap_or(&target);
             let mut response = bytes.into_response();
             let headers = response.headers_mut();
+            headers.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static(cache_control(relative)),
+            );
             headers.insert(
                 header::CONTENT_TYPE,
                 HeaderValue::from_static(content_type(&target)),
@@ -118,5 +151,42 @@ mod tests {
         assert_eq!(resolve(root, "/../secret"), None);
         assert_eq!(resolve(root, "/a/%2e%2e/%2e%2e/secret"), None);
         assert_eq!(resolve(root, "/%ff"), None);
+    }
+
+    #[test]
+    fn build_output_is_cached_forever() {
+        for pinned in [
+            // The 8-character hashes this build writes.
+            "assets/index-3hrPZ_u3.js",
+            "assets/elk-XV6XMXQE-BHy9YIXy.js",
+            // A 7-character hash, which a fixed-length rule would miss.
+            "assets/index--td0G00Q.css",
+            // Hashes that contain `-` themselves, which no suffix rule can split.
+            "assets/amphora-DCKmTK--.js",
+            "assets/align-horizontal-justify-center-CW-XBPgq.js",
+            "assets/fonts/inter-B4xQ1k9t.woff2",
+        ] {
+            assert_eq!(cache_control(Path::new(pinned)), IMMUTABLE, "{pinned}");
+        }
+    }
+
+    #[test]
+    fn anything_that_can_change_in_place_must_revalidate() {
+        for revalidated in [
+            // The shell points at the current hashes and must never be reused.
+            "index.html",
+            "favicon.ico",
+            "manifest.webmanifest",
+            // A hash outside the build-output directory proves nothing.
+            "index-B4xQ1k9t.js",
+            "assets-B4xQ1k9t/index.js",
+            "assetsx/app-2.js",
+        ] {
+            assert_eq!(
+                cache_control(Path::new(revalidated)),
+                REVALIDATE,
+                "{revalidated}"
+            );
+        }
     }
 }
