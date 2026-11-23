@@ -82,6 +82,12 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   /\b[0-9a-f]{32,}\b/i,
   // An assignment to a name that says it holds a secret, unless it only copies another variable.
   /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Z0-9_]*=(?!\$|\s|$)\S+/i,
+  // A flag that names a secret and carries its value (`--password hunter2`, `--token=abc`); `--password-file x` names a file, not a value.
+  /(?<![\w-])--?(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)(?!\$|-)\S+/i,
+  // The database clients take the password glued to `-p` (`mysql -u root -pSecret`); `-p` alone or on other tools is a port or a path flag.
+  /\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^|;&\n]*\s-p\S+/,
+  // A password in a URL's user information (`https://user:pass@host`).
+  /:\/\/[^/\s:@]+:[^/\s@]+@/,
 ];
 
 /**
