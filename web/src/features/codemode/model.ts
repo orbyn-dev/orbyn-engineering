@@ -121,7 +121,7 @@ export function callsOf(record: CodeRunRecord): CodeCall[] {
   });
 }
 
-const KINDS: readonly CodeErrorKind[] = ["syntax", "runtime", "limit", "denied", "lost"];
+const KINDS: readonly CodeErrorKind[] = ["syntax", "runtime", "limit", "denied", "lost", "cancelled"];
 const STATUSES: readonly CodeRunStatus[] = ["running", "paused", "completed", "error"];
 
 /** The reply an engine read from `orbyn_code_run`, or null when the text is not one. Never throws. */
@@ -211,6 +211,7 @@ const ERROR_NOTES = new Map<string, string>(Object.entries({
   limit: "· limit",
   denied: "· denied",
   lost: "· lost",
+  cancelled: "· cancelled",
 }));
 
 export const callWord = (count: number): string => `${count} ${count === 1 ? "call" : "calls"}`;
@@ -231,7 +232,8 @@ export function rowSummary(view: RunView, now: number): { note: string; due: str
   const calls = view.calls.length;
   if (view.status === "error") {
     const kind = view.error?.kind ?? "runtime";
-    return { note: ERROR_NOTES.get(kind) ?? "· runtime error", due: kind === "lost" ? "Lost" : "Failed", tone: "fail" };
+    const due = kind === "lost" ? "Lost" : kind === "cancelled" ? "Cancelled" : "Failed";
+    return { note: ERROR_NOTES.get(kind) ?? "· runtime error", due, tone: "fail" };
   }
   if (view.status === "paused") {
     const finished = view.calls.filter((call) => call.status !== "waiting" && call.status !== "running").length;

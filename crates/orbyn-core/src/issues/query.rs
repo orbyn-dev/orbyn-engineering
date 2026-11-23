@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 pub const DEFAULT_LIMIT: usize = 50;
 pub const MAX_LIMIT: usize = 100;
 const MAX_LABELS: usize = 20;
+const MAX_LABEL_CHARS: usize = 200;
 /// The most the `cursors` value may hold, as the page sends it (docs/issues.md, "Paging").
 const MAX_CURSORS_BYTES: usize = 4096;
 const MAX_CURSORS: usize = 50;
@@ -101,7 +102,13 @@ impl IssueQuery {
                     };
                 }
                 "label" => {
-                    plain(value, 200, "A label")?;
+                    if value.chars().count() > MAX_LABEL_CHARS
+                        || value.chars().any(char::is_control)
+                    {
+                        return Err(CoreError::Invalid(
+                            "A label is too long or has control characters.".into(),
+                        ));
+                    }
                     if value.trim().is_empty() {
                         return Err(CoreError::Invalid("A label is empty.".into()));
                     }
@@ -227,6 +234,17 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_label_is_counted_in_characters() {
+        let hundred = "\u{e9}".repeat(MAX_LABEL_CHARS);
+        assert!(
+            IssueQuery::from_pairs(&pairs(&[("label", &hundred)])).is_ok(),
+            "200 characters may be more than 200 bytes"
+        );
+        let over = "\u{e9}".repeat(MAX_LABEL_CHARS + 1);
+        assert!(IssueQuery::from_pairs(&pairs(&[("label", &over)])).is_err());
     }
 
     #[test]
