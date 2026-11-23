@@ -127,7 +127,7 @@ pub use crew_autonomy_person::{PersonWrite, Seen};
 pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};
 pub use crew_background::{
     BackgroundReviewRow, BackgroundRow, BackgroundRunRow, NewBackground,
-    PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX, RunEnd, Unwound,
+    PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX, RunEnd, Unwound, WATCHES_PER_PROJECT_MAX,
 };
 pub use crew_backtest::{
     BacktestLaneRow, BacktestResultRow, BacktestRunRow, BacktestState, LaneState,

@@ -63,12 +63,14 @@ export const TRIGGER_OF: Record<BackgroundTriggerKind, TriggerId> = {
   issue_label: "issue_label",
   schedule: "schedule",
   dependency_update: "dependency_update",
+  watch: "watch",
 };
 export const WIRE_TRIGGER: Record<TriggerId, BackgroundTriggerKind> = {
   ci_fails: "ci_failure",
   issue_label: "issue_label",
   schedule: "schedule",
   dependency_update: "dependency_update",
+  watch: "watch",
 };
 
 /** What a new crew starts with, and the route's limits: agent turns 1 to 1000 and minutes 1 to 1440 for each run, and for each
@@ -107,6 +109,8 @@ export function startsWhen(crew: Pick<WireCrew, "trigger">): string {
       return trigger.every_hours === 1 ? "Every hour" : `Every ${trigger.every_hours ?? "?"} hours`;
     case "dependency_update":
       return "When a dependency update opens";
+    case "watch":
+      return "Watch";
   }
 }
 
@@ -123,6 +127,8 @@ export function configuredAs(trigger: BackgroundTrigger): string | null {
       return trigger.every_hours ? (trigger.every_hours === 1 ? "Every hour" : `Every ${trigger.every_hours} hours`) : null;
     case "dependency_update":
       return trigger.ecosystem ? `Dependabot or Renovate PRs · ${trigger.ecosystem}` : "Dependabot or Renovate PRs";
+    case "watch":
+      return null;
   }
 }
 
@@ -156,6 +162,7 @@ const STARTED_BY: Record<BackgroundTriggerKind, (trigger: BackgroundTrigger) => 
   issue_label: () => "An issue got a label",
   schedule: () => "On a schedule",
   dependency_update: () => "A dependency update opened",
+  watch: () => "Watch",
 };
 
 /** One row of Recent runs: only what the route reports. */

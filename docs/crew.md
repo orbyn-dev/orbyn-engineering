@@ -1127,6 +1127,15 @@ the acknowledgement above. Known limits: removing a project leaves its crews (a 
 crews are per device; a template's prompt and checks are code-owned and defined only for the four templates a run can start (`background_start.rs`);
 any other template is refused.
 
+**Watches (slice A1):** a background crew's trigger may be `watch`: `{ "kind": "watch", "command": "...", "every_hours": 6,
+"on_failing": "needs_you" | "template" }`. `command` is 1 to 500 characters and follows the same text rules as every other trigger
+setting (no control or invisible characters, the locked redactor; a redaction that would pass 500 characters is refused). `every_hours`
+is 1 to 720, and `on_failing` is required. A project holds at most 10 watches, counted in the same transaction as the insert. The command
+is screened at create and update with the always-denied list (N1 to N10) and the blast-radius guard, with the project's folder as the
+worktree; a refusal names the rule in one fixed sentence and never repeats the command. `needs_you` stores the template and budgets as
+given (they must be in range, and no model run follows); `template` validates them like any other crew. The command is stored redacted.
+Nothing runs a watch yet: there is no listener, no command execution, no model call and no UI, and Run now refuses one.
+
 **As built (slice 4h, listeners, migration 59):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
 service starts behind the Preview flag **only when it sets an interval** (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60 s to 24 h; unset means no pass, not even at
 startup) and awaits on shutdown. Each pass fires what is due for the crews that are on (a crew that is off is not read from the forge and spends no event):
@@ -1181,7 +1190,7 @@ looked at between firings, never inside a start, and a run a crash leaves is set
 - **Every problem at once:** `crew::triggers::parse_and_validate` returns all of them, each naming the field and the shape it wants, in
   the form `crew_start` uses.
 - **Not wired to the stored crew:** this section is policy a later slice will read, not the record. The stored background crew above keeps
-  its own vocabulary (`ci_failure`, `issue_label`, `schedule`, `dependency_update`, with `every_hours`), and it stays the record of what a
+  its own vocabulary (`ci_failure`, `issue_label`, `schedule`, `dependency_update`, `watch`, with `every_hours`), and it stays the record of what a
   crew is; the file uses the names this work starts with (`ci_failed`, `schedule`, `manual`, with `every_minutes`). A later slice maps a
   file trigger to the stored crew when it starts one. Nothing here writes, starts or records anything.
   Only `ci_failed` and `schedule` have a stored-crew match (`ci_failure`, and `schedule` with `every_hours`). **Planned:** `manual`

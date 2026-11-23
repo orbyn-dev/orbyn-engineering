@@ -189,7 +189,7 @@ describe("Settings › Threads › Text generators", () => {
     };
     const projectEngine: TextGeneratorEngine = {
       ...chosen,
-      project: { project_id: "p1", chosen: "gpt-5.2-codex-max", resolved: "gpt-5.2-codex-max", reason: "chosen" },
+      project: { project_id: "p1", chosen: "gpt-5.2-codex-max", own: true, resolved: "gpt-5.2-codex-max", reason: "chosen" },
     };
     requestMock.mockImplementation(async (method, path) => {
       if (method === "POST" && path === "/api/settings/project-scopes") return catalog as never;
