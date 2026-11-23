@@ -420,6 +420,25 @@ async fn a_cursor_carries_to_the_next_page_and_only_for_its_own_scope_and_filter
 }
 
 #[tokio::test]
+async fn an_empty_page_has_no_next_cursor() {
+    let server = Server::start(|_| Reply::json(&json!({ "workItems": [] }))).await;
+    let page = reader(&server)
+        .list("org/proj", &IssueQuery::default())
+        .await
+        .unwrap();
+    assert!(page.issues.is_empty());
+    assert_eq!(page.next, None, "an empty page is the end");
+    let sent = posts(&server);
+    assert_eq!(sent.len(), 1, "one WIQL read");
+    assert_eq!(sent[0].path(), "/org/proj/_apis/wit/wiql");
+    assert_eq!(sent[0].param("$top").as_deref(), Some("50"));
+    assert!(
+        gets(&server).is_empty(),
+        "an empty page fetches no work items"
+    );
+}
+
+#[tokio::test]
 async fn the_offset_stops_at_one_thousand() {
     let server = Server::start(|req| {
         let base = base_of(req);

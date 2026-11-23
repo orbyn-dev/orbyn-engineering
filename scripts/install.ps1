@@ -28,6 +28,11 @@ $channel = Setting "ORBYN_CHANNEL" "stable"
 $version = Setting "ORBYN_VERSION" ""
 
 if ($version) {
+  # A version names one release folder: digits first, then letters, digits, dots, plus and hyphen only, so it cannot
+  # carry a path, a query or a space into the download address.
+  if ($version -notmatch '^v?[0-9][0-9A-Za-z.+-]*$') {
+    Fail "ORBYN_VERSION must look like 1.2.3 or v1.2.3-beta.1, not '$version'."
+  }
   $url = "$base/download/v$($version.TrimStart('v'))"
 } elseif ($channel -eq "stable") {
   $url = "$base/latest/download"

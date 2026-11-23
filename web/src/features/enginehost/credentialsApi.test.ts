@@ -105,6 +105,21 @@ it("scrubs the key, and its encoded forms, from any error text before it leaves 
   expect(network.message).not.toContain(KEY);
 });
 
+it("keeps the service's code and the key out of the message when a save is refused at 409, 503 or 400", async () => {
+  const api = createCredentialsApi();
+  serve(json(status()));
+  await api.storage();
+  const sentinel = "sk-test-SENTINEL-9f3";
+  for (const [status, code] of [[409, "opt_in_off"], [503, "keychain_failed"], [400, "invalid_key"]] as const) {
+    serve(failure(status, code, `The service refused ${sentinel} while saving it.`));
+    const caught = (await api.saveKey("cursor", sentinel).catch((thrown: unknown) => thrown)) as Error & { code: string; status: number };
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).toMatchObject({ code, status });
+    expect(caught.message).toBe("The service refused [removed] while saving it.");
+    expect(caught.message).not.toContain(sentinel);
+  }
+});
+
 it("declining is PUT opted_in false with the person header, and a later read says declined", async () => {
   const api = createCredentialsApi();
   const calls = serve(json(status({ state: "off", opted_in: false })));

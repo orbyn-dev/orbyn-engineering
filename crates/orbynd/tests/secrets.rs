@@ -123,6 +123,46 @@ async fn an_invalid_pattern_is_refused_with_words_and_a_position_and_nothing_is_
     service.stop().await;
 }
 
+/// A pattern is itself a secret (it can be a person's key). A refused one must not be echoed back in the error body,
+/// the test answer or the audit.
+#[tokio::test]
+async fn a_refused_pattern_is_never_echoed_in_an_error_body_or_the_audit() {
+    let dir = TempDir::new();
+    let service = start(&dir);
+    let canary = format!("{}{}", "zq9canary", "k4w7x");
+    let bad = format!("{canary}_([A-Za-z0-9]{{24}}");
+    let (code, body) = call(
+        &service,
+        Method::POST,
+        "/api/settings/secrets/patterns",
+        pattern("Broken", &bad, "regex"),
+    )
+    .await;
+    assert_eq!(code, 422, "{body}");
+    assert!(
+        !body.to_string().contains(&canary),
+        "the refusal echoed the pattern: {body}"
+    );
+    let (code, body) = call(
+        &service,
+        Method::POST,
+        "/api/settings/secrets/patterns/test",
+        json!({ "pattern": bad, "kind": "regex", "applies_to": "anywhere", "sample": "x" }),
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert!(
+        !body.to_string().contains(&canary),
+        "the test answer echoed the pattern: {body}"
+    );
+    let audit = service.json("/api/audit?limit=200").await;
+    assert!(
+        !audit.to_string().contains(&canary),
+        "the audit holds the refused pattern"
+    );
+    service.stop().await;
+}
+
 #[tokio::test]
 async fn a_broad_pattern_is_refused_until_the_person_accepts_it() {
     let dir = TempDir::new();

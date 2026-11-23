@@ -52,6 +52,31 @@ describe("saved history", () => {
     expect(again.historyOf("k").map((e) => e.command)).toEqual(["pwd"]);
   });
 
+  it.each([
+    ["export API_TOKEN=abc123", "abc123"],
+    ["OPENAI_API_KEY=sk-abcdefghijklmnop1234 run-tool", "sk-abcdefghijklmnop1234"],
+    ["curl -H 'Authorization: Bearer abcdefghijklmnop1234' https://x.test", "abcdefghijklmnop1234"],
+    ["git push https://ghp_abcdefghijklmnopqrstuvwxyz0123@github.com/o/r.git", "ghp_abcdefghijklmnopqrstuvwxyz0123"],
+    ["aws configure set aws_access_key_id AKIAABCDEFGHIJKLMNOP", "AKIAABCDEFGHIJKLMNOP"],
+  ])("keeps the secret in %s out of local storage while a harmless line beside it is kept", async (line, secret) => {
+    const mod = await fresh();
+    mod.recordCommand("k", line, 1);
+    mod.recordCommand("k", "ls", 2);
+    expect(stored()).not.toContain(secret);
+    expect(mod.historyOf("k").map((e) => e.command)).toEqual(["ls"]);
+  });
+
+  // Known gap (the terminal's local heuristic does not see these shapes; #1374): the line IS written to local storage today.
+  // `it.fails` keeps the suite green and turns red the day the heuristic learns them, so the marker cannot rot.
+  it.fails.each(["tool --password hunter2", "mysql -u root -pSecretValue db", "curl https://user:pass@host.test/x"])(
+    "known gap: %s is kept out of local storage",
+    async (line) => {
+      const mod = await fresh();
+      mod.recordCommand("k", line, 1);
+      expect(mod.historyOf("k")).toEqual([]);
+    },
+  );
+
   it.each(["not json", "[]", "null", '{"v":2,"h":{}}', '{"v":1,"h":[]}', '{"v":1,"h":{"k":"x"}}'])("discards %s whole", async (text) => {
     window.localStorage.setItem(STORE, text);
     const mod = await fresh();
