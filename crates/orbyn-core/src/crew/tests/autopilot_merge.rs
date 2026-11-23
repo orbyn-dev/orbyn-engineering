@@ -319,15 +319,22 @@ async fn low_and_medium_follow_the_mode() {
 #[tokio::test]
 async fn a_required_check_that_fails_on_the_combined_state_stops_the_merge() {
     let m = merging(Mode::Full, |_| vec![("src/state.txt", "BAD\n")]).await;
+    // main holds GOOD where the worker writes BAD, so main alone passes the check the repository declares below.
+    std::fs::write(m.w.repo.join("src/state.txt"), "GOOD\n").unwrap();
+    commit_all(&m.w.repo, "state");
+    // The task starts and passes before the repository declares the check, so it inherits none: a check a task
+    // starts under gates that task (issue #795), while the merge queue reads the repository's own at the tip.
+    let id = passed(&m.w, &["src/**"], "Change the state.").await;
+    run_git(&m.w.repo, &["checkout", "-q", &m.main]);
     std::fs::create_dir_all(m.w.repo.join(".orbyn")).unwrap();
     std::fs::write(
         m.w.repo.join(".orbyn/crew.json"),
         r#"{"checks":[{"run":"git grep --no-index -q GOOD -- src"}]}"#,
     )
     .unwrap();
-    std::fs::write(m.w.repo.join("src/state.txt"), "GOOD\n").unwrap();
-    commit_all(&m.w.repo, "state");
-    let id = passed(&m.w, &["src/**"], "Change the state.").await;
+    commit_all(&m.w.repo, "repository checks");
+    // main is not left checked out: the crew merges only a branch no one has checked out.
+    run_git(&m.w.repo, &["checkout", "-q", "--detach"]);
     let before = m.tip().await;
     m.w.core
         .crew_queue_merge(&id, &m.target, NOW)
