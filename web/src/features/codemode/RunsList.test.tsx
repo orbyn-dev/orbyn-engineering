@@ -62,17 +62,20 @@ describe("the runs of a thread", () => {
     mock.codeMode.setOffered(false);
     const { container } = render(<CodeRunsList threadId="t-1" />);
     await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled());
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
   });
 
   it("draws nothing for a thread with no runs, and nothing when the read fails", async () => {
     const empty = render(<CodeRunsList threadId="t-1" />);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(empty.container).toBeEmptyDOMElement();
     empty.unmount();
     mock.fail("/api/threads/t-2/code-runs", 1, 500);
     const failed = render(<CodeRunsList threadId="t-2" />);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(failed.container).toBeEmptyDOMElement();
     expect(screen.queryByRole("alert")).toBeNull();

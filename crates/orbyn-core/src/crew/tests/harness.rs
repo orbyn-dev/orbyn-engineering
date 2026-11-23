@@ -26,6 +26,11 @@ use crate::testing::{TempDir, run_git};
 use crate::tools::mcp::McpBinding;
 use crate::{CoreConfig, store::CrewTask};
 
+/// How long [`World::until`] waits before it panics. It is not one of the production budgets: a test's wait must
+/// survive a shared machine, which the archived full-suite log showed tens of times slower than idle. Three
+/// minutes is far past any loaded start and short enough that a deadlocked test still fails in the run.
+const WAIT_LIMIT: Duration = Duration::from_secs(3 * 60);
+
 /// A run and the restriction it was started under: `(thread, rules)`.
 pub type Confined = (String, Option<crate::host::confine::Confinement>);
 
@@ -654,15 +659,18 @@ impl World {
         self.core.store.crew_task(id).unwrap().unwrap()
     }
 
-    /// Waits (bounded) for `done`, which reads the world.
+    /// Waits for `done`, which reads the world, on a clock this test owns rather than a production budget: a machine
+    /// shared with other builds can be tens of times slower than an idle one, and a start that takes 20 seconds there is
+    /// not a bug in the test. The panic says how long it waited, so a real hang still fails by name.
     pub async fn until(&self, what: &str, mut done: impl FnMut(&World) -> bool) {
-        for _ in 0..3000 {
-            if done(self) {
-                return;
-            }
+        let give_up = std::time::Instant::now() + WAIT_LIMIT;
+        while !done(self) {
+            assert!(
+                std::time::Instant::now() < give_up,
+                "never happened in {WAIT_LIMIT:?}: {what}"
+            );
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        panic!("never happened: {what}");
     }
 
     pub async fn until_state(&self, id: &str, state: &str) {

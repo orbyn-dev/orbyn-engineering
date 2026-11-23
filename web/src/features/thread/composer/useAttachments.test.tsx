@@ -25,6 +25,7 @@ it("uploads an ordinary small image as it always did, without asking the convers
   act(() => result.current.upload([sized("shot.png", "image/png", 5)]));
   await waitFor(() => expect(result.current.attachments[0]?.id).toBe("a"));
   expect(upload).toHaveBeenCalledTimes(1);
+  expect(upload.mock.calls[0]?.[1].name).toBe("shot.png");
   expect(convert).not.toHaveBeenCalled();
   expect(result.current.attachments[0]?.conversion).toBeUndefined();
 });
