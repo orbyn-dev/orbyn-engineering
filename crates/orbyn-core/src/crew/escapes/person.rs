@@ -72,6 +72,10 @@ impl Core {
             note.as_deref(),
             unix_now(),
         )?;
+        // A person's confirm is the escape source: the lesson is written after the log has it, and never blocks the confirm.
+        if decision == EscapeDecision::Confirm {
+            self.learn_confirmed_escape(&record);
+        }
         Ok(row_wire(&record))
     }
 
@@ -86,6 +90,8 @@ impl Core {
             note.as_deref(),
             unix_now(),
         )?;
+        // A mark is a confirm: the escape source writes its lesson, once per escape.
+        self.learn_confirmed_escape(&record);
         Ok(row_wire(&record))
     }
 

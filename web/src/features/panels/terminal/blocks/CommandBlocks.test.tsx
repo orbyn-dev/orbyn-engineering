@@ -46,6 +46,7 @@ afterEach(() => {
 });
 
 describe("the production client", () => {
+  // Real wait: one macrotask turn lets already-resolved promises settle; no clock is involved.
   const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 
   it("draws nothing and says nothing when its first list is empty", async () => {
@@ -69,6 +70,7 @@ describe("the production client", () => {
     setBlocksApi(null);
     const { container } = mount();
     await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
+    expect(String(fetching.mock.calls[0]?.[0])).toBe("/api/threads/th/terminals/main/blocks");
     await settle();
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByText("Couldn't read this terminal's blocks.")).not.toBeInTheDocument();

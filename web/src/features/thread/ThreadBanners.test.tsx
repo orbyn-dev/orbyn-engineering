@@ -78,12 +78,13 @@ it("sends one write for a limit action however fast it is pressed, keeps focus o
   await user.click(schedule);
   expect(schedule).toHaveFocus();
   await user.click(screen.getByRole("button", { name: "Snooze until reset" }));
-  expect(patch).toHaveBeenCalledTimes(1);
+  expect(patch).toHaveBeenCalledExactlyOnceWith("t", { resume_at_reset: true });
   expect(schedule).toHaveAttribute("aria-disabled", "true");
   answer(thread);
   await waitFor(() => expect(schedule).not.toHaveAttribute("aria-disabled"));
   await user.click(screen.getByRole("button", { name: "Snooze until reset" }));
   expect(patch).toHaveBeenCalledTimes(2);
+  expect(patch).toHaveBeenLastCalledWith("t", { snoozed_until: reset });
 });
 
 it("sends Resume once however fast it is pressed, and says why when the service refuses", async () => {

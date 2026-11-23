@@ -19,6 +19,7 @@ it("refuses callbacks retained by an old period or a closed page", async () => {
     await waitFor(() => expect(hook.result.current.pending).toBe(false));
     await act(async () => { await old.reload(); await old.refresh(); });
     expect(get).toHaveBeenCalledTimes(3);
+    expect(get.mock.calls.map(([days]) => days)).toEqual([30, 7, 30]);
     expect(post).not.toHaveBeenCalled();
     const current = hook.result.current;
     hook.unmount();
