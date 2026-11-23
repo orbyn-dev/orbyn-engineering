@@ -270,8 +270,24 @@ async fn a_stored_decision_moves_the_task_to_routed_only_when_the_lifecycle_allo
     assert_eq!(refusal.code, orbyn_contracts::ErrorCode::InvalidTransition);
     assert_eq!(w.task(&id).state, "running");
     // Nor can a task skip a state, or pass without Evidence (H8).
-    assert!(w.core.store.move_crew_task(&id, "passed", None).is_err());
-    assert!(w.core.store.move_crew_task(&id, "stopped", None).is_err());
+    let skipped = w
+        .core
+        .store
+        .move_crew_task(&id, "passed", None)
+        .unwrap_err();
+    assert!(
+        matches!(&skipped, crate::error::CoreError::InvalidTransition { from, to } if (from.as_str(), to.as_str()) == ("running", "passed")),
+        "{skipped:?}"
+    );
+    let reasonless = w
+        .core
+        .store
+        .move_crew_task(&id, "stopped", None)
+        .unwrap_err();
+    assert!(
+        matches!(&reasonless, crate::error::CoreError::Invalid(why) if why == "a stopped task names its reason, and no other state has one"),
+        "{reasonless:?}"
+    );
     assert!(
         w.core
             .store
