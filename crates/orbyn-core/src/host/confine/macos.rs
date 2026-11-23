@@ -354,26 +354,7 @@ fn linked_targets(folder: &Path, home: &Path) -> Option<Vec<PathBuf>> {
 
 /// The account's home folder from the user database (not the environment).
 pub(super) fn account_home() -> Option<PathBuf> {
-    use std::os::unix::ffi::OsStringExt;
-    let mut buffer = vec![0u8; 16 * 1024];
-    // SAFETY: `passwd` is plain data; the buffer outlives the call and its size is passed; `pw_dir` is read only on success, while
-    // the buffer is alive, and copied out.
-    unsafe {
-        let mut entry: libc::passwd = std::mem::zeroed();
-        let mut found: *mut libc::passwd = std::ptr::null_mut();
-        let status = libc::getpwuid_r(
-            libc::getuid(),
-            &mut entry,
-            buffer.as_mut_ptr().cast(),
-            buffer.len(),
-            &mut found,
-        );
-        if status != 0 || found.is_null() || entry.pw_dir.is_null() {
-            return None;
-        }
-        let dir = std::ffi::CStr::from_ptr(entry.pw_dir).to_bytes().to_vec();
-        (!dir.is_empty()).then(|| PathBuf::from(OsString::from_vec(dir)))
-    }
+    crate::util::account_home()
 }
 
 /// Whether the proof's credential denials can be built on this machine (`None`), or why not. Checked before a proof is allowed to

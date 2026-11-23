@@ -8,8 +8,11 @@
 //! - Every pid found is **recorded with its start time**, and a later kill signals a recorded pid only if a fresh table still shows
 //!   the same pid with the same start time, never pid 1, this process, or this process's own group. A descendant seen by
 //!   `terminate` is therefore still finished by the `kill` on drop, after its parent exited and it was reparented to `init`.
-//! - Not covered: a process orphaned to `init` before any walk saw it (a double fork whose middle process has already exited), and
-//!   one forked after the last freeze round. Closing those needs a container such as a cgroup or a launchd job.
+//! - Linux also makes the leader a **subreaper** (`super::isolate`), so a process orphaned before any walk saw it — a double fork
+//!   whose middle process has already exited — is adopted back under the leader rather than `init`, and the parent link the walk
+//!   follows is a real one. macOS has no such flag: there an orphan of that shape leaves the tree, though the sandbox still confines
+//!   it. A descendant forked after the last freeze round is out of reach on both. Closing either needs a container such as a cgroup or
+//!   a launchd job.
 
 use std::collections::HashSet;
 

@@ -114,6 +114,8 @@ mod photo_conversion_tests;
 #[cfg(test)]
 mod profiles_tests;
 #[cfg(test)]
+mod projects_tests;
+#[cfg(test)]
 mod secrets_tests;
 #[cfg(test)]
 mod snapshot_tests;

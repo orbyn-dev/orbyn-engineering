@@ -249,6 +249,7 @@ EXIF location. The input is capped at 50 MiB, refused from the declared length b
 body is read, and at 100 megapixels with a 512 MiB decoder allocation, checked from the
 header before a decoder allocates. A HEIC, HEIF or WebP is refused as `415 unsupported_type`
 until a decoder this build can carry is chosen, and the route reads no path from the request.
+At most two photo conversions decode and encode at once across the service; others wait.
 
 The composer edits a fenced code block as plain text: Tab and Shift+Tab move the
 selected block's lines by two spaces, Enter from the block's empty last line closes
@@ -490,7 +491,13 @@ fresh once, logging `CUSTOM engine.session_lost`. A second loss fails the run.
 `UsageCenter` reads local session history and nothing else: `projects/**/*.jsonl`
 under `~/.claude` (or `CLAUDE_CONFIG_DIR`), `sessions/**/*.jsonl` under `~/.codex`
 (or `CODEX_HOME`), and `sessions/**/session.jsonl` under Muse's home
-(`$XDG_DATA_HOME/muse`, else `~/.local/share/muse`). It keeps only timestamps, models
+(`$XDG_DATA_HOME/muse`, else `~/.local/share/muse`). Each launch reads its own profile
+and not one it inherited: a relocated path is this launch's only when it lies outside a
+sandbox the environment declares, or when the launch declares that profile itself
+(`ORBYN_LAUNCH_PROFILE=smoke` with the harness's `ORBYN_SMOKE_SANDBOX` root). Any other
+launch that inherits those variables reads the person's own home, the account's own home
+from the user database when the inherited one is the sandbox's, so a personal build never
+reports the harness's empty sandbox. It keeps only timestamps, models
 and token counts, and never opens a credential file. Claude rewrites an entry as it
 streams, so each message counts once. Codex repeats its running total, so an
 unchanged total counts once. Muse writes one log per session, counts its cached
@@ -3741,7 +3748,7 @@ every method, path and which routes need a credential.
 | `POST /api/projects/clone`, `/create` | Make a folder, by default under `repo/`, or at `path`; `create` takes `readme` for a first commit |
 | `PATCH /api/projects/:id` | `RenameProject`: the name shown; the folder stays |
 | `DELETE /api/projects/:id?delete_files=&confirm=` | `ProjectRemoval`: unregisters; `delete_files` is `400` unless Orbyn made the folder, and can be `409 project_has_work` |
-| `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home |
+| `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home. Folders only, never a `.`-named one, and on Windows never one marked hidden or system and never a junction or link, which a person does not pick as a project and some of which loop when opened. A filesystem root, a Windows drive or a share, also lists the mounted drives that can be read, first, because nothing is above a root |
 | `GET /api/threads?project_id=&archived=`, `POST /api/threads`, `GET, DELETE /api/threads/:id` | Threads; no `project_id` on create makes a scratch folder |
 | `GET /api/threads/:id/family` | `ThreadFamily`: the topmost thread and every thread below it, so any member answers the same tree; the stored edge is `parent_thread_id` with its `fork`, `side` or `subagent` relation, and archived members stay |
 | `POST /api/threads/batch` | `BatchThreads` to `BatchThreadResult[]`; at most 100 entries, oversized batches return `400 invalid_input` before creating any thread; one item failure does not stop an accepted batch |

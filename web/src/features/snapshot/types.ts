@@ -23,10 +23,16 @@ export type SnapShotPlatform = "macos" | "windows";
 export type SnapShotNeedsSetup = "screen_recording" | "accessibility" | null;
 
 /**
- * The shell's `snapshot_setup` allow actions only read the grants back; setup is Planned (docs/snapshots.md). Flip this to
- * true when the shell prompts and opens System Settings, and the setup entry and dialog return.
+ * Screen Recording setup is built (docs/snapshots.md): the shell's `snapshot_setup` allow action prompts once and opens the
+ * System Settings pane, so the setup entry and dialog show. Flip this to false if the shell stops answering it.
  */
-export const SNAPSHOT_SETUP_AVAILABLE = false;
+export const SNAPSHOT_SETUP_AVAILABLE = true;
+
+/**
+ * The shell's `allow_accessibility` only reads the grant back (accessible text is Planned), so no Allow Accessibility button
+ * is offered. Flip this when the shell prompts for it.
+ */
+export const SNAPSHOT_ACCESSIBILITY_SETUP_AVAILABLE = false;
 
 export interface SnapShotState {
   supported: boolean;

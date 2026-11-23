@@ -6,7 +6,9 @@ use orbyn_code_sandbox::{
     CodeExecutor, Limits, Run, RunError, RunSeed, Step, ToolFailure, ToolHost,
 };
 use serde_json::{Value, json};
+use std::future::pending;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 struct Echo;
@@ -65,8 +67,8 @@ async fn start(
         crew_worker,
         code,
         seed(),
-        |_: PendingList| Arc::new(Echo),
-        |step| step,
+        |_: PendingList, _| Arc::new(Echo),
+        |step, _| step,
     )
     .await
 }
@@ -284,4 +286,89 @@ fn redaction_covers_values_but_not_keys_and_matches_whole_names() {
         "schema keys are untouched: {text}"
     );
     assert!(text.contains("another tool"), "{text}");
+}
+
+/// A host whose only call never returns; the guard records that the cancel dropped its future.
+struct DroppingHost {
+    dropped: Arc<AtomicBool>,
+    started: Arc<AtomicBool>,
+}
+
+struct DropGuard(Arc<AtomicBool>);
+
+impl Drop for DropGuard {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+#[async_trait]
+impl ToolHost for DroppingHost {
+    async fn call(&self, _name: &str, _args: Value) -> Result<Value, ToolFailure> {
+        self.started.store(true, Ordering::SeqCst);
+        let _guard = DropGuard(self.dropped.clone());
+        pending::<Result<Value, ToolFailure>>().await
+    }
+}
+
+#[tokio::test]
+async fn a_cancel_aborts_an_in_flight_call_and_drops_its_future() {
+    let runs = runs();
+    let dropped = Arc::new(AtomicBool::new(false));
+    let started = Arc::new(AtomicBool::new(false));
+    let host = Arc::new(DroppingHost {
+        dropped: dropped.clone(),
+        started: started.clone(),
+    });
+    let _live = runs
+        .start(
+            "r2",
+            "t1",
+            false,
+            "call orbyn_environment_read",
+            seed(),
+            move |_, _| host,
+            |step, _| step,
+        )
+        .await
+        .ok()
+        .unwrap();
+    for _ in 0..100 {
+        if started.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(started.load(Ordering::SeqCst), "the call is in flight");
+    assert!(runs.begin_cancel("r2").is_some());
+    runs.finish_cancel("r2").await;
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "the call future was dropped by the cancel"
+    );
+}
+
+#[test]
+fn a_cancelled_finish_records_cancelled_over_a_completed_step() {
+    let settled = super::settle(
+        Step::Done {
+            result: json!(1),
+            logs: vec!["x".into()],
+            truncated: false,
+        },
+        true,
+        None,
+    );
+    let Step::Failed {
+        error,
+        logs,
+        truncated,
+    } = settled
+    else {
+        panic!("a cancel ends as failed");
+    };
+    assert_eq!(error.code.as_deref(), Some("cancelled"));
+    assert_eq!(error.message, "The run was cancelled.");
+    assert_eq!(logs, vec!["x".to_owned()]);
+    assert!(!truncated);
 }

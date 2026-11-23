@@ -150,7 +150,7 @@ async fn engine_models(
 async fn engine_feedback(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(body): Json<EngineFeedbackRequest>,
+    ApiJson(body): ApiJson<EngineFeedbackRequest>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.engines.feedback(&id, &body).await?))
 }

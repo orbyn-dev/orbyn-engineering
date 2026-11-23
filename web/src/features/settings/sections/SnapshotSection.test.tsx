@@ -65,26 +65,29 @@ describe("the settings, off and on", () => {
     expect(screen.getByText(/Orbyn registers no shortcut and asks macOS for nothing/)).toBeVisible();
   });
 
-  it("turns on, sends the full settings and keeps the Planned setup entry hidden", async () => {
+  it("turns on, sends the full settings and opens the Screen Recording setup", async () => {
     const user = userEvent.setup();
     view();
     const snap = await screen.findByRole("switch", { name: "Snap Shot" });
     await user.click(snap);
     await waitFor(() => expect(mock.configured.at(-1)?.snapshot_enabled).toBe(true));
     expect(Object.keys(mock.configured.at(-1)!).sort()).toEqual(Object.keys(DEFAULT_SETTINGS).sort());
-    expect(screen.queryByRole("dialog", { name: "Set up Snap Shot" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Set up Snap Shot…" })).toBeNull();
-    expect(useSnapshot.getState().setupOpen).toBe(false);
+    const dialog = await screen.findByRole("dialog", { name: "Set up Snap Shot" });
+    expect(useSnapshot.getState().setupOpen).toBe(true);
     expect(mock.calls.some((call) => call.command === "snapshot_setup")).toBe(false);
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+    expect(await screen.findByRole("button", { name: "Set up Snap Shot…" })).toBeVisible();
   });
 
-  it("does not offer an Allow Accessibility action while setup is Planned", async () => {
+  it("does not offer an Allow Accessibility action", async () => {
     mock.setState(macState({ supported: true, enabled: true, permissions: { screen_recording: true, accessibility: false }, needs_setup: "accessibility" }));
     useUi.getState().setPrefs({ snapshotEnabled: true, snapshotIncludeAccessibility: true });
     view();
     expect(await screen.findByText(/Accessibility is not allowed for Orbyn/)).toBeVisible();
+    const dialog = await screen.findByRole("dialog", { name: "Set up Snap Shot" });
     expect(screen.queryByRole("button", { name: "Allow Accessibility" })).toBeNull();
-    expect(screen.queryByRole("dialog", { name: "Set up Snap Shot" })).toBeNull();
+    expect(within(dialog).queryByText("Accessibility")).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: "Turn off the text" })).toBeNull();
   });
 
   it("shows the accessibility warning in plain words, off by default", async () => {

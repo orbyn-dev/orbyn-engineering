@@ -14,7 +14,8 @@ let mock: MockApi;
 beforeAll(async () => {
   installMockFetch();
   await import("../../../app/App");
-});
+  // App's first import is the cold module graph of the whole app; under a full-suite run it passes the 10 s default hook timeout.
+}, 60_000);
 beforeEach(() => {
   mock = installMockFetch();
   useConnection.setState({ remote: false });
