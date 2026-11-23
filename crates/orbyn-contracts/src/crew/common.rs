@@ -75,10 +75,10 @@ pub struct CrewError {
     #[ts(optional)]
     pub object: Option<CrewHash>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
+    #[ts(optional, type = "number")]
     pub free_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
+    #[ts(optional, type = "number")]
     pub floor_gb: Option<u64>,
 }
 }
