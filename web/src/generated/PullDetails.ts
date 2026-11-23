@@ -19,7 +19,17 @@ requested_reviewers?: Array<RequestedReviewer>,
  */
 comment_count?: number, 
 /**
- * The signed-in viewer's latest review: `approved`, `changes_requested`,
- * `commented`, `dismissed`, `pending` or `none`.
+ * Approved latest opinionated reviews, only when the host's connection is complete.
  */
-viewer_review_state?: string, };
+approval_count?: number, 
+/**
+ * The signed-in viewer's latest review: `approved`, `changes_requested`,
+ * `commented`, `dismissed`, `pending` or `none`. Absent when the read could not
+ * see every review, so the viewer's may be past it.
+ */
+viewer_review_state?: string, 
+/**
+ * Whether the forge can merge the pull request: `mergeable`, `conflicting` or
+ * `unknown`. Absent when the forge does not say.
+ */
+mergeable?: string, };

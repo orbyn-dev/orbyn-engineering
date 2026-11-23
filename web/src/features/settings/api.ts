@@ -11,6 +11,7 @@ import type {
   ScheduledTask,
   Thread,
 } from "../../api/types";
+import type { BrowserProfile } from "../../generated/BrowserProfile";
 import type { AcpNativeSessionImported } from "../../generated/AcpNativeSessionImported";
 import type { AcpNativeSessionPage } from "../../generated/AcpNativeSessionPage";
 import type { AcpSessionCapabilities } from "../../generated/AcpSessionCapabilities";
@@ -25,7 +26,6 @@ import type { RedactionPatternTest } from "../../generated/RedactionPatternTest"
 import type { RedactionPatternTestInput } from "../../generated/RedactionPatternTestInput";
 import type { RedactionSettings } from "../../generated/RedactionSettings";
 import type { RedactionSurfaceChange } from "../../generated/RedactionSurfaceChange";
-import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
 import type { TriagePlaybook } from "../../generated/TriagePlaybook";
 
 const q = encodeURIComponent;
@@ -35,13 +35,7 @@ export function listProviders(signal?: AbortSignal) {
   return request<ProviderList>("GET", "/api/providers", undefined, signal);
 }
 
-export function queryPreferences(body: unknown, signal?: AbortSignal) {
-  return request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", body, signal);
-}
-
-export function updatePreferences(body: unknown) {
-  return request<ScopedPreferencesResult>("PUT", "/api/settings/preferences", body);
-}
+export { queryPreferences, updatePreferences } from "../../api/preferences";
 
 export function queryProjectScopes(body: unknown, signal?: AbortSignal) {
   return request<ProjectScopeCatalog>("POST", "/api/settings/project-scopes", body, signal);
@@ -137,16 +131,16 @@ export function nativeSessionCapabilities(engineId: string, signal?: AbortSignal
   return request<AcpSessionCapabilities>("GET", `/api/engines/${q(engineId)}/native-sessions/capabilities`, undefined, signal);
 }
 
-export function listNativeSessions(engineId: string, query: string) {
-  return request<AcpNativeSessionPage>("GET", `/api/engines/${q(engineId)}/native-sessions${query}`);
+export function listNativeSessions(engineId: string, query: string, signal?: AbortSignal) {
+  return request<AcpNativeSessionPage>("GET", `/api/engines/${q(engineId)}/native-sessions${query}`, undefined, signal);
 }
 
-export function importNativeSession(engineId: string, body: unknown) {
-  return request<AcpNativeSessionImported>("POST", `/api/engines/${q(engineId)}/native-sessions/import`, body);
+export function importNativeSession(engineId: string, body: unknown, signal?: AbortSignal) {
+  return request<AcpNativeSessionImported>("POST", `/api/engines/${q(engineId)}/native-sessions/import`, body, signal);
 }
 
-export function deleteNativeSession(engineId: string, body: { project_id: string; session_id: string }) {
-  return request("POST", `/api/engines/${q(engineId)}/native-sessions/delete`, body);
+export function deleteNativeSession(engineId: string, body: { project_id: string; session_id: string }, signal?: AbortSignal) {
+  return request("POST", `/api/engines/${q(engineId)}/native-sessions/delete`, body, signal);
 }
 
 export { ApiFailure, NETWORK_ERROR, api, authHeaders } from "../../api/client";
@@ -186,4 +180,22 @@ export function trySecretPattern(input: RedactionPatternTestInput, signal?: Abor
 /** One pattern with its text: only the edit dialog the person opens reads it. */
 export function readSecretPattern(id: string, signal?: AbortSignal) {
   return request<RedactionPatternDetail>("GET", `/api/settings/secrets/patterns/${q(id)}`, undefined, signal);
+}
+
+/** The named browser profiles: a folder each, held by one Browser tab at a time. */
+export function listBrowserProfiles(signal?: AbortSignal) {
+  return request<BrowserProfile[]>("GET", "/api/browser-profiles", undefined, signal);
+}
+
+export function createBrowserProfile(name: string) {
+  return request<BrowserProfile>("POST", "/api/browser-profiles", { name });
+}
+
+/** Empties cookies, storage and history; the profile and its name stay. */
+export function clearBrowserProfile(id: string) {
+  return request<void>("POST", `/api/browser-profiles/${q(id)}/clear`);
+}
+
+export function deleteBrowserProfile(id: string) {
+  return request<void>("DELETE", `/api/browser-profiles/${q(id)}`);
 }

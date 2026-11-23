@@ -10,7 +10,10 @@ use orbyn_contracts::{
 };
 use serde_json::{Value, json};
 
-use super::{DEFINITIONS, Kind, check, definition, normalized, setting_key, writable};
+use super::{
+    DEFINITIONS, Kind, check, definition, normalized, refuse_agent_device_access, setting_key,
+    writable,
+};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::store::scoped_settings::{ServerSettingField, SettingWrite, SettingsSnapshot};
@@ -490,6 +493,18 @@ impl Core {
                     super::worktree_cleanup::validate_patch(value)?;
                 } else {
                     check(definition, value)?;
+                }
+                refuse_agent_device_access(key, value)?;
+                if key == crate::agents::text_models::SETTING {
+                    let scopes: Vec<Option<&str>> = if ids.is_empty() {
+                        vec![None]
+                    } else {
+                        ids.iter().map(|id| Some(id.as_str())).collect()
+                    };
+                    for scope in scopes {
+                        let merged = set_value(&before, &files, key, scope, value)?;
+                        crate::agents::text_models::check_offered(&self.engines, &merged)?;
+                    }
                 }
                 if key == crate::agents::engines::instances::PREFERENCE {
                     self.engines

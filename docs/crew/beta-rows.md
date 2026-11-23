@@ -58,7 +58,7 @@ From [parity.md](../parity.md) on main at `ae67b34a`, counted with `scripts/coun
 | --- | --- | --- | --- |
 | F3 | open | Multi-account host picker: account per host, host off |  |
 | F12 | partial | Add existing folder: picker with filesystem browse | the row records service completion without client evidence |
-| F16 | partial | Initialize Git: vcs init from project | the row records service completion without client evidence |
+| F16 | partial | Initialize Git: vcs init from project | Orbyn runs `git init` only when it creates a new project folder; nothing initialises Git inside an already-added project that is not a Git repository |
 | F18 | partial | AI commit and PR text: generated messages, titles, descriptions | generation supports the guarded Claude one-shot path only; Codex and unproven drivers are refused because a strict tool-free boundary is unproven, with manual text retained; qualification uses… |
 | F19 | partial | Writing style: repo conventions or custom, follows templates | uses F18's guarded-provider subset; scoped settings, history/custom instructions and base-tree templates have offline fixture qualification, no live model quality or packaged macOS writing observation |
 | F25 | partial | Branch naming: static, semantic or custom | semantic and custom branch naming are missing |
@@ -207,11 +207,11 @@ From [parity.md](../parity.md) on main at `ae67b34a`, counted with `scripts/coun
 
 | Row | State | What | Remaining |
 | --- | --- | --- | --- |
-| R1 | partial | Projects (10): listEntries, listIgnoredFiles, readFile, searchContents, searchEntries, writeFile, mutate, ensureScratch, createNew, createFromThread | no general file `mutate` handler in the registered routes; save is not create/rename/delete parity. Exact `createFromThread` behavior beyond scratch promotion remains unqualified under… |
+| R1 | partial | Projects (10): listEntries, listIgnoredFiles, readFile, searchContents, searchEntries, writeFile, mutate, ensureScratch, createNew, createFromThread | exact `createFromThread` behavior beyond scratch promotion remains unqualified under… |
 | R2 | partial | Shell, filesystem, sessions, assets (9): shell.openInEditor; filesystem.browse, getMetadata; agentSessions.scan, import; assets.createUrl, persistChatAttachments; attachments.createUploadUrl, delete | `getMetadata`, broad Claude/Codex/Pi scan/import (K36, [#180](https://github.com/orbyn-dev/orbyn-engineering/issues/180)), and equivalence of asset-URL creation, chat-attachment persistence and… |
 | R3 | partial | MCP Apps (4): callTool, toolInfo, readResource, updateModelContext | toolInfo has no route; a page's own `resources/read` is refused by the host, so readResource beyond the page itself is not served; Codex is the only source |
 | R4 | partial | Provider (15): uploadFeedback; auth start, complete, respond, cancel, logout, subscribe; consumeResetCredit; chatgpt reconnect-profile, import-profile, handoff.subscribe; install start, cancel, subscribe, remove | preserve I9's qualification limits and [#186](https://github.com/orbyn-dev/orbyn-engineering/issues/186); install cancellation/progress gaps belong to I38/I39… |
-| R5 | partial | VCS and git (11): vcs pull, refreshStatus, listRefs, createWorktree, removeWorktree, createRef, switchRef, init; git runStackedAction, resolvePullRequest, preparePullRequestThread | no explicit VCS refreshStatus/removeWorktree handler in the router (worktree removal happens only through project-policy cleanup, which `worktree_cleanup.rs` tests against real Git worktrees, not… |
+| R5 | partial | VCS and git (11): vcs pull, refreshStatus, listRefs, createWorktree, removeWorktree, createRef, switchRef, init; git runStackedAction, resolvePullRequest, preparePullRequestThread | removeWorktree removes only a linked worktree under the project's sibling `<repo>-wt` root with no thread working in it; F16 Git init, exact resolvePullRequest and stacked-action equivalence remain audit limits in… |
 | R6 | partial | Review and terminal (10): review getBranchCommits, getDiffPreview, getDiffFileContents; terminal open, attach, observe, write, resize, clear, close | retain the existing service completion declaration without inferring a fresh desktop/platform run. Terminal context chips and resumed engine consoles are G5/G14… |
 | R7 | partial | Preview and devices (19): preview open, resize, adjust, close, list, clearProfile, reportProfiles, reportStatus, stopLocalServer; device configure, list, testHost, easAccount, simlockIdentity, open, close, shutdown, detail, action | device configuration/list/open/close/shutdown/detail/action and local toolchain support H20–H27/H31 are unimplemented, not mobile exclusions; retain H24's existing 3D-asset and H25's… |
 | R8 | partial | Server core (14): probe, getConfig, getNpmRelease, refreshProviders, updateProvider, updateServer, updateServerWithProgress, commitDesktopUpdate, upsertKeybinding, removeKeybinding, runStorageCleanup, getStorageCleanupReport, getDatabaseStorage, updateSettings | UI removal and full progress/commit semantics remain unqualified in [#185](https://github.com/orbyn-dev/orbyn-engineering/issues/185). K1/K2/K9 gaps belong to… |
@@ -224,7 +224,7 @@ From [parity.md](../parity.md) on main at `ae67b34a`, counted with `scripts/coun
 
 ## Appendix B: designed screens not yet built
 
-From [design-inventory.md](../design-inventory.md) on main: 160 screens missing, partial or preview-only in code.
+The list below is a 2026-11-11 snapshot. [design-inventory.md](../design-inventory.md) was recounted on 2026-11-20 and finds 44 of its 231 Phase 0 screens still unimplemented (38 missing, 4 preview-only, 2 unverified), so this appendix over-counts: check the row there before starting.
 
 ### Tool calls, every state (35)
 
@@ -387,7 +387,7 @@ Decided 2026-11-12: a block is one command or script the app itself runs (projec
 | `block-ask-crew` | Ask Crew about a block | missing | P2 |
 | `block-collapsed` | A collapsed block | missing | P2 |
 | `block-default` | A block | missing | P2 |
-| `block-empty` | No blocks yet: "Commands Orbyn runs appear here as blocks" | missing | P2 |
+| `block-empty` | No blocks yet: "Commands you run here appear as blocks" | missing | P2 |
 | `block-failed` | A failed block | missing | P2 |
 | `block-filter` | Filter blocks | missing | P2 |
 | `block-find` | Find in blocks | missing | P2 |

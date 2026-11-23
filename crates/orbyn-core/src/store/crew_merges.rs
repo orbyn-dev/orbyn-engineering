@@ -389,6 +389,35 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// One project's merges merged at or after `since_unix`, oldest first.
+    ///
+    /// Bounded in SQL rather than filtered afterwards, so a long-lived repository does not hand
+    /// back its whole merge history for a thirty-day answer.
+    pub fn crew_merges_of_project_since(
+        &self,
+        project_id: &str,
+        since_unix: i64,
+    ) -> Result<Vec<MergeRecord>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT m.* FROM crew_merges m
+             JOIN crew_runs r ON r.task_id = m.task_id
+             JOIN threads t ON t.id = r.lead_thread_id
+             WHERE t.project_id = ?1 AND m.merged_unix >= ?2 ORDER BY m.id",
+        )?;
+        Ok(statement
+            .query_map((project_id, since_unix), merge_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Makes the dashboard's window query fail, as a damaged table would. Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn break_crew_dashboard_for_test(&self) {
+        self.writer()
+            .execute_batch("ALTER TABLE crew_runs RENAME TO crew_runs_broken")
+            .unwrap();
+    }
+
     /// One page of merges, newest first, and the number of merges in all.
     pub fn crew_merges_page(&self, limit: u32, offset: u32) -> Result<(Vec<MergeRecord>, u32)> {
         let conn = self.reader();
@@ -478,6 +507,17 @@ impl Store {
     /// The merge was reverted by `commit` on the branch.
     pub fn set_merge_reverted(&self, task_id: &str, commit: &str) -> Result<()> {
         self.commit(|tx, _| {
+            let project: Option<String> = tx.query_row(
+                "SELECT t.project_id FROM crew_merges m JOIN crew_runs r ON r.task_id=m.task_id
+                 JOIN threads t ON t.id=r.lead_thread_id
+                 WHERE m.task_id=?1 AND NOT EXISTS(SELECT 1 FROM crew_escapes e WHERE e.merge_task_id=?1)
+                 AND NOT EXISTS(SELECT 1 FROM crew_escape_tombstones x WHERE x.merge_task_id=?1)",
+                [task_id], |row| row.get(0),
+            ).optional()?;
+            if let Some(project) = project {
+                // A typed capacity refusal leaves the plan untouched and never undoes a valid revert.
+                super::crew_escape_retention::room_for_revert(tx, &project, unix_now())?;
+            }
             tx.execute(
                 "UPDATE crew_merges SET review_state = 'reverted', reverted_commit = ?2, needs_person = NULL, reviewed_unix = ?3 WHERE task_id = ?1",
                 params![task_id, commit, unix_now()],

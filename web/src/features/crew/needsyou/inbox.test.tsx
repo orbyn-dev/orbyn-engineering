@@ -2,7 +2,9 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../mock/api";
+import type { Project } from "../../../generated/Project";
 import { useConnection } from "../../../product/state/connection";
+import { useWorkspace } from "../../../product/state/workspace";
 import { installMockFetch } from "../../../test-support";
 import { NeedsYouInbox } from "./NeedsYouInbox";
 import { NEEDS_REFRESH_MS } from "./useNeedsYou";
@@ -13,7 +15,8 @@ let mock: MockApi;
 beforeAll(async () => {
   installMockFetch();
   await import("../../../app/App");
-});
+  // App's first import is the cold module graph of the whole app; under a full-suite run it passes the 10 s default hook timeout.
+}, 60_000);
 beforeEach(() => {
   mock = installMockFetch();
   useConnection.setState({ remote: false });
@@ -29,6 +32,15 @@ async function open(scenario: "crew" | `crew-${string}`) {
   const user = userEvent.setup();
   const view = render(<NeedsYouInbox />);
   return { user, view };
+}
+
+/** The repository the areas read needs, as the areas page's own tests give it. */
+const gitProject = (id: string, name: string) => ({ id, name, trusted: true, is_git: true, path: `/fixture/${id}` }) as Project;
+function twoGitProjects() {
+  useWorkspace.setState({ projects: { data: [gitProject("p-app", "orbyn-engineering"), gitProject("p-two", "other-repo")], loading: false, error: null } });
+}
+function oneGitProject() {
+  useWorkspace.setState({ projects: { data: [{ id: "p-app", name: "orbyn-engineering", trusted: true, is_git: true, path: "/fixture/app" } as Project], loading: false, error: null } });
 }
 
 const list = () => screen.findByRole("list", { name: "Needs you" });
@@ -97,6 +109,105 @@ describe("the Needs you inbox on live data", () => {
     render(<NeedsYouInbox />);
     await screen.findByRole("list", { name: "Needs you" });
     expect(screen.queryByText("Stopped · too many denials")).toBeNull();
+  });
+
+  it("a demoted area is one line with its record, ranked below what waits on you (needsyou-demoted)", async () => {
+    oneGitProject();
+    await open("crew-areas-tripped");
+    const items = within(await list()).getAllByRole("listitem");
+    const item = items.find((one) => one.textContent?.includes("moved from Full to On")) as HTMLElement;
+    expect(item).toHaveTextContent("web/auth moved from Full to On: 2 reverts in 14 days. Review or override.");
+    expect(item).toHaveTextContent("Autopilot by area · circuit breaker · 9 merges in the window");
+    expect(item).toHaveTextContent("Nothing is blocked. A High risk diff in web/auth now waits for you at the merge gate; Low and Medium still merge by themselves. Dismiss is remembered on this browser.");
+    // It blocks nothing, so it waits below every item that waits on the person, whatever its age.
+    expect(items[items.length - 1]).toBe(item);
+    const bar = screen.getByRole("group", { name: "Filter the inbox" });
+    expect(within(bar).getByRole("button", { name: "Autonomy 1" })).toBeVisible();
+  });
+
+  it("a demotion's Dismiss is remembered on this browser: nothing is sent, and another read does not bring it back", async () => {
+    oneGitProject();
+    const { user, view } = await open("crew-areas-tripped");
+    const item = (await screen.findByText("web/auth moved from Full to On: 2 reverts in 14 days. Review or override.")).closest("li") as HTMLElement;
+    await user.click(within(item).getByRole("button", { name: /^Dismiss/ }));
+    expect(screen.queryByText(/moved from Full to On/)).toBeNull();
+    expect(writes()).toHaveLength(0);
+    const stored = () => JSON.parse(window.localStorage.getItem("orbyn.needsyou.dismissedAutonomy") ?? "[]") as string[];
+    expect(stored()).toHaveLength(1);
+    view.unmount();
+    render(<NeedsYouInbox />);
+    await screen.findByRole("list", { name: "Needs you" });
+    expect(screen.queryByText(/moved from Full to On/)).toBeNull();
+    expect(stored()).toHaveLength(1);
+  });
+
+  it("with several repositories the inbox says Autonomy shows one repository only; with one it says nothing", async () => {
+    twoGitProjects();
+    const first = await open("crew-areas-tripped");
+    expect(await screen.findByText("Autonomy shows orbyn-engineering only.")).toBeVisible();
+    first.view.unmount();
+    oneGitProject();
+    await open("crew-areas-tripped");
+    await screen.findByRole("list", { name: "Needs you" });
+    expect(screen.queryByText(/Autonomy shows/)).toBeNull();
+  });
+
+  it("a dismissal is per repository, and pruning only touches the shown repository's own entries", async () => {
+    oneGitProject();
+    const origin = window.location.origin;
+    const other = `${origin}|autonomy:p-other:web/auth:1`;
+    const stale = `${origin}|autonomy:p-app:web/auth:9`;
+    window.localStorage.setItem("orbyn.needsyou.dismissedAutonomy", JSON.stringify([other, stale]));
+    await open("crew-areas-tripped");
+    await screen.findByRole("list", { name: "Needs you" });
+    const stored = () => JSON.parse(window.localStorage.getItem("orbyn.needsyou.dismissedAutonomy") ?? "[]") as string[];
+    await waitFor(() => expect(stored()).not.toContain(stale));
+    expect(stored()).toContain(other);
+  });
+
+  it("after an override only the areas are read again, not the whole inbox", async () => {
+    oneGitProject();
+    const { user } = await open("crew-areas-tripped");
+    const item = (await screen.findByText("web/auth moved from Full to On: 2 reverts in 14 days. Review or override.")).closest("li") as HTMLElement;
+    const before = { stops: calls("/api/crew/stops").length, review: calls("/api/crew/autopilot/review").length, areas: calls("/api/crew/autopilot/areas?").length };
+    await user.click(within(item).getByRole("button", { name: /^Override/ }));
+    const menu = await screen.findByRole("menu", { name: "web/auth override" });
+    await user.click(within(menu).getByRole("menuitem", { name: "Off" }));
+    const dialog = await screen.findByRole("dialog", { name: "Turn web/auth off?" });
+    await user.click(within(dialog).getByRole("checkbox", { name: "I understand that everything in web/auth will wait for me." }));
+    await user.click(within(dialog).getByRole("button", { name: "Turn it off" }));
+    await waitFor(() => expect(calls("/api/crew/autopilot/areas?").length).toBeGreaterThan(before.areas));
+    await waitFor(() => expect(screen.queryByText(/moved from Full to On/)).toBeNull());
+    expect(calls("/api/crew/stops")).toHaveLength(before.stops);
+    expect(calls("/api/crew/autopilot/review")).toHaveLength(before.review);
+  });
+
+  it("a demotion's Review opens Autopilot by area on the row's repository; it writes nothing", async () => {
+    oneGitProject();
+    const { user } = await open("crew-areas-tripped");
+    const item = (await screen.findByText("web/auth moved from Full to On: 2 reverts in 14 days. Review or override.")).closest("li") as HTMLElement;
+    await user.click(within(item).getByRole("button", { name: /^Review/ }));
+    expect(window.location.hash).toBe("#/settings/crew/areas?repo=p-app");
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("a demotion's Override… opens the page's menu, and Off asks first with the same warning", async () => {
+    oneGitProject();
+    const { user } = await open("crew-areas-tripped");
+    const item = (await screen.findByText("web/auth moved from Full to On: 2 reverts in 14 days. Review or override.")).closest("li") as HTMLElement;
+    await user.click(within(item).getByRole("button", { name: /^Override/ }));
+    const menu = await screen.findByRole("menu", { name: "web/auth override" });
+    expect(menu).toHaveTextContent("web/auth is on On. What should it follow?");
+    expect(within(menu).getAllByRole("menuitem").map((one) => one.getAttribute("aria-label"))).toEqual(["Follow the record", "Keep the ceiling", "Off"]);
+    await user.click(within(menu).getByRole("menuitem", { name: "Off" }));
+    const dialog = await screen.findByRole("dialog", { name: "Turn web/auth off?" });
+    const confirm = within(dialog).getByRole("button", { name: "Turn it off" });
+    expect(confirm).toBeDisabled();
+    await user.click(within(dialog).getByRole("checkbox", { name: "I understand that everything in web/auth will wait for me." }));
+    await user.click(confirm);
+    await waitFor(() => expect(writes().map(([url, init]) => [String(url), init?.method])).toContainEqual(["/api/crew/autopilot/areas/override", "POST"]));
+    // The area is no longer demoted, so the inbox's line is gone.
+    await waitFor(() => expect(screen.queryByText(/moved from Full to On/)).toBeNull());
   });
 
   const KEY = "orbyn.needsyou.dismissedStops";
@@ -268,7 +379,7 @@ describe("answering from the inbox", () => {
     expect(within(orders).getByRole("button", { name: /^Approve/ })).toBeEnabled();
   });
 
-  it("offers no merge, revert or other write: only Approve, Deny and Open exist", async () => {
+  it("offers no merge or revert: from an approval only Approve, Deny and Open exist (a demoted area's Override… is person-only)", async () => {
     await open("crew-held-account");
     await list();
     const labels = screen.getAllByRole("button").map((one) => (one.textContent ?? "").trim());

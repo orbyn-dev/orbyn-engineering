@@ -2,6 +2,8 @@
 //! only ever added. The counters of the trip wires are read from it, so no counter can drift from
 //! the rows it counts.
 
+use std::collections::BTreeMap;
+
 use rusqlite::{OptionalExtension, params};
 use serde_json::Value;
 
@@ -200,9 +202,7 @@ impl Store {
                 let body: Value = serde_json::from_str(&body)?;
                 return if body["engine"] == engine && body["attempt"] == attempt { Ok(()) } else { Err(CoreError::RunClosed) };
             }
-            let worker: i64 = tx.query_row("SELECT COUNT(*) FROM runs WHERE thread_id = ?1", [run.worker_thread_id.as_deref()], |row| row.get(0))?;
-            let approvals: i64 = tx.query_row("SELECT COUNT(*) FROM crew_autopilot_events WHERE task_id=?1 AND kind='approval_started'", [task_id], |row| row.get(0))?;
-            if worker.max(i64::from(run.attempts)).saturating_add(approvals) >= i64::from(brief.budget.turns) {
+            if super::crew_runs::turns_spent(tx, &run)? >= u64::from(brief.budget.turns) {
                 return Err(CoreError::EngineUnavailable("The task has no turn left for an approval.".into()));
             }
             let body = serde_json::json!({ "approval": approval, "engine": engine, "attempt": attempt, "turns": 1 });
@@ -219,14 +219,6 @@ impl Store {
                  ON CONFLICT(scope) DO UPDATE SET mode = ?2, updated_at = ?3",
                 params![scope, mode, now()],
             )?;
-            Ok(())
-        })
-    }
-
-    /// Removes the mode stored for exactly this scope, so a start that was refused leaves no row behind.
-    pub fn clear_crew_autopilot_mode(&self, scope: &str) -> Result<()> {
-        self.commit(|tx, _| {
-            tx.execute("DELETE FROM crew_autopilot_modes WHERE scope = ?1", [scope])?;
             Ok(())
         })
     }
@@ -424,6 +416,60 @@ impl Store {
                 })
             })
             .collect()
+    }
+
+    /// The ledger rows of these kinds for every task in `task_ids`, oldest first within a task,
+    /// read in one query. A dashboard over a window needs the same kinds for all its tasks.
+    pub fn crew_autopilot_events_of_tasks(
+        &self,
+        task_ids: &[String],
+        kinds: &[&str],
+    ) -> Result<BTreeMap<String, Vec<AutopilotEvent>>> {
+        if task_ids.is_empty() || kinds.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let task_marks = vec!["?"; task_ids.len()].join(",");
+        let kind_marks = vec!["?"; kinds.len()].join(",");
+        let mut args: Vec<rusqlite::types::Value> = task_ids
+            .iter()
+            .cloned()
+            .map(rusqlite::types::Value::Text)
+            .collect();
+        args.extend(
+            kinds
+                .iter()
+                .map(|kind| rusqlite::types::Value::Text((*kind).to_owned())),
+        );
+        let conn = self.reader();
+        let mut statement = conn.prepare(&format!(
+            "SELECT id, crew_id, task_id, kind, body, at FROM crew_autopilot_events
+             WHERE task_id IN ({task_marks}) AND kind IN ({kind_marks}) ORDER BY id"
+        ))?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(args.iter()), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut events: BTreeMap<String, Vec<AutopilotEvent>> = BTreeMap::new();
+        for (id, crew_id, task_id, kind, body, at) in rows {
+            let event = AutopilotEvent {
+                id,
+                crew_id,
+                task_id: task_id.clone(),
+                kind,
+                body: serde_json::from_str(&body)?,
+                at,
+            };
+            events.entry(task_id).or_default().push(event);
+        }
+        Ok(events)
     }
 
     /// How a task's approvals stand: the denials since the last allow, and the denials in all.

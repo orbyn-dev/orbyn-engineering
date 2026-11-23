@@ -10,6 +10,9 @@ import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useThreadLogs } from "../../../product/state/threadLogs";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Button, IconButton } from "../../../ui/controls";
+import { limitsKey, limitsRefreshOn, readLimits } from "../../../lib/limitsStore";
+import { useLimitsChecked } from "../../../lib/limitsChecked";
+import { LimitsAge, LimitsFailure, LimitsRefresh } from "../../../product/ui/LimitsChecked";
 import type { StashedPrompt } from "../../../product/state/ui";
 
 export const usageShare = (usage: JsonValue | null | undefined): { used: number; window: number } | null => {
@@ -186,18 +189,21 @@ const windowsOf = (report: EngineLimits | null): EngineLimits["windows"] => repo
 
 /** The `/usage-limits` result, above the composer until dismissed. */
 export function InlineLimits({ threadId, onClose }: { threadId: string; onClose(): void }) {
-  const limits = useAsync(`thread-limits:${threadId}`, (signal) => api.threadLimits(threadId, signal), { refreshOn: topics("limits", `limits:${engineOf(threadId)}`) });
+  const limits = useAsync(`thread-limits:${threadId}`, (signal, context) => readLimits(limitsKey(engineOf(threadId), threadId), (force) => api.threadLimits(threadId, signal, force), { force: context.force }), { fresh: true, keepOnManual: true, refreshOn: limitsRefreshOn(topics("limits", `limits:${engineOf(threadId)}`), () => limitsKey(engineOf(threadId), threadId)) });
   const windows = windowsOf(limits.data);
+  const checked = useLimitsChecked(limitsKey(engineOf(threadId), threadId), limits);
   return (
     <section className="composer-panel" aria-label="Usage limits">
       <header>
         <strong>Usage limits</strong>
+        <LimitsAge checked={checked} />
+        <LimitsRefresh checked={checked} onRefresh={() => void limits.reloadNow()} />
         <IconButton label="Close usage limits" onClick={onClose}>
           <X size={14} aria-hidden />
         </IconButton>
       </header>
       {limits.status === "loading" ? <p>Checking limits...</p> : null}
-      {limits.status === "error" ? <p>Couldn't read limits. {limits.error.message}</p> : null}
+      {limits.status === "error" && !limits.data ? <p>Couldn't read limits. {limits.error.message}</p> : null}
       {limits.status === "ready" && windows.length === 0 ? <p>No limits reported.</p> : null}
       {windows.map((window, at) => (
         <p key={at}>
@@ -205,6 +211,7 @@ export function InlineLimits({ threadId, onClose }: { threadId: string; onClose(
           {window.resets_at ? `, resets ${relativeTime(window.resets_at).toLowerCase()}` : ""}
         </p>
       ))}
+      <LimitsFailure checked={checked} onRetry={() => void limits.reloadNow()} />
     </section>
   );
 }

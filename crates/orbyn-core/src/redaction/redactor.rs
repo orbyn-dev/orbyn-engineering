@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 
 use orbyn_contracts::PatternScope;
 use regex::Regex;
+use serde_json::Value;
 
 use super::builtin::BUILTINS;
 use super::custom;
@@ -39,6 +40,34 @@ pub struct Custom<'a> {
 #[derive(Default)]
 pub struct Redactor {
     detectors: Vec<Detector>,
+}
+
+/// The start of what `Redactor::labelled` writes in place of a hidden value.
+const MARKER: &str = "[hidden: ";
+
+/// `text` cut to at most `max` characters, without leaving a piece of a value behind. A cut that
+/// lands inside a `[hidden: ...]` marker drops the marker; one that lands inside a run of
+/// non-space characters drops that run's head, because a pattern that no longer matches the
+/// shortened run would show the front of a secret. Hide values first, then cut.
+pub fn cut_safely(text: &str, max: usize) -> String {
+    let Some((at, _)) = text.char_indices().nth(max) else {
+        return text.to_owned();
+    };
+    let mut head = &text[..at];
+    if let Some(open) = head
+        .rfind(MARKER)
+        .filter(|open| !head[*open..].contains(']'))
+    {
+        head = &head[..open];
+    }
+    let inside_run = !head.ends_with(char::is_whitespace)
+        && text[head.len()..].starts_with(|c: char| !c.is_whitespace());
+    if inside_run {
+        head = &head[..head.rfind(char::is_whitespace).map_or(0, |at| {
+            at + head[at..].chars().next().map_or(0, char::len_utf8)
+        })];
+    }
+    head.trim_end().to_owned()
 }
 
 fn assignments() -> &'static Regex {
@@ -227,6 +256,25 @@ impl Redactor {
     /// What a terminal block shows: one dot per hidden character.
     pub fn dotted(&self, text: &str) -> String {
         self.replace_spans(text, |_, _, hidden| "•".repeat(hidden.chars().count()))
+    }
+
+    /// A stored JSON value as a person reads it: every string value and every object key has the
+    /// set's patterns hidden, so a secret carried in either is not shown. A key has no room for a
+    /// marker of its own, so it becomes the same `[hidden: <label>]` text a value does. Other
+    /// scalars (numbers, booleans, null) are shown as they are.
+    pub fn mask_json(&self, value: &Value) -> Value {
+        match value {
+            Value::String(text) => Value::String(self.labelled(text)),
+            Value::Array(items) => {
+                Value::Array(items.iter().map(|item| self.mask_json(item)).collect())
+            }
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(key, item)| (self.labelled(key), self.mask_json(item)))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
     }
 
     /// `text` with each format replaced by `mask`, one format after the other, as Crew has always

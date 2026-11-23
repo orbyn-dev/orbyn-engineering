@@ -100,19 +100,26 @@ struct Fixture {
     core: Core,
     upstream: PathBuf,
     thread: String,
+    fake: Arc<Fake>,
 }
 
 async fn fixture(update: &'static str) -> Fixture {
+    fixture_with(update, false).await
+}
+
+/// `online` is not ORBYN_OFFLINE: the scheduled check runs.
+async fn fixture_with(update: &'static str, online: bool) -> Fixture {
     let dir = TempDir::new();
     let upstream = library(&dir.path().join("upstream"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
-    config.engines.lookup_latest = false;
+    config.engines.lookup_latest = online;
     let core = Core::open(config).unwrap();
-    core.engines.register(Arc::new(Fake {
+    let fake = Arc::new(Fake {
         update,
         version: "1.0.0",
         probes: Default::default(),
-    }));
+    });
+    core.engines.register(fake.clone());
     core.setup_workspace(WorkspaceSetup {
         url: Some(upstream.to_string_lossy().into_owned()),
         adopt_path: None,
@@ -141,6 +148,7 @@ async fn fixture(update: &'static str) -> Fixture {
         core,
         upstream,
         thread,
+        fake,
     }
 }
 
@@ -319,12 +327,25 @@ async fn shell_lines_drive_app_state_and_junk_is_ignored() {
     assert_eq!(*version.borrow(), 0, "ignored lines change nothing");
     updates.check().await;
     assert_eq!(lines.recv().await.unwrap()["type"], "check_app_update");
-    updates.on_shell_line(r#"{"type":"app_update_available","version":"99.0.0","notes":"new"}"#);
+    updates.on_shell_line(
+        r#"{"type":"app_update_available","release_id":"r1","version":"99.0.0","notes":"new"}"#,
+    );
     let app = updates.status().await.app;
     assert_eq!(app.mode, AppMode::Desktop);
     assert!(app.can_apply);
     assert_eq!(app.notes.as_deref(), Some("new"));
-    updates.on_shell_line(r#"{"type":"app_update_progress","downloaded":5,"total":10}"#);
+    updates
+        .download_app(
+            "t",
+            AppUpdateRequest {
+                release_id: "r1".into(),
+                operation: 0,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(lines.recv().await.unwrap()["type"], "download_app_update");
+    updates.on_shell_line(r#"{"type":"app_update_progress","release_id":"r1","operation":1,"downloaded":5,"total":10}"#);
     assert_eq!(updates.status().await.app.downloaded, Some(5));
     updates.on_shell_line(r#"{"type":"app_update_none"}"#);
     assert!(!updates.status().await.app.can_apply);
@@ -337,10 +358,12 @@ async fn a_check_failure_during_install_preserves_admission_and_progress() {
     let f = fixture("exit 0").await;
     let updates = &f.core.updates;
     let mut lines = updates.attach_shell();
-    updates.on_shell_line(r#"{"type":"app_update_available","version":"99.0.0","notes":"new"}"#);
+    updates.on_shell_line(
+        r#"{"type":"app_update_available","release_id":"r1","version":"99.0.0","notes":"new"}"#,
+    );
     updates.apply_app("t").await.unwrap();
-    assert_eq!(lines.recv().await.unwrap()["type"], "install_app_update");
-    updates.on_shell_line(r#"{"type":"app_update_progress","downloaded":5,"total":10}"#);
+    assert_eq!(lines.recv().await.unwrap()["type"], "download_app_update");
+    updates.on_shell_line(r#"{"type":"app_update_progress","release_id":"r1","operation":1,"downloaded":5,"total":10}"#);
 
     updates.on_shell_line(r#"{"type":"app_update_check_failed","message":"check unavailable"}"#);
     let status = updates.status().await;
@@ -361,9 +384,9 @@ async fn a_check_failure_during_install_preserves_admission_and_progress() {
     assert_eq!(status.app.latest.as_deref(), Some("99.0.0"));
     assert_eq!(status.app.notes.as_deref(), Some("new"));
 
-    updates.on_shell_line(r#"{"type":"app_update_failed","message":"install failed"}"#);
+    updates.on_shell_line(r#"{"type":"app_update_failed","release_id":"r1","operation":1,"message":"install failed"}"#);
     let status = updates.status().await;
-    assert_eq!(status.error.as_deref(), Some("install failed"));
+    assert_eq!(status.app.update_error.as_deref(), Some("install failed"));
     assert_eq!(status.app.downloaded, None);
     assert_eq!(status.app.total, None);
     let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
@@ -387,7 +410,8 @@ async fn a_check_failure_without_an_install_does_not_hold_admission() {
 
     // A disconnected shell must retain its existing refusal-and-release behavior.
     drop(lines);
-    updates.on_shell_line(r#"{"type":"app_update_available","version":"99.0.0"}"#);
+    updates
+        .on_shell_line(r#"{"type":"app_update_available","release_id":"r1","version":"99.0.0"}"#);
     assert!(matches!(
         updates.apply_app("t").await,
         Err(CoreError::UpdateFailed(_))
@@ -402,7 +426,8 @@ async fn install_is_refused_during_a_run_then_holds_admission_until_failure() {
     let f = fixture("exit 0").await;
     let mut lines = f.core.updates.attach_shell();
     let updates = &f.core.updates;
-    updates.on_shell_line(r#"{"type":"app_update_available","version":"99.0.0"}"#);
+    updates
+        .on_shell_line(r#"{"type":"app_update_available","release_id":"r1","version":"99.0.0"}"#);
     let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
     wait_running(&f.core, &run.id).await;
     assert!(matches!(
@@ -414,13 +439,18 @@ async fn install_is_refused_during_a_run_then_holds_admission_until_failure() {
     wait_stopped(&f.core, &run.id).await;
 
     updates.apply_app("t").await.unwrap();
-    assert_eq!(lines.recv().await.unwrap()["type"], "install_app_update");
+    assert_eq!(lines.recv().await.unwrap()["type"], "download_app_update");
     assert!(matches!(
         f.core.runs.admit(&f.thread, "go", "t"),
         Err(CoreError::Updating)
     ));
-    updates.on_shell_line(r#"{"type":"app_update_failed","message":"disk full"}"#);
-    assert_eq!(updates.status().await.error.as_deref(), Some("disk full"));
+    updates.on_shell_line(
+        r#"{"type":"app_update_failed","release_id":"r1","operation":1,"message":"disk full"}"#,
+    );
+    assert_eq!(
+        updates.status().await.app.update_error.as_deref(),
+        Some("disk full")
+    );
     let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
     f.core.runs.cancel(&run.id).unwrap();
     wait_stopped(&f.core, &run.id).await;
@@ -431,7 +461,8 @@ async fn an_automatic_install_waits_for_the_mode_an_idle_person_and_no_runs() {
     let f = fixture("exit 0").await;
     let updates = &f.core.updates;
     let mut lines = updates.attach_shell();
-    updates.on_shell_line(r#"{"type":"app_update_available","version":"99.0.0"}"#);
+    updates
+        .on_shell_line(r#"{"type":"app_update_available","release_id":"r1","version":"99.0.0"}"#);
     let idle = Duration::from_millis(40);
 
     assert!(!updates.auto_install_after("notify", Duration::ZERO).await);
@@ -453,7 +484,7 @@ async fn an_automatic_install_waits_for_the_mode_an_idle_person_and_no_runs() {
 
     tokio::time::sleep(idle * 2).await;
     assert!(updates.auto_install_after("automatic", idle).await);
-    assert_eq!(lines.recv().await.unwrap()["type"], "install_app_update");
+    assert_eq!(lines.recv().await.unwrap()["type"], "download_app_update");
 }
 
 #[tokio::test]
@@ -488,6 +519,79 @@ async fn the_setting_turns_background_checks_off() {
     stop.cancel();
     checks.await.unwrap();
     assert_eq!(f.core.updates.status().await.library.behind, 0);
+    assert!(f.core.updates.status().await.checked_at.is_none());
+}
+
+/// Turns one setting on or off the way the Settings screen does.
+fn set(f: &Fixture, key: &str, on: bool) {
+    let values = std::collections::BTreeMap::from([(key.to_owned(), serde_json::json!(on))]);
+    f.core.set_preferences(None, &values).unwrap();
+}
+
+/// Runs the scheduled check once and returns how many times the engine CLI was read.
+async fn scheduled_engine_reads(f: &Fixture) -> u64 {
+    // A first status fills the kept list; only a refresh reads the CLI after that.
+    f.core.engines.statuses(false).await.unwrap();
+    let before = f.fake.probes.load(std::sync::atomic::Ordering::Relaxed);
+    let stop = CancellationToken::new();
+    let checks = {
+        let (updates, stop) = (f.core.updates.clone(), stop.clone());
+        tokio::spawn(async move { updates.run_checks(stop).await })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    stop.cancel();
+    checks.await.unwrap();
+    f.fake.probes.load(std::sync::atomic::Ordering::Relaxed) - before
+}
+
+#[tokio::test]
+async fn provider_checks_off_skips_engine_versions_but_still_checks_the_library_and_app() {
+    let f = fixture_with("exit 0", true).await;
+    set(&f, "enable_provider_update_checks", false);
+    upstream_commit(&f.upstream);
+    assert_eq!(scheduled_engine_reads(&f).await, 0);
+    assert_eq!(f.core.updates.status().await.library.behind, 1);
+}
+
+#[tokio::test]
+async fn background_checks_off_still_reads_engine_versions_when_provider_checks_are_on() {
+    let f = fixture_with("exit 0", true).await;
+    let settings = ServerSettings {
+        background_update_checks: Some(false),
+        ..f.core.store.settings().unwrap()
+    };
+    f.core.store.save_settings(&settings, "t").unwrap();
+    upstream_commit(&f.upstream);
+    assert!(scheduled_engine_reads(&f).await > 0);
+    assert_eq!(f.core.updates.status().await.library.behind, 0);
+}
+
+#[tokio::test]
+async fn a_manual_check_reads_engine_versions_with_provider_checks_off() {
+    let f = fixture("exit 0").await;
+    set(&f, "enable_provider_update_checks", false);
+    let before = f.fake.probes.load(std::sync::atomic::Ordering::Relaxed);
+    f.core.updates.check().await;
+    assert!(f.fake.probes.load(std::sync::atomic::Ordering::Relaxed) > before);
+}
+
+#[tokio::test]
+async fn offline_sends_the_desktop_shell_no_automatic_check() {
+    // The fixture is offline (`lookup_latest` is false), as with ORBYN_OFFLINE.
+    let f = fixture("exit 0").await;
+    let mut lines = f.core.updates.attach_shell();
+    let stop = CancellationToken::new();
+    let checks = {
+        let (updates, stop) = (f.core.updates.clone(), stop.clone());
+        tokio::spawn(async move { updates.run_checks(stop).await })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    stop.cancel();
+    checks.await.unwrap();
+    assert!(
+        lines.try_recv().is_err(),
+        "no app update check reaches the shell while offline"
+    );
     assert!(f.core.updates.status().await.checked_at.is_none());
 }
 

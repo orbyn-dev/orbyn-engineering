@@ -23,14 +23,16 @@ path = "src/bin/orbyn_fake_engine/main.rs"
 
 [dependencies]
 orbyn-contracts = { path = "../orbyn-contracts" }
-orbyn-core = { path = "../orbyn-core" }
+orbyn-core = { path = "../orbyn-core", features = ["engine-credentials", "code-mode"] }
 axum.workspace = true
 clap.workspace = true
+flate2 = "1"
 futures-util.workspace = true
 getrandom.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_path_to_error.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["io-std"] }
 tokio-util.workspace = true
@@ -42,8 +44,12 @@ tracing-subscriber.workspace = true
 windows-sys.workspace = true
 
 [dev-dependencies]
+zeroize.workspace = true
 orbyn-core = { path = "../orbyn-core", features = ["test-support"] }
+base64 = "0.22"
 ed25519-dalek.workspace = true
+# Real photo fixtures for the attachment conversion tests, never committed as binaries.
+image.workspace = true
 rusqlite.workspace = true
 tokio-tungstenite.workspace = true
 windows-sys.workspace = true

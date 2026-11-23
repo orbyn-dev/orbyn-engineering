@@ -59,6 +59,10 @@ fn normalized(key: &str, value: Value) -> Value {
     {
         return json!(submodule_mode(text));
     }
+    // Device access is not built (H27), so a grant stored before this guard stays off.
+    if key == "enable_agent_device_access" && value.as_bool() == Some(true) {
+        return json!(false);
+    }
     value
 }
 /// Machine kinds the local environment can be shown as; empty is the plain monitor.
@@ -91,6 +95,8 @@ const DEFINITIONS: &[Definition] = defs![
     "warm_next_turn" Kind::Bool, false, false;
     "app_update_mode" Kind::OneOf(&["automatic", "notify", "off"]), "notify", false;
     "keep_awake_during_runs" Kind::Bool, true, false;
+    "terminal_attention_enabled" Kind::Bool, true, false;
+    "terminal_attention_quiet_seconds" Kind::Number, 20, false;
     "quit_confirmation" Kind::OneOf(QUIT), "direct", false;
     "default_engine" Kind::Text, "", true;
     "default_effort" Kind::Text, "", true;
@@ -102,6 +108,7 @@ const DEFINITIONS: &[Definition] = defs![
     "worktree_submodules" Kind::OneOf(SUBMODULES), "recursive", true;
     "add_project_base_directory" Kind::Text, "", false;
     "text_generation_model" Kind::Text, "", true;
+    "text_generation_models" Kind::Object, {}, true;
     "auto_thread_titles" Kind::Bool, true, true;
     "project_title_instructions" Kind::Text, "", true;
     "branch_naming_mode" Kind::OneOf(NAMING), "static", true;
@@ -132,7 +139,19 @@ const DEFINITIONS: &[Definition] = defs![
     "custom_models" Kind::List, [], false;
     "disabled_engines" Kind::List, [], true;
     "provider_instances" Kind::List, [], false;
+    "crew_digest" Kind::Object, {"time": "17:00"}, false;
+    "crew_turn_budget" Kind::Number, 0, false;
+    "claude_engine_path" Kind::OneOf(&["sdk", "cli"]), "sdk", false;
 ];
+
+/// Which path Claude runs take: `sdk` (the engine host, the default) or `cli`. Read at each run's start.
+pub(crate) const CLAUDE_ENGINE_PATH: &str = "claude_engine_path";
+
+/// The daily digest's send time (issue #806): a Person route stores it, and the Crew watch reads it.
+pub(crate) const CREW_DIGEST: &str = "crew_digest";
+
+/// The crew-wide turn budget's catalog key. Its value is whole turns; 0 is no crew budget.
+pub(crate) const CREW_TURN_BUDGET: &str = "crew_turn_budget";
 
 /// Keys the service writes itself; a client edit names them only through their owner.
 const SERVICE_OWNED: &[&str] = &["default_theme_set_at"];
@@ -143,6 +162,17 @@ fn writable(key: &str) -> Result<&'static Definition> {
         return Err(CoreError::Invalid(format!("{key} is set by the service.")));
     }
     definition(key)
+}
+
+/// Agent device access (H27) is not built: a stored grant would promise a permission
+/// nothing enforces, so a write that would turn it on is refused instead of kept.
+fn refuse_agent_device_access(key: &str, value: &Value) -> Result<()> {
+    if key == "enable_agent_device_access" && value.as_bool() == Some(true) {
+        return Err(CoreError::Invalid(
+            "Agent device access is not built yet, so it can't be turned on.".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// A theme name is a scheme or a preset id: short lowercase words joined by hyphens.
@@ -192,11 +222,37 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
     if fits && definition.key == "source_control_writing_style" {
         crate::source_control::scm::writing::validate_style(value)?;
     }
+    if fits && definition.key == CREW_DIGEST && digest_schedule(value).is_none() {
+        return Err(CoreError::Invalid(
+            "A digest time is HH:MM and an offset in minutes east of UTC, like 17:00 and 660."
+                .into(),
+        ));
+    }
     if fits && definition.key == "default_model_options" && !model_options(value) {
         return Err(CoreError::Invalid(
             "Model options are option ids with one value each, and effort is set on its own."
                 .into(),
         ));
+    }
+    if fits && definition.key == crate::agents::text_models::SETTING {
+        crate::agents::text_models::validate_syntax(value)?;
+    }
+    if fits && definition.key == CREW_TURN_BUDGET && value.as_u64().is_none() {
+        // Whole turns only: a fraction could never be spent, and 0 is no crew-wide budget.
+        return Err(CoreError::Invalid(
+            "A crew turn budget is a whole number of turns, or 0 for no budget.".into(),
+        ));
+    }
+    if fits && definition.key == crate::agents::attention::QUIET_PREFERENCE {
+        let allowed = value.as_u64().is_some_and(|seconds| {
+            (crate::agents::attention::QUIET_MIN_SECS..=crate::agents::attention::QUIET_MAX_SECS)
+                .contains(&seconds)
+        });
+        if !allowed {
+            return Err(CoreError::Invalid(
+                "Quiet time is a whole number of seconds from 10 to 120.".into(),
+            ));
+        }
     }
     if fits {
         Ok(())
@@ -206,6 +262,34 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
             definition.key
         )))
     }
+}
+
+/// The daily digest's stored send time: `(hour, minute, offset minutes east of UTC)`.
+/// `None` when the value is not a digest schedule at all. The offset is `None` until a person first
+/// saves; a schedule with no offset sends nothing, because "17:00 local" cannot be resolved.
+pub(crate) fn digest_schedule(value: &Value) -> Option<(u8, u8, Option<i32>)> {
+    let object = value.as_object()?;
+    if object
+        .keys()
+        .any(|key| key != "time" && key != "utc_offset_minutes")
+    {
+        return None;
+    }
+    let (hour, minute) = object.get("time")?.as_str()?.split_once(':')?;
+    let (hour, minute) = (hour.parse::<u8>().ok()?, minute.parse::<u8>().ok()?);
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    let offset = match object.get("utc_offset_minutes") {
+        None | Some(Value::Null) => None,
+        Some(offset) => {
+            let minutes = i32::try_from(offset.as_i64()?).ok()?;
+            let seconds = minutes.checked_mul(60)?;
+            time::UtcOffset::from_whole_seconds(seconds).ok()?;
+            Some(minutes)
+        }
+    };
+    Some((hour, minute, offset))
 }
 
 /// Default model options: short option ids, each with one value, and never effort,
@@ -356,6 +440,10 @@ impl Core {
             }
             if !value.is_null() {
                 check(definition, value)?;
+                refuse_agent_device_access(key, value)?;
+                if key == crate::agents::text_models::SETTING {
+                    crate::agents::text_models::check_offered(&self.engines, value)?;
+                }
             }
             if key == crate::agents::engines::instances::PREFERENCE && !value.is_null() {
                 let list = crate::agents::engines::instances::parse(value)?;
@@ -442,7 +530,8 @@ impl Core {
             .is_some_and(|list| list.iter().any(|item| item.as_str() == Some(engine)));
         if off {
             return Err(CoreError::Invalid(format!(
-                "{engine} is turned off for this project."
+                "{} is turned off for this project.",
+                self.engines.display_name(engine)
             )));
         }
         Ok(())
@@ -518,6 +607,16 @@ mod tests {
     }
 
     #[test]
+    fn a_crew_turn_budget_is_whole_turns_or_none() {
+        let budget = definition(CREW_TURN_BUDGET).unwrap();
+        assert!(check(budget, &json!(0)).is_ok(), "0 is no crew budget");
+        assert!(check(budget, &json!(30)).is_ok());
+        assert!(check(budget, &json!(1.5)).is_err());
+        assert!(check(budget, &json!("30")).is_err());
+        assert!(check(budget, &json!(-1)).is_err());
+    }
+
+    #[test]
     fn defaults_fit_their_own_rules_and_keys_are_unique() {
         for definition in DEFINITIONS {
             check(definition, &(definition.default)()).unwrap();
@@ -526,6 +625,18 @@ mod tests {
                 .filter(|d| d.key == definition.key)
                 .count();
             assert_eq!(same, 1, "{}", definition.key);
+        }
+    }
+
+    #[test]
+    fn the_claude_engine_path_defaults_to_sdk_and_takes_only_sdk_or_cli() {
+        let path = definition(CLAUDE_ENGINE_PATH).unwrap();
+        assert_eq!((path.default)(), json!("sdk"));
+        assert!(!path.project, "one choice for the whole computer");
+        assert!(check(path, &json!("cli")).is_ok());
+        assert!(check(path, &json!("sdk")).is_ok());
+        for bad in [json!("auto"), json!(""), json!(true), json!(null)] {
+            assert!(check(path, &bad).is_err(), "{bad}");
         }
     }
 
@@ -706,6 +817,124 @@ mod scoped_consumer_tests {
                 .unwrap()
                 .settled_at
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn agent_device_access_cannot_be_turned_on_until_device_support_exists() {
+        let dir = TempDir::new();
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        // The safe default is off, and turning it on is refused with a plain reason.
+        assert_eq!(
+            core.preference("enable_agent_device_access", None).unwrap(),
+            json!(false)
+        );
+        let error = core
+            .set_preferences(
+                None,
+                &BTreeMap::from([("enable_agent_device_access".into(), json!(true))]),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            &error,
+            CoreError::Invalid(message) if message.contains("not built")
+        ));
+        assert_eq!(
+            core.preference("enable_agent_device_access", None).unwrap(),
+            json!(false)
+        );
+        // A project-scoped write is refused the same way and leaves no override behind.
+        let path = dir.path().join("one");
+        std::fs::create_dir_all(&path).unwrap();
+        let project = core
+            .store
+            .add_project(NewProject {
+                path: path.to_str().unwrap(),
+                name: "one",
+                is_git: false,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+        let error = core
+            .set_preferences(
+                Some(&project.id),
+                &BTreeMap::from([("enable_agent_device_access".into(), json!(true))]),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            &error,
+            CoreError::Invalid(message) if message.contains("not built")
+        ));
+        let view = core
+            .preferences(Some(&project.id))
+            .unwrap()
+            .into_iter()
+            .find(|view| view.key == "enable_agent_device_access")
+            .unwrap();
+        assert_eq!(
+            (view.value, view.source.as_str(), view.project_scoped),
+            (json!(false), "default", true)
+        );
+        // A write that leaves it off still works, and other settings are unaffected.
+        core.set_preferences(
+            None,
+            &BTreeMap::from([
+                ("enable_agent_device_access".into(), json!(false)),
+                ("auto_pull".into(), json!(true)),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(core.preference("auto_pull", None).unwrap(), json!(true));
+    }
+
+    #[test]
+    fn a_stored_agent_device_access_grant_resolves_off() {
+        let dir = TempDir::new();
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        let path = dir.path().join("one");
+        std::fs::create_dir_all(&path).unwrap();
+        let project = core
+            .store
+            .add_project(NewProject {
+                path: path.to_str().unwrap(),
+                name: "one",
+                is_git: false,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+        // A grant written before this guard, at either scope, never resolves as granted.
+        core.store
+            .change_settings(|_| {
+                Ok((
+                    (),
+                    vec![
+                        crate::store::scoped_settings::SettingWrite::Global {
+                            key: "pref:enable_agent_device_access".into(),
+                            value: Some("true".into()),
+                        },
+                        crate::store::scoped_settings::SettingWrite::Project {
+                            project_id: project.id.clone(),
+                            key: "enable_agent_device_access".into(),
+                            value: Some("true".into()),
+                        },
+                    ],
+                ))
+            })
+            .unwrap();
+        assert_eq!(
+            core.preference("enable_agent_device_access", None).unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            core.preference("enable_agent_device_access", Some(&project.id))
+                .unwrap(),
+            json!(false)
         );
     }
 }

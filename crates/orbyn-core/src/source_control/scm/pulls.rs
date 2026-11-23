@@ -9,9 +9,9 @@ use crate::source_control::forge::{
 };
 use crate::source_control::git::{git, text};
 use orbyn_contracts::{
-    MergePull, Project, PullCheck, PullConversation, PullDetails, PullDetailsRequest,
-    PullDetailsResponse, PullFile, PullList, PullListEntry, PullListFailure, PullRequest,
-    PullRequestDetail, PullRevision, PullTimelineEvent, SubmitReview,
+    MergePull, Project, PullChangeBreakdown, PullCheck, PullConversation, PullDetails,
+    PullDetailsRequest, PullDetailsResponse, PullFile, PullList, PullListEntry, PullListFailure,
+    PullRequest, PullRequestDetail, PullRevision, PullTimelineEvent, SubmitReview, Thread,
 };
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -19,6 +19,7 @@ use std::time::Instant;
 impl Core {
     pub async fn link_pull(&self, id: &str, number: u64) -> Result<PullRequest> {
         let thread = self.scm_thread(id)?;
+        let repo = self.pull_repo(id)?;
         let cwd = Path::new(&thread.cwd);
         let forge = forge_of(cwd).await?;
         // The forge's own "no such pull request" answer is a 404; every other failure stays as it is.
@@ -30,7 +31,7 @@ impl Core {
                 }
                 other => other,
             })?;
-        self.store.link_pull(id, &pull)?;
+        self.store.link_pull(id, &repo, &pull)?;
         Ok(pull)
     }
 
@@ -38,11 +39,12 @@ impl Core {
     /// rules say so; a thread still running or opted out stays as it is.
     pub async fn refresh_pulls(&self, id: &str) -> Result<Vec<PullRequest>> {
         let thread = self.scm_thread(id)?;
+        let repo = self.pull_repo(id)?;
         let cwd = Path::new(&thread.cwd);
         let forge = forge_of(cwd).await?;
-        self.link_branch_pull(id, forge, cwd).await;
+        self.link_branch_pull(id, &repo, forge, cwd).await;
         let mut merged = false;
-        for pull in self.store.linked_pulls(id)? {
+        for pull in self.store.linked_pulls(id, &repo)? {
             if pull.state != "open" {
                 continue;
             }
@@ -62,7 +64,7 @@ impl Core {
                 self.scm_reads.pull_dropped(&thread.project_id, pull.number);
             }
             merged |= fresh.state == "merged";
-            self.store.link_pull(id, &fresh)?;
+            self.store.link_pull(id, &repo, &fresh)?;
         }
         let on_merge = self.preference("auto_settle_on_merge", Some(&thread.project_id))?
             == serde_json::json!(true);
@@ -74,11 +76,11 @@ impl Core {
             };
             self.update_thread(id, &settle, "system:auto-settle")?;
         }
-        self.store.linked_pulls(id)
+        self.store.linked_pulls(id, &repo)
     }
 
     /// Links the open pull request of the checkout's branch, if there is one.
-    pub(super) async fn link_branch_pull(&self, id: &str, forge: Forge, cwd: &Path) {
+    pub(super) async fn link_branch_pull(&self, id: &str, repo: &str, forge: Forge, cwd: &Path) {
         let Ok(branch) = git(cwd, &["branch", "--show-current"]).await else {
             return;
         };
@@ -91,15 +93,23 @@ impl Core {
             head: Some(branch),
             ..PullFilter::default()
         };
-        let linked = self.store.linked_pulls(id).unwrap_or_default();
+        let linked = self.store.linked_pulls(id, repo).unwrap_or_default();
         if let Ok(pulls) = forge::list_pulls(forge, cwd, &filter).await
             && let Some(pull) = pulls.first()
             && pull.state == "open"
             && !linked.iter().any(|known| known.number == pull.number)
-            && let Err(error) = self.store.link_pull(id, pull)
+            && let Err(error) = self.store.link_pull(id, repo, pull)
         {
             tracing::debug!(%error, "could not link the branch's pull request");
         }
+    }
+
+    /// The project's threads that linked this pull request, most recently changed
+    /// first. The project owns the number: a link keeps only the number, and a pull
+    /// request number belongs to one repository.
+    pub fn linked_threads(&self, project_id: &str, number: u64) -> Result<Vec<Thread>> {
+        self.store.project(project_id)?;
+        self.store.threads_linked_to_pull(project_id, number)
     }
 
     pub async fn pull_detail(&self, id: &str, number: u64) -> Result<PullRequestDetail> {
@@ -362,6 +372,18 @@ impl Core {
         self.cached_files(project_id, number, refresh).await
     }
 
+    /// Counts by change kind over the same file rows the files read serves, so it adds
+    /// no forge read of its own; `refresh` reads those rows again first.
+    pub async fn pull_change_breakdown(
+        &self,
+        project_id: &str,
+        number: u64,
+        refresh: bool,
+    ) -> Result<PullChangeBreakdown> {
+        let files = self.pull_files(project_id, number, refresh).await?;
+        Ok(change_breakdown(&files))
+    }
+
     pub async fn pull_revisions(
         &self,
         project_id: &str,
@@ -376,6 +398,32 @@ impl Core {
         let (project, forge) = self.pull_site(project_id).await?;
         forge::revision_files(forge, Path::new(&project.path), sha).await
     }
+}
+
+/// Counts one pull request's changed files by the kind of change. A status none of
+/// these four names counts only in `files`; the line totals cover every file.
+pub(super) fn change_breakdown(files: &[PullFile]) -> PullChangeBreakdown {
+    let mut breakdown = PullChangeBreakdown {
+        files: files.len() as u64,
+        added: 0,
+        modified: 0,
+        deleted: 0,
+        renamed: 0,
+        additions: 0,
+        deletions: 0,
+    };
+    for file in files {
+        match file.status.as_str() {
+            "added" => breakdown.added += 1,
+            "modified" => breakdown.modified += 1,
+            "deleted" => breakdown.deleted += 1,
+            "renamed" => breakdown.renamed += 1,
+            _ => {}
+        }
+        breakdown.additions += file.additions;
+        breakdown.deletions += file.deletions;
+    }
+    breakdown
 }
 
 /// One project's list, read from its forge.

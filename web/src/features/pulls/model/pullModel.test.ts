@@ -13,6 +13,7 @@ import {
   noFilters,
   ownPull,
   pageState,
+  requestedByMeHint,
   reviewersWord,
   reviewWords,
   statesToAsk,
@@ -217,6 +218,13 @@ describe("the pull request page", () => {
 describe("who a review waits on", () => {
   const pull = (over: Partial<PullListEntry["pull"]> = {}) => entry(1, over).pull;
 
+  it.each([0, 1, 4, undefined])("formats known approvals without changing other review states: %s", (count) => {
+    expect(reviewWords(pull({ review_state: "approved" }), ["sam"], ["me"], false, count)).toBe(!count ? "Approved" : `${count} ${count === 1 ? "approval" : "approvals"}`);
+    expect(reviewWords(pull({ review_state: "approved", draft: true }), ["sam"], ["me"], false, count)).toBe("Not requested");
+    expect(reviewWords(pull({ review_state: "changes_requested" }), ["sam"], ["me"], true, count)).toBe("Changes requested by you");
+    expect(reviewWords(pull({ review_state: "review_required" }), ["me"], ["me"], false, count)).toBe("Requested from you");
+  });
+
   it("names the signed-in person \"you\" in the Review line, and others by login", () => {
     expect(reviewWords(pull(), ["sam"], ["me"])).toBe("Requested from @sam");
     expect(reviewWords(pull(), ["me", "sam"], ["me"])).toBe("Requested from you, @sam");
@@ -233,6 +241,11 @@ describe("who a review waits on", () => {
     expect(conflictWords("mergeable")).toBe("None");
     expect(conflictWords("unknown")).toBe("\u2014");
     expect(conflictWords(null)).toBe("\u2014");
+  });
+  it("puts the person's own requested changes on the merge row, with the approval when that is what blocks it", () => {
+    expect(requestedByMeHint("Merge needs an approval.", true)).toBe("You requested changes. Merge needs an approval.");
+    expect(requestedByMeHint("Checks are still running.", true)).toBe("You requested changes.");
+    expect(requestedByMeHint("Merge needs an approval.", false)).toBeNull();
   });
   it("tells the person's own pull request by its author, whatever the case", () => {
     expect(ownPull(pull({ author: "Me" }), ["me"])).toBe(true);

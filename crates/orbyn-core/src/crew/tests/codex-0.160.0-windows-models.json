@@ -1,0 +1,16 @@
+{
+  "source": "installed Codex CLI 0.160.0 on Windows, app-server stdio model/list",
+  "captured_utc": "2026-11-19; re-read with isDefault on 2026-11-22",
+  "request": { "cursor": null, "limit": 100, "includeHidden": false },
+  "completeness": "One page; nextCursor was null. Visible models only. isDefault is the entry's own flag from the reply: gpt-6.1-terra is the one default, matching the first entry only because the CLI lists it first.",
+  "models": [
+    { "id": "gpt-6.1-terra", "label": "GPT-6.1 Terra", "isDefault": true },
+    { "id": "gpt-6.1-sol", "label": "GPT-6.1-Sol", "isDefault": false },
+    { "id": "gpt-6-astra", "label": "GPT-6-Astra", "isDefault": false },
+    { "id": "gpt-6-sol", "label": "GPT-6-Sol", "isDefault": false },
+    { "id": "gpt-6-luna", "label": "GPT-6-Luna", "isDefault": false },
+    { "id": "gpt-5.6-sol", "label": "GPT-5.6-Sol", "isDefault": false },
+    { "id": "gpt-5.6-terra", "label": "GPT-5.6-Terra", "isDefault": false },
+    { "id": "gpt-5.6-luna", "label": "GPT-5.6-Luna", "isDefault": false }
+  ]
+}

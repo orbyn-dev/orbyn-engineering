@@ -6,6 +6,8 @@ import { useUi } from "../../../product/state/ui";
 import { DetailsDismiss } from "./DetailsDismiss";
 import { ChangesRow, LimitsRow, LimitValue, ServersRow, tokensShort } from "./DetailsRows";
 import * as api from "../api";
+import { dataChanged } from "../../../api/shell";
+import { COALESCE_MS, startDataRefresh } from "../../../lib/dataRefresh";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -43,6 +45,26 @@ it("leaves Codex to its own window: no Not reported while it has none", async ()
   render(<LimitsRow threadId="t-1" engine="codex" />);
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(screen.queryByText("Not reported")).toBeNull();
+});
+
+it("reads again on remount instead of showing another account's five-minute promise", async () => {
+  const read = vi.spyOn(api.api, "threadLimits").mockResolvedValueOnce({
+    engine: "codex", checked_at: "", limits: {}, plan: null,
+    windows: [{ id: "primary", label: "5h", used_percent: 37, window_minutes: 300, resets_at: null }],
+  }).mockRejectedValue(new Error("new account unavailable"));
+  const first = render(<LimitsRow threadId="account-a" engine="codex" />);
+  expect(await screen.findByText("5h 63% left")).toBeVisible();
+  first.unmount();
+  // The account changed: the service says so, and the five-minute window is dropped with it.
+  const stop = startDataRefresh();
+  try {
+    act(() => { dataChanged("limits"); });
+    await new Promise((done) => setTimeout(done, COALESCE_MS + 50));
+  } finally { stop(); }
+  render(<LimitsRow threadId="account-b" engine="codex" />);
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.queryByText("5h 63% left")).toBeNull();
+  expect(read).toHaveBeenCalledTimes(2);
 });
 
 it("Changes says No changes without a chevron, and with changes shows the totals and opens the Changes tab", async () => {
@@ -129,4 +151,25 @@ it("while loading, Local servers shows a still bar after 400 ms but Changes keep
   } finally {
     vi.useRealTimers();
   }
+});
+
+const codexRead = (used: number) => ({
+  engine: "codex", checked_at: "", limits: {}, plan: null,
+  windows: [{ id: "primary", label: "5h", used_percent: used, window_minutes: 300, resets_at: null }],
+});
+
+it("gives the Limits row an age line and a refresh that forces a read and keeps the figures", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  try {
+    const read = vi.spyOn(api.api, "threadLimits").mockResolvedValueOnce(codexRead(38) as never).mockRejectedValue(new Error("down"));
+    render(<LimitsRow threadId="row-a" engine="codex" />);
+    expect(await screen.findByText("Checked just now")).toBeVisible();
+    act(() => { vi.advanceTimersByTime(3 * 60 * 60_000); });
+    expect(screen.getByText("Checked 3 hr ago")).toBeVisible();
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(screen.getByRole("button", { name: "Refresh limits" }));
+    expect(read).toHaveBeenLastCalledWith("row-a", expect.any(AbortSignal), true);
+    expect(await screen.findByText("Couldn\u2019t check limits")).toBeVisible();
+    expect(screen.getByText("5h 62% left")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+  } finally { vi.useRealTimers(); }
 });

@@ -46,7 +46,9 @@ fn create_body(project: &str, name: &str) -> wire::BackgroundCrewCreate {
         "name": name,
         "template": "fix_failing_ci",
         "trigger": { "kind": "ci_failure", "branch": "main" },
-        "budget": { "turns": 10, "minutes": 30 }
+        "budget": { "turns": 10, "minutes": 30 },
+        "daily": { "runs": 2, "turns": 40 },
+        "utc_offset_minutes": 600
     }))
     .unwrap()
 }
@@ -103,6 +105,10 @@ fn a_crew_is_created_off_and_audited() {
             minutes: 30
         }
     );
+    assert_eq!(
+        crew.daily,
+        wire::BackgroundDailyBudget { runs: 2, turns: 40 }
+    );
     assert_eq!(f.core.background_get(&crew.id).unwrap(), crew);
     let listed = f.core.background_list(Some(&f.project), page()).unwrap();
     assert_eq!((listed.total, listed.crews.len()), (1, 1));
@@ -123,7 +129,9 @@ fn input_is_checked_strictly() {
             "name": "Crew",
             "template": "flaky_test",
             "trigger": { "kind": "ci_failure" },
-            "budget": { "turns": 5, "minutes": 5 }
+            "budget": { "turns": 5, "minutes": 5 },
+            "daily": { "runs": 2, "turns": 40 },
+            "utc_offset_minutes": 600
         });
         for (key, value) in patch.as_object().unwrap() {
             body[key] = value.clone();
@@ -412,8 +420,8 @@ fn reaching_the_budget_stops_the_run_and_queues_a_review() {
     assert!(f.core.crew_background_spend(&fifth.id, 0, 1441).is_err());
 }
 
-#[test]
-fn a_budget_stop_adds_no_merge_authority() {
+#[tokio::test]
+async fn a_budget_stop_adds_no_merge_authority() {
     let f = fixture(true);
     let crew = f
         .core
@@ -422,7 +430,7 @@ fn a_budget_stop_adds_no_merge_authority() {
     f.core.background_set_enabled(&crew.id, true).unwrap();
     let run = f.core.crew_background_start_run(&crew.id).unwrap();
     f.core.crew_background_spend(&run.id, 10, 0).unwrap();
-    let queue = f.core.autopilot_merge_queue(page()).unwrap();
+    let queue = f.core.autopilot_merge_queue(page()).await.unwrap();
     assert!(queue.entries.is_empty(), "nothing was queued to merge");
     assert!(
         f.core
@@ -549,7 +557,9 @@ fn hidden_characters_are_refused_in_names_and_trigger_text() {
             "name": "Trigger",
             "template": "fix_failing_ci",
             "trigger": { "kind": "issue_label", "label": format!("bug{c}") },
-            "budget": { "turns": 5, "minutes": 5 }
+            "budget": { "turns": 5, "minutes": 5 },
+            "daily": { "runs": 2, "turns": 40 },
+            "utc_offset_minutes": 600
         }))
         .unwrap();
         assert!(

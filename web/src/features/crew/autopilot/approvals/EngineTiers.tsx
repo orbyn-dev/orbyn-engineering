@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RouteTier } from "../../../../generated/RouteTier";
 import { useAsync } from "../../../../lib/useAsync";
+import { useWorkspace } from "../../../../product/state/workspace";
+import { CrewRoleNote, type CrewRoleFields } from "../../../cursorthread";
 import { useConnection } from "../../../../product/state/connection";
-import { deferNavigation, registerNavigationGuard, type NavigationResume, type NavigationGuardOwner } from "../../../../product/state/navigationGuard";
+import { deferNavigation, navigationGuarded, registerNavigationGuard, type NavigationResume, type NavigationGuardOwner } from "../../../../product/state/navigationGuard";
 import { goToHash } from "../../../../product/state/route";
 import { Button } from "../../../../ui/controls";
 import { ErrorState, Loading } from "../../../../product/ui/states";
@@ -18,6 +20,7 @@ export function EngineTiers() {
   const read = useAsync(`crew-engine-tiers:${scope}`, (signal) => reviewControlApi.tiers(signal));
   const editor = useTierEditors((s) => s.editors[scope]);
   const remote = useConnection((s) => s.remote);
+  const statuses = useWorkspace((s) => s.engines.data);
   const [departure, setDeparture] = useState<NavigationResume | null>(null);
   const editButton = useRef<HTMLButtonElement>(null), lastField = useRef<HTMLElement | null>(null);
   const disposeGuard = useRef<NavigationGuardOwner | null>(null), focusEngine = useRef<string | null>(null);
@@ -48,7 +51,8 @@ export function EngineTiers() {
       event.preventDefault(); event.stopPropagation(); deferNavigation(() => goToHash(hash.slice(1)));
     };
     const hash = (event: HashChangeEvent) => {
-      if (window.location.href === original) return;
+      // Once Discard has released the guard the move is the person's: a synchronous router event must not be put back.
+      if (window.location.href === original || !navigationGuarded()) return;
       const next = window.location.hash;
       window.history.replaceState(historyState, "", original); event.stopImmediatePropagation();
       deferNavigation(() => goToHash(next.slice(1)));
@@ -108,6 +112,7 @@ export function EngineTiers() {
           {editor.editing && saved && !draft ? <small>Uses Builder until you map it.</small> : null}
           {problem && editor.editing ? <p className="et-error" id={`crew-tier-error-${id}`}>{problem}</p> : null}
         </div>
+        <div className="et-side">
         {!engine?.native && editor.editing ? <div className="et-field"><label htmlFor={`crew-tier-${id}`}>Tier · {engine?.name ?? id}</label><select id={`crew-tier-${id}`} value={draft?.tier ?? "unmapped"} disabled={busy || readonly || editor.phase === "conflict"} aria-invalid={!!problem} aria-describedby={problem ? `crew-tier-error-${id}` : undefined} onChange={(event) => {
           const next = copyTiers(editor.draft), tier = event.target.value;
           if (tier === "unmapped") delete next[id]; else next[id] = { tier: tier as RouteTier, model: draft?.model ?? saved?.model ?? current ?? "" };
@@ -115,6 +120,8 @@ export function EngineTiers() {
         }}><option value="unmapped">Builder · not mapped</option><option value="lead" disabled={!available}>Lead</option><option value="worker" disabled={!available}>Builder</option><option value="scout" disabled={!available}>Scout</option></select>
           {draft && current && draft.model !== current && engine?.available ? <Button small disabled={busy || readonly || editor.phase === "conflict"} onClick={() => patchTierEditor(scope, { draft: { ...editor.draft, [id]: { ...draft, model: current } }, error: undefined })}>Use current default</Button> : null}
         </div> : !engine?.native && !saved ? <Button small disabled={readonly || !available} onClick={() => edit(id)}>Map it</Button> : null}
+          <CrewRoleNote engine={statuses?.find((status) => status.id === id) as CrewRoleFields | undefined} />
+        </div>
       </div>;
     })}
     {readonly ? <p>Only a person on this computer can change engine tiers.</p> : null}

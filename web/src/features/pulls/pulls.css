@@ -7,13 +7,19 @@
 
 /* The list. Its toolbar is in pullsToolbar.css. */
 .pulls-table {
-  --c-rev: 140px;
-  --c-yours: 170px;
-  --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-rev) var(--c-yours) 56px 50px;
+  --c-rev: 118px;
+  --c-yours: 130px;
+  /* The drawn tracks (the width table in pr-list-narrow-900 and -800): number 24, title, Checks 132,
+     Reviewers 118, Your review 130, Comments 44, Updated 44. The two middle tracks come from variables so a
+     column with no data anywhere in the list can empty its own track. */
+  --pulls-cols: 24px minmax(0, 1fr) 132px var(--c-rev) var(--c-yours) 44px 44px;
   display: flex;
   flex: 1;
   flex-direction: column;
   padding: 0 28px 24px;
+}
+.pulls-bulk b {
+  font-weight: 500;
 }
 .pulls-bulk {
   display: flex;
@@ -335,32 +341,33 @@
 .pull-row-actions {
   position: absolute;
   top: 50%;
-  right: 4px;
+  /* Over the Comments cell, left of Updated, which stays readable. */
+  right: 66px;
   display: flex;
   justify-content: flex-end;
-  gap: 2px;
-  padding-left: 8px;
+  gap: 6px;
+  padding-left: 10px;
   border-radius: var(--radius-sm);
   transform: translateY(-50%);
 }
-/* The row paints its own hover colour; the cluster stays clear so no patch shows on it. */
+/* The cluster takes the row's own hover colour, so the cells under it do not show through. */
 .pull-rows > li:hover .pull-row-actions,
 .pull-rows > li:focus-within .pull-row-actions {
-  background: transparent;
+  background: linear-gradient(var(--color-rowHover), var(--color-rowHover)), var(--color-surface);
 }
 .pull-rows > li {
   position: relative;
 }
-.pull-row-actions .icon-btn {
+.pull-row-actions > * {
   opacity: 0;
 }
-.pull-rows > li:hover .pull-row-actions .icon-btn,
-.pull-rows > li:focus-within .pull-row-actions .icon-btn,
-.pull-row-actions .icon-btn:focus-visible {
+.pull-rows > li:hover .pull-row-actions > *,
+.pull-rows > li:focus-within .pull-row-actions > *,
+.pull-row-actions > *:focus-visible {
   opacity: 1;
 }
 @media (pointer: coarse) {
-  .pull-row-actions .icon-btn {
+  .pull-row-actions > * {
     opacity: 1;
   }
 }
@@ -428,29 +435,76 @@
   text-decoration: underline;
   cursor: pointer;
 }
+/* The phone list (pr-list-narrow-580, pr-phone-list). Under 600 px the web app drops the column header and the rows
+   become cards: the title with its state label, the number line, then the checks line, where a review asked of the
+   person shows as a small amber Review asked marker in place of the Your review column this width hides. */
+.pull-phone-line {
+  display: none;
+}
 @media (max-width: 599px) {
   .pulls-table {
     padding-inline: 16px;
-    --pulls-cols: 18px minmax(0, 1fr) 14px auto;
+  }
+  /* One track, on the grids themselves: a container query sets the same property with lower specificity, and it would
+     otherwise still give the row its four column tracks under the media query's width. */
+  .pulls-table .pulls-head,
+  .pulls-table .pull-rows > li {
+    --pulls-cols: minmax(0, 1fr);
   }
   .pulls-head,
+  .pull-lead,
+  .pull-checks-cell,
   .pull-reviewers-cell,
   .pull-yours-cell,
   .pull-comments-cell,
-  .pull-age {
+  .pull-age,
+  .pull-row-actions {
     display: none;
   }
-  /* The state word gives way to its icon; it stays for assistive technology. */
-  .pull-checks-cell {
-    position: relative;
+  .pull-rows > li {
+    align-items: start;
+    row-gap: 3px;
+    padding-block: 12px;
   }
-  .pull-res-word {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
+  .pull-rows > li > .pull-open {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .pull-phone-line {
+    display: flex;
+    grid-column: 1;
+    grid-row: 2;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  /* The narrow container step hides the checks word in favour of its icon; the phone line shows both. */
+  .pull-phone-line .pull-res-word {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
     white-space: nowrap;
+  }
+  /* Changes requested is a neutral label; amber is only for changes on the person's own pull request, and for a
+     review asked of them. */
+  .pull-phone-changes,
+  .pull-phone-asked {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: var(--radius-pill);
+    background: var(--color-raised);
+    color: var(--color-textSoft);
+    font-size: var(--text-label);
+    white-space: nowrap;
+  }
+  .pull-phone-changes[data-tone="act"],
+  .pull-phone-asked {
+    background: var(--color-warnSoft);
+    color: var(--color-warnText);
   }
 }
 
@@ -889,48 +943,66 @@
    nothing, so the grid has no gap for it either). */
 .pulls-table[data-no-reviewers] {
   --c-rev: ;
+  --c-rev-n: ;
 }
 .pulls-table[data-no-review] {
   --c-yours: ;
+  --c-yours-n: ;
 }
 .pulls-table[data-no-reviewers] :is(.h-reviewers, .pull-reviewers-cell),
 .pulls-table[data-no-review] :is(.h-yours, .pull-yours-cell, .pull-skel-review) {
   display: none;
 }
 
-/* Narrow: columns go in the order Updated, Comments, Reviewers; then Checks keeps only its icon. */
+/* Narrow: the steps are at list widths 820, 760, 710 and 590 px (queries at 819, 759, 709 and 589), which keeps the
+   title about 245 px wide or more. Columns go in the order Updated, Comments; then Checks keeps only its icon and
+   Reviewers and Your review take their narrow tracks (36, 96 and 130 px); then Reviewers goes. A container query styles
+   what is inside the container, never the container itself, so the tracks are set on the header and the rows. */
 .pulls-table {
   container: pulls / inline-size;
+  --c-rev-n: 96px;
+  --c-yours-n: 130px;
 }
-@container pulls (max-width: 859px) {
-  .pulls-table {
-    --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-rev) var(--c-yours) 56px;
+.h-checks {
+  display: inline-flex;
+  align-items: center;
+}
+.h-checks-icon {
+  display: none;
+}
+@container pulls (max-width: 819px) {
+  .pulls-head,
+  .pull-rows > li {
+    --pulls-cols: 24px minmax(0, 1fr) 132px var(--c-rev) var(--c-yours) 44px;
   }
   .h-age {
     display: none;
   }
+  .pull-row-actions {
+    right: 4px;
+  }
 }
-@container pulls (max-width: 779px) {
-  .pulls-table {
-    --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-rev) var(--c-yours);
+@container pulls (max-width: 759px) {
+  .pulls-head,
+  .pull-rows > li {
+    --pulls-cols: 24px minmax(0, 1fr) 132px var(--c-rev) var(--c-yours);
   }
   .h-comments,
   .pull-comments-cell {
     display: none;
   }
 }
-@container pulls (max-width: 699px) {
-  .pulls-table {
-    --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-yours);
+@container pulls (max-width: 709px) {
+  .pulls-head,
+  .pull-rows > li {
+    --pulls-cols: 24px minmax(0, 1fr) 36px var(--c-rev-n) var(--c-yours-n);
   }
-  .h-reviewers,
-  .pull-reviewers-cell {
+  .h-checks-word,
+  .pull-more:has(+ .pull-rword) {
     display: none;
   }
-}
-@container pulls (max-width: 559px) {
-  .pulls-table {
-    --pulls-cols: 24px minmax(0, 1fr) 28px var(--c-yours);
+  .h-checks-icon {
+    display: inline;
   }
   .pull-res-word {
     position: absolute;
@@ -939,6 +1011,16 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
+  }
+}
+@container pulls (max-width: 589px) {
+  .pulls-head,
+  .pull-rows > li {
+    --pulls-cols: 24px minmax(0, 1fr) 36px var(--c-yours-n);
+  }
+  .h-reviewers,
+  .pull-reviewers-cell {
+    display: none;
   }
 }
 
@@ -1040,4 +1122,114 @@
   opacity: 1;
   visibility: visible;
   transition-delay: var(--m-hover), var(--m-hover);
+}
+
+/* Change breakdown and Linked threads on the Summary (Engineer Designs t3gap-linked-pr-*). */
+.pull-page .pull-breakdown,
+.pull-page .pull-linked {
+  display: flex;
+  flex-direction: column;
+}
+.pull-bar {
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--color-selected);
+}
+.pull-bar i {
+  display: block;
+  height: 100%;
+  background: var(--color-muted);
+}
+.pull-bar i[data-kind="added"] {
+  background: var(--color-blueSolid);
+}
+.pull-bar i[data-kind="deleted"] {
+  background: var(--color-redSolid);
+}
+.pull-bar i[data-kind="renamed"] {
+  background: var(--color-borderStrong);
+}
+.pull-bar i + i {
+  margin-left: 1px;
+}
+.pull-breakdown-kinds {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-block: 6px;
+}
+.pull-breakdown-kinds > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.pull-breakdown-kinds span {
+  color: var(--color-muted);
+  font-size: var(--text-label);
+}
+.pull-linked-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 8px;
+  margin-inline: -8px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.pull-linked-row:hover {
+  background: var(--color-hover);
+}
+.pull-linked-row:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+.pull-linked-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+.pull-linked-top b {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pull-linked-state {
+  flex: none;
+  color: var(--color-muted);
+  font-size: var(--text-label);
+  font-variant-numeric: tabular-nums;
+}
+.pull-linked-state[data-tone="run"] {
+  color: var(--color-blueSolid);
+}
+.pull-linked-state[data-tone="fail"] {
+  color: var(--color-danger);
+}
+.pull-linked-failed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.pull-linked-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pull-linked-skel span {
+  display: block;
+  height: 12px;
+  width: 70%;
+  border-radius: 6px;
+  background: var(--color-selected);
+}
+.pull-linked-skel span + span {
+  width: 40%;
 }

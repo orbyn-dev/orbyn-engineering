@@ -235,6 +235,31 @@ pub fn model_for_tier<'a>(
     preferred(pool.into_iter()).ok_or(Unfit::Tier(tier))
 }
 
+/// The model a person's tier word means on one engine: for a Claude or Codex family the tier's own model, for an ACP engine the
+/// builder default or the model the person assigned to that tier in Settings. Execution profiles use it, so a profile and the
+/// router read the same mapping (docs/execution-profiles-and-library.md).
+pub fn tier_model<'a>(
+    config: &RouterConfig,
+    engine: &str,
+    family: &str,
+    acp: bool,
+    models: &'a [ModelInfo],
+    tier: RouteTier,
+) -> Result<&'a ModelInfo, Unfit> {
+    if acp && tier != RouteTier::Worker {
+        let assigned = config
+            .acp_tiers
+            .get(engine)
+            .filter(|assigned| assigned.tier == tier)
+            .ok_or(Unfit::Tier(tier))?;
+        return models
+            .iter()
+            .find(|model| model.id == assigned.model)
+            .ok_or(Unfit::Tier(tier));
+    }
+    model_for_tier(config, family, models, tier, false)
+}
+
 /// A model the lead or person named: the exact id, else the one whose id or label mentions
 /// the name as whole words (`sonnet`, `sol`), ignoring case.
 pub fn model_named<'a>(

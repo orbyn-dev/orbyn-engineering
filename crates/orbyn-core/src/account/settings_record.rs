@@ -245,7 +245,7 @@ mod tests {
         let unique: BTreeSet<_> = SYNCED_KEYS.iter().collect();
         assert_eq!(unique.len(), 11);
         let catalog: BTreeSet<_> = crate::settings::preferences::catalog_keys().collect();
-        assert_eq!(catalog.len(), 62);
+        assert_eq!(catalog.len(), 68);
         assert!(SYNCED_KEYS.iter().all(|key| catalog.contains(key)));
         // The four that escalate, and the stamp, are never staged.
         for never in [
@@ -261,11 +261,19 @@ mod tests {
             "default_model",
             "fallback_model",
             "text_generation_model",
+            "text_generation_models",
             "default_effort",
             "default_thread_env_mode",
             // A peer could turn model calls back on.
             "auto_thread_titles",
             "branch_naming_mode",
+            // When the crew digest sends is this device's: another device must not move it.
+            "crew_digest",
+            // A spending limit belongs to this device: another device must not set it.
+            "crew_turn_budget",
+            // Terminal-attention detection is a device setting, never synced.
+            "terminal_attention_enabled",
+            "terminal_attention_quiet_seconds",
         ] {
             assert!(
                 stage_preference(never, None, Some(&json!("x"))).is_empty(),

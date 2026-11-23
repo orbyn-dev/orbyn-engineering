@@ -7,7 +7,7 @@ use orbyn_contracts::{
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
-use super::approvals::{activity_event, approval_row};
+use super::approvals::{activity_event, add_run_wait, approval_row};
 use super::{Appended, AuditRecord, Store, insert_audit, insert_event, run_row, wire_name};
 use crate::agents::driver::ItemRecord;
 use crate::error::{CoreError, Result};
@@ -108,6 +108,21 @@ impl Store {
             .ok_or_else(|| CoreError::NotFound("run".into()))
     }
 
+    /// Whether the run was admitted from a message Crew queued for a lead: a task's result, a
+    /// review, or a start it refused. Such a run is judged by what the lead leaves behind, not by
+    /// what it says; the person did not send the prompt.
+    pub fn run_is_crew_note(&self, run_id: &str) -> Result<bool> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT crew_note != 0 FROM runs WHERE id = ?1",
+                [run_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
+    }
+
     pub fn mark_starting(&self, run_id: &str) -> Result<()> {
         self.commit(|tx, _| {
             guard_active(tx, &self.epoch, run_id)?;
@@ -137,6 +152,12 @@ impl Store {
             let guard = guard_active(tx, &self.epoch, run_id)?;
             insert_event(tx, appended, &guard.thread_id, Some(run_id), event)
         })
+    }
+
+    /// Appends an event that belongs to the thread rather than to one run, such as a
+    /// steer's mark after its message moved to the queue.
+    pub fn append_thread_event(&self, thread_id: &str, event: &AgUiEvent) -> Result<ThreadEvent> {
+        self.commit(|tx, appended| insert_event(tx, appended, thread_id, None, event))
     }
 
     pub fn set_engine_session(&self, run_id: &str, session: &str) -> Result<()> {
@@ -333,16 +354,17 @@ impl Store {
         self.finish_run_with_sign_in(run_id, to, error, None)
     }
 
-    /// Failure guidance is committed with the terminal result, and omitted when
-    /// a saved stop makes that result cancellation instead.
+    /// The failure note is committed with the terminal result: sign-in guidance
+    /// and the stable code the outcome carries. It is omitted when a saved stop
+    /// makes that result cancellation instead.
     pub(crate) fn finish_run_with_sign_in(
         &self,
         run_id: &str,
         to: RunState,
         error: Option<&str>,
-        sign_in_note: Option<&Value>,
+        failure_note: Option<&Value>,
     ) -> Result<(Run, Vec<Approval>)> {
-        self.run_changed(self.finish_run_unannounced(run_id, to, error, sign_in_note))
+        self.run_changed(self.finish_run_unannounced(run_id, to, error, failure_note))
     }
 
     fn finish_run_unannounced(
@@ -350,7 +372,7 @@ impl Store {
         run_id: &str,
         to: RunState,
         error: Option<&str>,
-        sign_in_note: Option<&Value>,
+        failure_note: Option<&Value>,
     ) -> Result<(Run, Vec<Approval>)> {
         if !matches!(
             to,
@@ -363,6 +385,9 @@ impl Store {
         }
         self.commit(|tx, appended| {
             let guard = guard_active(tx, &self.epoch, run_id)?;
+            let failure_code = failure_note
+                .and_then(|note| note.get("code"))
+                .and_then(Value::as_str);
             let stopped: bool = tx.query_row(
                 "SELECT stop_requested FROM runs WHERE id = ?1",
                 [run_id],
@@ -379,7 +404,8 @@ impl Store {
                 clear_handoff_for_run(tx, &guard.thread_id, run_id)?;
             }
             if to == RunState::Failed
-                && let Some(note) = sign_in_note
+                && let Some(note) = failure_note
+                && note.get("command").is_some()
             {
                 insert_event(
                     tx,
@@ -399,6 +425,7 @@ impl Store {
                 &guard.thread_id,
                 to,
                 error,
+                failure_code,
                 "system:run",
             )
         })
@@ -453,6 +480,7 @@ impl Store {
                     &thread_id,
                     to,
                     message,
+                    None,
                     "system:recovery",
                 )?;
                 if stopped {
@@ -489,6 +517,17 @@ impl Store {
             super::ACTIVE_STATES
         ))?;
         let rows = statement.query_map([], run_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The id and engine of every run that has not ended.
+    pub fn active_run_engines(&self) -> Result<Vec<(String, String)>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(&format!(
+            "SELECT id, engine FROM runs WHERE state IN {}",
+            super::ACTIVE_STATES
+        ))?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -721,6 +760,10 @@ pub(super) fn admit_in_for_engine(
     Ok(run)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the terminal record is built from the run's own identity and outcome; a struct would only rename them"
+)]
 fn close_run(
     tx: &Transaction<'_>,
     appended: &mut Appended,
@@ -728,6 +771,7 @@ fn close_run(
     thread_id: &str,
     to: RunState,
     error: Option<&str>,
+    code: Option<&str>,
     actor: &str,
 ) -> Result<(Run, Vec<Approval>)> {
     let expired = expire_pending(tx, appended, run_id, thread_id, actor)?;
@@ -782,7 +826,7 @@ fn close_run(
             code: Some(if super::setup::owns_failure(tx, thread_id, run_id)? {
                 let captured: bool = tx.query_row("SELECT script IS NOT NULL AND run_id = ?2 FROM thread_setup WHERE thread_id = ?1", params![thread_id, run_id], |row| row.get(0))?;
                 if captured { "workspace_preparation_failed" } else { "workspace_preparation_unavailable" }
-            } else { "engine_failed" }.into()),
+            } else { code.unwrap_or("engine_failed") }.into()),
         },
     };
     insert_event(tx, appended, thread_id, Some(run_id), &event)?;
@@ -819,6 +863,7 @@ fn expire_pending(
         approval.state = ApprovalState::Expired;
         approval.decided_by = Some(actor.to_owned());
         approval.decided_at = Some(stamp);
+        add_run_wait(tx, &approval);
         insert_audit(
             tx,
             &AuditRecord {

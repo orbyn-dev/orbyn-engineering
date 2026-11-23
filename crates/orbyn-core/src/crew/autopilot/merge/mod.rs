@@ -4,6 +4,7 @@
 mod api;
 mod comment;
 mod correction;
+mod digest;
 mod evidence;
 mod forge;
 mod forge_resolve;
@@ -21,6 +22,7 @@ mod watch;
 pub use api::{
     Answering, COMMENT_MAX, DIGEST_HOURS_MAX, OFFSET_MAX, PAGE_DEFAULT, PAGE_MAX, Page, valid_id,
 };
+pub(crate) use gitops::repo_checks;
 pub use guard::{check_words, owed_lanes, sensitive};
 pub use holds::lane_ran;
 pub use queue::{MergeOutcome, MergeTarget};

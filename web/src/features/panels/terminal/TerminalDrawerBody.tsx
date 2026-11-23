@@ -1,5 +1,5 @@
 import { useCommand } from "../../../product/shell/shortcuts";
-import { Check, ChevronDown, ChevronUp, Eye, Maximize2, Minimize2, MessageSquare, Play, Plus, RotateCw, Search, Square, SquareTerminal, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Columns2, Eye, Maximize2, Minimize2, MessageSquare, Play, Plus, RotateCw, Rows2, Search, Square, SquareTerminal, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { closeTerminal, listTerminals, listThreadScripts, startConsole, startTerminal } from "../api";
 import type { TerminalInfo } from "../../../api/types";
@@ -9,9 +9,11 @@ import { useNow } from "../../../lib/useNow";
 import { useConnectionKind } from "../../../product/state/connection";
 import { useUi } from "../../../product/state/ui";
 import { Button, IconButton } from "../../../ui/controls";
-import { ConfirmDialog } from "../../../ui/Dialog";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
+import { CommandBlocks } from "./blocks/CommandBlocks";
+import { useWaitingTerminals } from "./attention/store";
+import { EndDialog } from "./EndDialog";
 import { TerminalPanel } from "./TerminalPanel";
 import { controlsOf, terminalKey, watchTerminal } from "./terminalControls";
 import { captureFocusReturn } from "../../../ui/focusReturn";
@@ -21,6 +23,9 @@ import { runProjectAction } from "../../../product/composer/runProjectAction";
 import { ProjectActionIcon } from "../../../product/ui/ProjectActionIcon";
 
 const MAIN = "main";
+/** Panes one tab holds; each is a shell of its own. */
+export const MAX_PANES = 4;
+type SplitDirection = "horizontal" | "vertical";
 
 export function groupTerminals(terminals: readonly TerminalInfo[]): TerminalInfo[][] {
   const groups = new Map<string, TerminalInfo[]>();
@@ -175,17 +180,19 @@ export function TerminalDrawerBody({
   );
   const [active, setActive] = useState(MAIN);
   // A terminal opened here takes focus when it loads; one that was already there does not.
-  const [focusGroup, setFocusGroup] = useState<string | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
   const [mainHidden, setMainHidden] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [watching, setWatching] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchFocus, setSearchFocus] = useState(0);
-  const [ending, setEnding] = useState<TerminalInfo | null>(null);
+  /** The panes a confirmation is about to end: one for a pane or a one-pane tab, every pane for a split tab. */
+  const [ending, setEnding] = useState<TerminalInfo[] | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const pushToast = useUi((state) => state.pushToast);
   const { reload } = terminals;
   const reveal = useUi((state) => state.terminalReveal);
+  const waiting = useWaitingTerminals(threadId);
   useEffect(() => {
     if (reveal?.threadId !== threadId) return;
     setActive(reveal.group); reload();
@@ -209,30 +216,60 @@ export function TerminalDrawerBody({
     try {
       const made = await startTerminal(threadId, body);
       setActive(made.group);
-      setFocusGroup(made.group);
+      setFocusId(made.id);
       reload();
     } catch (failure) {
       fail(failure);
     }
+  };
+  /** One split at a time: a second press while the first shell is still opening does nothing. */
+  const [splitting, setSplitting] = useState(false);
+  const splitBusy = useRef(false);
+  /** Why the shown tab cannot take a split in `direction`, or null when it can. A split group keeps the direction it has. */
+  const splitBlock = (direction: SplitDirection): string | null => {
+    const target = shown?.at(-1);
+    if (!target) return "Terminal is not open yet";
+    if (shown && shown.length >= MAX_PANES) return `A tab holds ${MAX_PANES} panes`;
+    const has = shown?.[1]?.direction;
+    if (has && has !== direction) return `This tab is split ${has === "vertical" ? "down" : "right"}`;
+    return null;
+  };
+  /** Opens a new shell in the shown tab's group, beside or below the last pane, and puts focus in it. Only a press or a shortcut gets here. */
+  const split = async (direction: SplitDirection) => {
+    const target = shown?.at(-1);
+    if (!target || splitBusy.current || splitBlock(direction) !== null) return false;
+    splitBusy.current = true;
+    setSplitting(true);
+    try {
+      const made = await startTerminal(threadId, { split_of: target.id, direction });
+      setActive(made.group);
+      setFocusId(made.id);
+      reload();
+    } catch (failure) {
+      fail(failure);
+    } finally {
+      splitBusy.current = false;
+      setSplitting(false);
+    }
+    return true;
   };
   /** The engine's own CLI resumed on this thread's session; the service says when it can't. */
   const openConsole = async () => {
     try {
       const made = await startConsole(threadId);
       setActive(made.group);
-      setFocusGroup(made.group);
+      setFocusId(made.id);
       reload();
     } catch (failure) {
       fail(failure);
     }
   };
-  const close = async (terminal: TerminalInfo) => {
-    try {
-      await closeTerminal(threadId, terminal.id);
-      reload();
-    } catch (failure) {
-      fail(failure);
-    }
+  /** Ends these panes, each with one write; the list is read again whatever happened, and a failure is said once. */
+  const close = async (panes: TerminalInfo[]) => {
+    const results = await Promise.allSettled(panes.map((pane) => closeTerminal(threadId, pane.id)));
+    const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed) fail(failed.reason);
+    reload();
   };
   /**
    * Where focus goes when a tab leaves: the neighbouring tab, else the "+". Remembered before the tab
@@ -250,14 +287,20 @@ export function TerminalDrawerBody({
     focusBack.current.restore();
     focusBack.current = null;
   }, [terminals.data, mainHidden]);
-  /** A tab's X ends that shell; one that is alive asks first. The main shell's X only hides its tab here, so it asks nothing. */
-  const end = (terminal: TerminalInfo) => {
-    if (terminal.alive) setEnding(terminal);
+  /** Ends these panes; if any shell is still going the app asks once for all of them. The main shell's X only hides its tab here. */
+  const endPanes = (panes: TerminalInfo[]) => {
+    const first = panes[0];
+    if (!first) return;
+    if (panes.some((pane) => pane.alive)) setEnding(panes);
     else {
-      rememberFocus(terminal.group);
-      void close(terminal);
+      rememberFocus(first.group);
+      void close(panes);
     }
   };
+  /** A pane's own X ends that pane only. */
+  const end = (terminal: TerminalInfo) => endPanes([terminal]);
+  /** A tab's X, End process and the close key end every pane of the tab, with one confirmation. */
+  const endTab = (group: TerminalInfo[]) => endPanes(group.filter((pane) => pane.id !== MAIN));
   const hideMain = () => {
     rememberFocus(MAIN);
     setMainHidden(true);
@@ -271,9 +314,17 @@ export function TerminalDrawerBody({
     }
   };
   useCommand("terminal.new", () => void open({}));
+  const canSplit = (direction: SplitDirection) => !splitting && splitBlock(direction) === null;
+  const splitFromKey = (direction: SplitDirection) => {
+    if (!canSplit(direction)) return false;
+    void split(direction);
+    return true;
+  };
+  useCommand("terminal.split", () => splitFromKey("horizontal"), () => canSplit("horizontal"));
+  useCommand("terminal.splitVertical", () => splitFromKey("vertical"), () => canSplit("vertical"));
   useCommand("terminal.close", () => {
     const first = shown?.[0];
-    if (first && first.id !== MAIN) end(first);
+    if (shown && first && first.id !== MAIN) endTab(shown);
     else onClose();
   });
   const scriptList = scripts.data?.scripts ?? [];
@@ -311,13 +362,17 @@ export function TerminalDrawerBody({
   const menuFor = (group: TerminalInfo[]): MenuItem[] => {
     const first = group[0];
     const there = registered(group);
+    const here = group[0]?.group === shown?.[0]?.group;
+    const canSplitHere = (direction: SplitDirection) => here && canSplit(direction);
     return [
+      { label: "Split right", icon: <Columns2 size={14} aria-hidden />, disabled: !canSplitHere("horizontal"), onSelect: () => void split("horizontal") },
+      { label: "Split down", icon: <Rows2 size={14} aria-hidden />, disabled: !canSplitHere("vertical"), onSelect: () => void split("vertical") },
       ...(mainHidden ? [{ label: "Show Terminal", onSelect: () => { setMainHidden(false); setActive(MAIN); } }] : []),
-      { label: "Clear output", disabled: !there, ...(mainHidden ? { separatorBefore: true } : {}), onSelect: () => keysOf(group).forEach((key) => controlsOf(key)?.clear()) },
+      { label: "Clear output", disabled: !there, separatorBefore: true, onSelect: () => keysOf(group).forEach((key) => controlsOf(key)?.clear()) },
       { label: "Copy all output", disabled: !there, onSelect: () => copyAll(group) },
       { label: "Watch only", selected: watching, onSelect: () => setWatching(!watching) },
-      ...(first && first.id !== MAIN && first.alive
-        ? [{ label: "End process", icon: <Square size={14} aria-hidden />, destructive: true, separatorBefore: true, onSelect: () => end(first) }]
+      ...(first && first.id !== MAIN && group.some((pane) => pane.alive)
+        ? [{ label: "End process", icon: <Square size={14} aria-hidden />, destructive: true, separatorBefore: true, onSelect: () => endTab(group) }]
         : []),
     ];
   };
@@ -380,16 +435,18 @@ export function TerminalDrawerBody({
           if (!first) return null;
           const selected = first.group === current;
           const title = `${first.title}${group.length > 1 ? ` (${group.length})` : ""}`;
+          const asking = group.some((terminal) => waiting.has(terminal.id));
           return (
             <div key={first.group} className="ptab" data-group={first.group} data-selected={selected || undefined} onContextMenu={(event) => onTabMenu(event, group)} onKeyDown={(event) => onTabKey(event, group)}>
-              <button type="button" role="tab" aria-label={title} aria-selected={selected} onClick={() => setActive(first.group)}>
+              <button type="button" role="tab" aria-label={asking ? `${title}, waiting for you` : title} aria-selected={selected} onClick={() => setActive(first.group)}>
                 <SquareTerminal size={14} aria-hidden />
                 <span className="ptl">
+                  {asking ? <span className="status-dot tone-warn ptab-attn" aria-hidden /> : null}
                   <Marker terminal={first} />
                   {title}
                 </span>
               </button>
-              <button type="button" className="ptx" aria-label={`Close ${first.title}`} onClick={() => end(first)}>
+              <button type="button" className="ptx" aria-label={`Close ${first.title}`} onClick={() => endTab(group)}>
                 <X size={11} aria-hidden />
               </button>
             </div>
@@ -416,6 +473,9 @@ export function TerminalDrawerBody({
             <Play size={14} aria-hidden />
           </IconButton>
         ) : null}
+        <IconButton label="Split pane" disabled={!canSplit("horizontal")} onClick={() => void split("horizontal")}>
+          <Columns2 size={14} aria-hidden />
+        </IconButton>
         <IconButton label={maximized ? "Restore" : "Maximise terminal"} onClick={onToggleMaximize}>
           {maximized ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />}
         </IconButton>
@@ -445,12 +505,24 @@ export function TerminalDrawerBody({
                   <div className="term-view-title">
                     {terminal.alive && terminal.script ? <i className="spin" aria-label="Working" /> : null}
                     <span>{terminal.id === MAIN ? "Terminal" : terminal.title}</span>
+                    {terminal.id === MAIN ? null : (
+                      <IconButton className="term-view-close" label={`Close pane ${terminal.title}`} onClick={() => end(terminal)}>
+                        <X size={11} aria-hidden />
+                      </IconButton>
+                    )}
                   </div>
                 ) : null}
+                {/* Reads the service's blocks (docs/command-blocks.md); a shell that emits no marks leaves the terminal alone. A click writes a line into the shell, never a newline. */}
+                <CommandBlocks
+                  threadId={threadId}
+                  terminalId={terminal.id}
+                  write={watching ? undefined : (text) => controlsOf(keyOf(terminal))?.write(text)}
+                  interrupt={watching ? undefined : () => controlsOf(keyOf(terminal))?.interrupt()}
+                />
                 <TerminalPanel
                   threadId={threadId}
                   observe={watching}
-                  autoFocus={terminal.group === focusGroup}
+                  autoFocus={terminal.id === focusId}
                   {...(terminal.id === MAIN ? {} : { terminalId: terminal.id })}
                 />
               </div>
@@ -500,7 +572,7 @@ export function TerminalDrawerBody({
         <div className="term-dock" role="status">
           <span>Ended</span>
           <span className="term-dock-acts">
-            <Button small onClick={() => void close(currentTerminal)}>
+            <Button small onClick={() => endTab(shown ?? [currentTerminal])}>
               Close tab
             </Button>
           </span>
@@ -515,14 +587,10 @@ export function TerminalDrawerBody({
         />
       ) : null}</Presence>
       <Presence>{tabMenu ? <Menu x={tabMenu.x} y={tabMenu.y} label="Terminal tab" items={menuFor(tabMenu.group)} onClose={() => setTabMenu(null)} /> : null}</Presence>
-      {ending ? (
-        <ConfirmDialog title="End this terminal?" confirmLabel="End" tone="danger" cancelFocus onConfirm={async () => {
-            rememberFocus(ending.group);
-            await close(ending);
-          }} onClose={() => setEnding(null)}>
-          <p>{ending.title} is still running. Ending the terminal stops it.</p>
-        </ConfirmDialog>
-      ) : null}
+      {ending ? <EndDialog panes={ending} onConfirm={async () => {
+          rememberFocus(ending[0]!.group);
+          await close(ending);
+        }} onClose={() => setEnding(null)} /> : null}
     </div>
   );
 }

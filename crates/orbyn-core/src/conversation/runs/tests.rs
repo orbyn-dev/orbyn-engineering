@@ -1,6 +1,11 @@
 //! Adverse orderings around one run, against a scripted in-process driver.
 //! Wire-format behavior is covered against the fake engine in `orbynd/tests`.
 
+mod follow_ups;
+mod snapshot;
+#[cfg(unix)]
+mod update;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
@@ -12,7 +17,9 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::Core;
-use crate::agents::driver::{EngineDescriptor, EngineDriver, EngineProbe, UpdatePlan, ask};
+use crate::agents::driver::{
+    EngineDescriptor, EngineDriver, EngineProbe, SteerMessage, UpdatePlan, ask,
+};
 use crate::app::CoreConfig;
 use crate::governance::approvals::Verdict;
 use crate::testing::TempDir;
@@ -29,6 +36,8 @@ struct ScriptDriver {
     update_script: String,
     probes: std::sync::atomic::AtomicU64,
     start_failure: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
+    /// What a running turn's steer input received, when a test asks for one.
+    steer_log: Option<Arc<std::sync::Mutex<Vec<SteerMessage>>>>,
 }
 
 fn capabilities() -> EngineCapabilities {
@@ -114,10 +123,19 @@ impl EngineDriver for ScriptDriver {
         }
         let cancel = CancellationToken::new();
         let task = (self.script)(spec, events, cancel.clone());
+        let input = self.steer_log.clone().map(|log| {
+            let (sender, mut receiver) = mpsc::unbounded_channel::<SteerMessage>();
+            tokio::spawn(async move {
+                while let Some(steer) = receiver.recv().await {
+                    log.lock().unwrap().push(steer);
+                }
+            });
+            sender
+        });
         Ok(RunHandle {
             cancel,
             task,
-            input: None,
+            input,
             control: None,
         })
     }
@@ -162,6 +180,27 @@ async fn fixture_full(
     capabilities: EngineCapabilities,
     warms: bool,
 ) -> Fixture {
+    fixture_steering(
+        script,
+        update,
+        update_timeout,
+        start_failure,
+        capabilities,
+        warms,
+        None,
+    )
+    .await
+}
+
+async fn fixture_steering(
+    script: Script,
+    update: &str,
+    update_timeout: Duration,
+    start_failure: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
+    capabilities: EngineCapabilities,
+    warms: bool,
+    steer_log: Option<Arc<std::sync::Mutex<Vec<SteerMessage>>>>,
+) -> Fixture {
     let dir = TempDir::new();
     let root = crate::testing::library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
@@ -175,6 +214,7 @@ async fn fixture_full(
         update_script: update.to_owned(),
         probes: Default::default(),
         start_failure,
+        steer_log,
     }));
     core.workspace
         .setup(orbyn_contracts::WorkspaceSetup {
@@ -424,6 +464,26 @@ async fn second_admission_is_thread_busy() {
 }
 
 #[tokio::test]
+async fn stopping_an_engine_family_cancels_only_its_running_runs_and_counts_them() {
+    let script: Script = Arc::new(|_, events, cancel| {
+        tokio::spawn(async move {
+            cancel.cancelled().await;
+            let _ = events
+                .send(EngineEvent::Finished(EngineOutcome::Cancelled))
+                .await;
+        })
+    });
+    let f = fixture(script).await;
+    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    until_state(&f.core, &run.id, RunState::Running).await;
+    assert_eq!(f.core.stop_engine_runs("cursor"), 0, "another family");
+    assert_eq!(f.core.store.run(&run.id).unwrap().state, RunState::Running);
+    assert_eq!(f.core.stop_engine_runs("script"), 1);
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Cancelled);
+    assert_eq!(f.core.stop_engine_runs("script"), 0, "nothing left to stop");
+}
+
+#[tokio::test]
 async fn accepted_cancel_before_driver_start_finishes_wins_over_its_failure() {
     let entered = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());
@@ -497,7 +557,13 @@ async fn late_rejected_steer_after_cancel_remains_held_without_starting_work() {
         mode: PermissionMode::Supervised,
         plan: false,
     };
-    f.core.runs.requeue_steer(&scope, "keep rejected prompt");
+    f.core.runs.requeue_steer(
+        &scope,
+        &SteerMessage {
+            message_id: "late-steer".into(),
+            prompt: "keep rejected prompt".into(),
+        },
+    );
     let queued = f.core.store.list_queue(&f.thread).unwrap();
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].prompt, "keep rejected prompt");
@@ -576,6 +642,68 @@ async fn engine_exit_during_approval_fails_the_run_and_expires() {
         f.core.store.approval(&approval.id).unwrap().state,
         ApprovalState::Expired
     );
+}
+
+#[tokio::test]
+async fn a_stopped_host_fails_the_run_with_its_stable_code() {
+    let script: Script = Arc::new(|_, events, _| {
+        tokio::spawn(async move {
+            let _ = events
+                .send(EngineEvent::Finished(
+                    crate::agents::driver::host::host_stopped(),
+                ))
+                .await;
+        })
+    });
+    let f = fixture(script).await;
+    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Failed);
+    let stored = f.core.store.run(&run.id).unwrap();
+    assert_eq!(
+        stored.error.as_deref(),
+        Some(crate::agents::driver::host::HOST_STOPPED)
+    );
+    let events = f.core.store.events_after(&f.thread, 0, 100).unwrap();
+    let (message, code) = events
+        .iter()
+        .find_map(|event| match &event.event {
+            AgUiEvent::RunError { message, code } => Some((message, code)),
+            _ => None,
+        })
+        .expect("a run error event");
+    assert_eq!(message, crate::agents::driver::host::HOST_STOPPED);
+    assert_eq!(code.as_deref(), Some("engine_host_stopped"));
+    assert!(!events.iter().any(
+        |event| matches!(&event.event, AgUiEvent::Custom { name, .. } if name == "engine.sign_in_required")
+    ));
+}
+
+#[tokio::test]
+async fn a_plain_failure_keeps_the_plain_code() {
+    let script: Script = Arc::new(|_, events, _| {
+        tokio::spawn(async move {
+            // A plain failure that happens to use the host-stopped sentence is still
+            // not a host stop: the code comes from the outcome, never the words.
+            let _ = events
+                .send(EngineEvent::Finished(EngineOutcome::Failed(
+                    crate::agents::driver::host::HOST_STOPPED.into(),
+                )))
+                .await;
+        })
+    });
+    let f = fixture(script).await;
+    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Failed);
+    let events = f.core.store.events_after(&f.thread, 0, 100).unwrap();
+    let (message, code) = events
+        .iter()
+        .find_map(|event| match &event.event {
+            AgUiEvent::RunError { message, code } => Some((message, code)),
+            _ => None,
+        })
+        .expect("a run error event");
+    assert_eq!(message, crate::agents::driver::host::HOST_STOPPED);
+    assert_eq!(code.as_deref(), Some("engine_failed"));
 }
 
 #[tokio::test]
@@ -735,108 +863,6 @@ async fn a_run_someone_watches_is_never_ended_for_silence() {
     f.core.runs.force_stop(&f.thread, "t").await.unwrap();
 }
 
-fn follow_up(project: &str, target: &str, on_success: bool) -> orbyn_contracts::UpsertTask {
-    orbyn_contracts::UpsertTask {
-        id: None,
-        project_id: project.to_owned(),
-        thread_id: None,
-        name: "After".into(),
-        prompt: "next step".into(),
-        engine: "script".into(),
-        schedule: orbyn_contracts::TaskSchedule {
-            kind: "after_thread".into(),
-            every_minutes: None,
-            time: None,
-            weekdays: Vec::new(),
-            utc_offset_minutes: 0,
-            after_thread: Some(target.to_owned()),
-            only_on_success: on_success,
-        },
-        signature: None,
-        secret: None,
-        filters: Vec::new(),
-        dedupe: None,
-        max_age_seconds: None,
-        timestamp_path: None,
-    }
-}
-
-fn finishing() -> Script {
-    Arc::new(|_, events, _| {
-        tokio::spawn(async move {
-            let _ = events.send(text("done")).await;
-            let _ = events
-                .send(EngineEvent::Finished(EngineOutcome::Completed))
-                .await;
-        })
-    })
-}
-
-#[tokio::test]
-async fn a_follow_up_fires_once_for_each_run_that_ends_and_not_for_old_ones() {
-    let f = fixture(finishing()).await;
-    let project = f.core.store.thread(&f.thread).unwrap().project_id;
-    let first = f.core.runs.admit(&f.thread, "go", "t").unwrap();
-    until_terminal(&f.core, &first.id).await;
-
-    let task = f
-        .core
-        .save_task(follow_up(&project, &f.thread, true), "t")
-        .unwrap();
-    assert!(task.next_run_at.is_none());
-    f.core.run_due_tasks().await;
-    let threads = |core: &Core| {
-        core.store
-            .list_threads(Some(&project), false)
-            .unwrap()
-            .len()
-    };
-    assert_eq!(
-        threads(&f.core),
-        1,
-        "a run from before the task does not count"
-    );
-
-    let second = f.core.runs.admit(&f.thread, "go", "t").unwrap();
-    until_terminal(&f.core, &second.id).await;
-    f.core.run_due_tasks().await;
-    f.core.run_due_tasks().await;
-    assert_eq!(threads(&f.core), 2, "once, however often the clock ticks");
-}
-
-#[tokio::test]
-async fn a_follow_up_can_ask_for_success_and_cannot_follow_itself() {
-    let script: Script = Arc::new(|_, events, _| {
-        tokio::spawn(async move {
-            let outcome = EngineOutcome::Failed("no".into());
-            let _ = events.send(EngineEvent::Finished(outcome)).await;
-        })
-    });
-    let f = fixture(script).await;
-    let project = f.core.store.thread(&f.thread).unwrap().project_id;
-    let task = f
-        .core
-        .save_task(follow_up(&project, &f.thread, true), "t")
-        .unwrap();
-    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
-    until_terminal(&f.core, &run.id).await;
-    f.core.run_due_tasks().await;
-    let threads = f.core.store.list_threads(Some(&project), false).unwrap();
-    assert_eq!(threads.len(), 1, "a failed run sets off nothing here");
-    let kept = f.core.store.task(&task.id).unwrap();
-    assert_eq!(kept.after_run.as_deref(), Some(run.id.as_str()));
-
-    let mut itself = follow_up(&project, &f.thread, false);
-    itself.thread_id = Some(f.thread.clone());
-    assert!(f.core.save_task(itself, "t").is_err());
-    let mut unnamed = follow_up(&project, &f.thread, false);
-    unnamed.schedule.after_thread = None;
-    assert!(f.core.save_task(unnamed, "t").is_err());
-    let mut elsewhere = follow_up(&project, "nothing", false);
-    elsewhere.name = "x".into();
-    assert!(f.core.save_task(elsewhere, "t").is_err());
-}
-
 #[tokio::test]
 async fn the_gate_keeps_a_files_old_bytes_before_a_write_it_allows() {
     let script: Script = Arc::new(|spec, events, _| {
@@ -918,168 +944,6 @@ async fn mcp_token_lives_exactly_as_long_as_the_run() {
         )
         .await;
     assert!(reply.is_err());
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn update_is_refused_during_a_run_and_admission_during_an_update() {
-    let script: Script = Arc::new(|_, events, cancel| {
-        tokio::spawn(async move {
-            cancel.cancelled().await;
-            let _ = events
-                .send(EngineEvent::Finished(EngineOutcome::Cancelled))
-                .await;
-        })
-    });
-    let f = fixture(script).await;
-    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
-    until_state(&f.core, &run.id, RunState::Running).await;
-    let refused = f.core.engines.update("script", "t").await;
-    assert!(matches!(refused, Err(CoreError::EngineBusy(_))));
-    let audit = f.core.store.list_audit(None, 50).unwrap();
-    assert!(audit.iter().all(|row| row.action != "engine.update"));
-    f.core.runs.cancel(&run.id).unwrap();
-    until_terminal(&f.core, &run.id).await;
-
-    assert!(f.core.engines.update("script", "t").await.is_ok());
-    let audit = f.core.store.list_audit(None, 50).unwrap();
-    let positions: Vec<_> = audit
-        .iter()
-        .map(|row| row.action.as_str())
-        .filter(|action| action.starts_with("engine.update"))
-        .collect();
-    assert_eq!(positions, ["engine.update.result", "engine.update"]);
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn an_updater_that_changed_nothing_is_a_failed_update() {
-    let f = fixture_with(finished(), "echo no change", Duration::from_secs(30)).await;
-    match f.core.engines.update("script", "t").await {
-        Err(CoreError::UpdateFailed(message)) => assert!(message.contains("1.0.0"), "{message}"),
-        other => panic!("{:?}", other.map(|status| status.version)),
-    }
-}
-
-#[cfg(unix)]
-async fn until_warm(core: &Core, thread: &str, wanted: bool) {
-    for _ in 0..2000 {
-        if core.engines.has_warm(thread) == wanted {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(2)).await;
-    }
-    panic!("warm stayed {}", !wanted);
-}
-
-/// Warming is off by default; once on, an update start ends the waiting process so
-/// it cannot hold the binary being replaced.
-#[cfg(unix)]
-#[tokio::test]
-async fn an_update_ends_the_process_kept_for_the_next_turn() {
-    let f = fixture_full(
-        finished(),
-        "echo updated",
-        Duration::from_secs(30),
-        None,
-        capabilities(),
-        true,
-    )
-    .await;
-    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
-    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Completed);
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(!f.core.engines.has_warm(&f.thread), "off by default");
-
-    f.core
-        .set_preferences(
-            None,
-            &std::collections::BTreeMap::from([("warm_next_turn".into(), json!(true))]),
-        )
-        .unwrap();
-    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
-    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Completed);
-    until_warm(&f.core, &f.thread, true).await;
-    assert!(f.core.engines.update("script", "t").await.is_ok());
-    assert!(!f.core.engines.has_warm(&f.thread));
-    // Nothing can be started while an update runs.
-    assert!(f.core.engines.begin_warm().is_some());
-}
-
-/// The provider card's recommended-version action needs a signed recommendation.
-#[cfg(unix)]
-#[tokio::test]
-async fn install_recommended_needs_a_signed_recommendation() {
-    let f = fixture(finished()).await;
-    let refused = f.core.engines.install_recommended("script", "t").await;
-    assert!(
-        matches!(refused, Err(CoreError::UpdateUnavailable(_))),
-        "{refused:?}"
-    );
-    let audit = f.core.store.list_audit(None, 50).unwrap();
-    assert!(
-        audit
-            .iter()
-            .all(|row| !row.action.starts_with("engine.update"))
-    );
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn failed_update_keeps_its_output_and_clears_the_lock() {
-    let f = fixture_with(
-        finished(),
-        "echo broken registry >&2; exit 3",
-        Duration::from_secs(30),
-    )
-    .await;
-    let failed = f.core.engines.update("script", "t").await;
-    match failed {
-        Err(CoreError::UpdateFailed(output)) => assert!(output.contains("broken registry")),
-        other => panic!("{other:?}"),
-    }
-    assert!(f.core.engines.admit_with("script", || Ok(())).is_ok());
-    let audit = f.core.store.list_audit(None, 10).unwrap();
-    assert_eq!(audit[0].action, "engine.update.result");
-    assert_eq!(audit[0].detail["ok"], json!(false));
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn hung_update_is_stopped_at_its_timeout_with_its_children() {
-    let dir = TempDir::new();
-    let marker = dir.path().join("survived");
-    let script = format!("(sleep 1; touch '{}') & wait", marker.display());
-    let f = fixture_with(finished(), &script, Duration::from_millis(100)).await;
-    let timed_out = f.core.engines.update("script", "t").await;
-    match timed_out {
-        Err(CoreError::UpdateFailed(output)) => assert!(output.contains("in time")),
-        other => panic!("{other:?}"),
-    }
-    tokio::time::sleep(Duration::from_millis(1300)).await;
-    assert!(!marker.exists(), "the update's child outlived its timeout");
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn admission_is_refused_while_an_update_runs() {
-    let f = fixture_with(finished(), "sleep 1", Duration::from_secs(30)).await;
-    let engines = f.core.engines.clone();
-    let updating = tokio::spawn(async move { engines.update("script", "t").await });
-    for _ in 0..500 {
-        let statuses = f.core.engines.statuses(false).await.unwrap();
-        if statuses.iter().any(|status| status.updating) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(2)).await;
-    }
-    assert!(matches!(
-        f.core.runs.admit(&f.thread, "go", "t"),
-        Err(CoreError::EngineBusy(_))
-    ));
-    assert_eq!(f.core.store.latest_seq(&f.thread).unwrap(), 0);
-    assert!(updating.await.unwrap().is_ok());
-    assert!(f.core.runs.admit(&f.thread, "go", "t").is_ok());
 }
 
 #[tokio::test]
@@ -1219,4 +1083,439 @@ async fn no_run_starts_while_its_thread_is_rewound() {
     drop(hold);
     let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
     until_terminal(&f.core, &run.id).await;
+}
+
+fn a_secret() -> String {
+    format!("ghp_{}", "a1B2c3D4e5".repeat(4))
+}
+
+fn recording(seen: &Arc<std::sync::Mutex<Vec<RunSpec>>>) -> Script {
+    let seen = seen.clone();
+    Arc::new(move |spec: RunSpec, events, _| {
+        seen.lock().unwrap().push(spec);
+        tokio::spawn(async move {
+            let _ = events.send(text("done")).await;
+            let _ = events
+                .send(EngineEvent::Finished(EngineOutcome::Completed))
+                .await;
+        })
+    })
+}
+
+fn timeline(f: &Fixture) -> String {
+    serde_json::to_string(&f.core.store.events_after(&f.thread, 0, 200).unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn a_secret_in_a_message_reaches_the_engine_masked_and_stays_in_the_thread() {
+    let secret = a_secret();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let f = fixture(recording(&seen)).await;
+    let run = f
+        .core
+        .runs
+        .admit(&f.thread, &format!("deploy with {secret} now"), "t")
+        .unwrap();
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Completed);
+    let spec = seen.lock().unwrap().remove(0);
+    for sent in [&spec.prompt, &spec.user_prompt] {
+        assert!(
+            !sent.contains(&secret),
+            "the engine read the secret: {sent}"
+        );
+        assert!(
+            sent.contains("deploy with [hidden: GitHub token] now"),
+            "{sent}"
+        );
+    }
+    assert!(!spec.context.contains(&secret));
+    assert!(
+        timeline(&f).contains(&secret),
+        "the person's thread keeps what they typed"
+    );
+}
+
+#[tokio::test]
+async fn a_queued_follow_up_reaches_the_engine_masked_and_stays_queued_as_typed() {
+    let secret = a_secret();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let release = Arc::new(tokio::sync::Notify::new());
+    let gate = release.clone();
+    let record = seen.clone();
+    let script: Script = Arc::new(move |spec: RunSpec, events, _| {
+        record.lock().unwrap().push(spec);
+        let gate = gate.clone();
+        tokio::spawn(async move {
+            gate.notified().await;
+            let _ = events.send(text("done")).await;
+            let _ = events
+                .send(EngineEvent::Finished(EngineOutcome::Completed))
+                .await;
+        })
+    });
+    let f = fixture(script).await;
+    let first = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    until_state(&f.core, &first.id, RunState::Running).await;
+    let queued = f
+        .core
+        .runs
+        .enqueue(&f.thread, &format!("then use {secret}"), &[])
+        .unwrap();
+    assert_eq!(
+        f.core.store.list_queue(&f.thread).unwrap()[0].prompt,
+        format!("then use {secret}"),
+        "the queue keeps the typed text ({})",
+        queued.id
+    );
+    release.notify_one();
+    assert_eq!(
+        until_terminal(&f.core, &first.id).await,
+        RunState::Completed
+    );
+    for _ in 0..2000 {
+        if seen.lock().unwrap().len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    release.notify_one();
+    let specs = seen.lock().unwrap();
+    assert_eq!(specs.len(), 2);
+    assert!(!specs[1].prompt.contains(&secret));
+    assert!(
+        specs[1]
+            .user_prompt
+            .contains("then use [hidden: GitHub token]")
+    );
+}
+
+#[tokio::test]
+async fn a_steer_reaches_the_engine_masked_and_the_timeline_keeps_it_as_typed() {
+    let secret = a_secret();
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let release = Arc::new(tokio::sync::Notify::new());
+    let gate = release.clone();
+    let script: Script = Arc::new(move |_, events, _| {
+        let gate = gate.clone();
+        tokio::spawn(async move {
+            gate.notified().await;
+            let _ = events.send(text("done")).await;
+            let _ = events
+                .send(EngineEvent::Finished(EngineOutcome::Completed))
+                .await;
+        })
+    });
+    let f = fixture_steering(
+        script,
+        "echo updated",
+        Duration::from_secs(30),
+        None,
+        capabilities(),
+        false,
+        Some(log.clone()),
+    )
+    .await;
+    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    until_state(&f.core, &run.id, RunState::Running).await;
+    f.core
+        .runs
+        .steer(&f.thread, Some("s1"), &format!("also {secret}"))
+        .unwrap();
+    for _ in 0..2000 {
+        if !log.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    let got = log.lock().unwrap().clone();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].prompt, "also [hidden: GitHub token]");
+    assert!(
+        timeline(&f).contains(&secret),
+        "the timeline keeps the typed steer"
+    );
+    // A refused steer goes back to the queue as the person typed it.
+    let scope = RunScope {
+        run_id: run.id.clone(),
+        thread_id: f.thread.clone(),
+        engine: "script".into(),
+        family: "script".into(),
+        write_scope: None,
+        mode: PermissionMode::Supervised,
+        plan: false,
+    };
+    f.core.runs.requeue_steer(&scope, &got[0]);
+    let queued = f.core.store.list_queue(&f.thread).unwrap();
+    assert_eq!(queued[0].prompt, format!("also {secret}"));
+    release.notify_one();
+}
+
+#[tokio::test]
+async fn the_agents_switch_and_a_person_pattern_decide_what_the_engine_reads() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let f = fixture(recording(&seen)).await;
+    f.core
+        .change_redaction_surfaces(
+            "t",
+            &orbyn_contracts::RedactionSurfaceChange {
+                terminal: None,
+                agents: Some(false),
+            },
+        )
+        .unwrap();
+    let secret = a_secret();
+    let run = f
+        .core
+        .runs
+        .admit(&f.thread, &format!("use {secret}"), "t")
+        .unwrap();
+    until_terminal(&f.core, &run.id).await;
+    assert!(
+        seen.lock().unwrap()[0].user_prompt.contains(&secret),
+        "with the switch off nothing is hidden"
+    );
+}
+
+#[tokio::test]
+async fn a_person_pattern_is_masked_for_the_engine_before_any_cut() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let f = fixture(recording(&seen)).await;
+    f.core
+        .save_redaction_pattern(
+            "t",
+            None,
+            &orbyn_contracts::RedactionPatternInput {
+                name: "Project code".into(),
+                pattern: "corp_[a-z]{6}".into(),
+                kind: orbyn_contracts::PatternKind::Regex,
+                applies_to: orbyn_contracts::PatternScope::Anywhere,
+                accept_broad: None,
+            },
+        )
+        .unwrap();
+    let run = f
+        .core
+        .runs
+        .admit(&f.thread, "the code is corp_abcdef ok", "t")
+        .unwrap();
+    until_terminal(&f.core, &run.id).await;
+    let sent = seen.lock().unwrap()[0].user_prompt.clone();
+    assert_eq!(sent, "the code is [hidden: Project code] ok");
+    assert!(timeline(&f).contains("corp_abcdef"));
+}
+
+/// What each attached file held at the path the engine was told, read while the run's folder
+/// still exists (it is removed when the run ends).
+type Read = Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
+
+fn reading(read: &Read) -> Script {
+    let read = read.clone();
+    Arc::new(move |spec: RunSpec, events, _| {
+        for line in spec.context.lines().filter_map(|l| l.strip_prefix("- ")) {
+            if let Ok(bytes) = std::fs::read(line) {
+                read.lock().unwrap().push((line.to_owned(), bytes));
+            }
+        }
+        tokio::spawn(async move {
+            let _ = events.send(text("done")).await;
+            let _ = events
+                .send(EngineEvent::Finished(EngineOutcome::Completed))
+                .await;
+        })
+    })
+}
+
+/// Attaches `bytes` as `name`, runs one turn and returns what the engine read, the stored file's
+/// path and the timeline.
+async fn attach_and_run(
+    name: &str,
+    bytes: &[u8],
+    switch_off: bool,
+) -> (Vec<(String, Vec<u8>)>, String) {
+    let read: Read = Arc::default();
+    let f = fixture(reading(&read)).await;
+    if switch_off {
+        f.core
+            .change_redaction_surfaces(
+                "t",
+                &orbyn_contracts::RedactionSurfaceChange {
+                    terminal: None,
+                    agents: Some(false),
+                },
+            )
+            .unwrap();
+    }
+    let attachment = f
+        .core
+        .add_attachment(&f.thread, name, "application/octet-stream", bytes)
+        .unwrap();
+    let stored = f.core.store.list_attachments(&f.thread).unwrap()[0]
+        .1
+        .clone();
+    let run = f
+        .core
+        .runs
+        .admit_with(&f.thread, "look", std::slice::from_ref(&attachment.id), "t")
+        .unwrap();
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Completed);
+    // The person's stored attachment and the thread keep the original.
+    assert_eq!(std::fs::read(&stored).unwrap(), bytes);
+    assert!(timeline(&f).contains(&attachment.id));
+    let got = read.lock().unwrap().clone();
+    (got, stored)
+}
+
+#[tokio::test]
+async fn an_attached_text_file_reaches_the_engine_masked_and_the_original_stays() {
+    let secret = a_secret();
+    let body = format!("REMOTE={secret}\nMODE=dev\n");
+    let (got, stored) = attach_and_run(".env", body.as_bytes(), false).await;
+    assert_eq!(got.len(), 1);
+    let (path, bytes) = &got[0];
+    assert_ne!(
+        path, &stored,
+        "the engine gets a copy, not the person's file"
+    );
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(!text.contains(&secret), "{text}");
+    assert_eq!(text, "REMOTE=[hidden: GitHub token]\nMODE=dev\n");
+}
+
+#[tokio::test]
+async fn an_attached_text_file_with_nothing_to_hide_is_passed_by_its_own_path() {
+    let (got, stored) = attach_and_run("notes.txt", b"hello\n", false).await;
+    assert_eq!(got, vec![(stored, b"hello\n".to_vec())]);
+}
+
+#[tokio::test]
+async fn a_binary_attachment_is_passed_unchanged() {
+    let mut bytes = a_secret().into_bytes();
+    bytes.extend_from_slice(&[0, 159, 146, 150]);
+    let (got, stored) = attach_and_run("blob.bin", &bytes, false).await;
+    assert_eq!(got, vec![(stored, bytes)]);
+}
+
+#[tokio::test]
+async fn an_attached_file_over_the_cap_is_passed_unchanged() {
+    let mut body = format!("TOKEN={}\n", a_secret()).into_bytes();
+    body.resize(super::masked_files::CAP + 1, b'x');
+    let (got, stored) = attach_and_run("big.txt", &body, false).await;
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].0, stored);
+    assert_eq!(got[0].1, body);
+}
+
+#[tokio::test]
+async fn with_the_agents_switch_off_an_attached_file_is_passed_unchanged() {
+    let body = format!("TOKEN={}\n", a_secret());
+    let (got, stored) = attach_and_run(".env", body.as_bytes(), true).await;
+    assert_eq!(got, vec![(stored, body.into_bytes())]);
+}
+
+#[tokio::test]
+async fn when_the_redaction_settings_cannot_be_read_nothing_reaches_the_engine() {
+    let secret = a_secret();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let read: Read = Arc::default();
+    let both: Script = {
+        let (recorder, reader) = (recording(&seen), reading(&read));
+        Arc::new(move |spec, events, cancel| {
+            reader(spec.clone(), events.clone(), cancel.clone());
+            recorder(spec, events, cancel)
+        })
+    };
+    let f = fixture(both).await;
+    let body = format!("REMOTE={secret}\n");
+    let attachment = f
+        .core
+        .add_attachment(
+            &f.thread,
+            ".env",
+            "application/octet-stream",
+            body.as_bytes(),
+        )
+        .unwrap();
+    // The redaction row holds a value that is not text, so reading it fails while every other
+    // setting still reads: admission passes and the failure is the settings read of the turn.
+    rusqlite::Connection::open(f.core.config.data_dir.join("orbyn.sqlite3"))
+        .unwrap()
+        .execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('redaction', x'00ff')",
+            [],
+        )
+        .unwrap();
+    assert!(f.core.store.redaction_json().is_err());
+    for files in [vec![attachment.id.clone()], Vec::new()] {
+        let run = f
+            .core
+            .runs
+            .admit_with(&f.thread, &format!("deploy with {secret}"), &files, "t")
+            .unwrap();
+        assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Failed);
+        assert!(f.core.store.run(&run.id).unwrap().error.is_some());
+    }
+    assert!(seen.lock().unwrap().is_empty(), "the engine was started");
+    assert!(read.lock().unwrap().is_empty(), "the engine read a file");
+}
+
+#[tokio::test]
+async fn an_attached_transcript_reaches_the_engine_as_a_masked_copy_never_the_stored_file() {
+    let read: Read = Arc::default();
+    let f = fixture(reading(&read)).await;
+    let doc = serde_json::json!({
+        "format": "orbyn-transcript", "version": 1, "exported_at": "2026-11-22T10:00:00Z",
+        "thread": { "title": "Old", "engine": "claude", "model": "opus", "created_at": "2026-11-20T10:00:00Z" },
+        "messages": [{ "role": "user", "ts": "2026-11-20T10:00:00Z", "text": "the corp word is zebra-quartz-91" }],
+        "omitted_earlier": 0
+    });
+    let attached = f
+        .core
+        .attach_transcript(&f.thread, doc.to_string().as_bytes(), false)
+        .unwrap();
+    let attachment = attached.attachment.unwrap();
+    let stored = f.core.store.list_attachments(&f.thread).unwrap()[0]
+        .1
+        .clone();
+    // A pattern the person adds after the attach: the stored text holds the word, the send must still hide it.
+    f.core
+        .save_redaction_pattern(
+            "t",
+            None,
+            &orbyn_contracts::RedactionPatternInput {
+                name: "Corp word".into(),
+                pattern: "zebra-quartz-91".into(),
+                kind: orbyn_contracts::PatternKind::Text,
+                applies_to: orbyn_contracts::PatternScope::Anywhere,
+                accept_broad: None,
+            },
+        )
+        .unwrap();
+    let run = f
+        .core
+        .runs
+        .admit_with(
+            &f.thread,
+            "use it",
+            std::slice::from_ref(&attachment.id),
+            "t",
+        )
+        .unwrap();
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Completed);
+    assert!(
+        std::fs::read_to_string(&stored)
+            .unwrap()
+            .contains("zebra-quartz-91")
+    );
+    let got = read.lock().unwrap().clone();
+    assert_eq!(got.len(), 1);
+    assert_ne!(
+        got[0].0, stored,
+        "the engine gets a copy, not the stored file"
+    );
+    let text = String::from_utf8(got[0].1.clone()).unwrap();
+    assert!(!text.contains("zebra-quartz-91"), "{text}");
+    assert!(
+        text.contains("[hidden: Corp word]") && text.contains("Imported transcript"),
+        "{text}"
+    );
 }

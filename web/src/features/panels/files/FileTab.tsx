@@ -4,6 +4,7 @@ import type { ExplorerWorktree } from "../../../generated/ExplorerWorktree";
 import { formatBytes } from "../../../lib/format";
 import { useAsync } from "../../../lib/useAsync";
 import { useResolvedThreadPath } from "../../../product/composer/useResolvedThreadPath";
+import { IssuePanel } from "../../issues";
 import { parseFileTab, useUi, type FileTabId, type FileTarget } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Empty, ErrorState, Loading } from "../../../product/ui/states";
@@ -49,6 +50,15 @@ function ThreadFile({ threadId, tabId, path, locked }: { threadId: string; tabId
   if (resolved.value && isFullPath(full)) return <OutsideFileViewer threadId={threadId} path={full} />;
   if (resolved.value || resolved.error) return <Empty title={resolved.error?.message ?? "That path is outside this checkout."} />;
   return <Loading label="Loading file" rows={6} />;
+}
+
+/**
+ * A file of another repository of a multi-repository thread. Its path is relative to that repository and the service resolves it
+ * there, so nothing is resolved against the thread's own checkout; a path outside the repository or a repository that is not the
+ * thread's comes back from the service as an error the viewer draws.
+ */
+function RepoFile({ threadId, tabId, path, repoId }: { threadId: string; tabId: string; path: string; repoId: string }) {
+  return <Viewer threadId={threadId} tabId={tabId} path={path} line={null} repoId={repoId} />;
 }
 
 /** A file of any worktree, read through the explorer and never written. */
@@ -160,7 +170,11 @@ function MissingWorktree({ target, threadId }: { target: Extract<FileTarget, { k
 export function FileTab({ id, threadId }: { id: FileTabId; threadId: string | null }) {
   const target = parseFileTab(id);
   if (!target) return null;
+  if (target.kind === "issue") return <IssuePanel tracker={target.tracker} scope={target.scope} issueKey={target.key} />;
   if (target.kind === "worktree") return <MissingWorktree target={target} threadId={threadId} />;
-  if (target.kind === "thread") return threadId === null ? null : <ThreadFile threadId={threadId} tabId={id} path={target.path} />;
+  if (target.kind === "thread") {
+    if (threadId === null) return null;
+    return target.repoId === undefined ? <ThreadFile threadId={threadId} tabId={id} path={target.path} /> : <RepoFile threadId={threadId} tabId={id} path={target.path} repoId={target.repoId} />;
+  }
   return <ExplorerFile threadId={threadId} tabId={id} target={target} />;
 }

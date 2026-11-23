@@ -1,10 +1,22 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure, api } from "../../../api/client";
-import type { Run, SlashCommand, Thread } from "../../../api/types";
+import { pullsApi } from "../../../api/pulls";
+import type {
+  EngineModels,
+  EngineStatus,
+  PullRequest,
+  QueuedMessage,
+  Run,
+  SlashCommand,
+  Thread,
+  WireThreadEvent,
+} from "../../../api/types";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { useThreadLogs } from "../../../product/state/threadLogs";
+import { emptyLog } from "../../../product/timeline/projection";
+import { useModelStore } from "../../../product/state/modelStore";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Composer } from "./Composer";
@@ -27,6 +39,14 @@ const thread: Thread = {
 };
 
 const run = { id: "r1" } as Run;
+/** The service's own event when the engine refused a steer mid-turn and requeued its text. */
+const steerFailed = (seq: number, prompt: string): WireThreadEvent => ({
+  seq,
+  thread_id: "t1",
+  run_id: null,
+  ts: "2026-01-01T00:00:00Z",
+  event: { type: "CUSTOM", name: "steer.failed", value: { prompt } },
+});
 const box = () => screen.getByRole("textbox");
 const terminalChip: TerminalChip = {
   id: "t-chip",
@@ -94,7 +114,7 @@ describe("Composer", () => {
     start.mockRestore(); enqueue.mockRestore(); steer.mockRestore();
   });
 
-  it.each(["/plan", "/compact", "/goal resume", "/side explain"])("keeps review context when %s cannot carry it", async (command) => {
+  it.each(["/compact", "/goal resume", "/side explain"])("keeps review context when %s cannot carry it", async (command) => {
     const start = vi.spyOn(api, "startRun").mockResolvedValue(run);
     useComposerChips.setState({ chips: { t1: [reviewChip] } });
     setup();
@@ -132,7 +152,7 @@ describe("Composer", () => {
     start.mockRestore();
   });
 
-  it.each(["/plan", "/compact", "/goal resume"])('refuses %s while a terminal selection is attached', async (command) => {
+  it.each(["/compact", "/goal resume"])('refuses %s while a terminal selection is attached', async (command) => {
     const start = vi.spyOn(api, "startRun").mockResolvedValue(run);
     const patch = vi.spyOn(api, "patchThread").mockResolvedValue(thread);
     withTerminalChip();
@@ -172,6 +192,7 @@ describe("Composer", () => {
           state: "pending",
           decided_by: null,
           decided_at: null,
+          via: null,
           created_at: "",
         }],
       },
@@ -199,6 +220,7 @@ describe("Composer", () => {
     setup();
     await userEvent.type(box(), "hello{Enter}");
     expect(start).toHaveBeenCalledExactlyOnceWith("t1", "hello", []);
+    expect(start.mock.calls[0]).toHaveLength(3);
     await waitFor(() => expect(box()).toHaveValue(""));
     expect(useThreadLogs.getState().prompts.t1).toEqual([{ runId: "r1", text: "hello" }]);
     start.mockRestore();
@@ -249,15 +271,38 @@ describe("Composer", () => {
     const queue = vi.spyOn(api, "queue").mockResolvedValue([
       { id: "q1", thread_id: "t1", prompt: "also check tests", attachment_ids: [], held: false, created_at: "" },
     ]);
-    const steer = vi.spyOn(api, "steer").mockResolvedValue({ state: "delivered" });
+    const steer = vi
+      .spyOn(api, "steer")
+      .mockResolvedValue({ message_id: "steer-message", state: "delivered" });
     const remove = vi.spyOn(api, "removeQueued").mockResolvedValue();
     setup({ active_run: { ...run, state: "running" } as Run });
     await userEvent.click(await screen.findByRole("button", { name: /^Add to the running turn/ }));
-    await waitFor(() => expect(steer).toHaveBeenCalledWith("t1", "also check tests"));
+    await waitFor(() => expect(steer).toHaveBeenCalledWith("t1", "also check tests", expect.any(String)));
     await waitFor(() => expect(remove).toHaveBeenCalledWith("q1"));
     queue.mockRestore();
     steer.mockRestore();
     remove.mockRestore();
+  });
+
+  it("returns a refused steer to the queue", async () => {
+    const queue = vi.spyOn(api, "queue").mockResolvedValue([]);
+    setup({ active_run: { ...run, state: "running" } as Run });
+    await waitFor(() => expect(queue).toHaveBeenCalled());
+    const before = queue.mock.calls.length;
+    // The thread's log is already being followed, so the refusal is news rather than a replay.
+    act(() => useThreadLogs.setState({ logs: { t1: { ...emptyLog, lastSeq: 5 } }, queueVersion: {} }));
+    const requeued: QueuedMessage = {
+      id: "q2", thread_id: "t1", prompt: "keep this", attachment_ids: [], held: false, created_at: "",
+    };
+    queue.mockResolvedValue([requeued]);
+    act(() => useThreadLogs.getState().ingest("t1", [steerFailed(6, "keep this")]));
+    // One reload, so the queued strip the service now answers with is drawn.
+    await waitFor(() => expect(queue).toHaveBeenCalledTimes(before + 1));
+    expect(await screen.findByLabelText("Queued messages")).toHaveTextContent("keep this");
+    // Nothing else moves: the draft is untouched and no error is raised.
+    expect(box()).toHaveValue("");
+    expect(screen.queryByRole("alert")).toBeNull();
+    queue.mockRestore();
   });
 
   it("keeps the draft and explains a failed start", async () => {
@@ -342,6 +387,40 @@ describe("Composer", () => {
     start.mockRestore();
   });
 
+  it("picks a pull request from # as a labelled chip, removes it, and sends its block with the draft", async () => {
+    const pulls = vi.spyOn(pullsApi, "projectPulls").mockResolvedValue([
+      { number: 77, title: "Tidy the docs", url: "https://github.com/o/r/pull/77" } as PullRequest,
+    ]);
+    const start = vi.spyOn(api, "startRun").mockResolvedValue(run);
+    setup();
+    await userEvent.type(box(), "see #7");
+    await screen.findByRole("option", { name: /#77/ });
+    await userEvent.keyboard("{Enter}");
+    expect(box()).toHaveValue("see ");
+    expect(useComposerChips.getState().chips.t1?.[0]).toMatchObject({
+      kind: "pull", number: 77, title: "Tidy the docs", url: "https://github.com/o/r/pull/77",
+    });
+    expect(screen.getByTitle("#77 Tidy the docs")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy pull chip" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Remove pull chip" }));
+    expect(useComposerChips.getState().chips.t1).toHaveLength(0);
+    expect(box()).toHaveValue("see ");
+    await userEvent.type(box(), "#7");
+    await screen.findByRole("option", { name: /#77/ });
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith(
+        "t1",
+        "Pull request: [#77 Tidy the docs](https://github.com/o/r/pull/77)\n\nsee",
+        [],
+      ),
+    );
+    expect(useComposerChips.getState().chips.t1).toHaveLength(0);
+    pulls.mockRestore();
+    start.mockRestore();
+  });
+
   it("sends attachments with the run and reports upload failure", async () => {
     const upload = vi
       .spyOn(api, "uploadAttachment")
@@ -379,5 +458,32 @@ describe("Composer", () => {
   it("shows engine and model", () => {
     render(<Composer thread={thread} engine={null} showContext />);
     expect(screen.getByText("opus")).toBeInTheDocument();
+  });
+
+  it("shows the visible Unmanaged word on the composer chip and in its context row for an engine Orbyn cannot ask", async () => {
+    const kiro = {
+      id: "kiro", name: "Kiro", installed: true,
+      capabilities: { managed: false, permission_modes: ["supervised"], approvals: false, skill_delivery: [] },
+    } as unknown as EngineStatus;
+    const kiroThread = { ...thread, engine: "kiro", model: "auto" } as Thread;
+    const catalog: EngineModels = {
+      engine: "kiro", source: "engine", checked_at: "fixture", error: null, fallback: false,
+      models: [{ id: "auto", label: "Auto", description: null, is_default: true, custom: false, options: [] }],
+      options: [], agents: [], output_styles: [],
+    };
+    useWorkspace.setState({
+      approvals: { data: [], error: null, loading: false },
+      engines: { data: [kiro], error: null, loading: false },
+    });
+    useModelStore.setState({ byEngine: { kiro: catalog }, loading: {}, errors: {} });
+    vi.spyOn(api, "thread").mockResolvedValue(kiroThread);
+    vi.spyOn(api, "queue").mockResolvedValue([]);
+    vi.spyOn(api, "models").mockResolvedValue(catalog);
+    render(<Composer thread={kiroThread} engine={kiro} showContext />);
+    const chip = await screen.findByRole("button", { name: "Auto" });
+    expect(within(chip).getByText("Unmanaged")).toBeVisible();
+    expect(screen.getAllByText("Unmanaged").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Orbyn cannot ask before Kiro acts.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Permissions:/ })).toBeNull();
   });
 });

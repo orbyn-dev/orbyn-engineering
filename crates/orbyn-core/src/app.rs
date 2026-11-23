@@ -17,6 +17,7 @@ use crate::conversation::runs::{RunManager, RunServices};
 use crate::error::{CoreError, Result};
 use crate::governance::approvals::ApprovalGate;
 use crate::governance::computer::{ComputerBackend, ComputerConfig, ComputerGateway, LocalBackend};
+use crate::host::blocks::BlockStore;
 use crate::host::shell::ShellBridge;
 use crate::host::terminal::TerminalManager;
 use crate::operations::updates::UpdateCenter;
@@ -84,6 +85,12 @@ pub struct CoreConfig {
     pub account_backend: crate::account::AccountBackendKind,
     /// Whether the Crew tools exist. Ships `false`: Crew is Preview, with no screen yet.
     pub crew_preview: bool,
+    /// Whether the Code Mode tools (`orbyn_code_search`, `orbyn_code_describe`, `orbyn_code_run`) exist. Ships `false`.
+    pub code_mode: bool,
+    /// Whether the issue routes exist (docs/issues.md). Ships `false`: every issue route answers 404.
+    pub issues: bool,
+    /// Whether the multi-repository routes exist (docs/multi-repo.md). Ships `false`: every one answers 404.
+    pub multi_repo: bool,
     /// How engines map to tiers for the Crew router. `None` is the built-in map (Claude and Codex); an engine
     /// outside the map is a builder only. Settings will fill this in a later slice; tests use it for fake engines.
     pub crew_tiers: Option<crate::crew::RouterConfig>,
@@ -91,6 +98,9 @@ pub struct CoreConfig {
     pub crew_merge_required_checks: Vec<String>,
     /// Explicit in-service watch schedule, never publication/merging. None is off; 60s..24h only.
     pub crew_merge_watch_interval: Option<Duration>,
+    /// The background listeners' periodic pass (schedule buckets due and CI heads watched), behind the Crew Preview
+    /// flag. None is off: no pass runs, not even at startup; 60s..24h only.
+    pub crew_background_watch_interval: Option<Duration>,
     /// Whether a crew worker's process starts under the restriction (and is refused where
     /// none exists). Ships `true`; only tests of crew logic with fake engines turn it off.
     pub crew_confine_workers: bool,
@@ -114,9 +124,13 @@ impl CoreConfig {
             account_gate: crate::account::AccountGate::default(),
             account_backend: crate::account::AccountBackendKind::default(),
             crew_preview: false,
+            code_mode: false,
+            issues: false,
+            multi_repo: false,
             crew_tiers: None,
             crew_merge_required_checks: Vec::new(),
             crew_merge_watch_interval: None,
+            crew_background_watch_interval: None,
             crew_confine_workers: true,
         }
     }
@@ -137,12 +151,17 @@ pub struct Core {
     pub terminals: Arc<TerminalManager>,
     pub(crate) setups: Arc<SetupManager>,
     pub updates: Arc<UpdateCenter>,
-    pub shell: ShellBridge,
+    pub shell: Arc<ShellBridge>,
+    /// W10: one active waiting item per terminal, with the per-thread and
+    /// per-service caps, so a clear can name an item another watcher dropped.
+    pub(crate) attention: Arc<crate::agents::attention::AttentionHub>,
     /// A person's approvals given in the desktop app, in memory only.
     pub(crate) presence: crate::host::presence::PresenceBook,
     pub usage: Arc<UsageCenter>,
     pub clones: ClonePool,
     pub previews: PreviewManager,
+    /// Local AVDs and simulators, their actions and one writer per device (`devices`).
+    pub devices: Arc<crate::devices::Devices>,
     /// For requests a person asked for, such as reading the ACP registry.
     pub http: reqwest::Client,
     pub recovery: Recovery,
@@ -170,13 +189,25 @@ pub struct Core {
     pub(crate) crew_starts: tokio::sync::Mutex<()>,
     /// Crew Preview: the bus's guards, its wake-up for a waiting `crew_ask` and who is waited on.
     pub(crate) crew_bus: crate::crew::Bus,
+    /// Code Mode: the live and finished script runs (`tools::mcp::code`).
+    pub(crate) code_runs: crate::tools::mcp::code::CodeRuns,
+    /// Issue trackers: the keychain tokens, the sources and a short read cache (`issues`).
+    pub(crate) issues: crate::issues::IssueDesk,
+    /// Project repositories: the clones in flight (`repos`).
+    pub(crate) repos: crate::repos::RepoDesk,
     /// Crew Preview: who approves for the lead and who may be a second key (Autopilot).
     pub(crate) crew_autopilot: crate::crew::Autopilot,
     /// Crew Preview: one merge or revert at a time, so the queue moves a branch in order.
     pub(crate) crew_merges: tokio::sync::Mutex<()>,
+    /// Crew Preview: the progress of the bisect a watch is running now. In memory only; the outcome is stored.
+    pub(crate) crew_bisect: std::sync::Mutex<Option<orbyn_contracts::AutopilotBisect>>,
     /// Crew Preview: the reviewer replay's runner and its run in progress.
     pub(crate) crew_backtest: crate::crew::backtest::Slot,
-    _lock: File,
+    /// Engine API keys, kept in the OS keychain only (`credentials`).
+    pub(crate) credentials: crate::credentials::Credentials,
+    /// Personal-library environment-set values, kept in the OS keychain only, in their own service (`credentials::env_sets`).
+    pub(crate) env_sets: crate::credentials::EnvSets,
+    _lock: OwnerLock,
 }
 
 impl Core {
@@ -194,6 +225,7 @@ impl Core {
 
     pub fn open_with(config: CoreConfig, backend: Arc<dyn ComputerBackend>) -> Result<Self> {
         std::fs::create_dir_all(&config.data_dir)?;
+        restrict_data_dir(&config.data_dir);
         let lock = take_owner_lock(&config.data_dir)?;
         let timings = crate::operations::local_trace::LocalTrace::open(&config.data_dir)?;
         // A preview outlives no process, so any profile here is a leftover.
@@ -207,7 +239,9 @@ impl Core {
         }
         let gate = Arc::new(ApprovalGate::new(store.clone(), config.approval_timeout));
         let questions = Arc::new(QuestionDesk::new(store.clone(), config.approval_timeout));
-        let terminals = Arc::new(TerminalManager::default());
+        let terminals = Arc::new(TerminalManager::with_blocks(Arc::new(BlockStore::new(
+            store.clone(),
+        ))));
         let setups = Arc::new(SetupManager::new(store.clone())?);
         let http = reqwest::Client::builder()
             .user_agent(concat!("orbyn/", env!("CARGO_PKG_VERSION")))
@@ -249,6 +283,7 @@ impl Core {
             base_url: config.base_url.clone(),
             scm_reads: scm_reads.clone(),
             explorer: explorer.clone(),
+            data_dir: config.data_dir.clone(),
             runs_dir: config.data_dir.join("runs"),
             renders_dir: crate::conversation::renders::renders_root(&config.data_dir),
             setups: setups.clone(),
@@ -262,6 +297,7 @@ impl Core {
             engines.clone(),
             http.clone(),
             config.update_manifest.clone(),
+            !config.engines.lookup_latest,
         ));
         let keybinding_writer = Arc::new(Mutex::new(()));
         let account = Arc::new(crate::account::AccountCenter::new(
@@ -286,11 +322,13 @@ impl Core {
             terminals,
             setups,
             updates,
-            shell: ShellBridge::default(),
+            shell: Arc::new(ShellBridge::default()),
+            attention: Arc::default(),
             presence: crate::host::presence::PresenceBook::default(),
             usage,
             clones: ClonePool::default(),
             previews: PreviewManager::default(),
+            devices: Arc::new(crate::devices::Devices::new()),
             http,
             recovery,
             keybinding_writer,
@@ -323,15 +361,38 @@ impl Core {
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
             crew_starts: tokio::sync::Mutex::new(()),
             crew_bus: crate::crew::Bus::default(),
+            code_runs: crate::tools::mcp::code::CodeRuns::new(),
+            issues: crate::issues::IssueDesk::new(Self::system_credentials()),
+            repos: crate::repos::RepoDesk::default(),
             crew_autopilot: crate::crew::Autopilot::default(),
             crew_merges: tokio::sync::Mutex::new(()),
+            crew_bisect: std::sync::Mutex::new(None),
             crew_backtest: Default::default(),
+            credentials: Self::system_credentials(),
+            env_sets: crate::credentials::EnvSets::system(crate::credentials::default_env_service()),
             _lock: lock,
         };
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared
         // here, before any run can end and claim another.
         core.store.clear_crew_claims()?;
+        // A Codex worker's home outlives no task. Anything left from the last process whose
+        // task is not live is removed before a new worker can use the folder.
+        core.sweep_crew_codex_homes();
         core.crew_backtest_recover();
+        core.code_runs_recover();
+        core.repos_recover();
+        // Settled here, with nothing left in this function that can fail before the held tasks get their results: a failed open after
+        // this commit would leave them with no result and their leases granted, since the next open finds no run to recover.
+        let background_starts = core.store.recover_background_starts()?;
+        if background_starts.runs > 0 {
+            tracing::info!(
+                background_starts = background_starts.runs,
+                "recovered interrupted background starts"
+            );
+        }
+        for (task, why) in background_starts.held {
+            core.settle_held_background_task(task, why);
+        }
         core.apply_login_preference()?;
         core.wire_changes();
         Ok(core)
@@ -373,9 +434,52 @@ impl Core {
         })
     }
 
+    /// Records a refused request to a person-only route. The row names the route pattern (and, for a handler-level refusal, the name of the field) and the caller class, and holds
+    /// no body, header or token. `thread_id` is empty: a refusal belongs to no thread.
+    pub fn record_person_route_refusal(
+        &self,
+        method: &str,
+        route: &str,
+        field: Option<&str>,
+        caller: &str,
+        code: &str,
+    ) -> Result<i64> {
+        let target = match field {
+            Some(field) => format!("{method} {route} [{field}]"),
+            None => format!("{method} {route}"),
+        };
+        self.store.append_audit(&crate::store::AuditRecord {
+            actor: caller.to_owned(),
+            action: "person_route.refused".to_owned(),
+            target,
+            decision: Some(orbyn_contracts::PolicyEffect::Deny),
+            source: "access".to_owned(),
+            thread_id: None,
+            run_id: None,
+            detail: serde_json::json!({
+                "route": route,
+                "method": method,
+                "field": field,
+                "caller": caller,
+                "code": code,
+                "note": "A person-only route was refused. Repeats inside a minute write no new row.",
+            }),
+        })
+    }
+
     /// Creates a thread, with a worktree when asked. `git worktree add` runs repo
     /// hooks, so it needs a trusted folder like an engine does.
     pub async fn create_thread(&self, request: orbyn_contracts::CreateThread) -> Result<Thread> {
+        self.create_thread_in(request, None).await
+    }
+
+    /// `create_thread`, optionally in a folder the caller made and under an id it chose: a multi-repository
+    /// thread's task folder, which is not a repository.
+    pub(crate) async fn create_thread_in(
+        &self,
+        request: orbyn_contracts::CreateThread,
+        task_folder: Option<(String, String)>,
+    ) -> Result<Thread> {
         self.workspace.root()?;
         let project = match self.scratch_request(&request)? {
             Some(scratch) => scratch,
@@ -406,9 +510,15 @@ impl Core {
             }
             None => None,
         };
-        let cwd = worktree
-            .as_ref()
-            .map_or_else(|| project.path.clone(), |worktree| worktree.path.clone());
+        let (thread_id_chosen, cwd) = match task_folder {
+            Some((id, folder)) => (Some(id), folder),
+            None => (
+                None,
+                worktree
+                    .as_ref()
+                    .map_or_else(|| project.path.clone(), |worktree| worktree.path.clone()),
+            ),
+        };
         let project_id = project.id.clone();
         let remembered = self.store.remembered_selection(&request.engine)?;
         let default = self.project_default_selection(&request.engine, &project_id)?;
@@ -449,7 +559,7 @@ impl Core {
             wait_for_exit: !script.asynchronous,
             script: Some(script.clone()),
         });
-        let thread_id = new_id();
+        let thread_id = thread_id_chosen.unwrap_or_else(new_id);
         let registration = setup.as_ref().map(|_| self.setups.registration(&thread_id));
         let thread = self.store.create_registered_thread(
             &thread_id,
@@ -570,10 +680,37 @@ impl Core {
     }
 }
 
+/// Releases ownership even while a child between fork and exec holds a duplicate.
+struct OwnerLock(File);
+
+impl Drop for OwnerLock {
+    fn drop(&mut self) {
+        if let Err(error) = self.0.unlock() {
+            tracing::warn!(%error, "could not release the data-directory owner lock");
+        }
+    }
+}
+
+/// Keeps the data folder owner-only: the account files and `service.json` sit
+/// directly in it. Windows keeps the per-user app-data ACL.
+#[cfg(unix)]
+fn restrict_data_dir(data_dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(meta) = std::fs::metadata(data_dir) else {
+        return;
+    };
+    if meta.permissions().mode() & 0o777 != 0o700 {
+        let _ = std::fs::set_permissions(data_dir, std::fs::Permissions::from_mode(0o700));
+    }
+}
+
+#[cfg(not(unix))]
+fn restrict_data_dir(_: &Path) {}
+
 /// One live owner per data directory: a second process must not fence the first.
-fn take_owner_lock(data_dir: &Path) -> Result<File> {
+fn take_owner_lock(data_dir: &Path) -> Result<OwnerLock> {
     let path = data_dir.join("orbynd.lock");
-    let mut file = File::options()
+    let file = File::options()
         .create(true)
         .truncate(false)
         .read(true)
@@ -593,9 +730,13 @@ fn take_owner_lock(data_dir: &Path) -> Result<File> {
             Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
         }
     }
-    file.set_len(0)?;
-    file.write_all(std::process::id().to_string().as_bytes())?;
-    Ok(file)
+    // Own the unlock before either fallible PID write, including startup failures.
+    let mut owner = OwnerLock(file);
+    owner.0.set_len(0)?;
+    owner
+        .0
+        .write_all(std::process::id().to_string().as_bytes())?;
+    Ok(owner)
 }
 
 /// How long a lock whose owner has died may stay held. A child caught between fork and
@@ -629,10 +770,75 @@ fn clean_stale_run_dirs(runs_dir: &Path) {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn the_data_directory_is_created_private_and_tightened_when_it_exists() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = crate::testing::TempDir::new();
+        let fresh = dir.path().join("fresh");
+        let mut config = CoreConfig::new(fresh.clone(), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        assert_eq!(
+            std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        drop(core);
+
+        let existing = dir.path().join("existing");
+        std::fs::create_dir(&existing).unwrap();
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut config = CoreConfig::new(existing.clone(), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        assert_eq!(
+            std::fs::metadata(&existing).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        drop(core);
+    }
+
+    #[test]
+    fn the_data_directory_has_one_owner_until_its_guard_is_dropped() {
+        let dir = crate::testing::TempDir::new();
+        let owner = take_owner_lock(dir.path()).unwrap();
+        assert!(matches!(
+            take_owner_lock(dir.path()),
+            Err(CoreError::DataDirLocked)
+        ));
+        drop(owner);
+        assert!(take_owner_lock(dir.path()).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn releasing_the_owner_unlocks_a_file_description_inherited_by_a_child() {
+        let dir = crate::testing::TempDir::new();
+        let owner = take_owner_lock(dir.path()).unwrap();
+        // dup shares the open file description, just as fork does before exec.
+        let inherited = owner.0.try_clone().unwrap();
+        assert!(matches!(
+            take_owner_lock(dir.path()),
+            Err(CoreError::DataDirLocked)
+        ));
+        drop(owner);
+        let next = take_owner_lock(dir.path()).unwrap();
+        // Closing the old child's copy must not unlock the new owner's file.
+        drop(inherited);
+        assert!(matches!(
+            take_owner_lock(dir.path()),
+            Err(CoreError::DataDirLocked)
+        ));
+        drop(next);
+        assert!(take_owner_lock(dir.path()).is_ok());
+    }
+
+    #[cfg(unix)]
     #[test]
     fn a_lock_left_by_a_dead_owner_clears_and_a_live_owner_refuses_at_once() {
         let dir = crate::testing::TempDir::new();

@@ -11,7 +11,8 @@ use crate::governance::approvals::Verdict;
 /// How the turn that answered our prompt ended. `stopReason` is required by the
 /// protocol, so a reply without a known one is not proof of success: the run fails
 /// plainly instead of looking finished. A reply with no output at all is
-/// the run pump's to report ("No reply"), never hidden here.
+/// the run pump's to report ("No reply"), never hidden here, unless it also used
+/// no tokens: see `stop_outcome_after`.
 pub(super) fn stop_outcome(reply: &Value) -> EngineOutcome {
     match reply.get("stopReason").and_then(Value::as_str) {
         Some("end_turn") => EngineOutcome::Completed,
@@ -21,6 +22,23 @@ pub(super) fn stop_outcome(reply: &Value) -> EngineOutcome {
         Some("refusal") => stopped("it refused to continue"),
         Some(reason) => stopped(&format!("it gave the reason \"{reason}\"")),
         None => stopped("it did not say why"),
+    }
+}
+
+/// `stop_outcome`, told how many events the agent sent during the turn and which program it
+/// is. An `end_turn` that sent nothing and reports no `usage` never ran: OpenCode 1.15.10
+/// answers that way when a newer OpenCode already migrated its database and its own prompt
+/// handler fails. Asking the person to send again cannot help, so name the program and
+/// version. A turn that ran reports its tokens even when it said nothing, and stays the run
+/// pump's "No reply".
+pub(super) fn stop_outcome_after(reply: &Value, sent: usize, agent: &str) -> EngineOutcome {
+    match stop_outcome(reply) {
+        EngineOutcome::Completed if sent == 0 && reply.get("usage").is_none() => {
+            EngineOutcome::Failed(format!(
+                "{agent} ended the turn without running it. Check its log or update it."
+            ))
+        }
+        outcome => outcome,
     }
 }
 
@@ -48,12 +66,15 @@ pub(super) fn answer_request(
     let cancel = cancel.clone();
     tokio::spawn(async move {
         let (kind, target, summary) = classify(&params);
-        let paths = if kind == ActionKind::FileChange {
-            vec![target.clone()]
+        let paths = gate_paths(&params, kind);
+        let verdict = if kind == ActionKind::FileChange && paths.is_empty() {
+            Verdict::Deny(
+                "Orbyn declined this change: the agent did not say which file it touches."
+                    .to_owned(),
+            )
         } else {
-            Vec::new()
+            ask_paths(&events, kind, target, summary, params.clone(), paths).await
         };
-        let verdict = ask_paths(&events, kind, target, summary, params.clone(), paths).await;
         let outcome = permission_outcome(&params, &verdict, cancel.is_cancelled());
         let _ = rpc.respond(id, json!({ "outcome": outcome })).await;
     });
@@ -87,6 +108,23 @@ pub(super) fn permission_outcome(params: &Value, verdict: &Verdict, cancelled: b
             || json!({ "outcome": "cancelled" }),
             |id| json!({ "outcome": "selected", "optionId": id }),
         )
+}
+
+/// Every file a file-changing request names, so the gate scope-checks all of them.
+/// Empty for any other kind, and for a file change that names none: that one is
+/// declined by the caller, never gated as a path derived from its title.
+pub(super) fn gate_paths(params: &Value, kind: ActionKind) -> Vec<String> {
+    if kind != ActionKind::FileChange {
+        return Vec::new();
+    }
+    params
+        .pointer("/toolCall/locations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|location| location.get("path").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect()
 }
 
 pub(super) fn classify(params: &Value) -> (ActionKind, String, String) {

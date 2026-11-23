@@ -6,7 +6,7 @@ import { layoutForWidth } from "../../lib/useLayout";
 import { navigate, type Route } from "../../product/state/route";
 import { useUi, type ContextTab, type ThemeChoice } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
-import { toggleSidebarDrawer } from "../../product/shell/sidebarDrawer";
+import { togglePhoneSidebar, toggleSidebarDrawer } from "../../product/shell/sidebarDrawer";
 import { useReadingNav } from "../readingNav";
 
 const NEXT_THEME: Record<ThemeChoice, ThemeChoice> = { system: "light", light: "dark", dark: "system" };
@@ -24,6 +24,12 @@ export const openThread = (route: Route) => {
   const id = route.name === "thread" ? route.id : null;
   return id ? useWorkspace.getState().threads[id] : undefined;
 };
+
+/** No project yet: the shell draws its empty page in place of the phone's sidebar home. */
+function noProjects(): boolean {
+  const projects = useWorkspace.getState().projects.data;
+  return projects !== null && projects.length === 0;
+}
 
 function jumpRows() {
   const { threads } = useWorkspace.getState();
@@ -59,11 +65,17 @@ export function runShellCommand(command: string, route: Route): boolean {
     return row !== undefined;
   }
   switch (command) {
-    case "sidebar.toggle":
-      if (layoutForWidth(window.innerWidth) === "small") toggleSidebarDrawer();
+    case "sidebar.toggle": {
+      // Under 900 px the sidebar is never docked: it is the drawer on a small window, and on the phone
+      // a full-screen sheet over any page that is not its home. The key does what the title bar button
+      // does, so a phone can open and close that sheet from the keyboard.
+      const width = layoutForWidth(window.innerWidth);
+      if (width === "phone") togglePhoneSidebar(route.name === "home" && !noProjects());
+      else if (width === "small") toggleSidebarDrawer();
       else if (ui.workspaceLayout === "reading") useReadingNav.getState().toggle();
       else ui.toggleSidebar();
       return true;
+    }
     case "commandPalette.toggle":
       ui.setPalette(ui.palette ? null : "root");
       return true;
@@ -137,6 +149,8 @@ export function runShellCommand(command: string, route: Route): boolean {
       if (ui.panelOpen !== true) return false;
       ui.closePanel();
       return true;
+    case "view.reopenClosed":
+      return ui.reopenLastClosedPanelTab();
     case "threadPanel.toggle":
       ui.setPanelOpen(ui.panelOpen !== true);
       return true;

@@ -113,7 +113,7 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
       </label>
       <label>
         <input type="radio" name="unsynced" checked={discard} onChange={() => setDiscard(true)} />
-        <span><b>Discard them</b><small>They are deleted from this device and never reach your other devices.</small></span>
+        <span><b>Discard them</b><small>They are deleted from this device and are not synced to your other devices.</small></span>
       </label>
     </fieldset>
   );
@@ -143,7 +143,7 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
         busy={signingOut}
         footer={
           <>
-            <Button onClick={onClose} disabled={signingOut}>Cancel</Button>
+            <Button onClick={onClose} disabled={signingOut} data-dialog-focus>Cancel</Button>
             {stuck ? <Button tone="danger" onClick={() => void finish(false)} disabled={busy}>Sign out, keep changes</Button> : null}
           </>
         }
@@ -164,7 +164,7 @@ export function SignOutDialog({ view, reload, onClose, onDone }: { view: Account
       busy={busy}
       footer={
         <>
-          <Button onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button onClick={onClose} disabled={busy} data-dialog-focus>Cancel</Button>
           {waiting > 0 && !offline ? <Button onClick={() => void syncFirst()} disabled={busy}>Sync now, then sign out</Button> : null}
           <Button tone="danger" onClick={run} disabled={busy}>Sign out</Button>
         </>
@@ -218,7 +218,7 @@ export function SignOutEverywhere({ view, devices, onClose, onDone, onThisComput
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose} data-dialog-focus>Cancel</Button>
           <Button tone="danger" onClick={() => setConfirming(true)}>Sign out everywhere</Button>
         </>
       }

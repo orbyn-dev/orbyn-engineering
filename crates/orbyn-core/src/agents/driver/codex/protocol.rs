@@ -12,6 +12,10 @@ use crate::conversation::questions::Answers;
 use crate::error::{CoreError, Result};
 use crate::governance::approvals::Verdict;
 
+/// Why a file change with no known path is declined.
+const UNKNOWN_PATHS: &str =
+    "Orbyn declined this file change because Codex did not say which files it changes.";
+
 /// Answers one server request on its own task so the turn keeps flowing while a
 /// person decides. Anything unrecognized is refused, never ignored.
 pub(super) fn answer_request(
@@ -49,6 +53,16 @@ pub(super) fn answer_request(
         });
         return;
     };
+    if request.has_no_known_path() {
+        tracing::warn!(%method, "declining a file change whose paths are unknown");
+        tokio::spawn(async move {
+            let verdict = Verdict::Deny(UNKNOWN_PATHS.to_owned());
+            let _ = rpc
+                .respond(id, approval_response(&method, &params, &verdict))
+                .await;
+        });
+        return;
+    }
     let events = events.clone();
     tokio::spawn(async move {
         let verdict = ask_paths(
@@ -149,10 +163,62 @@ fn question_response(answers: Option<Answers>) -> Value {
 }
 
 pub(super) struct ClassifiedRequest {
-    kind: ActionKind,
+    pub(super) kind: ActionKind,
     pub(super) target: String,
     pub(super) summary: String,
-    paths: Vec<String>,
+    pub(super) paths: Vec<String>,
+}
+
+impl ClassifiedRequest {
+    /// A file change that names no path at all: an item Orbyn never recorded (a
+    /// sub-agent's) with no grant root. Nothing can say where it writes, so it is
+    /// never scoped to the checkout and no permission mode may accept it.
+    pub(super) fn has_no_known_path(&self) -> bool {
+        self.kind == ActionKind::FileChange && self.paths.is_empty()
+    }
+}
+
+/// Every path a permissions request asks to write: the legacy `write` list and the
+/// `entries` with write access. A write entry this code cannot read counts as the
+/// filesystem root, so it fails the write scope instead of passing as the checkout.
+fn write_roots(params: &Value) -> Vec<String> {
+    let Some(file_system) = params.pointer("/permissions/fileSystem") else {
+        return Vec::new();
+    };
+    let mut roots: Vec<String> = file_system
+        .get("write")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|path| path.as_str().unwrap_or("/").to_owned())
+        .collect();
+    let entries = file_system.get("entries").and_then(Value::as_array);
+    for entry in entries.into_iter().flatten() {
+        if entry.get("access").and_then(Value::as_str) != Some("write") {
+            continue;
+        }
+        roots.push(entry_root(entry.get("path")).unwrap_or_else(|| "/".to_owned()));
+    }
+    roots
+}
+
+fn entry_root(path: Option<&Value>) -> Option<String> {
+    let path = path?;
+    match path.get("type").and_then(Value::as_str)? {
+        "path" => text(path, "path"),
+        "glob_pattern" => text(path, "pattern"),
+        "special" => {
+            let value = path.get("value")?;
+            match value.get("kind").and_then(Value::as_str)? {
+                "root" => Some("/".to_owned()),
+                "tmpdir" | "slash_tmp" => Some("/tmp".to_owned()),
+                "project_roots" => Some(text(value, "subpath").unwrap_or_else(|| ".".to_owned())),
+                "unknown" => text(value, "path"),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn classify_request(
@@ -199,6 +265,19 @@ pub(super) fn classify_request(
             })
         }
         "item/permissions/requestApproval" => {
+            // The reason is the engine's own free text; the write roots are what the grant
+            // widens. They go through the write scope like any file change, and the
+            // remembered answer is keyed on them, not on the reason.
+            let roots = write_roots(params);
+            if !roots.is_empty() {
+                let target = roots.join(" ");
+                return Some(ClassifiedRequest {
+                    kind: ActionKind::FileChange,
+                    summary: format!("Grant write access to {target}"),
+                    target,
+                    paths: roots,
+                });
+            }
             let network = params
                 .pointer("/permissions/network")
                 .is_some_and(|value| !value.is_null());
@@ -351,10 +430,15 @@ pub(super) fn approval_response(method: &str, params: &Value, verdict: &Verdict)
         },
         "item/permissions/requestApproval" => {
             if allowed {
-                json!({
-                    "permissions": params.get("permissions").cloned().unwrap_or(json!({})),
-                    "scope": "turn",
-                })
+                let mut granted = params.get("permissions").cloned().unwrap_or(json!({}));
+                // A request with write roots was approved as a file change, which says
+                // nothing about the network: that part is never granted with it.
+                if !write_roots(params).is_empty()
+                    && let Some(object) = granted.as_object_mut()
+                {
+                    object.remove("network");
+                }
+                json!({ "permissions": granted, "scope": "turn" })
             } else {
                 json!({ "permissions": {}, "scope": "turn" })
             }

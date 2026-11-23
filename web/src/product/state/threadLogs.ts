@@ -8,6 +8,7 @@ import type { ThreadLog } from "../timeline/types";
 import { useWorkspace } from "./workspace";
 import { useUi } from "./ui";
 import { permissionToasts } from "./healthToasts";
+import { applySteerEvents } from "./steerMarks";
 
 export interface LocalPrompt {
   runId: string;
@@ -21,6 +22,8 @@ interface ThreadLogState {
   prompts: Record<string, LocalPrompt[]>;
   /** Bumped when the log says files may have changed. */
   diffVersion: Record<string, number>;
+  /** Bumped when an engine refused a steer, so its text is back in the queue. */
+  queueVersion: Record<string, number>;
   ingest(threadId: string, events: WireThreadEvent[]): void;
   setStream(threadId: string, status: StreamStatus, failure?: ApiFailure): void;
   addPrompt(threadId: string, prompt: LocalPrompt): void;
@@ -40,11 +43,16 @@ const touchesFiles = (event: WireThreadEvent) =>
   event.event.type === "RUN_ERROR" ||
   (event.event.type === "ACTIVITY_SNAPSHOT" && event.event.activityType === "diff");
 
+/** The engine refused a mid-turn message, so the service put it back in the queue. */
+const refusedSteer = (event: WireThreadEvent) =>
+  event.event.type === "CUSTOM" && event.event.name === "steer.failed";
+
 export const useThreadLogs = create<ThreadLogState>((set, get) => ({
   logs: {},
   streams: {},
   prompts: {},
   diffVersion: {},
+  queueVersion: {},
   ingest(threadId, events) {
     const log = get().logs[threadId] ?? emptyLog;
     const next = applyEvents(threadId, log, events);
@@ -56,7 +64,13 @@ export const useThreadLogs = create<ThreadLogState>((set, get) => ({
       diffVersion: fresh.some(touchesFiles)
         ? { ...state.diffVersion, [threadId]: (state.diffVersion[threadId] ?? 0) + 1 }
         : state.diffVersion,
+      // A first replay needs nothing: the queue the screen already read holds the requeued text.
+      queueVersion:
+        previousSeq > 0 && fresh.some(refusedSteer)
+          ? { ...state.queueVersion, [threadId]: (state.queueVersion[threadId] ?? 0) + 1 }
+          : state.queueVersion,
     }));
+    applySteerEvents(threadId, fresh);
     // Only news that arrives while the thread is open is announced, not a first replay.
     if (previousSeq > 0) for (const text of permissionToasts(fresh)) useUi.getState().pushToast(text);
     if (fresh.some(refreshesThread)) {

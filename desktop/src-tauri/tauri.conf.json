@@ -40,11 +40,13 @@
     ],
     "externalBin": [
       "binaries/orbynd",
-      "binaries/orbyn"
+      "binaries/orbyn",
+      "binaries/orbyn-engine-host"
     ],
     "resources": {
       "../../build/ui": "ui",
-      "../../build/library": "library"
+      "../../build/library": "library",
+      "../../build/sdk": "sdk"
     },
     "icon": [
       "icons/32x32.png",
@@ -55,7 +57,8 @@
     ],
     "macOS": {
       "minimumSystemVersion": "13.0",
-      "hardenedRuntime": true
+      "hardenedRuntime": true,
+      "entitlements": "../../engine-host/entitlements.plist"
     },
     "windows": {
       "webviewInstallMode": {
@@ -70,7 +73,8 @@
   "plugins": {
     "updater": {
       "pubkey": "",
-      "endpoints": []
+      "endpoints": [],
+      "requireSignedVersion": true
     },
     "deep-link": {
       "desktop": {

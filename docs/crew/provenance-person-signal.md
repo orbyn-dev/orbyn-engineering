@@ -1,6 +1,6 @@
 # Who wrote a line: a positive person signal for merge provenance (4l)
 
-Design note for issue #711. Status: built (slice 4l, migration 55), except the person path that records `crew_person_commits` rows, which does not exist yet: until one does, no line is `person`, and coverage stays merge-level.
+Design note for issue #711. Status: built (slice 4l, migration 55), including the person path that records `crew_person_commits` rows: the app records the README "Initial commit" it makes at project creation. A commit the person makes outside the app is still not listed, so manual work reads `unknown` (counted as agent) until the design's attestation (item 5) is built.
 
 ## The problem
 
@@ -19,7 +19,7 @@ Mark agent commits positively, mark person commits positively only where the app
 
    Matching uses only the exact `worker+<task id>@orbyn.invalid` address, where the id has the app's id format and exists in the crew tasks table. The `<engine>` and `<model>` values in the display name are cleaned (anything outside `[A-Za-z0-9._:/-]` becomes `_`, at most 64 characters) and never used for matching. Codex workers cannot run today (`CODEX_WORKERS_ALLOWED = false`) and workers run on macOS only; the Codex part waits for that.
 2. **A trailer as a second mark, best effort.** The worker brief asks for `Orbyn-Task: <task id>` in commit messages. The app cannot enforce it (the person owns the repository's hooks), so the identity is the mark and the trailer only corroborates it.
-3. **Person commits only for commits the app makes on a person action. Future: no such path exists today.** The only commit made on a person's action is the optional README "Initial commit" at project creation (`project/projects.rs`), which is not recorded; every other production commit uses an app identity (`Orbyn Crew`, and `Orbyn <orbyn@localhost>` for workspace provisioning and snapshots). When a path exists, the app records the full commit id in a local table (`crew_person_commits`: project, commit, time, action) in the same transaction as the audit row, and `person_commits` is read from that table. A commit the person makes outside the app is not listed. A commit is listed only if it contains no worker-written change: workers write into the person's own checkout, so while any worker run has touched the staged files since the last commit, the commit is refused or recorded as `unknown`.
+3. **Person commits only for commits the app makes on a person action. Built for the one such commit.** The only commit made on a person's action is the optional README "Initial commit" at project creation (`project/projects.rs`), which the app now records as `project.readme`; every other production commit uses an app identity (`Orbyn Crew`, and `Orbyn <orbyn@localhost>` for workspace provisioning and snapshots). The app records the full commit id in a local table (`crew_person_commits`: project, commit, time, action) in the same transaction as the audit row, and `person_commits` is read from that table. A commit the person makes outside the app is not listed. A commit is listed only if it contains no worker-written change: workers write into the person's own checkout, so while any worker run has touched the staged files since the last commit, the commit is refused or recorded as `unknown`.
 4. **Three values, two counts.** A line is `agent` (the author or the committer is a worker address, or the task trailer matches), `person` (commit id is in the table) or `unknown` (anything else: the person's manual commits, history before this change, bots). Coverage counts `unknown` as agent: it is never credited as human-written. The service returns all three values; the coverage screens fold `unknown` into the agent count, labelled "Agent or unconfirmed". This reverses today's rule that author emails are never read (`provenance.rs`): reading author and committer emails can only split `agent` from `unknown` and can never produce `person`.
 5. **A person may attest.** Later, a person-key route can mark a merge "I wrote this" (audit first, `seen`). It adds those commit ids to the table. Nothing is inferred from an email match.
 
@@ -55,3 +55,36 @@ the commit made by the engine's own shell tool. Read back with `git log --format
 | Codex (0.166.0) | Not probed: `CODEX_WORKERS_ALLOWED` is false, so no Crew worker runs on it, and this change does not loosen that. The per-run environment is in the driver and is unit-tested only as far as its construction. |
 
 Engines where a probe shows the environment does not win stay `unknown`. Re-run the Claude probe where the CLI is signed in before relying on its labels.
+
+## As built: worker identity, trailer and the person table
+
+Slice 4l is built (migration 55); `docs/crew.md`, "As built (slice 4l, person signal, migration 55)", records the merge hook's side.
+No route was added.
+
+- **Worker identity.** `RunSpec.crew_task` (`crates/orbyn-core/src/agents/driver/mod.rs:117`) is set when the run's thread works a
+  Crew task (`conversation/runs/turn.rs:137-215`), and the Claude, OpenCode (ACP) and Codex drivers append the four
+  `GIT_AUTHOR_*` / `GIT_COMMITTER_*` variables to that process's environment after `for_engine` (`agents/driver/pipes.rs:142-146`;
+  `claude/mod.rs:449`, `acp/mod.rs:218`, `codex/mod.rs:384`, all through `agents/driver/worker_identity.rs`). A warm process
+  started ahead of the turn is not reused for a worker, because it missed the identity (`turn.rs:141-146`). Only the exact
+  `worker+<task id>@orbyn.invalid` address of an app-format id naming an existing crew task matches; case, a look-alike or a
+  `.mailmap` cannot make a line a person's (`worker_identity.rs`, `crew/capacity/provenance.rs:494-570`). Codex workers still
+  cannot run (`host/confine/mod.rs:41`), so its per-run environment is unit-tested only.
+- **Trailer.** The worker brief asks for `Orbyn-Task: <task id>` in the commit message (`crew/start.rs:738`). Provenance reads it and
+  marks a line `agent` only when the named task exists (`provenance.rs:445-492`); a trailer can never make a line a person's.
+- **Three values.** `Author::Agent` / `Person` / `Unknown` (`provenance.rs:41-59`): `agent` on a worker author or committer, or a
+  trailer naming an existing task; `person` only when the blamed commit is in the project's `crew_person_commits`; otherwise
+  `unknown` (a manual commit, history before the identities, a bot, the app's own `crew@orbyn.invalid` merge, so a conflict
+  resolution is `unknown`). Migration 55 rebuilds `crew_hunks` so `author_kind` allows `unknown` and copies old rows as they were.
+  Coverage counts `unknown` with the agent's lines (`crew/capacity/coverage.rs:109-111`); the wire shape did not change, so
+  `agent_lines` is labelled "Agent or unconfirmed" (`crates/orbyn-contracts/src/crew_capacity.rs:166`,
+  `web/src/features/crew/capacity/live/LiveCoverage.tsx`), not the three fields the design's item 4 described.
+- **The table, and the person path.** `crew_person_commits` (project, full commit id, time, action) is written only
+  by `Store::record_person_commit`, in the same transaction as its `crew.person_commit` audit row
+  (`store/crew_person_commits.rs:31-71`); the merge hook passes the project's list through `crew_person_commits_for_task`
+  (`crew/capacity/hooks.rs:88-116`). Its one caller is project creation: `Core::new_project` records the README
+  "Initial commit" it just made as `project.readme` (`project/projects.rs`), after the project row exists, and a record
+  that fails is logged and never fails project creation (the commit then reads `unknown`, which counts as agent). That
+  commit holds nothing but the README the call itself wrote, so it cannot carry a worker-written change; a path that
+  stages other work must refuse or record `unknown` when a worker run has touched it since the last commit. A person's
+  manual commit is still not listed, no route records one, and the person attestation (item 5) is not built: nothing
+  infers `person` from an email.

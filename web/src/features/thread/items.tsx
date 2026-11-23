@@ -4,7 +4,9 @@ import { MessageActions } from "./MessageActions";
 import { failureWantsResend } from "./runFailures";
 import {
   Brain,
+  Check,
   ChevronRight,
+  Loader2,
   Clock,
   FileDiff as FileDiffIcon,
   OctagonAlert,
@@ -37,7 +39,27 @@ import { workSegments } from "./toolCalls";
 import { PlanRow } from "./trail/PlanRow";
 import { TrailRun, trailKeys } from "./trail/ToolTrail";
 import { useThreadOfTimeline } from "./timelineThread";
+import { ClaudeHostActions, useHostFor } from "../enginehost";
+import { isClaudeEngine, useClaudeEnginePath } from "../../product/engines/claudePath";
 import type { ActivityItem, ApprovalItem, DiffSummaryItem, MessageItem, NoticeItem, ReasoningItem, StoppedItem, StoppedTask, ToolItem } from "../../product/timeline/types";
+
+const STEER_MARKS = {
+  pending: { text: "Sending…", icon: <Loader2 size={13} className="spin" aria-hidden /> },
+  delivered: { text: "Delivered", icon: <Check size={13} className="steer-ok" aria-hidden /> },
+  queued: { text: "Queued for the next turn", icon: <Clock size={13} aria-hidden /> },
+  failed: { text: "Not delivered · moved to the queue", icon: <OctagonAlert size={13} aria-hidden /> },
+} as const;
+
+/** Where a mid-turn message went, under its bubble. */
+function SteerMark({ state }: { state: NonNullable<MessageItem["steer"]> }) {
+  const mark = STEER_MARKS[state];
+  return (
+    <span className={`steer-mark${state === "failed" ? " failed" : ""}`} role="status" data-state={state}>
+      {mark.icon}
+      {mark.text}
+    </span>
+  );
+}
 
 function Message({ item, live }: { item: MessageItem; live: boolean }) {
   if (item.role === "user") {
@@ -46,6 +68,7 @@ function Message({ item, live }: { item: MessageItem; live: boolean }) {
         <span className="sr-only">You said:</span>
         <p className="msg-bubble">{item.text}</p>
         <SentFiles attachments={item.attachments} text={item.text} />
+        {item.steer ? <SteerMark state={item.steer} /> : null}
         <MessageActions text={item.text} runId={item.runId} role="user" />
       </div>
     );
@@ -167,12 +190,35 @@ function Activity({ item }: { item: ActivityItem }) {
   );
 }
 
+/** The two run failures a Claude host owns: one that could not start, and one the host cut mid-run. */
+const CLAUDE_HOST_FAILURES = new Set(["engine_unavailable", "engine_host_stopped"]);
+
+/** The Claude host's two ways out, with the failed run itself and without sending anything. */
+function ClaudeHostFailureActions({ threadId, code }: { threadId: string; code: string | null }) {
+  const thread = useWorkspace((state) => state.threads[threadId]);
+  const engine = useWorkspace((state) => (thread ? state.engines.data?.find((entry) => entry.id === thread.engine) : undefined));
+  const { path } = useClaudeEnginePath();
+  const hostFor = engine?.instance_of ?? thread?.engine ?? null;
+  const host = useHostFor(hostFor);
+  const [error, setError] = useState<string | null>(null);
+  if (!thread || !isClaudeEngine(thread.engine, engine?.instance_of) || path !== "sdk" || !CLAUDE_HOST_FAILURES.has(code ?? "")) return null;
+  return (
+    <div className="notice-actions">
+      <ClaudeHostActions host={host} hostId={host?.id ?? hostFor} onError={setError} showUpdate={false} alwaysRetry />
+      {error ? <span className="field-error" role="alert">{error}</span> : null}
+    </div>
+  );
+}
+
 function Notice({ item }: { item: NoticeItem }) {
   const threadId = useThreadOfTimeline();
   const timestampFormat = useUi((state) => state.timestampFormat);
+  const thread = useWorkspace((state) => (threadId ? state.threads[threadId] : undefined));
+  const engine = useWorkspace((state) => (thread ? state.engines.data?.find((entry) => entry.id === thread.engine) : undefined));
   const preparation = item.code === "workspace_preparation_failed" || item.code === "workspace_preparation_unavailable";
   // A failure with nothing to retry sends the message again instead.
   const resendable = failureWantsResend(item.text);
+  const hostFailure = !!threadId && CLAUDE_HOST_FAILURES.has(item.code ?? "") && !!thread && isClaudeEngine(thread.engine, engine?.instance_of);
   if (item.code === "run_stopped") {
     return (
       <div className="stop-mark" data-minimap={item.key}>
@@ -195,12 +241,13 @@ function Notice({ item }: { item: NoticeItem }) {
       <div>
         <strong>Run failed</strong>
         <p>{item.text}</p>
-        {item.code && !preparation && !resendable ? <Pill>{item.code}</Pill> : null}
+        {item.code && !preparation && !resendable && !hostFailure ? <Pill>{item.code}</Pill> : null}
         {resendable && threadId ? (
           <div className="notice-actions">
             <ResendButton threadId={threadId} seq={item.seq} />
           </div>
         ) : null}
+        {hostFailure && threadId ? <ClaudeHostFailureActions threadId={threadId} code={item.code} /> : null}
         {threadId && item.runId && item.code === "workspace_preparation_failed"
           ? <PreparationRetryButton threadId={threadId} runId={item.runId} /> : null}
       </div>
@@ -208,12 +255,16 @@ function Notice({ item }: { item: NoticeItem }) {
   );
 }
 
+/** The kind of a stopped task: a Claude or Codex subagent, a shell, or any other background task. */
+export function stoppedKind(taskType: string): "Subagent" | "Shell" | "Background task" {
+  if (taskType === "local_agent" || taskType === "codex_subagent") return "Subagent";
+  return taskType === "local_bash" ? "Shell" : "Background task";
+}
+
 /** One task the engine stopped when its run ended: its kind, and its own words for it. */
 function StoppedRow({ task }: { task: StoppedTask }) {
-  const subagent = task.taskType === "local_agent";
-  const shell = task.taskType === "local_bash";
-  const Icon = subagent ? Users : shell ? Terminal : Clock;
-  const kind = subagent ? "Subagent" : shell ? "Shell" : "Background task";
+  const kind = stoppedKind(task.taskType);
+  const Icon = kind === "Subagent" ? Users : kind === "Shell" ? Terminal : Clock;
   return (
     <div className="stopped-row">
       <Icon size={14} aria-hidden />

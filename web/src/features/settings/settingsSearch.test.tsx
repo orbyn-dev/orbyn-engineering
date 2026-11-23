@@ -13,11 +13,18 @@ it("finds a specific label regardless of word order and excludes desktop control
   expect(searchSettings("command line tool", false)).toEqual([]);
   expect(searchSettings("command line tool", true)).toHaveLength(1);
   expect(searchSettings("  ", true)).toEqual([]);
+  expect(searchSettings("browser profiles", false).map((item) => item.section)).toEqual(["browser"]);
   expect(searchSettings("Accessibility", true, new Set(["cli"]))).toEqual([]);
   expect(searchSettings("Accessibility", true, new Set(["accessibility"]))).toHaveLength(1);
   expect(searchSettings("App updates", true, new Set())).toEqual([]);
   expect(searchSettings("Worktree location", true)).toEqual([]);
   expect(new Set(SETTINGS.map((item) => item.id)).size).toBe(SETTINGS.length);
+});
+
+it("finds the macOS-only quit confirmation on macOS and nowhere else", () => {
+  expect(searchSettings("quit confirmation", true, undefined, true).map((item) => item.id)).toEqual(["general-quit-confirmation"]);
+  expect(searchSettings("quit confirmation", true, undefined, false)).toEqual([]);
+  expect(searchSettings("quit confirmation", true)).toEqual([]);
 });
 
 it("navigates from an exact result to an asynchronously loaded row", async () => {

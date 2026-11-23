@@ -103,7 +103,9 @@ impl Served {
             "name": name,
             "template": "dependency_bump",
             "trigger": { "kind": "dependency_update", "ecosystem": "cargo" },
-            "budget": { "turns": 8, "minutes": 20 }
+            "budget": { "turns": 8, "minutes": 20 },
+            "daily": { "runs": 2, "turns": 20 },
+            "utc_offset_minutes": 600
         })
     }
 }
@@ -156,6 +158,7 @@ async fn a_crew_lives_its_whole_life_over_http() {
     assert_eq!(renamed["name"], "Bump deps");
     assert_eq!(renamed["trigger"]["every_hours"], 24);
     assert_eq!(renamed["budget"], crew["budget"]);
+    assert_eq!(renamed["daily"], crew["daily"]);
 
     let (_, on) = app
         .call("POST", &format!("/api/crew/background/{id}/enable"), None)
@@ -242,6 +245,10 @@ async fn a_bad_request_is_refused_and_stores_nothing() {
     let id = crew["id"].as_str().unwrap();
     let mut over = app.body("Over");
     over["budget"] = json!({ "turns": 1001, "minutes": 5 });
+    let mut over_daily = app.body("Over daily");
+    over_daily["daily"] = json!({ "runs": 1, "turns": 10_001 });
+    let mut far_clock = app.body("Far clock");
+    far_clock["utc_offset_minutes"] = json!(841);
     let mut unknown_template = app.body("Template");
     unknown_template["template"] = json!("deploy");
     let mut unknown_trigger = app.body("Trigger");
@@ -254,6 +261,8 @@ async fn a_bad_request_is_refused_and_stores_nothing() {
     no_project["project_id"] = json!("missing");
     for (body, want) in [
         (over, 400),
+        (over_daily, 400),
+        (far_clock, 400),
         (unknown_template, 400),
         (unknown_trigger, 400),
         (extra, 400),
@@ -370,7 +379,7 @@ async fn run_now_refuses_what_the_core_refuses_with_the_cores_reason() {
     );
     assert_eq!(
         body["message"],
-        "A dependency update crew cannot be started yet: nothing in Orbyn can start it."
+        "A dependency update crew cannot run yet: Orbyn has nothing that can start it."
     );
 
     // A crew that is not there is refused before anything is read.

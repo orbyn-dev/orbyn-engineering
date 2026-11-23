@@ -1,11 +1,13 @@
 // Assembles the Needs you inbox from the routes that exist: held commands, stops, the after-merge Review queue and the
 // background runs waiting for review. Pure: the same reads give the same rows, in the same order.
+import type { AutopilotAreaRow } from "../../../generated/AutopilotAreaRow";
 import type { AutopilotLogRow } from "../../../generated/AutopilotLogRow";
 import type { AutopilotSecondEngineNotice } from "../../../generated/AutopilotSecondEngineNotice";
 import type { AutopilotReviewItem } from "../../../generated/AutopilotReviewItem";
 import type { BackgroundCrew } from "../../../generated/BackgroundCrew";
 import type { BackgroundRun } from "../../../generated/BackgroundRun";
 import type { FlowCard } from "../../../generated/FlowCard";
+import { modeName, plural } from "../autopilot/approvals/areas";
 import { stopOf } from "../autopilot/approvals/ledger";
 import type { ApprovalRow, Risk } from "../autopilot/approvals/model";
 import { KIND_FILTER, NEEDS_KINDS, type NeedsItem, type NeedsKind, type NeedsView } from "./model";
@@ -128,38 +130,97 @@ export function mainItems(queue: AutopilotReviewItem[]): NeedsItem[] {
     }));
 }
 
+/**
+ * A daily-cap stop, told apart from the lifetime budget stop by the core's own sentence: only the daily stops (the cap, or a daily
+ * budget that could not be read) say "daily budget". The read has no flag for it, so the sentence is the evidence.
+ */
+const DAILY_STOP = /daily budget/i;
+/** The reset time the core's sentence ends with ("The budget resets at 2026-11-20T00:00:00+11:00."), as read; null when the sentence has none. */
+const RESET_AT = /resets at (\S+?)\.?$/;
+
 /** Background runs that wait for the person's review, with the crew each belongs to. */
 export function backgroundItems(runs: { crew: BackgroundCrew; runs: BackgroundRun[] }[]): NeedsItem[] {
   return runs.flatMap(({ crew, runs: list }) =>
     list
       .filter((run) => run.review_waiting)
-      .map((run) => ({
-        id: `background:${run.id}`,
-        kind: "background" as const,
-        // A run that spent its budget is paused; any other run waiting on the person needs approval.
-        title: run.stop_reason === "budget" ? "Paused: budget reached" : "Needs approval",
-        risk: null,
-        undo: null,
-        from: `Background crew · ${crew.name}`,
-        cost: run.stop_reason === "budget" ? "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget." : (run.review_reason?.trim() || "A command is held for your approval before the run can go on."),
-        since: time(run.ended_at ?? run.updated_at),
-        actions: [{ key: "open" as const, label: "Open", primary: true }],
-        ref: crew.id,
-      })),
+      .map((run) => {
+        const reason = run.review_reason?.trim() ?? "";
+        const daily = run.stop_reason === "budget" && DAILY_STOP.test(reason);
+        const reset = daily ? RESET_AT.exec(reason)?.[1] : undefined;
+        return {
+          id: `background:${run.id}`,
+          kind: "background" as const,
+          // A run that spent its budget is paused; any other run waiting on the person needs approval.
+          title: run.stop_reason === "budget" ? "Paused: budget reached" : "Needs approval",
+          risk: null,
+          undo: null,
+          from: `Background crew · ${crew.name}`,
+          // A daily stop shows the core's sentence as read; the lifetime budget stop keeps the line for a budget that cannot be raised.
+          cost: daily
+            ? reason
+            : run.stop_reason === "budget"
+              ? "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget."
+              : (reason || "A command is held for your approval before the run can go on."),
+          // The next step of a daily stop is to wait; the time is the one the sentence carries, never one made up here.
+          hint: daily
+            ? reset
+              ? `This run stays stopped. New runs can start after the daily reset: ${reset}. The budget is fixed at creation.`
+              : "No reset time: the daily budget could not be read or updated, so this is not a wait for the reset. Open the run to review it."
+            : undefined,
+          since: time(run.ended_at ?? run.updated_at),
+          actions: [{ key: "open" as const, label: "Open", primary: true }],
+          ref: crew.id,
+        };
+      }),
   );
 }
 
 const RISK_RANK: Record<Risk, number> = { high: 0, medium: 1, low: 2 };
 
+/** The kinds that ask nothing of the person (needsyou-demoted: a demotion blocks nothing), ranked below every waiting item. */
+const BLOCKS_NOTHING: ReadonlySet<NeedsKind> = new Set(["autonomy"]);
+
 /**
- * The inbox's order: risk first, for the items whose source states one, then the items without a stated risk; then the oldest
- * first (docs/crew.md), an unknown time last, then the id so a tie never moves. Reversibility and the cost of waiting are
- * ranked by no source today.
+ * An area the circuit breaker demoted, as the Needs you inbox's one line (Crew Designs: needsyou-demoted). The route's record is the
+ * trip's own numbers, so the line names them. Only a demotion under a Full ceiling is a row: a recovering or criteria-met area is not a
+ * new tell (the areas page keeps showing it, and its served record is the recovery, not the trip), a ceiling below Full means the
+ * demotion changed nothing, and the inbox never re-tells an area that follows its ceiling. Only a demotion to On is a row, since the
+ * line says a High risk diff waits while Low and Medium still merge; an area the breaker took to Off says something else.
+ */
+export function autonomyItems(rows: AutopilotAreaRow[], project: string): NeedsItem[] {
+  return rows
+    .filter((row) => row.state === "demoted" && row.ceiling === "full" && row.now === "on")
+    .map((row) => ({
+      // The repository and the trip time are part of the id, like a stop's: a new trip after a dismissal is a new row, and another
+      // repository's area of the same name is another row.
+      id: `autonomy:${project}:${row.area_key}:${row.since ?? ""}`,
+      kind: "autonomy" as const,
+      title: `${row.area} moved from ${modeName(row.ceiling)} to ${modeName(row.now)}: ${plural(row.record.reverts, "revert")} in ${row.record.window_days} days. Review or override.`,
+      risk: null,
+      undo: null,
+      from: `Autopilot by area · circuit breaker · ${plural(row.record.merges, "merge")} in the window`,
+      cost: `Nothing is blocked. A High risk diff in ${row.area} now waits for you at the merge gate; Low and Medium still merge by themselves. Dismiss is remembered on this browser.`,
+      since: row.since ? row.since * 1000 : null,
+      actions: [
+        { key: "review" as const, label: "Review", primary: true },
+        { key: "override" as const, label: "Override…" },
+        { key: "dismiss" as const, label: "Dismiss" },
+      ],
+      ref: row.area_key,
+    }));
+}
+
+/**
+ * The inbox's order: risk first, for the items whose source states one; then, within one risk tier, the kinds that block
+ * nothing (a demotion) below the kinds that wait on the person (needsyou-demoted); then the oldest first (docs/crew.md), an
+ * unknown time last, then the id so a tie never moves. Reversibility and the cost of waiting are ranked by no source today.
  */
 export function rank(items: NeedsItem[]): NeedsItem[] {
   return [...items].sort((a, b) => {
     const risk = (a.risk ? RISK_RANK[a.risk] : 3) - (b.risk ? RISK_RANK[b.risk] : 3);
     if (risk) return risk;
+    const waiting = Number(BLOCKS_NOTHING.has(a.kind)) - Number(BLOCKS_NOTHING.has(b.kind));
+    if (waiting) return waiting;
     if (a.since !== b.since) return (a.since ?? Number.POSITIVE_INFINITY) - (b.since ?? Number.POSITIVE_INFINITY);
     return a.id.localeCompare(b.id);
   });

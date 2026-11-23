@@ -17,7 +17,7 @@ use crate::crew::backtest::{
     Escape, FixtureEscapes, ReplayedFinding, STOPPED_BY_PERSON, ScriptedRunner,
 };
 use crate::error::CoreError;
-use crate::store::{BacktestLaneRow, BacktestState, LaneState};
+use crate::store::{BacktestLaneRow, BacktestState, LaneState, NewLane};
 use crate::testing::TempDir;
 use crate::util::unix_now;
 
@@ -79,6 +79,7 @@ async fn with_the_flag_off_nothing_exists() {
     let missing = |error: CoreError| assert!(matches!(error, CoreError::NotFound(_)), "{error}");
     missing(w.core.crew_backtest_estimate(&project, &[]).unwrap_err());
     missing(w.core.crew_backtest_report("run-1").unwrap_err());
+    missing(w.core.crew_backtest_start_view(&project).unwrap_err());
     missing(w.core.crew_backtest_stop("run-1").unwrap_err());
     missing(
         w.core
@@ -211,6 +212,117 @@ async fn a_run_reports_not_measured_and_never_a_zero_and_keeps_each_engines_budg
     }
     // Reading again gives the same.
     assert_eq!(core.crew_backtest_report(&started.id).unwrap(), run);
+}
+
+#[tokio::test]
+async fn a_start_view_of_a_project_that_never_ran_a_backtest_has_no_lane_and_no_budget() {
+    let rig = rig().await;
+    let view = rig.w.core.crew_backtest_start_view(&rig.project).unwrap();
+    assert_eq!(view.project, rig.project);
+    // Nothing is defaulted for a first run: no lane, no engine and no budget is invented.
+    assert_eq!(view.run, None);
+    assert!(matches!(
+        rig.w.core.crew_backtest_start_view("nope"),
+        Err(CoreError::NotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn a_start_view_reads_back_the_last_runs_lanes_their_kinds_and_its_budgets() {
+    let mut rig = rig().await;
+    seed(&mut rig, 1).await;
+    let core = rig.w.core.clone();
+    core.crew_backtest_use(Arc::new(ScriptedRunner::default()), None);
+    let mut check = lane("chk-tests", "b");
+    check.kind = wire::BacktestLaneKind::Check;
+    let started = core
+        .crew_backtest_start(&start_input(
+            &rig.project,
+            vec![lane("security", "a"), check],
+            &[("a", 100), ("b", 40)],
+        ))
+        .await
+        .unwrap();
+    core.crew_backtest_join().await;
+
+    let view = core.crew_backtest_start_view(&rig.project).unwrap();
+    let run = view.run.as_ref().expect("the run it just had");
+    assert_eq!(run.id, started.id);
+    assert_eq!(run.state, wire::BacktestState::Finished);
+    // Lane then engine order, each with the kind it was started as.
+    let lanes: Vec<(&str, &str, &str, Option<wire::BacktestLaneKind>)> = run
+        .lanes
+        .iter()
+        .map(|l| (l.lane.as_str(), l.engine.as_str(), l.model.as_str(), l.kind))
+        .collect();
+    assert_eq!(
+        lanes,
+        [
+            (
+                "chk-tests",
+                "b",
+                "b-model",
+                Some(wire::BacktestLaneKind::Check)
+            ),
+            (
+                "security",
+                "a",
+                "a-model",
+                Some(wire::BacktestLaneKind::Review)
+            ),
+        ]
+    );
+    // One budget per engine, each its own and never summed, and no total anywhere.
+    let budgets: Vec<(&str, u64)> = run
+        .budgets
+        .iter()
+        .map(|b| (b.engine.as_str(), b.tokens))
+        .collect();
+    assert_eq!(budgets, [("a", 100), ("b", 40)]);
+    let text = serde_json::to_string(&view).unwrap().to_lowercase();
+    for word in ["total", "cost", "usd", "price", "money"] {
+        assert!(!text.contains(word), "the view holds {word}: {text}");
+    }
+    // The kind it serves is the one the report serves, so both agree.
+    for served in &core.crew_backtest_report(&started.id).unwrap().lanes {
+        let from_view = run
+            .lanes
+            .iter()
+            .find(|l| l.lane == served.lane && l.engine == served.engine)
+            .unwrap();
+        assert_eq!(from_view.kind, served.kind, "{}", served.lane);
+    }
+}
+
+#[tokio::test]
+async fn a_start_view_serves_the_projects_newest_run() {
+    let mut rig = rig().await;
+    seed(&mut rig, 1).await;
+    let core = rig.w.core.clone();
+    core.crew_backtest_use(Arc::new(ScriptedRunner::default()), None);
+    core.crew_backtest_start(&start_input(
+        &rig.project,
+        vec![lane("security", "a")],
+        &[("a", 10)],
+    ))
+    .await
+    .unwrap();
+    core.crew_backtest_join().await;
+    let second = core
+        .crew_backtest_start(&start_input(
+            &rig.project,
+            vec![lane("correctness", "b")],
+            &[("b", 20)],
+        ))
+        .await
+        .unwrap();
+    core.crew_backtest_join().await;
+    let view = core.crew_backtest_start_view(&rig.project).unwrap();
+    let run = view.run.expect("a run");
+    assert_eq!(run.id, second.id, "the project's newest run");
+    assert_eq!(run.lanes.len(), 1);
+    assert_eq!(run.lanes[0].lane, "correctness");
+    assert_eq!(run.lanes[0].kind, Some(wire::BacktestLaneKind::Review));
 }
 
 #[tokio::test]
@@ -356,7 +468,12 @@ fn config(dir: &TempDir) -> CoreConfig {
 async fn a_run_left_running_by_a_crash_becomes_interrupted_when_the_core_opens() {
     let dir = TempDir::new();
     let budgets: BTreeMap<String, u64> = [("a".to_owned(), 100)].into();
-    let lanes = vec![("security".to_owned(), "a".to_owned(), "m".to_owned())];
+    let lanes = vec![NewLane {
+        lane: "security".to_owned(),
+        engine: "a".to_owned(),
+        model: "m".to_owned(),
+        kind: crate::crew::backtest::LaneKind::Review,
+    }];
     {
         let core = Core::open(config(&dir)).unwrap();
         let project = crate::crew::fixtures::add_project(&core, "/project");
@@ -376,6 +493,7 @@ async fn a_run_left_running_by_a_crash_becomes_interrupted_when_the_core_opens()
             lane: "security".into(),
             engine: "a".into(),
             model: "m".into(),
+            kind: Some(crate::crew::backtest::LaneKind::Review),
             tokens_used: 40,
             state: LaneState::Running,
             escapes_n: None,

@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use orbyn_contracts::{
     BranchInfo, CreateBranch, GitAction, GitActionResult, GitPhase, PullRequest, PullRequestDraft,
-    Thread,
+    Thread, VcsStatus,
 };
 use serde_json::{Value, json};
 
@@ -73,7 +73,7 @@ async fn valid_branch(cwd: &Path, name: &str) -> Result<()> {
 
 impl Core {
     fn scm_thread(&self, id: &str) -> Result<Thread> {
-        let thread = self.store.thread(id)?;
+        let thread = self.scoped_thread(id)?;
         if !self.store.project(&thread.project_id)?.trusted {
             return Err(CoreError::FolderUntrusted);
         }
@@ -124,7 +124,7 @@ impl Core {
             ));
         }
         let cwd = Path::new(&thread.cwd);
-        prepared.check(cwd).await?;
+        prepared.check(cwd, Some(&self.config.data_dir)).await?;
         let action = &prepared.action;
         let mut phases = Vec::new();
         if let Some(message) = &action.commit_message {
@@ -135,7 +135,7 @@ impl Core {
             let outcome = async {
                 self.scm_idle(id)?;
                 git_user(cwd, &["add", "-A"], FORGE_TIMEOUT).await?;
-                prepared.check(cwd).await?;
+                prepared.check(cwd, Some(&self.config.data_dir)).await?;
                 self.scm_idle(id)?;
                 git_user(cwd, &["commit", "-q", "-m", message], FORGE_TIMEOUT).await?;
                 Ok(None)
@@ -212,7 +212,7 @@ impl Core {
                     checks_state: None,
                     checks: None,
                 });
-                self.store.link_pull(id, &pull)?;
+                self.store.link_pull(id, &self.pull_repo(id)?, &pull)?;
             }
             None => tracing::warn!("the forge returned no pull request number"),
         }
@@ -284,6 +284,101 @@ impl Core {
         git_user(cwd, &["switch", "-q", name], FORGE_TIMEOUT)
             .await
             .map(|_| ())
+    }
+
+    /// The checked-out state of the thread's checkout, read now rather than from a
+    /// kept answer. The explorer's kept worktree list and letters for the project are
+    /// dropped, so the next explorer read is Git's too.
+    pub async fn refresh_vcs_status(&self, id: &str) -> Result<VcsStatus> {
+        let thread = self.scm_git_thread(id)?;
+        let project = self.store.project(&thread.project_id)?;
+        self.explorer.forget(&project.id);
+        let cwd = Path::new(&thread.cwd);
+        let branch = text(&git(cwd, &["branch", "--show-current"]).await?);
+        let detached = branch.is_empty();
+        let head = text(&git(cwd, &["rev-parse", "--short", "HEAD"]).await?);
+        let upstream = git(
+            cwd,
+            &[
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ],
+        )
+        .await
+        .ok()
+        .map(|bytes| text(&bytes))
+        .filter(|name| !name.is_empty());
+        let (mut ahead, mut behind) = (0, 0);
+        if upstream.is_some()
+            && let Ok(output) = git(
+                cwd,
+                &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+            )
+            .await
+        {
+            let text = String::from_utf8_lossy(&output);
+            let mut counts = text.split_whitespace().map(str::parse::<u32>);
+            ahead = counts.next().and_then(Result::ok).unwrap_or(0);
+            behind = counts.next().and_then(Result::ok).unwrap_or(0);
+        }
+        let dirty = crate::project::explorer::dirty_summary(cwd).await?;
+        Ok(VcsStatus {
+            branch: (!detached).then_some(branch),
+            detached,
+            head,
+            upstream,
+            ahead,
+            behind,
+            changed: dirty.changed,
+            untracked: dirty.untracked,
+            conflicted: dirty.conflicted,
+        })
+    }
+
+    /// Creates a branch without leaving the current one: the reference client's
+    /// `createRef` is separate from its `switchRef`.
+    pub async fn create_ref(&self, id: &str, request: &CreateBranch, actor: &str) -> Result<()> {
+        let thread = self.scm_idle_git(id)?;
+        let cwd = Path::new(&thread.cwd);
+        valid_branch(cwd, &request.name).await?;
+        self.scm_audit(actor, "git.ref", &request.name, Some(id))?;
+        let mut args = vec!["branch", request.name.as_str()];
+        if let Some(start) = &request.start {
+            if start.starts_with('-') {
+                return Err(CoreError::Invalid(
+                    "That is not a valid start point.".into(),
+                ));
+            }
+            args.push(start);
+        }
+        git_user(cwd, &args, FORGE_TIMEOUT).await.map(|_| ())
+    }
+
+    /// Switches the checkout to an existing ref.
+    pub async fn switch_ref(&self, id: &str, name: &str, actor: &str) -> Result<()> {
+        self.scm_git_thread(id)?;
+        self.switch_branch(id, name, actor).await
+    }
+
+    /// A thread on a Git checkout: the VCS methods refuse a folder outside Git.
+    fn scm_git_thread(&self, id: &str) -> Result<Thread> {
+        let thread = self.scm_thread(id)?;
+        if !self.store.project(&thread.project_id)?.is_git {
+            return Err(CoreError::Invalid(
+                "This folder is not a Git checkout.".into(),
+            ));
+        }
+        Ok(thread)
+    }
+
+    fn scm_idle_git(&self, id: &str) -> Result<Thread> {
+        let thread = self.scm_git_thread(id)?;
+        if thread.active_run.is_some() {
+            return Err(CoreError::ThreadBusy);
+        }
+        Ok(thread)
     }
 }
 

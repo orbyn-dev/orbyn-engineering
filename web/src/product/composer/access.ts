@@ -1,5 +1,6 @@
 import { Lock, PenLine, ShieldOff, Sparkles, type LucideIcon } from "lucide-react";
 import type { EngineStatus, PermissionMode } from "../../api/types";
+import { askBeforeFollowOn } from "../engines/unmanaged";
 
 export const ACCESS: Record<PermissionMode, { label: string; description: string; icon: LucideIcon }> = {
   supervised: { label: "Supervised", description: "Ask before commands and file changes.", icon: Lock },
@@ -14,17 +15,69 @@ export const ACCESS: Record<PermissionMode, { label: string; description: string
     icon: Sparkles,
   },
   full_access: { label: "Full access", description: "Allow commands and edits without prompts in this thread. Crew mode decides for crew workers.", icon: ShieldOff },
+  no_approvals: { label: "No approvals", description: "The engine never asks before acting, so this thread has one mode.", icon: ShieldOff },
 };
 
-const MODES = Object.keys(ACCESS) as PermissionMode[];
+/**
+ * An engine that never asks before acting lists one mode, spelled `no_approvals` (docs/cursor-thread-contract.md). It is read from
+ * the engine's own list, never from the engine's name, and it is not one of the modes a picker offers every engine.
+ */
+const NO_APPROVALS = "no_approvals";
+
+/** The modes any engine may offer, in menu order: every mode but the one of an engine that never asks. */
+export const MODES = (Object.keys(ACCESS) as PermissionMode[]).filter((mode) => mode !== NO_APPROVALS);
+
+/** The modes an engine that cannot ask refuses at run start: Supervised and Auto edits. Auto and Full access stay as they are. */
+const REFUSED_WITHOUT_ASKING: PermissionMode[] = ["supervised", "auto_edits"];
+
+/** Whether this engine's own list says it never asks before acting. */
+export function neverAsks(engine: Pick<EngineStatus, "capabilities"> | null): boolean {
+  const offered: readonly string[] | undefined = engine?.capabilities.permission_modes;
+  return offered?.includes(NO_APPROVALS) ?? false;
+}
+
+/** How the frames name a mode in the refusal card: "Auto edits", where the picker says "Auto-accept edits". */
+export function refusalModeName(mode: PermissionMode): string {
+  return mode === "auto_edits" ? "Auto edits" : ACCESS[mode].label;
+}
+
+/** What an engine that never asks shows in the mode pick: its one mode, never the saved one. */
+export const oneModeLabel = (engineName: string) => `No approvals (${engineName})`;
+export const oneModeReason = (engineId: string, engineName: string) =>
+  askBeforeFollowOn(engineId, engineName, "so this thread has one mode.", "This thread has one mode.");
+
+/** The modes a thread on this engine cannot run in, in menu order: drawn dimmed with the reason, never hidden. */
+export function refusedModes(engine: Pick<EngineStatus, "capabilities"> | null): PermissionMode[] {
+  const offered: readonly string[] = engine?.capabilities.permission_modes ?? [];
+  return neverAsks(engine) ? MODES.filter((mode) => REFUSED_WITHOUT_ASKING.includes(mode) && !offered.includes(mode)) : [];
+}
+
+/** The one sentence that says why, in the app's own mode names. */
+export function refusalSentence(engineId: string, engineName: string, refused: PermissionMode[]): string {
+  const names = refused.map((mode) => ACCESS[mode].label);
+  const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : (names[0] ?? "");
+  const isMany = names.length > 1;
+  return askBeforeFollowOn(
+    engineId,
+    engineName,
+    `so ${list} ${isMany ? "are" : "is"} not available here.`,
+    `${list} ${isMany ? "are" : "is"} not available here.`,
+  );
+}
 
 /** The modes an engine offers, in menu order. An older service that does not say offers all. */
 export function offeredModes(engine: Pick<EngineStatus, "capabilities"> | null): PermissionMode[] {
   const offered = engine?.capabilities.permission_modes;
-  return offered ? MODES.filter((mode) => offered.includes(mode)) : MODES;
+  if (!offered) return MODES;
+  if (neverAsks(engine)) return MODES.filter((mode) => !refusedModes(engine).includes(mode));
+  return MODES.filter((mode) => offered.includes(mode));
 }
 
-/** What a saved mode runs as: one the engine does not offer runs, and shows, Supervised. */
+/**
+ * What a saved mode runs as: one the engine does not offer runs, and shows, Supervised. An engine that refuses instead of
+ * falling back shows the saved mode as it is, so what the person sees is what the next send will be refused for.
+ */
 export function shownAccess(engine: Pick<EngineStatus, "capabilities"> | null, saved: PermissionMode): PermissionMode {
+  if (neverAsks(engine)) return saved;
   return offeredModes(engine).includes(saved) ? saved : "supervised";
 }

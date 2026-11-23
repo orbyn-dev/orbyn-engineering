@@ -4,6 +4,8 @@
 
 mod autopilot;
 mod background;
+mod background_daily;
+mod background_listeners;
 mod background_start;
 pub mod backtest;
 mod bus;
@@ -12,6 +14,8 @@ pub(crate) mod capacity;
 pub mod changes;
 mod checks;
 mod classes;
+mod codex_homes;
+mod dashboard;
 mod draft;
 pub mod escapes;
 mod filters;
@@ -46,6 +50,8 @@ mod workers;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use workers::worker_refusal;
+
 pub(crate) use autopilot::GateReview;
 pub use autopilot::{
     APPROVAL_LIFETIME_SECS, Answer, Answering, Approver, Approvers, Autopilot, COMMENT_MAX,
@@ -75,7 +81,7 @@ pub use review::{
 pub use router::{RouteFailure, RouteInput, RouteRefusal, route};
 pub use score::{EvalHistory, SEED_PASS_PERMILLE};
 pub use stamp::Stamper;
-pub use tiers::{AcpTierAssignment, RouterConfig, TierWords, WorkerProvider};
+pub use tiers::{AcpTierAssignment, RouterConfig, TierWords, WorkerProvider, tier_model};
 pub use tool::{REPORT_TOOL, ROUTE_TOOL, START_TOOL, is_tool, tool_specs};
 pub use verify::Judgement;
 pub use view::EngineView;

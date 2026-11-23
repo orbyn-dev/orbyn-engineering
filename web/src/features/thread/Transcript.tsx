@@ -3,15 +3,17 @@ import { ArrowDown } from "lucide-react";
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useThreadLogs, type LocalPrompt } from "../../product/state/threadLogs";
 import { useUi } from "../../product/state/ui";
+import { useSteerMarks, withSteerMarks } from "../../product/state/steerMarks";
 import { Button } from "../../ui/controls";
 import { Empty, ErrorState, Loading } from "../../product/ui/states";
 import { TimelineRow } from "./items";
 import { TimelineThread } from "./timelineThread";
 import { Minimap, type MinimapItem } from "./Minimap";
 import type { MessageItem, ThreadItem } from "../../product/timeline/types";
-import { rowOfItems } from "./threadSearch";
+import { rowOfItems, rowWhere } from "./threadSearch";
 import { arrangeTimeline, entryForMessage, entryIndexOf, firstUnread, runningTools } from "../../product/timeline/timeline";
 import { registerTranscript } from "./transcriptRegistry";
+import { registerTimelineScroll, runIdOf } from "../codemode";
 import { OpenStateScope } from "../../ui/openState";
 import { useAnnounce } from "./useAnnounce";
 import { useHeldRows } from "./useHeldRows";
@@ -76,9 +78,10 @@ export function Transcript({
   const log = useThreadLogs((state) => state.logs[threadId]);
   const stream = useThreadLogs((state) => state.streams[threadId]);
   const prompts = useThreadLogs((state) => state.prompts[threadId]);
+  const steerMarks = useSteerMarks((state) => state.marks[threadId]);
   const items = useMemo(
-    () => withLocalPrompts(log?.items ?? [], prompts ?? []),
-    [log, prompts],
+    () => withSteerMarks(withLocalPrompts(log?.items ?? [], prompts ?? []), steerMarks ?? []),
+    [log, prompts, steerMarks],
   );
 
   const entries = useMemo(
@@ -140,6 +143,17 @@ export function Transcript({
     () => registerTranscript(threadId, { entries: () => entriesNow.current, root: () => scroller.current, reveal: scrollToIndex }),
     [threadId, scrollToIndex],
   );
+  // "Open the run" asks by the row's place in the list, since a long thread mounts only the rows near the view.
+  const scrollToRun = useCallback(
+    (runId: string): boolean => {
+      const at = rowWhere(entriesNow.current, (item) => item.kind === "tool" && runIdOf(item) === runId);
+      if (at < 0) return false;
+      void scrollToIndex(at, "center");
+      return true;
+    },
+    [scrollToIndex],
+  );
+  useEffect(() => registerTimelineScroll(threadId, scrollToRun), [threadId, scrollToRun]);
 
   // Pinned means pinned: expanding content, late fonts and streaming all stay in view, and
   // so does the end when the view itself shrinks, as when the composer grows or a question docks.

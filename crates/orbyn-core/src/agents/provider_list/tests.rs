@@ -1,5 +1,6 @@
 use orbyn_contracts::{
-    EngineCapabilities, EngineStatus, PermissionMode, ProviderGroup, ProviderLabel,
+    EngineCapabilities, EngineStartIssue, EngineStatus, PermissionMode, ProviderGroup,
+    ProviderLabel,
 };
 use serde_json::json;
 
@@ -41,6 +42,13 @@ fn status(
         "compatibility": compatibility.map(|state| json!({ "status": state, "message": "Older." })),
         "update_command": null, "manual_hint": null, "sign_in_command": null,
         "updating": false, "problem": null
+    }))
+    .unwrap()
+}
+
+fn issue(kind: &str, message: &str) -> EngineStartIssue {
+    serde_json::from_value(json!({
+        "kind": kind, "message": message, "at": "2026-01-01T00:00:00Z"
     }))
     .unwrap()
 }
@@ -130,7 +138,46 @@ fn an_engine_that_is_not_found_stays_listed_so_it_can_be_edited_or_removed() {
     let mine = row(&found, "mine");
     assert_eq!(mine.group, ProviderGroup::NotFound);
     assert_eq!(mine.labels, [ProviderLabel::NotFound]);
-    assert!(mine.registered && mine.openable);
+    assert!(mine.registered && !mine.openable);
+}
+
+#[test]
+fn a_signed_out_start_adds_its_label_and_note_without_moving_the_group() {
+    let mut cursor = status("cursor", "Cursor", "acp", true, None);
+    let message = "Cursor isn't signed in. Run cursor-agent login, then try again.";
+    cursor.start_issue = Some(issue("signed_out", message));
+    let found = list(&[cursor], &[]);
+    let cursor = row(&found, "cursor");
+    assert_eq!(
+        cursor.labels,
+        [ProviderLabel::SignedOut, ProviderLabel::NotVerified]
+    );
+    assert_eq!(cursor.note.as_deref(), Some(message));
+    assert_eq!(cursor.group, ProviderGroup::Found);
+}
+
+#[test]
+fn a_failed_start_adds_its_label_and_note() {
+    let mut codex = status("codex", "Codex", "native", true, None);
+    let message = "Codex did not start: the agent did not answer its handshake.";
+    codex.start_issue = Some(issue("failed", message));
+    let found = list(&[codex], &[]);
+    let codex = row(&found, "codex");
+    assert_eq!(codex.labels, [ProviderLabel::StartFailed]);
+    assert_eq!(codex.note.as_deref(), Some(message));
+    assert_eq!(codex.group, ProviderGroup::InUse);
+}
+
+#[test]
+fn a_not_found_engine_keeps_saying_only_that_even_with_a_leftover_issue() {
+    let mut gone = status("mine", "Mine", "acp", true, None);
+    gone.installed = false;
+    gone.start_issue = Some(issue("failed", "Mine did not start: it is gone."));
+    let found = list(&[gone], &[]);
+    let mine = row(&found, "mine");
+    assert_eq!(mine.labels, [ProviderLabel::NotFound]);
+    assert_eq!(mine.note, None);
+    assert_eq!(mine.group, ProviderGroup::NotFound);
 }
 
 #[test]
@@ -153,18 +200,30 @@ fn the_other_unverified_engines_read_as_their_program() {
 }
 
 #[test]
-fn cursor_and_fx_have_no_detail_page_yet_and_the_others_do() {
+fn only_beta_families_have_a_detail_page_including_named_instances() {
+    let mut instance = status("my-open", "My OpenCode", "acp", true, None);
+    instance.instance_of = Some("opencode".into());
+    let mut other_instance = status("my-kimi", "My Kimi", "acp", true, None);
+    other_instance.instance_of = Some("kimi".into());
     let found = list(
         &[
             status("cursor", "Cursor", "acp", true, None),
             status("kimi", "Kimi Code", "acp", true, None),
             status("opencode", "OpenCode", "acp", true, None),
+            status("claude", "Claude", "native", true, None),
+            status("codex", "Codex", "native", true, None),
+            instance,
+            other_instance,
         ],
         &[],
     );
     assert!(!row(&found, "cursor").openable);
-    assert!(row(&found, "kimi").openable);
-    assert!(row(&found, "opencode").openable);
+    for id in ["kimi", "my-kimi"] {
+        assert!(!row(&found, id).openable, "{id}");
+    }
+    for id in ["opencode", "claude", "codex", "my-open"] {
+        assert!(row(&found, id).openable, "{id}");
+    }
     assert!(!row(&found, "pi").openable);
 }
 
@@ -176,7 +235,7 @@ fn a_program_that_is_another_cli_is_a_card_that_says_so() {
     }];
     let found = super::list(&[], &[], &refused);
     let grok = row(&found, "grok");
-    assert_eq!(grok.group, ProviderGroup::CantStart);
+    assert_eq!(grok.group, ProviderGroup::NotFound);
     assert_eq!(grok.labels, [ProviderLabel::NotFound]);
     assert!(!grok.registered && !grok.openable);
     assert!(grok.note.as_deref().unwrap().starts_with(

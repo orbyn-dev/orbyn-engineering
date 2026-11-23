@@ -1,7 +1,7 @@
 import { recordUserPrompt } from "../../workspace";
 import { useDraftModelDefaults } from "../useDraftModelDefaults";
 import { useDraftCheckout } from "../useDraftCheckout";
-import { ArrowUp, Bot, Folder, GitBranch, Paperclip, X } from "lucide-react";
+import { ArrowUp, Bot, ChevronDown, Folder, GitBranch, Paperclip, ShieldOff, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useCommand } from "../../../product/shell/shortcuts";
@@ -20,10 +20,14 @@ import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { Loading, NarrowBack } from "../../../product/ui/states";
 import { ACCESS, shownAccess } from "../../../product/composer/access";
+import { UnmanagedLabel } from "../../../product/engines/UnmanagedLabel";
+import { isUnmanaged } from "../../../product/engines/unmanaged";
 import { ModelPickerTrigger } from "../../thread";
 import { DraftProjectPicker } from "../DraftProjectPicker";
 import { DRAFT_KEY, SCRATCH, useDraftStore, worktreePurpose } from "../../../product/state/draftStore";
 import { DraftModelControls } from "./DraftModelControls";
+import { SnapshotCapturingChip, SnapshotDraftChip, isSnapShotSource, sourceBodyOf, useSnapshot, useSnapshotDraftFlow, withoutAccessibleText, type SnapShotSource } from "../../snapshot";
+import { RepoStart } from "./RepoStart";
 import { MAX_PREVIOUS_WORKTREES, uniquePurpose, useThreadList, type ModelChoice, type OpenMenu } from "./draftHelpers";
 import { SUGGESTIONS } from "./suggestions";
 
@@ -49,10 +53,38 @@ export function DraftView({ projectId }: { projectId: string | null }) {
   const setPalette = useUi((state) => state.setPalette);
   const files = useDraftStore((state) => state.files);
   const setFiles = useDraftStore((state) => state.setFiles);
+  const snapShots = useDraftStore((state) => state.snapShots);
+  const setSnapShots = useDraftStore((state) => state.setSnapShots);
   const reused = useDraftStore((state) => state.reuseWorktree);
   const setReused = useDraftStore((state) => state.setReuseWorktree);
   const currentCheckout = useDraftStore((state) => state.currentCheckout);
   const fileInput = useRef<HTMLInputElement>(null);
+  const snapshot = useSnapshotDraftFlow({
+    kind: "draft",
+    threadId: null,
+    label: "new-thread composer",
+    receive: async (draft) => {
+      setSnapShots([...useDraftStore.getState().snapShots, {
+        key: draft.captureId,
+        file: draft.file,
+        name: draft.name,
+        preview: draft.preview,
+        source: draft.source,
+        captureId: draft.captureId,
+      }]);
+    },
+  });
+  const removeSnapshotText = (key: string) => {
+    setSnapShots(useDraftStore.getState().snapShots.map((entry) => entry.key === key
+      ? { ...entry, source: isSnapShotSource(entry.source) ? withoutAccessibleText(entry.source) : entry.source }
+      : entry));
+  };
+  const dropSnapshot = (key: string, captureId: string) => {
+    const shot = useDraftStore.getState().snapShots.find((entry) => entry.key === key);
+    if (shot) URL.revokeObjectURL(shot.preview);
+    void useSnapshot.getState().discard(captureId);
+    setSnapShots(useDraftStore.getState().snapShots.filter((entry) => entry.key !== key));
+  };
   const adoptLayout = useUi((state) => state.adoptDraftLayout);
   const [picker, setPicker] = useState<DOMRect | null>(null);
   const [openTraits, setOpenTraits] = useState<((element: HTMLElement) => void) | null>(null);
@@ -94,7 +126,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
     setPrefs({ draftProject: chosenProject });
   }, [chosenProject, setPrefs]);
 
-  const unmanaged = engine !== null && !engine.capabilities.managed;
+  const unmanaged = isUnmanaged(engine);
   // A mode the chosen engine does not offer would run Supervised, so it starts that way.
   const access = shownAccess(engine, chosenAccess);
 
@@ -138,10 +170,20 @@ export function DraftView({ projectId }: { projectId: string | null }) {
     });
     putThread(thread);
     const attached = await Promise.all(files.map((file) => api.uploadAttachment(thread.id, file)));
+    const shots = await Promise.all(snapShots.map(async (shot) => {
+      try {
+        const kept = await api.uploadAttachment(thread.id, shot.file);
+        if (isSnapShotSource(shot.source)) await api.attachmentSource(kept.id, sourceBodyOf(shot.source));
+        return kept;
+      } catch (failure) {
+        await useSnapshot.getState().discard(shot.captureId);
+        throw failure;
+      }
+    }));
     const run = await api.startRun(
       thread.id,
       text,
-      attached.map((file) => file.id),
+      [...attached, ...shots].map((file) => file.id),
       {
         ...(pickedEffort ? { effort: pickedEffort } : {}),
         ...(Object.keys(extras).length > 0 ? { options: extras } : {}),
@@ -150,6 +192,14 @@ export function DraftView({ projectId }: { projectId: string | null }) {
     );
     addPrompt(thread.id, { runId: run.id, text });
     return thread;
+  };
+
+  /** A model picked in the composer or in the repository dialog: the same choice, so both show it. */
+  const pickModel = (next: ModelChoice) => {
+    const picked = { ...next, effort: engine && next.engine === engine.id && next.model === pickedModel ? pickedEffort : null };
+    setExtras({});
+    setChoice(picked);
+    setPrefs({ lastModel: picked });
   };
 
   const send = async () => {
@@ -165,6 +215,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
       adoptLayout(thread.id);
       setPrompt("");
       setFiles([]);
+      setSnapShots([]);
       setReused(null);
       navigate({ name: "thread", id: thread.id });
     } catch (failure) {
@@ -185,6 +236,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
       const thread = await launch({ engine: engine.id, model: pickedModel }, purpose, text);
       setPrompt("");
       setFiles([]);
+      setSnapShots([]);
       useUi.getState().pushToast(`Started ${thread.title}`);
       recordUserPrompt();
     } catch (failure) {
@@ -237,6 +289,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                       onClick={(event) => setPicker(event.currentTarget.getBoundingClientRect())}
                     >
                       {project.name}
+                      <ChevronDown size={14} aria-hidden />
                     </button>
                     ?
                   </>
@@ -258,6 +311,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                     onClick={(event) => setPicker(event.currentTarget.getBoundingClientRect())}
                   >
                     No project
+                    <ChevronDown size={14} aria-hidden />
                   </button>
                 )}
               </p>
@@ -295,6 +349,17 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                   </p>
                 ) : null}
                 <div className="composer-box">
+                  {snapshot.capturing ? <SnapshotCapturingChip onCancel={snapshot.cancel} /> : null}
+                  {snapShots.map((shot) => (
+                    <SnapshotDraftChip
+                      key={shot.key}
+                      name={shot.name}
+                      preview={shot.preview}
+                      source={shot.source as SnapShotSource}
+                      onRemove={() => dropSnapshot(shot.key, shot.captureId)}
+                      onRemoveText={() => removeSnapshotText(shot.key)}
+                    />
+                  ))}
                   {files.length > 0 ? (
                     <ul className="attachment-strip" aria-label="Attachments">
                       {files.map((file, at) => (
@@ -346,6 +411,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                       <IconButton label="Attach files" onClick={() => fileInput.current?.click()}>
                         <Paperclip size={16} aria-hidden />
                       </IconButton>
+                      {snapshot.button}
                     </span>
                     {engine ? (
                       <DraftModelControls
@@ -356,12 +422,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                         extras={extras}
                         access={unmanaged ? null : access}
                         register={setOpenTraits}
-                        onModel={(next) => {
-                          const picked = { ...next, effort: next.engine === engine.id && next.model === pickedModel ? pickedEffort : null };
-                          setExtras({});
-                          setChoice(picked);
-                          setPrefs({ lastModel: picked });
-                        }}
+                        onModel={pickModel}
                         onEffort={(value) => {
                           const picked = { engine: engine.id, model: pickedModel, effort: value };
                           setChoice(picked);
@@ -457,12 +518,13 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                         </dd>
                       </div>
                     ) : null}
+                    {engine ? <RepoStart project={project} engines={installed} engine={engine} model={pickedModel} access={access} onModel={pickModel} onAccess={setAccess} /> : null}
                   </dl>
                   ) : (
                     <span />
                   )}
                   {unmanaged ? (
-                    <span>Unmanaged</span>
+                    <UnmanagedLabel engine={engine} variant="text" icon={<ShieldOff size={12} aria-hidden />} note />
                   ) : (
                     <button
                       type="button"

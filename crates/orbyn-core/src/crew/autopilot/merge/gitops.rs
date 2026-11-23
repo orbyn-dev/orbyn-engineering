@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::error::{CoreError, Result};
-use crate::source_control::git::{git, git_hardened, git_hardened_capped, git_raw, text};
+use crate::source_control::git::{
+    git, git_hardened, git_hardened_capped, git_hardened_output_capped, git_raw, text,
+};
 use crate::util::new_id;
 
 /// The identity of a merge or revert commit the crew makes.
@@ -216,12 +218,24 @@ pub enum Refused {
     Other(String),
 }
 
+/// A merge or revert runs any custom merge driver the repository configures, a program of its choosing, so the real merge
+/// refuses where one is configured: the same rule the forecast dry run applies.
+async fn refuse_merge_driver(scratch: &Scratch) -> std::result::Result<(), Refused> {
+    if has_merge_driver(&scratch.repo).await {
+        return Err(Refused::Other(
+            "the repository configures a custom merge driver, which the crew does not run".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// `git merge --no-ff` of `candidate` into the scratch checkout. The merge commit is the result.
 pub async fn merge(
     scratch: &Scratch,
     candidate: &str,
     message: &str,
 ) -> std::result::Result<String, Refused> {
+    refuse_merge_driver(scratch).await?;
     let mut args = IDENTITY.to_vec();
     args.extend(["merge", "--no-ff", "--no-edit", "-m", message, candidate]);
     let out = git_raw(&scratch.dir, &args)
@@ -239,6 +253,7 @@ pub async fn merge(
 
 /// `git revert -m 1` of a merge commit in the scratch checkout. The revert commit is the result.
 pub async fn revert(scratch: &Scratch, merge_commit: &str) -> std::result::Result<String, Refused> {
+    refuse_merge_driver(scratch).await?;
     let mut args = IDENTITY.to_vec();
     args.extend(["revert", "-m", "1", "--no-edit", merge_commit]);
     let out = git_raw(&scratch.dir, &args)
@@ -291,6 +306,57 @@ pub async fn first_parents(repo: &Path, from: &str, to: &str) -> Result<Vec<Stri
 /// The first parent of a commit.
 pub async fn parent(repo: &Path, commit: &str) -> Result<String> {
     rev(repo, &format!("{commit}^1")).await
+}
+
+/// The most output a merge dry run reads.
+const MERGE_TREE_CAP: usize = 64 * 1024;
+/// The most conflicting files one candidate reports; a merge can conflict in more, and the screen needs the first few.
+pub const CONFLICT_PATHS_MAX: usize = 20;
+
+/// Whether the repository configures any custom merge driver (`merge.<name>.driver`). A driver named by `info/attributes` runs a
+/// program during a merge, so a dry run in such a repository is not made: the forecast leaves the candidate out. An unreadable
+/// config counts as configured.
+pub async fn has_merge_driver(repo: &Path) -> bool {
+    match git_hardened_output_capped(
+        repo,
+        &["config", "--get-regexp", r"^merge\..*\.driver$"],
+        MERGE_TREE_CAP,
+    )
+    .await
+    {
+        // 1 is no match.
+        Ok((status, _)) => status.code() != Some(1),
+        Err(_) => true,
+    }
+}
+
+/// The files a dry-run merge of `candidate` onto `branch` would report as conflicting, from `git merge-tree`. The trial tree is
+/// written as unreachable objects only: no ref, index or worktree moves. Empty means the merge is clean at this read.
+pub async fn conflict_paths(repo: &Path, branch: &str, candidate: &str) -> Result<Vec<String>> {
+    let (status, out) = git_hardened_output_capped(
+        repo,
+        &[
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            branch,
+            candidate,
+        ],
+        MERGE_TREE_CAP,
+    )
+    .await?;
+    match status.code() {
+        Some(0) => Ok(Vec::new()),
+        // 1 is a conflict; the first line names the trial tree and every line after it is a path.
+        Some(1) => Ok(text(&out)
+            .lines()
+            .skip(1)
+            .take(CONFLICT_PATHS_MAX)
+            .map(str::to_owned)
+            .collect()),
+        _ => Err(CoreError::Git("the merge dry run did not finish".into())),
+    }
 }
 
 /// The paths a candidate changes against where it left `branch`, and the lines added and removed.
@@ -478,6 +544,57 @@ mod tests {
                 .unwrap(),
         );
         assert!(!listing.contains(&held_dir), "git forgot it");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[tokio::test]
+    async fn a_merge_or_revert_is_refused_where_a_custom_merge_driver_is_configured() {
+        let repo = repo("driver");
+        let root = repo.join("scratch-root");
+        let base = rev(&repo, "HEAD").await.unwrap();
+        run_git(&repo, &["checkout", "-q", "-b", "candidate"]);
+        std::fs::write(repo.join("feature.txt"), "candidate\n").unwrap();
+        run_git(&repo, &["add", "feature.txt"]);
+        run_git(
+            &repo,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "candidate",
+            ],
+        );
+        let candidate = rev(&repo, "HEAD").await.unwrap();
+        // The repository names a driver for every path, as the issue's reproduction does.
+        run_git(&repo, &["config", "merge.custom.driver", "true"]);
+        std::fs::write(
+            repo.join(".git").join("info").join("attributes"),
+            "* merge=custom\n",
+        )
+        .unwrap();
+        // Without the refusal this fast-forward would succeed, so the refusal is what the test checks.
+        let scratch = Scratch::at(&repo, &root, &base).await.unwrap();
+        assert!(
+            matches!(
+                merge(&scratch, &candidate, "merge candidate").await,
+                Err(Refused::Other(_))
+            ),
+            "a merge runs no driver"
+        );
+        assert_eq!(
+            scratch.head().await.unwrap(),
+            base,
+            "the refused merge moved nothing"
+        );
+        assert!(
+            matches!(revert(&scratch, &candidate).await, Err(Refused::Other(_))),
+            "a revert runs no driver"
+        );
+        scratch.finish().await;
         let _ = std::fs::remove_dir_all(&repo);
     }
 }

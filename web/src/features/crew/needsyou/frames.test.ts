@@ -7,18 +7,21 @@ const DRAWN = NEEDSYOU_FRAMES.filter((name) => name !== "needsyou-live");
 const NOTE = "Risk and reversibility only where the item’s data has them";
 const INBOX = ["Needs you 4", NOTE];
 
-/** What each frame must show: text taken from its design (Crew Designs v37, group 9). */
+/** What each frame must show: text from its design and the live item builders (Crew Designs, group 9; pass 114). */
 const SHOWS: Record<string, string[]> = {
-  "needsyou-inbox": [...INBOX, "Denied 1", "Questions 1", "Main 1", "Conflicts 1", "A request only you can approve was denied: publish the package", "Claude Code · Sonnet 5.5 · person-only", "The task went on without it. Nothing is blocked; do it yourself when you choose.", "Open the request", "Dismiss", "Two workers disagree about the redirect rule", "Waiting holds 2 tasks. The choice is yours; the evidence is side by side.", "3 questions from OpenCode, batched", "Answer 3", "Main broke and the cause isn’t certain", "Watch on main · 9be4410 and f1a0c63 together", "Nothing has been reverted. Main stays as it is until you choose.", "Re-run the check", "Inbox · 4"],
-  "needsyou-inbox-off": [...INBOX, "Approvals 1", "Questions 1", "Reviews 1", "Conflicts 1", "Approve: run “npm publish --dry-run” in auth/", "Waiting holds 1 task and its lease on auth/redirect.ts. Nothing else is blocked.", "Approve", "Deny", "Review “Use next in the auth redirect”", "Risk · Medium", "Easy to undo", "Autopilot is Off · every change waits for you", "Waiting costs nothing now, and the change stays as it is.", "Open review", "Later"],
-  "needsyou-approval": [...INBOX, "Approvals 1", "Approve: run “npm publish --dry-run” in auth/", "Approve a command", "Claude Code · Sonnet 5.5 asks to run a command in its worktree crew/redirect-impl.", "npm publish --dry-run --workspace auth", "Waiting holds", "1 task and its lease on auth/redirect.ts", "Approve once"],
+  "needsyou-inbox": [...INBOX, "Denied 1", "Questions 1", "Main 1", "Conflicts 1", "A request only you can approve was denied: publish the package", "claude · person-only", "The task went on without it. Nothing is blocked; do it yourself when you choose.", "Open the request", "Dismiss", "Two workers disagree about the redirect rule", "The choice is yours; the evidence is side by side.", "3 questions from OpenCode, batched", "Answer 3", "Main broke and the cause isn’t certain", "Watch on main · 9be4410", "Nothing has been reverted. Main stays as it is until you choose.", "Inbox · 4"],
+  "needsyou-inbox-off": [...INBOX, "Approvals 1", "Questions 1", "Reviews 1", "Conflicts 1", "Approve: run “npm publish --dry-run” in auth/", "Approve", "Deny", "Review “Use next in the auth redirect”", "Risk · Medium", "Easy to undo", "Autopilot is Off · every change waits for you", "The change stays as it is.", "Open review", "Later"],
+  "needsyou-approval": [...INBOX, "Approvals 1", "Approve: run “npm publish --dry-run” in auth/", "Approve a command", "claude asks to run a command in its worktree crew/redirect-impl.", "npm publish --dry-run --workspace auth", "Approve once"],
   "needsyou-empty": ["Inbox", "Nothing needs you", "When something needs you, it appears here.", "Open the Flow view"],
-  "needsyou-many": ["Inbox · 27", "9 workers", "All projects 27", "orbyn-engineering 21", "orbyn-docs 6", "Showing 4 of 27 · the rest are grouped below", "Answer: which package manager?", "Review: licence file added", "Risk · Medium", "Approve: rm -rf build/", "Holds 2 tasks.", "Usage page crew", "Docs refresh crew"],
-  "needsyou-narrow-panel": ["Inbox 4", "Approval", "Run “npm publish --dry-run” in auth/", "Claude Code · Sonnet 5.5", "Waiting holds 1 task and 1 lease", "Conflict", "Waiting holds 2 tasks", "Questions", "3 questions from OpenCode", "Answer 3"],
+  "needsyou-many": ["Inbox · 27", "9 workers", "Needs you 27", "orbyn-engineering 21", "orbyn-docs 6", "Showing 4 of 27 · the rest are grouped below", "Answer: which package manager?", "claude · docs crew", "Review: licence file added", "Risk · Medium", "Approve: rm -rf build/", "Usage page crew", "Docs refresh crew"],
+  "needsyou-narrow-panel": ["Inbox", "Approval", "Run “npm publish --dry-run” in auth/", "claude", "Conflict", "codex · opencode", "Questions", "3 questions from OpenCode", "opencode", "Answer 3"],
   "needsyou-budget": ["How the inbox is ranked", "Crew puts what matters most at the top and batches what can wait, so the person is interrupted less and never surprised.", "1 · Risk", "“A change waiting for your review”: High", "2 · Reversibility", "3 · Cost of waiting", "Batching", "What you control", "High-risk items (irreversible, security, money or data loss) interrupt at once"],
   "needsyou-demoted": [...INBOX, "Autonomy 1", "web/auth moved from Full to On: 2 reverts in 14 days. Review or override.", "Autopilot by area · circuit breaker · 9 merges in the window", "Nothing is blocked. A High risk diff in web/auth now waits for you at the merge gate; Low and Medium still merge by themselves. Dismiss is remembered on this browser.", "Review", "Override…"],
   "needsyou-stop": ["Needs you 2", "Stops 2", NOTE, "Stopped · too many denials", "Dismiss hides this stop on this device.", "Dismiss", "Task 91c4e07", "3 denials in a row stopped the task. Nothing else is blocked; the other tasks keep going.", "Stopped · possible injected instructions", "Task 5b2d8a3", "A page the worker read contained text that looks like instructions. The task stopped before it ran anything the text asked for.", "Open"],
   "needsyou-background": ["Needs you 2", "Background 2", NOTE, "Paused: budget reached", "Background crew · Check dependencies weekly", "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget.", "Needs approval", "Background crew · Update the docs index", "A command is held for your approval before the run can go on.", "Open"],
+  "needsyou-daily-budget-stop": ["Needs you 2", "Background 2", NOTE, "Paused: budget reached", "Background crew · Check dependencies weekly", "Engine claude reached this crew's daily budget: 3 of its 2 turns today. The budget resets at 2026-11-08T00:00:00+01:00.", "This run stays stopped. New runs can start after the daily reset: 2026-11-08T00:00:00+01:00. The budget is fixed at creation.", "Background crew · Update the docs index", "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget.", "Open"],
+  "needsyou-daily-budget-stop-narrow": ["Background", "Paused: budget reached", "Background crew · Check dependencies weekly", "Engine claude reached this crew's daily budget: 3 of its 2 turns today. The budget resets at 2026-11-08T00:00:00+01:00.", "This run stays stopped. New runs can start after the daily reset: 2026-11-08T00:00:00+01:00. The budget is fixed at creation.", "Background crew · Update the docs index", "The crew's daily budget could not be read, so the run stopped instead of going on.", "No reset time: the daily budget could not be read or updated, so this is not a wait for the reset. Open the run to review it.", "Open"],
+  "needsyou-daily-budget-stop-no-reset": ["Needs you 2", "Background 2", NOTE, "Paused: budget reached", "Background crew · Check dependencies weekly", "The crew's daily budget could not be read, so the run stopped instead of going on.", "No reset time: the daily budget could not be read or updated, so this is not a wait for the reset. Open the run to review it.", "Background crew · Update the docs index", "The crew's daily budget could not be updated, so the run stopped instead of going on.", "Open"],
   "needsyou-source-error": ["Needs you 2", "Questions 1", "Main 1", NOTE, "Can’t read held commands. The rest is shown.", "One source of the inbox did not answer", "Try again", "3 questions from OpenCode, batched", "Main broke and the cause isn’t certain"],
 };
 
@@ -43,6 +46,36 @@ describe("the frames of the group", () => {
     const rows = [...container.querySelectorAll(".ny-item")];
     expect(rows.map((row) => row.querySelector(".ny-rk")?.textContent)).toEqual(["", "1", "2"]);
     expect(rows[0]).toHaveTextContent("Can’t read held commands. The rest is shown.");
+  });
+
+  it.each(DRAWN)("#/preview/crew/%s leaves out the claims no code computes and names engines by id", async (name) => {
+    const { openFrame } = await import("../shared/test-support");
+    const { container } = await openFrame(name);
+    for (const text of ["Waiting holds", "Waiting costs nothing now", "Claude Code · Sonnet 5.5", "9be4410 and f1a0c63", "Re-run the check"]) {
+      expect(container.textContent, name).not.toContain(text);
+    }
+  });
+
+  it("a main row has only a disabled Open: the app has no main-break screen to re-run from", async () => {
+    const { openFrame } = await import("../shared/test-support");
+    const { container } = await openFrame("needsyou-inbox");
+    const main = [...container.querySelectorAll(".ny-item")].find((row) => row.textContent?.includes("Main broke and the cause isn’t certain"));
+    expect(main).toBeDefined();
+    const buttons = [...main!.querySelectorAll("button")];
+    expect(buttons.map((button) => button.textContent)).toEqual(["Open"]);
+    expect(buttons[0]).toBeDisabled();
+  });
+
+  it("the daily-budget frames are built from the same assembly as the live inbox: no button changes the budget, and a stop with no reset time names none", async () => {
+    const { openFrame } = await import("../shared/test-support");
+    for (const name of ["needsyou-daily-budget-stop", "needsyou-daily-budget-stop-narrow", "needsyou-daily-budget-stop-no-reset"]) {
+      const { container, unmount } = await openFrame(name);
+      const buttons = [...container.querySelectorAll("button")].map((button) => button.textContent);
+      expect(buttons.filter((label) => label === "Open").length).toBeGreaterThanOrEqual(2);
+      expect(container.textContent).not.toMatch(/raise|increase|change the budget/i);
+      if (name.endsWith("no-reset")) expect(container.textContent).not.toMatch(/daily reset: 2/);
+      unmount();
+    }
   });
 
   it("names the two it does not build, with nothing drawn for them", () => {

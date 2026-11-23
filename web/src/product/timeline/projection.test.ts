@@ -205,6 +205,19 @@ describe("applyEvents", () => {
     expect(next.items[0]).toMatchObject({ role: "user", attachments: files });
   });
 
+  it("keeps a Snap Shot's source on the sent attachment", () => {
+    const source = { kind: "snap_shot", captured_at: "2026-11-22T14:32:08Z", app_name: "Safari", window_title: "Acme · Sign in" };
+    const log = applyEvents("t", emptyLog, [
+      ev(1, {
+        type: "CUSTOM",
+        name: "user.attachments",
+        value: { attachments: [{ id: "a1", name: "Snap Shot.png", mime: "image/png", size: 5, source }] },
+      }),
+      ev(2, { type: "TEXT_MESSAGE_START", messageId: "u1", role: "user" }),
+    ]);
+    expect(log.items[0]).toMatchObject({ attachments: [{ id: "a1", source }] });
+  });
+
   it("ignores malformed attachment entries", () => {
     const log = applyEvents("t", emptyLog, [
       ev(1, {
@@ -241,7 +254,8 @@ describe("background.stopped", () => {
     const log = applyEvents("t", emptyLog, [
       stopped(1, { taskId: "s1", taskType: "local_bash", description: "pnpm dev --port 5173" }),
       stopped(2, { taskId: "a1", taskType: "local_agent", description: "Review callers of after()" }),
-      stopped(3, { taskId: "w1", taskType: "local_workflow", description: "" }),
+      stopped(3, { taskId: "c1", taskType: "codex_subagent", description: "Reviewer" }),
+      stopped(4, { taskId: "w1", taskType: "local_workflow", description: "probe" }),
     ]);
     expect(log.items).toHaveLength(1);
     expect(log.items[0]).toMatchObject({
@@ -251,9 +265,14 @@ describe("background.stopped", () => {
       tasks: [
         { taskId: "s1", taskType: "local_bash", description: "pnpm dev --port 5173" },
         { taskId: "a1", taskType: "local_agent", description: "Review callers of after()" },
-        { taskId: "w1", taskType: "local_workflow", description: null },
+        { taskId: "c1", taskType: "codex_subagent", description: "Reviewer" },
       ],
     });
+  });
+
+  it("gives a workflow no stopped row", () => {
+    const log = applyEvents("t", emptyLog, [stopped(1, { taskId: "w1", taskType: "local_workflow", description: "probe" })]);
+    expect(log.items).toHaveLength(0);
   });
 
   it("keeps each run's stopped tasks under that run", () => {

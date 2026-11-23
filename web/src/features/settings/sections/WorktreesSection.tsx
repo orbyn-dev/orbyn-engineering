@@ -4,7 +4,6 @@ import { Segmented } from "../../../ui/Segmented";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { PreferenceGroups } from "../rows/PreferenceRows";
 import { WorktreeCleanup } from "../maintenance/WorktreeCleanup";
-import { heading } from "./parts";
 
 const NAMING_MODES = [
   { value: "static", label: "Static", description: "The prefix plus a fixed name." },
@@ -31,7 +30,6 @@ function BranchPrefix({ value, save, disabled, mixed }: { value: string; save(ne
 export function WorktreesSection() {
   return (
     <>
-      {heading("Worktrees")}
       <SettingGroup>
         <SettingRow title="Worktree folder" description="Next to each project"><span className="mono set-muted">&lt;project&gt;-wt/&lt;purpose&gt;</span></SettingRow>
       </SettingGroup>

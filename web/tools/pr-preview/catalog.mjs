@@ -6,6 +6,7 @@
 //   pre       network behaviour set up before the page opens: { route, delay } holds a request for `delay` ms, { route, status } answers it
 //   steps     what to do once it has loaded, in order:
 //               { do: "click", role, name, prefix?, exact?, within? }   a button, tab, checkbox ... by its accessible name (`within`: only inside the region of that name)
+//               { do: "hover", role, name, prefix? }  or  { do: "hover", selector, text? }   rest the pointer there (a CSS selector, and the text it must hold)
 //               { do: "fill", label, value, exact? }          a field by its label (exact when another label contains it)
 //               { do: "press", key }
 //               { do: "route", route, delay | status }        network behaviour from here on
@@ -26,6 +27,12 @@ const filterNeedsMyReview = [
   click("checkbox", "Needs my review"),
   { do: "press", key: "Escape" },
 ];
+
+const openFilters = click("button", "Filters", { prefix: true });
+const needsAndFailing = [openFilters, click("checkbox", "Needs my review"), click("checkbox", "Failing")];
+const filterChips = [...needsAndFailing, { do: "press", key: "Escape" }];
+/** The reviewer filter on, then a refresh the service answers with the rate limit (mock "pulls-limited*": the first details read is whole). */
+const limitedAfterRefresh = [...filterNeedsMyReview, click("button", "Refresh"), { do: "wait", ms: 900 }];
 
 /** Opens Cargo.toml from the left bar's Files view, which puts it in the editor. */
 const openFile = [click("tab", "Files"), click("treeitem", "Cargo.toml", { prefix: true })];
@@ -61,11 +68,96 @@ const approveAndType = (digits) => [
   ...typeDigits(digits),
 ];
 
+
+/** Transcript import sheets: the same file and the same two menu steps, then whichever state the frame draws. */
+const TRANSCRIPT_TITLE = "Redirect loop on logout";
+const TRANSCRIPT_MESSAGES = Array.from({ length: 214 }, (_, i) => ({
+  role: i % 2 === 0 ? "user" : "assistant",
+  ts: "2026-11-20T09:00:05Z",
+  text: `Message ${i + 1}`,
+}));
+const transcriptBody = (thread, over = {}) =>
+  JSON.stringify({ format: "orbyn-transcript", version: 1, exported_at: "2026-11-22T10:00:00Z", thread, messages: TRANSCRIPT_MESSAGES, omitted_earlier: 0, ...over });
+const importSteps = (name, thread, over = {}, after = [], content = transcriptBody(thread, over)) => [
+  { do: "contextmenu", selector: ".folder-toggle", text: "orbyn-engineering-app" },
+  click("menuitem", "Import transcript…"),
+  { do: "file", name, mime: "application/vnd.orbyn.transcript+json", content },
+  ...after,
+];
+const importRoute = (name, thread, over = {}, after = [], content = transcriptBody(thread, over)) => ({
+  route: "#/threads/t-done",
+  scenario: "transcript-import",
+  steps: importSteps(name, thread, over, after, content),
+  wait: 1200,
+});
+const engineThread = { title: TRANSCRIPT_TITLE, engine: "codex", model: "opus", created_at: "2026-11-20T09:00:00Z" };
+/** A transcript over the cap, so the page refuses it before sending; 3.4 MiB as the frame shows. */
+const TOO_LARGE = "x".repeat(Math.ceil(3.4 * 1024 * 1024));
+
 export const FRAMES = {
   // The shell.
   "shell-home": { route: "#/" },
   "update-sources": { route: "#/", scenario: "updates-unconfigured" },
   "shell-new-thread": { route: "#/new" },
+  // The engine picker's visible Unmanaged label, and Crew's Reviewer only chip for an engine the service limits.
+  "engine-picker-closed": { route: "#/threads/t-unmanaged" },
+  "engine-picker-new-thread": { route: "#/new", scenario: "crew-engine-picker" },
+  "engine-picker-crew-tiers": { route: "#/settings/crew", scenario: "crew-engine-picker" },
+  "engine-picker-crew-tiers-narrow": { route: "#/settings/crew", scenario: "crew-engine-picker", width: 640 },
+  // The unmanaged thread's one mode, notice and labels, on the mock's managed:false Kiro.
+  "unmanaged-thread-open": { route: "#/threads/t-empty", scenario: "unmanaged-thread" },
+  "unmanaged-thread-open-narrow": { route: "#/threads/t-empty", scenario: "unmanaged-thread", width: 640 },
+  "unmanaged-thread-first-run": {
+    route: "#/threads/t-empty",
+    scenario: "unmanaged-thread",
+    steps: [{ do: "fill", label: "Message", value: "Run the tests." }, click("button", "Send")],
+    wait: 900,
+  },
+  "unmanaged-thread-first-run-narrow": {
+    route: "#/threads/t-empty",
+    scenario: "unmanaged-thread",
+    width: 640,
+    steps: [{ do: "fill", label: "Message", value: "Run the tests." }, click("button", "Send")],
+    wait: 900,
+  },
+  // The sidebar: the strip over a thread row under the pointer, and a project row with its hover controls.
+  "shell-thread-row-actions": { route: "#/threads/t-done", steps: [{ do: "hover", selector: ".thread-row", text: "Keep the checks running" }] },
+  "shell-project-controls": { route: "#/threads/t-done", steps: [{ do: "hover", selector: ".folder-head" }] },
+  // Snap Shot (K49 and the draft flow, docs/snapshots.md), on the dev-only mock at #/preview/snapshot.
+  "snapshot-settings-off": { route: "#/preview/snapshot?frame=snapshot-settings-off" },
+  "snapshot-settings": { route: "#/preview/snapshot?frame=snapshot-settings" },
+  "snapshot-settings-shortcut": { route: "#/preview/snapshot?frame=snapshot-settings-shortcut", steps: [click("button", "Change")] },
+  "snapshot-settings-conflict": { route: "#/preview/snapshot?frame=snapshot-settings-conflict" },
+  "snapshot-settings-excluded": { route: "#/preview/snapshot?frame=snapshot-settings-excluded", steps: [click("button", "Edit list…")] },
+  "snapshot-settings-accessibility": { route: "#/preview/snapshot?frame=snapshot-settings-accessibility" },
+  "snapshot-settings-windows": { route: "#/preview/snapshot?frame=snapshot-settings-windows" },
+  "snapshot-settings-linux": { route: "#/preview/snapshot?frame=snapshot-settings-linux" },
+  "snapshot-settings-off-narrow": { route: "#/preview/snapshot?frame=snapshot-settings-off-narrow", width: 640 },
+  "snapshot-settings-narrow": { route: "#/preview/snapshot?frame=snapshot-settings-narrow", width: 640 },
+  "snapshot-settings-excluded-narrow": { route: "#/preview/snapshot?frame=snapshot-settings-excluded-narrow", width: 640, steps: [click("button", "Edit list…")] },
+  "snapshot-composer-button": { route: "#/preview/snapshot?frame=snapshot-composer-button", steps: [{ do: "hover", selector: ".snapshot-button" }] },
+  "snapshot-composer-button-narrow": { route: "#/preview/snapshot?frame=snapshot-composer-button-narrow", width: 640, steps: [{ do: "hover", selector: ".snapshot-button" }] },
+  "snapshot-draft": { route: "#/preview/snapshot?frame=snapshot-draft" },
+  "snapshot-details": { route: "#/preview/snapshot?frame=snapshot-details", steps: [click("button", "Show Snap Shot details")] },
+  "snapshot-capturing": { route: "#/preview/snapshot?frame=snapshot-capturing" },
+  "snapshot-captured": { route: "#/preview/snapshot?frame=snapshot-captured" },
+  "snapshot-no-thread": { route: "#/preview/snapshot?frame=snapshot-no-thread" },
+  "snapshot-excluded": { route: "#/preview/snapshot?frame=snapshot-excluded" },
+  "snapshot-excluded-narrow": { route: "#/preview/snapshot?frame=snapshot-excluded-narrow", width: 640 },
+  "snapshot-failed": { route: "#/preview/snapshot?frame=snapshot-failed" },
+  "snapshot-failed-no-window": { route: "#/preview/snapshot?frame=snapshot-failed-no-window" },
+  "snapshot-failed-too-large": { route: "#/preview/snapshot?frame=snapshot-failed-too-large" },
+  "snapshot-failed-timeout": { route: "#/preview/snapshot?frame=snapshot-failed-timeout" },
+  "snapshot-failed-error": { route: "#/preview/snapshot?frame=snapshot-failed-error" },
+  "snapshot-failed-narrow": { route: "#/preview/snapshot?frame=snapshot-failed-narrow", width: 640 },
+  "snapshot-setup-mac": { route: "#/preview/snapshot?frame=snapshot-setup-mac" },
+  "snapshot-setup-asked": { route: "#/preview/snapshot?frame=snapshot-setup-asked", steps: [click("button", "Allow Screen Recording")] },
+  "snapshot-setup-denied": { route: "#/preview/snapshot?frame=snapshot-setup-denied" },
+  "snapshot-setup-accessibility": { route: "#/preview/snapshot?frame=snapshot-setup-accessibility" },
+  "snapshot-setup-granted": { route: "#/preview/snapshot?frame=snapshot-setup-granted", steps: [click("button", "Test capture")] },
+  "snapshot-setup-windows": { route: "#/preview/snapshot?frame=snapshot-setup-windows" },
+  "snapshot-setup-narrow": { route: "#/preview/snapshot?frame=snapshot-setup-narrow", width: 640 },
+  "snapshot-narrow": { route: "#/preview/snapshot?frame=snapshot-narrow", width: 640 },
   "shell-ledger": {
     route: "#/threads/t-done",
     steps: [
@@ -82,6 +174,8 @@ export const FRAMES = {
   "pr-row-variants": { route: "#/pulls", scenario: "pulls" },
   "pr-row-pending": { route: "#/pulls", scenario: "pulls", pre: [{ route: "**/api/pulls/details", delay: 20000 }] },
   "pr-row-pending-failed": { route: "#/pulls", scenario: "pulls-details-failed" },
+  // From a list row the method is a select in the dialog.
+  "pr-list-merge-dialog": { route: "#/pulls", scenario: "pulls", steps: [click("button", "Merge #", { prefix: true })] },
   "pr-list-none": { route: "#/pulls", scenario: "pulls-none" },
   "pr-list-loading": { route: "#/pulls", scenario: "pulls", pre: [{ route: "**/api/pulls?*", delay: 20000 }] },
   "pr-list-error": { route: "#/pulls", scenario: "pulls-unreachable" },
@@ -106,6 +200,49 @@ export const FRAMES = {
     wait: 700,
   },
 
+  // Pull requests, the toolbar (Engineer Designs pr-tb-*): each menu and state of the row above the list.
+  "pr-tb-default": { route: "#/pulls", scenario: "pulls" },
+  "pr-tb-search": { route: "#/pulls", scenario: "pulls", steps: [{ do: "fill", label: "Search pull requests", value: "label:bug login" }] },
+  "pr-tb-filters": { route: "#/pulls", scenario: "pulls", steps: needsAndFailing },
+  "pr-tb-chips": { route: "#/pulls", scenario: "pulls", steps: filterChips },
+  "pr-tb-sort": { route: "#/pulls", scenario: "pulls", steps: [click("button", "Sort", { prefix: true })] },
+  "pr-tb-project": { route: "#/pulls", scenario: "pulls", steps: [click("button", "All projects", { prefix: true })] },
+  // The read is held back, so the header says Refreshing and the rows stay.
+  "pr-tb-refreshing": {
+    route: "#/pulls",
+    scenario: "pulls",
+    steps: [{ do: "route", route: "**/api/pulls?*", delay: 20000 }, click("button", "Refresh")],
+    wait: 900,
+  },
+  "pr-tb-loading": { route: "#/pulls", scenario: "pulls", pre: [{ route: "**/api/pulls?*", delay: 20000 }] },
+  // A project, a search and two filters that match nothing.
+  "pr-tb-empty": {
+    route: "#/pulls",
+    scenario: "pulls",
+    steps: [click("button", "All projects", { prefix: true }), click("menuitemradio", "orbyn-engineering-app", { prefix: true }), ...filterChips],
+  },
+  "pr-tb-author": { route: "#/pulls", scenario: "pulls", steps: [openFilters, { do: "fill", label: "Search people", value: "ri" }] },
+  "pr-tb-author-none": { route: "#/pulls", scenario: "pulls", steps: [openFilters, { do: "fill", label: "Search people", value: "zq" }] },
+  "pr-tb-filter-rate-limited": { route: "#/pulls", scenario: "pulls-limited", steps: limitedAfterRefresh },
+  // The pause ends two seconds after every read; the check at that time finds the limit still on, and the banner says when the next one is.
+  "pr-tb-filter-still-limited": { route: "#/pulls", scenario: "pulls-limited-still", steps: [...limitedAfterRefresh, { do: "wait", ms: 3200 }] },
+  "pr-tb-narrow": { route: "#/pulls", scenario: "pulls", width: 900, steps: filterChips },
+  "pr-tb-phone": { route: "#/pulls", scenario: "pulls", width: 390, steps: filterChips },
+  "pr-list-narrow-900": { route: "#/pulls", scenario: "pulls", width: 900 },
+  // The drawn steps below it: the list reads its own width (the window minus 56 px, and minus the docked 224 px sidebar from 900 up).
+  "pr-list-narrow-800": { route: "#/pulls", scenario: "pulls", width: 800 },
+  "pr-list-narrow-700": { route: "#/pulls", scenario: "pulls", width: 700 },
+  "pr-list-narrow-640": { route: "#/pulls", scenario: "pulls", width: 640 },
+  "pr-list-narrow-580": { route: "#/pulls", scenario: "pulls", width: 580 },
+  // The cell's tooltip says why a value is missing.
+  "pr-row-tooltips": { route: "#/pulls", scenario: "pulls", steps: [{ do: "hover", selector: ".pull-rows > li:last-child .pull-reviewers-cell" }] },
+  // Two rows selected, the pointer on the Ready to merge row: its Merge and Close appear at its end.
+  "pr-row-actions-hover": {
+    route: "#/pulls",
+    scenario: "pulls-ready",
+    steps: [click("checkbox", "Select #139"), click("checkbox", "Select #138"), { do: "hover", selector: ".pull-rows > li", text: "Settings scoped rows" }],
+  },
+
   // Pull requests: one pull request as a page, in each state (201 running ... 209 draft, see mock/fixtures.ts pageStates).
   "pr-detail-running": { route: pull(201), scenario: "pulls" },
   "pr-detail-failed": { route: pull(202), scenario: "pulls" },
@@ -123,6 +260,37 @@ export const FRAMES = {
   "pr-detail-loading": { route: pull(201), scenario: "pulls", pre: [{ route: "**/api/projects/*/pulls/201", delay: 20000 }] },
   "pr-detail-error": { route: pull(201), scenario: "pulls", pre: [{ route: "**/api/projects/*/pulls/201", status: 502 }] },
   "pr-detail-signedout": { route: pull(201), scenario: "pulls-signed-out", pre: [{ route: "**/api/projects/*/pulls/201", status: 502 }] },
+  // Nothing cached: the header says Pull request #N and the page only that the details did not load (the same frame as pr-detail-error, opened cold).
+  "pr-detail-error-uncached": { route: pull(142), scenario: "pulls", pre: [{ route: "**/api/projects/*/pulls/142", status: 502 }] },
+  "pr-detail-menu": { route: pull(205), scenario: "pulls", steps: [click("button", "More actions")] },
+  "pr-detail-merge-dialog": { route: pull(205), scenario: "pulls", steps: [click("button", "Merge", { exact: true })] },
+  // The dialog's states. The account setting is off in the mock, so the switch reads off; the on frame drives a mock with
+  // it on. The design's two read-only frames described the switch before the service obeys the per-merge value; it does now
+  // (crates/orbyn-core/src/source_control/scm/review.rs), so the switch is editable and only the setting decides its start.
+  "pr-detail-merge-dialog-credits-readonly": { route: pull(205), scenario: "pulls", steps: [click("button", "Merge", { exact: true })] },
+  "pr-detail-merge-dialog-credits-readonly-on": { route: pull(205), scenario: "pulls-credits-on", steps: [click("button", "Merge", { exact: true })] },
+  "pr-detail-merge-dialog-auto": {
+    route: pull(205),
+    scenario: "pulls",
+    steps: [click("button", "Squash and merge", { prefix: true }), click("menuitemcheckbox", "Merge when checks pass"), click("button", "Merge", { exact: true })],
+  },
+  "pr-detail-merge-dialog-rebase": {
+    route: pull(205),
+    scenario: "pulls",
+    steps: [click("button", "Squash and merge", { prefix: true }), click("menuitem", "Rebase and merge"), click("button", "Merge", { exact: true })],
+  },
+  "pr-detail-merge-dialog-busy": {
+    route: pull(205),
+    scenario: "pulls",
+    pre: [{ route: "**/api/projects/*/pulls/205/merge", delay: 20000 }],
+    steps: [click("button", "Merge", { exact: true }), click("button", "Merge", { exact: true, within: "Merge pull request" }), { do: "wait", ms: 300 }],
+  },
+  "pr-detail-merge-dialog-error": {
+    route: pull(205),
+    scenario: "pulls",
+    pre: [{ route: "**/api/projects/*/pulls/205/merge", status: 502 }],
+    steps: [click("button", "Merge", { exact: true }), click("button", "Merge", { exact: true, within: "Merge pull request" })],
+  },
   "pr-detail-offline": { route: pull(201), scenario: "pulls", steps: [{ do: "offline" }] },
   "pr-detail-filtered": {
     route: pull(202),
@@ -155,9 +323,9 @@ export const FRAMES = {
   "thread-failed": { route: "#/threads/t-failed" },
   "thread-run-no-reply": { route: "#/threads/t-run-no-reply" },
   "thread-run-session-lost": { route: "#/threads/t-run-session-lost" },
-  "thread-background-stopped": { route: "#/threads/t-bg-stopped" },
-  "thread-background-stopped-many": { route: "#/threads/t-bg-stopped-many" },
-  "thread-background-stopped-narrow": { route: "#/threads/t-bg-stopped", width: 640 },
+  "thread-background-stopped": { route: "#/threads/t-empty" },
+  "thread-background-stopped-many": { route: "#/threads/t-empty-many" },
+  "thread-background-stopped-narrow": { route: "#/threads/t-empty", width: 640 },
   "thread-interrupted": { route: "#/threads/t-interrupted" },
   "thread-empty": { route: "#/threads/t-empty" },
   "thread-tools": { route: "#/threads/t-tools" },
@@ -590,6 +758,10 @@ export const FRAMES = {
     ],
   },
 
+  // Crew, the wide Map tree and the swim lanes (Crew Designs' crew-map and lanes-main; built from the map and message reads).
+  "crew-map": { route: "#/crew/map", scenario: "crew" },
+  "lanes-main": { route: "#/crew/lanes", scenario: "crew" },
+
   // Live stage-list adaptations of the approved consent/badge frames.
   "flow-offline": { route: "#/crew/flow", scenario: "crew-review-consent", steps: [click("button", "Use next in the auth redirect", { prefix: true }), click("button", "security: Needs you")] },
   "lane-same-engine": { route: "#/crew/flow", scenario: "crew-review-same", steps: [click("button", "Use next in the auth redirect", { prefix: true })] },
@@ -610,6 +782,7 @@ export const FRAMES = {
   "autonomy-empty": { route: AREAS, scenario: "crew-areas-empty" },
   "autonomy-repos": { route: AREAS, scenario: "crew" },
   "autonomy-entry": { route: "#/settings/crew", scenario: "crew-areas" },
+  "settings-crew": { route: "#/settings/crew", scenario: "crew" },
   "settings-crew-worker-provider": { route: "#/settings/crew", scenario: "crew" },
   "settings-crew-worker-provider-any": { route: "#/settings/crew", scenario: "crew-worker-provider-any" },
   "settings-crew-worker-provider-narrow": { route: "#/settings/crew", scenario: "crew", width: 640 },
@@ -645,4 +818,225 @@ export const FRAMES = {
   "classes-narrow": { route: "#/settings/crew", scenario: "crew-classes", width: 640 },
   "route-log-none": { route: "#/crew/approvals", scenario: "crew-route-none", steps: [click("button", "Routing", { prefix: true })] },
   "route-log": { route: "#/crew/approvals", scenario: "crew-route-blocked", steps: [click("button", "Routing", { prefix: true })] },
+
+  // Crew, the background create form and its daily budget (Crew Designs frames background-new, background-new-label,
+  // background-new-schedule and background-create-daily-*). The mock's crew-background scenario lists crews, so the
+  // header's New background crew opens the form with the default template, budget and daily budget.
+  "background-new": { route: "#/crew/background", scenario: "crew-background", steps: [click("button", "New background crew")] },
+  "background-new-label": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [click("button", "New background crew"), click("radio", "An issue gets a label"), { do: "fill", label: "Label", value: "flaky-test", exact: true }],
+  },
+  "background-new-schedule": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [click("button", "New background crew"), click("radio", "On a schedule")],
+  },
+  "background-create-daily-max": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "On a schedule"),
+      { do: "fill", label: "Turns", value: "1000", exact: true },
+      { do: "fill", label: "Minutes", value: "1440", exact: true },
+      { do: "fill", label: "Runs a day", value: "1000", exact: true },
+      { do: "fill", label: "Turns a day", value: "10000", exact: true },
+    ],
+  },
+  "background-create-daily-min": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "An issue gets a label"),
+      { do: "fill", label: "Label", value: "crew-fix", exact: true },
+      { do: "fill", label: "Turns", value: "1", exact: true },
+      { do: "fill", label: "Minutes", value: "1", exact: true },
+      { do: "fill", label: "Runs a day", value: "1", exact: true },
+      { do: "fill", label: "Turns a day", value: "1", exact: true },
+    ],
+  },
+  "background-create-daily-invalid": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      { do: "fill", label: "Runs a day", value: "1001", exact: true },
+      { do: "fill", label: "Turns a day", value: "0", exact: true },
+    ],
+  },
+  "background-create-daily-range-per-run": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      { do: "fill", label: "Turns", value: "0", exact: true },
+      { do: "fill", label: "Minutes", value: "1441", exact: true },
+    ],
+  },
+  "background-create-daily-range-empty": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "An issue gets a label"),
+      { do: "fill", label: "Label", value: "crew-fix", exact: true },
+      { do: "fill", label: "Runs a day", value: "", exact: true },
+      { do: "fill", label: "Turns a day", value: "1.5", exact: true },
+    ],
+  },
+  "background-create-daily-range-hours": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "On a schedule"),
+      { do: "fill", label: "Every N hours", value: "0", exact: true },
+    ],
+  },
+  "background-create-daily-range-name-label": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "An issue gets a label"),
+      { do: "fill", label: "Name", value: "", exact: true },
+    ],
+  },
+  "background-create-daily-range-narrow": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    width: 520,
+    steps: [
+      click("button", "New background crew"),
+      { do: "fill", label: "Turns", value: "0", exact: true },
+      { do: "fill", label: "Minutes", value: "1441", exact: true },
+      { do: "fill", label: "Runs a day", value: "1001", exact: true },
+      { do: "fill", label: "Turns a day", value: "0", exact: true },
+    ],
+  },
+
+  /** Crew, the escape log (Crew Designs v79), on the real escape routes over the mock's crew-escapes scenarios. A detail
+   *  frame names its escape in the hash; escape-gap opens the same escape with its Set-the-gap dialog. */
+  "escape-log": { route: "#/preview/crew/escape-log", scenario: "crew-escapes", wait: 2500 },
+  "escape-empty": { route: "#/preview/crew/escape-empty", scenario: "crew-escapes-empty" },
+  "escape-low-sample": { route: "#/preview/crew/escape-low-sample", scenario: "crew-escapes-low" },
+  "escape-error": { route: "#/preview/crew/escape-error", scenario: "crew-escapes-unreadable" },
+  "escape-possible": { route: "#/preview/crew/escape-possible", scenario: "crew-escapes" },
+  "escape-detail": { route: "#/preview/crew/escape-detail?id=esc-returnto", scenario: "crew-escapes" },
+  "escape-detail-tooling": { route: "#/preview/crew/escape-detail?id=esc-next", scenario: "crew-escapes" },
+  "escape-confirmed": { route: "#/preview/crew/escape-confirmed?id=esc-session", scenario: "crew-escapes" },
+  "escape-dismissed": { route: "#/preview/crew/escape-dismissed?id=esc-docs", scenario: "crew-escapes" },
+  "escape-gap": { route: "#/preview/crew/escape-gap?id=esc-session", scenario: "crew-escapes", steps: [click("button", "Set the gap…")] },
+  /** Crew, the reviewer backtest (Crew Designs v23), on the real 4n routes over the mock's crew-backtest scenarios. A report
+   *  frame names its run in the hash, the way an escape detail names its escape. The estimate draws its dialog open. */
+  "backtest-estimate": { route: "#/preview/crew/backtest-estimate", scenario: "crew-backtest", wait: 2500 },
+  "backtest-report": { route: "#/preview/crew/backtest-report?id=run-4n", scenario: "crew-backtest-report" },
+  "backtest-stopped": { route: "#/preview/crew/backtest-stopped?id=run-stopped", scenario: "crew-backtest-stopped" },
+  /** The backtest page on the start-view read: a project with no run, a finished run, a stopped run and a narrow window. */
+  "entry-crew-backtest-page": { route: "#/settings/crew/backtest", scenario: "crew-backtest-none", wait: 2500 },
+  "entry-crew-backtest-page-last-finished": { route: "#/settings/crew/backtest", scenario: "crew-backtest", wait: 2500 },
+  "entry-crew-backtest-page-last-stopped": { route: "#/settings/crew/backtest", scenario: "crew-backtest-stopped", wait: 2500 },
+  "entry-crew-backtest-page-running": { route: "#/settings/crew/backtest", scenario: "crew-backtest-running", wait: 2500 },
+  "entry-crew-backtest-page-narrow-window": { route: "#/settings/crew/backtest", scenario: "crew-backtest-none", width: 640, wait: 2500 },
+  /** The lanes and budgets states: reading, an error with Try again, a lane with no kind, an engine with no budget and a failed last run. */
+  "backtest-lanes-reading": { route: "#/settings/crew/backtest", scenario: "crew-backtest", pre: [{ route: "**/api/crew/backtest/start-view*", delay: 20000 }], wait: 900 },
+  "backtest-lanes-error": { route: "#/settings/crew/backtest", scenario: "crew-backtest", pre: [{ route: "**/api/crew/backtest/start-view*", status: 500 }] },
+  "backtest-lanes-kind-not-recorded": { route: "#/settings/crew/backtest", scenario: "crew-backtest-kind-none" },
+  "backtest-lanes-budget-not-set": { route: "#/settings/crew/backtest", scenario: "crew-backtest-budget-none" },
+  "backtest-lanes-last-failed": { route: "#/settings/crew/backtest", scenario: "crew-backtest-failed" },
+  "backtest-lanes-narrow-window": { route: "#/settings/crew/backtest", scenario: "crew-backtest", width: 640 },
+  /** Crew, the escape check frames (Crew Designs v79): one escape's own page with its check in the state the mock leaves it. */
+  "escape-check-proposed": { route: "#/preview/crew/escape-check-proposed?id=esc-proposed", scenario: "crew-escapes-checks" },
+  "escape-check-writing": { route: "#/preview/crew/escape-check-writing?id=esc-writing", scenario: "crew-escapes-checks" },
+  "escape-check-approve": { route: "#/preview/crew/escape-check-approve?id=esc-proof", scenario: "crew-escapes-checks" },
+  "escape-check-proven": { route: "#/preview/crew/escape-check-proven?id=esc-proven", scenario: "crew-escapes-checks" },
+  "escape-check-invalid": { route: "#/preview/crew/escape-check-invalid?id=esc-session", scenario: "crew-escapes-checks" },
+  "escape-check-retry": { route: "#/preview/crew/escape-check-retry?id=esc-session", scenario: "crew-escapes-checks", steps: [click("button", "Retry")] },
+  "escape-check-withdraw": { route: "#/preview/crew/escape-check-withdraw?id=esc-proven", scenario: "crew-escapes-checks", steps: [click("button", "Withdraw")] },
+  "escape-check-withdrawn": { route: "#/preview/crew/escape-check-withdrawn?id=esc-withdrawn", scenario: "crew-escapes-checks" },
+  "escape-limit": { route: "#/preview/crew/escape-limit", scenario: "crew-escapes-limit", wait: 2500 },
+  /** The same log at a narrow width (Crew Designs v79): a 640 px window and the 320 px side panel, cards instead of the table. */
+  "escape-narrow-window": { route: "#/preview/crew/escape-narrow-window", scenario: "crew-escapes", width: 640 },
+  "escape-narrow-panel": { route: "#/preview/crew/escape-narrow-panel", scenario: "crew-escapes", width: 320 },
+  /** The settings sheet on the real thresholds read (the defaults; `crew-escapes-stored` draws a person's stored values). */
+  "escape-settings": { route: "#/preview/crew/escape-settings", scenario: "crew-escapes" },
+  /** Drawn samples with no read behind them, matched to Crew Designs v79: the mark dialog (no Review queue to open it from),
+   *  the dashboard (no report route) and the Route escape counts (no per-area counts route). */
+  "escape-report": { route: "#/preview/crew/escape-report" },
+  "escape-dashboard": { route: "#/preview/crew/escape-dashboard" },
+  "escape-route-counts": { route: "#/preview/crew/escape-route-counts" },
+  "escape-route-shifted": { route: "#/preview/crew/escape-route-shifted" },
+
+  /** Crew, Settings › Review capacity (Crew Designs v77), on the real capacity and settings routes: the editor that
+   *  Change the limit and Set a limit open, that editor in a 640 px window, and a save the service refused for want of
+   *  the person key. The mock's crew-capacity scenarios answer the two reads and the Person-only settings write. */
+  "capacity-settings-editor": { route: "#/preview/crew/capacity-live-settings", scenario: "crew-capacity", steps: [click("button", "Change the limit")] },
+  "capacity-settings-editor-narrow": { route: "#/preview/crew/capacity-live-settings", scenario: "crew-capacity", width: 640, steps: [click("button", "Change the limit")] },
+  "capacity-settings-editor-error": { route: "#/preview/crew/capacity-live-settings", scenario: "crew-capacity-save-fails", steps: [click("button", "Change the limit"), click("button", "Save")] },
+  // Transcript export and import (frames transcript-*): the two menus, the export toasts, the import sheet's states,
+  // its four refusals, and an imported thread. The mock's transcript-import scenarios carry a project default engine.
+  "transcript-export-menu": { route: "#/threads/t-done", steps: [click("button", "Thread menu")] },
+  "transcript-export-menu-sidebar": {
+    route: "#/threads/t-done",
+    steps: [{ do: "contextmenu", role: "link", name: "Explain how the event log resumes", prefix: true }],
+  },
+  "transcript-export-exporting": {
+    route: "#/threads/t-done",
+    pre: [{ route: "**/api/threads/t-done/export", delay: 20000 }],
+    steps: [click("button", "Thread menu"), click("menuitem", "Export transcript")],
+  },
+  "transcript-export-saved": {
+    route: "#/threads/t-done",
+    steps: [click("button", "Thread menu"), click("menuitem", "Export transcript")],
+  },
+  "transcript-export-failed": {
+    route: "#/threads/t-done",
+    pre: [{ route: "**/api/threads/t-done/export", status: 500 }],
+    steps: [click("button", "Thread menu"), click("menuitem", "Export transcript")],
+  },
+  "transcript-import-project-menu": {
+    route: "#/threads/t-done",
+    scenario: "transcript-import",
+    steps: [{ do: "contextmenu", selector: ".folder-toggle", text: "orbyn-engineering-app" }],
+  },
+  "transcript-import-drop": {
+    route: "#/threads/t-done",
+    scenario: "transcript-import",
+    steps: [
+      {
+        do: "drag",
+        selector: ".folder-toggle",
+        name: "Redirect loop on logout.orbyn.json",
+        mime: "application/vnd.orbyn.transcript+json",
+        text: "orbyn-engineering-app",
+        content: transcriptBody(engineThread),
+      },
+    ],
+  },
+  "transcript-import-reading": {
+    route: "#/threads/t-done",
+    scenario: "transcript-import",
+    pre: [{ route: "**/api/threads/import*", delay: 20000 }],
+    steps: importSteps("Redirect loop on logout.orbyn.json", engineThread),
+  },
+  "transcript-import-preview": importRoute("Redirect loop on logout.orbyn.json", engineThread),
+  "transcript-import-preview-dropped": importRoute("Redirect loop on logout dropped.orbyn.json", engineThread),
+  "transcript-import-importing": importRoute("Redirect loop on logout.orbyn.json", engineThread, {}, [
+    { do: "route", route: "**/api/threads/import*", delay: 20000 },
+    click("button", "Import as new thread"),
+    { do: "wait", ms: 300 },
+  ]),
+  "transcript-import-engine-menu": importRoute("Redirect loop on logout.orbyn.json", engineThread, {}, [
+    click("combobox", "Engine"),
+  ]),
+  "transcript-import-preview-no-engine": importRoute("Redirect loop on logout.orbyn.json", { title: TRANSCRIPT_TITLE }),
+  "transcript-import-error-too-large": importRoute("too large.orbyn.json", engineThread, {}, [], TOO_LARGE),
+  "transcript-import-error-too-new": importRoute("newer.orbyn.json", engineThread),
+  "transcript-import-error-unreadable": importRoute("notes.orbyn.json", engineThread),
+  "transcript-import-error-key-missing": importRoute("nokey.orbyn.json", engineThread),
+  "transcript-imported-thread": { route: "#/threads/t-imported", scenario: "transcript-imported" },
+
 };

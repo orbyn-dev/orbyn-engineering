@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ChevronLeft, Plus } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, Info, Plus } from "lucide-react";
 import { useState } from "react";
 import { api } from "../api";
 import type { EngineStatus } from "../../../api/types";
@@ -10,6 +10,7 @@ import { navigate } from "../../../product/state/route";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Button, CopyCommand, IconButton } from "../../../ui/controls";
 import { ConfirmDialog, Dialog } from "../../../ui/Dialog";
+import { CodeModeSetting } from "../../codemode";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { NativeSessions } from "../maintenance/NativeSessions";
 import { SettingsBanner } from "../rows/SettingsBanner";
@@ -17,6 +18,10 @@ import { InstallBanner, InstallBody, InstallLog, useInstallView, VendorInstall }
 import { FeedbackAction, hasFeedback, UpdateAction, useCustomModels } from "./ProviderParts";
 import type { InstanceStore } from "./ProviderInstances";
 import { patchInstance } from "./providerInstanceData";
+import { EngineHostBanner, EngineHostCard } from "../engineHost/HostCard";
+import { ClaudePathBanner, ClaudePathSettings } from "./ClaudePath";
+import { KeyStorageRow } from "../engineHost/KeyStorage";
+import { EngineGapCard } from "../engineHost/NeedsAttention";
 
 function AddModelDialog({ onClose, add, disabled, error }: { onClose(): void; add(id: string, label: string): Promise<boolean>; disabled: boolean; error: string | null }) {
   const [id, setId] = useState("");
@@ -104,6 +109,8 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
   // Remove is refused while a thread runs on this engine; the row says which one and links to it.
   const running = useWorkspace((state) => Object.values(state.threads).find((thread) => thread.engine === engine.id && thread.active_run !== null));
   const instance = store.instances.find((entry) => entry.id === engine.id);
+  const opencode = (engine.instance_of ?? engine.id) === "opencode";
+  const claudePath = engine.id === "claude";
   const removable = instance !== undefined || engine.tier !== "native";
   const hasNewer = engine.latest !== null && engine.latest !== engine.version;
   const recheck = async () => {
@@ -113,47 +120,63 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
   };
   const install = useInstallView(engine);
   const failed = install.shown !== null && !install.shown.ok;
+  // The service's own sentence for a failed or signed-out start already says what happened: it is shown alone, not after the path.
+  const issue = engine.start_issue?.message ? engine.start_issue.message.slice(0, 300) : null;
   const signIn = engine.sign_in_command && (engine.auth === "logged_out" || engine.tier === "acp");
   return (
     <>
       <div className="set-back">
         <Button small tone="quiet" icon={<ChevronLeft size={13} aria-hidden />} onClick={onBack}>Providers</Button>
         <h2 className="set-back-title">{engine.name}</h2>
-        {instance ? <Button small className="set-back-end" onClick={onEdit}>Edit</Button> : null}
+        {instance && !opencode ? <Button small className="set-back-end" onClick={onEdit}>Edit</Button> : null}
       </div>
-      {engine.problem ? <SettingsBanner tone="err" actions={<Button small busy={checking} onClick={() => void recheck()}>Check again</Button>}>
-        {engine.path ? `Couldn’t run ${engine.path}. ` : ""}{engine.problem}
+      {issue || engine.problem ? <SettingsBanner tone="err" actions={<Button small busy={checking} onClick={() => void recheck()}>Check again</Button>}>
+        {issue ?? `${engine.path ? `Couldn’t run ${engine.path}. ` : ""}${engine.problem}`}
       </SettingsBanner> : null}
+      {claudePath ? <ClaudePathBanner /> : <EngineHostBanner engineId={engine.id} />}
       {failure ? <p className="field-error" role="alert">{failure}</p> : null}
       {!engine.installed ? <VendorInstall engine={engine} view={install} checking={checking} onCheck={() => void recheck()} /> : null}
       <InstallBanner engine={engine} view={install} />
       {failed && install.shown ? <InstallLog command={install.shown.command ?? null} lines={install.shown.output} failed /> : null}
+      {opencode && engine.compatibility ? <SettingsBanner icon={<Info size={16} aria-hidden />}>{engine.compatibility.message}</SettingsBanner> : null}
       <SettingGroup>
         <SettingRow title="Version" description={engine.version === null ? "Unknown" : install.running && engine.latest ? `${engine.version} · updating to ${engine.latest}` : hasNewer ? `${engine.version} · ${engine.latest} is available` : engine.version}>
-          <UpdateAction engine={engine} />
-          {hasNewer || install.running ? null : <Button small busy={checking} onClick={() => void recheck()}>Check for update</Button>}
+          {opencode ? <Button small busy={checking} onClick={() => void recheck()}>Check for update</Button> : <>
+            <UpdateAction engine={engine} />
+            {hasNewer || install.running ? null : <Button small busy={checking} onClick={() => void recheck()}>Check for update</Button>}
+          </>}
         </SettingRow>
         {failed ? null : <InstallBody view={install} />}
         <SettingRow title="Login" description={engine.auth === "logged_out" ? "Not signed in" : engine.auth === "logged_in" && engine.account ? `Signed in as ${engine.account}` : authLabels[engine.auth]}>
           {signIn && engine.sign_in_command ? <CopyCommand command={engine.sign_in_command} label="Copy sign-in command" /> : null}
           {engine.auth === "logged_out" ? <Button small busy={checking} onClick={() => void recheck()}>Check again</Button> : null}
         </SettingRow>
+        <KeyStorageRow engineId={engine.id} />
         <SettingRow title="Location"><code className="set-path">{engine.path ?? "Not found"}</code></SettingRow>
+        {claudePath ? <ClaudePathSettings /> : null}
       </SettingGroup>
+      {claudePath ? null : <EngineHostCard engineId={engine.id} />}
+      <EngineGapCard engine={engine} />
       {engine.installed && !engine.update_command && engine.manual_hint && !engine.compatibility ? <p className="setting-line-desc">{engine.manual_hint}</p> : null}
+      {engine.installed && !opencode ? <CodeModeSetting engine={engine} /> : null}
       {engine.installed ? (engine.auth === "logged_out"
         ? <><p className="set-grp">Models</p><div className="set-card"><span className="t3">Sign in to see the models this account can use.</span></div></>
         : <Models engine={engine} />) : null}
-      {engine.installed ? <NativeSessions engine={engine} /> : null}
-      <SettingGroup>
-        {hasFeedback(engine) ? <FeedbackAction engine={engine} /> : null}
+      {opencode ? <SettingGroup>
+        <SettingRow title="Crew tier mapping" description="Crew maps its tiers to OpenCode models in Settings › Crew.">
+          <Button small disabled>Open Settings › Crew</Button><span className="set-pill planned dot">Planned</span>
+        </SettingRow>
+      </SettingGroup> : null}
+      {engine.installed && !opencode ? <NativeSessions engine={engine} /> : null}
+      {!opencode || instance !== undefined ? <SettingGroup>
+        {!opencode && hasFeedback(engine) ? <FeedbackAction engine={engine} /> : null}
         {removable ? (
           <SettingRow title="Remove" description={running ? `A thread is running on ${engine.name}: “${running.title}”. Stop it, then remove it.` : "Removes this engine from Orbyn. Its sign-in and sessions stay with the engine."}>
             <Button small tone="quiet" className="set-remove" aria-label={`Remove ${engine.name}`} disabled={running !== undefined} onClick={() => setRemoving(true)}>Remove…</Button>
             {running ? <Button small onClick={() => navigate({ name: "thread", id: running.id })}>Open thread</Button> : null}
           </SettingRow>
         ) : null}
-      </SettingGroup>
+      </SettingGroup> : null}
       {removing ? (
         <ConfirmDialog title={`Remove ${engine.name}?`} confirmLabel="Remove" tone="danger" onClose={() => setRemoving(false)}
           onConfirm={async () => {

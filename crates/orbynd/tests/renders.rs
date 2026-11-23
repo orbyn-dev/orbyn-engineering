@@ -5,11 +5,12 @@ mod support;
 
 use std::path::{Path, PathBuf};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use serde_json::{Value, json};
 use support::{Options, Service, TempDir, setup};
 
 /// The exact policy a published page and its images are served with.
-const CSP: &str = "default-src 'none'; script-src 'unsafe-inline'; img-src 'self' data:; style-src 'unsafe-inline'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+const CSP: &str = "default-src 'none'; script-src 'unsafe-inline'; img-src 'self' data:; style-src 'unsafe-inline'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts";
 
 fn header<'a>(response: &'a reqwest::Response, name: &str) -> &'a str {
     response
@@ -112,7 +113,7 @@ async fn a_published_page_is_served_with_its_hardening_headers() {
 }
 
 #[tokio::test]
-async fn a_checkout_image_is_copied_and_its_src_rewritten() {
+async fn a_checkout_image_is_inlined_as_a_data_uri() {
     let dir = TempDir::new();
     let (service, thread) = setup(&dir, Options::default(), "codex").await;
     let root = checkout(&service, &thread).await;
@@ -141,9 +142,32 @@ async fn a_checkout_image_is_copied_and_its_src_rewritten() {
         .text()
         .await
         .unwrap();
-    assert!(page.contains("src=\"image-1.png\""), "{page}");
-    assert!(page.contains("src='image-2.svg'"), "{page}");
-    assert!(page.contains("src=\"image-3.webp\""), "{page}");
+    // Every picture is inlined with its own type and exact bytes; no relative
+    // `image-N` reference is left for the sandboxed frame to fail on.
+    assert!(
+        page.contains(&format!(
+            "src=\"data:image/png;base64,{}\"",
+            B64.encode(&png)
+        )),
+        "{page}"
+    );
+    assert!(
+        page.contains(&format!(
+            "src='data:image/svg+xml;base64,{}'",
+            B64.encode(b"<svg/>")
+        )),
+        "{page}"
+    );
+    assert!(
+        page.contains(&format!(
+            "src=\"data:image/webp;base64,{}\"",
+            B64.encode(b"webp")
+        )),
+        "{page}"
+    );
+    assert!(!page.contains("image-1"), "{page}");
+    assert!(!page.contains("image-2"), "{page}");
+    assert!(!page.contains("image-3"), "{page}");
     assert!(!page.contains("logo.png"), "{page}");
     assert!(!page.contains("deep.svg"), "{page}");
     assert!(!page.contains(absolute.to_str().unwrap()), "{page}");
@@ -153,25 +177,18 @@ async fn a_checkout_image_is_copied_and_its_src_rewritten() {
         "{page}"
     );
     assert!(page.contains("data:image/gif;base64,AA"), "{page}");
-
-    let image = service
-        .get(&format!("{url}/image-1.png"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(image.status(), 200);
-    assert_eq!(header(&image, "content-type"), "image/png");
-    assert_eq!(header(&image, "content-security-policy"), CSP);
-    assert_eq!(header(&image, "x-content-type-options"), "nosniff");
-    assert_eq!(image.bytes().await.unwrap().to_vec(), png);
-
-    let svg = service
-        .get(&format!("{url}/image-2.svg"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(svg.status(), 200);
-    assert_eq!(header(&svg, "content-type"), "image/svg+xml");
+    assert_eq!(body["notes"], json!([]), "{body}");
+    // The page is stored once, with no copy of each picture beside it.
+    let stored: Vec<String> =
+        std::fs::read_dir(render_root(&dir, &thread).join(body["id"].as_str().unwrap()))
+            .unwrap()
+            .flatten()
+            .map(|item| item.file_name().to_string_lossy().into_owned())
+            .collect();
+    assert!(
+        stored.iter().all(|name| !name.starts_with("image-")),
+        "{stored:?}"
+    );
 
     // Nothing else in the render folder is reachable by name.
     for name in [
@@ -229,15 +246,103 @@ async fn a_src_outside_the_checkout_is_left_alone_and_the_page_still_publishes()
     ] {
         assert!(page.contains(kept), "{kept}: {page}");
     }
-    assert!(page.contains("src=\"image-1.png\""), "{page}");
+    assert!(
+        page.contains(&format!(
+            "src=\"data:image/png;base64,{}\"",
+            B64.encode(b"in")
+        )),
+        "{page}"
+    );
     assert!(page.contains(external.to_str().unwrap()), "{page}");
+}
 
-    let gone = service
-        .get(&format!("{url}/image-2.png"))
+#[tokio::test]
+async fn an_inlined_picture_that_would_pass_the_page_limit_is_left_as_written_and_reported() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let root = checkout(&service, &thread).await;
+    // 300 KiB of bytes is 400 KiB of base64: fits alone, never twice.
+    std::fs::write(root.join("big.png"), vec![7u8; 300 * 1024]).unwrap();
+    std::fs::write(root.join("small.png"), b"ok").unwrap();
+
+    let html = "<img src=\"big.png\"><img src=\"big.png\"><img src=\"small.png\">";
+    let (status, body) = publish(&service, &thread, html).await;
+    assert_eq!(status, 201, "{body}");
+    assert_eq!(body["images"], 2, "{body}");
+    assert!(body["bytes"].as_u64().unwrap() <= 512 * 1024, "{body}");
+    let notes = body["notes"].as_array().unwrap();
+    assert_eq!(notes.len(), 1, "{body}");
+    let note = notes[0].as_str().unwrap();
+    assert!(
+        note.contains("big.png") && note.contains("512 KiB"),
+        "{note}"
+    );
+
+    let page = service
+        .get(body["url"].as_str().unwrap())
         .send()
         .await
+        .unwrap()
+        .text()
+        .await
         .unwrap();
-    assert_eq!(gone.status(), 404);
+    // The first big picture and the small one are inlined; the second big one stays
+    // exactly as written, never dropped.
+    assert_eq!(
+        page.matches("data:image/png;base64,").count(),
+        2,
+        "{}",
+        page.len()
+    );
+    assert_eq!(page.matches("src=\"big.png\"").count(), 1);
+    assert!(page.len() <= 512 * 1024);
+}
+
+#[tokio::test]
+async fn a_picture_over_the_picture_limit_is_left_as_written_and_reported() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let root = checkout(&service, &thread).await;
+    std::fs::write(root.join("huge.png"), vec![1u8; 8 * 1024 * 1024 + 1]).unwrap();
+
+    let (status, body) = publish(&service, &thread, "<img src=\"huge.png\">").await;
+    assert_eq!(status, 201, "{body}");
+    assert_eq!(body["images"], 0, "{body}");
+    let note = body["notes"][0].as_str().unwrap();
+    assert!(
+        note.contains("huge.png") && note.contains("8 MiB"),
+        "{note}"
+    );
+}
+
+#[tokio::test]
+async fn an_svg_is_inlined_as_an_image_and_never_as_markup() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let root = checkout(&service, &thread).await;
+    let svg = b"<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>";
+    std::fs::write(root.join("art.svg"), svg).unwrap();
+
+    let (status, body) = publish(&service, &thread, "<img src=\"art.svg\">").await;
+    assert_eq!(status, 201, "{body}");
+    let page = service
+        .get(body["url"].as_str().unwrap())
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    // Only ever a base64 `<img>` source: the SVG text is not in the page, so it is
+    // not parsed as part of it, and an image document never runs its scripts.
+    assert_eq!(
+        page,
+        format!(
+            "<img src=\"data:image/svg+xml;base64,{}\">",
+            B64.encode(svg)
+        )
+    );
+    assert!(!page.contains("<script>"));
 }
 
 #[tokio::test]
@@ -306,6 +411,12 @@ async fn another_thread_cannot_read_this_render() {
     let (status, body) = publish(&service, &thread, "<img src=\"logo.png\">").await;
     assert_eq!(status, 201, "{body}");
     let id = body["id"].as_str().unwrap().to_owned();
+    // A render stored before pictures were inlined holds an `image-1.png` file.
+    std::fs::write(
+        render_root(&dir, &thread).join(&id).join("image-1.png"),
+        b"png",
+    )
+    .unwrap();
 
     for path in [
         format!("/api/threads/{sibling}/renders/{id}"),
@@ -371,8 +482,14 @@ async fn a_frame_token_serves_its_own_page_and_images_and_nothing_else() {
     assert!(header(&page, "content-security-policy").contains("script-src 'unsafe-inline'"));
     assert_eq!(
         page.text().await.unwrap(),
-        "<!doctype html><script>draw()</script><img src=\"image-1.png\"><p>framed</p>"
+        format!(
+            "<!doctype html><script>draw()</script><img src=\"data:image/png;base64,{}\"><p>framed</p>",
+            B64.encode(b"png")
+        )
     );
+    // An older render keeps its stored pictures reachable by the same frame token.
+    let render_dir = render_root(&dir, &thread).join(&id);
+    std::fs::write(render_dir.join("image-1.png"), b"png").unwrap();
     let image = service
         .client
         .get(format!("{}{url}/image-1.png?render={frame}", service.url))
@@ -396,7 +513,7 @@ async fn a_frame_token_serves_its_own_page_and_images_and_nothing_else() {
     for credential in [
         "render=wrong".to_owned(),
         "render=".to_owned(),
-        "render=".to_owned() + &service.token,
+        format!("render={}", service.token),
         "other=1".to_owned(),
     ] {
         let refused = service

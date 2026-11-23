@@ -3,7 +3,7 @@ import { useId, useRef, useState, type ReactNode } from "react";
 import type { PullListEntry } from "../../../api/types";
 import { deriveProjectIdentity } from "../../../product/projects/projectIdentity";
 import { forgeName } from "../../../product/pulls/labels";
-import { checksView, requestedName, reviewersWord, yourReview, type PullDetails } from "../model/pullModel";
+import { checksView, requestedName, reviewersWord, yourReview, type PullDetails, type ChecksView } from "../model/pullModel";
 import type { DetailsStatus } from "../model/usePullDetails";
 
 /** What the cells need to know about the details request, and who is signed in. */
@@ -127,21 +127,25 @@ function Slot({
   );
 }
 
+/** A checks result: its icon and its word, coloured by tone. The column and the phone row's checks line share it. */
+export function ChecksResult({ view }: { view: ChecksView }) {
+  return (
+    <span className="pull-res" data-tone={view.tone}>
+      {view.tone === "fail" ? <X size={14} aria-hidden /> : null}
+      {view.tone === "running" ? <i className="pull-spin spin" aria-hidden /> : null}
+      {view.tone === "pass" ? <SquareCheck size={14} aria-hidden /> : null}
+      <span className="pull-res-word">
+        <span className="sr-only">Checks </span>
+        {view.label}
+      </span>
+    </span>
+  );
+}
+
 export function ChecksCell({ entry, env }: { entry: PullListEntry; env: CellEnv }) {
   const { pull } = entry;
   const view = checksView(pull);
-  const value =
-    view === undefined || view === null ? undefined : (
-      <span className="pull-res" data-tone={view.tone}>
-        {view.tone === "fail" ? <X size={14} aria-hidden /> : null}
-        {view.tone === "running" ? <i className="pull-spin spin" aria-hidden /> : null}
-        {view.tone === "pass" ? <SquareCheck size={14} aria-hidden /> : null}
-        <span className="pull-res-word">
-          <span className="sr-only">Checks </span>
-          {view.label}
-        </span>
-      </span>
-    );
+  const value = view === undefined || view === null ? undefined : <ChecksResult view={view} />;
   const tip = view?.tip ? (
     <>
       <b>{view.tip.title}</b>

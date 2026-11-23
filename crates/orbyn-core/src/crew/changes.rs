@@ -19,6 +19,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/review/{id}/consent"),
     ("POST", "/api/crew/review/{id}/remove-lane"),
     ("PUT", "/api/crew/autopilot/mode"),
+    ("POST", "/api/crew/autopilot/digest/schedule/set"),
     ("POST", "/api/crew/autopilot/confirm"),
     ("POST", "/api/crew/autopilot/areas/override"),
     ("POST", "/api/crew/autopilot/areas/follow"),
@@ -54,6 +55,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
     ("POST", "/api/crew/projects/{id}/worker-provider/set"),
+    ("POST", "/api/crew/profile/apply"),
 ];
 
 /// Reads confer no action authority. The notice projection may record observed
@@ -62,6 +64,7 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/settings/engine-tiers"),
     ("GET", "/api/crew/review/{id}/controls"),
     ("GET", "/api/crew/backtest/estimate"),
+    ("GET", "/api/crew/backtest/start-view"),
     ("GET", "/api/crew/backtest/{id}/report"),
     ("GET", "/api/crew/capacity"),
     ("GET", "/api/crew/capacity/coverage"),
@@ -74,6 +77,7 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/autopilot/merge-queue"),
     ("GET", "/api/crew/autopilot/watch"),
     ("GET", "/api/crew/autopilot/digest"),
+    ("GET", "/api/crew/autopilot/digest/schedule"),
     ("GET", "/api/crew/autopilot/areas"),
     ("GET", "/api/crew/autopilot/areas/history"),
     ("GET", "/api/crew/autopilot/thresholds"),
@@ -89,6 +93,7 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/guard/test"),
     ("GET", "/api/crew/classes"),
     ("GET", "/api/crew/classes/test"),
+    ("GET", "/api/crew/dashboard"),
     ("GET", "/api/crew/projects/{id}/pinned-ref"),
     ("GET", "/api/crew/projects/{id}/worker-provider"),
     ("GET", "/api/crew/route/{id}"),
@@ -103,6 +108,7 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/flow/messages"),
     ("GET", "/api/crew/flow/tasks"),
     ("GET", "/api/crew/flow/tasks/{id}"),
+    ("GET", "/api/crew/flow/tasks/{id}/run"),
 ];
 
 const PREFIX: &str = "/api/crew";

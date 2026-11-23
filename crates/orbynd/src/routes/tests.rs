@@ -246,9 +246,21 @@ fn every_route_has_a_class() {
 }
 
 /// Enforcement is a one-line allowlist, and each line must name a `Person` route that exists: a typo, or a route that was
-/// renamed or reclassified `local`, would otherwise leave a route unguarded without a failure.
+/// renamed or reclassified `local`, would otherwise leave a route unguarded without a failure. `PERSON`, `ENFORCED` and
+/// `tests/routes.json` are all written from the same decision, so dropping a route from all three would read as a plain
+/// table edit: the routes below cannot be dropped, and a real reclassification has to delete its line here in the same
+/// diff.
 #[test]
 fn every_enforced_route_is_a_person_route_in_the_table() {
+    // The routes a service-token agent must never reach: each approves, answers, trusts or acts as the person.
+    const MUST_STAY_PERSON: &[(&str, &str)] = &[
+        ("POST", "/api/approvals/{id}/decide"),
+        ("POST", "/api/questions/{id}/answer"),
+        ("POST", "/api/projects/{id}/trust"),
+        ("POST", "/api/shell/actions"),
+        ("GET", "/api/settings/secrets/patterns/{id}"),
+        ("POST", "/api/crew/tasks/{id}/merge"),
+    ];
     let table = pinned();
     let rows = table["protected"].as_array().unwrap();
     assert!(!ENFORCED.is_empty());
@@ -266,6 +278,17 @@ fn every_enforced_route_is_a_person_route_in_the_table() {
             rows.iter()
                 .any(|row| row[0] == *method && row[1] == *path && row[2] == "person"),
             "{method} {path} is enforced but is not a person row of tests/routes.json"
+        );
+    }
+    for (method, path) in MUST_STAY_PERSON {
+        assert!(
+            ENFORCED.iter().any(|(m, p)| (m, p) == (method, path)),
+            "{method} {path} must stay enforced: it decides or grants something for the person"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row[0] == *method && row[1] == *path && row[2] == "person"),
+            "{method} {path} must stay a person row of tests/routes.json"
         );
     }
 }

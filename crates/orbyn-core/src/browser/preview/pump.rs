@@ -12,6 +12,11 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+/// How long one periodic read may take. A read sent as the page swaps documents can
+/// go unanswered, and the tab's session is held for the whole wait, so a lost reply
+/// skips this look instead of stalling the pump until the command timeout.
+const READ_TIMEOUT: Duration = Duration::from_secs(2);
+
 pub(super) fn decode_base64(text: &str) -> Vec<u8> {
     let value = |byte: u8| match byte {
         b'A'..=b'Z' => Some(byte - b'A'),
@@ -35,6 +40,23 @@ pub(super) fn decode_base64(text: &str) -> Vec<u8> {
     out
 }
 
+async fn refresh_metadata(tab: &Tab) {
+    let mut session = tab.session.lock().await;
+    let history = session.history_within(READ_TIMEOUT).await;
+    let title = session.title_within(READ_TIMEOUT).await;
+    let icon = session.read_within(FAVICON, READ_TIMEOUT).await;
+    if let Ok(history) = history {
+        tab.note_history(&history);
+    }
+    if let Ok(title) = title {
+        lock(&tab.info).title = title;
+    }
+    if let Ok(icon) = icon {
+        let mut info = lock(&tab.info);
+        info.favicon_url = favicon_url(&icon, &info.url);
+    }
+}
+
 /// Polls frames while anyone wants them. A page that did not change sends nothing,
 /// and a tab that stops answering just skips that frame.
 pub(super) async fn pump(tab: Arc<Tab>) {
@@ -43,7 +65,7 @@ pub(super) async fn pump(tab: Arc<Tab>) {
     let mut since_history = Instant::now();
     let mut last_view = Instant::now() - FRAME_EVERY;
     let mut crashes = Crashes::default();
-    loop {
+    'frames: loop {
         tokio::select! {
             () = tab.stop.cancelled() => {
                 let recording = { lock(&tab.recording).take() };
@@ -74,51 +96,89 @@ pub(super) async fn pump(tab: Arc<Tab>) {
             last.clear();
         }
         let view_due = viewers > 0 && last_view.elapsed() >= FRAME_EVERY;
+        // The title and icon are the tab's own state, shown in its tab strip, so they are
+        // refreshed even while nobody watches frames.
+        if since_history.elapsed() >= FRAME_EVERY * HISTORY_TICKS {
+            since_history = Instant::now();
+            tokio::select! {
+                biased;
+                () = tab.stop.cancelled() => continue,
+                () = refresh_metadata(&tab) => {}
+            }
+        }
         if !view_due && !record_due {
             continue;
         }
-        if since_history.elapsed() >= FRAME_EVERY * HISTORY_TICKS {
-            since_history = Instant::now();
+        // Capture owns its reply slot, so metadata and input can use the session
+        // while the browser renders. Close cancels that slot before releasing Tab.
+        let prepare = async {
             let mut session = tab.session.lock().await;
-            let history = session.history().await;
-            let title = session.title().await;
-            let icon = session.read(FAVICON).await;
-            if let Ok(history) = history {
-                tab.note_history(&history);
-            }
-            if let Ok(title) = title {
-                lock(&tab.info).title = title;
-            }
-            if let Ok(icon) = icon {
-                let mut info = lock(&tab.info);
-                info.favicon_url = favicon_url(&icon, &info.url);
-            }
-        }
-        // The screenshot and its input cue snapshot share the page-session owner.
-        let (frame, captured) = {
-            let mut session = tab.session.lock().await;
-            let frame = session.frame(FRAME_QUALITY).await;
-            let captured = if record_due && let (Ok(frame), Some(recording)) = (&frame, &recording)
-            {
-                if recording.keys_enabled() {
-                    let safe = session
-                        .isolated_read(RECORDING_SAFE_FOCUS)
+            let request = if record_due && let Some(recording) = &recording {
+                let safe = !recording.keys_enabled()
+                    || session
+                        .isolated_read_within(RECORDING_SAFE_FOCUS, READ_TIMEOUT)
                         .await
                         .is_ok_and(|value| value == json!(true));
-                    if !safe {
-                        recording.key("", false);
+                Some(recording.begin_capture(session.document_generation(), safe))
+            } else {
+                None
+            };
+            (session.pending_frame(FRAME_QUALITY), request)
+        };
+        let (capture, recording_request) = tokio::select! {
+            biased;
+            () = tab.stop.cancelled() => continue 'frames,
+            prepared = prepare => prepared,
+        };
+        let capture = async move { (capture.await, recording_request) };
+        tokio::pin!(capture);
+        let (frame, recording_request) = loop {
+            tokio::select! {
+                biased;
+                () = tab.stop.cancelled() => continue 'frames,
+                frame = &mut capture => break frame,
+                // Reuse the pump's existing ticks: metadata keeps its cadence
+                // even if this capture will never produce a reply.
+                _ = ticks.tick() => {
+                    if since_history.elapsed() >= FRAME_EVERY * HISTORY_TICKS {
+                        since_history = Instant::now();
+                        tokio::select! {
+                            biased;
+                            () = tab.stop.cancelled() => continue 'frames,
+                            frame = &mut capture => break frame,
+                            () = refresh_metadata(&tab) => {}
+                        }
                     }
                 }
-                // Reject the encoded size before allocating the decoded byte vector.
-                if frame.len() > (MAX_JPEG / 3 + 1) * 4 {
-                    None
+            }
+        };
+        let complete = async {
+            let mut session = tab.session.lock().await;
+            let captured = if let (Ok(frame), Some(request)) = (&frame, recording_request) {
+                let safe = if recording
+                    .as_ref()
+                    .is_some_and(|recording| recording.keys_enabled())
+                {
+                    session
+                        .isolated_read_within(RECORDING_SAFE_FOCUS, READ_TIMEOUT)
+                        .await
+                        .is_ok_and(|value| value == json!(true))
                 } else {
-                    Some(recording.capture(decode_base64(frame)))
-                }
+                    true
+                };
+                // Reject the encoded size before allocating the decoded byte vector.
+                let jpeg = (frame.len() <= (MAX_JPEG / 3 + 1) * 4).then(|| decode_base64(frame));
+                let current = lock(&tab.recording).clone();
+                request.finish(jpeg, session.document_generation(), safe, current.as_ref())
             } else {
                 None
             };
             (frame, captured)
+        };
+        let (frame, captured) = tokio::select! {
+            biased;
+            () = tab.stop.cancelled() => continue 'frames,
+            completed = complete => completed,
         };
         let Ok(frame) = frame else {
             if !tab.session.lock().await.is_alive().await {
@@ -127,15 +187,9 @@ pub(super) async fn pump(tab: Arc<Tab>) {
             continue;
         };
         preview_bridge::settle(&tab.bridge, &mut *tab.session.lock().await, &tab.files).await;
-        if record_due && let Some(recording) = &recording {
-            if let Some(captured) = captured {
-                // Hand over without waiting: live viewers never stall on encoding.
-                recording.submit(captured);
-            } else {
-                recording
-                    .fail("Recorded frame exceeds the JPEG size limit.")
-                    .await;
-            }
+        if let Some(captured) = captured {
+            // Normal frames hand over without waiting on encoding.
+            captured.submit().await;
         }
         if view_due {
             last_view = Instant::now();

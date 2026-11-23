@@ -10,6 +10,7 @@ import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton } from "../../ui/controls";
 import { failureWantsResend } from "./runFailures";
+import { isClaudeEngine } from "../../product/engines/claudePath";
 
 const dismissed = new Set<string>();
 
@@ -24,12 +25,22 @@ export function LimitBanner({ thread }: { thread: Thread }) {
   const putThread = useWorkspace((state) => state.putThread);
   const pushToast = useUi((state) => state.pushToast);
   const limit = thread.lifecycle?.limit;
+  // One write at a time: a second press while one is in flight sends nothing. The buttons are marked, not disabled, so focus stays on the one pressed.
+  const pending = useRef(false);
+  const [busy, setBusy] = useState(false);
   const resetsAt = limit?.resets_at ? Date.parse(limit.resets_at) : Number.NaN;
   // The clock ticks only while a wait is still ahead, and stops once it is over.
   const now = useNow(!Number.isNaN(resetsAt) && Date.now() < resetsAt + 1000);
   if (!limit || thread.active_run) return null;
   const failed = (error: unknown) => pushToast(`Couldn't do that. ${toFailure(error).message}`);
-  const patch = (body: UpdateThread) => api.patchThread(thread.id, body).then(putThread, failed);
+  const once = (write: () => Promise<unknown>) => {
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    void write().finally(() => { pending.current = false; setBusy(false); });
+  };
+  const patch = (body: UpdateThread) => once(() => api.patchThread(thread.id, body).then(putThread, failed));
+  const held = busy || undefined;
   const future = !Number.isNaN(resetsAt) && resetsAt > now;
   const over = !Number.isNaN(resetsAt) && !future;
   const snoozedUntilReset = future && thread.lifecycle?.snoozed_until != null &&
@@ -50,14 +61,13 @@ export function LimitBanner({ thread }: { thread: Thread }) {
         small
         tone="quiet"
         icon={<RotateCcw size={12} aria-hidden />}
-        onClick={() => {
-          api.startRun(thread.id, CONTINUE).then(() => void refreshThread(thread.id), failed);
-        }}
+        aria-disabled={held}
+        onClick={() => once(() => api.startRun(thread.id, CONTINUE).then(() => refreshThread(thread.id), failed))}
       >
         Resume
       </Button>
       {future ? (
-        <Button small tone="quiet" onClick={() => void patch({ resume_at_reset: limit.resume_at === null })}>
+        <Button small tone="quiet" aria-disabled={held} onClick={() => patch({ resume_at_reset: limit.resume_at === null })}>
           {limit.resume_at ? "Cancel auto-resume" : "Resume at reset"}
         </Button>
       ) : null}
@@ -66,7 +76,8 @@ export function LimitBanner({ thread }: { thread: Thread }) {
           small
           tone="quiet"
           icon={<Clock size={12} aria-hidden />}
-          onClick={() => void patch(snoozedUntilReset ? { wake: true } : { snoozed_until: limit.resets_at ?? undefined })}
+          aria-disabled={held}
+          onClick={() => patch(snoozedUntilReset ? { wake: true } : { snoozed_until: limit.resets_at ?? undefined })}
         >
           {snoozedUntilReset ? "Wake now" : "Snooze until reset"}
         </Button>
@@ -81,9 +92,13 @@ export function ThreadErrorBanner({ thread }: { thread: Thread }) {
   const [, redraw] = useState(0);
   const refreshThread = useWorkspace((state) => state.refreshThread);
   const pushToast = useUi((state) => state.pushToast);
+  const engine = useWorkspace((state) => state.engines.data?.find((entry) => entry.id === thread.engine));
   if (thread.active_run || thread.last_run_state !== "failed" || thread.lifecycle?.limit || !items) return null;
   const failure = items.findLast((item) => item.kind === "notice" && item.tone === "error");
   if (!failure || failure.kind !== "notice" || dismissed.has(failure.key)) return null;
+  // The Claude host failures keep their two actions on the failed run; a second Retry here would send the message.
+  if (isClaudeEngine(thread.engine, engine?.instance_of)
+    && (failure.code === "engine_unavailable" || failure.code === "engine_host_stopped")) return null;
   const prompt = items.findLast((item) => item.kind === "message" && item.role === "user");
   if (failure.code === "workspace_preparation_failed" || failure.code === "workspace_preparation_unavailable") return null;
   // A no-reply or lost-conversation failure keeps only Resend, which sits on the
@@ -194,5 +209,30 @@ function LimitCountdown({ limit, now }: { limit: { stopped_at: string; resets_at
         <i style={{ width: `${Math.round(share * 100)}%` }} />
       </span>
     </span>
+  );
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** The import date from the service, drawn as the frame says: 22 Nov. */
+function importedDate(at: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(at);
+  if (!match) return new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return `${Number(match[3])} ${MONTHS[Number(match[2]) - 1] ?? ""}`.trim();
+}
+
+/** The header's small Imported pill on a thread made from a transcript file. */
+export function ImportedThreadPill({ thread }: { thread: Thread }) {
+  if (thread.source !== "orbyn-transcript") return null;
+  return <span className="page-sub-item transcript-imported-pill">Imported</span>;
+}
+
+/** The one line after imported history: when it came in, and that the next message starts a fresh session. */
+export function ImportedThreadMarker({ thread }: { thread: Thread }) {
+  if (thread.source !== "orbyn-transcript" || !thread.imported_at) return null;
+  return (
+    <p className="imported-marker" role="note">
+      Imported {importedDate(thread.imported_at)} · new messages start a fresh session
+    </p>
   );
 }

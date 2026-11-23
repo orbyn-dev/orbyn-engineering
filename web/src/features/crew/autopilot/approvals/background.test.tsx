@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../../mock/api";
 import type { Project } from "../../../../generated/Project";
 import { useWorkspace } from "../../../../product/state/workspace";
@@ -18,6 +18,24 @@ beforeEach(() => {
 
 const crewsTable = () => screen.getByRole("table", { name: "Background crews" });
 const rowOf = (name: string) => within(crewsTable()).getByText(name, { selector: "b" }).closest('[role="row"]') as HTMLElement;
+
+const BUDGET_HINT = "Budget for each run. Turns 1 to 1000, minutes 1 to 1440. It is set now and does not change after.";
+const DAILY_HINT = "Daily budget for each engine. Runs 1 to 1000, turns 1 to 10000. It is set now and does not change after, and it resets at your midnight.";
+
+/** Opens the create form from a template, with the mock's five-field page already read. */
+async function openCreate(template = "Use the Fix failing CI template") {
+  mock.reset("crew-background-empty");
+  const user = userEvent.setup();
+  render(<BackgroundTab />);
+  await user.click(await screen.findByRole("button", { name: template }));
+  const dialog = await screen.findByRole("dialog", { name: /New background crew/ });
+  return { user, dialog };
+}
+
+/** Replaces a field's value the way a person editing it would, including one a number input refuses to show. */
+function setValue(input: HTMLElement, value: string) {
+  fireEvent.change(input, { target: { value } });
+}
 
 describe("Background crews on the Crew routes", () => {
   it("lists the repo's crews by name with trigger, state and newest run, and says per-crew Autopilot is Planned", async () => {
@@ -93,13 +111,218 @@ describe("Background crews on the Crew routes", () => {
     expect(within(dialog).getByLabelText("Turns")).toHaveValue(40);
     expect(within(dialog).getByLabelText("Minutes")).toHaveValue(60);
     expect(within(dialog).getByText("Budget for each run. Turns 1 to 1000, minutes 1 to 1440. It is set now and does not change after.")).toBeVisible();
+    // The daily per-engine budget follows the run budget's pattern: a pair with one hint under both.
+    expect(within(dialog).getByLabelText("Runs a day")).toHaveValue(2);
+    expect(within(dialog).getByLabelText("Turns a day")).toHaveValue(80);
+    expect(within(dialog).getByText("Daily budget for each engine. Runs 1 to 1000, turns 1 to 10000. It is set now and does not change after, and it resets at your midnight.")).toBeVisible();
     const order = [...dialog.querySelectorAll("label")].map((one) => one.textContent);
     expect(order.indexOf("Name")).toBeLessThan(order.indexOf("Template"));
     expect(order.indexOf("Template")).toBeLessThan(order.findIndex((text) => text?.startsWith("Starts when")));
+    expect(order.indexOf("Turns")).toBeLessThan(order.indexOf("Runs a day"));
 
     await user.click(within(dialog).getByRole("button", { name: "Create background crew" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(rowOf("Dependency bump")).toHaveTextContent("When a dependency update opensNever runIdleOff");
+  });
+
+  it("sends the daily per-engine budget and the person's clock with the create body", async () => {
+    mock.reset("crew-background-empty");
+    const user = userEvent.setup();
+    render(<BackgroundTab />);
+    await user.click(await screen.findByRole("button", { name: "Use the Flaky test template" }));
+    const dialog = await screen.findByRole("dialog", { name: /New background crew/ });
+    const dailyRuns = within(dialog).getByLabelText("Runs a day");
+    await user.clear(dailyRuns);
+    await user.type(dailyRuns, "4");
+    const dailyTurns = within(dialog).getByLabelText("Turns a day");
+    await user.clear(dailyTurns);
+    await user.type(dailyTurns, "160");
+    await user.click(within(dialog).getByRole("button", { name: "Create background crew" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The body the route reads: the run budget, the daily budget of the form, and this clock's offset, the way a scheduled task sends it.
+    const create = vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => url === "/api/crew/background/create").at(-1);
+    expect(create).toBeDefined();
+    const sent = JSON.parse(String(create?.[1]?.body)) as { budget: unknown; daily: unknown; utc_offset_minutes: number };
+    expect(sent.budget).toEqual({ turns: 40, minutes: 60 });
+    expect(sent.daily).toEqual({ runs: 4, turns: 160 });
+    expect(sent.utc_offset_minutes).toBe(-new Date().getTimezoneOffset());
+  });
+
+  it("sends the form's default daily budget of 2 runs and 80 turns", async () => {
+    const { user, dialog } = await openCreate();
+    expect(within(dialog).getByLabelText("Runs a day")).toHaveValue(2);
+    expect(within(dialog).getByLabelText("Turns a day")).toHaveValue(80);
+    await user.click(within(dialog).getByRole("button", { name: "Create background crew" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const create = vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => url === "/api/crew/background/create").at(-1);
+    const sent = JSON.parse(String(create?.[1]?.body)) as { daily: unknown };
+    expect(sent.daily).toEqual({ runs: 2, turns: 80 });
+  });
+
+  it("shows the range under Runs a day while it is invalid, and restores its shared hint when it is valid", async () => {
+    const { dialog } = await openCreate();
+    const runs = within(dialog).getByLabelText("Runs a day");
+    const create = within(dialog).getByRole("button", { name: "Create background crew" });
+    for (const bad of ["", "0", "1001", "1.5", "abc"]) {
+      setValue(runs, bad);
+      expect(within(dialog).getByText("Use 1 to 1000 runs a day")).toBeVisible();
+      expect(create).toBeDisabled();
+      expect(runs).toHaveAttribute("aria-invalid", "true");
+      expect(runs).toHaveAttribute("aria-describedby", "bg-daily-runs-error");
+      expect(document.getElementById("bg-daily-runs-error")).toHaveTextContent("Use 1 to 1000 runs a day");
+      expect(runs).toHaveAccessibleDescription("Use 1 to 1000 runs a day");
+      expect(within(dialog).getByText(DAILY_HINT)).toBeVisible();
+    }
+    for (const good of ["1", "1000"]) {
+      setValue(runs, good);
+      expect(within(dialog).queryByText("Use 1 to 1000 runs a day")).toBeNull();
+      expect(create).toBeEnabled();
+      expect(runs).not.toHaveAttribute("aria-invalid");
+      expect(runs).toHaveAttribute("aria-describedby", "bg-daily-hint");
+      expect(runs).toHaveAccessibleDescription(DAILY_HINT);
+    }
+  });
+
+  it("shows the range under Turns a day while it is invalid, and restores its shared hint when it is valid", async () => {
+    const { dialog } = await openCreate();
+    const turns = within(dialog).getByLabelText("Turns a day");
+    const create = within(dialog).getByRole("button", { name: "Create background crew" });
+    for (const bad of ["", "0", "10001", "1.5", "abc"]) {
+      setValue(turns, bad);
+      expect(within(dialog).getByText("Use 1 to 10000 turns a day")).toBeVisible();
+      expect(create).toBeDisabled();
+      expect(turns).toHaveAttribute("aria-invalid", "true");
+      expect(turns).toHaveAccessibleDescription("Use 1 to 10000 turns a day");
+      expect(within(dialog).getByText(DAILY_HINT)).toBeVisible();
+    }
+    for (const good of ["1", "10000"]) {
+      setValue(turns, good);
+      expect(within(dialog).queryByText("Use 1 to 10000 turns a day")).toBeNull();
+      expect(create).toBeEnabled();
+      expect(turns).not.toHaveAttribute("aria-invalid");
+      expect(turns).toHaveAccessibleDescription(DAILY_HINT);
+    }
+  });
+
+  it("shows the run budget ranges under Turns and Minutes", async () => {
+    const { dialog } = await openCreate();
+    const turns = within(dialog).getByLabelText("Turns");
+    const minutes = within(dialog).getByLabelText("Minutes");
+    const create = within(dialog).getByRole("button", { name: "Create background crew" });
+    for (const bad of ["", "0", "1001", "1.5", "abc"]) {
+      setValue(turns, bad);
+      expect(within(dialog).getByText("Use 1 to 1000 turns")).toBeVisible();
+      expect(create).toBeDisabled();
+      expect(turns).toHaveAccessibleDescription("Use 1 to 1000 turns");
+      expect(within(dialog).getByText(BUDGET_HINT)).toBeVisible();
+    }
+    for (const good of ["1", "1000"]) {
+      setValue(turns, good);
+      expect(within(dialog).queryByText("Use 1 to 1000 turns")).toBeNull();
+      expect(turns).toHaveAccessibleDescription(BUDGET_HINT);
+    }
+    for (const bad of ["", "0", "1441", "1.5", "abc"]) {
+      setValue(minutes, bad);
+      expect(within(dialog).getByText("Use 1 to 1440 minutes")).toBeVisible();
+      expect(create).toBeDisabled();
+      expect(minutes).toHaveAccessibleDescription("Use 1 to 1440 minutes");
+      expect(within(dialog).getByText(BUDGET_HINT)).toBeVisible();
+    }
+    for (const good of ["1", "1440"]) {
+      setValue(minutes, good);
+      expect(within(dialog).queryByText("Use 1 to 1440 minutes")).toBeNull();
+      expect(minutes).toHaveAccessibleDescription(BUDGET_HINT);
+    }
+    expect(create).toBeEnabled();
+  });
+
+  it("replaces Every N hours' own hint with its range, and restores it when the value is valid", async () => {
+    const { user, dialog } = await openCreate();
+    await user.click(within(dialog).getByRole("radio", { name: "On a schedule" }));
+    const hours = within(dialog).getByLabelText("Every N hours");
+    const create = within(dialog).getByRole("button", { name: "Create background crew" });
+    for (const bad of ["", "0", "721", "1.5", "abc"]) {
+      setValue(hours, bad);
+      expect(within(dialog).getByText("Use 1 to 720 hours")).toBeVisible();
+      expect(within(dialog).queryByText("1 to 720.")).toBeNull();
+      expect(create).toBeDisabled();
+      expect(hours).toHaveAttribute("aria-invalid", "true");
+      expect(hours).toHaveAccessibleDescription("Use 1 to 720 hours");
+    }
+    for (const good of ["1", "720"]) {
+      setValue(hours, good);
+      expect(within(dialog).queryByText("Use 1 to 720 hours")).toBeNull();
+      expect(within(dialog).getByText("1 to 720.")).toBeVisible();
+      expect(create).toBeEnabled();
+      expect(hours).not.toHaveAttribute("aria-invalid");
+      expect(hours).toHaveAccessibleDescription("1 to 720.");
+    }
+  });
+
+  it("replaces Name and Label hints with their ranges while either is empty or too long", async () => {
+    const { user, dialog } = await openCreate();
+    const name = within(dialog).getByLabelText("Name");
+    const create = within(dialog).getByRole("button", { name: "Create background crew" });
+    setValue(name, "");
+    expect(within(dialog).getByText("Use 1 to 80 characters")).toBeVisible();
+    expect(create).toBeDisabled();
+    expect(name).toHaveAccessibleDescription("Use 1 to 80 characters");
+    setValue(name, "a");
+    expect(within(dialog).queryByText("Use 1 to 80 characters")).toBeNull();
+    expect(create).toBeEnabled();
+    expect(name).toHaveAccessibleDescription("1 to 80 characters");
+    setValue(name, "a".repeat(80));
+    expect(create).toBeEnabled();
+    setValue(name, "a".repeat(81));
+    expect(within(dialog).getByText("Use 1 to 80 characters")).toBeVisible();
+    expect(create).toBeDisabled();
+    setValue(name, "Fix failing CI");
+
+    await user.click(within(dialog).getByRole("radio", { name: "An issue gets a label" }));
+    const label = within(dialog).getByLabelText("Label");
+    expect(within(dialog).getByText("Use 1 to 100 characters")).toBeVisible();
+    expect(create).toBeDisabled();
+    expect(label).toHaveAccessibleDescription("Use 1 to 100 characters");
+    setValue(label, "crew-fix");
+    expect(within(dialog).queryByText("Use 1 to 100 characters")).toBeNull();
+    expect(label).toHaveAccessibleDescription("1 to 100 characters. An issue that gets this label starts a run.");
+    setValue(label, "a".repeat(100));
+    expect(create).toBeEnabled();
+    setValue(label, "a".repeat(101));
+    expect(within(dialog).getByText("Use 1 to 100 characters")).toBeVisible();
+    expect(create).toBeDisabled();
+  });
+
+  it.each([
+    ["Runs a day", "the daily budget is 1 to 1000 runs"],
+    ["Turns a day", "the daily budget is 1 to 10000 turns"],
+  ])("shows the service's refusal under %s and drops it when the field is edited", async (field, message) => {
+    const { user, dialog } = await openCreate();
+    mock.fail("/api/crew/background/create", 1, 400, "invalid", message);
+    await user.click(within(dialog).getByRole("button", { name: "Create background crew" }));
+    const shown = await within(dialog).findByText(message);
+    expect(shown).toBeVisible();
+    expect(within(dialog).getByLabelText(field)).toHaveAttribute("aria-invalid", "true");
+    expect(within(dialog).getByLabelText(field)).toHaveAccessibleDescription(message);
+    expect(within(dialog).getByText(DAILY_HINT)).toBeVisible();
+    await user.type(within(dialog).getByLabelText(field), "1");
+    expect(within(dialog).queryByText(message)).toBeNull();
+    expect(within(dialog).getByLabelText(field)).toHaveAccessibleDescription(DAILY_HINT);
+    expect(within(dialog).getByRole("button", { name: "Create background crew" })).toBeEnabled();
+  });
+
+  it("keeps Create on when the optional CI workflow and Branch are empty", async () => {
+    const { user, dialog } = await openCreate();
+    const workflow = within(dialog).getByLabelText("CI workflow · optional");
+    const branch = within(dialog).getByLabelText("Branch · optional");
+    const create = within(dialog).getByRole("button", { name: "Create background crew" });
+    expect(create).toBeEnabled();
+    await user.type(workflow, "build.yml");
+    await user.clear(workflow);
+    await user.type(branch, "release");
+    await user.clear(branch);
+    expect(create).toBeEnabled();
+    expect(within(dialog).queryByRole("alert")).toBeNull();
   });
 
   it("opens the Flaky test template on its schedule, and creates it", async () => {
@@ -128,8 +351,9 @@ describe("Background crews on the Crew routes", () => {
     await user.click(within(dialog).getByRole("radio", { name: "An issue gets a label" }));
     expect(within(dialog).getByRole("button", { name: "Create background crew" })).toBeDisabled();
     const label = within(dialog).getByLabelText("Label");
-    expect(label).toHaveAccessibleDescription("1 to 100 characters. An issue that gets this label starts a run.");
+    expect(label).toHaveAccessibleDescription("Use 1 to 100 characters");
     await user.type(label, "crew-fix");
+    expect(label).toHaveAccessibleDescription("1 to 100 characters. An issue that gets this label starts a run.");
     await user.click(within(dialog).getByRole("button", { name: "Create background crew" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(rowOf("Fix failing CI")).toHaveTextContent("When an issue gets the label crew-fix");
@@ -183,6 +407,14 @@ describe("Background crews on the Crew routes", () => {
     await user.type(turns, "1001");
     expect(within(dialog).getByRole("button", { name: "Create background crew" })).toBeDisabled();
     expect(within(dialog).getByText(/Turns 1 to 1000, minutes 1 to 1440/)).toBeVisible();
+    // The daily pair carries the same rule for each engine's day.
+    const dailyTurns = within(dialog).getByLabelText("Turns a day");
+    await user.clear(turns);
+    await user.type(turns, "40");
+    await user.clear(dailyTurns);
+    await user.type(dailyTurns, "10001");
+    expect(within(dialog).getByRole("button", { name: "Create background crew" })).toBeDisabled();
+    expect(within(dialog).getByText(/Daily budget for each engine/)).toBeVisible();
   });
 
   it("lists nothing without a git project, and says why Create is off", async () => {
@@ -223,11 +455,13 @@ describe("Background crew words", () => {
     expect(fieldOf("every_hours is 1 to 720")).toBe("hours");
     expect(fieldOf("the budget is 1 to 1000 turns")).toBe("turns");
     expect(fieldOf("the budget is 1 to 1440 minutes")).toBe("minutes");
+    expect(fieldOf("the daily budget is 1 to 1000 runs")).toBe("dailyRuns");
+    expect(fieldOf("the daily budget is 1 to 10000 turns")).toBe("dailyTurns");
     expect(fieldOf("something else")).toBeNull();
   });
 
   it("lists what each trigger is set to across the crews", () => {
-    const crew = (id: string, branch: string) => ({ id, project_id: "p", name: id, template: "fix_failing_ci" as const, trigger: { kind: "ci_failure" as const, workflow: "ci.yml", branch }, budget: { turns: 1, minutes: 1 }, enabled: true, state: "idle" as const, reviews_waiting: 0, created_at: "", updated_at: "" });
+    const crew = (id: string, branch: string) => ({ id, project_id: "p", name: id, template: "fix_failing_ci" as const, trigger: { kind: "ci_failure" as const, workflow: "ci.yml", branch }, budget: { turns: 1, minutes: 1 }, daily: { runs: 2, turns: 80 }, enabled: true, state: "idle" as const, reviews_waiting: 0, created_at: "", updated_at: "" });
     const view = backgroundView({ crews: [crew("a", "main"), crew("b", "main"), crew("c", "dev")], total: 3, runs: {} }, new Date());
     expect(view.configured).toEqual({ ci_fails: "ci.yml on main, ci.yml on dev" });
   });

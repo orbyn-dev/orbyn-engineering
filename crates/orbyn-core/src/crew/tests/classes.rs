@@ -23,6 +23,53 @@ pub(super) fn file(rules: Vec<Value>) -> String {
     json!({ "classes": { "version": 1, "rules": rules } }).to_string()
 }
 
+#[test]
+fn host_notes_are_nonblocking_indexed_and_do_not_echo_values() {
+    let (rules, notes) = parse_file(
+        r#"{"allowed_hosts":["collector.internal","private:443","*.com","*.co.uk","*.internal"]}"#,
+    )
+    .unwrap();
+    assert!(rules.is_empty());
+    assert_eq!(notes.len(), 3);
+    assert!(notes[0].contains("allowed_hosts[1]"));
+    assert!(notes[0].contains("ignored"));
+    assert!(!notes.join(" ").contains("private:443"));
+    assert!(notes[1].contains("allowed_hosts[2]"));
+    assert!(notes[1].contains("base host and all descendants"));
+    assert!(notes[2].contains("allowed_hosts[4]"));
+}
+
+#[test]
+fn host_note_shapes_caps_and_secret_guard_preserve_class_validation() {
+    for source in [
+        r#"{"allowed_hosts":null}"#,
+        r#"{"allowed_hosts":["collector",7]}"#,
+    ] {
+        let (_, notes) = parse_file(source).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("no configured hosts are allowed"));
+    }
+    let source = json!({"allowed_hosts": vec!["bad:443"; 30]}).to_string();
+    let (_, notes) = parse_file(&source).unwrap();
+    assert_eq!(notes.len(), 17);
+    assert!(notes[16].contains("omitted"));
+    assert!(!notes.join(" ").contains("bad:443"));
+    for source in [
+        r#"{}"#,
+        r#"{"allowed_hosts":[]}"#,
+        r#"{"allowed_hosts":["collector","10.0.0.7","[fd00::7]","*.logs.internal"]}"#,
+    ] {
+        assert!(parse_file(source).unwrap().1.is_empty());
+    }
+    assert!(
+        parse_file(r#"{"allowed_hosts":["bad:443"],"classes":{"version":99,"rules":[]}}"#).is_err()
+    );
+    let secret =
+        json!({"allowed_hosts": [format!("sk-{}", "a".repeat(30)), "bad:443"]}).to_string();
+    let why = parse_file(&secret).unwrap_err();
+    assert!(!why.contains("allowed_hosts[") && !why.contains("aaaaaaaa"));
+}
+
 fn git_out(repo: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .args(args)

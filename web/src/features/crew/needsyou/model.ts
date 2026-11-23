@@ -2,12 +2,12 @@
 // `NeedsItem`; the screens draw nothing else. A field a source does not state is null, never a guess.
 import type { Risk } from "../autopilot/approvals/model";
 
-/** The kinds the designs name, in the order their filters are drawn. The first four live kinds have a route behind them. */
+/** The kinds the designs name, in the order their filters are drawn. The kinds with a route behind them are in LIVE_KINDS. */
 export const NEEDS_KINDS = ["autonomy", "approval", "denied", "questions", "review", "main", "conflict", "stopped", "could_not_start", "background"] as const;
 export type NeedsKind = (typeof NEEDS_KINDS)[number];
 
 /** The kinds `assemble.ts` builds from a route today. The rest are drawn by the frames only. */
-export const LIVE_KINDS = ["approval", "denied", "stopped", "could_not_start", "main", "background"] as const satisfies readonly NeedsKind[];
+export const LIVE_KINDS = ["autonomy", "approval", "denied", "stopped", "could_not_start", "main", "background"] as const satisfies readonly NeedsKind[];
 
 /** A filter chip's word, from the designs: Approvals, Denied, Questions, Main, Conflicts, Reviews, Autonomy. */
 export const KIND_FILTER: Record<NeedsKind, string> = {
@@ -53,7 +53,7 @@ export interface NeedsItem {
   risk: Risk | null;
   /** Reversibility is stated by no route: only the frames carry it. */
   undo: "easy" | "hard" | null;
-  /** Who asked and what it is, after the tags: "Claude Code · Sonnet 5.5 · approval". */
+  /** Who asked and what it is, after the tags: "claude · approval". */
   from: string;
   /** What waiting costs, in the designs' sentence for the kind; null when no source says. */
   cost: string | null;

@@ -30,11 +30,22 @@ const separatorOf = (path: string) => (path.includes("\\") && !path.includes("/"
 
 export const withSlash = (path: string) => (SEP.test(path.slice(-1)) ? path : `${path}${separatorOf(path)}`);
 
+/** The `~` root in the home folder's own style: `~\Documents` on Windows, `~/Documents` elsewhere. */
+export const homePrefix = (home: string) => `~${separatorOf(home)}`;
+
 export const shortenHome = (path: string, home: string) => {
-  if (path === home) return "~/";
   const prefix = withSlash(home);
-  return path.startsWith(prefix) ? `~/${path.slice(prefix.length)}` : path;
+  if (path === home || path === prefix) return homePrefix(home);
+  return path.startsWith(prefix) ? `${homePrefix(home)}${path.slice(prefix.length)}` : path;
 };
+
+/** The name a path ends in, for the row that goes to the folder above: a root keeps its own text. */
+export function pathName(path: string): string {
+  const trimmed = dropTrailingSlash(path);
+  const at = lastSep(trimmed);
+  const name = at < 0 ? trimmed : trimmed.slice(at + 1);
+  return name === "" ? trimmed : name;
+}
 
 export const expandHome = (path: string, home: string) =>
   path === "~" || /^~[\\/]/.test(path) ? `${withSlash(home)}${path.slice(2)}` : path;

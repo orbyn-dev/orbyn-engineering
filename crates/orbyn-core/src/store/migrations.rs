@@ -64,6 +64,24 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (54, include_str!("crew_paused_starts.sql")),
     (55, include_str!("crew_person_commits.sql")),
     (56, include_str!("crew_merge_corrections.sql")),
+    (57, include_str!("crew_background_daily.sql")),
+    (58, include_str!("crew_escape_retention.sql")),
+    (59, include_str!("crew_background_events.sql")),
+    (60, CREW_NOTES),
+    (61, include_str!("plan_mode_reset.sql")),
+    (62, include_str!("issues.sql")),
+    (63, include_str!("code_runs.sql")),
+    (64, include_str!("profiles.sql")),
+    (65, include_str!("project_repos.sql")),
+    (66, include_str!("thread_repos.sql")),
+    (67, include_str!("library.sql")),
+    (68, include_str!("approval_via.sql")),
+    (69, include_str!("thread_import.sql")),
+    (70, include_str!("pull_repos.sql")),
+    (71, include_str!("crew_backtest_lane_kind.sql")),
+    (72, include_str!("library_env_key_presence.sql")),
+    (73, include_str!("attachment_sources.sql")),
+    (74, include_str!("code_run_waits.sql")),
 ];
 
 // What each install, update and removal of an engine did: when, whether it worked, why not, the
@@ -629,3 +647,12 @@ CREATE TABLE settings (
 // Which account the zone's local record belongs to, so a different account signing in on the same
 // data folder starts from nothing instead of inheriting the first one's changes.
 const ACCOUNT_OWNER: &str = "ALTER TABLE account_sync ADD COLUMN account TEXT;";
+
+// Crew asks its lead to read a task's result, a review, or a start it refused; the person asks the
+// lead to answer. A queued message keeps which one it was, because the run that starts from it is
+// judged by what the lead leaves behind rather than by what it says. The queued row is deleted when
+// the run starts, so the run keeps the answer too.
+const CREW_NOTES: &str = r#"
+ALTER TABLE queued_messages ADD COLUMN crew_note INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN crew_note INTEGER NOT NULL DEFAULT 0;
+"#;

@@ -24,7 +24,7 @@ import { GUARD_WORKERS } from "./copy";
 import { Chip } from "./parts";
 
 const INTRO =
-  "Path classes sort files by sensitivity and list the engines allowed for each. They are blocking rules: Crew applies them before it scores any engine, and every routing decision is in the ledger. A task that touches two classes can use the engines both classes allow. They are stored in .orbyn/crew.json in this repo, and that file is the authority. Orbyn reads it and never writes it: a change is made in the file’s editor and is a normal reviewed change to the repo, with no separate owner role. Agents can never edit the file (it is on the always-denied list).";
+  "Path classes sort files by sensitivity and list the engines allowed for each. They are blocking rules: Crew applies them before it scores any engine, and every routing decision is in the ledger. A task that touches two classes can use the engines both classes allow. They are stored in .orbyn/crew.json in this repo, and that file is the authority. Orbyn reads it and does not write it: a change is made in the file’s editor and is a normal reviewed change to the repo, with no separate owner role. Agents can never edit the file (it is on the always-denied list).";
 
 /** The most paths one test takes (the service refuses more). */
 export const TEST_PATHS = 10;
@@ -118,7 +118,7 @@ function Detail({ rule, at, onClose, pinBlocked }: { rule: CrewClassRule; at: nu
           <div><dt>Allowed engines</dt><dd>{engines}</dd></div>
           <div><dt>Reason</dt><dd>{rule.reason}</dd></div>
         </dl>
-        <p className="ap-muted">Orbyn reads this file and never writes it. To change the class, open the file in the editor: the change is a normal reviewed change to the repo, and Orbyn reads it again when it is saved.</p>
+        <p className="ap-muted">Orbyn reads this file and does not write it. To change the class, open the file in the editor: the change is a normal reviewed change to the repo, and Orbyn reads it again when it is saved.</p>
       </div>
       <footer className="ap-drawer-foot"><Button small tone="quiet" onClick={onClose}>Close</Button></footer>
     </aside>
@@ -136,8 +136,25 @@ function Problems({ problems, onCheck }: { problems: string[]; onCheck(): void }
         <div className="ap-destroy-row ap-head" role="row"><span role="columnheader">What is wrong</span></div>
         {problems.map((problem, at) => <div key={`${at}-${problem}`} className="ap-class-problem" role="row"><span role="cell">{problem}</span></div>)}
       </div>
-      <p className="ap-muted">Orbyn reads the file and never writes it. Fix the rules in the editor, then Check again; nothing is changed until the file is valid, and a mistake never silently becomes a rule.</p>
+      <p className="ap-muted">Orbyn reads the file and does not write it. Fix the rules in the editor, then Check again; nothing is changed until the file is valid, and a mistake is shown, not turned silently into a rule.</p>
     </>
+  );
+}
+
+/** Generic nonblocking diagnostics; the service owns their wording and rule semantics. */
+function RuleNotes({ notes, refreshing, onCheck }: { notes: string[]; refreshing: boolean; onCheck(): void }) {
+  if (!notes.length) return null;
+  return (
+    <aside className="ap-banner ap-banner-am ap-rule-notes" aria-label="Rule notes" data-frame={notes.length > 16 ? "classes-rule-notes-truncated" : "classes-rule-notes"}>
+      <div className="ap-rule-notes-body">
+        <b>Rule notes</b>
+        <p>These notes do not block engines. Existing path-class and host rules still apply.</p>
+        <ul>{notes.slice(0, 16).map((note, at) => <li key={`${at}-${note}`}>{note}</li>)}</ul>
+        {notes.length > 16 ? <p>More rule notes were omitted. Review the remaining entries in .orbyn/crew.json.</p> : null}
+        <p>Edit .orbyn/crew.json in your editor and commit the change, then Check again.</p>
+      </div>
+      <span className="ap-banner-acts"><Button small disabled={refreshing} onClick={onCheck}>Check again</Button></span>
+    </aside>
   );
 }
 
@@ -370,6 +387,7 @@ function Loaded({ project }: { project: { id: string; name: string } }) {
         </div>
       ) : write?.phase === "check" ? <div className="ap-banner ap-banner-am" role="alert"><p>{write.message ?? "Couldn’t check the remembered default branch."}</p><Button small onClick={() => void check()}>Check again</Button></div> : null}
       {broken ? <Problems problems={view.problems} onCheck={read.reload} /> : null}
+      <RuleNotes notes={view.notes.filter((entry) => !entry.startsWith(BLOCKED_PREFIX) && entry !== view.working_copy_note)} refreshing={read.refreshing} onCheck={read.reload} />
       <div className="ap-class-split">
         <div className="ap-class-main">
           <Table view={view} pinBlocked={!!note} selected={rule?.name ?? null} onSelect={(name) => setSelected(name === selected ? null : name)} />

@@ -18,6 +18,7 @@ use serde_json::json;
 
 use super::super::guard::{key_needles, refuse_leak, refuse_secret};
 use super::super::leases::internal;
+use super::{DeliveryClaims, DeliveryKey};
 use crate::app::Core;
 use crate::store::{CrewRun, CrewTask};
 
@@ -176,6 +177,21 @@ impl Core {
         mode: &'static str,
         note: &str,
     ) -> Held {
+        self.collect_held_with(crew_id, recipient, thread, guard, mode, note, || {})
+    }
+
+    /// A deterministic interleaving before selection, like the worker-send cancellation seam.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::crew) fn collect_held_with(
+        &self,
+        crew_id: &str,
+        recipient: &str,
+        thread: &str,
+        guard: bool,
+        mode: &'static str,
+        note: &str,
+        before_select: impl FnOnce(),
+    ) -> Held {
         let mut taken = Held {
             texts: Vec::new(),
             more: 0,
@@ -183,7 +199,29 @@ impl Core {
             recipient: recipient.to_owned(),
             thread: thread.to_owned(),
             mode,
+            claims: Claims {
+                active: self.crew_bus.deliveries.clone(),
+                keys: Vec::new(),
+            },
         };
+        before_select();
+        let needles = if guard {
+            match self.crew_key_needles(crew_id) {
+                Ok(needles) => needles,
+                Err(error) => {
+                    tracing::warn!(%error, "could not guard held crew messages");
+                    return taken;
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        let active = self.crew_bus.deliveries.clone();
+        let mut claims = active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Read pending state under the same lock as selection. A collector may have
+        // committed a receipt and released its claim while this one checked the keys.
         let held = match self.store.held_crew_messages(crew_id, recipient) {
             Ok(held) => held,
             Err(error) => {
@@ -191,12 +229,21 @@ impl Core {
                 return taken;
             }
         };
-        let needles = self.crew_key_needles(crew_id).unwrap_or_default();
+        let available: Vec<_> = held
+            .iter()
+            .filter(|message| {
+                !claims.contains(&(
+                    crew_id.to_owned(),
+                    recipient.to_owned(),
+                    message.id.as_str().to_owned(),
+                ))
+            })
+            .collect();
         let mut chars = 0;
-        for (index, message) in held.iter().enumerate() {
+        for (index, message) in available.iter().enumerate() {
             let (text, withheld) = self.outbound(message, guard, &needles);
             if index >= HELD_MESSAGES || chars + text.len() > HELD_CHARS {
-                taken.more = held.len() - index;
+                taken.more = available.len() - index;
                 break;
             }
             chars += text.len();
@@ -209,7 +256,15 @@ impl Core {
                 .rows
                 .push((message.id.as_str().to_owned(), note.to_owned()));
             taken.texts.push(text);
+            let key = (
+                crew_id.to_owned(),
+                recipient.to_owned(),
+                message.id.as_str().to_owned(),
+            );
+            claims.insert(key.clone());
+            taken.claims.keys.push(key);
         }
+        drop(claims);
         taken
     }
 
@@ -236,7 +291,57 @@ impl Core {
             run.worker_thread_id.as_deref().unwrap_or_default(),
             true,
             "next_turn",
-            "sent with the worker's next prompt",
+            "sent in the worker's accepted turn context",
+        )
+    }
+
+    /// Every worker launch, including a person's resume, takes the same guarded inbox.
+    pub(crate) fn held_for_worker_turn(&self, thread: &str) -> crate::error::Result<Option<Held>> {
+        let Some((task, run)) = self.store.crew_task_for_worker(thread)? else {
+            return Ok(None);
+        };
+        if task.state != "running" {
+            return Ok(None);
+        }
+        Ok(Some(self.held_for_worker(&task, &run)))
+    }
+
+    /// Acceptance is checked again after the driver starts and the run becomes running.
+    pub(crate) fn accept_worker_held(&self, thread: &str, held: &Held) {
+        if self
+            .store
+            .crew_task_for_worker(thread)
+            .ok()
+            .flatten()
+            .is_some_and(|(task, run)| {
+                task.state == "running" && run.member == held.recipient && held.thread == thread
+            })
+        {
+            self.commit_held(held);
+        }
+    }
+
+    /// A final result tells the lead what never reached this member, without forwarding bodies
+    /// or pretending a message to the worker was delivered to it.
+    pub(crate) fn ended_worker_held_summary(&self, task: &CrewTask, run: &CrewRun) -> String {
+        let value = match self.store.held_crew_messages(&task.crew_id, &run.member) {
+            Ok(messages) if messages.is_empty() => return String::new(),
+            Ok(messages) => {
+                let ids: Vec<_> = messages
+                    .iter()
+                    .take(HELD_MESSAGES)
+                    .map(|m| m.id.as_str())
+                    .collect();
+                json!({ "recipient": run.member, "total": messages.len(), "remaining": messages.len() - ids.len(), "message_ids": ids })
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not list an ended worker's held messages");
+                json!({ "recipient": run.member, "unavailable": true })
+            }
+        };
+        let body = value.to_string().replace('&', "&amp;").replace('<', "&lt;");
+        format!(
+            "\n\nUndelivered messages for the ended crew member (metadata only):\n<crew-held-summary trust=\"data\">\n{body}\n</crew-held-summary>"
         )
     }
 
@@ -267,6 +372,24 @@ pub(crate) struct Held {
     recipient: String,
     thread: String,
     mode: &'static str,
+    claims: Claims,
+}
+
+struct Claims {
+    active: DeliveryClaims,
+    keys: Vec<DeliveryKey>,
+}
+
+impl Drop for Claims {
+    fn drop(&mut self) {
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for key in &self.keys {
+            active.remove(key);
+        }
+    }
 }
 
 impl Held {

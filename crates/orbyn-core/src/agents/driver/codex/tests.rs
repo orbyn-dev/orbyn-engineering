@@ -13,6 +13,7 @@ use super::turn::started_turn;
 use crate::agents::driver::{EngineOutcome, RunKind};
 use crate::agents::selection::SERVICE_TIER;
 use crate::governance::approvals::Verdict;
+use orbyn_contracts::ActionKind;
 use orbyn_contracts::{AgUiEvent, ModelInfo, PermissionMode};
 #[test]
 fn limits_keep_only_windows_and_the_plan() {
@@ -742,6 +743,107 @@ fn a_list_codex_did_not_answer_leaves_its_group_out() {
     let ids: Vec<_> = tools.groups.iter().map(|one| one.id.as_str()).collect();
     assert_eq!(ids, ["connectors"]);
     assert!(tools.not_reported.contains(&"mcp".to_owned()));
+}
+
+#[test]
+fn a_file_change_with_no_known_path_is_never_taken_for_one_in_the_checkout() {
+    let mut mapper = mapper();
+    // A sub-agent's item is never recorded, and Codex sends no grantRoot with it.
+    let unknown = json!({ "itemId": "sub-agent-item", "threadId": "other" });
+    let request = classify_request("item/fileChange/requestApproval", &unknown, &mapper).unwrap();
+    assert!(request.has_no_known_path());
+    let rooted = json!({ "itemId": "sub-agent-item", "grantRoot": "/work/repo" });
+    let request = classify_request("item/fileChange/requestApproval", &rooted, &mapper).unwrap();
+    assert!(!request.has_no_known_path());
+    // The legacy request names its paths, or none.
+    let empty = json!({ "callId": "c", "fileChanges": {} });
+    let request = classify_request("applyPatchApproval", &empty, &mapper).unwrap();
+    assert!(request.has_no_known_path());
+    let named = json!({ "callId": "c", "fileChanges": { "src/a.rs": {} } });
+    let request = classify_request("applyPatchApproval", &named, &mapper).unwrap();
+    assert!(!request.has_no_known_path());
+    // It is declined for both request shapes, never accepted.
+    for method in ["item/fileChange/requestApproval", "applyPatchApproval"] {
+        let denied = approval_response(method, &unknown, &Verdict::Deny("no".into()));
+        assert!(
+            denied["decision"] == "decline" || denied["decision"] == "denied",
+            "{method}"
+        );
+    }
+    // Other kinds carry no paths by design and are not affected.
+    let command = json!({ "command": "ls" });
+    let request =
+        classify_request("item/commandExecution/requestApproval", &command, &mapper).unwrap();
+    assert!(!request.has_no_known_path());
+    mapper
+        .file_paths
+        .insert("known".into(), vec!["src/b.rs".into()]);
+    let known = json!({ "itemId": "known" });
+    let request = classify_request("item/fileChange/requestApproval", &known, &mapper).unwrap();
+    assert!(!request.has_no_known_path());
+}
+
+#[test]
+fn a_permissions_request_for_write_roots_is_checked_as_a_file_change() {
+    let mapper = mapper();
+    // Whatever the reason says, the write roots are what the grant widens.
+    let legacy = json!({
+        "reason": "read docs",
+        "permissions": { "fileSystem": { "write": ["/home/me/.ssh"] } },
+    });
+    let request = classify_request("item/permissions/requestApproval", &legacy, &mapper).unwrap();
+    assert_eq!(request.kind, ActionKind::FileChange);
+    assert_eq!(request.paths, ["/home/me/.ssh"]);
+    assert!(request.summary.contains("/home/me/.ssh"));
+    // The newer entry list: only write entries count, in each of its path shapes.
+    let entries = json!({
+        "reason": "read docs",
+        "permissions": { "fileSystem": { "entries": [
+            { "access": "read", "path": { "type": "path", "path": "/etc" } },
+            { "access": "write", "path": { "type": "path", "path": "/home/me/.aws" } },
+            { "access": "write", "path": { "type": "glob_pattern", "pattern": "/home/me/**" } },
+            { "access": "write", "path": { "type": "special", "value": { "kind": "root" } } },
+            { "access": "write", "path": { "type": "special", "value": { "kind": "tmpdir" } } },
+            { "access": "write", "path": { "type": "special", "value": { "kind": "project_roots", "subpath": "src" } } },
+            { "access": "deny", "path": { "type": "path", "path": "/secret" } },
+        ] } },
+    });
+    let request = classify_request("item/permissions/requestApproval", &entries, &mapper).unwrap();
+    assert_eq!(request.kind, ActionKind::FileChange);
+    assert_eq!(
+        request.paths,
+        ["/home/me/.aws", "/home/me/**", "/", "/tmp", "src"]
+    );
+    // A write entry this code cannot read is never taken for one in the checkout.
+    let strange = json!({
+        "permissions": { "fileSystem": { "entries": [
+            { "access": "write", "path": { "type": "from_the_future" } },
+        ] } },
+    });
+    let request = classify_request("item/permissions/requestApproval", &strange, &mapper).unwrap();
+    assert_eq!(request.kind, ActionKind::FileChange);
+    assert_eq!(request.paths, ["/"]);
+    // Read-only and network requests keep their old classes.
+    let read = json!({ "permissions": { "fileSystem": { "read": ["/etc"] } } });
+    let request = classify_request("item/permissions/requestApproval", &read, &mapper).unwrap();
+    assert_eq!(request.kind, ActionKind::Tool);
+    assert!(request.paths.is_empty());
+    let network = json!({ "permissions": { "network": { "enabled": true } } });
+    let request = classify_request("item/permissions/requestApproval", &network, &mapper).unwrap();
+    assert_eq!(request.kind, ActionKind::Network);
+}
+
+#[test]
+fn an_allowed_permissions_request_never_carries_network_along_with_write_roots() {
+    let allow = Verdict::Allow;
+    let both = json!({ "permissions": {
+        "network": { "enabled": true },
+        "fileSystem": { "write": ["src"] },
+    } });
+    assert_eq!(
+        approval_response("item/permissions/requestApproval", &both, &allow),
+        json!({ "permissions": { "fileSystem": { "write": ["src"] } }, "scope": "turn" })
+    );
 }
 
 #[test]

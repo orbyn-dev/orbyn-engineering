@@ -17,6 +17,8 @@ How a release is built today. Nothing here publishes: a person reviews and promo
 | macOS, no secrets (today) | Ad-hoc signed (`-`), whole bundle. Not notarized. |
 | Windows | Not signed. The Azure step only reports that. No Authenticode signing exists yet. |
 
+A local build is ad-hoc signed the same way by `scripts/sign-adhoc-macos.sh` (run it after `npm run build` in `desktop/`; it signs the whole `.app` with `-`, no hardened runtime, and verifies it). Without it a local bundle fails `codesign --verify --deep --strict` ("code has no resources but signature indicates they must be present"), because Tauri does not sign a bundle when it has no identity.
+
 In both macOS cases `codesign --verify --deep --strict` runs on the `.app` and the dmg's `.app`, and a failure fails the job.
 
 There is no Apple Developer account, so no Developer ID and no notarization. Expect a Gatekeeper block on a downloaded Mac build and SmartScreen on the Windows installer. Tester steps: [first run on an unsigned build](setup.md#first-run-on-an-unsigned-build).
@@ -29,6 +31,16 @@ There is no Apple Developer account, so no Developer ID and no notarization. Exp
 ## Updates
 
 The updater reads `ORBYN_UPDATE_PUBKEY` and `ORBYN_UPDATE_ENDPOINT` at compile time. No endpoint or key is configured, so an unsigned build has no update channel ("Updates aren't set up for this build."). The release build turns on updater files only when both `ORBYN_UPDATE_PUBKEY` and `TAURI_SIGNING_PRIVATE_KEY` exist; otherwise it builds without them. UNVERIFIED: a run of that path.
+
+`tauri.conf.json` sets `plugins.updater.requireSignedVersion`, so the app only accepts a release
+whose artifact signature names the version the endpoint announced. The endpoint response is not
+signed, and without that binding a compromised endpoint could pair an older, validly signed
+artifact with a higher version and force a downgrade. Two consequences for releases:
+
+- Every release users can still update from must be signed by a Tauri CLI that records the version
+  in the signature's trusted comment. Re-sign and re-publish anything signed before that.
+- A release whose signature carries no version, or another version, is refused: the shell reports
+  `app_update_failed` and never offers the download as ready.
 
 ## Not yet verified on a real machine
 

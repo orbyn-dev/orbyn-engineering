@@ -394,6 +394,17 @@ it("keeps Copy contents and Add file to message in the tab menu for a file open 
   Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
 });
 
+it("offers the tab menu's file actions in the design's order and no Reveal in the left bar", async () => {
+  serve();
+  render(<><Viewer threadId="t" tabId={TAB} path="auth/redirect.ts" line={null} /><Menu /></>);
+  await editor();
+  const labels = screen.getAllByRole("button").map((button) => button.textContent);
+  const menu = labels.slice(labels.indexOf("Copy path"));
+  expect(menu.slice(0, 4)).toEqual(["Copy path", "Copy relative path", "Copy contents", "Add file to message"]);
+  expect(menu.at(-1)).toBe("Close tab");
+  expect(menu.some((label) => /reveal/i.test(label ?? ""))).toBe(false);
+});
+
 it("never shows or saves one thread's unsaved text in another thread's file", async () => {
   const puts: string[] = [];
   vi.stubGlobal(
@@ -480,4 +491,29 @@ it("asks the browser before the page is left with unsaved text, and not otherwis
   expect(leave()).toBe(true);
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(leave()).toBe(false));
+});
+
+const comment = (over: object = {}) => ({ id: "c1", kind: "review" as const, path: "auth/redirect.ts", line: 3, endLine: 3,
+  comment: "why 25", excerpt: "export const LIMIT = 25", sourceRevision: "r1", sourceCwd: "/repo", ...over });
+
+it("moves a file comment with its line when the file is saved with an insert above it", async () => {
+  serve();
+  open();
+  await editor();
+  useComposerChips.getState().add("t", comment());
+  useEditorSessions.getState().patch(KEY, { text: `// header\n${TEXT}` });
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.getByText("Saved")).toBeInTheDocument());
+  expect(useComposerChips.getState().chips["t"]?.[0]).toMatchObject({ line: 4, endLine: 4, sourceRevision: "r2", comment: "why 25" });
+});
+
+it("marks a file comment out of date when its text is edited, and never re-points it", async () => {
+  serve();
+  open();
+  await editor();
+  useComposerChips.getState().add("t", comment());
+  useEditorSessions.getState().patch(KEY, { text: TEXT.replace("LIMIT = 25", "LIMIT = 30") });
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.getByText("Saved")).toBeInTheDocument());
+  expect(useComposerChips.getState().chips["t"]?.[0]).toMatchObject({ stale: true, line: 3, sourceRevision: "r2", excerpt: "export const LIMIT = 25" });
 });

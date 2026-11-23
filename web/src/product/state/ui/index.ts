@@ -1,5 +1,5 @@
 // Front door: the UI store, its saved preferences and the theme applier.
-export { fileName, fileTabId, parseFileTab, type FileTarget } from "./fileTab";
+export { fileName, fileTabId, issueTabLabel, parseFileTab, type FileTarget } from "./fileTab";
 export { applyTheme, resolveTheme } from "./theme";
 export { useUi } from "./store";
 export { defaults as defaultPrefs } from "./defaults";
@@ -25,6 +25,7 @@ export {
   type ThreadLayout,
   type ThreadNavigationOrigin,
   type ToastAction,
+  type ToastOptions,
   type ToastKind,
   type Typography,
 } from "./types";

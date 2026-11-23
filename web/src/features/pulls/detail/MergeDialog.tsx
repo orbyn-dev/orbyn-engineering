@@ -5,6 +5,7 @@ import type { PullRequestDetail } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { Button, Field } from "../../../ui/controls";
 import { Dialog } from "../../../ui/Dialog";
+import { rememberDeleteBranch, useMergeOptions } from "../model/mergeOptions";
 
 const METHOD_WORDS: Record<string, string> = { squash: "Squash and merge", merge: "Create a merge commit", rebase: "Rebase and merge" };
 
@@ -16,8 +17,6 @@ export function MergeDialog({
   onStale,
   initialMethod,
   fixedMethod,
-  initialAuto,
-  initialDeleteBranch,
 }: {
   projectId: string;
   detail: PullRequestDetail;
@@ -28,15 +27,15 @@ export function MergeDialog({
   initialMethod: string;
   /** On the page the merge menu has chosen the method, so the dialog only says which. */
   fixedMethod?: boolean;
-  initialAuto?: boolean;
-  /** Where the page already holds the project's choice; otherwise the remembered one. */
-  initialDeleteBranch?: boolean;
 }) {
   const { number } = detail.pull;
   const [method, setMethod] = useState(initialMethod);
-  const [auto, setAuto] = useState(initialAuto ?? false);
-  const [deleteBranch, setDeleteBranch] = useState(initialDeleteBranch ?? deleteBranchChoice(projectId));
-  const [strip, setStrip] = useState(false);
+  // The merge menu offers the same two options: they are one state, for this pull request.
+  const { auto, setAuto, deleteBranch, setDeleteBranch } = useMergeOptions(projectId, number);
+  // The switch starts from the account setting (unknown shows as off) and, once the person sets it, that choice wins for this merge.
+  const credits = useAsync(`pull-credits:${projectId}`, (signal) => pullsApi.creditsSetting(projectId, signal));
+  const [chosen, setChosen] = useState<boolean | null>(null);
+  const stripping = chosen ?? credits.data === true;
   const [body, setBody] = useState(detail.body);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +50,10 @@ export function MergeDialog({
         method,
         auto,
         delete_branch: deleteBranch,
-        strip_credits: strip,
+        strip_credits: false,
+        // The resolved switch value always goes, and wins over the account setting at the service. Left out only when the setting
+        // could not be read and the person never touched the switch, so an unknown setting is not overridden with a guess.
+        ...(chosen !== null || credits.data != null ? { remove_agent_credits: stripping } : {}),
         ...(method === "rebase" ? {} : { body }),
         // The commit the person saw, so a push since then is refused rather than merged unseen.
         ...(seenHead ? { expected_head: seenHead } : {}),
@@ -145,10 +147,13 @@ export function MergeDialog({
         <span>Delete the branch</span>
       </label>
       <label className="check">
-        <input type="checkbox" role="switch" aria-describedby="merge-strip-hint" checked={strip} onChange={(event) => setStrip(event.target.checked)} />
+        <input type="checkbox" role="switch" aria-describedby="merge-strip-hint" checked={stripping} onChange={(event) => setChosen(event.target.checked)} />
         <span>Remove agent credits</span>
       </label>
-      <p id="merge-strip-hint" className="field-hint">Strips agent credit lines from the commit message.</p>
+      <p id="merge-strip-hint" className="field-hint">
+        {chosen === null ? "Follows your account setting." : ""}
+        {chosen === null && credits.data == null ? "" : `${chosen === null ? " " : ""}Credit lines ${stripping ? "are stripped from" : "stay in"} this merge.`}
+      </p>
       {error ? (
         <p className="field-error" role="alert">
           {error}
@@ -192,21 +197,4 @@ export function RowMergeDialog({ projectId, number, onClose, onMerged, onStale }
       )}
     </Dialog>
   );
-}
-
-const DELETE_KEY = (projectId: string) => `orbyn.pulls.deleteBranch.${projectId}`;
-/** "Delete branch after merge" is off until chosen, and then remembered for the project. */
-export function deleteBranchChoice(projectId: string): boolean {
-  try {
-    return localStorage.getItem(DELETE_KEY(projectId)) === "1";
-  } catch {
-    return false;
-  }
-}
-export function rememberDeleteBranch(projectId: string, on: boolean) {
-  try {
-    localStorage.setItem(DELETE_KEY(projectId), on ? "1" : "0");
-  } catch {
-    /* A private window keeps nothing: the choice then lasts for this page. */
-  }
 }

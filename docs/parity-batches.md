@@ -6,6 +6,43 @@ remains open. All 26 batch issues below are closed; their closeouts explain the
 work delivered, refused or left unqualified. The umbrella's 5 November assignment
 comment is historical and must not be used to claim a batch.
 
+## Current pickup check
+
+Checked 21 November 2026 UTC against product revision
+[`c4f264c40`](https://github.com/orbyn-dev/orbyn-engineering/commit/c4f264c40) plus the
+parity truth pass that unticked I14, J19 and K52.
+
+Rechecked 22 November 2026 UTC against
+[`164d068b`](https://github.com/orbyn-dev/orbyn-engineering/commit/164d068b): all 26 batch
+issues are still closed and the counts below still match `python3 scripts/count-parity.py`.
+I14 and J19 stay unticked; three rows are declared checked again — K52 after
+[`1e8b0f1e`](https://github.com/orbyn-dev/orbyn-engineering/commit/1e8b0f1e) made provider
+update checks read `enable_provider_update_checks`, B41 and B42 in
+[`c0a09ab2`](https://github.com/orbyn-dev/orbyn-engineering/commit/c0a09ab2) with the
+composer chips (B42 also merged as
+[#730](https://github.com/orbyn-dev/orbyn-engineering/pull/730)), and R6 in
+[`7f1418e0`](https://github.com/orbyn-dev/orbyn-engineering/commit/7f1418e0) as
+`server done`. #187 remains the reconciliation index, not a claim that the unfinished
+rows are complete.
+
+After the re-pin to T3 `9168ca73d`, `python scripts/count-parity.py` reports 733 rows and 463
+source checkboxes ticked. Of 548 included rows, 382 are declared checked, 117
+partial, 45 open and 4 not doable; 185 are excluded and none have unresolved
+scope. The 15 new rows are unticked. These are checklist declarations, not fresh runtime qualification.
+
+The four successor issues named in the historical pickup paragraph now stand as follows:
+
+| Issue | Current issue state | Merged work |
+| --- | --- | --- |
+| [#272](https://github.com/orbyn-dev/orbyn-engineering/issues/272) | Open | #286 and #366; the issue remains open |
+| [#276](https://github.com/orbyn-dev/orbyn-engineering/issues/276) | Closed | #283 |
+| [#277](https://github.com/orbyn-dev/orbyn-engineering/issues/277) | Closed | #589; #285 closed without merging |
+| [#280](https://github.com/orbyn-dev/orbyn-engineering/issues/280) | Closed | #287 |
+
+Use current row notes and live successor issues before claiming work. Preserve
+their scope, refusal and platform-evidence limits. The counts and active-owner
+claims below remain the 7 November snapshot, not the current pickup queue.
+
 ## Closed batch index
 
 | Batch | Closed issues | Surface |
@@ -31,9 +68,9 @@ comment is historical and must not be used to claim a batch.
 ## Remaining work and evidence
 
 [Parity rows](parity.md) retain the exact `remaining:`, scope and refusal notes.
-`python scripts/count-parity.py` reports 713 rows, 467 source checkboxes ticked,
-and 534 included rows: 396 declared checked, 101 partial, 33 open and 4 not doable.
-There are 179 excluded and zero unresolved-scope rows. Issue closure changes none
+`python scripts/count-parity.py` reports 733 rows, 463 source checkboxes ticked,
+and 548 included rows: 382 declared checked, 117 partial, 45 open and 4 not doable.
+There are 185 excluded and zero unresolved-scope rows. Issue closure changes none
 of those declarations and supplies no new runtime evidence.
 
 - **Native/manual qualification:** #186 records packaged macOS and Windows
@@ -46,12 +83,13 @@ of those declarations and supplies no new runtime evidence.
   is closed; C4/C10/C31/C37/C40 remain partial. [#127](https://github.com/kinqsradio/orbyn-engineering/issues/127)
   is closed with N21's `request_secret` refusal recorded through #262, not an
   implemented secret broker. Existing permission/tool stops remain stops.
-- **Behavior still missing:** open/partial rows include B8 and B41–B43, F3,
+- **Behavior still missing:** open/partial rows include B8 and B43, F3,
   local desktop devices H20–H27/H31 and their N11 tools, H33/H34, remaining I
   drivers/adapters, K49, L27 local access checks and P6/P23/P24. Read each row
   before scoping a successor issue; this is not an exhaustive replacement queue.
-- **RPC equivalence:** #185 closed the source reconciliation. R1–R14 remain
-  partial for their explicit method-level gaps. Nearby HTTP/SSE/WebSocket routes
+- **RPC equivalence:** #185 closed the source reconciliation. R1–R5 and R7–R14 stay
+  partial for their explicit method-level gaps; R6 is declared checked as `server done`
+  and infers no fresh desktop or platform run. Nearby HTTP/SSE/WebSocket routes
   and cited tests do not prove every reference method works.
 - **Refused or not doable:** retain A54/P20's missing predecessor, I24's managed
   runtime restriction and H35's streamed-page DevTools limit. B40 does not permit

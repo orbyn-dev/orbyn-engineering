@@ -5,7 +5,9 @@ import { Loading } from "../../../../product/ui/states";
 import { NETWORK_ERROR, type ApiFailure } from "../../../../api/client";
 import { Menu, type MenuItem } from "../../../../ui/Menu";
 import { Presence } from "../../../../ui/Presence";
+import type { CrewOrigin } from "../../../../product/state/route";
 import { Frame } from "../../shared/Frame";
+import { useCrewHref } from "../../shared/nav";
 import { Btn, Ic, Seg } from "../../shared/parts";
 import { Planned, WHY } from "../Planned";
 import { count, dateOf, engineLabel, merges, momentOf, NOT_MEASURED, share, split } from "./model";
@@ -51,12 +53,35 @@ function ProjectChip({ name, projects, current, onPick }: { name: string; projec
  * at merge level: a line is reviewed when the merge that wrote it was marked Looks good or commented, never per line. Anything
  * the read could not measure says Not measured and adds no number. Nothing here sends a write.
  */
-export function LiveCoverage({ project, name, projects, onPick }: { project: string; name: string; projects: readonly Project[]; onPick(id: string): void }) {
+/**
+ * The way back, drawn only when the address says where the map was opened from: the Review capacity sheet or the escape log. It
+ * is one control at the top, on the left, and returns to that page for the project shown. With no origin (a typed address, a
+ * bookmark) there is no control: where the person came from is never guessed from history.
+ */
+function Back({ project, from }: { project: string; from: CrewOrigin | undefined }) {
+  const href = useCrewHref();
+  if (!from) return null;
+  return (
+    <div style={{ display: "flex" }}>
+      <a
+        className="cx-t10r"
+        href={href(from === "capacity" ? { page: "capacity", project } : { page: "escapes", project })}
+        style={{ marginLeft: "0", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: "2px", color: "inherit" }}
+      >
+        <Ic n="left" sm />
+        <span style={{ textDecoration: "underline", textUnderlineOffset: "2px" }}>{from === "capacity" ? "Back to Review capacity" : "Back to escapes"}</span>
+      </a>
+    </div>
+  );
+}
+
+export function LiveCoverage({ project, name, projects, onPick, from }: { project: string; name: string; projects: readonly Project[]; onPick(id: string): void; from?: CrewOrigin }) {
   const read = useCoverage(project);
   return (
     <Frame live>
       <div className="cx-cwpg">
         <div className="cx-t14pg">
+          <Back project={project} from={from} />
           <div className="cx-t10hd">
             <b>Review coverage</b>
             <span className="cx-rtag cx-lo">This device only</span>

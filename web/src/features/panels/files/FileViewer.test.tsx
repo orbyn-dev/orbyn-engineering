@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { Viewer } from "./FileViewer";
@@ -95,6 +95,29 @@ it("cancel leaves no chip and another revision never inherits stale annotation p
   expect(useComposerChips.getState().chips.t?.[0]).toMatchObject({ comment: "old", excerpt: "one" });
 });
 
+const staleChip = (over: object = {}) => ({ id: "s", kind: "review" as const, path: "a.ts", line: 2, endLine: 2, comment: "Also allow <b>relative</b> paths", excerpt: "return inside(next) ? next : \"/\"\nsecond", sourceRevision: "r2", sourceCwd: "/repo", stale: true, ...over });
+
+it("draws an out-of-date comment as the frame does: its text, the reason, the line it was written on, and Remove comment as the one act (editor-comment-out-of-date)", async () => {
+  act(() => useComposerChips.getState().add("t", staleChip()));
+  render(<FileComments threadId="t" cwd="/repo" path="a.ts" revision="r2" text={"one\ntwo\nthree"} revealedLine={null} />);
+  const card = screen.getByRole("listitem");
+  expect(within(card).getByText("Out of date: the file was edited")).toBeVisible();
+  expect(within(card).getByText("Also allow <b>relative</b> paths")).toBeVisible();
+  expect(card.querySelector("b")).toBeNull();
+  // The text it pointed at, as first captured (its first line), and never re-pointed.
+  expect(within(card).getByText("Was: return inside(next) ? next : \"/\"")).toBeVisible();
+  expect(within(card).getAllByRole("button").map((button) => button.textContent)).toEqual(["Remove comment"]);
+  await userEvent.click(within(card).getByRole("button", { name: "Remove comment" }));
+  expect(useComposerChips.getState().chips.t ?? []).toEqual([]);
+});
+
+it("draws a current comment with no out-of-date lines", () => {
+  act(() => useComposerChips.getState().add("t", staleChip({ stale: undefined })));
+  render(<FileComments threadId="t" cwd="/repo" path="a.ts" revision="r2" text={"one\ntwo\nthree"} revealedLine={null} />);
+  expect(screen.queryByText(/Out of date/)).toBeNull();
+  expect(screen.queryByText(/^Was:/)).toBeNull();
+});
+
 interface ServedFile {
   content: string;
   binary: boolean;
@@ -153,6 +176,20 @@ it("copies the text the viewer shows", async () => {
   expect(screen.getByLabelText("Save file")).toBeInTheDocument();
   expect(screen.getByRole("radio", { name: "Source" })).toBeInTheDocument();
   expect(screen.getByRole("radio", { name: "Edit" })).toBeInTheDocument();
+});
+
+it("raises a Download started toast when Save file is pressed, and keeps the link that downloads", async () => {
+  const user = userEvent.setup();
+  serve({ content: "alpha\n", binary: false, truncated: false, size: 6 });
+  render(<Viewer threadId="t" tabId="tab" path="notes.md" line={null} onBack={() => undefined} />);
+
+  const save = await screen.findByRole("link", { name: "Save file" });
+  expect(save).toHaveAttribute("download");
+  expect(lastToast()).not.toBe("Download started");
+  // A click on a download link navigates nowhere in the test browser; the toast is the part under test.
+  save.addEventListener("click", (event) => event.preventDefault());
+  await user.click(save);
+  await waitFor(() => expect(lastToast()).toBe("Download started"));
 });
 
 it("reports a clipboard failure", async () => {

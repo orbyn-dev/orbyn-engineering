@@ -73,34 +73,27 @@ async fn claude_subscription_windows_use_control_ipc_without_a_prompt_or_account
         "the probe is reaped and its isolated cwd removed"
     );
     assert_ne!(cwd, dir.path());
-    let cached = service.json("/api/engines/claude/limits").await;
-    assert_eq!(cached, limits);
+    let again = service.json("/api/engines/claude/limits").await;
+    for field in ["plan", "windows", "limits"] {
+        assert_eq!(again[field], limits[field]);
+    }
+    assert!(!again.to_string().contains("SECRET-MARKER"));
     assert_eq!(
         std::fs::read_to_string(&controls).unwrap().lines().count(),
-        2
+        4
     );
     let forced = service.json("/api/engines/claude/limits?force=true").await;
     assert!(!forced.to_string().contains("SECRET-MARKER"));
     assert_eq!(
         std::fs::read_to_string(&controls).unwrap().lines().count(),
-        4
+        6
     );
     let overview = service.json("/api/limits").await;
-    let weekly = overview["pooled"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|window| window["window_minutes"] == 10080)
-        .unwrap();
-    assert_eq!(weekly["used_percent"], 73.0);
+    assert!(!overview.to_string().contains("\"claude\""), "{overview}");
     assert_eq!(
-        weekly["engines"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|engine| **engine == "claude")
-            .count(),
-        1
+        std::fs::read_to_string(&controls).unwrap().lines().count(),
+        6,
+        "the overview must not probe Claude"
     );
     service.stop().await;
 }
@@ -114,10 +107,17 @@ async fn claude_limits_stay_unknown_for_unavailable_errors_malformed_and_timed_o
         ("silent", 502),
     ] {
         let dir = TempDir::new();
+        let controls = dir.path().join("controls");
         let service = support::Service::start(
             &dir.path().join("data"),
             Options {
-                env: vec![("ORBYN_FAKE_CLAUDE_USAGE".into(), mode.into())],
+                env: vec![
+                    ("ORBYN_FAKE_CLAUDE_USAGE".into(), mode.into()),
+                    (
+                        "ORBYN_FAKE_CLAUDE_CONTROL_FILE".into(),
+                        controls.to_string_lossy().into_owned(),
+                    ),
+                ],
                 ..Options::default()
             },
         );
@@ -136,14 +136,15 @@ async fn claude_limits_stay_unknown_for_unavailable_errors_malformed_and_timed_o
         );
         assert!(body.get("windows").is_none(), "{mode}: {body}");
         if mode == "error" {
+            let before = std::fs::read_to_string(&controls).unwrap();
             let overview = service.json("/api/limits").await;
-            let unavailable = overview["unavailable"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|entry| entry["engine"] == "claude")
-                .expect("an untyped error must remain visible as unavailable");
-            assert!(!unavailable.to_string().contains("SECRET-MARKER"));
+            assert!(!overview.to_string().contains("\"claude\""), "{overview}");
+            assert!(!overview.to_string().contains("SECRET-MARKER"));
+            assert_eq!(
+                std::fs::read_to_string(&controls).unwrap(),
+                before,
+                "the overview must not retry a Claude probe"
+            );
         }
         service.stop().await;
     }
@@ -270,6 +271,89 @@ fn claude_of(report: &Value) -> Value {
         .clone()
 }
 
+fn engine_of(report: &Value, name: &str) -> Value {
+    report["engines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["engine"] == name)
+        .unwrap_or_else(|| panic!("no {name} row in {report}"))
+        .clone()
+}
+
+/// A Muse `runtime.session` inference as its session log records it: microsecond
+/// `recorded_at` and inclusive usage counters.
+fn muse_inference(id: &str, inference: &str) -> String {
+    format!(
+        r#"{{"schema_version":1,"record_type":"event","payload_type":"runtime.session","payload_schema_version":1,"id":"{id}","recorded_at":1785578400123456,"stream":{{"kind":"session","id":"session-1"}},"payload":{{"source_run_record_id":"{inference}","event":{{"kind":"model_completed","model":"muse-wonder-full-1.0","usage":{{"input_tokens":100,"cache_read_tokens":60,"cache_write_tokens":10,"output_tokens":20,"reasoning_tokens":8}}}}}}}}"#
+    )
+}
+
+#[tokio::test]
+async fn muse_history_comes_from_its_session_logs_and_never_fabricates_spend() {
+    let dir = TempDir::new();
+    let data_home = dir.path().join("xdg-data");
+    let session = data_home.join("muse/sessions/2026/08/01/session-1");
+    write(
+        session.join("session.jsonl"),
+        &[
+            muse_inference("envelope-1", "inference-1"),
+            // The same inference copied into a log again must not double its spend.
+            muse_inference("envelope-2", "inference-1"),
+            "{not json".to_owned(),
+            r#"{"schema_version":2,"record_type":"event","id":"x","recorded_at":1785578400123456}"#
+                .to_owned(),
+        ]
+        .join("\n"),
+    );
+    write(
+        session.join("telemetry.jsonl"),
+        r#"{"input_tokens":999999}"#,
+    );
+    let options = Options {
+        env: vec![(
+            "XDG_DATA_HOME".into(),
+            data_home.to_string_lossy().into_owned(),
+        )],
+        ..Options::default()
+    };
+    let service = support::Service::start(&dir.path().join("data"), options);
+    let muse = engine_of(&service.json("/api/usage").await, "muse");
+    assert_eq!(muse["status"], "scanned", "{muse}");
+    assert_eq!(
+        muse["files_scanned"], 1,
+        "only session.jsonl is a session log"
+    );
+    let model = &muse["models"][0];
+    assert_eq!(model["model"], "muse-wonder-full-1.0");
+    assert_eq!(model["input_tokens"], 30, "cached input is moved out");
+    assert_eq!(model["cache_read_tokens"], 60);
+    assert_eq!(model["cache_write_tokens"], 10);
+    assert_eq!(model["output_tokens"], 20);
+    assert_eq!(
+        muse["days"][0],
+        json!({ "date": "2026-08-01", "tokens": 120, "estimated_cost": null }),
+        "a copied inference counts once and reasoning is already in output"
+    );
+    service.stop().await;
+
+    // No Muse home is no history, never zero spend.
+    let dir = TempDir::new();
+    let empty = dir.path().join("empty");
+    let service = support::Service::start(
+        &dir.path().join("data"),
+        Options {
+            env: vec![("XDG_DATA_HOME".into(), empty.to_string_lossy().into_owned())],
+            ..Options::default()
+        },
+    );
+    assert_eq!(
+        engine_of(&service.json("/api/usage").await, "muse")["status"],
+        "no_history"
+    );
+    service.stop().await;
+}
+
 #[tokio::test]
 async fn cost_splits_by_token_type_and_tier_and_a_tier_never_borrows_the_standard_rate() {
     let dir = TempDir::new();
@@ -321,24 +405,49 @@ async fn cost_splits_by_token_type_and_tier_and_a_tier_never_borrows_the_standar
 #[tokio::test]
 async fn limits_come_from_the_engine_and_only_where_it_reports_them() {
     let dir = TempDir::new();
-    let (service, _) = setup(&dir, Options::default(), "codex").await;
+    let launches = dir.path().join("launches");
+    let (service, _) = setup(
+        &dir,
+        Options {
+            env: vec![(
+                "ORBYN_FAKE_LAUNCH_FILE".into(),
+                launches.to_string_lossy().into_owned(),
+            )],
+            ..Options::default()
+        },
+        "codex",
+    )
+    .await;
+    let reads = || {
+        std::fs::read_to_string(&launches)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|entry| entry["mode"] == "codex")
+            .count()
+    };
     let limits = service.json("/api/engines/codex/limits").await;
     assert_eq!(limits["limits"]["rateLimits"]["primary"]["usedPercent"], 12);
     assert!(
         !limits.to_string().contains("SECRET-MARKER"),
         "no account ID or upsell leaves the driver: {limits}"
     );
+    let before = reads();
     let again = service.json("/api/engines/codex/limits").await;
+    assert_eq!(again["limits"], limits["limits"]);
     assert_eq!(
-        again["checked_at"], limits["checked_at"],
-        "cached for five minutes"
+        reads(),
+        before + 1,
+        "each explicit read asks a fresh fake app-server"
     );
     assert_eq!(limits["plan"], "plus");
     assert_eq!(limits["windows"][0]["label"], "5 hours");
     assert_eq!(limits["windows"][1]["label"], "7 days");
     assert_eq!(limits["windows"][0]["resets_at"], "2027-01-15T08:00:00Z");
     let forced = service.json("/api/engines/codex/limits?force=true").await;
-    assert_ne!(forced["checked_at"], limits["checked_at"]);
+    assert_eq!(forced["windows"], limits["windows"]);
+    assert_eq!(reads(), before + 2);
+    assert!(!forced.to_string().contains("SECRET-MARKER"));
     let overview = service.json("/api/limits").await;
     assert_eq!(overview["pooled"][0]["used_percent"], 12.0);
     assert_eq!(overview["pooled"][0]["engines"][0], "codex");

@@ -13,7 +13,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { api } from "./api";
 import { toFailure } from "../../lib/useAsync";
-import { runHandlers, useCommand } from "../../product/shell/shortcuts";
+import { useCommand } from "../../product/shell/shortcuts";
 import type { Project, RunState, Thread } from "../../api/types";
 import { relativeTime } from "../../lib/format";
 import { runStateLabels } from "../../product/runs/stateLabels";
@@ -31,28 +31,31 @@ import { useUi } from "../../product/state/ui";
 import { engineById, useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton, LinkButton } from "../../ui/controls";
 import { Empty, ErrorState, Loading, NarrowBack } from "../../product/ui/states";
-import { PanelHost, TerminalBar, TerminalDrawerBody } from "../panels";
+import { openAttentionTerminal, PanelHost, TerminalAttention, TerminalBar, TerminalDrawerBody } from "../panels";
 import { threadRunState } from "../workspace";
-import { RelatedThreads } from "./RelatedThreads";
 import { Composer } from "./composer/Composer";
 import { DetailsPopover } from "./details/DetailsPopover";
 import { ThreadHeaderMenu } from "./ThreadHeaderMenu";
 import { ArchivedBanner, CompactingStep, useThreadChip } from "./ThreadStates";
+import { FamilyChip, FamilyLine, FamilyPanel } from "../family";
+import { IssueChip } from "../issues";
+import { ReposChip } from "../repos";
 import { PullChip } from "./PullChip";
 import { composerSettled, useComposerDock } from "./heroTransition";
 import { runningTools } from "../../product/timeline/timeline";
-import { implementPrompt, planTitle, proposedPlanIn } from "./proposedPlan";
 import { SideChatPanel } from "./SideChatPanel";
+import { openSideChat } from "./sideChat";
 import { SubagentBar } from "./SubagentBar";
-import { LimitBanner, ThreadErrorBanner } from "./ThreadBanners";
+import { ImportedThreadMarker, ImportedThreadPill, LimitBanner, ThreadErrorBanner } from "./ThreadBanners";
 import { ConnectionStatus, ServiceDownBanner } from "./ConnectionStatus";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { ThreadFind } from "./ThreadFind";
 import { Transcript } from "./Transcript";
+import { EarlierMessages } from "./earlier/EarlierMessages";
 import { FavoriteEditorShortcut } from "./OpenInEditor";
 import { ProjectActionShortcuts } from "./ProjectActionShortcuts";
 
-function TopBar({
+export function TopBar({
   thread,
   project,
   detailsShown,
@@ -98,15 +101,16 @@ function TopBar({
               {project.name}
             </span>
           ) : null}
+          <ImportedThreadPill thread={thread} />
+          <FamilyLine thread={thread} />
           {connection ? <ConnectionStatus /> : chip ?? (thread.active_run && state ? <span className="page-sub-item">{runStateLabels[state]}</span> : null)}
         </span>
-        {narrow ? <PullChip thread={thread} /> : null}
+        {narrow ? <><ReposChip thread={thread} /><IssueChip thread={thread} /><PullChip thread={thread} /><FamilyChip thread={thread} /></> : null}
       </div>
-      <RelatedThreads thread={thread} />
       <GitActions thread={thread} />
       {branch ? <BranchShortcut thread={thread} /> : null}
       <div className="layout-toggles" role="group" aria-label="Layout">
-        {narrow ? null : <PullChip thread={thread} />}
+        {narrow ? null : <><ReposChip thread={thread} /><IssueChip thread={thread} /><PullChip thread={thread} /><FamilyChip thread={thread} /></>}
         <Button small tone="quiet" className="topbar-details" data-details-toggle aria-pressed={detailsShown} aria-haspopup="dialog" icon={<Info size={16} aria-hidden />} onClick={onToggleDetails}>
           Details
         </Button>
@@ -214,38 +218,6 @@ function RunStatusLine({ thread }: { thread: Thread }) {
       {tools.length > 0 ? (
         <span className="run-status-detail">{tools.map((tool) => tool.name).join(", ")}</span>
       ) : null}
-    </div>
-  );
-}
-
-/** Once a turn has proposed a plan, offers to act on it. */
-function PlanBanner({ thread }: { thread: Thread }) {
-  const log = useThreadLogs((store) => store.logs[thread.id]);
-  const addPrompt = useThreadLogs((store) => store.addPrompt);
-  const putThread = useWorkspace((store) => store.putThread);
-  const last = log?.items.at(-1);
-  const plan = last?.kind === "message" && last.role !== "user" && last.done ? proposedPlanIn(last.text) : null;
-  if (!plan || thread.active_run) return null;
-  const implement = async () => {
-    if (thread.lifecycle?.plan_mode) putThread(await api.patchThread(thread.id, { plan_mode: false }));
-    const prompt = implementPrompt(plan);
-    const run = await api.startRun(thread.id, prompt);
-    addPrompt(thread.id, { runId: run.id, text: prompt });
-  };
-  return (
-    <div className="plan-banner" role="status">
-      <strong>Plan ready</strong>
-      <span>{planTitle(plan)}</span>
-      <Button
-        small
-        tone="quiet"
-        onClick={() => runHandlers("composer.focus")}
-      >
-        Suggest changes
-      </Button>
-      <Button small onClick={() => void implement()}>
-        Approve and start
-      </Button>
     </div>
   );
 }
@@ -484,7 +456,12 @@ export function ThreadView({ id }: { id: string }) {
               threadId={id}
               active={thread.active_run !== null}
               readUpTo={lastVisit}
-              header={<LedgerPin threadId={id} />}
+              header={
+                <>
+                  <EarlierMessages threadId={id} imported={thread.imported_at !== undefined} />
+                  <LedgerPin threadId={id} />
+                </>
+              }
                 footer={
                   <>
                     <GoalLine thread={thread} canPause={engine?.capabilities.goal_control === true} />
@@ -493,6 +470,7 @@ export function ThreadView({ id }: { id: string }) {
                 }
             />
           )}
+          <ImportedThreadMarker thread={thread} />
           <WorktreeSetupCard thread={thread} />
           <ThreadErrorBanner thread={thread} />
           <LimitBanner thread={thread} />
@@ -502,7 +480,7 @@ export function ThreadView({ id }: { id: string }) {
             <div ref={mover} className="composer-group">
               <div className="composer-stack">
                 {hero ? <DraftHero project={project} /> : null}
-                <PlanBanner thread={thread} />
+                <TerminalAttention threadId={id} onOpen={(target) => void openAttentionTerminal(target)} />
                 <div ref={anchor}>
                   {thread.lifecycle?.relation === "subagent" ? (
                     <SubagentBar thread={thread} />
@@ -533,7 +511,7 @@ export function ThreadView({ id }: { id: string }) {
           closing={!panelOpen}
           moves={panelMoves}
           maximized={maximized}
-          sideChat={<SideChatPanel parent={thread} />}
+          content={{ side: <SideChatPanel parent={thread} />, linked: <FamilyPanel thread={thread} onStart={() => void openSideChat(thread, null)} /> }}
           onToggleMaximize={() => setMaximized(!maximized)}
           onReturn={() => {
             setMaximized(false);

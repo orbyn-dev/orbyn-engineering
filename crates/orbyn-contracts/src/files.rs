@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::ExplorerEntryKind;
+
 wire! {
 pub struct FileEntry {
     pub name: String,
@@ -78,6 +80,10 @@ pub struct WriteFile {
     pub content: String,
     /// The revision this edit started from; `None` means the file must not exist.
     pub base_revision: Option<String>,
+    /// A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_id: Option<String>,
 }
 }
 
@@ -123,6 +129,10 @@ pub struct FileDiff {
     pub additions: u32,
     pub deletions: u32,
     pub patch: String,
+    /// The repository of a multi-repository thread the file is in; absent for an ordinary thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_id: Option<String>,
 }
 }
 
@@ -140,5 +150,34 @@ pub struct FsListing {
     pub parent: Option<String>,
     /// Directories only, sorted by name.
     pub entries: Vec<FsEntry>,
+}
+}
+
+wire! {
+/// One path in a thread's checkout for the file browser: the entry itself, with no bytes
+/// read and the last link never followed. A path with nothing there is an answer
+/// (`exists: false`), not an error; a path that leaves the checkout is refused.
+pub struct FileMetadata {
+    /// The path asked for, relative to the checkout with `/` separators; empty is its root.
+    pub path: String,
+    /// False when nothing exists at the path; everything else is then empty.
+    pub exists: bool,
+    /// The entry's own kind. `None` when nothing exists there, or the entry is a device,
+    /// pipe or socket, which is never opened.
+    pub kind: Option<ExplorerEntryKind>,
+    /// Bytes for a file; a folder's own record size; a link's target text, never its
+    /// target's bytes.
+    #[ts(type = "number")]
+    pub size: u64,
+    /// Unix permission bits (`0o777`); `None` where the platform has none.
+    pub mode: Option<u32>,
+    /// True when the entry cannot be written, which every platform reports.
+    pub read_only: bool,
+    /// Last modified time, RFC 3339 UTC; `None` when the platform cannot say.
+    pub modified: Option<String>,
+    /// False for a link that resolves nowhere, lands outside the checkout or lands in a
+    /// place a file read refuses (Git's folder, the library's `repo/`): the link is still
+    /// reported as itself, and nothing about where it points is returned.
+    pub inside: bool,
 }
 }

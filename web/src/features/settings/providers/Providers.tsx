@@ -1,3 +1,4 @@
+import { Info } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { EngineStatus } from "../../../api/types";
@@ -17,6 +18,10 @@ import { ProviderListActions, ProviderTable, useProviderList } from "./ProviderT
 import { SettingsBanner } from "../rows/SettingsBanner";
 import { followEngineUpdates } from "./engineUpdates";
 import { skippedNoInstaller, UpdateAllFacts, UpdateAllView } from "./UpdateAll";
+import { hasProviderDetail } from "./providerDetailFamily";
+import { EngineHostGroup } from "../engineHost/HostGroup";
+import { KeyStorageGroup } from "../engineHost/KeyStorage";
+import { NeedsAttentionGroup } from "../engineHost/NeedsAttention";
 
 const POLL_WHILE_UPDATING_MS = 1500;
 
@@ -62,7 +67,9 @@ export function ProvidersSection() {
   const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [creating, setCreating] = useState<{ instance: ProviderInstance; program: string; title: string } | null>(null);
-  const catalog = useProviderList(engines.data ?? []);
+  const { catalog, reload: reloadCatalog } = useProviderList(engines.data ?? []);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const checkedAt = useRef<number | null>(null);
   if (engines.data && !offline) checkedAt.current = Date.now();
 
@@ -79,6 +86,7 @@ export function ProvidersSection() {
     try {
       await api.refreshEngines();
       await refreshEngines();
+      if (mounted.current) await reloadCatalog();
     } catch (failure) {
       setError(toFailure(failure).message);
     } finally {
@@ -93,7 +101,7 @@ export function ProvidersSection() {
   if (view.page === "history") return <HistoryImportView onBack={list} />;
   if (view.page === "registry") return <AcpRegistryView onBack={list} />;
   const detail = view.page === "detail" ? engines.data?.find((engine) => engine.id === view.id) : undefined;
-  if (detail) {
+  if (detail && hasProviderDetail(detail)) {
     return (
       <>
         <ProviderDetail engine={detail} store={store} onBack={list} onEdit={() => setEditing(detail.id)} />
@@ -105,9 +113,6 @@ export function ProvidersSection() {
   return (
     <>
       <div className="section-bar">
-        <h1 className="sr-only" tabIndex={-1} data-page-title>
-          Providers
-        </h1>
         {updatable.length > 1 && !updating ? (
           <Button small disabled={offline} onClick={() => setConfirmingAll(true)}>
             Update all
@@ -147,6 +152,10 @@ export function ProvidersSection() {
           </span>
         </div>
       ) : (<>
+        <SettingsBanner role="note" tone="info" icon={<Info size={16} aria-hidden />}>
+          Orbyn lists an engine when it finds its program on this computer. A label says what Orbyn has seen work on a real install and what it has not; “Not verified” is not a promise that a feature works.
+        </SettingsBanner>
+        <NeedsAttentionGroup engines={base} onOpen={(id) => setView({ page: "detail", id })} />
         <ProviderTable engines={engines.data} catalog={catalog} store={store} onOpen={(id) => setView({ page: "detail", id })} onEdit={setEditing} />
         <ProviderListActions onAdd={() => setAdding(true)} onRecheck={() => void recheck()} checking={refreshing} />
         <SettingRow title="Agent history import" description="Bring in sessions you ran in Claude Code or Codex outside Orbyn">
@@ -156,6 +165,8 @@ export function ProvidersSection() {
         <SettingRow title="ACP registry" description="Add other agents that speak ACP">
           <Button small onClick={() => setView({ page: "registry" })}>Browse</Button>
         </SettingRow>
+        <EngineHostGroup />
+        <KeyStorageGroup />
       </>)}
       {editInstance ? <InstanceEditor store={store} engines={base} instance={editInstance} onClose={() => setEditing(null)} /> : null}
       {adding ? (

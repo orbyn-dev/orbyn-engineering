@@ -32,6 +32,10 @@ beforeEach(() => {
     if (method === "GET" && path === "/api/providers") {
       return { providers: mock.engines.map((one) => ({ id: one.id, name: one.name, group: "in_use", labels: [], registered: true, openable: true })) } as never;
     }
+    // The engine host status is a read of its own; this service does not report it, so the group draws nothing.
+    if (method === "GET" && path === "/api/engine-host") throw new ApiFailure("not_found", "No engine host.", 404);
+    // API key storage reads its own status; this service keeps no key, so the group draws nothing.
+    if (method === "GET" && path.startsWith("/api/settings/engine-credentials/")) throw new ApiFailure("not_found", "This engine does not keep a key.", 404);
     const wanted = (body as { keys?: string[]; edits?: Record<string, { value: JsonValue[] }> });
     if (method === "POST" && wanted.keys?.[0] === "disabled_engines") return { catalog: { version: "members-1", selection: { kind: "all_projects" } }, rows: [{ key: "disabled_engines", revision: "r", value: [], mixed: false, default: [], project_scoped: true, environment: { source: "default", value: [], default: [] }, members: [], overrides: [] }] } as never;
     if (method === "PUT" && wanted.edits?.disabled_engines) { inUseWrites.push(wanted.edits.disabled_engines.value); return {} as never; }
@@ -158,7 +162,7 @@ describe("provider pages", () => {
       engine({ id: "codex", name: "Codex", tier: "native", auth: "logged_out" })];
     render(<ProvidersSection />);
     await screen.findByRole("rowgroup", { name: "In use" });
-    expect(await screen.findByText("sam@example.com")).toBeVisible();
+    expect(await screen.findByText(/Runs through Orbyn’s engine host with the Claude Agent SDK/)).toBeVisible();
     expect(screen.getByText("Work · sam@acme.com")).toBeVisible();
     expect(screen.getByText("Not signed in")).toBeVisible();
   });
@@ -167,7 +171,7 @@ describe("provider pages", () => {
     mock.engines = [engine({ id: "claude", name: "Claude Code", tier: "native", account: "sam@example.com" })];
     render(<ProvidersSection />);
     await screen.findByRole("rowgroup", { name: "In use" });
-    await user.click(await screen.findByRole("button", { name: "Claude Code" }));
+    await user.click(await screen.findByRole("button", { name: "Claude (SDK)" }));
     expect(await screen.findByText("Signed in as sam@example.com")).toBeVisible();
   });
   it("offers Review with the count of sessions the service finds, and opens the history import", async () => {
@@ -215,5 +219,23 @@ describe("provider pages", () => {
     await user.click(await screen.findByRole("button", { name: "Remove Claude Code · Work" }));
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(entries).toEqual([{ id: "other", driver: "acp-base", enabled: true, forward: { nested: true } }]));
+  });
+  it("opens a provider row from the keyboard and leaves a row with no detail behind it without a control", async () => {
+    const user = userEvent.setup(); render(<ProvidersSection />);
+    await screen.findByRole("rowgroup", { name: "In use" });
+    // The row's name button is its control: it is tabbable, it carries the designs' disclosure chevron, and Enter opens.
+    const name = await screen.findByRole("button", { name: "Claude Code · Work" });
+    expect(name.querySelector("svg")).not.toBeNull();
+    name.focus();
+    expect(name).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("heading", { name: "Claude Code · Work" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Providers" }));
+    // A table row is not a control: it takes no tabindex of its own, so only the name button is tabbable.
+    const row = (await screen.findByRole("button", { name: "Claude Code · Work" })).closest('[role="row"]');
+    expect(row).not.toBeNull();
+    expect(row).not.toHaveAttribute("tabindex");
+    // The ACP provider has no detail page to open, so its row offers no control at all.
+    expect(screen.queryByRole("button", { name: "Agent" })).toBeNull();
   });
 });

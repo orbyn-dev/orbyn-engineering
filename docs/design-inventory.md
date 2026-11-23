@@ -1,145 +1,176 @@
 # Design inventory
 
 Every screen and motion in the internal designs, mapped to this app. Phase 0 built it
-from the design HTML and the code on `main`. "Exists" means a component renders the
-screen today; it does not mean the screen matches the design. No row has been compared
-side by side yet. A phase fills the Proof column for each row it finishes: the design
-section and the app at the same 1160x700 frame in Light, Dark and Dim, and for motion
-rows a timing check and a filmed reduced-motion fallback.
+from the design HTML and the code on `main`. A phase fills the Proof column for each row
+it finishes: the design section and the app at the same 1160x700 frame in Light, Dark and
+Dim, and for motion rows a timing check and a filmed reduced-motion fallback.
 
+**Recount, 2026-11-20.** The screen table was re-checked against `origin/main`
+(`38ece38f`) and the published designs (`orbyn-designs@main`, read from `artifacts/`).
+Each row's status now says whether the screen is built, preview-only, missing or
+unverified, read from the code and the frame ids rather than copied from the earlier
+snapshot. It is a code check, not an eye review: no row was compared side by side with
+its frame, and copy, spacing, colour and motion are still unreviewed. Frame ids were read
+from the artifacts' `<section id>` entries, not from the Designer's audit. The engineer
+artifact now publishes 904 frames. Crew (448 frames), Components (25) and Motion (69) are separate artifacts, not part of that count; this table still
+holds the 231 Phase 0 rows, so frames added since (the redesigned shell, Crew, the file
+editor, hunks, comments and the rest of the pull request states) are not rows here and
+are not counted below. 212 of the 231 ids are still in the engineer artifact; the other
+19 rows' frame ids no longer exist in the artifacts (the
+Diff and Files panels were redesigned as Changes and the left-bar explorer):
+`panel-diff`, `panel-files`, `x-diff-empty`, `x-diff-loading`, `x-diff-error`,
+`x-diff-binary`, `x-diff-huge`, `x-diff-conflict`, `x-diff-staged`, `x-diff-comment`,
+`x-diff-search`, `x-diff-menu`, `x-diff-split`, `x-files-empty`, `x-files-loading`,
+`x-files-error`, `x-files-search`, `x-files-large` and `x-files-menu`; their status is
+read from the replacement code. The motion table was not re-reviewed in this recount.
+
+**Frames applied after the recount (not rows, not eye-reviewed).** From Engineer v186
+(orbyn-designs #374 and #376): `x-term-split`, `x-term-split-down`, `x-term-split-menu`,
+`x-term-split-max`, `x-term-pane-close`, `x-term-tab-close`, `x-term-end-confirm`
+(tab X ends every pane), `editor-comment-out-of-date` (card content only, not inline),
+`cursor-thread-mode-refused`, `-auto-edits`, `cursor-thread-refused-engine` and
+`cursor-thread-details-other-engine` (all Planned), and Crew's `crew-cursor-reviewer-only`.
+Not checked: `x-term-split-narrow`, the narrow Cursor and Crew frames (no narrow-specific code was
+added) and the Rename and Move to window items (Planned in the frame, not built).
+
+`built` means a component renders the screen in the app (on a live route or in the
+thread's own view); it does not mean the screen matches the design. `preview-only` means
+the only implementation is the dev-only `__ORBYN_PREVIEWS__` sample screen. `missing`
+means no implementation was found. `unverified` means the code was not enough to decide.
 Component paths are under `web/src` and some line numbers are approximate; each phase
 re-verifies its rows. Sources of truth and the token file are in
 [design.md](design.md#sources-of-truth).
 
 ## Screens (231)
 
-exists: 98, missing: 60, partial: 68, preview-only: 5.
+built: 187, preview-only: 4, missing: 38, unverified: 2. (The Phase 0 count was
+exists: 98, partial: 68, missing: 60, preview-only: 5.)
 
 | n | id | group | title | component | status | phase | Proof |
 |---|---|---|---|---|---|---|---|
-| 1 | `shell-console` | Shell and layouts | Console layout | `app/shell/Shell.tsx; product/state/ui/types.ts` | exists | P1 | |
-| 2 | `shell-ledger` | Shell and layouts | Ledger layout | `product/state/ui/types.ts; app/TitleBar.tsx:84; features/thread/LedgerPin.tsx` | exists | P1 | |
-| 3 | `shell-reading` | Shell and layouts | Reading layout | `app/readingNav.ts; app/shell/commands.ts` | exists | P1 | |
-| 4 | `welcome` | Getting started | Welcome | `features/onboarding/WelcomeWizard.tsx:152` | exists | P1 | |
-| 5 | `connect-agent` | Getting started | Connect an agent | `features/onboarding/WelcomeWizard.tsx:52` | exists | P1 | |
-| 6 | `add-project` | Getting started | Add a project | `features/workspace/palette/AddProjectPalette.tsx:392; product/ui/FolderBrowser.tsx` | exists | P1 | |
-| 7 | `trust` | Getting started | Trust this folder | `features/onboarding/TrustFolder.tsx:12` | exists | P1 | |
-| 8 | `no-projects` | Getting started | No projects yet | `features/onboarding/NoProjects.tsx:10` | exists | P1 | |
-| 9 | `new-thread` | Threads | New thread | `features/onboarding/DraftView/index.tsx` | exists | P2 | |
-| 10 | `approval` | Threads | Approve a command | `features/thread/ApprovalCard.tsx:24` | exists | P2 | |
-| 11 | `question` | Threads | The agent asks a question | `features/thread/QuestionCard.tsx:79` | exists | P2 | |
-| 12 | `plan` | Threads | Proposed plan | `features/thread/PlanCard.tsx:76` | exists | P2 | |
-| 13 | `subagents` | Threads | Subagents and queued messages | `features/thread/SubagentBar.tsx:40; features/thread/QueuedMessages.tsx:9` | exists | P2 | |
-| 14 | `composer` | Threads | Composer | `features/thread/composer/Composer.tsx:105` | exists | P2 | |
-| 15 | `composer-menus` | Threads | Access mode and slash commands | `features/thread/composer/Composer.tsx:243; features/thread/composer/ComposerTraits.tsx` | exists | P2 | |
-| 16 | `banners` | Threads | Thread states | `features/thread/ThreadBanners.tsx:19` | exists | P2 | |
-| 17 | `git` | Threads | Commit, push and worktrees | `features/thread/GitControl.tsx:16` | exists | P2 | |
-| 18 | `find` | Threads | Find, minimap and related threads | `features/thread/ThreadFind.tsx:34; features/thread/Minimap.tsx:14; features/thread/RelatedThreads.tsx:25` | exists | P2 | |
-| 19 | `thread-menu` | Threads | Thread menu and undo | `features/workspace/sidebar/threadMenu.tsx; features/workspace/sidebar/threadUndo.ts` | exists | P2 | |
-| 20 | `palette` | Threads | Command palette | `features/workspace/palette/CommandPalette.tsx:67` | exists | P2 | |
-| 21 | `thread-empty` | Threads | Loading, empty and error | `product/ui/states.tsx:9; features/thread/Transcript.tsx` | exists | P2 | |
-| 22 | `tc-collapsed` | Tool calls, every state | Collapsed groups | `features/thread/items.tsx:396` | partial | P2 | |
-| 23 | `tc-rows` | Tool calls, every state | Every kind of row, collapsed | `product/timeline/toolTrace.ts:49; features/thread/items.tsx:116` | partial | P2 | |
-| 24 | `tc-group-open` | Tool calls, every state | Group expanded | `features/thread/items.tsx:420` | exists | P2 | |
-| 25 | `tc-command-open` | Tool calls, every state | Command expanded | `features/thread/items.tsx:190; features/content/code/CodeBlock.tsx` | partial | P2 | |
-| 26 | `tc-output-capped` | Tool calls, every state | Output capped at 12 lines | `features/thread/items.tsx:128` | missing | P2 | |
-| 27 | `tc-output-all` | Tool calls, every state | All output, scrolling inside the block | `features/thread/items.tsx:128; styles/thread.css:596` | partial | P2 | |
-| 28 | `tc-running` | Tool calls, every state | Running, output streaming | `features/thread/items.tsx:190` | partial | P2 | |
-| 29 | `tc-running-group` | Tool calls, every state | Running group, collapsed and open | `features/thread/items.tsx:374,445` | partial | P2 | |
-| 30 | `tc-failed` | Tool calls, every state | Failed, with stderr in red | `features/thread/items.tsx:190` | partial | P2 | |
-| 31 | `tc-failed-collapsed` | Tool calls, every state | Failed, collapsed | `product/timeline/toolTrace.ts:116` | partial | P2 | |
+| 1 | `shell-console` | Shell and layouts | Console layout | `app/shell/Shell.tsx; product/state/ui/types.ts` | built | P1 | |
+| 2 | `shell-ledger` | Shell and layouts | Ledger layout | `product/state/ui/types.ts; app/TitleBar.tsx:84; features/thread/LedgerPin.tsx` | built | P1 | |
+| 3 | `shell-reading` | Shell and layouts | Reading layout | `app/readingNav.ts; app/shell/commands.ts` | built | P1 | |
+| 4 | `welcome` | Getting started | Welcome | `features/onboarding/WelcomeWizard.tsx:152` | built | P1 | |
+| 5 | `connect-agent` | Getting started | Connect an agent | `features/onboarding/WelcomeWizard.tsx:52` | built | P1 | |
+| 6 | `add-project` | Getting started | Add a project | `features/workspace/palette/AddProjectPalette.tsx:392; product/ui/FolderBrowser.tsx` | built | P1 | |
+| 7 | `trust` | Getting started | Trust this folder | `features/onboarding/TrustFolder.tsx:12` | built | P1 | |
+| 8 | `no-projects` | Getting started | No projects yet (the draft view's fallback; the empty home is the Welcome page) | `features/onboarding/NoProjects.tsx:10` | built | P1 | |
+| 9 | `new-thread` | Threads | New thread | `features/onboarding/DraftView/index.tsx` | built | P2 | |
+| 10 | `approval` | Threads | Approve a command | `features/thread/ApprovalCard.tsx:24` | built | P2 | |
+| 11 | `question` | Threads | The agent asks a question | `features/thread/QuestionCard.tsx:79` | built | P2 | |
+| 12 | `plan` | Threads | Proposed plan | `features/thread/PlanCard.tsx:76` | built | P2 | |
+| 13 | `subagents` | Threads | Subagents and queued messages | `features/thread/SubagentBar.tsx:40; features/thread/QueuedMessages.tsx:9` | built | P2 | |
+| 14 | `composer` | Threads | Composer | `features/thread/composer/Composer.tsx:105` | built | P2 | |
+| 15 | `composer-menus` | Threads | Access mode and slash commands | `features/thread/composer/Composer.tsx:243; features/thread/composer/ComposerTraits.tsx` | built | P2 | |
+| 16 | `banners` | Threads | Thread states | `features/thread/ThreadBanners.tsx:19` | built | P2 | |
+| 17 | `git` | Threads | Commit, push and worktrees | `features/thread/GitControl.tsx:16` | built | P2 | |
+| 18 | `find` | Threads | Find, minimap and related threads | `features/thread/ThreadFind.tsx:34; features/thread/Minimap.tsx:14; features/thread/RelatedThreads.tsx:25` | built | P2 | |
+| 19 | `thread-menu` | Threads | Thread menu and undo | `features/workspace/sidebar/threadMenu.tsx; features/workspace/sidebar/threadUndo.ts` | built | P2 | |
+| 20 | `palette` | Threads | Command palette | `features/workspace/palette/CommandPalette.tsx:67` | built | P2 | |
+| 21 | `thread-empty` | Threads | Loading, empty and error | `product/ui/states.tsx:9; features/thread/Transcript.tsx` | built | P2 | |
+| 22 | `tc-collapsed` | Tool calls, every state | Collapsed groups | `features/thread/trail/ToolTrail.tsx:144` | built | P2 | |
+| 23 | `tc-rows` | Tool calls, every state | Every kind of row, collapsed | `product/timeline/toolTrace.ts:49; features/thread/items.tsx:116` | built | P2 | |
+| 24 | `tc-group-open` | Tool calls, every state | Group expanded | `features/thread/items.tsx:420` | built | P2 | |
+| 25 | `tc-command-open` | Tool calls, every state | Command expanded | `features/thread/items.tsx:190; features/content/code/CodeBlock.tsx` | built | P2 | |
+| 26 | `tc-output-capped` | Tool calls, every state | Output capped at 12 lines | `features/thread/trail/blocks/OutputBlock.tsx:16; features/thread/toolCalls.ts:374` | built | P2 | |
+| 27 | `tc-output-all` | Tool calls, every state | All output, scrolling inside the block | `features/thread/trail/blocks/OutputBlock.tsx:66` | built | P2 | |
+| 28 | `tc-running` | Tool calls, every state | Running, output streaming | `features/thread/items.tsx:190` | built | P2 | |
+| 29 | `tc-running-group` | Tool calls, every state | Running group, collapsed and open | `features/thread/items.tsx:374,445` | built | P2 | |
+| 30 | `tc-failed` | Tool calls, every state | Failed, with stderr in red | `features/thread/items.tsx:190` | built | P2 | |
+| 31 | `tc-failed-collapsed` | Tool calls, every state | Failed, collapsed | `product/timeline/toolTrace.ts:116` | built | P2 | |
 | 32 | `tc-timeout` | Tool calls, every state | Timed out | `features/thread/items.tsx:190` | missing | P2 | |
-| 33 | `tc-denied` | Tool calls, every state | Blocked by the access mode, needs you | `features/thread/ApprovalCard.tsx:24` | partial | P2 | |
-| 34 | `tc-denied-resolved` | Tool calls, every state | After the choice | `features/thread/ApprovalCard.tsx:13` | partial | P2 | |
-| 35 | `tc-cancelled` | Tool calls, every state | Cancelled | `product/timeline/types.ts:32` | missing | P2 | |
+| 33 | `tc-denied` | Tool calls, every state | Blocked by the access mode, needs you | `features/thread/ApprovalCard.tsx:24` | built | P2 | |
+| 34 | `tc-denied-resolved` | Tool calls, every state | After the choice | `features/thread/ApprovalCard.tsx:13` | built | P2 | |
+| 35 | `tc-cancelled` | Tool calls, every state | Cancelled | `features/thread/toolCalls.ts:75; product/timeline/projection.ts:188` | built | P2 | |
 | 36 | `tc-output-file` | Tool calls, every state | Output too large, saved to a file | `product/timeline/types.ts:32` | missing | P2 | |
 | 37 | `tc-binary` | Tool calls, every state | Binary output | `features/thread/items.tsx:128` | missing | P2 | |
-| 38 | `tc-empty` | Tool calls, every state | Empty output | `features/thread/items.tsx:137` | exists | P2 | |
-| 39 | `tc-long-hover` | Tool calls, every state | Very long command, collapsed | `features/thread/items.tsx:208` | partial | P2 | |
-| 40 | `tc-long-open` | Tool calls, every state | Very long command, expanded | `features/thread/items.tsx:190; features/content/code/CodeBlock.tsx:44` | partial | P2 | |
-| 41 | `tc-long-lines` | Tool calls, every state | Very long lines in output | `styles/thread.css:596; features/content/code/CodeBlock.tsx:11` | partial | P2 | |
-| 42 | `tc-many` | Tool calls, every state | Many groups, Expand all and Collapse all | `features/thread/items.tsx:396` | missing | P2 | |
-| 43 | `tc-focus` | Tool calls, every state | Keyboard focus on a row | `ui/Collapsible.tsx` | partial | P2 | |
-| 44 | `tc-terminal` | Tool calls, every state | Open in terminal | `generated/OpenTerminal.ts` | missing | P2 | |
-| 45 | `tc-read` | Tool calls, every state | Read file, with a line range | `product/timeline/toolTrace.ts:14,49` | partial | P2 | |
-| 46 | `tc-edit` | Tool calls, every state | Edit file, with a mini diff | `features/thread/items.tsx:295` | partial | P2 | |
-| 47 | `tc-create` | Tool calls, every state | Create file | `product/timeline/toolTrace.ts:15` | missing | P2 | |
-| 48 | `tc-search` | Tool calls, every state | Search, with a result list | `product/timeline/toolTrace.ts:16` | partial | P2 | |
-| 49 | `tc-list` | Tool calls, every state | List files | `product/timeline/toolTrace.ts:16` | missing | P2 | |
-| 50 | `tc-fetch` | Tool calls, every state | Web fetch, with the page title | `product/timeline/toolTrace.ts:17` | partial | P2 | |
-| 51 | `tc-mcp` | Tool calls, every state | MCP tool, with server and arguments | `features/thread/McpApp.tsx; product/timeline/toolTrace.ts:49` | partial | P2 | |
-| 52 | `tc-subagent` | Tool calls, every state | Subagent, with a link to its thread | `features/thread/SubagentBar.tsx:40; features/thread/RelatedThreads.tsx:25` | partial | P2 | |
-| 53 | `tc-plan` | Tool calls, every state | Plan or to-do update | `features/thread/items.tsx:254` | exists | P2 | |
-| 54 | `tc-image` | Tool calls, every state | Image viewed | `product/timeline/toolTrace.ts:14` | partial | P2 | |
-| 55 | `tc-side-chat` | Tool calls, every state | Side chat | `features/thread/SideChatPanel.tsx:16` | partial | P2 | |
-| 56 | `tc-side-needs-you` | Tool calls, every state | Side chat, needs you | `features/thread/SideChatPanel.tsx:16; features/thread/ApprovalCard.tsx:24` | partial | P2 | |
+| 38 | `tc-empty` | Tool calls, every state | Empty output | `features/thread/items.tsx:137` | built | P2 | |
+| 39 | `tc-long-hover` | Tool calls, every state | Very long command, collapsed | `features/thread/items.tsx:208` | built | P2 | |
+| 40 | `tc-long-open` | Tool calls, every state | Very long command, expanded | `features/thread/items.tsx:190; features/content/code/CodeBlock.tsx:44` | built | P2 | |
+| 41 | `tc-long-lines` | Tool calls, every state | Very long lines in output | `styles/thread.css:596; features/content/code/CodeBlock.tsx:11` | built | P2 | |
+| 42 | `tc-many` | Tool calls, every state | Many groups, Expand all and Collapse all | `features/thread/items.tsx:410` | built | P2 | |
+| 43 | `tc-focus` | Tool calls, every state | Keyboard focus on a row | `features/thread/trail/ToolTrail.tsx:225; features/thread/items.tsx:301` | built | P2 | |
+| 44 | `tc-terminal` | Tool calls, every state | Open in terminal | `features/thread/trail/ToolTrail.tsx (no open-in-terminal action; ThreadHeaderMenu.test asserts it absent)` | missing | P2 | |
+| 45 | `tc-read` | Tool calls, every state | Read file, with a line range | `features/thread/trail/blocks/FileBlocks.tsx:10` | built | P2 | |
+| 46 | `tc-edit` | Tool calls, every state | Edit file, with a mini diff | `features/thread/trail/blocks/FileBlocks.tsx:34` | built | P2 | |
+| 47 | `tc-create` | Tool calls, every state | Create file | `features/thread/trail/blocks/FileBlocks.tsx:72` | built | P2 | |
+| 48 | `tc-search` | Tool calls, every state | Search, with a result list | `features/thread/trail/blocks/SearchBlock.tsx` | built | P2 | |
+| 49 | `tc-list` | Tool calls, every state | List files | `features/thread/trail/blocks/ListBlock.tsx` | built | P2 | |
+| 50 | `tc-fetch` | Tool calls, every state | Web fetch, with the page title | `features/thread/trail/blocks/RemoteBlocks.tsx:8` | built | P2 | |
+| 51 | `tc-mcp` | Tool calls, every state | MCP tool, with server and arguments | `features/thread/trail/blocks/RemoteBlocks.tsx:38; features/thread/McpApp.tsx` | built | P2 | |
+| 52 | `tc-subagent` | Tool calls, every state | Subagent, with a link to its thread | `features/thread/trail/blocks/RemoteBlocks.tsx:57; features/thread/SubagentBar.tsx` | built | P2 | |
+| 53 | `tc-plan` | Tool calls, every state | Plan or to-do update | `features/thread/trail/PlanRow.tsx` | built | P2 | |
+| 54 | `tc-image` | Tool calls, every state | Image viewed | `features/thread/toolCalls.ts:309; features/thread/trail/blocks/Block.tsx:88` | built | P2 | |
+| 55 | `tc-side-chat` | Tool calls, every state | Side chat | `features/thread/SideChatPanel.tsx` | built | P2 | |
+| 56 | `tc-side-needs-you` | Tool calls, every state | Side chat, needs you | `features/thread/SideChatPanel.tsx; features/thread/ApprovalCard.tsx` | built | P2 | |
 | 57 | `tc-phone-list` | Tool calls, every state | Phone: groups and rows | `missing` | missing | P2 | |
 | 58 | `tc-phone-sheet` | Tool calls, every state | Phone: output in a sheet | `missing` | missing | P2 | |
 | 59 | `tc-phone-needs-you` | Tool calls, every state | Phone: needs you | `missing` | missing | P2 | |
-| 60 | `panel-diff` | Side panel and terminal | Diff | `features/panels/diff/DiffPanel.tsx` | exists | P2 | |
-| 61 | `panel-files` | Side panel and terminal | Files | `features/panels/files/FilesPanel.tsx` | exists | P2 | |
-| 62 | `panel-browser` | Side panel and terminal | Browser | `features/panels/browser/BrowserPanel.tsx` | exists | P2 | Engineer Designs v98, shell PR 1a |
-| 63 | `panel-activity` | Side panel and terminal | Activity | `features/panels/activity/ActivityPanel.tsx:13` | exists | P2 | Engineer Designs v98, shell PR 1a |
-| 64 | `panel-side` | Side panel and terminal | Side chat | `features/thread/SideChatPanel.tsx` | exists | P2 | Engineer Designs v98, shell PR 1a |
-| 65 | `terminal` | Side panel and terminal | Terminal | `features/panels/terminal/TerminalDrawerBody.tsx:25` | exists | P2 | |
-| 66 | `pulls` | Pages | Pull requests | `features/pulls/list/PullsPage.tsx:42` | exists | P2 | |
-| 67 | `pull-detail` | Pages | Pull request | `features/pulls/detail/PullDetail.tsx` | exists | P2 | |
-| 68 | `usage` | Pages | Usage | `features/usage/UsagePage.tsx:554` | exists | P2 | |
-| 69 | `tasks` | Pages | Scheduled tasks | `features/settings/scheduled-tasks/ScheduledTasks.tsx:597` | exists | P2 | |
-| 70 | `task-new` | Pages | New scheduled task | `features/settings/scheduled-tasks/ScheduledTasks.tsx:149` | exists | P2 | |
-| 71 | `pr-list-none` | Pull requests, every state | List: no pull requests | `features/pulls/list/PullsPage.tsx:258` | partial | P2 | |
-| 72 | `pr-list-loading` | Pull requests, every state | List: loading | `features/pulls/list/PullsPage.tsx:253` | exists | P2 | |
-| 73 | `pr-list-error` | Pull requests, every state | List: GitHub unreachable | `features/pulls/list/PullsPage.tsx:256` | exists | P2 | |
-| 74 | `pr-list-offline` | Pull requests, every state | List: offline | `missing` | missing | P2 | |
-| 75 | `pr-list-signedout` | Pull requests, every state | List: signed out of GitHub | `features/pulls/list/PullsPage.tsx:262; api/pulls.ts:28` | missing | P2 | |
-| 76 | `pr-list-filtered` | Pull requests, every state | List: filtered with no results | `features/pulls/list/PullsPage.tsx:258` | partial | P2 | |
-| 77 | `pr-list-running` | Pull requests, every state | List: checks running | `features/pulls/list/PullsPage.tsx:32,307` | exists | P2 | |
-| 78 | `pr-list-failed` | Pull requests, every state | List: checks failed | `features/pulls/list/PullsPage.tsx:32,307` | partial | P2 | |
-| 79 | `pr-list-review` | Pull requests, every state | List: review requested | `features/pulls/list/PullsPage.tsx:34` | partial | P2 | |
-| 80 | `pr-list-changes` | Pull requests, every state | List: changes requested | `features/pulls/list/PullsPage.tsx:316` | exists | P2 | |
-| 81 | `pr-list-approved` | Pull requests, every state | List: approved and ready to merge | `features/pulls/list/PullsPage.tsx:34` | exists | P2 | |
-| 82 | `pr-list-conflict` | Pull requests, every state | List: merge conflict | `features/pulls/list/PullsPage.tsx:283` | missing | P2 | |
-| 83 | `pr-list-merged` | Pull requests, every state | List: merged | `features/pulls/list/PullsPage.tsx:28` | exists | P2 | |
-| 84 | `pr-list-closed` | Pull requests, every state | List: closed | `features/pulls/list/PullsPage.tsx:27` | exists | P2 | |
-| 85 | `pr-list-draft` | Pull requests, every state | List: draft | `features/pulls/list/PullsPage.tsx:155,302` | exists | P2 | |
-| 86 | `pr-detail-none` | Pull requests, every state | Detail: no pull request | `features/panels/diff/GitActionDialog.tsx:36` | partial | P2 | |
-| 87 | `pr-detail-loading` | Pull requests, every state | Detail: loading | `features/pulls/detail/PullDetail.tsx` | exists | P2 | |
-| 88 | `pr-detail-error` | Pull requests, every state | Detail: GitHub unreachable | `features/pulls/detail/PullDetail.tsx` | exists | P2 | |
-| 89 | `pr-detail-offline` | Pull requests, every state | Detail: offline | `missing` | missing | P2 | |
-| 90 | `pr-detail-signedout` | Pull requests, every state | Detail: signed out of GitHub | `missing` | missing | P2 | |
-| 91 | `pr-detail-filtered` | Pull requests, every state | Detail: files filter with no results | `features/pulls/detail/PullCode.tsx` | missing | P2 | |
-| 92 | `pr-detail-running` | Pull requests, every state | Detail: checks running | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
-| 93 | `pr-detail-failed` | Pull requests, every state | Detail: checks failed | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
-| 94 | `pr-detail-review` | Pull requests, every state | Detail: review requested | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
-| 95 | `pr-detail-changes` | Pull requests, every state | Detail: changes requested | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
-| 96 | `pr-detail-approved` | Pull requests, every state | Detail: approved and ready to merge | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
-| 97 | `pr-detail-conflict` | Pull requests, every state | Detail: merge conflict | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
-| 98 | `pr-detail-merged` | Pull requests, every state | Detail: merged | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
-| 99 | `pr-detail-closed` | Pull requests, every state | Detail: closed | `features/pulls/detail/PullDetail.tsx` | exists | P2 | |
-| 100 | `pr-detail-draft` | Pull requests, every state | Detail: draft | `features/pulls/detail/PullDetail.tsx` | exists | P2 | |
-| 101 | `pr-detail-conversation` | Pull requests, every state | Detail: conversation with comments | `features/pulls/detail/PullConversation.tsx` | partial | P2 | |
-| 102 | `pr-detail-files` | Pull requests, every state | Detail: Files changed | `features/pulls/detail/PullCode.tsx` | partial | P2 | |
-| 103 | `pr-detail-checks` | Pull requests, every state | Detail: Checks with a log | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
-| 104 | `pr-detail-merge-menu` | Pull requests, every state | Detail: merge options menu | `features/pulls/detail/PullDetail.tsx` | partial | P2 | |
-| 105 | `pr-detail-thread` | Pull requests, every state | Detail: thread linked to the pull request | `features/panels/LinkedPulls.tsx; features/panels/strip/tabs.ts:10` | partial | P2 | |
+| 60 | `panel-diff` | Side panel and terminal | Diff | `features/panels/diff/DiffPanel.tsx` | built | P2 | |
+| 61 | `panel-files` | Side panel and terminal | Files | `features/panels/FilePanel.tsx; features/workspace/explorer/Explorer.tsx` | built | P2 | |
+| 62 | `panel-browser` | Side panel and terminal | Browser | `features/panels/browser/BrowserPanel.tsx` | built | P2 | Engineer Designs v98, shell PR 1a |
+| 63 | `panel-activity` | Side panel and terminal | Activity | `features/panels/activity/ActivityPanel.tsx:13` | built | P2 | Engineer Designs v98, shell PR 1a |
+| 64 | `panel-side` | Side panel and terminal | Side chat | `features/thread/SideChatPanel.tsx` | built | P2 | Engineer Designs v98, shell PR 1a |
+| 65 | `terminal` | Side panel and terminal | Terminal | `features/panels/terminal/TerminalDrawerBody.tsx:25` | built | P2 | |
+| 66 | `pulls` | Pages | Pull requests | `features/pulls/list/PullsPage.tsx:42` | built | P2 | |
+| 67 | `pull-detail` | Pages | Pull request | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 68 | `usage` | Pages | Usage | `features/usage/UsagePage.tsx:554` | built | P2 | |
+| 69 | `tasks` | Pages | Scheduled tasks | `features/settings/scheduled-tasks/ScheduledTasks.tsx:597` | built | P2 | |
+| 70 | `task-new` | Pages | New scheduled task | `features/settings/scheduled-tasks/ScheduledTasks.tsx:149` | built | P2 | |
+| 71 | `pr-list-none` | Pull requests, every state | List: no pull requests | `features/pulls/list/PullsPage.tsx:258` | built | P2 | |
+| 72 | `pr-list-loading` | Pull requests, every state | List: loading | `features/pulls/list/PullsPage.tsx:253` | built | P2 | |
+| 73 | `pr-list-error` | Pull requests, every state | List: GitHub unreachable | `features/pulls/list/PullsPage.tsx:256` | built | P2 | |
+| 74 | `pr-list-offline` | Pull requests, every state | List: offline | `features/pulls/list/PullStates.tsx:16` | built | P2 | |
+| 75 | `pr-list-signedout` | Pull requests, every state | List: signed out of GitHub | `features/pulls/list/PullStates.tsx:86` | built | P2 | |
+| 76 | `pr-list-filtered` | Pull requests, every state | List: filtered with no results | `features/pulls/list/PullsPage.tsx:258` | built | P2 | |
+| 77 | `pr-list-running` | Pull requests, every state | List: checks running | `features/pulls/list/PullsPage.tsx:32,307` | built | P2 | |
+| 78 | `pr-list-failed` | Pull requests, every state | List: checks failed | `features/pulls/list/PullsPage.tsx:32,307` | built | P2 | |
+| 79 | `pr-list-review` | Pull requests, every state | List: review requested | `features/pulls/list/PullsPage.tsx:34` | built | P2 | |
+| 80 | `pr-list-changes` | Pull requests, every state | List: changes requested | `features/pulls/list/PullsPage.tsx:316` | built | P2 | |
+| 81 | `pr-list-approved` | Pull requests, every state | List: approved and ready to merge | `features/pulls/list/PullsPage.tsx:34` | built | P2 | |
+| 82 | `pr-list-conflict` | Pull requests, every state | List: merge conflict | `features/pulls/list/PullRows.tsx:8 (no conflict word; the list does not carry mergeable yet)` | missing | P2 | |
+| 83 | `pr-list-merged` | Pull requests, every state | List: merged | `features/pulls/list/PullsPage.tsx:28` | built | P2 | |
+| 84 | `pr-list-closed` | Pull requests, every state | List: closed | `features/pulls/list/PullsPage.tsx:27` | built | P2 | |
+| 85 | `pr-list-draft` | Pull requests, every state | List: draft | `features/pulls/list/PullsPage.tsx:155,302` | built | P2 | |
+| 86 | `pr-detail-none` | Pull requests, every state | Detail: no pull request | `unverified: no pull request empty state found` | unverified | P2 | |
+| 87 | `pr-detail-loading` | Pull requests, every state | Detail: loading | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 88 | `pr-detail-error` | Pull requests, every state | Detail: GitHub unreachable | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 89 | `pr-detail-offline` | Pull requests, every state | Detail: offline | `features/pulls/detail/PullDetailBlocks.tsx:393; features/pulls/detail/PullDetail.tsx:441` | built | P2 | |
+| 90 | `pr-detail-signedout` | Pull requests, every state | Detail: signed out of GitHub | `features/pulls/detail/PullDetail.tsx:126` | built | P2 | |
+| 91 | `pr-detail-filtered` | Pull requests, every state | Detail: files filter with no results | `features/pulls/detail/PullCode.tsx` | built | P2 | |
+| 92 | `pr-detail-running` | Pull requests, every state | Detail: checks running | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 93 | `pr-detail-failed` | Pull requests, every state | Detail: checks failed | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 94 | `pr-detail-review` | Pull requests, every state | Detail: review requested | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 95 | `pr-detail-changes` | Pull requests, every state | Detail: changes requested | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 96 | `pr-detail-approved` | Pull requests, every state | Detail: approved and ready to merge | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 97 | `pr-detail-conflict` | Pull requests, every state | Detail: merge conflict | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 98 | `pr-detail-merged` | Pull requests, every state | Detail: merged | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 99 | `pr-detail-closed` | Pull requests, every state | Detail: closed | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 100 | `pr-detail-draft` | Pull requests, every state | Detail: draft | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 101 | `pr-detail-conversation` | Pull requests, every state | Detail: conversation with comments | `features/pulls/detail/PullConversation.tsx` | built | P2 | |
+| 102 | `pr-detail-files` | Pull requests, every state | Detail: Files changed | `features/pulls/detail/PullCode.tsx` | built | P2 | |
+| 103 | `pr-detail-checks` | Pull requests, every state | Detail: Checks with a log | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 104 | `pr-detail-merge-menu` | Pull requests, every state | Detail: merge options menu | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
+| 105 | `pr-detail-thread` | Pull requests, every state | Detail: thread linked to the pull request | `features/pulls/detail/PullLinkedCards.tsx; features/thread/PullChip.tsx` | built | P2 | |
 | 106 | `pr-phone-list` | Pull requests, every state | Phone: Pull requests list | `missing` | missing | P2 | |
 | 107 | `pr-phone-detail` | Pull requests, every state | Phone: pull request detail | `missing` | missing | P2 | |
-| 108 | `s-general` | Settings | Settings · General | `features/settings/sections/GeneralSection.tsx:72` | exists | P1 | |
-| 109 | `s-appearance` | Settings | Settings · Appearance | `features/settings/pages/Appearance.tsx:281` | exists | P1 | |
-| 110 | `s-chat` | Settings | Settings · Chat | `features/settings/sections/ChatSection.tsx:10` | exists | P1 | |
-| 111 | `s-diffs` | Settings | Settings · Diffs & pull requests | `features/settings/sections/DiffsSection.tsx:27` | exists | P1 | |
-| 112 | `s-keys` | Settings | Settings · Keybindings | `features/settings/pages/Keybindings.tsx:12` | exists | P1 | |
-| 113 | `s-providers` | Settings | Settings · Providers | `features/settings/providers/Providers.tsx:412` | exists | P1 | |
-| 114 | `s-threads` | Settings | Settings · Threads | `features/settings/pages/Threads.tsx:60` | exists | P1 | |
-| 115 | `s-tasks` | Settings | Settings · Scheduled tasks | `features/settings/scheduled-tasks/ScheduledTasks.tsx:592` | exists | P1 | |
-| 116 | `s-projects` | Settings | Settings · Projects | `features/settings/projects/Projects.tsx:418` | exists | P1 | |
-| 117 | `s-source` | Settings | Settings · Source control | `features/settings/sections/SourceControlSection.tsx:14` | exists | P1 | |
-| 118 | `s-worktrees` | Settings | Settings · Worktrees | `features/settings/sections/WorktreesSection.tsx:38` | exists | P1 | |
-| 119 | `s-maintenance` | Settings | Settings · Maintenance | `features/settings/maintenance/Maintenance.tsx:405` | exists | P1 | |
-| 120 | `s-labs` | Settings | Settings · Labs | `features/settings/sections/LabsSection.tsx:6` | exists | P1 | |
-| 121 | `s-about` | Settings | Settings · About and updates | `features/settings/sections/AboutSection.tsx:110` | exists | P1 | |
-| 122 | `s-archive` | Settings | Settings · Archive | `features/settings/sections/ArchiveSection.tsx:17` | exists | P1 | |
-| 123 | `s-search` | Settings | Find a setting | `features/settings/SettingsPage.tsx:160; features/settings/settingsSearch.ts` | exists | P1 | |
+| 108 | `s-general` | Settings | Settings · General | `features/settings/sections/GeneralSection.tsx:72` | built | P1 | |
+| 109 | `s-appearance` | Settings | Settings · Appearance | `features/settings/pages/Appearance.tsx:281` | built | P1 | |
+| 110 | `s-chat` | Settings | Settings · Chat | `features/settings/sections/ChatSection.tsx:10` | built | P1 | |
+| 111 | `s-diffs` | Settings | Settings · Diffs & pull requests | `features/settings/sections/DiffsSection.tsx:27` | built | P1 | |
+| 112 | `s-keys` | Settings | Settings · Keybindings | `features/settings/pages/Keybindings.tsx:12` | built | P1 | |
+| 113 | `s-providers` | Settings | Settings · Providers | `features/settings/providers/Providers.tsx:412` | built | P1 | |
+| 114 | `s-threads` | Settings | Settings · Threads | `features/settings/pages/Threads.tsx:60` | built | P1 | |
+| 115 | `s-tasks` | Settings | Settings · Scheduled tasks | `features/settings/scheduled-tasks/ScheduledTasks.tsx:592` | built | P1 | |
+| 116 | `s-projects` | Settings | Settings · Projects | `features/settings/projects/Projects.tsx:418` | built | P1 | |
+| 117 | `s-source` | Settings | Settings · Source control | `features/settings/sections/SourceControlSection.tsx:14` | built | P1 | |
+| 118 | `s-worktrees` | Settings | Settings · Worktrees | `features/settings/sections/WorktreesSection.tsx:38` | built | P1 | |
+| 119 | `s-maintenance` | Settings | Settings · Maintenance | `features/settings/maintenance/Maintenance.tsx:405` | built | P1 | |
+| 120 | `s-labs` | Settings | Settings · Labs | `features/settings/sections/LabsSection.tsx:6` | built | P1 | |
+| 121 | `s-about` | Settings | Settings · About and updates | `features/settings/sections/AboutSection.tsx:110` | built | P1 | |
+| 122 | `s-archive` | Settings | Settings · Archive | `features/settings/sections/ArchiveSection.tsx:17` | built | P1 | |
+| 123 | `s-search` | Settings | Find a setting | `features/settings/SettingsPage.tsx:160; features/settings/settingsSearch.ts` | built | P1 | |
 | 124 | `t-memory` | Tools | Memory | `missing` | missing | P3 | |
 | 125 | `t-memory-detail` | Tools | A memory in detail | `missing` | missing | P3 | |
 | 126 | `t-memory-forget` | Tools | Forget a memory | `missing` | missing | P3 | |
@@ -147,8 +178,8 @@ exists: 98, missing: 60, partial: 68, preview-only: 5.
 | 128 | `t-gate` | Tools | Review gate in a thread | `missing` | missing | P3 | |
 | 129 | `t-gate-log` | Tools | Review gate history | `missing` | missing | P3 | |
 | 130 | `t-gate-settings` | Tools | Settings · Review gate | `missing` | missing | P3 | |
-| 131 | `t-skills` | Tools | Skills library | `missing` | missing | P4 | |
-| 132 | `t-skill` | Tools | A skill in detail | `missing` | missing | P4 | |
+| 131 | `t-skills` | Tools | Skills library | `features/skills/SkillsPage.tsx; app/shell/routes.tsx:49` | built | P4 | |
+| 132 | `t-skill` | Tools | A skill in detail | `features/skills/SkillsPage.tsx; app/shell/routes.tsx:49` | built | P4 | |
 | 133 | `t-diagrams` | Tools | Diagrams | `missing` | missing | P4 | |
 | 134 | `t-diagrams-new` | Tools | New diagram | `missing` | missing | P4 | |
 | 135 | `t-audit-start` | Tools | Start a security audit | `missing` | missing | P5 | |
@@ -157,97 +188,97 @@ exists: 98, missing: 60, partial: 68, preview-only: 5.
 | 138 | `t-inspect` | Tools | Inspect | `missing` | missing | P5 | |
 | 139 | `t-inspect-empty` | Tools | Inspect: empty and error | `missing` | missing | P5 | |
 | 140 | `t-phone` | Tools | Memory and review on a phone | `missing` | missing | P3 | |
-| 141 | `x-diff-empty` | Side panel, every state | Diff: no changes | `features/panels/diff/DiffPanel.tsx:620` | exists | P2 | |
-| 142 | `x-diff-loading` | Side panel, every state | Diff: loading | `features/panels/diff/DiffPanel.tsx:529` | exists | P2 | |
-| 143 | `x-diff-error` | Side panel, every state | Diff: couldn't read changes | `features/panels/diff/DiffPanel.tsx:531` | exists | P2 | |
-| 144 | `x-diff-binary` | Side panel, every state | Diff: binary file | `features/panels/diff/DiffPanel.tsx:204` | partial | P2 | |
-| 145 | `x-diff-huge` | Side panel, every state | Diff: huge file collapsed | `features/panels/diff/DiffPanel.tsx:19,482` | partial | P2 | |
-| 146 | `x-diff-conflict` | Side panel, every state | Diff: conflict markers | `features/panels/diff/DiffPanel.tsx:426` | partial | P2 | |
-| 147 | `x-diff-staged` | Side panel, every state | Diff: staged and unstaged | `features/panels/diff/DiffPanel.tsx:67` | missing | P2 | |
-| 148 | `x-diff-comment` | Side panel, every state | Diff: comment on a line | `features/panels/diff/DiffPanel.tsx:154,253` | exists | P2 | |
-| 149 | `x-diff-search` | Side panel, every state | Diff: filter files | `features/panels/diff/DiffPanel.tsx:110` | partial | P2 | |
-| 150 | `x-diff-menu` | Side panel, every state | Diff: panel menu open | `features/panels/diff/DiffPanel.tsx` | missing | P2 | |
-| 151 | `x-diff-split` | Side panel, every state | Diff: split view, maximised | `features/panels/diff/DiffPanel.tsx:374; features/panels/PanelHost.tsx:245` | exists | P2 | |
-| 152 | `x-files-empty` | Side panel, every state | Files: nothing selected | `features/panels/files/FilesPanel.tsx:236` | partial | P2 | |
-| 153 | `x-files-loading` | Side panel, every state | Files: loading | `features/panels/files/FilesPanel.tsx:201,245` | exists | P2 | |
-| 154 | `x-files-error` | Side panel, every state | Files: folder can't be read | `features/panels/files/FilesPanel.tsx:247` | exists | P2 | |
-| 155 | `x-files-search` | Side panel, every state | Files: search in the tree | `features/panels/files/FilesPanel.tsx:353` | exists | P2 | |
-| 156 | `x-files-edit` | Side panel, every state | Files: unsaved edit | `features/panels/files/FilesPanel.tsx:43,76` | exists | P2 | |
-| 157 | `x-files-readonly` | Side panel, every state | Files: read-only file | `features/panels/files/FilesPanel.tsx:43` | missing | P2 | |
-| 158 | `x-files-large` | Side panel, every state | Files: large tree | `features/panels/files/FilesPanel.tsx:236` | missing | P2 | |
-| 159 | `x-files-menu` | Side panel, every state | Files: file menu open | `features/panels/files/FilesPanel.tsx:283` | partial | P2 | |
-| 160 | `x-browser-empty` | Side panel, every state | Browser: no page open | `features/panels/browser/BrowserPanel.tsx:480` | exists | P2 | |
-| 161 | `x-browser-loading` | Side panel, every state | Browser: loading a page | `features/panels/browser/BrowserPanel.tsx` | missing | P2 | |
-| 162 | `x-browser-error` | Side panel, every state | Browser: page error | `features/panels/browser/BrowserPanel.tsx:893` | partial | P2 | |
-| 163 | `x-browser-offline` | Side panel, every state | Browser: offline | `features/panels/browser/BrowserPanel.tsx` | missing | P2 | |
+| 141 | `x-diff-empty` | Side panel, every state | Diff: no changes | `features/panels/diff/DiffPanel.tsx:374` | built | P2 | |
+| 142 | `x-diff-loading` | Side panel, every state | Diff: loading | `features/panels/diff/DiffPanel.tsx:365` | built | P2 | |
+| 143 | `x-diff-error` | Side panel, every state | Diff: couldn't read changes | `features/panels/diff/DiffPanel.tsx:368` | built | P2 | |
+| 144 | `x-diff-binary` | Side panel, every state | Diff: binary file | `features/panels/diff/FileView.tsx:115; features/panels/diff/diffModel.ts:148` | built | P2 | |
+| 145 | `x-diff-huge` | Side panel, every state | Diff: huge file collapsed | `features/panels/diff/diffModel.ts:160; features/panels/diff/ChangedFiles.tsx` | built | P2 | |
+| 146 | `x-diff-conflict` | Side panel, every state | Diff: conflict markers | `features/panels/diff/DiffPanel.tsx:384; features/panels/diff/DiffPatch.tsx:9` | built | P2 | |
+| 147 | `x-diff-staged` | Side panel, every state | Diff: staged and unstaged | `features/panels/diff/DiffPanel.tsx (no staged/unstaged split found)` | missing | P2 | |
+| 148 | `x-diff-comment` | Side panel, every state | Diff: comment on a line | `features/panels/diff/DiffPanel.tsx:154,253` | built | P2 | |
+| 149 | `x-diff-search` | Side panel, every state | Diff: filter files | `features/panels/diff/DiffPanel.tsx:110` | built | P2 | |
+| 150 | `x-diff-menu` | Side panel, every state | Diff: panel menu open | `features/panels/diff/ChangesHeader.tsx:58; features/panels/diff/DiffPanel.tsx:354` | built | P2 | |
+| 151 | `x-diff-split` | Side panel, every state | Diff: split view, maximised | `features/panels/diff/DiffPanel.tsx:292; features/panels/diff/DiffPatch.tsx:53` | built | P2 | |
+| 152 | `x-files-empty` | Side panel, every state | Files: nothing selected | `features/panels/files/FileTab.tsx:149` | built | P2 | |
+| 153 | `x-files-loading` | Side panel, every state | Files: loading | `features/panels/files/FileTab.tsx:133` | built | P2 | |
+| 154 | `x-files-error` | Side panel, every state | Files: folder can't be read | `features/panels/files/FileTab.tsx:113` | built | P2 | |
+| 155 | `x-files-search` | Side panel, every state | Files: search in the tree | `features/workspace/explorer/Explorer.tsx; features/panels/files/FileTab.tsx` | built | P2 | |
+| 156 | `x-files-edit` | Side panel, every state | Files: unsaved edit | `features/panels/editor/EditorShell.tsx; features/panels/files/FileTab.tsx:119` | built | P2 | |
+| 157 | `x-files-readonly` | Side panel, every state | Files: read-only file | `features/panels/files/FileTab.tsx:105` | built | P2 | |
+| 158 | `x-files-large` | Side panel, every state | Files: large tree | `features/panels/files/FileTab.tsx:114` | built | P2 | |
+| 159 | `x-files-menu` | Side panel, every state | Files: file menu open | `features/workspace/explorer/Explorer.tsx:16` | built | P2 | |
+| 160 | `x-browser-empty` | Side panel, every state | Browser: no page open | `features/panels/browser/BrowserPanel.tsx:480` | built | P2 | |
+| 161 | `x-browser-loading` | Side panel, every state | Browser: loading a page | `unverified: no loading state found; the panel draws the streamed page` | unverified | P2 | |
+| 162 | `x-browser-error` | Side panel, every state | Browser: page error | `features/panels/browser/BrowserPanel.tsx:893` | built | P2 | |
+| 163 | `x-browser-offline` | Side panel, every state | Browser: offline | `features/panels/browser/BrowserPanel.tsx` | built | P2 | |
 | 164 | `x-browser-console` | Side panel, every state | Browser: console open | `features/panels/browser/BrowserPanel.tsx` | missing | P2 | |
-| 165 | `x-browser-device` | Side panel, every state | Browser: device size picker | `features/panels/browser/BrowserPanel.tsx:185` | exists | P2 | |
-| 166 | `x-browser-pick` | Side panel, every state | Browser: element picked | `features/panels/browser/BrowserPanel.tsx:151` | exists | P2 | |
-| 167 | `x-activity-empty` | Side panel, every state | Activity: nothing yet | `features/panels/activity/ActivityPanel.tsx:17` | exists | P2 | |
-| 168 | `x-activity-running` | Side panel, every state | Activity: running | `features/panels/activity/ActivityPanel.tsx:31` | partial | P2 | |
-| 169 | `x-activity-failed` | Side panel, every state | Activity: failed step with log | `features/panels/activity/ActivityPanel.tsx:35` | partial | P2 | |
-| 170 | `x-activity-filtered` | Side panel, every state | Activity: filtered | `features/panels/activity/ActivityPanel.tsx:7` | partial | P2 | |
-| 171 | `x-side-empty` | Side panel, every state | Side chat: empty | `features/thread/SideChatPanel.tsx` | exists | P2 | |
-| 172 | `x-side-streaming` | Side panel, every state | Side chat: answering | `features/thread/SideChatPanel.tsx:16` | exists | P2 | |
-| 173 | `x-side-error` | Side panel, every state | Side chat: error | `features/thread/SideChatPanel.tsx:16` | partial | P2 | |
+| 165 | `x-browser-device` | Side panel, every state | Browser: device size picker | `features/panels/browser/BrowserPanel.tsx:185` | built | P2 | |
+| 166 | `x-browser-pick` | Side panel, every state | Browser: element picked | `features/panels/browser/BrowserPanel.tsx:151` | built | P2 | |
+| 167 | `x-activity-empty` | Side panel, every state | Activity: nothing yet | `features/panels/activity/ActivityPanel.tsx:17` | built | P2 | |
+| 168 | `x-activity-running` | Side panel, every state | Activity: running | `features/panels/activity/ActivityPanel.tsx:31` | built | P2 | |
+| 169 | `x-activity-failed` | Side panel, every state | Activity: failed step with log | `features/panels/activity/ActivityPanel.tsx:35` | built | P2 | |
+| 170 | `x-activity-filtered` | Side panel, every state | Activity: filtered | `features/panels/activity/ActivityPanel.tsx:7` | built | P2 | |
+| 171 | `x-side-empty` | Side panel, every state | Side chat: empty | `features/thread/SideChatPanel.tsx` | built | P2 | |
+| 172 | `x-side-streaming` | Side panel, every state | Side chat: answering | `features/thread/SideChatPanel.tsx:16` | built | P2 | |
+| 173 | `x-side-error` | Side panel, every state | Side chat: error | `features/thread/SideChatPanel.tsx:16` | built | P2 | |
 | 174 | `x-gate-running` | Side panel, every state | Review gate: reviewing | `missing` | missing | P3 | |
 | 175 | `x-gate-passed` | Side panel, every state | Review gate: passed | `missing` | missing | P3 | |
 | 176 | `x-gate-selected` | Side panel, every state | Review gate: finding opened | `missing` | missing | P3 | |
 | 177 | `x-gate-error` | Side panel, every state | Review gate: couldn't run | `missing` | missing | P3 | |
-| 178 | `x-panel-collapsed` | Side panel, every state | Panel: collapsed | `features/thread/ThreadView.tsx:345` | exists | P1 | |
-| 179 | `x-panel-resized` | Side panel, every state | Panel: resized | `features/panels/PanelHost.tsx:112` | exists | P1 | |
-| 180 | `x-panel-maximised` | Side panel, every state | Panel: maximised | `features/panels/PanelHost.tsx:245` | exists | P1 | |
-| 181 | `x-panel-tabs-more` | Side panel, every state | Panel: tabs overflow | `features/panels/PanelHost.tsx:220` | partial | P1 | |
-| 182 | `x-panel-offline` | Side panel, every state | Panel: offline | `features/panels/PanelHost.tsx` | missing | P1 | |
-| 183 | `x-chat-streaming` | Threads, every state | Reply streaming, with stop | `features/thread/composer/ComposerExtras.tsx:129; features/thread/items.tsx:208` | exists | P2 | |
-| 184 | `x-chat-interrupted` | Threads, every state | Interrupted, then resumed | `features/thread/ThreadView.tsx:167` | partial | P2 | |
-| 185 | `x-chat-code` | Threads, every state | Long code block with copy | `features/content/code/CodeBlock.tsx:44` | partial | P2 | |
-| 186 | `x-chat-attach` | Threads, every state | Attached files and images | `features/thread/composer/Composer.tsx:70; features/thread/SentFiles.tsx` | exists | P2 | |
-| 187 | `x-chat-tool` | Threads, every state | Tool call expanded | `features/thread/items.tsx:190` | exists | P2 | |
-| 188 | `x-chat-error` | Threads, every state | Error with retry | `features/thread/ThreadBanners.tsx:70` | exists | P2 | |
-| 189 | `x-chat-ratelimit` | Threads, every state | Rate limited, with time to wait | `features/thread/ThreadBanners.tsx:19` | partial | P2 | |
-| 190 | `x-chat-context` | Threads, every state | Context nearly full | `features/thread/composer/ComposerExtras.tsx:30` | partial | P2 | |
-| 191 | `x-chat-compacting` | Threads, every state | Compacting the thread | `features/thread/composer/ComposerExtras.tsx:53` | partial | P2 | |
-| 192 | `x-chat-model-switch` | Threads, every state | Model switched mid-thread | `product/timeline/projection.ts:133` | partial | P2 | |
-| 193 | `x-chat-edit` | Threads, every state | Edit a message and branch | `features/thread/MessageActions.tsx:81,94` | partial | P2 | |
-| 194 | `x-chat-message-menu` | Threads, every state | Message actions | `features/thread/MessageActions.tsx:41` | exists | P2 | |
-| 195 | `x-chat-long` | Threads, every state | Very long thread, jump to latest | `features/thread/Transcript.tsx:218` | partial | P2 | |
-| 196 | `x-chat-offline` | Threads, every state | Offline composer, queued message | `features/thread/composer/Composer.tsx` | missing | P2 | |
-| 197 | `x-chat-slash` | Threads, every state | Slash command results | `features/thread/composer/Composer.tsx:243` | exists | P2 | |
-| 198 | `x-chat-slash-none` | Threads, every state | Slash command with no match | `features/thread/composer/Composer.tsx:243` | partial | P2 | |
-| 199 | `x-chat-mention` | Threads, every state | @-mention file picker | `features/thread/composer/Composer.tsx:232` | exists | P2 | |
-| 200 | `x-chat-voice` | Threads, every state | Voice dictation | `features/thread/composer/Composer.tsx` | missing | P2 | |
-| 201 | `x-chat-suggest` | Threads, every state | Empty thread, ready to start | `features/onboarding/DraftView/index.tsx` | exists | P2 | |
-| 202 | `x-chat-archived` | Threads, every state | Archived thread, read-only | `features/settings/sections/ArchiveSection.tsx:17` | partial | P2 | |
-| 203 | `x-term-tabs` | Terminal, every state | Terminal: several tabs | `features/panels/terminal/TerminalDrawerBody.tsx:101` | exists | P2 | |
-| 204 | `x-term-running` | Terminal, every state | Terminal: a running process | `features/panels/terminal/TerminalPanel.tsx:207` | partial | P2 | |
-| 205 | `x-term-failed` | Terminal, every state | Terminal: a failed command | `features/panels/terminal/TerminalPanel.tsx:42` | partial | P2 | |
-| 206 | `x-term-search` | Terminal, every state | Terminal: search in output | `package.json xterm deps` | missing | P2 | |
-| 207 | `x-term-split` | Terminal, every state | Terminal: split panes | `features/panels/terminal/TerminalDrawerBody.tsx:125` | exists | P2 | |
-| 208 | `x-term-menu` | Terminal, every state | Terminal: tab menu | `features/panels/terminal/TerminalDrawerBody.tsx:179` | missing | P2 | |
-| 209 | `x-term-agent` | Terminal, every state | Terminal: started by the agent | `features/panels/terminal/TerminalDrawerBody.tsx:138; features/panels/terminal/TerminalPanel.tsx:76` | partial | P2 | |
-| 210 | `x-term-ended` | Terminal, every state | Terminal: process ended | `features/panels/terminal/TerminalPanel.tsx:207` | partial | P2 | |
-| 211 | `x-term-maximised` | Terminal, every state | Terminal: maximised | `features/thread/ThreadView.tsx:402` | partial | P2 | |
-| 212 | `x-term-closed` | Terminal, every state | Terminal: closed | `features/thread/ThreadView.tsx:282` | missing | P2 | |
+| 178 | `x-panel-collapsed` | Side panel, every state | Panel: collapsed | `features/thread/ThreadView.tsx:345` | built | P1 | |
+| 179 | `x-panel-resized` | Side panel, every state | Panel: resized | `features/panels/PanelHost.tsx:112` | built | P1 | |
+| 180 | `x-panel-maximised` | Side panel, every state | Panel: maximised | `features/panels/PanelHost.tsx:245` | built | P1 | |
+| 181 | `x-panel-tabs-more` | Side panel, every state | Panel: tabs overflow | `features/panels/PanelHost.tsx:220` | built | P1 | |
+| 182 | `x-panel-offline` | Side panel, every state | Panel: offline | `features/panels/PanelHost.tsx:548` | built | P1 | |
+| 183 | `x-chat-streaming` | Threads, every state | Reply streaming, with stop | `features/thread/composer/ComposerExtras.tsx:129; features/thread/items.tsx:208` | built | P2 | |
+| 184 | `x-chat-interrupted` | Threads, every state | Interrupted, then resumed | `features/thread/ThreadView.tsx:167` | built | P2 | |
+| 185 | `x-chat-code` | Threads, every state | Long code block with copy | `features/content/code/CodeBlock.tsx:44` | built | P2 | |
+| 186 | `x-chat-attach` | Threads, every state | Attached files and images | `features/thread/composer/Composer.tsx:70; features/thread/SentFiles.tsx` | built | P2 | |
+| 187 | `x-chat-tool` | Threads, every state | Tool call expanded | `features/thread/items.tsx:190` | built | P2 | |
+| 188 | `x-chat-error` | Threads, every state | Error with retry | `features/thread/ThreadBanners.tsx:70` | built | P2 | |
+| 189 | `x-chat-ratelimit` | Threads, every state | Rate limited, with time to wait | `features/thread/ThreadBanners.tsx:19` | built | P2 | |
+| 190 | `x-chat-context` | Threads, every state | Context nearly full | `features/thread/composer/ComposerExtras.tsx:30` | built | P2 | |
+| 191 | `x-chat-compacting` | Threads, every state | Compacting the thread | `features/thread/composer/ComposerExtras.tsx:53` | built | P2 | |
+| 192 | `x-chat-model-switch` | Threads, every state | Model switched mid-thread | `product/timeline/projection.ts:133` | built | P2 | |
+| 193 | `x-chat-edit` | Threads, every state | Edit a message and branch | `features/thread/MessageActions.tsx:81,94` | built | P2 | |
+| 194 | `x-chat-message-menu` | Threads, every state | Message actions | `features/thread/MessageActions.tsx:41` | built | P2 | |
+| 195 | `x-chat-long` | Threads, every state | Very long thread, jump to latest | `features/thread/Transcript.tsx:218` | built | P2 | |
+| 196 | `x-chat-offline` | Threads, every state | Offline composer, queued message | `features/thread/composer/Composer.tsx (no offline composer or queued-offline state found)` | missing | P2 | |
+| 197 | `x-chat-slash` | Threads, every state | Slash command results | `features/thread/composer/Composer.tsx:243` | built | P2 | |
+| 198 | `x-chat-slash-none` | Threads, every state | Slash command with no match | `features/thread/composer/Composer.tsx:170 (the menu closes; no no-match state is drawn)` | missing | P2 | |
+| 199 | `x-chat-mention` | Threads, every state | @-mention file picker | `features/thread/composer/Composer.tsx:232` | built | P2 | |
+| 200 | `x-chat-voice` | Threads, every state | Voice dictation | `features/thread/composer/Composer.tsx (no voice dictation found)` | missing | P2 | |
+| 201 | `x-chat-suggest` | Threads, every state | Empty thread, ready to start | `features/onboarding/DraftView/index.tsx` | built | P2 | |
+| 202 | `x-chat-archived` | Threads, every state | Archived thread, read-only | `features/thread/ThreadStates.tsx:46; features/settings/sections/ArchiveSection.tsx:17` | built | P2 | |
+| 203 | `x-term-tabs` | Terminal, every state | Terminal: several tabs | `features/panels/terminal/TerminalDrawerBody.tsx:101` | built | P2 | |
+| 204 | `x-term-running` | Terminal, every state | Terminal: a running process | `features/panels/terminal/TerminalPanel.tsx:207` | built | P2 | |
+| 205 | `x-term-failed` | Terminal, every state | Terminal: a failed command | `features/panels/terminal/TerminalPanel.tsx:42` | built | P2 | |
+| 206 | `x-term-search` | Terminal, every state | Terminal: search in output | `features/panels/terminal/TerminalDrawerBody.tsx:102` | built | P2 | |
+| 207 | `x-term-split` | Terminal, every state | Terminal: split panes | `features/panels/terminal/TerminalDrawerBody.tsx:125` | built | P2 | |
+| 208 | `x-term-menu` | Terminal, every state | Terminal: tab menu | `features/panels/terminal/TerminalDrawerBody.tsx:179` | built | P2 | |
+| 209 | `x-term-agent` | Terminal, every state | Terminal: started by the agent | `features/panels/terminal/TerminalDrawerBody.tsx:138; features/panels/terminal/TerminalPanel.tsx:76` | built | P2 | |
+| 210 | `x-term-ended` | Terminal, every state | Terminal: process ended | `features/panels/terminal/TerminalPanel.tsx:207` | built | P2 | |
+| 211 | `x-term-maximised` | Terminal, every state | Terminal: maximised | `features/thread/ThreadView.tsx:402` | built | P2 | |
+| 212 | `x-term-closed` | Terminal, every state | Terminal: closed | `features/thread/ThreadView.tsx:282` | built | P2 | |
 | 213 | `x-phone-stream` | Phone, more | Phone: streaming and offline | `missing` | missing | P2 | |
 | 214 | `x-phone-panel` | Phone, more | Phone: Diff and checks | `missing` | missing | P2 | |
-| 215 | `update` | Updates, dialogs and toasts | Updates | `features/workspace/app-chrome/Updates.tsx:275` | exists | P1 | |
-| 216 | `quit` | Updates, dialogs and toasts | Quit while agents run | `features/workspace/app-chrome/QuitConfirmation.tsx:17` | exists | P1 | |
-| 217 | `toasts` | Updates, dialogs and toasts | Toasts and dialogs | `product/ui/Toasts.tsx:6; ui/Dialog.tsx` | exists | P1 | |
-| 218 | `account` | Orbyn account and other devices | Sign in to Orbyn | `features/platform/AccountCard.tsx; features/platform/previews.ts` | preview-only | Later | |
+| 215 | `update` | Updates, dialogs and toasts | Updates | `features/workspace/app-chrome/Updates.tsx:275` | built | P1 | |
+| 216 | `quit` | Updates, dialogs and toasts | Quit while agents run | `features/workspace/app-chrome/QuitConfirmation.tsx:17` | built | P1 | |
+| 217 | `toasts` | Updates, dialogs and toasts | Toasts and dialogs | `product/ui/Toasts.tsx:6; ui/Dialog.tsx` | built | P1 | |
+| 218 | `account` | Orbyn account and other devices | Sign in to Orbyn | `features/account/SignInCard.tsx; features/settings/SettingsPage.tsx:66` | built | Later | |
 | 219 | `connect-planner` | Orbyn account and other devices | Connect Orbyn Planner | `features/platform/ConnectPlanner.tsx` | preview-only | Later | |
 | 220 | `pair-phone` | Orbyn account and other devices | Remote access and pairing | `features/platform/PairPhone.tsx` | preview-only | P2 | |
 | 221 | `phone` | Orbyn account and other devices | On a phone | `features/platform/PhoneView.tsx` | preview-only | P2 | |
-| 222 | `conn-defs` | Connection states | Connection states: the four definitions |  | missing | P1 | |
-| 223 | `conn-compare` | Connection states | Connection states side by side |  | missing | P1 | |
-| 224 | `conn-service-down` | Connection states | Can't reach the Orbyn service |  | missing | P1 | |
-| 225 | `conn-service-restart` | Connection states | Restarting the Orbyn service |  | missing | P1 | |
-| 226 | `conn-remote` | Connection states | Paired machine offline |  | preview-only | P2c | |
-| 227 | `panel-empty` | Side panel and terminal | Side panel: no tabs | `features/panels/strip/PanelEmpty.tsx; features/panels/PanelHost.tsx` | exists | P3 | Engineer Designs v98, shell PR 1a |
-| 228 | `panel-launcher-menu` | Side panel and terminal | Side panel: the + launcher | `features/panels/PanelHost.tsx; features/panels/strip/tabs.ts` | partial | P3 | Engineer Designs v98, shell PR 1a: Review and comments, Crew views and Open file are hidden until they exist |
-| 229 | `panel-tab-menu` | Side panel and terminal | Side panel: tab menu | `features/panels/PanelHost.tsx` | exists | P3 | Engineer Designs v98, shell PR 1a |
-| 230 | `panel-tabs-single` | Side panel and terminal | Side panel tabs: one tab | `features/panels/PanelHost.tsx` | exists | P3 | Engineer Designs v98, shell PR 1a |
-| 231 | `panel-tabs-drag` | Side panel and terminal | Side panel tabs: drag to reorder | `features/panels/strip/tabDrag.ts` | exists | P3 | Engineer Designs v98, shell PR 1a |
+| 222 | `conn-defs` | Connection states | Connection states: the four definitions | `none found (conn-defs frame only)` | missing | P1 | |
+| 223 | `conn-compare` | Connection states | Connection states side by side | `none found (conn-compare frame only)` | missing | P1 | |
+| 224 | `conn-service-down` | Connection states | Can't reach the Orbyn service | `features/thread/ConnectionStatus.tsx:30` | built | P1 | |
+| 225 | `conn-service-restart` | Connection states | Restarting the Orbyn service | `features/thread/ConnectionStatus.tsx:30` | built | P1 | |
+| 226 | `conn-remote` | Connection states | Paired machine offline | `features/platform/PhoneOffline.tsx (preview only)` | preview-only | P2c | |
+| 227 | `panel-empty` | Side panel and terminal | Side panel: no tabs | `features/panels/strip/PanelEmpty.tsx; features/panels/PanelHost.tsx` | built | P3 | Engineer Designs v98, shell PR 1a |
+| 228 | `panel-launcher-menu` | Side panel and terminal | Side panel: the + launcher | `features/panels/PanelHost.tsx; features/panels/strip/tabs.ts` | built | P3 | Engineer Designs v98, shell PR 1a: Review and comments is now in the launcher (W7); Crew views and Open file are hidden until they exist |
+| 229 | `panel-tab-menu` | Side panel and terminal | Side panel: tab menu | `features/panels/PanelHost.tsx` | built | P3 | Engineer Designs v98, shell PR 1a |
+| 230 | `panel-tabs-single` | Side panel and terminal | Side panel tabs: one tab | `features/panels/PanelHost.tsx` | built | P3 | Engineer Designs v98, shell PR 1a |
+| 231 | `panel-tabs-drag` | Side panel and terminal | Side panel tabs: drag to reorder | `features/panels/strip/tabDrag.ts` | built | P3 | Engineer Designs v98, shell PR 1a |
 
 ## Motion (85)
 

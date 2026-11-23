@@ -18,6 +18,14 @@ describe("what can be selected", () => {
     expect(root?.body).toMatch(/cursor:\s*default/);
   });
 
+  it("turns selection off everywhere while a panel edge is dragged, WebKit spelling included", () => {
+    const drag = blocks.find(({ selectors }) => selectors.includes(":root[data-resizing] *"));
+    expect(drag, "the drag block").toBeDefined();
+    expect(drag!.selectors).toContain(":root[data-resizing]");
+    expect(drag!.body).toMatch(/-webkit-user-select:\s*none/);
+    expect(drag!.body).toMatch(/(^|\s)user-select:\s*none/);
+  });
+
   it("opts the text people copy back in, WebKit spelling included", () => {
     for (const selector of [
       ".msg-bubble", ".md", ".code-card", ".tool-output", ".tool-inspect", ".command", ".d2", ".md2", ".diff-card",

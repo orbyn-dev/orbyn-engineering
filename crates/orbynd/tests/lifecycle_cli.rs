@@ -47,9 +47,14 @@ fn say(service: &mut Service, line: &str) {
 }
 
 async fn until_latest(service: &Service, version: &str) {
+    until_app(service, |app| app["latest"] == version).await;
+}
+
+async fn until_app(service: &Service, ready: impl Fn(&Value) -> bool) -> Value {
     for _ in 0..500 {
-        if service.json("/api/updates").await["app"]["latest"] == version {
-            return;
+        let app = service.json("/api/updates").await["app"].clone();
+        if ready(&app) {
+            return app;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
@@ -63,7 +68,7 @@ async fn update_checks_refuses_other_versions_and_installs_the_latest_through_th
     let mut service = Service::start(&data, desktop());
     say(
         &mut service,
-        r#"{"type":"app_update_available","version":"99.0.0","notes":"n"}"#,
+        r#"{"type":"app_update_available","release_id":"cli-release-99","version":"99.0.0","notes":"n"}"#,
     );
     until_latest(&service, "99.0.0").await;
 
@@ -100,12 +105,91 @@ async fn update_checks_refuses_other_versions_and_installs_the_latest_through_th
     assert!(output.status.success(), "{output:?}");
     assert!(String::from_utf8_lossy(&output.stdout).contains("Installing Orbyn 99.0.0"));
 
-    let mut line = String::new();
-    while !line.contains("install_app_update") {
-        line.clear();
+    let download = loop {
+        let mut line = String::new();
         service.stdout.read_line(&mut line).unwrap();
         assert!(!line.is_empty(), "stdout closed");
+        let command: Value = serde_json::from_str(&line).unwrap();
+        assert_ne!(
+            command["type"], "install_app_update",
+            "install cannot precede download"
+        );
+        if command["type"] == "download_app_update" {
+            break command;
+        }
+    };
+    assert_eq!(
+        download,
+        serde_json::json!({
+            "type":"download_app_update", "release_id":"cli-release-99", "operation":1
+        })
+    );
+    say(
+        &mut service,
+        r#"{"type":"app_update_progress","release_id":"cli-release-99","operation":1,"downloaded":100,"total":100}"#,
+    );
+    let progress = until_app(&service, |app| app["downloaded"] == 100).await;
+    assert_eq!(
+        progress["phase"], "downloading",
+        "completed bytes are not Ready"
+    );
+    say(
+        &mut service,
+        r#"{"type":"app_update_preparing","release_id":"cli-release-99","operation":1}"#,
+    );
+    until_app(&service, |app| app["phase"] == "preparing").await;
+    say(
+        &mut service,
+        r#"{"type":"app_update_ready","release_id":"cli-release-99","operation":1}"#,
+    );
+    let install = loop {
+        let mut line = String::new();
+        service.stdout.read_line(&mut line).unwrap();
+        assert!(!line.is_empty(), "stdout closed");
+        let command: Value = serde_json::from_str(&line).unwrap();
+        assert_ne!(
+            command["type"], "download_app_update",
+            "only one transfer is requested"
+        );
+        if command["type"] == "install_app_update" {
+            break command;
+        }
+    };
+    assert_eq!(install["release_id"], download["release_id"]);
+    assert_eq!(install["operation"], download["operation"]);
+}
+
+/// A release build enforces the person key, and the CLI holds only the service token: it must
+/// report the update and point at the desktop app, not show the 403 or fail.
+#[tokio::test]
+async fn update_with_the_person_key_enforced_only_checks_and_points_at_the_desktop_app() {
+    let dir = TempDir::new();
+    let data = dir.path().join("data");
+    let mut options = desktop();
+    options
+        .env
+        .push(("ORBYN_DEV_DISABLE_PERSON_KEY".into(), "0".into()));
+    let mut service = Service::start(&data, options);
+    say(
+        &mut service,
+        r#"{"type":"app_update_available","release_id":"cli-release-99","version":"99.0.0","notes":"n"}"#,
+    );
+    until_latest(&service, "99.0.0").await;
+    for args in [&["update"][..], &["update", "--version", "99.0.0"][..]] {
+        let output = orbyn(&data, args).await;
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("Orbyn 99.0.0 is available"), "{stdout}");
+        assert!(stdout.contains("desktop app"), "{stdout}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("403") && !stderr.contains("person"),
+            "{stderr}"
+        );
     }
+    let app = service.json("/api/updates").await["app"].clone();
+    assert_eq!(app["phase"], "available");
+    assert_eq!(app["operation"], 0, "nothing was requested");
 }
 
 #[tokio::test]
@@ -118,6 +202,25 @@ async fn a_server_without_a_shell_reports_and_cannot_install() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("No release manifest"));
     let output = orbyn(&data, &["update"]).await;
     assert!(output.status.success(), "{output:?}");
+}
+
+#[tokio::test]
+async fn update_refuses_an_unidentified_checked_release_before_requesting_an_effect() {
+    let dir = TempDir::new();
+    let data = dir.path().join("data");
+    let mut service = Service::start(&data, desktop());
+    say(
+        &mut service,
+        r#"{"type":"app_update_available","release_id":"","version":"99.0.0"}"#,
+    );
+    until_latest(&service, "99.0.0").await;
+    refused(
+        &orbyn(&data, &["update"]).await,
+        "did not identify the checked update",
+    );
+    let app = service.json("/api/updates").await["app"].clone();
+    assert_eq!(app["phase"], "available");
+    assert_eq!(app["operation"], 0);
 }
 
 #[tokio::test]

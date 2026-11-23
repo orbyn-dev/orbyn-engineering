@@ -348,7 +348,9 @@ pub(super) const TOOLS: &[Tool] = &[
         "Publish an HTML page in this thread's timeline, as a card with a frame. The page \
          runs sandboxed: no network, no API and no storage of its own. `html` is the whole \
          page. `height` is the frame's height in CSS pixels; nothing measures the page yet, \
-         so a page that needs more room needs a taller height.",
+         so a page that needs more room needs a taller height. Pictures in the checkout \
+         that an `<img src>` names are inlined into the page, which must stay under 512 KiB \
+         with them; the result's `notes` lists any picture left out.",
         &[
             ("html", "string"),
             ("title", "string"),

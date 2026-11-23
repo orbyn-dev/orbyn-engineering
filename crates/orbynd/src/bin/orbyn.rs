@@ -680,8 +680,28 @@ fn refused_channel(wanted: &str, built: &str) -> Option<String> {
     })
 }
 
+/// Keep consent bound to the checked response, including when talking to an older service.
+fn checked_app_request(app: &Value) -> Outcome<orbyn_contracts::AppUpdateRequest> {
+    let release = app["release_id"]
+        .as_str()
+        .filter(|id| !id.trim().is_empty());
+    let operation = app["operation"]
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok());
+    match (release, operation) {
+        (Some(release_id), Some(operation)) => Ok(orbyn_contracts::AppUpdateRequest {
+            release_id: release_id.to_owned(),
+            operation,
+        }),
+        _ => Err(Failure::new(
+            "The service did not identify the checked update. Check again before updating.",
+        )),
+    }
+}
+
 /// Checks through the running service and, unless only checking, asks it to have the
-/// desktop shell install the latest release. A version that is not the latest is
+/// desktop shell install the latest release; where the person key is enforced it only
+/// checks and says to install from the desktop app. A version that is not the latest is
 /// refused: the installer only offers the latest.
 async fn update(cli: &Cli, wanted: &Wanted<'_>) -> Outcome<()> {
     if let Some(message) = refused_request(wanted) {
@@ -738,13 +758,45 @@ async fn update(cli: &Cli, wanted: &Wanted<'_>) -> Outcome<()> {
             latest.unwrap_or_default()
         )));
     }
-    service.post("/api/updates/app/apply", json!({})).await?;
+    let request = checked_app_request(&app)?;
+    let applied = service
+        .post(
+            "/api/updates/app/apply?complete=true",
+            json!({
+                "release_id": request.release_id, "operation": request.operation,
+            }),
+        )
+        .await;
+    match applied {
+        Ok(_) => {}
+        // Installing is a person action and this program holds only the service token, so a
+        // build that enforces the person key refuses it. That is not a failure: this run only
+        // checked, and the desktop app installs.
+        Err(failure) if needs_the_desktop_app(&failure) => {
+            return show(cli.json, &app, |_| {
+                println!(
+                    "Orbyn {} is available (running {current}). Install it from the desktop app.",
+                    latest.as_deref().unwrap_or_default()
+                )
+            });
+        }
+        Err(failure) => return Err(failure),
+    }
     show(cli.json, &app, |_| {
         println!(
             "Installing Orbyn {} through the desktop app. It restarts when done.",
             latest.unwrap_or_default()
         );
     })
+}
+
+/// The service answered that the action belongs to the person at the desktop app.
+fn needs_the_desktop_app(failure: &Failure) -> bool {
+    failure
+        .api_error
+        .as_ref()
+        .and_then(|error| error["code"].as_str())
+        .is_some_and(|code| matches!(code, "person_required" | "desktop_required"))
 }
 
 /// `orbynd` sits beside this program in every install.
@@ -1359,5 +1411,31 @@ mod tests {
     #[test]
     fn ids_cannot_change_the_path_they_go_into() {
         assert_eq!(encoded("a/../b c"), "a%2F..%2Fb%20c");
+    }
+
+    #[test]
+    fn update_consent_requires_the_checked_release_and_a_valid_operation() {
+        for app in [
+            json!({}),
+            json!({"release_id":null,"operation":0}),
+            json!({"release_id":"","operation":0}),
+            json!({"release_id":" ","operation":0}),
+            json!({"release_id":42,"operation":0}),
+            json!({"release_id":"r1"}),
+            json!({"release_id":"r1","operation":null}),
+            json!({"release_id":"r1","operation":-1}),
+            json!({"release_id":"r1","operation":"0"}),
+            json!({"release_id":"r1","operation":0.5}),
+            json!({"release_id":"r1","operation":u64::from(u32::MAX)+1}),
+        ] {
+            assert!(checked_app_request(&app).is_err(), "{app}");
+        }
+        for operation in [0, u32::MAX] {
+            let selected =
+                checked_app_request(&json!({"release_id":"checked-release","operation":operation}))
+                    .unwrap_or_else(|failure| panic!("{}", failure.message));
+            assert_eq!(selected.release_id, "checked-release");
+            assert_eq!(selected.operation, operation);
+        }
     }
 }

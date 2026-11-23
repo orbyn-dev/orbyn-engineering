@@ -16,6 +16,8 @@
 //! No digit is formatted, logged or put in an error. The trusted side's digits reach the screen
 //! only through the approve answer; the new device's are kept in a redacting holder.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use orbyn_device_client as dc;
 
 use super::account::EngineAccount;
@@ -35,7 +37,14 @@ pub(super) struct Joining {
     digits: Option<Issued>,
     /// The text the Engine gave, passed back to its own check once ours has passed.
     engine_text: Option<ApprovalDigits>,
+    /// Where a cancel on its way leaves its mark, so a cancel that is dropped can release it
+    /// without taking the slot's lock.
+    cancel: std::sync::Arc<CancelFlags>,
+    /// Tells this request from a later one that reuses the id.
+    serial: u64,
 }
+
+static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl Joining {
     pub(super) fn new(request_id: String) -> Self {
@@ -44,6 +53,51 @@ impl Joining {
             joined: None,
             digits: None,
             engine_text: None,
+            cancel: std::sync::Arc::default(),
+            serial: SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+}
+
+/// What is known about a cancel of this request. Both marks are atomics rather than fields
+/// behind the slot's lock: a cancel future can be dropped while a poll holds that lock, and the
+/// request must not stay marked as cancelling until the ten-minute expiry because of it.
+#[derive(Default)]
+struct CancelFlags {
+    /// A cancel is on its way to the Engine: the slot stays, so nothing else reads the request
+    /// as gone, and polls and digits wait for the answer.
+    on_its_way: AtomicBool,
+    /// The Engine did not take a cancel and its handle is spent: the approval ends on its own
+    /// clock, so nothing is joined again and the next cancel only lets go.
+    not_sent: AtomicBool,
+}
+
+impl CancelFlags {
+    /// Polls and typed digits find the request neither finished nor gone.
+    fn waiting(&self) -> bool {
+        self.on_its_way.load(Ordering::SeqCst) || self.not_sent.load(Ordering::SeqCst)
+    }
+
+    /// The cancel is over without the Engine taking it: its handle is spent, so the request
+    /// waits out its clock instead of being read as gone or as finished.
+    fn release(&self) {
+        self.not_sent.store(true, Ordering::SeqCst);
+        self.on_its_way.store(false, Ordering::SeqCst);
+    }
+}
+
+/// If a cancel is dropped while the Engine is asked, its answer is unknown and its handle is
+/// spent: the request is marked as a cancel that was not sent, rather than as one on its way.
+struct CancelGuard {
+    flags: std::sync::Arc<CancelFlags>,
+    armed: bool,
+}
+
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            // No lock is taken here: one held by a poll right now must not leave the mark set.
+            self.flags.release();
         }
     }
 }
@@ -74,6 +128,9 @@ where
         let Some(joining) = slot.as_mut().filter(|j| j.request_id == request_id) else {
             return Err(DeviceError::RequestGone);
         };
+        if joining.cancel.waiting() {
+            return Ok(ApprovalStatus::Waiting);
+        }
         let client = &self.shared.client;
         let view = match client.pending_approval().await {
             Ok(view) => view,
@@ -128,16 +185,41 @@ where
 
     pub(super) async fn cancel_joined(&self, request_id: &str) -> Result<(), DeviceError> {
         let mut slot = self.joining.lock().await;
-        if !slot.as_ref().is_some_and(|j| j.request_id == request_id) {
+        let Some(joining) = slot.as_mut().filter(|j| j.request_id == request_id) else {
             return Ok(());
+        };
+        // Another cancel is on its way: its answer is not known yet.
+        if joining.cancel.on_its_way.load(Ordering::SeqCst) {
+            return Err(DeviceError::Server { retryable: true });
         }
-        let taken = slot.take();
+        // Before the Engine's approval was joined there is nothing on the server to cancel;
+        // after a cancel it did not take, the handle is spent and the approval ends on its own.
+        let Some(joined) = joining.joined.take() else {
+            *slot = None;
+            return Ok(());
+        };
+        // The slot stays while the Engine is asked: a poll or the digits find the request
+        // still there and wait, instead of reading it as gone.
+        joining.cancel.on_its_way.store(true, Ordering::SeqCst);
+        let flags = std::sync::Arc::clone(&joining.cancel);
+        let serial = joining.serial;
         drop(slot);
-        // Before the Engine's approval was joined there is nothing on the server to cancel.
-        if let Some(joined) = taken.and_then(|j| j.joined) {
-            let _ = self.shared.client.deny_joined(joined).await;
+        let mut guard = CancelGuard { flags, armed: true };
+        let result = self.shared.client.deny_joined(joined).await.map_err(map);
+        guard.armed = false;
+        let mut slot = self.joining.lock().await;
+        // Only the entry this cancel started is touched: a later request may hold the slot.
+        if let Some(joining) = slot.as_mut().filter(|j| j.serial == serial) {
+            match &result {
+                // An approval that is over needs nothing more.
+                Ok(()) | Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {
+                    *slot = None;
+                }
+                // Told to the caller, and kept so the person is not shown it as cancelled.
+                Err(_) => joining.cancel.release(),
+            }
         }
-        Ok(())
+        result
     }
 
     pub(super) async fn finish_joined(
@@ -149,6 +231,11 @@ where
         let Some(joining) = slot.as_mut().filter(|j| j.request_id == request_id) else {
             return Err(DeviceError::RequestGone);
         };
+        // A cancel is on its way, or the Engine did not take it: the request is neither
+        // finished nor gone, so these digits are not spent on it.
+        if joining.cancel.waiting() {
+            return Err(DeviceError::Server { retryable: true });
+        }
         let Some(issued) = joining.digits.as_mut() else {
             return Err(DeviceError::RequestGone);
         };

@@ -99,6 +99,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/autopilot/digest/schedule/set",
+        "core crew_set_digest_schedule: the person's daily digest send time as HH:MM and the UTC offset their local time was in when they saved it, shape-checked by the preference catalog; one person-level preference, no notification is sent by it; local only",
+    ),
+    (
+        "POST",
         "/api/crew/autopilot/confirm",
         "core set_crew_autopilot_mode keeping the default as it is; local only",
     ),
@@ -150,7 +155,7 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     (
         "POST",
         "/api/crew/background/create",
-        "core background_create: a live project, bounded name, budget and trigger settings of the trigger's own kind, redacted, created off, audited in the same transaction; local only",
+        "core background_create: a live project, bounded name, run budget, daily per-engine budget with the person's UTC offset, and trigger settings of the trigger's own kind, redacted, created off, audited in the same transaction; local only",
     ),
     (
         "POST",
@@ -165,7 +170,7 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     (
         "POST",
         "/api/crew/background/{id}/disable",
-        "core background_set_enabled: stops a run in progress with the reason disabled, audited in the same transaction; local only",
+        "core background_turn_off: stops a run in progress with the reason disabled and cancels its worker's task, audited in the same transaction; local only",
     ),
     (
         "POST",
@@ -277,6 +282,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "/api/crew/projects/{id}/worker-provider/set",
         "core crew_set_worker_provider: a person's per-project choice of same_as_lead or any, a known project, audited in the same transaction; it changes where later work runs and never an engine a task already has; no agent tool reaches it; local only",
     ),
+    (
+        "POST",
+        "/api/crew/profile/apply",
+        "core apply_profile_to_crew: a person applies an execution profile to a crew, a copy and never a link; a profile that grants full access or Autopilot Full needs its grant codes acknowledged or answers confirm_required and applies nothing; the audit row first in the same transaction; no agent tool reaches it; local only",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -291,6 +301,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
             post(remove_review_lane),
         )
         .route("/api/crew/autopilot/mode", put(set_mode))
+        .route(
+            "/api/crew/autopilot/digest/schedule/set",
+            post(set_digest_schedule),
+        )
         .route("/api/crew/autopilot/confirm", post(confirm))
         .route(
             "/api/crew/autopilot/merge-queue/{task_id}/resolve",
@@ -341,6 +355,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
             "/api/crew/projects/{id}/worker-provider/set",
             post(worker_provider_set),
         )
+        .route("/api/crew/profile/apply", post(apply_profile))
         .route("/api/crew/guard/targets/add", post(guard_add))
         .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .merge(super::crew_areas::routes())
@@ -367,6 +382,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/autopilot/merge-queue", get(merge_queue))
         .route("/api/crew/autopilot/watch", get(watch))
         .route("/api/crew/autopilot/digest", get(digest))
+        .route("/api/crew/autopilot/digest/schedule", get(digest_schedule))
         .route("/api/crew/autopilot/areas", get(areas))
         .route("/api/crew/autopilot/areas/history", get(area_history))
         .route("/api/crew/autopilot/thresholds", get(thresholds))
@@ -378,6 +394,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         )
         .route("/api/crew/stops", get(stops))
         .route("/api/crew/trust", get(trust))
+        .route("/api/crew/dashboard", get(dashboard))
         .route("/api/crew/background", get(background_list))
         .route("/api/crew/background/{id}", get(background_get))
         .route("/api/crew/background/{id}/runs", get(background_runs))
@@ -462,6 +479,19 @@ fn number(query: &QueryMap, name: &str) -> Result<Option<u32>, CoreError> {
 
 fn page(query: &QueryMap) -> Result<Page, CoreError> {
     Page::new(number(query, "limit")?, number(query, "offset")?)
+}
+
+/// The person's UTC offset in minutes, as the daily digest takes it. Absent means UTC.
+fn offset_minutes(query: &QueryMap) -> Result<i32, CoreError> {
+    query
+        .0
+        .get("utc_offset_minutes")
+        .map(|text| {
+            text.parse::<i32>()
+                .map_err(|_| CoreError::Invalid("utc_offset_minutes is a whole number".into()))
+        })
+        .transpose()
+        .map(|offset| offset.unwrap_or(0))
 }
 
 /// The repository's data classes at the commit a task started in this thread would start from, or at the project's own checkout
@@ -645,6 +675,14 @@ async fn set_mode(
     Ok(Json(state.core.autopilot_modes()?))
 }
 
+/// Applies an execution profile to a crew (docs/execution-profiles-and-library.md): `Person`, a copy, never a link.
+async fn apply_profile(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<orbyn_contracts::ApplyCrewProfile>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.apply_profile_to_crew(&body).await?))
+}
+
 async fn confirm(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     state.core.autopilot_confirm()?;
     Ok(Json(state.core.autopilot_modes()?))
@@ -659,6 +697,17 @@ async fn trust(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl
     Ok(Json(state.core.autopilot_trust(
         unix_now(),
         query.0.get("project").map(String::as_str),
+    )?))
+}
+
+/// One repository's dashboard figures over a window: `project`, `days` (30, 60 or 90, 60 by default) and the person's
+/// `utc_offset_minutes`, which the weekly bars count their local Mondays from. Read-only.
+async fn dashboard(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_dashboard(
+        &required(&query, "project")?,
+        number(&query, "days")?,
+        offset_minutes(&query)?,
+        unix_now(),
     )?))
 }
 
@@ -763,7 +812,7 @@ async fn merge_queue(
     State(state): State<AppState>,
     query: QueryMap,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.autopilot_merge_queue(page(&query)?)?))
+    Ok(Json(state.core.autopilot_merge_queue(page(&query)?).await?))
 }
 
 async fn watch(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
@@ -776,6 +825,17 @@ async fn digest(State(state): State<AppState>, query: QueryMap) -> ApiResult<imp
             .core
             .autopilot_digest(unix_now(), number(&query, "hours")?)?,
     ))
+}
+
+async fn digest_schedule(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_digest_schedule()?))
+}
+
+async fn set_digest_schedule(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<wire::AutopilotDigestScheduleInput>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_set_digest_schedule(&body)?))
 }
 
 /// The approval ledger: `task`, `kind`, `limit`, `offset`.
@@ -906,7 +966,7 @@ async fn background_disable(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.background_set_enabled(&id, false)?))
+    Ok(Json(state.core.background_turn_off(&id).await?))
 }
 
 async fn background_delete(
@@ -923,7 +983,7 @@ async fn background_run_now(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.crew_background_run_now(&id).await?))
+    Ok(Json(state.core.crew_background_run_now(&id, "user").await?))
 }
 
 /// The person's acknowledgement of one background run waiting in Review: the wait clears and the run is returned as it now

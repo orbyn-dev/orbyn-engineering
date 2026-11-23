@@ -5,7 +5,8 @@
 //! header on a socket and the key must not be in the URL, so the page offers it as the subprotocol `orbyn.person.<key>`
 //! beside `orbyn.v1`, and the upgrade answers `orbyn.v1` only (never the key).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,8 +16,12 @@ use axum::extract::{Path, Query, State, WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::Response;
-use futures_util::{SinkExt, StreamExt};
-use orbyn_contracts::{OpenConsole, OpenTerminal, RenameTerminal, RunScript, TerminalScrollback};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use futures_util::{SinkExt, Stream, StreamExt, stream};
+use orbyn_contracts::{
+    CommandOutputEvent, OpenConsole, OpenTerminal, RenameTerminal, RunScript,
+    TerminalAttentionOpen, TerminalScrollback,
+};
 use orbyn_core::CoreError;
 use orbyn_core::host::terminal::{
     MAIN_TERMINAL, PtyOutputState, PtySession, PtySpec, TerminalLabel, default_shell,
@@ -36,6 +41,7 @@ pub fn routes() -> Router<AppState> {
         .route("/ws/terminal/{thread_id}", get(terminal))
         .route("/ws/terminal/{thread_id}/{terminal}", get(attach))
         .route("/api/threads/{id}/terminals", get(list).post(open))
+        .route("/api/threads/{id}/terminal-attention", get(attention))
         .route("/api/threads/{id}/console", post(console))
         .route(
             "/api/threads/{id}/terminals/{terminal}",
@@ -44,6 +50,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/threads/{id}/terminals/{terminal}/scrollback",
             get(scrollback).delete(clear),
+        )
+        .route(
+            "/api/threads/{id}/terminals/{terminal}/output/events",
+            get(output_events),
         )
         .route("/api/threads/{id}/scripts", get(scripts).post(run_script))
 }
@@ -142,6 +152,17 @@ pub async fn list(
     Ok(Json(state.core.terminals.list(&id)))
 }
 
+/// `GET /api/threads/:id/terminal-attention`: the engine consoles waiting for the
+/// person now, from the in-memory registry. Local: the same redacted values the
+/// thread's log already carries.
+pub async fn attention(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    let items = state.core.terminal_attention(&id)?;
+    Ok(Json(TerminalAttentionOpen { items }))
+}
+
 pub async fn open(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -236,6 +257,158 @@ pub async fn scrollback(
         .ok_or_else(not_found)?;
     let text = String::from_utf8_lossy(&session.scrollback()).into_owned();
     Ok(Json(TerminalScrollback { text }))
+}
+
+/// How much retained output one snapshot frame carries.
+const SNAPSHOT_CHUNK: usize = 64 * 1024;
+const OUTPUT_KEEP_ALIVE: Duration = Duration::from_secs(15);
+
+/// `GET /api/threads/:id/terminals/:terminal/output/events`: a read-only subscription
+/// to one terminal's output, for a client that runs a command and reads what it prints.
+/// It sends the retained output first, then each chunk as the PTY broadcasts it, and
+/// ends with `ended` when the terminal's output ends. The terminal socket stays the
+/// interactive transport; this one is one way, pushes on its own and ends by itself.
+pub async fn output_events(
+    State(state): State<AppState>,
+    Path((thread_id, terminal)): Path<(String, String)>,
+) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+    state.core.store.thread(&thread_id)?;
+    let session = state
+        .core
+        .terminals
+        .named(&thread_id, &terminal)
+        .ok_or_else(not_found)?;
+    // Taken under the scrollback lock with the receiver, so no output falls between the
+    // retained frames and the live ones.
+    let (scrollback, output) = session.attach();
+    let frames = OutputFrames {
+        output_state: session.output_state(),
+        session,
+        output,
+        pending: snapshot_frames(&scrollback),
+        text: TextCarry::default(),
+        done: false,
+    };
+    let frames = stream::unfold(frames, |mut frames| async move {
+        let event = frames.next_frame().await?;
+        let frame = Event::default().json_data(&event).ok()?;
+        Some((Ok::<_, Infallible>(frame), frames))
+    });
+    Ok(Sse::new(frames).keep_alive(KeepAlive::new().interval(OUTPUT_KEEP_ALIVE)))
+}
+
+/// The output subscription's state: what it has not sent yet, what it has decoded so far,
+/// and whether the output has ended.
+struct OutputFrames {
+    session: Arc<PtySession>,
+    output: tokio::sync::broadcast::Receiver<Vec<u8>>,
+    output_state: tokio::sync::watch::Receiver<PtyOutputState>,
+    pending: VecDeque<CommandOutputEvent>,
+    text: TextCarry,
+    done: bool,
+}
+
+impl OutputFrames {
+    /// The next frame. Output is pushed: this waits on the PTY broadcast, it never asks
+    /// the terminal for a new read.
+    async fn next_frame(&mut self) -> Option<CommandOutputEvent> {
+        loop {
+            if let Some(frame) = self.pending.pop_front() {
+                return Some(frame);
+            }
+            if self.done {
+                return None;
+            }
+            match next_output(&mut self.output, &mut self.output_state).await {
+                Ok(Some(bytes)) => {
+                    let text = self.text.push(&bytes);
+                    if !text.is_empty() {
+                        return Some(CommandOutputEvent::Chunk { text });
+                    }
+                }
+                Ok(None) | Err(RecvError::Closed) => {
+                    self.done = true;
+                    // A character split at the end has no next bytes, so it reads lossily.
+                    let tail = self.text.finish();
+                    let ended = CommandOutputEvent::Ended {
+                        exit_code: self.session.exit_code(),
+                    };
+                    if tail.is_empty() {
+                        return Some(ended);
+                    }
+                    self.pending.push_back(ended);
+                    return Some(CommandOutputEvent::Chunk { text: tail });
+                }
+                Err(RecvError::Lagged(dropped)) => {
+                    // Chunks were dropped, so the order a client sees would have a hole;
+                    // end the stream and let it connect again for the retained output.
+                    self.done = true;
+                    return Some(CommandOutputEvent::Overflow { dropped });
+                }
+            }
+        }
+    }
+}
+
+/// The retained output as snapshot frames, cut so one large scrollback is not one frame.
+fn snapshot_frames(scrollback: &[u8]) -> VecDeque<CommandOutputEvent> {
+    let mut frames = VecDeque::new();
+    let mut text = TextCarry::default();
+    for chunk in scrollback.chunks(SNAPSHOT_CHUNK) {
+        let decoded = text.push(chunk);
+        if !decoded.is_empty() {
+            frames.push_back(CommandOutputEvent::Snapshot { text: decoded });
+        }
+    }
+    let tail = text.finish();
+    if !tail.is_empty() {
+        frames.push_back(CommandOutputEvent::Snapshot { text: tail });
+    }
+    frames
+}
+
+/// PTY output read as UTF-8 across chunk boundaries: a character split between two
+/// reads waits for its next bytes, and bytes that are not text read as U+FFFD, the same
+/// as `TerminalScrollback.text`.
+#[derive(Default)]
+struct TextCarry(Vec<u8>);
+
+impl TextCarry {
+    fn push(&mut self, bytes: &[u8]) -> String {
+        self.0.extend_from_slice(bytes);
+        let mut text = String::new();
+        loop {
+            let error = match std::str::from_utf8(&self.0) {
+                Ok(valid) => {
+                    text.push_str(valid);
+                    self.0.clear();
+                    break;
+                }
+                Err(error) => error,
+            };
+            let valid = error.valid_up_to();
+            if let Ok(part) = std::str::from_utf8(&self.0[..valid]) {
+                text.push_str(part);
+            }
+            match error.error_len() {
+                Some(len) => {
+                    text.push(char::REPLACEMENT_CHARACTER);
+                    self.0.drain(..valid + len);
+                }
+                None => {
+                    self.0.drain(..valid);
+                    break;
+                }
+            }
+        }
+        text
+    }
+
+    /// What was left when the output ended, read the same lossy way.
+    fn finish(&mut self) -> String {
+        let rest = std::mem::take(&mut self.0);
+        String::from_utf8_lossy(&rest).into_owned()
+    }
 }
 
 pub async fn clear(

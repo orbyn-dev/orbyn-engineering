@@ -76,6 +76,7 @@ The final list is an open question below.
 3. Enforce the rest of the `Person` table, add the field-level checks, remove the explorer Preview gate and the core
    `crew_preview` check on file actions, and reword the #441 sentences on Crew's flag. **Done (this change).**
 4. Per-worker tokens, only when a worker needs the HTTP API (item 4 above), and the sandbox work in "Still open after step 3".
+   The `person_route.refused` audit row ("The audit row for a refused call") gains a worker caller class when per-worker tokens land.
 
 ## Tests
 
@@ -94,11 +95,13 @@ The final list is an open question below.
 - **Windows.** No sandbox exists for a worker, so Windows workers stay refused. Same-user `OpenProcess` can read the
   shell's memory, so the key is a barrier against file readers and env readers, not against a determined local debugger.
   A Low-integrity or AppContainer worker is the real answer and needs its own spike.
-- Both: devtools is on in release builds (`docs/architecture.md`, shell section), so a script run in the page can use the key.
+- **Both.** Ordinary release builds omit devtools. Debug builds and technical-tester builds with the explicit Cargo `devtools` feature retain it
+  ([setup](setup.md#developer-tools-for-technical-testers)). A hostile script already running in the product origin can still call `person_key`; disabling
+  the inspector does not remove the page's IPC authority or protect against script injection.
 
 ## What still stays open
 
-A process of the same user can read the shell's memory (Windows always; macOS in unsigned builds), attach devtools, drive
+A process of the same user can read the shell's memory (Windows always; macOS in unsigned builds), use devtools in debug/tester builds, drive
 the native dialog, or write into the shell's pipe. Anything the person can type in a terminal, a worker can type too, so
 `Local` routes remain open to an unconfined worker, including the CLI's. This design removes the person-only routes from
 that set; it does not make the data folder unreadable. Browser mode (`orbyn start`) has no key, so it loses `Person`
@@ -171,10 +174,15 @@ workspace and account routes, is closed by step 3.
 - **Every `Person` route needs the key.** `ENFORCED` in `routes/classes.rs` now lists all of the `Person` table (96 routes):
   Account, Crew's person writes, engines, updates, workspace, shell actions, scheduled tasks, preferences, policy rules,
   redaction settings, questions, project trust and publish, workflow approve, pull merges and reviews, the explorer, the
-  console, terminals, scripts, file writes and computer use. A test (`routes/tests.rs`) fails for a `Person` route that is
+  console, terminals, scripts, file writes, computer use and the routes that move a checkout (`POST /api/projects/{id}/git/init`,
+  `POST /api/threads/{id}/branches` and `/branches/switch`, `POST /api/threads/{id}/vcs/refs` and `/vcs/refs/switch`; ruling F3:
+  a service-token agent cannot move the checkout under the person; `GET .../branches` stays `Local`). A test (`routes/tests.rs`) fails for a `Person` route that is
   not enforced, and for an `ENFORCED` line that is not a `Person` row. The web side is the same list in
   `PERSON_ROUTES` (`web/src/api/personKey.ts`); its test fails if the list differs from the service's person rows.
-- **Field-level.** `FIELD_LEVEL` lists the two routes that stay `Local` as a whole and check the key for part of the body:
+- **Field-level.** `FIELD_LEVEL` lists the three routes that stay `Local` as a whole and check the key for part of the body:
+  `POST /api/projects/{id}/pulls/{number}/checkout` when `worktree` is false (ruling F3: that runs `git switch` in the
+  project's own checkout; the check comes before the fetch, so a refused call changes nothing; `worktree: true` adds a
+  worktree and stays `Local`; the web sends the key on this route for both modes),
   `POST /api/threads/{id}/runs` when `permission_mode` is looser than the thread's current mode (`Supervised`, `AutoEdits`,
   `Auto`, `FullAccess`, loosest last; keeping or lowering it needs no key), and `POST /agui/threads/{id}` when `resume[]`
   is non-empty. `PATCH /api/threads/{id}` is `Person` as a whole, so any patch needs the key.
@@ -192,6 +200,20 @@ workspace and account routes, is closed by step 3.
   refused for want of it, and a socket opens with the subprotocol and is refused without it
   (`tests/person_key.rs`). Web unit tests check the list, the header and the subprotocol; the mock and the browser e2e send
   the fixed fake key or run with the development override.
+
+### The audit row for a refused call
+
+An enforced `Person` route that answers `person_required` or `desktop_required` writes one `person_route.refused` audit row
+(decision `deny`, source `access`), so the owner can see a worker trying one. The row has the target `METHOD pattern` (the
+matched route, never the URL), the caller class as actor and the code; the time is the row's own. It holds no body, header,
+token, id or query. A repeat of the same route and class inside a minute writes no row (the log is append-only, so there is
+no count). The map behind that holds at most 1024 pairs; a full map drops new pairs until a minute passes. A failed write is
+logged and the call is still refused. Caller classes: `service_token` (token, no browser origin) and `browser` (a session
+cookie or an `Origin` header). A worker that read `service.json` is `service_token`: there is no per-worker class until
+per-worker tokens exist. A refusal made inside a handler for part of the request (`FIELD_LEVEL`: the run's `permission_mode`, the
+AG-UI `resume[]`, the pull checkout's `worktree: false`) is audited the same way, through the same helper
+(`Access::person_check_field`), with the field's name added to the target, as `POST /api/threads/{id}/runs [permission_mode]`.
+The name is a fixed label; the row never holds the field's value. The window is shared per route, field and caller class.
 
 ### What browser mode and the CLI lose now
 
@@ -216,8 +238,9 @@ The `Person` routes are closed to a token-only worker. This is what #441 still h
 - [ ] **`POST /api/diagnostics/processes/{pid}/stop`** is `Local`. It can stop any process in the service's own tree, so a
   token holder can cause a denial of service; it cannot act as the person, so it is not an impersonation route.
 - [ ] **Thread-level pull request bookkeeping** (`POST /api/threads/{id}/pulls`, `.../refresh`, `.../watch`, `DELETE
-  .../pulls/{number}`, and a pull's `checkout`, `work`, `guide` and `viewed`) stays `Local`: none of it writes to the forge.
-  Be exact about what it does do: `checkout` runs local `git fetch`, `switch` and `worktree add`, and `work` and `guide`
+  .../pulls/{number}`, and a pull's `work`, `guide` and `viewed`, and `checkout` with `worktree: true`) stays `Local`: none
+  of it writes to the forge. Be exact about what it does do: `checkout` runs local `git fetch` and `worktree add` (with
+  `worktree: false` it also runs `switch`, which is why that mode needs the key, see "Field-level"), and `work` and `guide`
   create a worktree or start an engine thread at the default permission mode. That grants nothing beyond what the open
   `Local` runs route already does.
 - [ ] **A same-user process that reads the shell's memory or drives its devtools** still gets the key (platform notes above).

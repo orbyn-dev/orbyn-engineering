@@ -1,0 +1,29 @@
+[package]
+name = "orbyn-code-sandbox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+
+[features]
+default = ["quickjs"]
+# The QuickJS executor and the TypeScript stripper. Off for crates that only need the traits, so
+# the swc build cost lands only where scripts run.
+quickjs = ["dep:rquickjs", "dep:deno_ast", "dep:url", "dep:tokio"]
+
+[[test]]
+name = "sandbox"
+required-features = ["quickjs"]
+
+[dependencies]
+async-trait.workspace = true
+deno_ast = { version = "0.53", default-features = false, features = ["type_strip"], optional = true }
+rquickjs = { version = "0.14", default-features = false, features = ["futures", "parallel"], optional = true }
+serde_json.workspace = true
+thiserror.workspace = true
+url = { version = "2", optional = true }
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "time"] }

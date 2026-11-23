@@ -1,16 +1,16 @@
 //! Chrome DevTools Protocol against an installed Chrome or Edge, using a
 //! dedicated profile directory so the user's own browser data is never touched.
+//! Starting the process and waiting for its debugging endpoint lives in `start`.
+
+mod start;
 
 use std::collections::VecDeque;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::net::TcpStream;
-use tokio::process::Command;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
@@ -18,11 +18,13 @@ use super::browser_stderr::BrowserStderr;
 use crate::error::{CoreError, Result};
 use crate::host::process::ManagedChild;
 
-const START_TIMEOUT: Duration = Duration::from_secs(20);
+mod connection;
+use connection::Connection;
+
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const LOAD_TIMEOUT: Duration = Duration::from_secs(20);
 /// A capture is normally a few milliseconds. One sent as the page swaps documents can go
-/// unanswered, and the session is held for the whole wait, so it gets a short limit.
+/// unanswered, so preview captures get a short limit independent of other calls.
 const FRAME_TIMEOUT: Duration = Duration::from_secs(3);
 /// A step in history is usually instant, and a same-page entry fires no load at all.
 const HISTORY_LOAD_TIMEOUT: Duration = Duration::from_secs(5);
@@ -218,17 +220,10 @@ impl Document {
 }
 
 pub struct BrowserSession {
-    socket: Socket,
+    connection: Connection,
     session_id: String,
-    next_id: u64,
-    document: Document,
-    on_document_change: Option<Box<dyn Fn() + Send + Sync>>,
     _child: Option<ManagedChild>,
     _stderr: Option<BrowserStderr>,
-    /// Events a caller asked to keep, which would otherwise pass unread between replies.
-    kept: Vec<Value>,
-    /// Navigation signals received before the corresponding command reply.
-    navigation_events: VecDeque<Value>,
 }
 
 /// The events a preview's bridge reads: a file chooser and a download's progress.
@@ -315,44 +310,8 @@ impl NavigationWait {
 
 impl BrowserSession {
     pub async fn launch(path: &Path, profile: &Path, options: LaunchOptions) -> Result<Self> {
-        std::fs::create_dir_all(profile)?;
-        let port_file = profile.join("DevToolsActivePort");
-        let _ = std::fs::remove_file(&port_file);
-        let mut profile_arg = OsString::from("--user-data-dir=");
-        profile_arg.push(profile);
-        let mut command = Command::new(path);
-        command
-            .arg("--remote-debugging-port=0")
-            .arg(profile_arg)
-            .args(["--no-first-run", "--no-default-browser-check"]);
-        let flags = launch_flags(path, options.headless, options.in_process_gpu);
-        command.args(&flags);
-        command
-            .arg("about:blank")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        #[cfg(unix)]
-        command.process_group(0);
-        crate::host::child_env::for_tool(command.as_std_mut());
-        let mut child = ManagedChild::spawn(command)?;
-        let mut stderr = BrowserStderr::start(
-            child
-                .child_mut()
-                .stderr
-                .take()
-                .ok_or_else(|| failed("browser stderr is missing"))?,
-        );
-        let url = match wait_for_port(&mut child, &port_file).await {
-            Ok(url) => url,
-            Err(error) => {
-                let detail = stderr.failure_text().await;
-                return Err(CoreError::Computer(format!(
-                    "{error}; startup flags: {flags:?}; stderr: {detail}"
-                )));
-            }
-        };
+        let start::Started { child, stderr, url } =
+            start::start(path, profile, options.headless, options.in_process_gpu).await?;
         stderr.startup_complete();
         let mut session = Self::connect(&url, Some(child)).await?;
         session._stderr = Some(stderr);
@@ -363,15 +322,10 @@ impl BrowserSession {
     pub async fn connect(url: &str, child: Option<ManagedChild>) -> Result<Self> {
         let (socket, _) = connect_async(url).await.map_err(failed)?;
         let mut session = Self {
-            socket,
+            connection: Connection::new(socket),
             session_id: String::new(),
-            next_id: 0,
-            document: Document::default(),
-            on_document_change: None,
             _child: child,
             _stderr: None,
-            kept: Vec::new(),
-            navigation_events: VecDeque::new(),
         };
         let targets = session.browser_call("Target.getTargets", json!({})).await?;
         let page = targets
@@ -404,53 +358,24 @@ impl BrowserSession {
             .and_then(Value::as_str)
             .ok_or_else(|| failed("no page session"))?
             .to_owned();
+        session.connection.client.state().session_id = session.session_id.clone();
         session.call("Page.enable", json!({})).await?;
         session
             .call("Page.setLifecycleEventsEnabled", json!({ "enabled": true }))
             .await?;
         let tree = session.call("Page.getFrameTree", json!({})).await?;
         if let Some(id) = tree.pointer("/frameTree/frame/id").and_then(Value::as_str) {
-            session.document.frame = id.to_owned();
+            session.connection.client.state().document.frame = id.to_owned();
         }
         Ok(session)
     }
 
     pub fn document_generation(&self) -> u64 {
-        self.document.generation
+        self.connection.client.state().document.generation
     }
 
     pub fn on_document_change(&mut self, notify: impl Fn() + Send + Sync + 'static) {
-        self.on_document_change = Some(Box::new(notify));
-    }
-
-    fn note_document(&mut self, event: &Value) {
-        if event.get("sessionId").and_then(Value::as_str) == Some(self.session_id.as_str()) {
-            if self.document.note(event)
-                && let Some(notify) = &self.on_document_change
-            {
-                notify();
-            }
-            if self.is_navigation_signal(event) {
-                if self.navigation_events.len() == MAX_KEPT {
-                    self.navigation_events.pop_front();
-                }
-                self.navigation_events.push_back(event.clone());
-            }
-        }
-    }
-
-    /// Only the main frame's signals can end a navigation, so a busy iframe cannot push
-    /// them out of the buffer.
-    fn is_navigation_signal(&self, event: &Value) -> bool {
-        let params = &event["params"];
-        let main = self.document.frame.as_str();
-        match event.get("method").and_then(Value::as_str) {
-            Some("Page.frameNavigated") => params["frame"].get("parentId").is_none(),
-            Some("Page.lifecycleEvent" | "Page.navigatedWithinDocument") => {
-                main.is_empty() || params["frameId"].as_str() == Some(main)
-            }
-            _ => false,
-        }
+        self.connection.client.state().on_document_change = Some(std::sync::Arc::new(notify));
     }
 
     async fn browser_call(&mut self, method: &str, params: Value) -> Result<Value> {
@@ -467,13 +392,14 @@ impl BrowserSession {
     }
 
     /// Gives up as soon as the page opens a dialog, which would hold the reply.
-    async fn call_unless_dialog(&mut self, method: &str, params: Value) -> Result<Value> {
-        if self.document.dialog {
-            return Err(failed("a dialog is open"));
-        }
+    async fn call_unless_dialog_within(
+        &mut self,
+        method: &str,
+        params: Value,
+        limit: Duration,
+    ) -> Result<Value> {
         let session = self.session_id.clone();
-        self.send(method, params, Some(session), true, CALL_TIMEOUT)
-            .await
+        self.send(method, params, Some(session), true, limit).await
     }
 
     async fn send(
@@ -484,57 +410,24 @@ impl BrowserSession {
         unless_dialog: bool,
         limit: Duration,
     ) -> Result<Value> {
-        self.next_id += 1;
-        let id = self.next_id;
-        let mut message = json!({ "id": id, "method": method, "params": params });
-        if let Some(session) = session {
-            message["sessionId"] = json!(session);
-        }
-        self.socket
-            .send(Message::text(message.to_string()))
+        self.connection
+            .client
+            .send(method, params, session, unless_dialog, limit)
             .await
-            .map_err(failed)?;
-        tokio::time::timeout(limit, async {
-            loop {
-                let frame = self
-                    .socket
-                    .next()
-                    .await
-                    .ok_or_else(|| failed("the browser closed the connection"))?
-                    .map_err(failed)?;
-                let Ok(text) = frame.to_text() else { continue };
-                let Ok(reply) = serde_json::from_str::<Value>(text) else {
-                    continue;
-                };
-                self.note_document(&reply);
-                if unless_dialog && self.document.dialog {
-                    // Its late reply is dropped like any other unmatched one.
-                    return Err(failed("a dialog is open"));
-                }
-                if reply.get("id").and_then(Value::as_u64) != Some(id) {
-                    keep_event(&mut self.kept, reply);
-                    continue;
-                }
-                if let Some(error) = reply.get("error") {
-                    return Err(failed(
-                        error
-                            .get("message")
-                            .and_then(Value::as_str)
-                            .unwrap_or("command refused"),
-                    ));
-                }
-                return Ok(reply.get("result").cloned().unwrap_or(Value::Null));
-            }
-        })
-        .await
-        .map_err(|_| failed("the browser did not answer"))?
     }
 
     async fn evaluate(&mut self, expression: &str) -> Result<Value> {
+        self.evaluate_within(expression, CALL_TIMEOUT).await
+    }
+
+    /// A page-side read with its own limit, for a caller that must not hold its
+    /// page while a document swap drops the reply.
+    async fn evaluate_within(&mut self, expression: &str, limit: Duration) -> Result<Value> {
         let reply = self
-            .call(
+            .call_within(
                 "Runtime.evaluate",
                 json!({ "expression": expression, "returnByValue": true }),
+                limit,
             )
             .await?;
         if reply.get("exceptionDetails").is_some() {
@@ -560,16 +453,16 @@ impl BrowserSession {
     }
 
     pub async fn navigate(&mut self, url: &str) -> Result<Value> {
-        self.navigation_events.clear();
+        self.connection.client.state().navigation_events.clear();
         let reply = self.call("Page.navigate", json!({ "url": url })).await?;
         if let Some(error) = reply.get("errorText").and_then(Value::as_str) {
             return Err(failed(error));
         }
         // A reply without a frame is the main frame.
-        let frame = reply
-            .get("frameId")
-            .and_then(Value::as_str)
-            .map_or_else(|| self.document.frame.clone(), str::to_owned);
+        let frame = reply.get("frameId").and_then(Value::as_str).map_or_else(
+            || self.connection.client.state().document.frame.clone(),
+            str::to_owned,
+        );
         let loader = reply.get("loaderId").and_then(Value::as_str);
         self.wait_for_navigation(&frame, loader).await;
         Ok(json!({ "url": self.current_url().await? }))
@@ -579,54 +472,50 @@ impl BrowserSession {
     /// awaiting Page.navigate's reply. A stale load from another loader is not readiness.
     async fn wait_for_navigation(&mut self, frame: &str, loader: Option<&str>) {
         let mut wait = NavigationWait::new(frame, loader);
-        let buffered = std::mem::take(&mut self.navigation_events);
-        if buffered.iter().any(|event| wait.observe(event)) {
-            return;
-        }
-        let _ = tokio::time::timeout(LOAD_TIMEOUT, async {
-            while let Some(Ok(message)) = self.socket.next().await {
-                let Ok(text) = message.to_text() else {
-                    continue;
-                };
-                let Ok(event) = serde_json::from_str::<Value>(text) else {
-                    continue;
-                };
-                self.note_document(&event);
-                if event.get("sessionId").and_then(Value::as_str) == Some(self.session_id.as_str())
-                    && wait.observe(&event)
-                {
-                    return;
-                }
-                keep_event(&mut self.kept, event);
-            }
-        })
-        .await;
-        self.navigation_events.clear();
+        self.wait_for_signal(LOAD_TIMEOUT, |event| wait.observe(event))
+            .await;
     }
 
     /// Load completion is best effort; a slow page is still navigated.
     async fn wait_for_load(&mut self, limit: Duration) {
-        let _ = tokio::time::timeout(limit, async {
-            while let Some(Ok(frame)) = self.socket.next().await {
-                let Ok(text) = frame.to_text() else { continue };
-                let Ok(event) = serde_json::from_str::<Value>(text) else {
-                    continue;
-                };
-                self.note_document(&event);
-                if matches!(
-                    event.get("method").and_then(Value::as_str),
-                    Some("Page.loadEventFired" | "Page.navigatedWithinDocument")
-                ) {
-                    return;
-                }
-                keep_event(&mut self.kept, event);
-            }
+        self.wait_for_signal(limit, |event| {
+            matches!(
+                event.get("method").and_then(Value::as_str),
+                Some("Page.loadEventFired" | "Page.navigatedWithinDocument")
+            )
         })
         .await;
     }
 
+    async fn wait_for_signal(&self, limit: Duration, mut ready: impl FnMut(&Value) -> bool) {
+        let client = &self.connection.client;
+        let _ = tokio::time::timeout(limit, async {
+            loop {
+                // Register before checking the queue: an event received between
+                // those steps must wake us rather than wait for another event.
+                let changed = client.changed.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                let buffered = std::mem::take(&mut client.state().navigation_events);
+                if buffered.iter().any(&mut ready) || client.is_closed() {
+                    return;
+                }
+                changed.await;
+            }
+        })
+        .await;
+        client.state().navigation_events.clear();
+    }
+
     pub async fn history(&mut self) -> Result<HistoryState> {
-        let reply = self.call("Page.getNavigationHistory", json!({})).await?;
+        self.history_within(CALL_TIMEOUT).await
+    }
+
+    /// A history read with its own limit; see `title_within`.
+    pub async fn history_within(&mut self, limit: Duration) -> Result<HistoryState> {
+        let reply = self
+            .call_within("Page.getNavigationHistory", json!({}), limit)
+            .await?;
         Ok(read_history(&reply))
     }
 
@@ -637,6 +526,7 @@ impl BrowserSession {
         let Some(entry) = target else {
             return Ok(state);
         };
+        self.connection.client.state().navigation_events.clear();
         self.call("Page.navigateToHistoryEntry", json!({ "entryId": entry }))
             .await?;
         self.wait_for_load(HISTORY_LOAD_TIMEOUT).await;
@@ -659,18 +549,33 @@ impl BrowserSession {
 
     /// One frame for a preview, as base64 JPEG.
     pub async fn frame(&mut self, quality: u32) -> Result<String> {
-        let reply = self
-            .call_within(
-                "Page.captureScreenshot",
-                json!({ "format": "jpeg", "quality": quality }),
-                FRAME_TIMEOUT,
-            )
-            .await?;
-        reply
-            .get("data")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .ok_or_else(|| failed("the browser returned no frame"))
+        self.pending_frame(quality).await
+    }
+
+    /// An owned capture future; waiting for it does not borrow the page-session lock.
+    /// Its connection handle cannot extend the browser child's lifetime.
+    pub fn pending_frame(
+        &self,
+        quality: u32,
+    ) -> impl std::future::Future<Output = Result<String>> + Send + use<> {
+        let client = self.connection.client.clone();
+        let session = self.session_id.clone();
+        async move {
+            let reply = client
+                .send(
+                    "Page.captureScreenshot",
+                    json!({ "format": "jpeg", "quality": quality }),
+                    Some(session),
+                    false,
+                    FRAME_TIMEOUT,
+                )
+                .await?;
+            reply
+                .get("data")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| failed("the browser returned no frame"))
+        }
     }
 
     pub async fn set_viewport(&mut self, width: u32, height: u32) -> Result<()> {
@@ -754,8 +659,15 @@ impl BrowserSession {
 
     /// The page's title.
     pub async fn title(&mut self) -> Result<String> {
+        self.title_within(CALL_TIMEOUT).await
+    }
+
+    /// The page's title with its own limit. A title read sent as the document swaps
+    /// can go unanswered, and the caller's page is held for the whole wait, so a
+    /// periodic reader gives it a short one and reads again on its next look.
+    pub async fn title_within(&mut self, limit: Duration) -> Result<String> {
         Ok(self
-            .evaluate("document.title")
+            .evaluate_within("document.title", limit)
             .await?
             .as_str()
             .unwrap_or_default()
@@ -764,39 +676,61 @@ impl BrowserSession {
 
     /// Runs a page-side read and hands back its value.
     pub async fn read(&mut self, expression: &str) -> Result<Value> {
-        self.evaluate(expression).await
+        self.read_within(expression, CALL_TIMEOUT).await
+    }
+
+    /// A page-side read with its own limit; see `title_within`.
+    pub async fn read_within(&mut self, expression: &str, limit: Duration) -> Result<Value> {
+        self.evaluate_within(expression, limit).await
     }
 
     /// Runs a read in a world of its own, which shares the page's DOM but not its
     /// scripts, so the page cannot replace what the read calls. Fails at once
     /// while a dialog holds the page rather than wait behind it.
     pub async fn isolated_read(&mut self, expression: &str) -> Result<Value> {
-        let generation = self.document.generation;
-        let context = match self.document.world {
+        self.isolated_read_within(expression, CALL_TIMEOUT).await
+    }
+
+    /// An isolated read with its own limit; see `title_within`.
+    pub async fn isolated_read_within(
+        &mut self,
+        expression: &str,
+        limit: Duration,
+    ) -> Result<Value> {
+        let (generation, world, frame) = {
+            let state = self.connection.client.state();
+            (
+                state.document.generation,
+                state.document.world,
+                state.document.frame.clone(),
+            )
+        };
+        let context = match world {
             Some((made, context)) if made == generation => context,
             _ => {
-                let frame = self.document.frame.clone();
                 let world = self
-                    .call_unless_dialog(
+                    .call_unless_dialog_within(
                         "Page.createIsolatedWorld",
                         json!({ "frameId": frame, "worldName": "orbyn-read" }),
+                        limit,
                     )
                     .await?;
                 let context = world
                     .get("executionContextId")
                     .and_then(Value::as_i64)
                     .ok_or_else(|| failed("no isolated world"))?;
-                self.document.world = Some((generation, context));
+                self.connection.client.state().document.world = Some((generation, context));
                 context
             }
         };
         let reply = self
-            .call_unless_dialog(
+            .call_unless_dialog_within(
                 "Runtime.evaluate",
                 json!({ "expression": expression, "returnByValue": true, "contextId": context }),
+                limit,
             )
             .await
-            .inspect_err(|_| self.document.world = None)?;
+            .inspect_err(|_| self.connection.client.state().document.world = None)?;
         if reply.get("exceptionDetails").is_some() {
             return Err(failed("the page raised an error"));
         }
@@ -808,7 +742,7 @@ impl BrowserSession {
 
     /// The bridge events seen since the last look, oldest first.
     pub fn take_events(&mut self) -> Vec<Value> {
-        std::mem::take(&mut self.kept)
+        std::mem::take(&mut self.connection.client.state().kept)
     }
 
     /// A browser-wide DevTools call, such as where downloads go.
@@ -853,34 +787,11 @@ impl BrowserSession {
     }
 }
 
-async fn read_port_file(path: &Path) -> String {
-    loop {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            let mut lines = text.lines();
-            if let (Some(port), Some(endpoint)) = (lines.next(), lines.next())
-                && !port.is_empty()
-            {
-                return format!("ws://127.0.0.1:{port}{endpoint}");
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-async fn wait_for_port(child: &mut ManagedChild, path: &Path) -> Result<String> {
-    tokio::time::timeout(START_TIMEOUT, async {
-        tokio::select! {
-            biased;
-            status = child.wait() => Err(failed(format!("the browser exited before opening its debugging port: {}", status.map_err(failed)?))),
-            url = read_port_file(path) => Ok(url),
-        }
-    })
-    .await
-    .map_err(|_| failed("the browser did not open its debugging port"))?
-}
-
 #[cfg(test)]
 mod frame_tests;
+
+#[cfg(test)]
+mod dispatch_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1270,28 +1181,6 @@ mod tests {
         }
         drop(session);
         server.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn browser_exit_during_startup_is_reported_without_waiting_for_timeout() {
-        let mut command = Command::new(std::env::current_exe().unwrap());
-        command
-            .arg("--list")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        #[cfg(unix)]
-        command.process_group(0);
-        let mut child = ManagedChild::spawn(command).unwrap();
-        let path = std::env::temp_dir().join(format!("missing-port-{}", crate::util::new_id()));
-        let result = tokio::time::timeout(Duration::from_secs(5), wait_for_port(&mut child, &path))
-            .await
-            .unwrap();
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("exited before opening its debugging port")
-        );
     }
 
     #[tokio::test]

@@ -19,6 +19,7 @@ import { ConfirmDialog } from "../../../ui/Dialog";
 import { Loading } from "../../../product/ui/states";
 import { ProjectIconSetting } from "./ProjectIconSetting";
 import { FallbackModel, ProjectModelDefaults } from "./ProjectModelDefaults";
+import { RepositoriesSection } from "../../repos";
 
 const short = (revision: string | null) => revision?.slice(0, 8) ?? "Unknown";
 
@@ -394,6 +395,7 @@ function ProjectSelection() {
             </div>
           </SettingRow>
         </ProjectName>
+        {members[0] ? <RepositoriesSection projectId={members[0].project_id} projectName={group.label} disabled={blocked} /> : null}
         <fieldset className="preference-control" disabled={blocked}>
           <PreferenceGroups groups={[{ title: "", rows: [{ key: "default_project_scripts", title: "Actions", inheritance: true,
             render: (value, _save, control) => <ProjectActions value={value} control={control} /> }] }]} />
@@ -409,7 +411,6 @@ function ProjectSelection() {
 export function ProjectsSection() {
   const scope = useSettingsScope();
   return <>
-    <div className="section-bar"><h1 className="sr-only" tabIndex={-1} data-page-title>Projects</h1></div>
     <ProjectSelection key={JSON.stringify(scope?.query ?? {})} />
   </>;
 }

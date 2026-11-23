@@ -69,7 +69,7 @@
 .shell :is(.topbar, .settings-head, .skills-heading) {
   padding-right: max(28px, calc(var(--bar-end-w, 0px) + 14px + 12px));
 }
-.shell:has(> .titlebar[data-nav="hidden"][data-bar="float"]) :is(.topbar, .settings-head, .skills-heading) {
+.shell:has(> .titlebar[data-nav="hidden"][data-bar="float"]) :is(.topbar, .skills-heading) {
   padding-left: max(28px, var(--bar-lead, 0px));
 }
 /* The full 44px strip drags the window; see useDragStrip for when it takes the pointer. */
@@ -175,8 +175,31 @@
   padding: 46px 10px 10px;
   background: var(--color-sidebar);
 }
+/* The phone (under 600 px): the sidebar is its home page, and over any other page it is a full-screen
+   sheet that takes the page's place, with a Close link of its own (Engineer Designs, "Phone layout
+   (under 600 px)"). Nothing is docked and nothing is drawn beside the page. */
 .shell[data-layout="phone"] > .sidebar {
   grid-area: 2 / 1;
+  padding-top: 6px;
+}
+.sidebar-sheet {
+  grid-area: 2 / 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-sidebar);
+}
+/* The sheet's own row above the sidebar, like the side panel's: the way back to the page. */
+.sidebar-sheet-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: 36px;
+  padding: 6px 16px 0;
+}
+.sidebar-sheet > .sidebar {
+  flex: 1 1 auto;
   padding-top: 6px;
 }
 /* Small windows (600 to 899 px): the sidebar is a drawer over the thread, opened from the title bar's
@@ -389,6 +412,8 @@
 .thread-row {
   /* No iOS callout or link preview: a long press is ours (the context menu). */
   -webkit-touch-callout: none;
+  /* A sideways touch reaches the row (a swipe left reveals Snooze and Settle); the page still scrolls up and down. */
+  touch-action: pan-y;
   /* The state's own fill, which the floating row actions fade into. */
   --row-state: transparent;
   container: thread-row / inline-size;
@@ -564,6 +589,7 @@ input.dialog-field-mono {
    the row into its buttons keeps it (:has). Touch has neither: a long press opens the context menu with the same actions. */
 li:hover > .thread-row .row-actions,
 li[data-selected] .thread-row .row-actions,
+.thread-row[data-revealed] .row-actions,
 .thread-row:focus-visible .row-actions,
 .thread-row:has(:focus-visible) .row-actions {
   visibility: visible;

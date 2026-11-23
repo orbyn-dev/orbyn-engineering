@@ -15,7 +15,7 @@ use crate::error::{CoreError, Result};
 use crate::project::workspace::{ProjectRoot, guard_library, resolve_project};
 use crate::source_control::git::{git, is_git_repo, linked_worktrees, text};
 use crate::store::{AuditRecord, NewProject};
-use crate::util::{canonicalize, new_id, now};
+use crate::util::{canonicalize, new_id, now, unix_now};
 
 const WORKTREE_SUFFIX: &str = "-wt";
 
@@ -54,6 +54,22 @@ async fn strings(cwd: &Path, args: &[&str]) -> Result<Vec<String>> {
         .lines()
         .map(str::to_owned)
         .collect())
+}
+
+/// The full id of the "Initial commit" `new_project` makes for its README, or `None` when Git has no identity to
+/// make it: then the file still stands and the person commits it themselves, so no commit is recorded.
+async fn initial_commit(path: &Path) -> Option<String> {
+    if let Err(error) = git(path, &["commit", "-q", "-m", "Initial commit"]).await {
+        tracing::debug!(%error, "could not make the first commit");
+        return None;
+    }
+    match git(path, &["rev-parse", "HEAD"]).await {
+        Ok(id) => Some(text(&id)),
+        Err(error) => {
+            tracing::debug!(%error, "could not read the first commit's id");
+            None
+        }
+    }
 }
 
 /// Local branches with commits no remote has. `current` is left out when asked.
@@ -361,6 +377,34 @@ impl Core {
         Ok(job)
     }
 
+    /// Starts a Git repository in a registered project folder that is not one yet, so a
+    /// folder added without Git can use the repository features. Only `.git` is written:
+    /// no file is touched and no commit is made. The person must have trusted the folder.
+    pub async fn init_project_git(&self, id: &str) -> Result<Project> {
+        let project = self.store.project(id)?;
+        if !project.trusted {
+            return Err(CoreError::FolderUntrustedInit);
+        }
+        let path = PathBuf::from(&project.path);
+        if !path.is_dir() {
+            return Err(CoreError::Invalid("The project's folder is gone.".into()));
+        }
+        // The stored path can be swapped for a symlink, or an enclosing repository can
+        // appear, after the folder was added: start Git only where the folder still is.
+        let resolved = resolve_project(&self.workspace.root()?, &path).await?;
+        if resolved.path != path {
+            return Err(CoreError::Invalid("The project's folder has moved.".into()));
+        }
+        if project.is_git || is_git_repo(&path) || resolved.is_git {
+            return Err(CoreError::Invalid(
+                "This project is already a Git repository.".into(),
+            ));
+        }
+        self.audit_project("project.git-init", &project.path, serde_json::Value::Null)?;
+        init_repository(&path).await?;
+        self.store.mark_project_git(id)
+    }
+
     /// Starts an empty repository, with a README and first commit when asked.
     pub async fn new_project(
         &self,
@@ -369,24 +413,38 @@ impl Core {
         chosen: Option<&str>,
     ) -> Result<Project> {
         let (slug, path) = self.slot(name, chosen).await?;
-        let path_text = path.to_string_lossy().into_owned();
         self.audit_project("project.create", &slug, serde_json::Value::Null)?;
         let parent = path
             .parent()
             .ok_or_else(|| CoreError::Invalid("Choose a folder.".into()))?;
         std::fs::create_dir_all(parent)?;
-        git(parent, &["init", "--quiet", "-b", "main", &path_text]).await?;
+        init_repository(&path).await?;
         let root = self.workspace.root()?;
         let resolved = resolve_project(&root, &path).await?;
-        if readme {
+        let first_commit = if readme {
             std::fs::write(path.join("README.md"), format!("# {name}\n"))?;
             git(&path, &["add", "README.md"]).await?;
             // With no Git identity the file still stands, and the person commits it.
-            if let Err(error) = git(&path, &["commit", "-q", "-m", "Initial commit"]).await {
-                tracing::debug!(%error, "could not make the first commit");
-            }
+            initial_commit(&path).await
+        } else {
+            None
+        };
+        let project = self.register_project(&resolved, &slug, true)?;
+        // This first commit is the one commit the app makes on a person's action, so it is the one positive
+        // person signal merge provenance accepts (`docs/crew/provenance-person-signal.md`). It is recorded only
+        // after the project row exists, because the row references it, and a record that does not land never
+        // fails project creation: the commit stands, and an unrecorded commit reads `unknown`, which coverage
+        // counts as agent rather than crediting a person. The commit holds nothing but the README this call
+        // wrote: no worker can have touched a folder that is not a project yet, which is the check a future
+        // path that stages other work has to make for itself.
+        if let Some(commit) = first_commit
+            && let Err(error) =
+                self.store
+                    .record_person_commit(&project.id, &commit, "project.readme", unix_now())
+        {
+            tracing::warn!(%error, "the first commit was not recorded as a person's");
         }
-        self.register_project(&resolved, &slug, true)
+        Ok(project)
     }
 
     /// Forgets a project and archives its threads, which stay. The folder stays, always, unless Orbyn
@@ -467,6 +525,17 @@ impl Core {
             kept_path: None,
         })
     }
+}
+
+/// Starts a repository at `path` on `main`, with nothing in it. Project creation and
+/// Git init in an already registered folder share this one invocation.
+async fn init_repository(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| CoreError::Invalid("Choose a folder.".into()))?;
+    let target = path.to_string_lossy();
+    git(parent, &["init", "--quiet", "-b", "main", &target]).await?;
+    Ok(())
 }
 
 /// A clone's temporary folder. Dropping it removes whatever is still there, so a

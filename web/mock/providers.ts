@@ -10,9 +10,15 @@ import type { ProviderList } from "../src/generated/ProviderList.ts";
 /** Known ACP engines the service has only run against a test agent, with the program each starts. */
 const UNVERIFIED: Record<string, { program: string; own?: string }> = {
   cursor: { program: "cursor-agent", own: "Starts over ACP. Not verified on a real install." },
+  droid: { program: "droid" },
+  glm: { program: "glm-acp-agent" },
   kimi: { program: "kimi" },
+  kiro: { program: "kiro-cli" },
+  "mistral-vibe": { program: "vibe-acp" },
+  omp: { program: "omp" },
 };
-const NO_DETAIL = ["cursor", "fx"];
+/** The only families with a provider detail page in the beta (provider_list.rs, BETA_DETAIL). */
+const BETA_DETAIL = ["claude", "codex", "opencode"];
 
 const planned = (id: string, name: string, note: string): ProviderEntry =>
   ({ id, name, group: "planned", labels: ["planned"], note, registered: false, openable: false });
@@ -29,7 +35,7 @@ export function providerList(engines: EngineStatus[]): ProviderList {
     if (engine.installed && engine.compatibility && !broken) labels.push("limited_support");
     if (unverified) labels.push("not_verified");
     const group: ProviderEntry["group"] = !engine.installed ? "not_found" : broken ? "cant_start" : unverified ? (unverified.own ? "found" : "more") : "in_use";
-    return { id: engine.id, name: engine.name, group, labels, registered: true, openable: !NO_DETAIL.includes(family),
+    return { id: engine.id, name: engine.name, group, labels, registered: true, openable: BETA_DETAIL.includes(family),
       note: unverified ? unverified.own ?? unverified.program : engine.compatibility?.message };
   });
   // The fixed rows ride with the full fixture set, so a scenario that keeps two engines shows only those.
@@ -39,6 +45,8 @@ export function providerList(engines: EngineStatus[]): ProviderList {
       ...rows,
       ...(full ? [{ id: "antigravity", name: "Antigravity", group: "cant_start", labels: ["cant_start"], registered: false, openable: false,
         note: "Antigravity.app is installed, but it has no ACP server Orbyn can start." } satisfies ProviderEntry] : []),
+      ...(full && !engines.some((engine) => engine.id === "grok") ? [{ id: "grok", name: "Grok Build", group: "not_found", labels: ["not_found"], registered: false, openable: false,
+        note: "Found a program named grok at /usr/local/bin/grok, but it is not xAI’s Grok CLI. Orbyn does not use it. Get xAI’s own Grok Build from xAI’s official page." } satisfies ProviderEntry] : []),
       planned("pi", "Pi", "Pi speaks its own protocol, not ACP. Orbyn has no driver for it yet."),
       planned("muse", "Muse Code", "Muse Code speaks its own protocol, not ACP. Orbyn has no driver for it yet."),
       planned("zcode", "ZCode", "Uses a private protocol. Not built."),

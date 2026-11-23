@@ -8,11 +8,13 @@ use super::events::StreamMapper;
 use super::workflows::Workflows;
 use super::{EXIT_GRACE, HOLD_GRACE};
 use crate::agents::driver::pipes::{EngineProcess, exit_message, lines};
-use crate::agents::driver::{EngineEvent, EngineOutcome, RunControl, RunKind, RunSpec};
+use crate::agents::driver::{
+    EngineEvent, EngineOutcome, RunControl, RunKind, RunSpec, SteerMessage,
+};
 
-/// What a run takes while it works: steering text and controls.
+/// What a run takes while it works: steering messages and controls.
 pub(super) struct Inputs {
-    pub(super) steering: mpsc::UnboundedReceiver<String>,
+    pub(super) steering: mpsc::UnboundedReceiver<SteerMessage>,
     pub(super) controls: mpsc::UnboundedReceiver<RunControl>,
 }
 
@@ -78,9 +80,9 @@ pub(super) async fn run_protocol(
                     return;
                 }
             }
-            Some(text) = steering.recv() => {
+            Some(steer) = steering.recv() => {
                 // The CLI folds a message sent mid-turn into the running turn.
-                let frame = format!("{}\n", user_frame(&text));
+                let frame = format!("{}\n", user_frame(&steer.prompt));
                 if let Err(error) = stdin.write_all(frame.as_bytes()).await {
                     tracing::debug!(%error, "could not steer the run");
                 }
@@ -161,7 +163,7 @@ fn user_message(spec: &RunSpec, uuid: &str) -> String {
 
 /// The CLI asks for a UUID, and echoes it back with `--replay-user-messages` when it takes the
 /// prompt up.
-fn prompt_uuid() -> String {
+pub(crate) fn prompt_uuid() -> String {
     let n = ulid::Ulid::generate().0;
     // Version 4, variant 1: the shape the CLI validates.
     format!(

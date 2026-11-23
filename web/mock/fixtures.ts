@@ -478,6 +478,7 @@ export function pendingApprovals(): Approval[] {
       state: "pending",
       decided_by: null,
       decided_at: null,
+      via: null,
       created_at: iso(-320),
     },
     {
@@ -490,6 +491,7 @@ export function pendingApprovals(): Approval[] {
       state: "pending",
       decided_by: null,
       decided_at: null,
+      via: null,
       created_at: iso(-300),
     },
     {
@@ -502,6 +504,7 @@ export function pendingApprovals(): Approval[] {
       state: "pending",
       decided_by: null,
       decided_at: null,
+      via: null,
       created_at: iso(-620),
     },
   ];
@@ -605,6 +608,29 @@ const longToolOutput = Array.from(
   { length: 60 },
   (_, at) => `test approvals::tests::case_${String(at).padStart(3, "0")}_expires_open_approvals_when_the_driver_exits ... ok`,
 ).join("\n");
+
+/** The mock's imported thread, for the transcript-imported scenario and its frame. */
+export function importedThread(): Thread {
+  return baseThread("t-imported", "p-app", "Redirect loop on logout", "claude", -240, {
+    model: "claude-opus-5-5",
+    source: "orbyn-transcript",
+    imported_at: "2026-11-22T10:00:00Z",
+  });
+}
+
+/** The imported history as ordinary log events, with no tool calls or reasoning. */
+export function importedLog(): WireThreadEvent[] {
+  return sequence([
+    ...logOf("t-imported", "r-imported", -240, [
+      { type: "RUN_STARTED", threadId: "t-imported", runId: "r-imported" },
+      ...user("u1", "The logout page redirects back to itself in a loop."),
+      ...assistant("a1", "The cookie is cleared after the redirect has already fired, so the next request still looks signed in. I would clear it first."),
+      ...user("u2", "Do that, then check the sign-in page does the same."),
+      ...assistant("a2", "Done: the cookie is cleared before the redirect, and the sign-in page already did it in that order."),
+      { type: "RUN_FINISHED", threadId: "t-imported", runId: "r-imported", outcome: { type: "success" } },
+    ]),
+  ]);
+}
 
 export function logs(): Record<string, WireThreadEvent[]> {
   const pending = pendingApprovals();
@@ -810,7 +836,7 @@ export function logs(): Record<string, WireThreadEvent[]> {
         { type: "CUSTOM", name: "background.stopped", value: { taskId: "b2", taskType: "local_agent", description: "Check the login tests for stale redirects" } },
         { type: "CUSTOM", name: "background.stopped", value: { taskId: "b3", taskType: "local_bash", description: "pnpm dev --port 5173" } },
         { type: "CUSTOM", name: "background.stopped", value: { taskId: "b4", taskType: "local_bash", description: "pnpm typecheck --watch" } },
-        { type: "CUSTOM", name: "background.stopped", value: { taskId: "b5", taskType: "local_workflow" } },
+        { type: "CUSTOM", name: "background.stopped", value: { taskId: "b5", taskType: "monitor" } },
         { type: "RUN_FINISHED", threadId: "t-bg-stopped-many", runId: "r-bm", outcome: { type: "success" } },
       ]),
     ),
@@ -1061,6 +1087,9 @@ export function updateStatus(behind: number): UpdateStatus {
       latest: "0.2.0",
       notes: "## Changes\n\n- Faster thread loading\n- Fixes terminal resize on Windows",
       mode: "desktop",
+      phase: "available",
+      release_id: "fixture-release-1",
+      operation: 0,
       can_apply: true,
       blocked_reason: null,
       unconfigured: false,
@@ -1225,6 +1254,27 @@ export const pageFiles = () => [
   { path: "auth/redirect.test.ts", previous_path: null, status: "modified", additions: 2, deletions: 2, patch: "@@ -1,2 +1,2 @@\n-old\n+new", viewed: false },
 ];
 
+/** The linked pull request's forge comments: one unresolved review thread and one resolved. */
+export const pullConversation = () => ({
+  comments: [],
+  threads: [
+    {
+      id: "th-redirect", resolved: false, path: "auth/redirect.ts", line: 15,
+      comments: [{
+        id: "c-redirect", kind: "review", author: "sam-reyes", body: "Does inside() reject //evil.com?",
+        created_at: iso(-420), path: "auth/redirect.ts", line: 15,
+      }],
+    },
+    {
+      id: "th-test", resolved: true, path: "auth/redirect.test.ts", line: 8,
+      comments: [{
+        id: "c-test", kind: "review", author: "riley-chen", body: "Added the case for a protocol-relative next value.",
+        created_at: iso(-360), path: "auth/redirect.test.ts", line: 8,
+      }],
+    },
+  ],
+});
+
 export const pullList = () => [
   listed(142, "Return to the page people came from", {
     updated_at: iso(-240),
@@ -1265,7 +1315,7 @@ export const pullDetails = () => [
   { project_id: "p-app", number: 131, created_at: iso(-400000), requested_reviewers: [{ name: "you", kind: "user" }, { name: "sam-reyes", kind: "user" }, { name: "marilyn", kind: "user" }], comment_count: 0, viewer_review_state: "none" },
   { project_id: "p-site", number: 136, created_at: iso(-500000), requested_reviewers: [{ name: "riley-chen", kind: "user" }, { name: "sam-reyes", kind: "user" }, { name: "marilyn", kind: "user" }], comment_count: 1, viewer_review_state: "none" },
   { project_id: "p-app", number: 203, requested_reviewers: [{ name: "you", kind: "user" }], comment_count: 3, viewer_review_state: "none" },
-  { project_id: "p-app", number: 205, requested_reviewers: [], comment_count: 3, viewer_review_state: "approved" },
+  { project_id: "p-app", number: 205, requested_reviewers: [], comment_count: 3, viewer_review_state: "approved", approval_count: 1 },
   { project_id: "p-app", number: 210, requested_reviewers: [{ name: "sam", kind: "user" }], comment_count: 3, viewer_review_state: "none" },
   // A forge that gives none of these: every cell shows an en dash.
   { project_id: "p-app", number: 57 },
@@ -1370,4 +1420,47 @@ export function limits(scenario: string, checkedAt: string): LimitsOverview {
     default:
       return { pooled: [], engines: [claude, codex(weekly)], unavailable: [] };
   }
+}
+
+/**
+ * DEV AND TEST ONLY: the "codemode" scenario's thread log (docs/code-mode.md). It replaces the log of t-approval with a search, a
+ * describe, a finished run, a run that paused on an approval, and the approval itself with a `via`. The run records behind
+ * them are in mock/codemode.ts. The approval's `via` is display-only and not on the wire yet.
+ */
+export function codeModeLog(): WireThreadEvent[] {
+  const server = "mcp__orbyn_engineering__";
+  const script = ["const all = await tools.orbyn_thread_list({});", "const failed = [];", "for (const t of all) {", "  const r = await tools.orbyn_thread_read({ thread_id: t.id });", '  if (r.status === "failed") failed.push(t.id);', "}", "console.log(failed.length + ' of ' + all.length + ' failed');", "await tools.orbyn_thread_send({ thread_id: failed[0], prompt: 'Re-run the failing test and report back.' });", "return failed;"].join("\n");
+  const first = (id: string, runId: string, status: "completed" | "paused") =>
+    tool(id, `${server}orbyn_code_run`, JSON.stringify({ code: script }), JSON.stringify(status === "completed" ? { status, runId, result: ["t_52"], logs: ["1 of 3 failed"] } : { status, runId, pending: [{ tool: "orbyn_thread_send", call: 5 }] }));
+  return sequence(
+    logOf("t-approval", "r-approval", -360, [
+      { type: "RUN_STARTED", threadId: "t-approval", runId: "r-approval" },
+      ...user("u1", "Find the threads that failed and ask the first one to re-run its test."),
+      ...assistant("a0", "I will check every thread with one script instead of one call each."),
+      ...tool("c1", `${server}orbyn_code_search`, '{"query":"send a message to a thread","detail":"summary","limit":10}', JSON.stringify({ results: [{ path: "orbyn_thread_send", description: "Queue a message on a thread." }, { path: "orbyn_thread_search", description: "Threads in this project matching every word." }] })),
+      ...tool("c2", `${server}orbyn_code_describe`, '{"paths":["orbyn_thread_send","orbyn_thread_sned"]}', JSON.stringify({ declarations: ["/** Queue a message on a thread. */\ndeclare function orbyn_thread_send(args: {\n  thread_id: string;\n  prompt: string;\n}): Promise<unknown>;"], unknown: ["orbyn_thread_sned"] })),
+      ...first("c3", "run_done", "completed"),
+      ...first("c4", "run_paused", "paused"),
+      codeModeApprovalSnapshot(),
+    ]),
+  );
+}
+
+const codeModeApprovalSnapshot = (): AgUiEvent => approvalSnapshot(codeModeApproval());
+
+/** MOCK ONLY: the pending approval an inner call of the paused run asked for, with the `via` the backend will add. */
+export function codeModeApproval(): Approval {
+  return {
+    id: "ap-code",
+    thread_id: "t-approval",
+    run_id: "r-approval",
+    kind: "tool",
+    summary: "Use orbyn_project_create in /Users/dev/code/orbyn-planner-experiments",
+    detail: { tool: "orbyn_project_create", folder: "/Users/dev/code/orbyn-planner-experiments", name: "Planner experiments", options: { git_init: true, template: "empty" }, files: ["README.md", "notes/ideas.md"] },
+    state: "pending",
+    decided_by: null,
+    decided_at: null,
+    created_at: iso(-60),
+    via: { code_run: "run_paused", call: 5, script_sha256: "3f9a1c8d2b7e4f60a1b2c3d4e5f60718293a4b5c6d7e8f9012345678901e07" },
+  } as Approval;
 }

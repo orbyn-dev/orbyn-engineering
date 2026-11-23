@@ -29,7 +29,14 @@ struct Ready {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServiceMessage {
     CheckAppUpdate,
-    InstallAppUpdate,
+    DownloadAppUpdate {
+        release_id: String,
+        operation: u32,
+    },
+    InstallAppUpdate {
+        release_id: String,
+        operation: u32,
+    },
     ShellAction {
         action: ShellAction,
     },
@@ -200,6 +207,10 @@ impl CoreProcess {
             .stdout(Stdio::piped())
             .stderr(stderr)
             .env("NO_COLOR", "1");
+        // The service starts its engine host from this path. With none, it keeps the Rust drivers.
+        if let Some(host) = sidecar_path()?.parent().and_then(crate::engine_host::beside) {
+            command.env(crate::engine_host::ENV, host);
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;

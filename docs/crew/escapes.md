@@ -1,7 +1,26 @@
 # Crew escape flywheel: backend design
 
-Design note for the escape backend (beta item 4k, U2); no code. The screens exist as display-only Preview frames (`escape-*`,
-Crew Designs v20, [crew.md](../crew.md) "slice 4f, UI part C"). Reverts are counted today (4j); escapes are not: `escapes` is `null`.
+Design note for the escape backend (beta item 4k, U2). Status: PRs 1 to 4 are built, the web screens of PR 5 (5a-5c) are built, and
+capacity-pressure retention (issue #686, built in #757, migration 58) is built, as the as-built sections below record.
+Not built: the report and per-area counts backend (so `escape-dashboard` and the two route-counts frames stay drawn), the Review
+queue that would open `escape-report`'s mark dialog and the scan from the merge and revert paths. Retention
+is capacity-driven, not age-based: nothing is pruned until a project's log is full. The screens are Crew Designs v79 on the real reads
+(`escape-*`, [crew.md](../crew.md) "slice 4f, UI part C"); 22 of 28 frames are live and six are still drawn: four redrawn at v79 and
+the two `escape-create-check*` at v20. All of them open by `#/preview/crew/<frame>`, which exists only in a build with the dev-only
+previews flag. **Reached from the app (Crew Designs v87, behind `crew_preview`):** Settings › Crew has an Escapes row (button "Open", read out as "Open Escapes", no value
+chip) that opens the live log at `#/settings/crew/escapes`; a row of the log opens that escape's page at `#/settings/crew/escapes/detail?id=`;
+the log header carries a Coverage link to the coverage map for the same project (`entry-crew-coverage-link-log` and its narrow variants) and a
+Settings link to the thresholds page (`escape-settings`, read only) at `#/settings/crew/escapes/settings`. Under the header a tab strip, "All escapes"
+and "Possible N", opens the possible list (`escape-possible`) at `#/settings/crew/escapes/possible` for the same project (`?repo=`); N is the log's own
+Possible count (`GET /escapes`), an ellipsis read out as "reading" while it loads and a dash read out as "can't read" when it fails, never a 0 that was
+not measured. With none waiting the list says "Nothing waits for you" (`entry-crew-possible-empty`) and draws no confirmed table. The coverage map
+shows "Back to escapes" or "Back to Review capacity" at its top left only when its address says where it was opened from (`?from=escapes` or
+`?from=capacity`, set by the two Coverage links); with no origin, or one it does not know, there is no control, and history is never read. The
+escape thresholds page shows "Back to escapes" above its title (the log, `#/settings/crew/escapes`), and the log and the possible list show
+"Back to Review" above the title in a 640 px window and in the 320 px panel (not at the full width, which keeps its crumb; Crew Designs v371).
+Review is Planned, so "Back to Review" returns to Settings › Crew (`#/settings/crew`) until a Review tab exists. The
+Review-tab Escapes section (`entry-crew-review-escapes*`) is not built because the beta has no Review tab, and the log keeps its existing
+"Dashboard › Escape log" crumb, which no beta page backs. Browser Back works. See "Propose a check" below for the act wired inside the detail page.
 
 ## What an escape is
 
@@ -51,10 +70,15 @@ counts, checks added, being written and failed, and a per-week series, grouped b
 (`risk::area_of`) and **lane**. A group under 10 merges returns `rate: null`, `low_sample: true`; a rate uses confirmed escapes only. An escape counts
 against the engine, model and area copied from the merge **when logged**. A hard-deleted lead thread drops out, as for 4j.
 
-## Screens to wire
+## Screens and the reads they need
 
-All are `#/preview/crew/<frame>` in `web/src/features/crew/escape/`, on literal sample data with every button disabled;
-`web/mock/` has no escape data. Frame ids: Crew Designs v20 in `orbyn-designs` (path in `docs/match-kit.md`).
+All are `#/preview/crew/<frame>` in `web/src/features/crew/escape/`, reachable only in a build with the dev-only previews flag
+(`__ORBYN_PREVIEWS__`); the log and an escape's page are also reached from Settings › Crew (see above), the other frames are not. Since PR 5 (see "As built: PR 5, web screens") every frame except the six drawn ones below reads the real
+service. The table keeps the read each frame needs; `web/mock/` has no escape data. Frame ids: Crew Designs v20 in `orbyn-designs`
+(path in `docs/match-kit.md`).
+
+Still drawn on sample data, every button disabled: `escape-report`, `escape-dashboard`, `escape-route-counts`, `-route-shifted`,
+`escape-create-check` and `-tooling`.
 
 | Frame | Needs |
 | --- | --- |
@@ -74,14 +98,16 @@ migration PR to merge takes the next free number and any other renumbers at its 
 - `crew_escapes(id PK, project_id, merge_task_id UNIQUE REFERENCES crew_merges(task_id), source, state, gap, gap_by, engine,
   model, areas, lane, reason, found_unix, decided_unix, decided_by)`. `state`: `possible`, `confirmed`, `dismissed`.
   `source` and `gap` are checked enums. `reason` is at most 200 characters, redacted by the same scrub the ledger uses.
-- `crew_escape_events` (append-only, UPDATE and DELETE refused by triggers, like `crew_area_events`): `detected`, `confirmed`,
+- `crew_escape_events` (append-only outside migration 58's audited retention path; UPDATE always refused): `detected`, `confirmed`,
   `dismissed`, `reclassified`, `check_proposed`, `check_failed`, `check_proven`, `check_merged`, `check_withdrawn`;
   unique `(escape_id, kind, cause)`. The audit row is written in the same transaction as the state change (rule 6).
 - `crew_escape_checks(escape_id PK, path, task_id, state, proof)`; `proof` is JSON: commit ids and two booleans.
 
 **Stored:** ids, commit ids, paths, enums, areas, engine and model names, one short reason. **Never stored:** diffs, test bodies,
-command output, prompts, secrets or comment text. On this device only (rule 4). Limits: 5,000 escapes and 20,000 events per
-project; oldest `dismissed` and `possible` rows go first, `confirmed` never. Unreadable fails closed (rule 7).
+command output, prompts, secrets or comment text. On this device only (rule 4). Person and scan admission limits are 5,000 escapes and
+20,000 events per project; capacity pressure clears oldest `dismissed`, then oldest `possible` rows, never confirmed or check-bearing history.
+Core-owned check completion events remain durable even when a legacy/full log has no room; this is not a hard cap on all event writers.
+Unreadable fails closed (rule 7).
 
 ## HTTP and route classes
 
@@ -95,7 +121,7 @@ follow [worker-token-isolation.md](../worker-token-isolation.md), not built: `lo
 | `POST /escapes/mark`, `/escapes/{id}/confirm`, `/dismiss`, `/gap` | Person |
 | `POST /escapes/{id}/check` (propose), `/check/accept`, `/check/retry`, `/check/withdraw` | Person |
 
-Each write takes a `seen` token (a mismatch is `409 stale`, as areas do) and answers with the escape as it now stands.
+Confirm, dismiss and gap take a `seen` token (a mismatch is `409 stale`, as areas do). Mark accepts an optional `seen`: without it the mark itself is the explicit confirmation, including an existing possible escape. A supplied token is checked. Each answers with the escape as it now stands.
 `check/accept` is the only route that starts a worker.
 
 ## PR plan
@@ -124,11 +150,11 @@ Migration **51** (`store/crew_escapes.sql`), numbered when it opened; a later me
   drops out, as for 4j. A failure to log never undoes a revert (`ON CONFLICT DO NOTHING`; any other refusal still errors).
 - **Routes** (Preview-gated, class **Local**, in `READS`; writes are PR 2, as Person): `GET /api/crew/escapes?project=&state=&limit=&offset=`
   (counts for the report window by engine, possible, confirmed and dismissed apart, no rate, `low_sample`; one page of rows, newest found first),
-  `GET /api/crew/escapes/{id}` (the escape and its trail, at most 100 rows) and `GET /api/crew/escapes/thresholds`. A damaged log is `500 unreadable`.
+  `GET /api/crew/escapes/{id}` (the escape and its latest 100 events, in ascending append order) and `GET /api/crew/escapes/thresholds`. A damaged log is `500 unreadable`.
 - **Thresholds** are one JSON document in the existing `settings` table under `crew_escape_thresholds` (not a `pref:` key, so the account sync never
   carries it): `report_days` 60, `follow_up_days` 14, `min_merges` 10, `rate_multiple` 2; `stored` says whether a person's values are in force.
   Absent means defaults; present but unparsable, unknown-field or out of range is `unreadable`, never the defaults.
-- **Limits not built.** The 5,000-escape and 20,000-event pruning is still not built (PR 2's writer refuses to pass either limit instead); `DELETE` on events is refused by trigger, so pruning needs its own removal path. `crew_merges.areas` is `CHECK(json_valid)`, so the revert trigger cannot see invalid JSON; valid JSON that is not a list of strings makes reads of that row `unreadable`.
+- **Retention.** Migration 58 adds the guarded clearing path below. `crew_merges.areas` is `CHECK(json_valid)`, so the revert trigger cannot see invalid JSON; valid JSON that is not a list of strings makes reads of that row `unreadable`.
 - **Display only.** Nothing reads the log for a decision: the breaker, the Router and every gate ignore it (decision 2). Test-covered for the breaker.
 
 ## As built: PR 2, person acts
@@ -151,7 +177,7 @@ No migration. `store/crew_escape_person.rs` (the writes), `crew/escapes/person.r
 - **Audit first, one transaction** (rule 6): the ledger's audit row (`crew.escape.confirm`, `.dismiss`, `.mark`, `.gap`; who `user`, when, the
   note), then the state change, then the `crew_escape_events` row (`confirmed`, `dismissed`, `reclassified` for a gap; a mark writes `detected` then
   `confirmed`) whose `cause` is `person:<audit id>`. The state is read and compared inside the immediate transaction and the `UPDATE` repeats the
-  old state, so two acts racing leave one decision. A mark that would pass 5,000 escapes, or any act that would pass 20,000 events, is refused.
+  old state, so two acts racing leave one decision. If admission would pass 5,000 escapes or 20,000 events, the same transaction first plans and audits eligible retention. If protected history leaves too little room, the act is refused without deleting anything.
 - **Authority.** `Person` and enforced (`routes/classes.rs`, `tests/routes.json`, `web/src/api/personKey.ts`): browser mode and the CLI get
   `403 desktop_required`, a remote viewer `403 local_only`, the flag off `404`. All four are in `crew::changes::STATE_CHANGING`, so an agent's
   request is refused by path (N1); no MCP tool, CLI command, timer or scan calls them. Nothing confirms by itself: detection, the revert trigger
@@ -202,12 +228,49 @@ No migration (the PR 1 tables already hold `post_merge_check` and `follow_up_fix
   (`ORBYN_CREW_WATCH_INTERVAL_SECS`; none when that is off). No route, tool or CLI command runs it. A later PR may also call `crew_escape_scan` from the merge and revert paths.
 - **Bounds.** Per scan: 50 merges, 200 later commits per merge, 300 git calls, 60 seconds. Each git call is cut at the scan's deadline and its output is capped (1 MiB for the log, name lists and blame, 256 KiB for a diff). A capped `diff-tree`, `diff` or `blame` skips only that fix or file; a capped `log`, name list or `rev-list`, or an unreadable repository, skips the merge: it is counted as skipped, never half read. stdout and stderr are read together, so a chatty stderr cannot stall a call. The log is NUL-separated and every parsed commit id is checked against `rev-list <merge>..refs/heads/<branch>`, so a commit message cannot forge an entry; paths are literal pathspecs; the branch is read as `refs/heads/<branch>` (a tag of the same name cannot stand in).
   **Rotation.** A merge with no signal never gets a row, so the scan keeps a cursor (the merge time and id of the last merge passed over) in `settings` under `crew_escape_scan_cursor`, device config like the thresholds; a damaged value reads as none and is overwritten. The next scan resumes after it and wraps to the newest at the end, so every merge in the window is reached over successive scans. The cursor is written after the escape rows. A batch the writer refuses (it would pass 5,000 escapes or 20,000 events) is treated like a project that was full before git ran: counted as `refused`, passed over, and retried when the scan wraps. A merge that alone cannot be read inside the scan's time (or whose log is always over its cap) is counted as skipped and passed over, so no one merge pins the scan. A merge skipped this way is not scanned for its signals until it can be read.
-  A project at 5,000 escapes or 20,000 events is refused whole before any git runs, and a batch that would pass either limit is refused whole by the writer: nothing is
-  partly written, the scan reports `refused` and logs a plain sentence. Pruning is still not built.
+  The scan asks the store whether a project can record before any git runs (`crew_escape_can_record`); a project that cannot is skipped with nothing written and counted `refused`. A batch that would pass 5,000 escapes or 20,000 events goes to the writer, which first plans retention (oldest dismissed, then oldest possible; confirmed escapes and escapes with a check are kept, see "Capacity pressure and writer migration (#686)") and refuses the batch whole, writing nothing, only when protected history leaves too little room. The log page says the same in its limit banner (`escape-limit`, #857).
 - **Choices where the note is silent:** the order of signals when several fire, the bisect and re-land filters, blame (not a line-number overlap) as the meaning of "overlapping
   hunk", the 60-day candidate window, the own-tick runner instead of merge hooks, and `post_merge_check`'s cause being the merge commit.
 - **Known limit.** The schema's revert trigger records a crew revert only for a merge with no escape row. If the scan already logged a `follow_up_fix` or `post_merge_check` for a merge, a later crew revert of it does not add a `revert` source or event to that escape (one escape per merge); the merge row still says `reverted`, and a person decides the escape as usual.
 - **Not built.** A scan from the merge and revert paths; per-merge model and lane; any trigger from a route (a person's "scan now" is not in the route plan).
+
+## Capacity pressure and writer migration (#686, #757)
+
+Migration **58** preserves all existing rows and trails. A changed gap is refused before it would exceed the 100-event detail limit; a possible
+escape stops gap changes at 99 events, reserving event 100 for confirm or dismiss. An identical gap on a non-dismissed escape remains an idempotent
+retry, including at capacity. A dismissed escape refuses every gap write, including an identical gap. Existing oversized trails are retained and get no more gap changes. The reserved final visible slot applies to new trails that have not already exceeded the cap.
+Detail reads retrieve the newest 101 events, use the extra event only to set `truncated`, and return the latest 100 in ascending append order, so a legacy trail's
+latest confirmation or dismissal remains visible. No stored history is removed by a read. The existing oldest-first `crew_escape_events` reader remains
+unchanged for initial detected-event provenance in check proof and backtest fix resolution. Check events are not subject to the gap-only cap.
+
+`store/crew_escape_retention.rs` serves person actions, person check actions, scanner writes and the normal revert API. Under capacity pressure it
+plans enough room before mutating, excluding the operation's current escape, confirmed escapes, any current check row, and every escape named by
+permanent `crew_escape_check_tasks`. Eligible dismissed rows go before possible rows; each class is ordered by oldest found time, then id.
+Other projects are untouched. Events without a surviving, classifiable owning escape, or with a mismatched project, are retained and unprunable.
+A log containing only protected history refuses truthfully; there is no manual clear control or promise that the person can delete that history.
+
+For each eviction, the same immediate transaction writes `crew.escape.retain` to the permanent audit ledger, records a compact immutable
+`crew_escape_tombstones` row (merge task, project, evicted state/time and audit id), opens a validated deletion grant, removes the eligible events
+and escape, and closes the grant. Normal event DELETE and all event UPDATE remain refused. A later failure rolls the whole operation back,
+including evictions, grants and tombstones. Runtime code never drops or recreates a trigger. Parent-merge deletion may still remove an escape
+through its existing foreign key, leaving its immutable orphan trail; retention does not guess that trail's state.
+
+Tombstones suppress candidates, scanner writes and SQL revert detection permanently. A dismissed tombstone also refuses a person's mark.
+A possible tombstone permits an explicit mark without `seen`, creating a new confirmed row; it still suppresses automatic detection. Tombstones,
+check-task proof mappings and permanent audit receipts are never pruned: their compact storage can grow with historical merges.
+
+Scanner preflight only reads a capacity plan, so an eligible full log still gets scanned. The writer validates still-existing project-owned merges and deduplicates
+admissions before planning under the immediate writer transaction. Missing or foreign merges and a no-op revert of a non-merged task clear no history.
+The writer re-evaluates current states; a concurrent confirmation cannot be deleted as possible. A direct SQL revert at capacity skips logging
+and never undoes the revert. The normal API can clear eligible history first; only the typed unprunable-capacity outcome may skip logging, while
+unreadable/store/audit errors propagate. Existing core-owned check finish/merge events retain their original durable semantics and can exceed the
+admission limit; they are not silently dropped to manufacture a hard cap.
+
+Current `Store` connections register escape writer protocol 57 before migrating. New triggers reject affected escape/event/check writes from an
+already-open older connection that lacks that protocol function; older services also reject schema 58 on reopen through the existing schema-version
+check. No deployed old process is assumed stopped by these source tests: normal Core startup still owns the data-directory lock. Migration is
+forward-only and tested on a populated schema-56 database (the test applies migrations up to 56, then opens it with the current store, which applies 57 and 58). After an error, reopen with a compatible current service and retry; do not remove the
+fence or restart an older writer against migrated data. Direct database tools must use the current writer protocol rather than bypass triggers.
 
 ## As built: PR 4, create a check
 
@@ -254,7 +317,7 @@ run, fix_commit, task_id, state, proof, note, attempts, diff_commit, diff_hash, 
   - **Where it runs.** Each run is in a fresh scratch folder under the device's data folder (`crew-escape-proof/<id>`) with its own `tree` (made from `git archive` of that commit, so the person's `.git` (config,
     hooks, other branches) is not there, and any symlink or hard link in the commit is left out), `home` and `tmp`. The one test file is laid over the tree without following any link (each folder on the way is checked
     with `symlink_metadata`; a link or a file where a folder belongs is refused). The folder is removed after each run, and the tick removes any a crash left behind.
-  - **What the command gets.** Its output and input are discarded. It has a time limit and stops at once when the check is withdrawn. Its whole process tree is reaped at the deadline, on a withdraw and on drop, a `setsid` child included (macOS and Linux: the descendants are read from the process table while the leader is unreaped, recorded with their start time, and killed on drop; Windows: the job object). Limits (#704 stays open for them): a descendant already orphaned to `init` before any snapshot (a double fork whose middle process has exited, or a leader that exits within the 100 ms between two records), one forked after the last freeze round, and, for `terminate`, a child forked between the snapshot and the signal; closing them needs a container such as a cgroup or a launchd job. Where the process table cannot be read (`/proc` missing or refused, `libproc` refusing, another Unix) only the process group is killed. Only the proof records descendants while it runs, and `terminate` records those of the tree it is called on; a worker whose leader exits normally and is then dropped gets the group kill, as before. A terminal tab keeps the group-only kill. A credential folder too large to check for links makes the proof unconfined (a person approves it). It runs off the tick's critical path. Its environment is cleared and set to
+  - **What the command gets.** Its output and input are discarded. It has a time limit and stops at once when the check is withdrawn. Its whole process tree is reaped at the deadline, on a withdraw and on drop, a `setsid` child included (macOS and Linux: the descendants are read from the process table while the leader is unreaped, recorded with their start time, and killed on drop; Linux also makes the leader a subreaper, so a double-forked child is adopted back under it and the same read finds it; Windows: the job object). Limits (#704 stays open for the rest): on macOS a descendant already orphaned to `init` before any snapshot (a double fork whose middle process has exited), on both a leader that exits within the 100 ms between two records, a descendant forked after the last freeze round, and, for `terminate`, a child forked between the snapshot and the signal; closing those needs a container such as a cgroup or a launchd job. Where the process table cannot be read (`/proc` missing or refused, `libproc` refusing, another Unix) only the process group is killed. Only the proof records descendants while it runs, and `terminate` records those of the tree it is called on; a worker whose leader exits normally and is then dropped gets the group kill, as before. A terminal tab keeps the group-only kill. A credential folder too large to check for links makes the proof unconfined (a person approves it). It runs off the tick's critical path. Its environment is cleared and set to
     exactly `PATH`, `HOME` (the scratch `home`), `TMPDIR` (the scratch `tmp`), `LANG` and `CI=1` (plus what Windows needs to start a program): no token, key, session marker or account variable is inherited.
     The person's `run` command is arbitrary code the person wrote; apart from the restriction below it runs as the person.
   - **Confinement, or an approval.** Where the machine can confine it (macOS `sandbox-exec`) the proof runs under **the profile a Crew worker gets** (`host/confine/macos.rs`, so every worker rule is inherited: the data
@@ -297,6 +360,48 @@ run, fix_commit, task_id, state, proof, note, attempts, diff_commit, diff_hash, 
   feed no breaker or router.
 - **Limits.** The proof lays one file over a commit, so a test that needs the worker's source changes to compile fails on both and is refused. The test environment's fake worker works in the project's own checkout, so the
   tests reset it between attempts; a real worker has its own worktree. Off macOS there is no confinement: the approval is the control.
+
+## As built: PR 5, web screens
+
+Three web PRs (5a, 5b, 5c): no migration, no route, no read field and no new write. The web binds the reads and person acts
+PR 1 to PR 4 already serve; 22 of the 28 frame ids in `web/src/features/crew/escape/names.ts` are live, and six stay drawn.
+
+- **Live (real reads).** `escape-log`, `-empty`, `-low-sample` and `-error` (5a) and `escape-limit` (5b) on `GET /escapes`;
+  `escape-possible` (5a) on `GET /escapes/possible`; `escape-detail`, `-detail-tooling`, `-confirmed`, `-dismissed` and
+  `-gap` (5a), and the eight `escape-check-*` frames (5b), on `GET /escapes/{id}`. A check's propose, accept, approve, retry and
+  withdraw send the person's own check routes, and its retry, withdraw and approve are that page with its dialog opened by a
+  click. **Propose a check** (`live/propose.tsx`) is the design's `escape-create-check` dialog on the real `POST /escapes/{id}/check`:
+  the button on a confirmed escape with no check (or whose check was withdrawn, and whose gap is not a tooling gap) opens a dialog
+  on `web/src/ui/Dialog.tsx` with the escape's name, merge, what it counts against and its gap (read only), and the person's own
+  new test file, what it asserts, how it runs and an optional commit it must pass on (left out of the body when empty, so the
+  service uses the revert or fix it recorded). Nothing is sent before "Propose the check"; the body carries `project` and `seen`
+  (the escape's state and gap and the check's state); the dialog is busy while the write is in flight, one press sends one write,
+  and a refusal (`stale`, a path the rules refuse, a tooling gap) shows the service's own words with what was typed kept. A proposal only
+  writes a row: accepting stays the only act that starts a worker. The path rules are the service's, so the form checks none.
+  The Planned pill on the button is gone; the model row and the tooling-gap proposal keep theirs. `escape-settings` (5c) reads `GET /escapes/thresholds` (read only); `escape-narrow-window` and `-narrow-panel`
+  (5c) are the same log read in the design's 640 px window and its 320 px side panel.
+- **Still drawn samples, six.** `escape-report` (the Review item's mark dialog: the beta has no Review queue to open it from,
+  and its how-found and the fix fields are Planned), `escape-dashboard` and `escape-route-counts` / `-shifted` (the report
+  and per-area counts routes are not built; every figure is Not measured, never a zero), and `escape-create-check*` (the
+  v20 sample with the Review queue behind it; its dialog is built on the escape's own page, see Propose a check above).
+  They are drawn at v79 with Planned pills, and `escape-create-check*` stays at v20.
+- **Where it lives.** `web/src/features/crew/escape/live/screens.tsx` maps each live frame to its read, and
+  `LiveEscapeLog.tsx`, `LiveEscapePossible.tsx`, `LiveEscapeDetail.tsx`, `live/check.tsx` and `LiveEscapeSettings.tsx`
+  draw them over `live/api.ts` and `live/useEscapes.ts`; `screens.ts` splits live from drawn and `names.ts` lists every
+  frame. The drawn frames are `report.tsx`, `dashboard.tsx`, `route-counts.tsx`, `route-shifted.tsx`, `create-check.tsx`
+  and `create-check-tooling.tsx`. Tests: `live/*.test.tsx`, `frames.test.ts` and `web/e2e/crew-designs.spec.ts`.
+- **Writes stay a person's.** Every act is a person's click carrying `seen`; a stale answer shows the service's own words and
+  reloads, and drawing a screen never writes. Settings save stays Planned (the thresholds read is bound; no write).
+- **Derived, not invented.** The log's limit banner draws only when the unfiltered read's total reaches the store's own 5,000 cap
+  (`ESCAPES_PER_PROJECT_MAX`, `store/crew_escapes.rs`). It follows retention (#757), not a refusal: "This project holds 5,000 escapes,
+  the limit. To make room for a new escape, the oldest dismissed escapes, then the oldest possible ones, are removed. Confirmed
+  escapes and escapes with a check are kept. If every escape is kept, a new one is refused. How many are kept now: Not measured."
+  The log read carries the total but no kept count and no retention result, so that figure reads Not measured with a Planned pill.
+  The 20,000-event limit is not on the read, so the banner does not name it. The log's heading names the count the read returns; the narrow panel
+  draws the frame's first four cards, the narrow window the page's rows. Rate, gap and check counts read Not measured while the
+  report route does not exist.
+- **Not built.** No report or counts backend; a merged escape's "Merged to main" timeline row and the escape page's as-of line are absent because
+  the detail read carries no `as_of` (the log read does, and its page shows it) and no read carries the merge row; the Review queue item that would open Propose a check is not in the beta, so the dialog opens from the escape's own page.
 
 ## Decisions (owner)
 

@@ -2,6 +2,7 @@
 
 mod support;
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -212,6 +213,98 @@ async fn delete_takes_descendants_but_refuses_a_busy_family() {
     assert_eq!(audit[0]["action"], "thread.delete");
 }
 
+/// Forks a child from a thread and checks the stored edge.
+async fn fork(service: &Service, parent: &str, side: bool) -> String {
+    let (status, thread) = service
+        .send(
+            &format!("/api/threads/{parent}/fork"),
+            json!({ "side": side }),
+        )
+        .await;
+    assert_eq!(status, 201, "{thread}");
+    assert_eq!(thread["lifecycle"]["parent_thread_id"], parent);
+    thread["id"].as_str().unwrap().to_owned()
+}
+
+async fn family(service: &Service, thread: &str) -> Value {
+    service.json(&format!("/api/threads/{thread}/family")).await
+}
+
+/// The family read walks the stored `parent_thread_id` tree, so a fork, a side chat
+/// and their own forks come back together, and a thread outside the tree never does.
+#[tokio::test]
+async fn a_thread_family_is_the_whole_parent_child_tree_and_leaves_unrelated_threads_out() {
+    let dir = TempDir::new();
+    let (service, root) = setup(&dir, Options::default(), "codex").await;
+    let project = project_of(&service).await;
+    let side = fork(&service, &root, true).await;
+    let child = fork(&service, &side, false).await;
+    let grandchild = fork(&service, &child, false).await;
+    let peer = service.thread(&project, "codex").await;
+    assert_eq!(
+        service
+            .patch(&grandchild, json!({ "archived": true }))
+            .await
+            .0,
+        200
+    );
+
+    let expected = BTreeSet::from([
+        root.as_str(),
+        side.as_str(),
+        child.as_str(),
+        grandchild.as_str(),
+    ]);
+    // Asking any member gives the same tree, from the top.
+    for asked in [&root, &side, &child, &grandchild] {
+        let answer = family(&service, asked).await;
+        assert_eq!(answer["thread_id"], asked.as_str(), "{answer}");
+        assert_eq!(answer["root_thread_id"], root.as_str(), "{answer}");
+        let members = answer["threads"].as_array().unwrap();
+        let ids: Vec<&str> = members
+            .iter()
+            .map(|thread| thread["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ids.iter().copied().collect::<BTreeSet<_>>(),
+            expected,
+            "{answer}"
+        );
+        assert_eq!(ids[0], root.as_str(), "the root comes first: {answer}");
+        assert!(!ids.contains(&peer.as_str()), "{answer}");
+        let position = |id: &str| ids.iter().position(|one| *one == id).unwrap();
+        assert!(position(&root) < position(&side));
+        assert!(position(&side) < position(&child));
+        assert!(position(&child) < position(&grandchild));
+        // The relation is the store's, not a second lineage.
+        let member = |id: &str| {
+            members
+                .iter()
+                .find(|thread| thread["id"] == id)
+                .unwrap_or_else(|| panic!("{id} is in the family"))
+                .clone()
+        };
+        assert!(member(&root)["lifecycle"]["parent_thread_id"].is_null());
+        assert_eq!(member(&side)["lifecycle"]["relation"], "side");
+        assert_eq!(member(&child)["lifecycle"]["relation"], "fork");
+        assert_eq!(member(&grandchild)["lifecycle"]["relation"], "fork");
+        // Archiving hides a thread from the list, not from its family.
+        assert!(member(&grandchild)["lifecycle"]["archived_at"].is_string());
+    }
+
+    // An unrelated thread's family is itself alone.
+    let alone = family(&service, &peer).await;
+    assert_eq!(alone["root_thread_id"], peer.as_str());
+    assert_eq!(alone["threads"].as_array().unwrap().len(), 1);
+
+    let missing = service
+        .get("/api/threads/not-a-thread/family")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), 404);
+}
+
 #[tokio::test]
 async fn rename_validates_and_audits() {
     let dir = TempDir::new();
@@ -334,6 +427,105 @@ async fn the_chosen_text_model_is_used_where_the_engine_lists_it() {
     wait_for_title(&service, &thread, "A fresh title").await;
     let args = std::fs::read_to_string(args_file(&record)).unwrap();
     assert!(args.contains("fake-big"), "{args}");
+}
+
+#[tokio::test]
+async fn the_per_engine_text_model_names_the_first_message_title() {
+    let dir = TempDir::new();
+    let (record, options) = title_options(&dir);
+    let (service, thread) = setup(&dir, options, "codex").await;
+    set_preference(
+        &service,
+        json!({ "text_generation_models": { "codex": "fake-big", "claude": "fable" } }),
+    )
+    .await;
+    service.admit(&thread, "first").await;
+    service.finished(&thread).await;
+    wait_for_title(&service, &thread, "A fresh title").await;
+    let args = std::fs::read_to_string(args_file(&record)).unwrap();
+    assert!(args.contains("fake-big"), "{args}");
+    assert!(!args.contains("fable"), "{args}");
+}
+
+#[tokio::test]
+async fn another_engines_entry_is_not_sent_to_this_titles_engine() {
+    let dir = TempDir::new();
+    let (record, options) = title_options(&dir);
+    let (service, thread) = setup(&dir, options, "codex").await;
+    set_preference(
+        &service,
+        json!({ "text_generation_models": { "claude": "fake-big" } }),
+    )
+    .await;
+    service.admit(&thread, "first").await;
+    service.finished(&thread).await;
+    wait_for_title(&service, &thread, "A fresh title").await;
+    let args = std::fs::read_to_string(args_file(&record)).unwrap();
+    assert!(args.contains("fake-small"), "the small model: {args}");
+    assert!(!args.contains("fake-big"), "{args}");
+}
+
+#[tokio::test]
+async fn the_text_generators_read_lists_models_choices_and_project_scope() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let project = service.json(&format!("/api/threads/{thread}")).await["project_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let engine = |read: &Value, id: &str| {
+        read["engines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["engine"] == id)
+            .unwrap_or_else(|| panic!("{id} not in {read}"))
+            .clone()
+    };
+
+    // The first read lists the catalog and resolves to the small model.
+    let read = service.json("/api/text-generators").await;
+    let codex = engine(&read, "codex");
+    assert!(
+        codex["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|model| model["id"] == "fake-big"),
+        "{codex}"
+    );
+    assert!(codex["chosen"].is_null(), "{codex}");
+    assert_eq!(codex["resolved"], "fake-small");
+    assert_eq!(codex["reason"], "small");
+
+    // A listed model is accepted, and the project read carries the same choice.
+    set_preference(
+        &service,
+        json!({ "text_generation_models": { "codex": "fake-big" } }),
+    )
+    .await;
+    let read = service
+        .json(&format!("/api/text-generators?project={project}"))
+        .await;
+    let codex = engine(&read, "codex");
+    assert_eq!(codex["chosen"], "fake-big");
+    assert_eq!(codex["resolved"], "fake-big");
+    assert_eq!(codex["reason"], "chosen");
+    assert_eq!(codex["project"]["project_id"], project);
+    assert_eq!(codex["project"]["chosen"], "fake-big");
+    assert_eq!(codex["project"]["resolved"], "fake-big");
+    assert_eq!(codex["project"]["reason"], "chosen");
+
+    // Once the engine has listed, a model it does not offer is refused.
+    let response = service
+        .client
+        .put(format!("{}/api/preferences", service.url))
+        .bearer_auth(&service.token)
+        .json(&json!({"values": {"text_generation_models": {"codex": "not-a-model"}}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 400);
 }
 
 #[tokio::test]
@@ -481,6 +673,88 @@ async fn message_search_opens_at_the_message_and_keeps_to_its_scope() {
         json!([]),
         "deleting a thread deletes its text"
     );
+}
+
+#[tokio::test]
+async fn message_search_streams_the_same_matches_in_order() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "rename the billing helper").await;
+    service.finished(&thread).await;
+    service
+        .admit(&thread, "billing again after the rename")
+        .await;
+    service.finished(&thread).await;
+
+    let whole = search(&service, &[("q", "billing")]).await;
+    assert_eq!(
+        whole["hits"].as_array().unwrap().len(),
+        2,
+        "two prompts mention billing"
+    );
+    let frames = service
+        .sse_until("/api/search/messages/events?q=billing", |frame| {
+            frame["type"] == "done"
+        })
+        .await;
+    let streamed: Vec<&Value> = frames
+        .iter()
+        .filter(|frame| frame["type"] == "hit")
+        .map(|frame| &frame["hit"])
+        .collect();
+    assert_eq!(
+        streamed,
+        whole["hits"].as_array().unwrap().iter().collect::<Vec<_>>(),
+        "the stream returns the read's hits in the read's order"
+    );
+    let done = frames.last().unwrap();
+    assert_eq!(done["type"], "done");
+    assert_eq!(done["too_short"], false);
+    assert_eq!(done["truncated"], whole["truncated"]);
+
+    // A limit ends the stream early, exactly as it truncates the whole read.
+    let limited = service
+        .sse_until("/api/search/messages/events?q=billing&limit=1", |frame| {
+            frame["type"] == "done"
+        })
+        .await;
+    assert_eq!(
+        limited
+            .iter()
+            .filter(|frame| frame["type"] == "hit")
+            .count(),
+        1
+    );
+    assert_eq!(limited.last().unwrap()["truncated"], true);
+
+    // No matches still finishes with a frame that says so.
+    let none = service
+        .sse_until("/api/search/messages/events?q=billing%20zebra", |frame| {
+            frame["type"] == "done"
+        })
+        .await;
+    assert_eq!(none.len(), 1);
+    assert_eq!(none[0]["type"], "done");
+    assert_eq!(none[0]["truncated"], false);
+
+    // A too-short query answers as the read does, without searching.
+    let short = service
+        .sse_until("/api/search/messages/events?q=a", |frame| {
+            frame["type"] == "done"
+        })
+        .await;
+    assert_eq!(short.len(), 1);
+    assert_eq!(short[0]["too_short"], true);
+
+    // A query the read refuses is refused before any stream starts.
+    let refused = service
+        .get("/api/search/messages/events")
+        .query(&[("q", "x".repeat(201))])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 400);
+    service.stop().await;
 }
 
 #[tokio::test]

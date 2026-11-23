@@ -11,11 +11,14 @@ Everything about the coding engines Orbyn runs: which exist, how to talk to each
 | `native_sessions` | An engine's own saved conversations: list, import, delete |
 | `claude_history` | One Claude conversation read from Claude's history folder |
 | `history_import` | Claude and Codex conversations imported as threads |
+| `earlier` | An imported thread's earlier messages read from its recorded session file |
 | `console` | The engine's own console resumed in an Orbyn terminal |
+| `attention` | A quiet engine console waiting for the person: the heuristic, excerpt cleaning, and the `CUSTOM orbyn.terminal_attention` event |
 | `permission_modes` | Which permission modes each provider offers |
 | `provider_facts` | One provider's state facts (installed, signed in, broken, managed, approvals), read by the crew router's filters and the Providers list alike |
 | `provider_list` | The grouped Providers list: labels, found apps and engines not built |
 | `selection` | Model, effort and options a turn asks of its engine |
+| `text_models` | The one-shot model for thread titles and source-control writing: per engine, legacy, small, then thread, and the text-generators read |
 | `usage` | Usage from each engine's local session history |
 | `triage` | A fresh native support session outside governed runs |
 | `sse` | An incremental `text/event-stream` parser |
@@ -60,7 +63,7 @@ How the held run ends:
 
 `ORBYN_CODEX_BACKGROUND_LIMIT_MS` and `ORBYN_CODEX_BACKGROUND_IDLE_MS` set the two caps, for tests.
 
-Whenever the run ends with an agent still running, the driver emits one `background.stopped` custom event per agent: `taskId` (the thread id), `taskType: "codex_subagent"`, `description` (the agent's nickname, when known) and `reason` (`cancelled`, `new message`, `limit`, `idle`, `engine exited` or `turn ended`). A force stop aborts the task and cannot say it. The app does not show `background.stopped` yet: it is in the run's event log only, and showing it is a follow-up for the core and UI owners.
+Whenever the run ends with an agent still running, the driver emits one `background.stopped` custom event per agent: `taskId` (the thread id), `taskType: "codex_subagent"`, `description` (the agent's nickname, when known) and `reason` (`cancelled`, `new message`, `limit`, `idle`, `engine exited` or `turn ended`). A force stop aborts the task and cannot say it. The app shows it as a "Stopped when the run ended" section under the run. Claude reports its background shells and subagents the same way on run end; a Claude workflow keeps its own state (`workflow.state`, its workflow item) and never gets a `background.stopped` row ([run contract](../../../../docs/engine-run-contract.md)).
 
 Not held: background shells. A `commandExecution` item that has not completed looks the same for a dev server and for a command an interrupt left behind, and `process/exited` is only sent for processes this client started with `process/spawn`. The schema has no reliable "background terminal still running" signal, so shells are neither held nor reported.
 

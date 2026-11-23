@@ -1,0 +1,432 @@
+/* Code Mode: the script box, the call rows and the run sections (design frames codemode-*, docs/code-mode.md).
+   Tokens only; the design's --main, --line, --t1..t3 map to the app's background, border and text tokens. */
+
+.cm-sc {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-10);
+  background: var(--color-background);
+  box-shadow: 0 0 0 1px var(--color-border);
+}
+.cb > .cm-sc {
+  border-radius: 0;
+  box-shadow: none;
+}
+.cm-sh {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-textSoft);
+  font-size: 11.5px;
+}
+.cm-id {
+  color: var(--color-textSoft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-ligatures: none;
+  white-space: nowrap;
+}
+.cm-sb {
+  margin: 0;
+  padding: 6px 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  color: var(--color-text);
+  font: 11.5px/1.65 var(--font-mono);
+  font-variant-ligatures: none;
+  white-space: pre;
+}
+.cm-line {
+  white-space: pre;
+}
+.cm-sb .p {
+  color: var(--color-muted);
+  user-select: none;
+}
+.cm-sb.cm-cap {
+  max-height: 104px;
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 30px), transparent);
+  mask-image: linear-gradient(#000 calc(100% - 30px), transparent);
+}
+.cm-sb.cm-scr {
+  max-height: 260px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.cm-sf {
+  display: flex;
+  gap: 4px;
+  padding: 2px 6px;
+  border-top: 1px solid var(--color-border);
+}
+.cm-sf button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--radius-7);
+  background: transparent;
+  color: var(--color-textSoft);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cm-sf button:hover {
+  background: var(--color-selected);
+  color: var(--color-text);
+}
+.cm-sf button:focus-visible,
+.cm-skip button:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: -2px;
+}
+
+.cm-calls,
+.cm-sec,
+.cm-hits {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cm-calls {
+  padding: 4px 0;
+}
+.cm-h {
+  padding: 6px 12px 2px;
+  color: var(--color-textSoft);
+  font-size: 11.5px;
+}
+.cm-note {
+  padding: 0 12px 4px;
+  color: var(--color-textSoft);
+  font-size: 11.5px;
+}
+.cm-err .cm-h {
+  color: var(--color-danger);
+}
+.cm-err .co {
+  color: var(--color-text);
+}
+.cm-banner {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-sunken);
+  color: var(--color-textSoft);
+  font-size: var(--text-meta);
+}
+
+.cm-c {
+  display: grid;
+  grid-template-columns: 14px 16px auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+  min-height: 24px;
+  padding: 0 12px;
+  color: var(--color-textSoft);
+  font-size: 12px;
+}
+.cm-c .ci {
+  display: grid;
+  place-items: center;
+  color: var(--color-muted);
+}
+.cm-c .cn {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: right;
+}
+.cm-c .ct {
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-variant-ligatures: none;
+  white-space: nowrap;
+}
+.cm-c .cr {
+  display: flex;
+  min-width: 0;
+  color: var(--color-textSoft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-ligatures: none;
+  white-space: nowrap;
+}
+.cm-c .cr-t {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cm-c .cr-n {
+  flex: none;
+  color: var(--color-muted);
+  white-space: pre;
+}
+.cm-c .cd {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.cm-fail .cr,
+.cm-declined .cr,
+.cm-fail .ci,
+.cm-declined .ci {
+  color: var(--color-danger);
+}
+.cm-wait .cr,
+.cm-wait .ci {
+  color: var(--color-warnText);
+}
+.cm-pend .cm-c {
+  min-height: 26px;
+}
+.cm-skip button {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-textSoft);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cm-skip button:hover {
+  color: var(--color-text);
+}
+
+.cm-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 12px;
+}
+.cm-hit b {
+  color: var(--color-text);
+  font: 500 11.5px var(--font-mono);
+  font-variant-ligatures: none;
+}
+.cm-hit span {
+  color: var(--color-textSoft);
+  font-size: 12px;
+}
+
+/* The row: a paused run is amber, like a thing waiting for the person. */
+.tcr.s-wait .tic,
+.tcr.s-wait .tlb {
+  color: var(--color-warnText);
+}
+.tcr .du .am {
+  color: var(--color-warnText);
+}
+
+/* The approval card with a script behind it. */
+.cm-apr .cm-sc,
+.cm-apr .cm-calls {
+  margin-top: 2px;
+}
+.cm-apr .cm-calls {
+  border-radius: var(--radius-10);
+  background: var(--color-background);
+  box-shadow: 0 0 0 1px var(--color-border);
+}
+.cm-always {
+  margin: 2px 0 0;
+  color: var(--color-textSoft);
+  font-size: 11.5px;
+  text-align: right;
+}
+.approval.cm-closed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: var(--radius-xl);
+  background: var(--color-sunken);
+  border: 1px solid var(--color-borderStrong);
+}
+.cm-closed .cm-banner {
+  margin: 0;
+}
+.cm-closed .ask-label {
+  color: var(--color-textSoft);
+}
+.cm-closed .ask-label .status-dot {
+  background: var(--color-faint);
+}
+.cm-done {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--color-sunken);
+}
+.cm-done .cm-tool {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.cm-callno {
+  margin-left: auto;
+  color: var(--color-textSoft);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+}
+.cm-done .cm-res {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 12.5px;
+}
+.cm-sub {
+  margin: 0;
+  color: var(--color-textSoft);
+  font-size: 12px;
+}
+.cm-next {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--color-sunken);
+  color: var(--color-textSoft);
+  font-size: 12px;
+}
+.cm-next span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-next .t3 {
+  color: var(--color-muted);
+}
+
+/* Settings: the Code Mode group. */
+.cm-set-note code,
+.cm-set-note .mono {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}
+
+/* The Planned mark beside a Code Mode tool in the Tools tab: the design's Planned pill, until Code Mode ships. */
+.cm-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.cm-planned {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  box-shadow: inset 0 0 0 1px var(--color-borderStrong);
+  color: var(--planned-text);
+  font-size: var(--text-label);
+}
+.cm-planned::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* The list of runs for a thread (Engineer frame codemode-runs-list). */
+.cm-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+}
+.cm-runs-h {
+  padding: 4px 2px;
+  color: var(--color-muted);
+  font-size: var(--text-caption);
+}
+.cm-run {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+.cm-run-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.cm-run-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cm-run-status.fail {
+  color: var(--color-danger);
+}
+.cm-run-status.wait {
+  color: var(--color-warning, var(--color-muted));
+}
+.cm-run-when,
+.cm-runs-foot {
+  color: var(--color-muted);
+  font-size: var(--text-label);
+}
+.cm-run-head {
+  overflow: hidden;
+  color: var(--color-textSoft);
+  font-size: var(--text-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-runs-foot {
+  margin: 4px 2px 0;
+}
+.cm-open {
+  align-items: baseline;
+  gap: 10px;
+}
+.cm-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.cm-link:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.cm-open .cm-open-note {
+  color: var(--color-textSoft);
+  font-size: 11.5px;
+}
+.cb:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}

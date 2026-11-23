@@ -1,0 +1,98 @@
+/* Engine host surfaces: the Providers group, the detail card, the cause chain and the sign-in storage rows. */
+.set-pill.info {
+  background: var(--color-infoSoft);
+  color: var(--color-info);
+}
+.set-pill.err {
+  background: var(--color-dangerSoft);
+  color: var(--color-danger);
+}
+.set-pill.ok {
+  background: var(--color-greenSoft);
+  color: var(--color-green);
+}
+.eh-table .set-tr {
+  grid-template-columns: 28px minmax(0, 1fr) auto auto;
+}
+.eh-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.eh-sub {
+  overflow-wrap: anywhere;
+}
+.eh-caption {
+  padding: 0 0 6px;
+}
+.eh-chain {
+  border-left: 1px solid var(--color-borderStrong);
+  margin: 2px 0 10px 2px;
+  padding-left: 12px;
+  font-size: 12.5px;
+}
+.eh-chain-kind {
+  padding-bottom: 2px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.eh-chain ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.eh-chain li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  padding: 3px 0;
+}
+.eh-chain li > span:first-child {
+  color: var(--color-muted);
+}
+.eh-chain li > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.eh-chain .eh-loop {
+  color: var(--color-muted);
+}
+.eh-chain code,
+.eh-stack {
+  font-family: var(--font-mono);
+}
+.eh-stack {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--color-textSoft);
+  font-size: 11.5px;
+}
+.eh-stack-label {
+  padding-top: 6px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.eh-row-error {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.eh-problem {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) auto;
+  align-items: start;
+}
+.eh-problem-detail {
+  grid-column: 2 / -1;
+}
+.eh-key {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0 4px;
+  font-size: 12.5px;
+}
+.eh-key input {
+  width: 100%;
+  font-family: var(--font-mono);
+}

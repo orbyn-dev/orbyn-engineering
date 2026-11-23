@@ -1,7 +1,8 @@
+import { CrewRoleNote } from "../../cursorthread";
 import { Frame } from "../shared/Frame";
 import { Btn } from "../shared/parts";
 
-/** Crew Designs v23, frame `settings-crew`. */
+/** Crew Designs v23, frame `settings-crew`, with its four entry rows as Crew Designs v87 draws them (Review capacity, Escapes, Independent oracle, Reviewer backtest). The Cursor row is frame `crew-cursor-reviewer-only`: the small Map it and the Reviewer only chip, with the reason as its title. */
 export function SettingsCrew() {
   return (
     <Frame sheet>
@@ -28,7 +29,7 @@ export function SettingsCrew() {
             <div>
               <b>Review on the same engine</b>
               <small>
-                When no engine but the author’s is signed in, Crew asks you first. This lets it go ahead without asking; the review is always labelled “Same engine as author”.
+                When no engine but the author’s is signed in, Crew asks you first. This lets it go ahead without asking; the review is labelled “Same engine as author”.
               </small>
             </div>
             <span className="cx-sv">Ask me before it runs</span>
@@ -46,28 +47,37 @@ export function SettingsCrew() {
             <div>
               <b>Review capacity</b>
               <small>
-                How many High and Medium changes you can have waiting before Crew pauses new Low-priority starts, and whether low-risk batches are sampled. Open Review capacity.
+                How many High and Medium changes you can have waiting before Crew pauses new Low-priority starts, and whether low-risk batches are sampled.
               </small>
             </div>
-            <span className="cx-sv">Not set</span>
+            <Btn className="cx-ghost" style={{ height: "26px", fontSize: "12px" }}>Open Review capacity</Btn>
           </div>
           <div className="cx-setrow">
             <div>
-              <b>Independent oracle</b>
+              <b>Escapes</b>
               <small>
-                Who writes the answer key (an engine other than the builder) and whether a mutation gate checks that the key can catch a break. Open Independent oracle.
+                Every revert, and every bug found after a merge that you don’t revert, is a possible escape. You confirm it; from a confirmed escape you can ask Crew to propose a check. Nothing runs until you accept it.
               </small>
             </div>
-            <span className="cx-sv">Another engine · gate on</span>
+            <Btn className="cx-ghost" style={{ height: "26px", fontSize: "12px" }} aria-label="Open Escapes">Open</Btn>
+          </div>
+          <div className="cx-setrow">
+            <div>
+              <b>Independent oracle<span className="cx-cwpv" style={{ marginLeft: "8px" }}>Planned</span></b>
+              <small>
+                Who writes the answer key (an engine other than the builder) and whether a mutation gate checks that the key can catch a break.
+              </small>
+            </div>
+            <Btn className="cx-ghost" style={{ height: "26px", fontSize: "12px" }}>Open Independent oracle</Btn>
           </div>
           <div className="cx-setrow">
             <div>
               <b>Reviewer backtest</b>
               <small>
-                Replay your review lanes and checks on merged pull requests whose outcome is known, to see what each would have caught. Needs a run budget for each engine. Open Reviewer backtest.
+                Replay your review lanes and checks on merged pull requests whose outcome is known, to see what each would have caught. The live runner is not approved, so a backtest can’t start yet.
               </small>
             </div>
-            <span className="cx-sv">Budget not set</span>
+            <Btn className="cx-ghost" style={{ height: "26px", fontSize: "12px" }}>Open Reviewer backtest</Btn>
           </div>
           <div className="cx-setrow">
             <div><b>Daily digest</b><small>What merged, what is waiting for your review and what was reverted, sent once a day in your local time.</small></div>
@@ -95,7 +105,7 @@ export function SettingsCrew() {
             <div>
               <b>Engine tiers</b>
               <small>
-                The tier each engine fills when Crew routes work: Lead, Builder or Scout. Claude Code and Codex fill the tiers their own models give. For an engine that connects over ACP, you map the tier here. Crew never guesses a tier from a model name; an engine you haven’t mapped shows “Builder · not mapped” until you do.
+                The tier each engine fills when Crew routes work: Lead, Builder or Scout. Claude Code and Codex fill the tiers their own models give. For an engine that connects over ACP, you map the tier here. Crew does not guess a tier from a model name; an engine you haven’t mapped shows “Builder · not mapped” until you do.
               </small>
             </div>
             <span className="cx-sv">3 engines</span>
@@ -106,7 +116,13 @@ export function SettingsCrew() {
           </div>
           <div className="cx-setrow cx-sub">
             <div><b>Cursor</b><small>Connects over ACP. Not mapped yet, so it is treated as Builder and marked “not mapped” wherever its tier shows.</small></div>
-            <span className="cx-sv">{"Builder · not mapped "}<u>Map it</u></span>
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+              <span style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <span className="cx-sv">Builder · not mapped</span>
+                <Btn className="cx-ghost cx-sm">Map it</Btn>
+              </span>
+              <CrewRoleNote engine={{ crew_role: "reviewer_only", crew_role_reason: "Not yet confined for writing work" }} />
+            </span>
           </div>
           <div className="cx-setrow cx-sub">
             <div><b>Kimi CLI</b><small>Not installed.</small></div>

@@ -32,8 +32,10 @@ pub fn routes() -> Router<AppState> {
 /// only credential its URL carries is a frame token scoped to that one render. That
 /// token cannot be used on another render, another route or with `POST`, so a script
 /// that reads or leaks it has nothing it can do with it. `allow-same-origin` must
-/// never be added to either half.
-const PAGE_CSP: &str = "default-src 'none'; script-src 'unsafe-inline'; img-src 'self' data:; style-src 'unsafe-inline'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+/// never be added to either half. The header's own `sandbox allow-scripts` is the same
+/// protection when the page is opened at top level (a new tab), where no frame
+/// attribute applies and the page would otherwise run on this service's origin.
+const PAGE_CSP: &str = "default-src 'none'; script-src 'unsafe-inline'; img-src 'self' data:; style-src 'unsafe-inline'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts";
 
 #[derive(Deserialize)]
 pub struct Publish {
@@ -53,6 +55,7 @@ pub async fn publish(
             "url": render.url,
             "frame_token": render.frame_token,
             "images": render.images,
+            "notes": render.notes,
             "bytes": render.bytes,
         })),
     ))
@@ -126,6 +129,33 @@ mod tests {
             "https:",
         ] {
             assert!(!PAGE_CSP.contains(open), "{open}");
+        }
+    }
+
+    #[test]
+    fn every_render_response_is_sandboxed_without_the_service_origin() {
+        for (content_type, bytes) in [
+            ("text/html; charset=utf-8", b"<p>page</p>".to_vec()),
+            ("image/png", vec![0x89, b'P', b'N', b'G']),
+        ] {
+            let file = RenderFile {
+                content_type,
+                bytes,
+            };
+            let (_, headers, _) = hardened(file);
+            let policy = headers
+                .get(header::CONTENT_SECURITY_POLICY)
+                .expect("csp header")
+                .to_str()
+                .unwrap();
+            let sandbox = policy
+                .split(';')
+                .map(str::trim)
+                .find(|directive| directive.starts_with("sandbox"))
+                .expect("a sandbox directive");
+            let tokens: Vec<&str> = sandbox.split_whitespace().skip(1).collect();
+            assert_eq!(tokens, ["allow-scripts"], "{content_type}");
+            assert!(!policy.contains("allow-same-origin"));
         }
     }
 }

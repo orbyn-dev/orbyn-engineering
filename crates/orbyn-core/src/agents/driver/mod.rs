@@ -7,6 +7,8 @@ pub mod agui;
 pub mod claude;
 pub mod codex;
 pub mod diagnostics;
+pub mod failure;
+pub mod host;
 pub(crate) mod pipes;
 pub mod rpc;
 pub mod terminal;
@@ -24,6 +26,8 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+pub use failure::{Failure, RetryInfo, RetryWhy, ThreadDisposition};
 
 use crate::conversation::questions::Answers;
 use crate::error::Result;
@@ -200,15 +204,25 @@ pub enum EngineOutcome {
     Completed,
     Cancelled,
     Failed(String),
+    /// A failure the engine described beyond its message (the engine host does).
+    FailedWith(Failure),
     /// The engine does not have the session this run tried to resume.
     SessionLost,
+}
+
+/// A steer handed to a running engine. Its id travels with the text so a refusal
+/// can be recorded against the message the steer logged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SteerMessage {
+    pub message_id: String,
+    pub prompt: String,
 }
 
 #[derive(Debug)]
 pub enum EngineEvent {
     Agui(AgUiEvent),
     /// The engine refused a message sent mid-turn.
-    SteerFailed(String),
+    SteerFailed(SteerMessage),
     /// The engine says the turn stopped on a usage or rate limit.
     Limited {
         /// Unix seconds, when it says.
@@ -231,6 +245,10 @@ pub enum EngineEvent {
     Goal(Option<orbyn_contracts::ThreadGoal>),
     /// An MCP App page for a finished tool call, read while the engine was alive.
     McpApp(crate::tools::mcp_apps::McpAppSnapshot),
+    /// An event from a turn the engine ran for its own leftovers (a background agent that finished while
+    /// the process was down) ahead of the prompt's. The run shows it as it shows any event, but it never
+    /// counts as the engine answering the prompt (docs/engine-run-contract.md, rule 3).
+    Leftover(Box<EngineEvent>),
     Finished(EngineOutcome),
 }
 
@@ -279,8 +297,8 @@ impl From<AgUiEvent> for EngineEvent {
 pub struct RunHandle {
     pub cancel: CancellationToken,
     pub task: JoinHandle<()>,
-    /// Takes steering text while the run works, for engines that accept it.
-    pub input: Option<mpsc::UnboundedSender<String>>,
+    /// Takes steering messages while the run works, for engines that accept them.
+    pub input: Option<mpsc::UnboundedSender<SteerMessage>>,
     /// Takes run controls other than text, for engines that accept them.
     pub control: Option<mpsc::UnboundedSender<RunControl>>,
 }
@@ -501,6 +519,21 @@ pub trait EngineDriver: Send + Sync {
         ))
     }
 
+    /// One tool's descriptor on an MCP server the engine has configured, for an MCP
+    /// App page. `Ok(None)` means the server answered and does not advertise that
+    /// tool; a server that cannot be asked is an error, never `None`. The default
+    /// says this engine reports no MCP Apps.
+    async fn mcp_app_tool_info(
+        &self,
+        _cwd: &std::path::Path,
+        _server: &str,
+        _tool: &str,
+    ) -> Result<Option<Value>> {
+        Err(crate::error::CoreError::Unsupported(
+            "This engine cannot read an MCP App's tools.".into(),
+        ))
+    }
+
     /// Sends a feedback report through the engine's own route. The default says
     /// this engine has none.
     async fn feedback(&self, _request: &EngineFeedbackRequest) -> Result<EngineFeedbackReceipt> {
@@ -510,8 +543,10 @@ pub trait EngineDriver: Send + Sync {
     }
 
     /// Drops `before_turn` and every later turn from `session`'s own history, for a
-    /// rewind that keeps the session. Files are not touched. The default says this
-    /// engine has no native rollback, and the rewind leaves a handoff instead.
+    /// rewind that keeps the session. Files are not touched. For the Claude host,
+    /// `before_turn` is the run's prompt message id: the host's own turn id is a counter
+    /// and never appears in the session file. The default says this engine has no native
+    /// rollback, and the rewind leaves a handoff instead.
     async fn revert_session(
         &self,
         _cwd: &std::path::Path,

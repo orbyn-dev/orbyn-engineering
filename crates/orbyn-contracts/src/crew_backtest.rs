@@ -97,6 +97,9 @@ pub struct BacktestLaneRun {
     pub lane: String,
     pub engine: String,
     pub model: String,
+    /// The kind the lane was started as. Null only for a run recorded before a lane kept its kind: unknown, never
+    /// guessed as a review.
+    pub kind: Option<BacktestLaneKind>,
     pub state: BacktestLaneState,
     #[ts(type = "number")]
     pub tokens_used: u64,
@@ -122,5 +125,37 @@ pub struct BacktestRun {
     #[ts(type = "number | null")]
     pub finished_unix: Option<i64>,
     pub lanes: Vec<BacktestLaneRun>,
+}
+}
+
+wire! {
+/// One lane of a start input: what it is, what it runs on, and the kind the run started it as. A field a run did not
+/// record is null, never filled in with a guess.
+pub struct BacktestStartLane {
+    pub lane: String,
+    pub engine: String,
+    pub model: String,
+    pub kind: Option<BacktestLaneKind>,
+}
+}
+wire! {
+/// The lanes and the per-engine token budgets one run was started with.
+pub struct BacktestStartRun {
+    pub id: String,
+    pub state: BacktestState,
+    pub lanes: Vec<BacktestStartLane>,
+    /// One entry per engine, never summed and with no total.
+    pub budgets: Vec<BacktestEngineBudget>,
+}
+}
+wire! {
+/// The input a start request needs, as far as the service can serve it: the lanes and the per-engine token budgets
+/// (see `BacktestStartInput`) of a run the project already had. Reads only, and nothing is defaulted: `run` is null
+/// when the project never ran a backtest, so no lane, engine or budget is invented for a first run, and a budget that
+/// was never set reads unset rather than as a number.
+pub struct BacktestStartView {
+    pub project: String,
+    /// The project's most recent backtest, when there is one.
+    pub run: Option<BacktestStartRun>,
 }
 }

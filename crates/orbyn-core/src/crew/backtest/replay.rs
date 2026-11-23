@@ -22,7 +22,7 @@ use super::score::{LaneScore, Outcome, PastFinding, count, from_counts, match_es
 use crate::error::{CoreError, Result};
 use crate::store::{
     BacktestLaneRow, BacktestResultRow, BacktestRunRow, BacktestState, LaneState,
-    MOST_BUDGET_TOKENS, ResultOutcome, Store,
+    MOST_BUDGET_TOKENS, NewLane, ResultOutcome, Store,
 };
 
 const DAY_SECS: i64 = 86_400;
@@ -177,6 +177,8 @@ pub struct LaneReport {
     pub lane: String,
     pub engine: String,
     pub model: String,
+    /// The kind the lane was started as; `None` only for a lane recorded before the store kept kinds (never guessed).
+    pub kind: Option<LaneKind>,
     pub state: LaneState,
     pub tokens_used: u64,
     pub result: LaneResult,
@@ -231,6 +233,7 @@ pub fn report(store: &Store, run_id: &str) -> Result<BacktestReport> {
                 lane: lane.lane,
                 engine: lane.engine,
                 model: lane.model,
+                kind: lane.kind,
                 state: lane.state,
                 tokens_used: lane.tokens_used,
                 result,
@@ -281,10 +284,15 @@ pub(crate) fn begin(
     alone: bool,
 ) -> Result<()> {
     request.validate()?;
-    let lane_keys: Vec<(String, String, String)> = request
+    let lane_keys: Vec<NewLane> = request
         .lanes
         .iter()
-        .map(|s| (s.lane.clone(), s.engine.clone(), s.model.clone()))
+        .map(|s| NewLane {
+            lane: s.lane.clone(),
+            engine: s.engine.clone(),
+            model: s.model.clone(),
+            kind: s.kind,
+        })
         .collect();
     if alone {
         store.crew_backtest_create_alone(
@@ -396,6 +404,7 @@ fn execute(
             lane: spec.lane.clone(),
             engine: spec.engine.clone(),
             model: spec.model.clone(),
+            kind: Some(spec.kind),
             tokens_used: 0,
             state: LaneState::Running,
             escapes_n: None,

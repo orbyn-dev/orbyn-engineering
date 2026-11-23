@@ -1,7 +1,7 @@
 import { Activity, FileDiff, Gauge, Globe, Play, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, listThreadScripts, listThreadServers, stopThreadServer } from "../api";
-import type { EngineLimits, FileDiff as DiffFile, LocalServer } from "../../../api/types";
+import type { FileDiff as DiffFile, LocalServer } from "../../../api/types";
 import type { ProjectFileView } from "../../../generated/ProjectFileView";
 import type { ProjectScript } from "../../../generated/ProjectScript";
 import { useWaited as useWaitedFor } from "../../../lib/motion";
@@ -18,6 +18,9 @@ import { IconButton } from "../../../ui/controls";
 import { useDismissDetails as useDismiss } from "./DetailsDismiss";
 import { usageShare } from "../composer/ComposerExtras";
 import { pluralize } from "../toolCalls";
+import { limitsKey, limitsRefreshOn, readLimits } from "../../../lib/limitsStore";
+import { useLimitsChecked } from "../../../lib/limitsChecked";
+import { LimitsRefresh } from "../../../product/ui/LimitsChecked";
 
 
 /** A row's read: its state and the way to read it again. */
@@ -243,10 +246,6 @@ export function ScriptsRow({ threadId, scripts }: { threadId: string; scripts: R
   );
 }
 
-/** Automatic checks stay this far apart, however often the card appears. */
-const LIMITS_CHECK_MS = 5 * 60 * 1000;
-const lastLimits = new Map<string, { at: number; limits: Promise<EngineLimits> }>();
-
 /** The Limits row: a window only for Codex, which reports one. Claude, OpenCode and any custom engine read "Not reported". */
 export function LimitsRow({ threadId, engine }: { threadId: string; engine: string }) {
   if (engine !== "codex") {
@@ -258,21 +257,25 @@ export function LimitsRow({ threadId, engine }: { threadId: string; engine: stri
 /** What's left of each limit window for this thread's engine, when it reports one. */
 function ReportedLimitsRow({ threadId, engine }: { threadId: string; engine: string }) {
   const limits = useAsync(
-    `details-limits:${engine}`,
-    (_signal, how) => {
-      const kept = lastLimits.get(engine);
-      // A change the service announced reads again whatever this card kept.
-      if (!how.background && kept && Date.now() - kept.at < LIMITS_CHECK_MS) return kept.limits;
-      const fresh = api.threadLimits(threadId);
-      lastLimits.set(engine, { at: Date.now(), limits: fresh });
-      fresh.catch(() => lastLimits.delete(engine));
-      return fresh;
-    },
-    { refreshOn: topics("limits", `limits:${engine}`) },
+    `details-limits:${threadId}:${engine}`,
+    (signal, context) => readLimits(limitsKey(engine, threadId), (force) => api.threadLimits(threadId, signal, force), { force: context.force }),
+    { fresh: true, keepOnManual: true, refreshOn: limitsRefreshOn(topics("limits", `limits:${engine}`), () => limitsKey(engine, threadId)) },
   );
+  const checked = useLimitsChecked(limitsKey(engine, threadId), limits);
   const windows = limits.data?.windows ?? [];
   if (windows.length === 0) return null;
-  return <DRow icon={<Activity size={16} aria-hidden />} label="Limits" value={<LimitValue windows={windows} />} />;
+  return (
+    <DRow
+      icon={<Activity size={16} aria-hidden />}
+      label="Limits"
+      value={<LimitValue windows={windows} />}
+      subLines={[
+        ...(checked.failed ? [<span key="bad" className="limits-bad" role="alert">Couldn{"\u2019"}t check limits</span>] : []),
+        ...(checked.label ? [<span key="age" role={checked.checking ? "status" : undefined}>{checked.label}</span>] : []),
+      ]}
+      extra={<LimitsRefresh checked={checked} onRefresh={() => void limits.reloadNow()} />}
+    />
+  );
 }
 
 /**

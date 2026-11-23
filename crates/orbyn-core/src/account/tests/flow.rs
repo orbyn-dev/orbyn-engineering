@@ -124,6 +124,25 @@ async fn sign_up_runs_invite_email_password_and_code_in_that_order_then_signs_in
     );
 }
 
+/// The second-factor code a refused sign-in answers with is not carried by the error, in its
+/// plain or its `Debug` text: an error that carried it would leak it through any log line or reply
+/// built from the error. (The emailed code's error is covered by the sign-up test below.)
+#[tokio::test]
+async fn a_refused_second_factor_code_is_not_in_the_error_it_answers_with() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "two-step-error");
+    core.account
+        .sign_in("two@example.com", pw(PASSWORD))
+        .await
+        .unwrap();
+    let wrong = "481902";
+    let refused = core.account.second_factor(wrong).await.unwrap_err();
+    assert_eq!(refused.code(), "invalid_code");
+    for printed in [format!("{refused}"), format!("{refused:?}")] {
+        assert!(!printed.contains(wrong), "{printed}");
+    }
+}
+
 #[tokio::test]
 async fn the_password_step_takes_twelve_characters_and_checks_nothing_else() {
     let dir = TempDir::new();
@@ -574,6 +593,24 @@ async fn sign_out_keeps_unsynced_changes_unless_asked_to_discard_them() {
     a.pause_sync().await.unwrap();
     a.sign_out(true).await.unwrap();
     assert_eq!(super::waiting(&core), 0);
+}
+
+#[tokio::test]
+async fn a_sign_out_with_nothing_to_end_does_not_wait_behind_a_cancel() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "out-early");
+    // A cancel is on its way and holds the one-at-a-time gate.
+    let _cancel = core.account.cancelling.lock().await;
+    let done = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        core.account.sign_out(false),
+    )
+    .await;
+    assert!(
+        done.is_ok(),
+        "a sign-out with no session waited for a cancel to finish"
+    );
+    done.unwrap().unwrap();
 }
 
 #[tokio::test]

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { request } from "./client";
-import { forgetPersonKey, PERSON_HEADER, PERSON_ROUTES, personKeyHeaders, personKeyProtocols, sendsPersonKey } from "./personKey";
+import { canSendPersonKey, forgetPersonKey, PENDING_PERSON_ROUTES, PERSON_HEADER, PERSON_ROUTES, personKeyHeaders, personKeyProtocols, sendsPersonKey } from "./personKey";
 
 const ok = () => vi.fn(async () => new Response(null, { status: 204 }));
 const sentHeaders = (fetchMock: ReturnType<typeof ok>) => new Headers((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].headers);
@@ -24,6 +24,9 @@ describe("which requests carry the person key", () => {
     expect(sendsPersonKey("POST", "/api/threads/t1/console")).toBe(true);
     expect(sendsPersonKey("PATCH", "/api/threads/t1")).toBe(true);
     expect(sendsPersonKey("PUT", "/api/threads/t1/files/content")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/files/mutate")).toBe(true);
+    expect(sendsPersonKey("DELETE", "/api/projects/p/worktrees/w")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/vcs/refresh-status")).toBe(false);
     expect(sendsPersonKey("POST", "/api/account/sign-in/digits")).toBe(true);
     expect(sendsPersonKey("POST", "/api/crew/tasks/t1/merge")).toBe(true);
     expect(sendsPersonKey("POST", "/api/crew/autopilot/merge-queue/t1/resolve")).toBe(true);
@@ -41,6 +44,16 @@ describe("which requests carry the person key", () => {
     expect(sendsPersonKey("GET", "/api/crew/escapes/esc_1")).toBe(false);
     expect(sendsPersonKey("GET", "/api/crew/projects/p1/worker-provider")).toBe(false);
     expect(sendsPersonKey("POST", "/api/threads/t1/runs")).toBe(true);
+    // The routes that move a checkout (ruling F3).
+    expect(sendsPersonKey("POST", "/api/projects/p1/git/init")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/branches")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/branches/switch")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/vcs/refs")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/vcs/refs/switch")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/threads/t1/branches")).toBe(false);
+    // A pull checkout carries the key for both modes; the service reads it only for `worktree: false`.
+    expect(sendsPersonKey("POST", "/api/projects/p1/pulls/12/checkout")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/projects/p1/pulls/12/checkout")).toBe(false);
     for (const [method, path] of [
       ["GET", "/api/approvals/a1/decide"],
       ["GET", "/api/approvals?state=pending"],
@@ -68,9 +81,72 @@ describe("which requests carry the person key", () => {
     }
     const person = table.protected.filter(([, , kind]) => kind === "person").map(([m, p]) => `${m} ${p}`);
     for (const row of person) expect(listed.has(row), `${row} is a person route the page does not send the key to`).toBe(true);
-    // The two field-level routes are the only local rows in the list.
+    // The field-level routes are the only local rows in the list.
     const local = PERSON_ROUTES.filter(([method, pattern]) => table.protected.some(([m, p, kind]) => m === method && p === pattern && kind === "local"));
-    expect(local.map(([method, pattern]) => `${method} ${pattern}`).sort()).toEqual(["POST /agui/threads/{id}", "POST /api/threads/{id}/runs"]);
+    expect(local.map(([method, pattern]) => `${method} ${pattern}`).sort()).toEqual(["POST /agui/threads/{id}", "POST /api/projects/{id}/pulls/{number}/checkout", "POST /api/threads/{id}/runs"]);
+  });
+});
+
+describe("the Cursor thread routes", () => {
+  it("send the key on the override and the acknowledgement, and on no read of the notice", () => {
+    expect(sendsPersonKey("POST", "/api/threads/t1/send-without-approvals")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/projects/p1/engines/cursor/notice/acknowledge")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/projects/p1/engines/cursor/notice")).toBe(false);
+    // The old engine-wide path is gone: the notice is per project.
+    expect(sendsPersonKey("POST", "/api/engines/cursor/notice/acknowledge")).toBe(false);
+    expect(sendsPersonKey("GET", "/api/threads/t1/send-without-approvals")).toBe(false);
+    expect(sendsPersonKey("POST", "/api/projects/p1/engines/cursor/notice")).toBe(false);
+  });
+
+  it("are Person routes on the service, and no longer pending", () => {
+    for (const route of [
+      ["POST", "/api/threads/{id}/send-without-approvals"],
+      ["POST", "/api/projects/{project_id}/engines/{engine}/notice/acknowledge"],
+    ]) {
+      expect(PERSON_ROUTES.some(([m, p]) => m === route[0] && p === route[1])).toBe(true);
+      expect(PENDING_PERSON_ROUTES.some(([m, p]) => m === route[0] && p === route[1])).toBe(false);
+    }
+  });
+
+  it("sends the key with the one-turn override and the acknowledgement through the client", async () => {
+    shell(vi.fn(async () => "shell-key"));
+    const posted = ok();
+    vi.stubGlobal("fetch", posted);
+    await request("POST", "/api/threads/t1/send-without-approvals", { prompt: "x" });
+    expect(sentHeaders(posted).get(PERSON_HEADER)).toBe("shell-key");
+    const acknowledged = ok();
+    vi.stubGlobal("fetch", acknowledged);
+    await request("POST", "/api/projects/p1/engines/cursor/notice/acknowledge");
+    expect(sentHeaders(acknowledged).get(PERSON_HEADER)).toBe("shell-key");
+  });
+});
+
+describe("the Issues writes", () => {
+  it("send the key on every write, the five in the route table and the two edits not built yet, and on no read", () => {
+    for (const path of ["/api/issues/trackers/github/connect", "/api/issues/trackers/github/disconnect", "/api/issues/start-thread", "/api/threads/t1/issue-links", "/api/threads/t1/issue-links/remove", "/api/issues/item/update", "/api/issues/item/state"]) {
+      expect(sendsPersonKey("POST", path), path).toBe(true);
+    }
+    for (const path of ["/api/issues", "/api/issues/item", "/api/issues/candidates", "/api/issues/links"]) expect(sendsPersonKey("GET", path), path).toBe(false);
+    // The five in the first slice are no longer pending: they are in PERSON_ROUTES, from routes.json.
+    const pending = PENDING_PERSON_ROUTES.map(([, pattern]) => pattern);
+    expect(pending).toEqual(expect.arrayContaining(["/api/issues/item/update", "/api/issues/item/state"]));
+    for (const pattern of ["/api/issues/start-thread", "/api/issues/trackers/{tracker}/connect", "/api/threads/{id}/issue-links"]) expect(pending).not.toContain(pattern);
+  });
+});
+
+describe("the multi-repository writes of docs/multi-repo.md", () => {
+  const writes = [
+    "/api/projects/p1/repos/add-folder", "/api/projects/p1/repos/create", "/api/projects/p1/repos/clone", "/api/projects/p1/repos/r1/publish",
+    "/api/projects/p1/repos/r1/trust", "/api/projects/p1/repos/r1/setup-git", "/api/projects/p1/repos/r1/remove", "/api/projects/p1/repos/r1/clone/cancel",
+    "/api/projects/p1/repo-threads", "/api/threads/t1/repos", "/api/projects/p1/repos/scan",
+  ];
+  it("send the key on every write and on no read", () => {
+    for (const path of writes) expect(sendsPersonKey("POST", path), path).toBe(true);
+    expect(sendsPersonKey("GET", "/api/projects/p1/repos")).toBe(false);
+    expect(sendsPersonKey("GET", "/api/threads/t1/repos")).toBe(false);
+    expect(sendsPersonKey("GET", "/api/threads/t1/task-folder")).toBe(false);
+    expect(sendsPersonKey("POST", "/api/projects/p1/repos")).toBe(false);
+    expect(sendsPersonKey("POST", "/api/projects/p1/repos/r1")).toBe(false);
   });
 });
 
@@ -130,5 +206,48 @@ describe("the key, from the shell", () => {
     vi.stubGlobal("fetch", fetchMock);
     await request("POST", "/api/projects/p/worktrees/w/file-actions", { action: "create_file", path: "x" });
     expect(sentHeaders(fetchMock).get(PERSON_HEADER)).toBe("mock-person-key");
+  });
+});
+
+it("download consent is a person-only update effect", () => {
+  expect(sendsPersonKey("POST", "/api/updates/app/download")).toBe(true);
+});
+
+describe("the device actions of docs/devices.md", () => {
+  it("send the key for every action type through one route, and not for the reads", async () => {
+    expect(sendsPersonKey("POST", "/api/devices/android%3APixel_Fold/actions")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/devices/ios%3AUDID/actions")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/devices")).toBe(false);
+    expect(sendsPersonKey("GET", "/api/devices/android%3Aa")).toBe(false);
+    shell(vi.fn(async () => "shell-key"));
+    const posted = ok();
+    vi.stubGlobal("fetch", posted);
+    await request("POST", "/api/devices/android%3Aa/actions", { type: "screenshot" });
+    expect(sentHeaders(posted).get(PERSON_HEADER)).toBe("shell-key");
+  });
+});
+
+describe("the profile writes of docs/execution-profiles-and-library.md", () => {
+  it("send the key on every write, and on the reads and the check", () => {
+    expect(sendsPersonKey("POST", "/api/profiles")).toBe(true);
+    expect(sendsPersonKey("PATCH", "/api/profiles/01j0")).toBe(true);
+    expect(sendsPersonKey("DELETE", "/api/profiles/01j0")).toBe(true);
+    expect(sendsPersonKey("PUT", "/api/threads/t1/profile")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/profile/apply")).toBe(true);
+    for (const [method, path] of [["GET", "/api/profiles"], ["GET", "/api/profiles/01j0"], ["POST", "/api/profiles/check"]] as const) expect(sendsPersonKey(method, path), path).toBe(false);
+  });
+});
+
+describe("which pages may send the key", () => {
+  it("is true in the desktop app, whose shell has the bridge to ask", () => {
+    shell(vi.fn(async () => "shell-key"));
+    expect(canSendPersonKey()).toBe(true);
+  });
+
+  it("stays true in a dev preview, which sends the mock's fixed key, so the designed frames stay reachable there", () => {
+    // No bridge: a browser tab. The preview build compiles `__ORBYN_PREVIEWS__` true (vite.config.ts), which is what the
+    // prompt and the mock both rely on; a production build has it false and this answers false.
+    expect(window as unknown as { __TAURI_INTERNALS__?: unknown }).not.toHaveProperty("__TAURI_INTERNALS__");
+    expect(canSendPersonKey()).toBe(__ORBYN_PREVIEWS__);
   });
 });

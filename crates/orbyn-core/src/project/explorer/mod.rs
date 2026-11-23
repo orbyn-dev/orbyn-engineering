@@ -6,6 +6,7 @@
 
 mod guard;
 mod member;
+mod remove;
 mod status;
 mod tree;
 mod watch;
@@ -13,11 +14,19 @@ mod write;
 
 pub use watch::ExplorerWatch;
 
+/// A person's path cleaned for a file route: relative, `/` separators, nothing to resolve
+/// (`.` and `..` are dropped or refused), no backslash or control character, no Git's
+/// folder and no Windows device or stream name. Empty is the root. The explorer's
+/// [`guard`] owns these rules; a thread's file routes use the same ones.
+pub(crate) fn clean_relative(raw: &str) -> Result<String> {
+    guard::clean(raw, cfg!(windows))
+}
+
 #[cfg(test)]
 mod tests;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -161,6 +170,12 @@ impl ExplorerReads {
             .or_insert_with(|| Arc::new(Semaphore::new(STATUS_READS)))
             .clone()
     }
+}
+
+/// The dirty summary of the checkout at `root`, read now through the shared hardened
+/// runner. The VCS `refreshStatus` handler uses it so its answer is Git's current one.
+pub(crate) async fn dirty_summary(root: &Path) -> Result<orbyn_contracts::ExplorerDirty> {
+    Ok(status::read(root).await?.dirty)
 }
 
 /// A worktree of one project, as the routes resolve it.

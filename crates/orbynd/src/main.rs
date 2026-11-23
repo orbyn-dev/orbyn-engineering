@@ -94,6 +94,22 @@ fn known_engine_ids(raw: Option<&std::ffi::OsStr>) -> Result<Option<Vec<String>>
     .transpose()
 }
 
+/// The background listeners' periodic pass, local startup policy only: 60 seconds to 24 hours, or unset for off:
+/// with no interval no pass runs at all. Neither HTTP nor a tool can change it.
+fn background_watch_interval(raw: Option<&std::ffi::OsStr>) -> Result<Option<Duration>, String> {
+    raw.map(|raw| {
+        let seconds = raw
+            .to_str()
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|n| (60..=86400).contains(n))
+            .ok_or(
+                "ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS must be 60 to 86400, or unset for off.",
+            )?;
+        Ok(Duration::from_secs(seconds))
+    })
+    .transpose()
+}
+
 /// Local startup policy only. Neither HTTP nor a tool can change these values.
 fn crew_merge_config(
     preview: bool,
@@ -167,6 +183,14 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
         known_engine_ids: known_engine_ids(std::env::var_os("ORBYN_KNOWN_ENGINE_IDS").as_deref())?,
         cache_dir: None,
         approval_timeout: defaults.approval_timeout,
+        engine_host: orbyn_core::agents::driver::host::HostConfig::from_env(
+            std::env::var_os("ORBYN_ENGINE_HOST"),
+            std::env::var("ORBYN_ENGINE_HOST_CLAUDE").ok().as_deref(),
+        )
+        .map(|host| {
+            host.with_acp(std::env::var("ORBYN_ENGINE_HOST_ACP").ok().as_deref())
+                .with_cursor(std::env::var("ORBYN_ENGINE_HOST_CURSOR").ok().as_deref())
+        }),
     };
     if let Ok(seconds) = std::env::var("ORBYN_APPROVAL_TIMEOUT_SECS") {
         let seconds: u64 = seconds
@@ -184,6 +208,9 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
     development_account(&mut config);
     // Crew is Preview and has no screen yet: a developer turns its tools on here.
     config.crew_preview = env_flag("ORBYN_CREW_PREVIEW");
+    config.code_mode = env_flag("ORBYN_CODE_MODE");
+    config.issues = env_flag("ORBYN_ISSUES");
+    config.multi_repo = env_flag("ORBYN_MULTI_REPO");
     (
         config.crew_merge_required_checks,
         config.crew_merge_watch_interval,
@@ -192,6 +219,13 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
         std::env::var_os("ORBYN_CREW_REQUIRED_CHECKS").as_deref(),
         std::env::var_os("ORBYN_CREW_WATCH_INTERVAL_SECS").as_deref(),
     )?;
+    config.crew_background_watch_interval = if config.crew_preview {
+        background_watch_interval(
+            std::env::var_os("ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS").as_deref(),
+        )?
+    } else {
+        None
+    };
     Ok(config)
 }
 
@@ -308,10 +342,12 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
         .map_err(|error| error.to_string())?
         .port();
     let base_url = format!("http://127.0.0.1:{port}");
-    let core = Arc::new(
-        Core::open(core_config(&args, base_url.clone())?).map_err(|error| error.to_string())?,
-    );
+    let config = core_config(&args, base_url.clone())?;
+    // The login shell can take its time; ask it once without holding up start-up.
+    std::thread::spawn(orbyn_core::host::child_env::warm_login_path);
+    let core = Arc::new(Core::open(config).map_err(|error| error.to_string())?);
     core.mcp.bind_host(&core);
+    core.engines.bind_host_core(&core);
     core.set_crew_engine_approvers();
     orbyn_core::operations::diagnostics::start_sampling();
     core.start_telemetry_export(telemetry_interval()?)
@@ -377,6 +413,20 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     let access = Arc::new(
         access
             .with_desktop(args.parent_stdin)
+            .with_refusal_audit({
+                let core = core.clone();
+                Arc::new(move |refusal: &http::access::PersonRefusal| {
+                    core.record_person_route_refusal(
+                        &refusal.method,
+                        &refusal.route,
+                        refusal.field,
+                        refusal.caller.as_str(),
+                        refusal.code,
+                    )
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+                })
+            })
             // A frame URL carries a capability for one published page instead of the
             // service token, and only core knows which render a token belongs to.
             .with_frames({
@@ -456,6 +506,15 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     } else {
         None
     };
+    let crew_background =
+        if core.config.crew_preview && core.config.crew_background_watch_interval.is_some() {
+            let (core, background_stop) = (core.clone(), stop.child_token());
+            Some(tokio::spawn(async move {
+                core.run_crew_background_listeners(background_stop).await
+            }))
+        } else {
+            None
+        };
     if args.parent_stdin {
         let (activity, quit) = (core.clone(), stop.clone());
         tokio::spawn(async move { activity.run_shell_activity(quit).await });
@@ -502,6 +561,15 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
             Ok(Ok(())) => {}
             Ok(Err(error)) => tracing::warn!(%error, "Crew escape scan stopped with an error"),
             Err(error) => tracing::warn!(%error, "Crew escape scan task did not complete"),
+        }
+    }
+    if let Some(background) = crew_background {
+        match background.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "Crew background listeners stopped with an error")
+            }
+            Err(error) => tracing::warn!(%error, "Crew background listeners task did not complete"),
         }
     }
     checks.abort();
@@ -600,6 +668,28 @@ mod crew_merge_config_tests {
         }
         for bad in ["0", "59", "86401", "invalid", "-1"] {
             assert!(crew_merge_config(true, None, Some(OsStr::new(bad))).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod background_watch_interval_tests {
+    use super::background_watch_interval;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn background_interval_is_off_by_default_and_bounded() {
+        assert_eq!(background_watch_interval(None).unwrap(), None);
+        assert_eq!(
+            background_watch_interval(Some(OsStr::new("60"))).unwrap(),
+            Some(std::time::Duration::from_secs(60))
+        );
+        assert_eq!(
+            background_watch_interval(Some(OsStr::new("86400"))).unwrap(),
+            Some(std::time::Duration::from_secs(86400))
+        );
+        for bad in ["0", "59", "86401", "invalid", "-1"] {
+            assert!(background_watch_interval(Some(OsStr::new(bad))).is_err());
         }
     }
 }

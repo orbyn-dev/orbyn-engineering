@@ -51,6 +51,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A terminal waits for the person: the amber dot before the tab's title. */
+.ptab .ptab-attn {
+  margin-inline-end: 6px;
+  vertical-align: 1px;
+}
 .ptab[data-selected] {
   z-index: 1;
   flex: 0 1 128px;
@@ -178,6 +183,11 @@
 .terminal-splits[data-direction="vertical"] .term-view + .term-view {
   border-top: 1px solid var(--color-border);
   border-left: 0;
+}
+/* The pane that has focus is outlined, as in the frame; with one pane there is nothing to tell apart. */
+.terminal-splits .term-view + .term-view:focus-within,
+.terminal-splits .term-view:has(+ .term-view):focus-within {
+  box-shadow: inset 0 0 0 1px var(--color-border);
 }
 .term-view-title {
   display: flex;
@@ -309,4 +319,9 @@
 .thread-stage:has(~ .drawer[data-maximized]) {
   flex: 0 0 calc(var(--topbar-h) + 12px);
   overflow: hidden;
+}
+/* A pane's own close sits at the end of its title row. */
+.term-view-title .term-view-close {
+  margin-left: auto;
+  margin-right: -8px;
 }

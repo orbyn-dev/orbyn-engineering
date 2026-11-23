@@ -116,11 +116,33 @@
 .cx-frh{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
 .cx-frh b{font-size:15px;font-weight:500;color:var(--color-text)}
 .cx-cwsheet{padding:18px 26px;display:flex;flex-direction:column;gap:14px;min-width:0;container-type:inline-size}
-@media (max-width:520px){.cx-frame.cx-sheetpage{padding:16px 12px}.cx-sheetpage .cx-cwsheet{padding:12px 8px}}
+/* 840px, not 520: beside Settings' 320px list a 640px window leaves the page about 320px wide. */
+@media (max-width:840px){.cx-frame.cx-sheetpage{padding:16px 12px}.cx-sheetpage .cx-cwsheet{padding:12px 8px}}
 @container (max-width:480px){.cx-cwsheet .cx-setrow{grid-template-columns:minmax(0,1fr);justify-items:start;gap:8px}.cx-cwsheet .cx-setrow .cx-sv{white-space:normal;max-width:100%}.cx-cwsheet .cx-cwbn{flex-wrap:wrap;align-items:flex-start}.cx-cwsheet .cx-cwbn>span:not(.cx-acts){flex:1 1 160px;min-width:0}.cx-cwsheet .cx-cwbn .cx-acts{margin-left:0;flex-wrap:wrap}}
+/* The capacity editor's rows (Crew Designs v77, capacity-settings-editor): a stepper, a pause switch, two low-risk choices, then its footer. */
+.cx-stepper{display:flex;align-items:center;gap:6px}
+.cx-stepper .cx-sv{min-width:36px;text-align:center;padding:4px 6px}
+.cx-stepper .cx-ghost{width:28px;height:28px;padding:0;justify-content:center;border-radius:8px}
+.cx-stepper .cx-unit{color:var(--color-muted);font-size:12px}
+.cx-toggle{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--color-textSoft);white-space:nowrap;cursor:pointer}
+.cx-choices{display:flex;flex-direction:column;gap:8px}
+.cx-choice{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--color-text);white-space:nowrap;cursor:pointer}
+.cx-choice input[type="radio"]{appearance:none;position:relative;width:15px;height:15px;margin:0;flex:none;border:1.5px solid var(--color-borderStrong);border-radius:50%;background:transparent;cursor:pointer}
+.cx-choice input[type="radio"]:checked{border-color:var(--color-text)}
+.cx-choice input[type="radio"]:checked::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--color-text)}
+.cx-editfoot{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cx-editfoot .cx-hint{color:var(--color-muted);font-size:12px}
+.cx-editfoot .cx-acts{margin-left:auto;display:flex;gap:8px}
+.cx-why{display:flex;flex-direction:column;flex:1;min-width:0}
+.cx-why b{font-weight:500}
+.cx-why span{color:var(--color-textSoft)}
+/* The editor's narrow window (capacity-settings-editor-narrow): a sheet under the design's 640 px puts each control under its row's text and the save pair under the hint. */
+.cx-cwsheet.cx-narrow .cx-setrow{grid-template-columns:minmax(0,1fr);justify-items:start;gap:8px}
+.cx-cwsheet.cx-narrow .cx-setrow .cx-sv{white-space:normal;max-width:100%}
+.cx-cwsheet.cx-narrow .cx-editfoot .cx-acts{margin-left:0}
 .cx-cwseg{display:inline-flex;gap:2px;padding:2px;border-radius:9px;background:var(--color-sunken);width:max-content;max-width:100%}
-.cx-cwseg span{height:24px;padding:0 10px;border-radius:7px;display:inline-flex;align-items:center;font-size:12px;color:var(--color-textSoft);white-space:nowrap}
-.cx-cwseg span.cx-on{background:var(--color-surface);color:var(--color-text);box-shadow:0 0 0 1px var(--color-borderStrong)}
+.cx-cwseg span,.cx-cwseg a{height:24px;padding:0 10px;border-radius:7px;display:inline-flex;align-items:center;font-size:12px;color:var(--color-textSoft);white-space:nowrap;text-decoration:none}
+.cx-cwseg span.cx-on,.cx-cwseg a.cx-on{background:var(--color-surface);color:var(--color-text);box-shadow:0 0 0 1px var(--color-borderStrong)}
 .cx-rtag{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 7px;border-radius:9px;font-size:11px;white-space:nowrap;background:var(--color-sunken);color:var(--color-textSoft)}
 .cx-rtag.cx-lo{background:transparent;box-shadow:inset 0 0 0 1px var(--color-borderStrong);color:var(--color-muted)}
 .cx-rtc{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;padding:14px 20px;min-width:0}
@@ -183,6 +205,9 @@
 .cx-apq .cx-rb{grid-column:2/-1;display:flex;gap:10px;align-items:center;color:var(--color-muted);font-size:11.5px}
 .cx-apchip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;border-radius:10px;font-size:11px;white-space:nowrap;background:var(--color-sunken);color:var(--color-textSoft)}
 .cx-apchip.cx-ok{background:var(--color-greenSoft);color:var(--color-green)}
+.cx-apchip.cx-no{background:transparent;box-shadow:inset 0 0 0 1px var(--color-borderStrong);color:var(--color-text)}
+.cx-linkname{appearance:none;background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;text-align:inherit;cursor:pointer}
+.cx-linkname:focus-visible{outline:2px solid var(--color-borderStrong);outline-offset:2px;border-radius:4px}
 .cx-apchip.cx-am{background:var(--color-warnSoft);color:var(--color-warnText);box-shadow:inset 0 0 0 1px var(--color-warnBorder)}
 .cx-apchip.cx-dim{background:transparent;color:var(--color-muted);box-shadow:inset 0 0 0 1px var(--color-borderStrong)}
 .cx-apck{width:16px;height:16px;border-radius:5px;background:var(--color-text);color:var(--color-surface);display:grid;place-items:center;flex:none;margin-top:2px}
@@ -222,7 +247,9 @@
 .cx-t13mk{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:7px;background:var(--color-sunken);font-size:11.5px;color:var(--color-text);white-space:nowrap}
 .cx-t13mk svg{width:12px;height:12px;flex:none}
 .cx-t13row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.cx-t14pg{display:flex;flex-direction:column;gap:12px;padding:12px 20px 18px;min-width:0;overflow:hidden}
+.cx-t14pg{display:flex;flex-direction:column;gap:12px;padding:12px 20px 18px;min-width:0;overflow:hidden;container-type:inline-size}
+/* Beside Settings' list a 640px window leaves the page about 320px: the tiles stack and the table's rows stack their cells, as the dashboard's do. */
+@container (max-width:460px){.cx-t14pg .cx-t10g,.cx-t14pg .cx-t10g.cx-t10two{grid-template-columns:minmax(0,1fr)!important}.cx-t14pg .cx-aptb{grid-template-columns:minmax(0,1fr)!important}.cx-t14pg .cx-aptb>div.cx-h{display:none}.cx-t14pg .cx-aptb>div[style*="grid-column"]{grid-column:auto!important}}
 .cx-t14pg>*{flex:none}
 .cx-t14two{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:12px;align-items:start;min-width:0}
 .cx-t14col{display:flex;flex-direction:column;gap:10px;min-width:0}
@@ -244,7 +271,7 @@
 .cx-t14card b{font-weight:500;color:var(--color-text)}
 .cx-t14r{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .cx-t14card small{color:var(--color-muted);font-size:11.5px;line-height:1.4}
-.cx-t15map{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;min-width:0}
+.cx-t15map{display:grid;grid-template-columns:repeat(auto-fit,minmax(max(150px,calc((100% - 20px)/3)),1fr));gap:10px;min-width:0}
 .cx-t15tile{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border-radius:12px;box-shadow:inset 0 0 0 1px var(--color-borderStrong);background:var(--color-surface);min-width:0;font-size:12px;color:var(--color-textSoft)}
 .cx-t15tile b.cx-n{font-size:20px;font-weight:500;color:var(--color-text);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
 .cx-t15tile b.cx-a{font-size:13px;font-weight:500;color:var(--color-text)}

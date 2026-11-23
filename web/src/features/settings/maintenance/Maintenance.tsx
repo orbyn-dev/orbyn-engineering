@@ -22,6 +22,9 @@ import { SettingsBanner, SettingsEmpty } from "../rows/SettingsBanner";
 import { useConnection } from "../../../product/state/connection";
 import { FallbackNotice, Library } from "../projects/Projects";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
+import { useEngineHostCrashes } from "../../enginehost";
+import { HostProcessRows, useHostProcesses } from "../engineHost/HostProcesses";
+import { mergeProblems, problemReport, ProblemLine } from "../engineHost/HostCrashRow";
 
 /** Past this, the space a repair gets back is worth a mention. */
 const REPAIR_NOTICE_BYTES = 1024 ** 3;
@@ -384,6 +387,8 @@ function DiagnosticsGroup() {
   const [showProblems, setShowProblems] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [stopping, setStopping] = useState<ServiceProcess | null>(null);
+  const crashes = useEngineHostCrashes(), hostProcesses = useHostProcesses();
+  const [openCrash, setOpenCrash] = useState<string | null>(null);
   const run = async (action: () => Promise<unknown>, done: string) => {
     setNote(null);
     try {
@@ -402,7 +407,7 @@ function DiagnosticsGroup() {
   // Only processes that have run longer than 2 s: a short-lived one is not something to stop, and listing it only for a
   // moment made the section flicker.
   const stoppable = data.processes.filter((process) => process.pid !== data.pid && process.running_seconds > LONG_RUNNING_SECONDS);
-  const recent = data.events.filter((event) => Date.now() - Date.parse(event.at) <= DAY_MS);
+  const recent = mergeProblems(data.events.filter((event) => Date.now() - Date.parse(event.at) <= DAY_MS), crashes, DAY_MS);
   const memory = data.history.at(-1)?.memory_bytes;
   const facts: [string, string][] = [
     ["Service", `Running · ${data.version}`],
@@ -412,7 +417,7 @@ function DiagnosticsGroup() {
   ];
   const copy = () => {
     const lines = [...facts.map(([label, value]) => `${label}: ${value}`),
-      ...recent.map((event) => `${problemTime(event.at)} ${event.message}`)];
+      ...recent.flatMap((event) => problemReport(event, problemTime(event.at), openCrash))];
     void navigator.clipboard?.writeText(lines.join("\n")).then(() => pushToast("Report copied"), () => undefined);
   };
   return (
@@ -432,13 +437,12 @@ function DiagnosticsGroup() {
           <Button small aria-expanded={showProblems} onClick={() => setShowProblems(!showProblems)}>{showProblems ? "Hide" : "Show"}</Button>
         </SettingRow>
         {showProblems ? <div className="set-tbl" role="table" aria-label="Recent problems">
-          {recent.map((event, at) => <div key={at} role="row" className="set-tr" style={{ gridTemplateColumns: "90px minmax(0, 1fr)" }}>
-            <span role="cell" className="set-time">{problemTime(event.at)}</span><span role="cell">{event.message}</span>
-          </div>)}
+          {recent.map((event, at) => <ProblemLine key={"id" in event ? event.id : at} row={event} time={problemTime(event.at)} open={"id" in event && openCrash === event.id} onToggle={() => setOpenCrash("id" in event && openCrash !== event.id ? event.id : null)} />)}
         </div> : null}
       </>}
       <p className="set-grp">Processes</p>
-      {stoppable.length === 0 ? <p className="setting-line-desc">Nothing is running long.</p> : <ul className="setting-list" aria-label="Processes">
+      {stoppable.length === 0 && hostProcesses.rows.length === 0 ? <p className="setting-line-desc">Nothing is running long.</p> : <ul className="setting-list" aria-label="Processes">
+        <HostProcessRows rows={hostProcesses.rows} reload={hostProcesses.reload} />
         {stoppable.map((process) => (
           <li key={process.pid}>
             <SettingRow title={process.name} description={`Running ${uptime(process.running_seconds)}`}>
@@ -494,14 +498,34 @@ export function MaintenanceSection() {
   const offline = useConnection((state) => state.offline);
   const failure = error ?? updates?.error ?? null;
   const app = updates?.app;
-  // The shell reports bytes while it downloads; the update is ready once all of them are in.
-  const hasProgress = !!app?.latest && app.downloaded !== undefined && app.total !== undefined && Number(app.total) > 0;
-  const percent = hasProgress ? Math.min(100, Math.floor((Number(app?.downloaded) / Number(app?.total)) * 100)) : 0;
-  const downloading = hasProgress && percent < 100;
-  const ready = hasProgress && !downloading && !!app?.can_apply;
-  const restart = async () => {
-    try { await api.applyAppUpdate(); } catch (problem) { setError(toFailure(problem).message); }
+  const [updating, setUpdating] = useState(false);
+  const actionPending = useRef(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const phase = app?.phase ?? "idle";
+  const downloading = phase === "downloading";
+  const preparing = phase === "preparing";
+  const installing = phase === "installing";
+  const ready = phase === "ready";
+  const available = phase === "available" && !!app?.latest;
+  const knownTotal = app?.total !== undefined && app.total !== null && Number(app.total) > 0;
+  const percent = knownTotal ? Math.min(100, Math.floor((Number(app?.downloaded ?? 0) / Number(app?.total)) * 100)) : 0;
+  const activeRuns = app?.blocked_reason === "Finish or stop active runs first.";
+  const act = async (install: boolean) => {
+    if (actionPending.current || !app?.release_id || !app.can_apply || (!install && offline)) return;
+    actionPending.current = true;
+    setUpdating(true);
+    setActionError(null);
+    try {
+      const request = { release_id: app.release_id, operation: app.operation ?? 0 };
+      if (install) await api.applyAppUpdate(request);
+      else await api.downloadAppUpdate(request);
+    } catch (problem) { setActionError(toFailure(problem).message); }
+    finally { actionPending.current = false; setUpdating(false); }
   };
+  const versionDescription = ready || installing ? `${app?.current} · ${installing ? `Installing ${app?.latest}…` : `${app?.latest} is downloaded`}`
+    : available ? `${app?.current} · ${app?.latest}${offline && updates?.checked_at ? ` was available at ${new Date(updates.checked_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}` : " is available"}`
+    : downloading || preparing ? app?.current
+    : `${app?.current ?? "Unknown"}${checking ? "" : ` · ${updates?.checked_at ? (app?.latest ? `checked ${new Date(updates.checked_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}` : "up to date") : "not checked yet"}`}`;
 
   const check = async () => {
     setChecking(true);
@@ -517,9 +541,6 @@ export function MaintenanceSection() {
 
   return (
     <>
-      <h1 className="sr-only" tabIndex={-1} data-page-title>
-        Maintenance
-      </h1>
       <DiagnosticsGroup />
       <CleanupGroup />
       <TelemetryGroup />
@@ -530,18 +551,27 @@ export function MaintenanceSection() {
         {unsupported || updates?.app.unconfigured ? (
           <SettingRow title="App updates" description="Updates aren't set up for this build." />
         ) : null}
-        {offline ? <SettingsBanner>You’re offline. Updates are checked when you’re back.</SettingsBanner> : null}
+        {offline && !available ? <SettingsBanner>You’re offline. Updates are checked when you’re back.</SettingsBanner> : null}
         {failure ? <SettingsBanner tone="err" actions={<Button small icon={<RefreshCw size={14} aria-hidden />} disabled={checking} onClick={() => void check()}>Retry</Button>}>
           Couldn’t check for updates. {failure}
         </SettingsBanner> : null}
-        <SettingRow title="Version" settingId="maintenance-check-for-updates"
-          description={ready && updates?.app.latest ? `${updates.app.current} · ${updates.app.latest} is downloaded`
-            : `${updates?.app.current ?? "Unknown"}${checking ? "" : ` · ${updates?.checked_at ? (app?.latest ? `checked ${new Date(updates.checked_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}` : "up to date") : "not checked yet"}`}`}>
-          {checking ? <span className="set-checking" role="status"><i className="spin" aria-hidden />Checking…</span>
-            : downloading ? <span className="set-checking" role="status">Downloading {app?.latest}…
+        {available && offline ? <SettingsBanner>You’re offline. Connect to download the update.</SettingsBanner> : null}
+        {activeRuns && (available || ready) ? <SettingsBanner>Wait for active runs to finish before updating.</SettingsBanner> : null}
+        {app?.update_error ? <SettingsBanner tone="err">
+          {!app.failed_phase ? app.update_error : app.failed_phase === "installing" ? `Couldn’t install ${app.failed_version ?? app.latest}. Try again.` : `Couldn’t download ${app.failed_version ?? app.latest}. Try again.`}
+        </SettingsBanner> : null}
+        {actionError ? <SettingsBanner tone="err">{actionError}</SettingsBanner> : null}
+        <SettingRow title="Version" settingId="maintenance-check-for-updates" description={versionDescription}>
+          {downloading || preparing ? <span className="set-checking" role="status">
+            {preparing ? `Preparing ${app?.latest}…` : `Downloading ${app?.latest}…`}
+            {downloading && knownTotal ? <>
               <span className="set-prog" role="progressbar" aria-label="Download progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }} /></span>
-              <span className="set-pct">{percent}%</span></span>
-            : ready ? <Button tone="primary" small onClick={() => void restart()}>Restart to update</Button>
+              <span className="set-pct">{percent}%</span>
+            </> : <i className="set-update-spinner spin" aria-hidden />}
+          </span>
+            : ready || installing ? <><span className="sr-only" role="status">{installing ? `Installing ${app?.latest}…` : "Update downloaded"}</span>{installing ? <i className="set-update-spinner spin" aria-hidden /> : null}<Button tone="primary" small disabled={updating || installing || !app?.can_apply} onClick={() => void act(true)}>Restart to update</Button></>
+            : available ? <Button small disabled={updating || offline || !app?.can_apply} onClick={() => void act(false)}>{app?.failed_phase === "downloading" ? "Retry download" : "Download update"}</Button>
+            : checking ? <span className="set-checking" role="status"><i className="set-update-spinner spin" aria-hidden />Checking…</span>
             : <Button small disabled={offline} onClick={() => void check()}>Check for updates</Button>}
         </SettingRow>
         <UpdateTrack />

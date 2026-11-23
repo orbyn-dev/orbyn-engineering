@@ -9,8 +9,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 
 use orbyn_contracts::{
-    EditorInfo, FileContent, FileEntry, OpenInEditor, ResolveThreadPath, ResolvedThreadPath,
-    SearchHit, Thread, ThreadPathBasis, WriteFile,
+    EditorInfo, ExplorerEntryKind, FileContent, FileEntry, FileMetadata, OpenInEditor,
+    ResolveThreadPath, ResolvedThreadPath, SearchHit, Thread, ThreadPathBasis, WriteFile,
 };
 use serde_json::json;
 
@@ -281,7 +281,7 @@ fn reveal_command(file: &Path) -> (&'static str, Vec<OsString>) {
     }
 }
 
-fn scope_of(root: &Path, thread: &Thread) -> WriteScope {
+fn scope_of(data_dir: &Path, root: &Path, thread: &Thread) -> WriteScope {
     let checkout = PathBuf::from(&thread.cwd);
     WriteScope {
         excluded: if checkout == root {
@@ -291,6 +291,7 @@ fn scope_of(root: &Path, thread: &Thread) -> WriteScope {
         },
         engine_cwd: checkout.clone(),
         checkout,
+        data_dir: Some(data_dir.to_path_buf()),
     }
 }
 
@@ -369,6 +370,109 @@ pub(crate) fn open_inside(
 
 fn revision_of(bytes: &[u8]) -> String {
     sha256_hex(bytes)
+}
+
+/// What one entry of a checkout is, from its own record: kind, size, permissions and
+/// time. Nothing is read and the entry is not opened, so a device, pipe or socket can
+/// be described without a reader blocking on it. Only a final link can lead elsewhere,
+/// and its target is judged, never returned.
+fn describe(scope: &WriteScope, path: &str, full: &Path) -> Result<FileMetadata> {
+    let meta = match std::fs::symlink_metadata(full) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(FileMetadata {
+                path: path.to_owned(),
+                exists: false,
+                kind: None,
+                size: 0,
+                mode: None,
+                read_only: false,
+                modified: None,
+                inside: true,
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let (mode, read_only) = permissions_of(&meta);
+    Ok(FileMetadata {
+        path: path.to_owned(),
+        exists: true,
+        kind: entry_kind(&meta),
+        size: meta.len(),
+        mode,
+        read_only,
+        modified: meta.modified().ok().and_then(modified_time),
+        // A plain file or folder is where it says it is; only a link has a target.
+        inside: !meta.file_type().is_symlink() || link_lands_inside(scope, full),
+    })
+}
+
+/// The entry's own kind, or `None` for a device, pipe or socket, which is never opened.
+fn entry_kind(meta: &std::fs::Metadata) -> Option<ExplorerEntryKind> {
+    let kind = meta.file_type();
+    if kind.is_symlink() {
+        Some(ExplorerEntryKind::Symlink)
+    } else if kind.is_dir() {
+        Some(ExplorerEntryKind::Directory)
+    } else if kind.is_file() {
+        Some(ExplorerEntryKind::File)
+    } else {
+        None
+    }
+}
+
+/// Permission bits and the read-only flag the platform reports. Unix has mode bits;
+/// Windows reports only the read-only attribute, so its `mode` is `None`.
+fn permissions_of(meta: &std::fs::Metadata) -> (Option<u32>, bool) {
+    let read_only = meta.permissions().readonly();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        (Some(meta.permissions().mode() & 0o777), read_only)
+    }
+    #[cfg(not(unix))]
+    {
+        (None, read_only)
+    }
+}
+
+/// The contract's timestamp form, RFC 3339 UTC.
+fn modified_time(at: std::time::SystemTime) -> Option<String> {
+    let seconds = at.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    time::OffsetDateTime::from_unix_timestamp(i64::try_from(seconds).ok()?)
+        .ok()?
+        .format(&time::format_description::well_known::Rfc3339)
+        .ok()
+}
+
+/// Where a final link lands, links followed: inside the checkout and out of the places a
+/// file read refuses. A target that names another machine is never resolved, so no host
+/// is contacted, and one that does not exist answers `false`.
+fn link_lands_inside(scope: &WriteScope, full: &Path) -> bool {
+    let Ok(target) = std::fs::read_link(full) else {
+        return false;
+    };
+    // A relative link is read from the folder holding it, as the system reads it.
+    let target = match full.parent() {
+        Some(parent) if !target.is_absolute() => parent.join(&target),
+        _ => target,
+    };
+    if crate::project::outside_files::reaches_remote(&target) {
+        return false;
+    }
+    let (Ok(real), Ok(checkout)) = (
+        crate::util::canonicalize(&target),
+        crate::util::canonicalize(&scope.checkout),
+    ) else {
+        return false;
+    };
+    let Ok(relative) = real.strip_prefix(&checkout) else {
+        return false;
+    };
+    !names_git(relative)
+        && !scope.excluded.iter().any(|excluded| {
+            crate::util::canonicalize(excluded).is_ok_and(|excluded| real.starts_with(excluded))
+        })
 }
 
 /// A model can repeat the selected workspace suffix in a relative link. Prefer
@@ -508,11 +612,11 @@ impl Core {
 
     /// A thread's checkout, gated on trust like any other work in the folder.
     pub(crate) fn file_scope(&self, thread_id: &str) -> Result<(Thread, WriteScope)> {
-        let thread = self.store.thread(thread_id)?;
+        let thread = self.scoped_thread(thread_id)?;
         if !self.store.project(&thread.project_id)?.trusted {
             return Err(CoreError::FolderUntrusted);
         }
-        let scope = scope_of(&self.workspace.root()?, &thread);
+        let scope = scope_of(&self.config.data_dir, &self.workspace.root()?, &thread);
         Ok((thread, scope))
     }
 
@@ -607,6 +711,26 @@ impl Core {
             binary,
             truncated: false,
         })
+    }
+
+    /// One path in the checkout as the file browser shows it: kind, size, permission
+    /// bits and modified time from the entry itself. Nothing is read and the last link
+    /// is never followed; every folder above it passes the same rules as a file read, so
+    /// `..`, Git's folder and a link out of the checkout are refused. A missing path is
+    /// an answer, not an error.
+    pub fn file_metadata(&self, thread_id: &str, path: &str) -> Result<FileMetadata> {
+        let (_, scope) = self.file_scope(thread_id)?;
+        let cleaned = crate::project::explorer::clean_relative(path)
+            .map_err(|_| CoreError::Invalid("That path is outside this checkout.".into()))?;
+        if !cleaned.is_empty() {
+            // The folder holding the entry is resolved exactly like a file read; only the
+            // last name is read as itself, so a link there is described, not followed.
+            let parent = Path::new(&cleaned)
+                .parent()
+                .map_or_else(String::new, |parent| parent.to_string_lossy().into_owned());
+            inside(&scope, &parent)?;
+        }
+        describe(&scope, &cleaned, &scope.checkout.join(&cleaned))
     }
 
     /// Saves an edit if the file is still what the editor started from. The new
@@ -813,6 +937,7 @@ mod tests {
             checkout: root.clone(),
             engine_cwd: root,
             excluded: Vec::new(),
+            data_dir: None,
         };
         assert!(open_inside(&scope, "image.png", &fifo).is_err());
     }
@@ -833,6 +958,7 @@ mod tests {
             checkout: dir.path().to_path_buf(),
             engine_cwd: dir.path().to_path_buf(),
             excluded: Vec::new(),
+            data_dir: None,
         };
         for bad in [
             ".git/config",
@@ -844,6 +970,25 @@ mod tests {
             assert!(inside(&scope, bad).is_err(), "{bad}");
         }
         assert!(inside(&scope, "src/a.rs").is_ok());
+    }
+
+    #[test]
+    fn protected_account_files_are_refused_by_checkout_reads() {
+        let dir = crate::testing::TempDir::new();
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(data.join("workspace/repo/p")).unwrap();
+        let protected = data.join("account-keys-default.store");
+        std::fs::write(&protected, "secret").unwrap();
+        let scope = WriteScope {
+            checkout: crate::util::canonicalize(dir.path()).unwrap(),
+            engine_cwd: crate::util::canonicalize(dir.path()).unwrap(),
+            excluded: Vec::new(),
+            data_dir: Some(data.clone()),
+        };
+        let relative = "data/account-keys-default.store";
+        assert!(inside(&scope, relative).is_err());
+        assert!(open_inside(&scope, relative, &protected).is_err());
+        assert!(inside(&scope, "data/workspace/repo/p/file.txt").is_ok());
     }
 
     #[cfg(unix)]
@@ -859,8 +1004,53 @@ mod tests {
             checkout: root.clone(),
             engine_cwd: root,
             excluded: Vec::new(),
+            data_dir: None,
         };
         assert!(inside(&scope, "meta/config").is_err());
         assert!(inside(&scope, "cfg").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_final_link_is_judged_where_it_lands_and_never_followed() {
+        let dir = crate::testing::TempDir::new();
+        let root = crate::util::canonicalize(dir.path()).unwrap();
+        let checkout = root.join("checkout");
+        for folder in ["repo", ".git"] {
+            std::fs::create_dir_all(checkout.join(folder)).unwrap();
+        }
+        std::fs::write(checkout.join(".git/config"), "secret").unwrap();
+        std::fs::write(checkout.join("a.txt"), "in").unwrap();
+        std::fs::write(checkout.join("repo/x.txt"), "x").unwrap();
+        std::fs::write(root.join("outside.txt"), "out").unwrap();
+        let scope = WriteScope {
+            checkout: checkout.clone(),
+            engine_cwd: checkout.clone(),
+            excluded: vec![checkout.join("repo")],
+            data_dir: None,
+        };
+        use std::os::unix::fs::symlink;
+        // A link out of the checkout, absolute or relative to its own folder.
+        symlink(root.join("outside.txt"), checkout.join("outside-link")).unwrap();
+        symlink("../outside.txt", checkout.join("relative-outside")).unwrap();
+        // A link that lands inside, through Git's folder, in the excluded folder, or nowhere.
+        symlink("a.txt", checkout.join("inside-link")).unwrap();
+        symlink(".git/config", checkout.join("git-link")).unwrap();
+        symlink("repo/x.txt", checkout.join("repo-link")).unwrap();
+        symlink("missing.txt", checkout.join("broken-link")).unwrap();
+        for (link, lands) in [
+            ("inside-link", true),
+            ("outside-link", false),
+            ("relative-outside", false),
+            ("git-link", false),
+            ("repo-link", false),
+            ("broken-link", false),
+        ] {
+            assert_eq!(
+                link_lands_inside(&scope, &checkout.join(link)),
+                lands,
+                "{link}"
+            );
+        }
     }
 }

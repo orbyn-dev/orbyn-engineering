@@ -75,6 +75,38 @@ pub(super) fn normalize_entry(entry: &str) -> Option<String> {
     }
 }
 
+/// Nonblocking diagnostics only. Admission still uses `File` and `normalize_entry` below.
+/// Never quote a submitted value: this output is served to the repository's rules view.
+pub(in crate::crew) fn allowed_host_notes(value: Option<&serde_json::Value>) -> Vec<String> {
+    const NOTES_MAX: usize = 16;
+    let Some(value) = value else {
+        return Vec::new();
+    };
+    let Some(entries) = value.as_array() else {
+        return vec![
+            "allowed_hosts must be an array of strings; no configured hosts are allowed."
+                .to_owned(),
+        ];
+    };
+    // Vec<String> deserialization refuses the whole list, even when other entries are valid.
+    if let Some(index) = entries.iter().position(|entry| !entry.is_string()) {
+        return vec![format!(
+            "allowed_hosts[{index}] must be a string; no configured hosts are allowed."
+        )];
+    }
+    let mut notes: Vec<String> = entries.iter().enumerate().filter_map(|(index, entry)| {
+        match normalize_entry(entry.as_str()?) {
+            None => Some(format!("allowed_hosts[{index}] is not a valid host entry and is ignored.")),
+            Some(entry) if entry.strip_prefix("*.").is_some_and(|base| !base.contains('.')) => Some(format!("allowed_hosts[{index}] uses a wildcard with a one-label base. It remains allowed for the base host and all descendants. No public-suffix check is performed.")),
+            Some(_) => None,
+        }
+    }).take(NOTES_MAX + 1).collect();
+    if notes.len() > NOTES_MAX {
+        notes[NOTES_MAX] = "More allowed_hosts notes were omitted. Check the remaining entries in .orbyn/crew.json.".to_owned();
+    }
+    notes
+}
+
 fn parse_allowed_hosts(shown: &[u8]) -> Vec<String> {
     if shown.len() > 64 * 1024 {
         return Vec::new();
@@ -246,5 +278,39 @@ mod tests {
         assert_eq!(parse_allowed_hosts(&bounded), ["collector"]);
         bounded.push(b' ');
         assert!(parse_allowed_hosts(&bounded).is_empty());
+    }
+
+    #[test]
+    fn diagnostics_must_not_change_existing_host_admission() {
+        let hosts = parse_allowed_hosts(br#"{"allowed_hosts":["collector","bad:443","*.COM.","*.co.uk","*.internal","10.0.0.7","[fd00::7]"]}"#);
+        assert_eq!(
+            hosts,
+            [
+                "collector",
+                "*.com",
+                "*.co.uk",
+                "*.internal",
+                "10.0.0.7",
+                "fd00::7"
+            ]
+        );
+        assert!(parse_allowed_hosts(br#"{"allowed_hosts":["collector",7]}"#).is_empty());
+        for host in [
+            "collector",
+            "com",
+            "a.com",
+            "a.b.com",
+            "a.co.uk",
+            "a.internal",
+            "10.0.0.7",
+            "fd00::7",
+            "127.0.0.1",
+        ] {
+            assert!(super::super::shell::host_allowed(host, &hosts), "{host}");
+        }
+        assert!(!super::super::shell::host_allowed(
+            "unlisted.example",
+            &hosts
+        ));
     }
 }

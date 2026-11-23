@@ -17,9 +17,10 @@ pub const BUILTINS: &[Builtin] = &[
         label: "Private key block",
         example: "-----BEGIN … PRIVATE KEY-----",
         class: "private key",
-        // The header, and the block through its END line when that follows within 8 KiB.
+        // The block through its END line when that follows within 8 KiB; otherwise (a cut-off
+        // excerpt) the header and everything after it. `PGP ... KEY BLOCK` is the same format.
         patterns: &[
-            r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[A-Za-z0-9+/=:,.\s-]{0,8192}-----END [A-Z ]*PRIVATE KEY-----)?",
+            r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:[A-Za-z0-9+/=:,.\s-]{0,8192}-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|.*)",
         ],
     },
     Builtin {
@@ -27,7 +28,14 @@ pub const BUILTINS: &[Builtin] = &[
         label: "API key",
         example: "sk-••••••••",
         class: "api key",
-        patterns: &[r"\bsk-[A-Za-z0-9_-]{20,}"],
+        // OpenAI-style, Stripe secret and restricted keys, GitLab, npm and Google API keys.
+        patterns: &[
+            r"\bsk-[A-Za-z0-9_-]{20,}",
+            r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}",
+            r"\bglpat-[A-Za-z0-9_-]{20,}",
+            r"\bnpm_[A-Za-z0-9]{36}\b",
+            r"\bAIza[0-9A-Za-z_-]{35}",
+        ],
     },
     Builtin {
         id: "github_token",
@@ -44,7 +52,8 @@ pub const BUILTINS: &[Builtin] = &[
         label: "AWS access key",
         example: "AKIA••••••••",
         class: "aws key",
-        patterns: &[r"\bAKIA[0-9A-Z]{16}\b"],
+        // AKIA is a long-lived key, ASIA a temporary one.
+        patterns: &[r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"],
     },
     Builtin {
         id: "aws_secret_key",
@@ -80,7 +89,9 @@ pub const BUILTINS: &[Builtin] = &[
         example: "KEY, TOKEN, SECRET, PASSWORD",
         class: "credential assignment",
         patterns: &[
-            r#"(?i)\b(password|passwd|secret|api[_-]?key|token)["']?\s*[:=]\s*["']?[^\s"']{8,}"#,
+            // `_` is a word character, so a prefixed name (`DB_PASSWORD`) has no `\b` before its
+            // keyword: the name is read from its first character instead.
+            r#"(?i)\b[A-Za-z0-9_-]*(?:password|passwd|secret[_-]?key|secret|api[_-]?key|access[_-]?key|private[_-]?key|token)["']?\s*[:=]\s*["']?[^\s"']{8,}"#,
         ],
     },
 ];

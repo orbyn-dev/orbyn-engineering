@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use super::fake::{caps, model};
 use crate::agents::driver::{
     ApprovalSpec, EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe,
-    ModelCatalog, RunHandle, RunSpec,
+    ModelCatalog, RunHandle, RunSpec, SteerMessage,
 };
 use crate::app::Core;
 use crate::error::Result;
@@ -168,7 +168,7 @@ impl EngineDriver for Fake {
                         kind: orbyn_contracts::ActionKind::Command,
                         target: "must-not-execute".into(),
                         summary: "forbidden".into(),
-                        detail: json!({}),
+                        detail: json!({ "command": "must-not-execute" }),
                         paths: vec![],
                         reply,
                     })
@@ -302,11 +302,11 @@ impl EngineDriver for Fake {
             let _ = events.send(EngineEvent::Finished(outcome)).await;
         });
         let input = self.steerable.then(|| {
-            let (send, mut receive) = mpsc::unbounded_channel::<String>();
+            let (send, mut receive) = mpsc::unbounded_channel::<SteerMessage>();
             let (steered, thread) = (self.steered.clone(), spec_thread);
             tokio::spawn(async move {
-                while let Some(text) = receive.recv().await {
-                    steered.lock().unwrap().push((thread.clone(), text));
+                while let Some(steer) = receive.recv().await {
+                    steered.lock().unwrap().push((thread.clone(), steer.prompt));
                 }
             });
             send
@@ -460,6 +460,7 @@ async fn world_full(
     config.engines.codex_program = absent.join("codex.exe").to_string_lossy().into_owned();
     config.engines.known_engine_ids = Some(Vec::new());
     config.crew_preview = preview;
+    config.code_mode = true;
     if let Some(timeout) = approval_timeout {
         config.approval_timeout = timeout;
     }

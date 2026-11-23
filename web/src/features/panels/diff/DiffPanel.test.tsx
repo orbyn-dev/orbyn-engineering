@@ -783,3 +783,107 @@ it("comments are reachable by keyboard: the arrows carry focus to a line's butto
   await user.keyboard("{Enter}");
   expect(await screen.findByRole("textbox", { name: /Review comment on/ })).toBeInTheDocument();
 });
+
+// E19: a turn's change list is read-only per file; the only restore is the whole-turn one, and it asks first.
+it("a turn shows its files without a per-file restore, and the whole-turn restore changes nothing until confirmed", async () => {
+  const user = userEvent.setup();
+  setup();
+  vi.spyOn(api, "checkpoints").mockResolvedValue([{ run_id: "r1", start: "s1", end: "e1", created_at: "2026-11-12T14:12:00" }]);
+  const restore = vi.spyOn(api, "restoreWorkspace").mockResolvedValue(undefined);
+  await open();
+  await user.click(screen.getByRole("button", { name: "Scope: Working tree" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Turn" }));
+  await user.click(within(await screen.findByRole("menu", { name: "Turn" })).getByRole("menuitem", { name: /^Turn 1/ }));
+  await screen.findByRole("button", { name: "Restore files to before this response" });
+  const restoreButtons = screen.getAllByRole("button", { name: /^Restore / }).map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim());
+  expect(restoreButtons).toEqual(["Restore files to before this response"]);
+  await user.click(screen.getByRole("button", { name: "Restore files to before this response" }));
+  expect(await screen.findByRole("dialog", { name: "Restore files?" })).toBeInTheDocument();
+  expect(restore).not.toHaveBeenCalled();
+});
+
+// multi-repository thread: files grouped by repository, and nothing changes for any other thread
+it("groups the files by repository only when the service reports repositories for the thread, reading each repository's diff with its own repo_id", async () => {
+  const diff = setup();
+  const feed: FileDiff = { path: "calendar/feed.ts", status: "modified", additions: 3, deletions: 0, patch: "@@ -1,1 +1,4 @@\n same\n+a\n+b\n+c\n" };
+  // The service answers one repository's files per read: the primary (the project's id) with no repo_id, the other with its own.
+  diff.mockImplementation(async (_thread, _signal, _scope, repoId) => (repoId === "p" ? [feed] : [REDIRECT, TEST]));
+  useWorkspace.setState({ threads: { t: { id: "t", project_id: "e", cwd: "/repo", active_run: null, worktree: { path: "/repo", branch: "fix/login", base: "main" } } as never } });
+  const { createReposMock } = await import("../../../../mock/repos");
+  const { setReposApi } = await import("../../repos");
+  setReposApi(createReposMock({ threads: { t: [
+    { repo_id: "e", name: "orbyn-engineering", branch: "fix/login", added: 4, deleted: 3, trusted: true, files: ["auth/redirect.ts", "auth/redirect.test.ts"] },
+    { repo_id: "p", name: "orbyn-planner", branch: "fix/login", added: 3, deleted: 0, trusted: true, files: ["calendar/feed.ts"] },
+  ] } }));
+  try {
+    await open();
+    await waitFor(() => expect(rowsOf()).toHaveLength(3));
+    expect(screen.getByRole("heading", { name: /orbyn-engineering/ })).toBeVisible();
+    expect(screen.getByRole("heading", { name: /orbyn-planner/ })).toBeVisible();
+    expect(diff.mock.calls.some((call) => call[3] === "p")).toBe(true);
+    expect(diff.mock.calls.some((call) => call[3] === "e")).toBe(false);
+  } finally {
+    setReposApi(null);
+  }
+});
+
+it("does not read an untrusted repository's diff, and lists the rest", async () => {
+  const diff = setup();
+  useWorkspace.setState({ threads: { t: { id: "t", project_id: "e", cwd: "/repo", active_run: null, worktree: { path: "/repo", branch: "fix/login", base: "main" } } as never } });
+  const { createReposMock } = await import("../../../../mock/repos");
+  const { setReposApi } = await import("../../repos");
+  setReposApi(createReposMock({ threads: { t: [
+    { repo_id: "e", name: "orbyn-engineering", branch: "fix/login", added: 4, deleted: 3, trusted: true },
+    { repo_id: "p", name: "orbyn-planner", branch: "fix/login", added: 0, deleted: 0, trusted: false },
+  ] } }));
+  try {
+    await open();
+    expect(await screen.findByRole("heading", { name: /orbyn-engineering/ })).toBeVisible();
+    expect(rowsOf()).toHaveLength(2);
+    expect(diff.mock.calls.some((call) => call[3] === "p")).toBe(false);
+  } finally {
+    setReposApi(null);
+  }
+});
+
+it("keeps one flat list for a thread the service reports no repositories for", async () => {
+  setup();
+  await open();
+  expect(screen.queryByRole("heading", { name: /orbyn/ })).toBeNull();
+  expect(rowsOf()).toHaveLength(2);
+});
+
+it("tells two README.md files in different repositories apart: one is open, its header names the repository, and picking the other opens that one", async () => {
+  const readme = (line: string): FileDiff => ({ path: "README.md", status: "modified", additions: 1, deletions: 0, patch: `@@ -1,1 +1,2 @@\n same\n+${line}\n` });
+  const diff = setup();
+  diff.mockImplementation(async (_thread, _signal, _scope, repoId) => [readme(repoId === "p" ? "planner line" : "engineering line")]);
+  useWorkspace.setState({ threads: { t: { id: "t", project_id: "e", cwd: "/repo", active_run: null, worktree: { path: "/repo", branch: "fix/login", base: "main" } } as never } });
+  const { createReposMock } = await import("../../../../mock/repos");
+  const { setReposApi } = await import("../../repos");
+  setReposApi(createReposMock({ threads: { t: [
+    { repo_id: "e", name: "orbyn-engineering", branch: "fix/login", added: 1, deleted: 0, trusted: true },
+    { repo_id: "p", name: "orbyn-planner", branch: "fix/login", added: 1, deleted: 0, trusted: true },
+  ] } }));
+  try {
+    const user = userEvent.setup();
+    await open();
+    await screen.findByRole("heading", { name: /orbyn-planner/ });
+    expect(rowsOf().filter((row) => row.getAttribute("aria-current") === "true")).toHaveLength(1);
+    expect(rowsOf()[0]).toHaveAttribute("aria-current", "true");
+    expect(await screen.findByText("engineering line")).toBeVisible();
+    expect(document.querySelector(".fh2 .repo-pill")).toHaveTextContent("orbyn-engineering");
+    await user.click(rowsOf()[1]!);
+    expect(await screen.findByText("planner line")).toBeVisible();
+    expect(screen.queryByText("engineering line")).toBeNull();
+    expect(rowsOf().map((row) => row.getAttribute("aria-current"))).toEqual([null, "true"]);
+    expect(document.querySelector(".fh2 .repo-pill")).toHaveTextContent("orbyn-planner");
+  } finally {
+    setReposApi(null);
+  }
+});
+
+it("draws no repository label in the file header for a thread in one repository", async () => {
+  setup();
+  await open();
+  expect(document.querySelector(".fh2 .repo-pill")).toBeNull();
+});

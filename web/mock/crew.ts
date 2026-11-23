@@ -423,6 +423,10 @@ export function createCrewMock() {
   let areas = areaScenario("crew-areas");
   let staleOnce = false;
   let tripped: Record<string, number> = {};
+  // Settings › Crew › Daily digest: the saved time, and the offset it was saved in. The unsaved scenario
+  // has the 17:00 default with no offset, which sends nothing; the fail scenario refuses the write.
+  let digest: { time: string; utc_offset_minutes: number | null } = { time: "17:00", utc_offset_minutes: 660 };
+  let digestSaveFails = false;
 
   const modes = (): AutopilotModes => ({ confirmed, effective_default: mode, entries, truncated: false });
 
@@ -444,6 +448,8 @@ export function createCrewMock() {
     held = scenario === "crew-guard-full" ? guardHolds(true) : scenario === "crew-guard" || scenario === "crew-guard-unknown" ? guardHolds(false) : heldScenario ? holds() : [];
     if (scenario === "crew-guard" || scenario === "crew-guard-unknown") mode = "on";
     failPaging = scenario === "crew-many-fails";
+    digest = { time: "17:00", utc_offset_minutes: scenario === "crew-digest-unsaved" ? null : 660 };
+    digestSaveFails = scenario === "crew-digest-save-fail";
     all = scenario === "crew-empty" ? [] : scenario === "crew-many" || scenario === "crew-many-fails" ? many() : scenario === "crew-one-vendor" ? sample().map((one) => (one.id === 2 ? { ...one, kind: "denied", decided_by: "two_keys", second: null, needs_second_engine: true } : one)) : sample();
     secondNotices = scenario === "crew-one-vendor" ? all.filter((one) => one.needs_second_engine) : [];
     if (scenario === "crew-guard" || scenario === "crew-guard-unknown") all = [...guardRowsOn(scenario === "crew-guard-unknown"), ...all];
@@ -510,6 +516,16 @@ export function createCrewMock() {
     if (!on) return { status: 404, body: { code: "not_found", message: "Crew is not on." } };
     const seg = path.split("/").filter(Boolean); // api crew ...
     const [, , head, id] = seg;
+    if (head === "autopilot" && id === "digest" && seg[4] === "schedule" && !seg[5] && method === "GET") {
+      return { status: 200, body: digest };
+    }
+    if (head === "autopilot" && id === "digest" && seg[4] === "schedule" && seg[5] === "set" && method === "POST") {
+      if (digestSaveFails) return { status: 500, body: { code: "internal", message: "Could not save the daily digest time." } };
+      const asked = body as { time?: string; utc_offset_minutes?: number };
+      if (!asked.time || typeof asked.utc_offset_minutes !== "number") return { status: 400, body: { code: "invalid_input", message: "A digest time is HH:MM and an offset in minutes east of UTC, like 17:00 and 660." } };
+      digest = { time: asked.time, utc_offset_minutes: asked.utc_offset_minutes };
+      return { status: 200, body: digest };
+    }
     if (head === "projects" && id && seg[4] === "pinned-ref") {
       const current = "b".repeat(40);
       const stored = "a".repeat(40);

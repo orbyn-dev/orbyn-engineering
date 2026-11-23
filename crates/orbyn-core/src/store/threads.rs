@@ -8,7 +8,7 @@ use orbyn_contracts::{
     AgUiEvent, AutoSettleChoice, AutoSettleSettings, ServerSettings, SnoozePreset, Thread,
     UpdateThread,
 };
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
 use super::{ACTIVE_STATES, Appended, AuditRecord, Store, insert_audit, insert_event};
@@ -36,14 +36,14 @@ pub struct TickReport {
     pub settled: Vec<String>,
 }
 
-/// A thread and everything below it, deepest last.
-pub(crate) fn thread_family(tx: &Transaction<'_>, id: &str) -> Result<Vec<String>> {
-    let mut statement = tx.prepare(
-        "WITH RECURSIVE family(id) AS (
-            SELECT id FROM threads WHERE id = ?1
-            UNION SELECT threads.id FROM threads
+/// A thread and everything below it, parents before their children.
+pub(crate) fn thread_family_ids(conn: &Connection, id: &str) -> Result<Vec<String>> {
+    let mut statement = conn.prepare(
+        "WITH RECURSIVE family(id, depth) AS (
+            SELECT id, 0 FROM threads WHERE id = ?1
+            UNION SELECT threads.id, family.depth + 1 FROM threads
                 JOIN family ON threads.parent_thread_id = family.id
-         ) SELECT id FROM family",
+         ) SELECT id FROM family ORDER BY depth, id",
     )?;
     let family = statement
         .query_map([id], |row| row.get(0))?
@@ -54,7 +54,7 @@ pub(crate) fn thread_family(tx: &Transaction<'_>, id: &str) -> Result<Vec<String
     Ok(family)
 }
 
-fn has_active_run(tx: &Transaction<'_>, id: &str) -> Result<bool> {
+pub(super) fn has_active_run(tx: &Transaction<'_>, id: &str) -> Result<bool> {
     Ok(tx.query_row(
         &format!(
             "SELECT EXISTS (SELECT 1 FROM runs WHERE thread_id = ?1 AND state IN {ACTIVE_STATES})"
@@ -248,6 +248,10 @@ impl Store {
                 )?;
                 notify(tx, appended, id, "auto_settle")?;
             }
+            if patch.permission_mode.is_some() || patch.model.is_some() {
+                // A person's own choice after a profile was applied: the chip reads "edited".
+                super::profiles::mark_customized(tx, id)?;
+            }
             if let Some(mode) = patch.permission_mode {
                 tx.execute(
                     "UPDATE threads SET permission_mode = ?2 WHERE id = ?1",
@@ -430,6 +434,46 @@ impl Store {
                 params![id, most],
             )?;
             Ok(changed == 1)
+        })
+    }
+
+    /// Gives back a try that never started a run, so a refused start (an engine update, a
+    /// workspace that is busy) does not use up the thread's automatic continuations.
+    pub fn refund_resume_try(&self, id: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "UPDATE threads SET resume_tries = resume_tries - 1
+                 WHERE id = ?1 AND resume_tries > 0",
+                [id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Ends automatic continuation for a limit that used up its tries: nothing stays
+    /// scheduled, the limit and its reset stay on the thread, and the timeline says the
+    /// continuation stopped, so the thread waits for you.
+    pub fn stop_limit_retry(&self, id: &str, tries: i64) -> Result<()> {
+        self.commit(|tx, appended| {
+            let changed = tx.execute(
+                "UPDATE threads SET limit_resume_at = NULL
+                 WHERE id = ?1 AND limit_resume_at IS NOT NULL",
+                [id],
+            )?;
+            if changed == 0 {
+                return Ok(());
+            }
+            insert_event(
+                tx,
+                appended,
+                id,
+                None,
+                &AgUiEvent::Custom {
+                    name: "limit.retry_exhausted".into(),
+                    value: json!({ "tries": tries }),
+                },
+            )?;
+            notify(tx, appended, id, "limit")
         })
     }
 
@@ -720,6 +764,7 @@ pub(super) fn clear_limit(tx: &Transaction<'_>, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Schedules the continuation a person asked for, which gives back the automatic tries.
 fn schedule_resume(tx: &Transaction<'_>, id: &str, resume: bool) -> Result<()> {
     if !resume {
         tx.execute(
@@ -739,7 +784,7 @@ fn schedule_resume(tx: &Transaction<'_>, id: &str, resume: bool) -> Result<()> {
         ));
     }
     tx.execute(
-        "UPDATE threads SET limit_resume_at = limit_resets_at WHERE id = ?1",
+        "UPDATE threads SET limit_resume_at = limit_resets_at, resume_tries = 0 WHERE id = ?1",
         [id],
     )?;
     Ok(())
@@ -760,7 +805,7 @@ fn settle(tx: &Transaction<'_>, appended: &mut Appended, id: &str, actor: &str) 
 
 /// A running descendant means this thread is still waiting on delegated work.
 fn family_is_busy(tx: &Transaction<'_>, id: &str) -> Result<bool> {
-    for member in thread_family(tx, id)? {
+    for member in thread_family_ids(tx, id)? {
         if has_active_run(tx, &member)? {
             return Ok(true);
         }

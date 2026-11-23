@@ -57,12 +57,12 @@ saw no harness launch of an installed Chrome. The shell needs `--in-process-gpu`
 | Timeline | Command output | Live: highlighted command, italic No output; source: follows while near the end, 320 max | Match, Real, ANSI colour, exit code, failed mark | Earlier output not shown notice absent, no truncation signal |
 | Timeline | Item inspector | Source: inside the expanded row | Inspect item, dialog of the raw record, Real | Field layout own |
 | Timeline | Rich Markdown | Source: math opt-in, Mermaid, file, thread and external links, details, table copy | Match, Real | Thread links use orbyn://thread/id; images remote only, no local media route |
-| Timeline | Proposed plan | Source: Plan badge, clip over 900 chars or 20 lines, menu, Save to workspace, Plan ready banner | Match, Real via a proposed_plan tag | Claude plan mode cards through ExitPlanMode |
+| Timeline | Proposed plan | Source: Plan badge, clip over 900 chars or 20 lines, menu, Save to workspace; the Plan ready banner went with plan mode | Match, Real via a proposed_plan tag; no banner (B66) | Claude plan cards through ExitPlanMode |
 | Timeline | Minimap | Live and source: tick per prompt, 8 spacing, min(natural, 100vh - 18rem) | Match, Real | Wheel passthrough absent |
 | Timeline | Error banner | Source: end-of-thread failure, dismiss for the session | Match, Real, with Retry | Inline notice stays for history |
 | Timeline | Changed files | Source: per-turn tree with open diff | Flat list, Real, opens and scrolls to the file | Flat, not a tree |
 | Timeline | Subagent bar | Source: model, effort, status, Runs on its own, Open parent | Match, Real on a delegated thread | Live activity not shown in the parent |
-| Thread details | Limits | Source: remaining windows row | Match, Real from the protocol double | Checked once in five minutes per page load |
+| Thread details | Limits | Source: remaining windows row | Match, Real from the protocol double | Read fresh on each request; no five-minute throttle exists (J19) |
 | Thread details | Automations | Source: tasks tied to a thread, with schedule, status, pause/resume, run now, edit and manage | Match, Real | Binding is set through the API or MCP; no Settings control picks a thread yet |
 | Usage | Price and alias | Source: per-model rates, counts as | Dialog from the model row, Real | A failed save keeps the form; no Mixed price |
 | Timeline | Announcers | Source | Background threads live region, Real | Current-thread activity uses the status row |
@@ -92,7 +92,7 @@ saw no harness launch of an installed Chrome. The shell needs `--in-process-gpu`
 | Composer | Message limit | Source: 120,000, draft kept | Match, Real | Counted in the client as well as the service |
 | Composer | Uploads | Source: each file on add, retry, remove, blocks send | Match, Real | Failure text inline, no progress bar |
 | Composer | Queue edit | Source: back to the composer | Match, Real | An existing draft keeps its text, the prompt joins after it |
-| Composer | Plan | Source | Button, /plan, /default, Shift+Tab, Real; Labs turns them off | Inside a list Shift+Tab outdents first |
+| Composer | Plan | Removed upstream (B66) | None: no button, /plan, /default or Shift+Tab switch; Labs has no Plan mode | Inside a list Shift+Tab outdents |
 | Composer | Context meter, /usage-limits | Source | Match, Real; the meter compacts on native engines | Compaction tick absent |
 | Composer | List editing | Source: Shift+Enter continues, Tab nests | Match, Real | 0 |
 | Composer | Live Markdown | Source: rich editor that keeps literal markers | Styled layer under a transparent textarea, Real; markers stay and bold, headings and code keep their width | Italic is an underline and code stays in the body font, so the caret never drifts |

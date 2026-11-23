@@ -5,7 +5,8 @@
 use std::path::PathBuf;
 
 use orbyn_contracts::{
-    EngineStatus, EngineTier, ProviderEntry, ProviderGroup, ProviderLabel, ProviderList,
+    EngineStartIssueKind, EngineStatus, EngineTier, ProviderEntry, ProviderGroup, ProviderLabel,
+    ProviderList,
 };
 
 use super::engines::known::known_engine;
@@ -15,8 +16,8 @@ use super::provider_facts::ProviderFacts;
 /// OpenCode 2.2.5 ran real turns through `orbynd` (docs/architecture.md, engines).
 const SEEN_ON_REAL_INSTALL: &[&str] = &["opencode"];
 
-/// Engines whose detail page is not built yet: their rows carry no Open.
-const NO_DETAIL: &[&str] = &["cursor", "fx"];
+/// Only these families have provider detail pages in the beta.
+const BETA_DETAIL: &[&str] = &["claude", "codex", "opencode"];
 
 /// Known ACP engines with a frame of their own. The other unverified ones are listed together.
 const OWN_ROW: &[&str] = &["cursor", "fx"];
@@ -114,7 +115,22 @@ fn not_verified(status: &EngineStatus) -> bool {
         && !SEEN_ON_REAL_INSTALL.contains(&family)
 }
 
+/// The label the last start issue adds, for an engine that can otherwise start.
+fn start_issue_label(status: &EngineStatus) -> Option<ProviderLabel> {
+    match status.start_issue.as_ref()?.kind {
+        EngineStartIssueKind::SignedOut => Some(ProviderLabel::SignedOut),
+        EngineStartIssueKind::Failed => Some(ProviderLabel::StartFailed),
+    }
+}
+
 fn note(status: &EngineStatus, facts: &ProviderFacts, labels: &[ProviderLabel]) -> Option<String> {
+    // The last start is the most useful line, and it replaces the program-name note.
+    if facts.installed()
+        && !labels.contains(&ProviderLabel::CantStart)
+        && let Some(issue) = &status.start_issue
+    {
+        return Some(issue.message.clone());
+    }
     if labels.contains(&ProviderLabel::CantStart) || labels.contains(&ProviderLabel::LimitedSupport)
     {
         return facts
@@ -148,6 +164,9 @@ fn entry_of(status: &EngineStatus) -> ProviderEntry {
     let mut labels = facts.labels();
     // Only an engine that can start is verified or not; a missing or broken one says that alone.
     if facts.installed() && !labels.contains(&ProviderLabel::CantStart) {
+        if let Some(label) = start_issue_label(status) {
+            labels.push(label);
+        }
         if not_verified(status) {
             labels.push(ProviderLabel::NotVerified);
         }
@@ -176,7 +195,7 @@ fn entry_of(status: &EngineStatus) -> ProviderEntry {
         labels,
         note,
         registered: true,
-        openable: !NO_DETAIL.contains(&family(status)),
+        openable: BETA_DETAIL.contains(&family(status)),
     }
 }
 
@@ -210,7 +229,7 @@ pub fn list(statuses: &[EngineStatus], apps: &[&str], refused: &[Refused]) -> Pr
             providers.push(ProviderEntry {
                 id: one.id.to_owned(),
                 name: known.name.to_owned(),
-                group: ProviderGroup::CantStart,
+                group: ProviderGroup::NotFound,
                 labels: vec![ProviderLabel::NotFound],
                 note: Some(format!(
                     "Found a program named {} at {}, but it is not xAI’s Grok CLI. Orbyn does not use it. Get xAI’s own Grok Build from xAI’s official page.",

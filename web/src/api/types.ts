@@ -3,6 +3,7 @@
  * adjustments here describe what JSON actually delivers.
  */
 import type { Approval as ApprovalWire } from "../generated/Approval";
+import type { Attachment } from "../generated/Attachment";
 import type { EngineLimits as EngineLimitsWire } from "../generated/EngineLimits";
 import type { EngineTools as EngineToolsWire } from "../generated/EngineTools";
 import type { EngineUsage as EngineUsageWire } from "../generated/EngineUsage";
@@ -52,6 +53,11 @@ export type { ApplyAllResult } from "../generated/ApplyAllResult";
 export type { Approval } from "../generated/Approval";
 export type { ApprovalState } from "../generated/ApprovalState";
 export type { Attachment } from "../generated/Attachment";
+
+export type { AttachmentSource } from "../generated/AttachmentSource";
+
+/** The Attachment answer now carries `source` itself; the alias keeps the callers that name it. */
+export type AttachmentWithSource = Attachment;
 export type { AuthState } from "../generated/AuthState";
 export type { CreateThread } from "../generated/CreateThread";
 export type { CustomEngine } from "../generated/CustomEngine";
@@ -153,10 +159,10 @@ export type { Question } from "../generated/Question";
 export type { QuestionRequest } from "../generated/QuestionRequest";
 export type { SearchHit } from "../generated/SearchHit";
 export type { MessageSearch } from "../generated/MessageSearch";
-export type { RestoredFile } from "../generated/RestoredFile";
-export type { RestoreOutcome } from "../generated/RestoreOutcome";
 export type { RunChanges } from "../generated/RunChanges";
 export type { TerminalInfo } from "../generated/TerminalInfo";
+export type { TerminalAttentionEvent } from "../generated/TerminalAttentionEvent";
+export type { TerminalAttentionOpen } from "../generated/TerminalAttentionOpen";
 export type Diagnostics = Wired<DiagnosticsWire>;
 export type ScheduledTask = Wired<ScheduledTaskWire>;
 export type { WebhookDelivery } from "../generated/WebhookDelivery";

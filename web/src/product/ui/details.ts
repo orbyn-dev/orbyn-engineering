@@ -5,6 +5,7 @@ export const DETAIL_ROWS: { id: string; label: string }[] = [
   { id: "branch", label: "Branch" },
   { id: "changes", label: "Changes" },
   { id: "pulls", label: "Pull requests" },
+  { id: "issues", label: "Issues" },
   { id: "automations", label: "Automations" },
   { id: "tools", label: "Tools" },
   { id: "servers", label: "Local servers" },

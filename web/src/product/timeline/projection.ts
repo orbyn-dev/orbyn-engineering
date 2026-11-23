@@ -27,6 +27,15 @@ function record(value: JsonValue | undefined): { [key in string]?: JsonValue } |
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : null;
 }
 
+/** The optional Snap Shot source on a sent attachment (docs/snapshots.md), read defensively. */
+function isWireSource(value: JsonValue | undefined): boolean {
+  const source = record(value);
+  return source?.kind === "snap_shot"
+    && typeof source.captured_at === "string"
+    && typeof source.app_name === "string"
+    && typeof source.window_title === "string";
+}
+
 const ACTION_KINDS: readonly string[] = [
   "command",
   "file_change",
@@ -70,7 +79,17 @@ export function approvalFromContent(
     decided_by: str("decided_by"),
     decided_at: str("decided_at"),
     created_at: str("created_at") ?? ts,
+    via: viaFrom(body.via),
   };
+}
+
+/** The Code Mode origin of an approval, read loosely: it is only drawn, never decided on. */
+function viaFrom(value: unknown): Approval["via"] {
+  if (typeof value !== "object" || value === null) return null;
+  const { code_run: run, call, script_sha256: sha } = value as Record<string, unknown>;
+  return typeof run === "string" && typeof call === "number" && typeof sha === "string"
+    ? { code_run: run, call, script_sha256: sha }
+    : null;
 }
 
 function planSteps(content: JsonValue): PlanStep[] {
@@ -340,7 +359,13 @@ function applyEvent(fold: Fold, wire: WireThreadEvent): void {
             typeof file.name === "string" &&
             typeof file.mime === "string" &&
             typeof file.size === "number"
-            ? [{ id: file.id, name: file.name, mime: file.mime, size: file.size }]
+            ? [{
+              id: file.id,
+              name: file.name,
+              mime: file.mime,
+              size: file.size,
+              ...(isWireSource(file.source) ? { source: file.source as SentAttachment["source"] } : {}),
+            }]
             : [];
         });
         if (wire.run_id) fold.sent[wire.run_id] = sent;
@@ -426,7 +451,8 @@ function applyEvent(fold: Fold, wire: WireThreadEvent): void {
         const taskId = body?.taskId;
         const taskType = typeof body?.taskType === "string" ? body.taskType : "";
         const described = typeof body?.description === "string" && body.description !== "" ? body.description : null;
-        if (typeof taskId === "string" && taskId !== "") {
+        // A workflow keeps its own state (workflow item); it never gets a stopped row.
+        if (typeof taskId === "string" && taskId !== "" && taskType !== "local_workflow") {
           const key = "stopped:" + (wire.run_id ?? "");
           const at = fold.items.findIndex((item) => item.key === key);
           const task = { taskId, taskType, description: described };

@@ -1,0 +1,74 @@
+# Starter Opengrep rules for this project. Advisory: see .opengrep/README.md.
+# Every rule has a matching case and a safe look-alike in .opengrep/tests, run by the workflow.
+rules:
+  - id: orbyn-ts-eval
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "eval or new Function runs a string as code"
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+    metadata: {category: security, subcategory: [vuln], confidence: HIGH, cwe: ["CWE-95: Eval Injection"]}
+  - id: orbyn-ts-inner-html
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: "innerHTML assigned a non-literal value: confirm it is sanitised"
+    patterns:
+      - pattern: $EL.innerHTML = $V
+      - pattern-not: $EL.innerHTML = "..."
+    metadata: {category: security, subcategory: [audit], confidence: MEDIUM, cwe: ["CWE-79: Cross-site Scripting"]}
+  - id: orbyn-ts-storage-secret
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: "A secret-looking key is written to browser storage"
+    patterns:
+      - pattern-either:
+          - pattern: localStorage.setItem($K, $V)
+          - pattern: sessionStorage.setItem($K, $V)
+      - metavariable-regex:
+          metavariable: $K
+          regex: (?i).*(token|secret|password|passwd|apikey|api_key).*
+    metadata: {category: security, subcategory: [audit], confidence: MEDIUM, cwe: ["CWE-922: Insecure Storage of Sensitive Information"]}
+  - id: orbyn-js-reflected-html-from-url
+    languages: [typescript, javascript]
+    mode: taint
+    severity: WARNING
+    message: "The request URL reaches an HTML response unescaped (reflected XSS): escape it or serve it as text"
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.url
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(req|request)$
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $RES.end($X)
+              - pattern: $RES.send($X)
+              - pattern: $RES.write($X)
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|response)$
+          - focus-metavariable: $X
+    pattern-sanitizers:
+      - pattern: encodeURIComponent(...)
+      - pattern: escapeHtml(...)
+    metadata: {category: security, subcategory: [vuln], confidence: MEDIUM, cwe: ["CWE-79: Cross-site Scripting"]}
+  - id: orbyn-js-replace-string-literal-first-only
+    languages: [typescript, javascript]
+    severity: INFO
+    message: "replace() with a string literal changes only the first occurrence: use a global regex if every occurrence must change"
+    pattern: $S.replace("...", $R)
+    metadata: {category: security, subcategory: [audit], confidence: LOW, cwe: ["CWE-116: Improper Encoding or Escaping of Output"]}
+  - id: orbyn-js-regex-escape-skips-backslash
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: "Regex metacharacters are escaped by prefixing a backslash, but the character class does not escape a backslash itself: an input holding one loses it and the pattern changes; escape the backslash first"
+    pattern-regex: '\.replace\(\s*/\[(?:\\[^\\]|[^\]\\])*\]/g\s*,\s*"\\\\\$&"\s*\)'
+    metadata: {category: security, subcategory: [audit], confidence: HIGH, cwe: ["CWE-116: Improper Encoding or Escaping of Output"], references: ["CodeQL js/incomplete-sanitization"]}
+  - id: orbyn-js-strip-html-comment-incomplete
+    languages: [typescript, javascript]
+    severity: INFO
+    message: "Stripping <!-- --> with one regex pass can leave a new comment opener behind: loop until stable or parse the HTML"
+    pattern-regex: \.replace\(\s*/<!--
+    metadata: {category: security, subcategory: [audit], confidence: LOW, cwe: ["CWE-80: Improper Neutralization of Script-Related HTML Tags"]}

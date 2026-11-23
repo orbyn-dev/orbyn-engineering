@@ -100,6 +100,21 @@ fn a_background_shell_does_not_hold_the_run_and_is_reported_stopped() {
 }
 
 #[test]
+fn a_workflow_is_never_reported_as_a_background_stop() {
+    let mut mapper = StreamMapper::default();
+    mapper.on_frame(&started("w1", "local_workflow"));
+    mapper.on_frame(&launch_frame());
+    mapper.on_frame(&started("b1", "local_bash"));
+    mapper.on_frame(&done());
+    let ended = mapper.end_background();
+    assert!(
+        matches!(&ended[..], [EngineEvent::Agui(AgUiEvent::Custom { name, value })]
+            if name == "background.stopped" && value["taskId"] == "b1"),
+        "only the shell is reported; the workflow keeps its own state"
+    );
+}
+
+#[test]
 fn a_turn_the_engine_started_for_its_own_work_does_not_end_the_run() {
     let mut mapper = StreamMapper::answering("mine");
     // The CLI ran a turn for a task notification before reaching the prompt.
@@ -123,6 +138,46 @@ fn a_turn_the_engine_started_for_its_own_work_does_not_end_the_run() {
     mapper.on_frame(&said("here is your answer"));
     mapper.on_frame(&done());
     assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
+}
+
+#[test]
+fn what_a_notifications_turn_says_is_shown_but_is_not_the_prompts_reply() {
+    let is_leftover = |events: &[EngineEvent]| {
+        !events.is_empty()
+            && events
+                .iter()
+                .all(|event| matches!(event, EngineEvent::Leftover(_)))
+    };
+    let mut mapper = StreamMapper::answering("mine");
+    // The CLI ran a turn for a finished background agent, and said so, before reaching the prompt.
+    mapper.on_frame(&json!({ "type": "system", "subtype": "task_notification",
+        "task_id": "old", "status": "completed" }));
+    let events = mapper.on_frame(&said("the old agent finished"));
+    assert!(is_leftover(&events), "{events:?}");
+    mapper.on_frame(&done());
+    mapper.on_frame(&echo("mine"));
+    // After the echo the words are the prompt's own.
+    let events = mapper.on_frame(&said("here is your answer"));
+    assert!(!events.is_empty());
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, EngineEvent::Leftover(_))),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn a_cli_that_gave_no_notice_of_a_leftover_turn_has_nothing_wrapped() {
+    // No notification came, so nothing says these words are not the prompt's: they count.
+    let mut mapper = StreamMapper::answering("mine");
+    let events = mapper.on_frame(&said("hello"));
+    assert!(
+        !events.is_empty()
+            && !events
+                .iter()
+                .any(|event| matches!(event, EngineEvent::Leftover(_)))
+    );
 }
 
 #[test]

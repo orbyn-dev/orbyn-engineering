@@ -45,6 +45,107 @@ fn manager(dir: &TempDir) -> EngineManager {
 }
 
 #[tokio::test]
+async fn opencode_status_reads_its_version_without_claiming_unsigned_support() {
+    let dir = TempDir::new();
+    let script = dir
+        .path()
+        .join(if cfg!(windows) { "fake.cmd" } else { "fake" });
+    #[cfg(windows)]
+    {
+        let node = crate::host::process::resolve("node").expect("Node.js for the fake npm shim");
+        std::fs::copy(node.program, dir.path().join("node.exe")).unwrap();
+        std::fs::create_dir_all(dir.path().join("node_modules/fake")).unwrap();
+        std::fs::write(
+            &script,
+            "@echo off\r\n\"%~dp0\\node.exe\" \"%~dp0\\node_modules\\fake\\cli.js\" %*\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("node_modules/fake/cli.js"),
+            "if (process.argv[2] !== '--version') process.exit(1); console.log('1.2.3')",
+        )
+        .unwrap();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(
+            &script,
+            "#!/bin/sh\n[ \"$1\" = --version ] || exit 1\necho 1.2.3\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut engines = manager(&dir);
+    let driver = engines
+        .custom_driver_for(
+            CustomEngine {
+                id: "opencode".into(),
+                name: "OpenCode".into(),
+                tier: EngineTier::Acp,
+                target: script.to_string_lossy().into_owned(),
+                args: vec!["acp".into()],
+            },
+            "opencode",
+        )
+        .unwrap();
+    let status = engines.status_of(driver.as_ref(), true).await;
+    assert_eq!(status.version.as_deref(), Some("1.2.3"));
+    assert_eq!(status.support, VersionSupport::Unknown);
+    assert!(status.compatibility.is_none());
+    // The test-only manifest stands in for a future owner-signed OpenCode entry.
+    engines.manifest = serde_json::from_value(
+        serde_json::json!({"engines": {"opencode": {"minimum": "2.0.0", "tested": ["2.0.0"]}}}),
+    )
+    .unwrap();
+    let status = engines.status_of(driver.as_ref(), true).await;
+    assert_eq!(status.support, VersionSupport::BelowMinimum);
+    assert!(status.compatibility.is_some());
+    let instance = serde_json::json!([{ "id": "my-open", "driver": "opencode", "program": script.to_string_lossy(), "args": [] }]);
+    engines
+        .store
+        .change_settings(|_| {
+            Ok((
+                (),
+                vec![crate::store::scoped_settings::SettingWrite::Global {
+                    key: "pref:provider_instances".into(),
+                    value: Some(instance.to_string()),
+                }],
+            ))
+        })
+        .unwrap();
+    let named = engines.status("my-open").await.unwrap();
+    assert_eq!(named.instance_of.as_deref(), Some("opencode"));
+    assert_eq!(named.version.as_deref(), Some("1.2.3"));
+    assert_eq!(named.support, VersionSupport::BelowMinimum);
+    let other = engines
+        .custom_driver_for(
+            CustomEngine {
+                id: "kimi".into(),
+                name: "Kimi".into(),
+                tier: EngineTier::Acp,
+                target: script.to_string_lossy().into_owned(),
+                args: vec![],
+            },
+            "kimi",
+        )
+        .unwrap();
+    assert_eq!(engines.status_of(other.as_ref(), true).await.version, None);
+    #[cfg(windows)]
+    std::fs::write(
+        dir.path().join("node_modules/fake/cli.js"),
+        "console.log('unavailable')",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    std::fs::write(&script, "#!/bin/sh\necho unavailable\n").unwrap();
+    let unknown = engines.status_of(driver.as_ref(), true).await;
+    assert_eq!(unknown.version, None);
+    assert_eq!(unknown.support, VersionSupport::Unknown);
+    assert!(unknown.compatibility.is_none());
+}
+
+#[tokio::test]
 async fn native_operations_exclude_command_changes_and_same_instance_admission() {
     let dir = TempDir::new();
     let engines = manager(&dir);
@@ -842,4 +943,347 @@ async fn an_unknown_engine_is_not_answered_from_a_kept_list() {
         1
     );
     assert_eq!(*slow.heard.lock().unwrap(), ["models"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_discovery_runs_off_async_thread_and_preserves_results() {
+    let caller = std::thread::current().id();
+    let statuses: Vec<EngineStatus> = vec![
+        serde_json::from_value(serde_json::json!({
+            "id": "codex", "name": "Codex", "tier": "native",
+            "capabilities": {"streaming": true, "approvals": true, "resume": true, "mcp": true,
+                "sandbox": true, "managed": true, "skill_delivery": [], "goal_control": false,
+                "decline_feedback": false, "permission_modes": []},
+            "installed": true, "path": "/fake/codex", "version": null, "auth": "unknown",
+            "installer": "unknown", "latest": null, "support": "unknown",
+            "update_command": null, "manual_hint": null, "sign_in_command": null,
+            "updating": false, "problem": null
+        }))
+        .unwrap(),
+    ];
+    let facts = || {
+        (
+            vec!["antigravity"],
+            vec![crate::agents::provider_list::Refused {
+                id: "grok",
+                path: "/fake/grok".into(),
+            }],
+        )
+    };
+    let (apps, refused) = facts();
+    let expected = crate::agents::provider_list::list(&statuses, &apps, &refused);
+    let actual = EngineManager::provider_list_with_discovery(statuses, move || {
+        assert_ne!(
+            std::thread::current().id(),
+            caller,
+            "discovery ran on async caller"
+        );
+        facts()
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(actual).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_discovery_panic_returns_internal_error() {
+    let result = EngineManager::provider_list_with_discovery(Vec::new(), || {
+        panic!("synthetic discovery failure")
+    })
+    .await;
+    assert!(matches!(result, Err(CoreError::Internal(_))));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_list_uses_cached_statuses() {
+    let dir = TempDir::new();
+    let engines = manager(&dir);
+    *engines.statuses.lock().await = Some(Vec::new());
+    let actual = engines.provider_list().await.unwrap();
+    let expected = crate::agents::provider_list::list(
+        &[],
+        &crate::agents::provider_list::installed_apps(),
+        &crate::agents::provider_list::refused_programs(),
+    );
+    assert_eq!(
+        serde_json::to_value(actual).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn provider_checks_off_keeps_the_list_but_a_refresh_still_reads() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let dir = TempDir::new();
+    let core = crate::app::Core::open(crate::CoreConfig::new(
+        dir.path().join("data"),
+        "http://127.0.0.1:1".into(),
+    ))
+    .unwrap();
+    let slow = Slow {
+        engines: core.engines.clone(),
+        reads: Arc::default(),
+        generation: Arc::default(),
+        failing: Arc::default(),
+        heard: Arc::default(),
+        _dir: dir,
+    };
+    core.engines.register(Arc::new(SlowDriver {
+        reads: slow.reads.clone(),
+        generation: slow.generation.clone(),
+        failing: slow.failing.clone(),
+    }));
+    slow.engines.models("slow", false).await.unwrap();
+    assert_eq!(slow.reads(), 1);
+    core.set_preferences(
+        None,
+        &std::collections::BTreeMap::from([(
+            "enable_provider_update_checks".to_owned(),
+            serde_json::json!(false),
+        )]),
+    )
+    .unwrap();
+    // Old enough that the list would be read again, and the engine's key has moved on.
+    slow.generation.store(1, SeqCst);
+    slow.engines
+        .model_reads
+        .age_all(MODELS_FRESH + Duration::from_secs(1));
+    for cached in slow.engines.models.lock().await.values_mut() {
+        cached.checked -= MODELS_KEY_CHECK + Duration::from_secs(1);
+    }
+    let kept = slow.engines.models("slow", false).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(kept.models[0].label, "Slow Model 0");
+    assert_eq!(
+        slow.reads(),
+        1,
+        "no automatic catalog read with the setting off"
+    );
+    let asked = slow.engines.models("slow", true).await.unwrap();
+    assert_eq!(slow.reads(), 2);
+    assert_eq!(asked.models[0].label, "Slow Model 1");
+}
+
+/// An engine that counts how often it is asked for its latest version.
+struct LatestDriver(Arc<std::sync::atomic::AtomicUsize>);
+
+#[async_trait::async_trait]
+impl EngineDriver for LatestDriver {
+    fn descriptor(&self) -> crate::agents::driver::EngineDescriptor {
+        let mut descriptor = KeyedDriver {
+            key: None,
+            failing: false,
+            empty: false,
+        }
+        .descriptor();
+        descriptor.id = "latest".into();
+        descriptor
+    }
+
+    async fn probe(&self) -> crate::agents::driver::EngineProbe {
+        crate::agents::driver::EngineProbe::default()
+    }
+
+    async fn start_run(
+        &self,
+        _spec: crate::agents::driver::RunSpec,
+        _events: tokio::sync::mpsc::Sender<crate::agents::driver::EngineEvent>,
+    ) -> Result<crate::agents::driver::RunHandle> {
+        Err(CoreError::Unsupported("no run".into()))
+    }
+
+    async fn latest_version(&self) -> Option<String> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Some("9.9.9".into())
+    }
+}
+
+/// An engine whose probe is fixed, for the status a start issue is overlaid on.
+struct StartIssueDriver {
+    id: &'static str,
+}
+
+#[async_trait::async_trait]
+impl EngineDriver for StartIssueDriver {
+    fn descriptor(&self) -> crate::agents::driver::EngineDescriptor {
+        crate::agents::driver::EngineDescriptor {
+            id: self.id.into(),
+            name: "Start Issue".into(),
+            tier: EngineTier::Acp,
+            capabilities: orbyn_contracts::EngineCapabilities {
+                streaming: true,
+                approvals: true,
+                resume: true,
+                mcp: true,
+                sandbox: false,
+                managed: true,
+                skill_delivery: Vec::new(),
+                goal_control: false,
+                decline_feedback: false,
+                permission_modes: Vec::new(),
+            },
+        }
+    }
+
+    async fn probe(&self) -> crate::agents::driver::EngineProbe {
+        crate::agents::driver::EngineProbe {
+            path: Some("/bin/start-issue".into()),
+            auth: Some(AuthState::NotApplicable),
+            sign_in_command: Some("start-issue login".into()),
+            ..Default::default()
+        }
+    }
+
+    async fn start_run(
+        &self,
+        _spec: crate::agents::driver::RunSpec,
+        _events: tokio::sync::mpsc::Sender<crate::agents::driver::EngineEvent>,
+    ) -> Result<crate::agents::driver::RunHandle> {
+        Err(CoreError::Unsupported("no run".into()))
+    }
+}
+
+#[tokio::test]
+async fn a_signed_out_start_issue_logs_out_the_status_and_keeps_its_sign_in() {
+    use orbyn_contracts::EngineStartIssueKind;
+    let dir = TempDir::new();
+    let engines = manager(&dir);
+    let id = "start-issue-status";
+    engines.register(Arc::new(StartIssueDriver { id }));
+    let message =
+        "Start Issue says it is not signed in. Sign in with its own command, then try again.";
+    super::start_issue::note_start_issue(id, EngineStartIssueKind::SignedOut, message);
+
+    let status = engines.status(id).await.unwrap();
+    assert_eq!(status.auth, AuthState::LoggedOut);
+    assert_eq!(status.sign_in_command.as_deref(), Some("start-issue login"));
+    assert_eq!(status.problem.as_deref(), Some(message));
+    let issue = status.start_issue.expect("the issue is on the status");
+    assert_eq!(issue.kind, EngineStartIssueKind::SignedOut);
+    assert_eq!(issue.message, message);
+
+    super::start_issue::clear_start_issue(id);
+    let clean = engines.status(id).await.unwrap();
+    assert_eq!(clean.auth, AuthState::NotApplicable);
+    assert!(clean.start_issue.is_none());
+    assert!(
+        serde_json::to_value(&clean)
+            .unwrap()
+            .get("start_issue")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn provider_checks_off_skips_the_latest_lookup_until_a_refresh() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let lookups: Arc<std::sync::atomic::AtomicUsize> = Arc::default();
+    let latest_of = |statuses: Vec<EngineStatus>| {
+        statuses
+            .into_iter()
+            .find(|status| status.id == "latest")
+            .unwrap()
+            .latest
+    };
+    let open = |name: &str| {
+        let dir = TempDir::new();
+        let core = crate::app::Core::open(crate::CoreConfig::new(
+            dir.path().join(name),
+            "http://127.0.0.1:1".into(),
+        ))
+        .unwrap();
+        core.engines
+            .register(Arc::new(LatestDriver(lookups.clone())));
+        (dir, core)
+    };
+    let (_on_dir, on) = open("on");
+    assert_eq!(
+        latest_of(on.engines.statuses(false).await.unwrap()),
+        Some("9.9.9".into())
+    );
+    assert_eq!(
+        lookups.swap(0, SeqCst),
+        1,
+        "setting on: the first status looks up"
+    );
+
+    let (_off_dir, off) = open("off");
+    off.set_preferences(
+        None,
+        &std::collections::BTreeMap::from([(
+            "enable_provider_update_checks".to_owned(),
+            serde_json::json!(false),
+        )]),
+    )
+    .unwrap();
+    assert_eq!(latest_of(off.engines.statuses(false).await.unwrap()), None);
+    assert_eq!(
+        lookups.load(SeqCst),
+        0,
+        "setting off: no lookup on the first status"
+    );
+    off.engines.invalidate().await;
+    off.engines.status("latest").await.unwrap();
+    assert_eq!(
+        lookups.load(SeqCst),
+        0,
+        "setting off: no lookup on an automatic status"
+    );
+    assert_eq!(
+        latest_of(off.engines.statuses(true).await.unwrap()),
+        Some("9.9.9".into())
+    );
+    assert_eq!(lookups.load(SeqCst), 1, "a refresh still looks up");
+}
+
+#[test]
+fn a_turned_off_engine_is_refused_by_the_name_the_status_list_shows() {
+    let dir = TempDir::new();
+    let engines = manager(&dir);
+    engines
+        .store
+        .save_custom_engine(
+            &CustomEngine {
+                id: "own".into(),
+                name: String::new(),
+                tier: EngineTier::Acp,
+                target: "agent-command".into(),
+                args: Vec::new(),
+            },
+            "test",
+        )
+        .unwrap();
+    let instances = serde_json::json!([
+        { "id": "kiro-work", "driver": "kiro", "enabled": false },
+        { "id": "own-work", "driver": "own", "enabled": false }
+    ]);
+    engines
+        .store
+        .change_settings(|_| {
+            Ok((
+                (),
+                vec![crate::store::scoped_settings::SettingWrite::Global {
+                    key: "pref:provider_instances".into(),
+                    value: Some(instances.to_string()),
+                }],
+            ))
+        })
+        .unwrap();
+    assert_eq!(
+        engines
+            .check_enabled("kiro-work")
+            .unwrap_err()
+            .public_message(),
+        "Kiro is turned off."
+    );
+    assert_eq!(
+        engines
+            .check_enabled("own-work")
+            .unwrap_err()
+            .public_message(),
+        "own-work is turned off."
+    );
 }

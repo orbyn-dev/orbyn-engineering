@@ -189,6 +189,23 @@ pub struct StartRun {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[ts(optional, as = "Option<BTreeMap<String, String>>")]
     pub options: BTreeMap<String, String>,
+    /// A JSON Schema for the run's result (M20). The run ends with a `turn_result` event: the engine's answer parsed and
+    /// checked against it, or why it could not be. At most 16 KiB, local `$ref` only. Not with `purpose`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub result_schema: Option<Value>,
+    /// What the run is for, when Orbyn supplies the schema itself. Not with `result_schema`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub purpose: Option<RunPurpose>,
+}
+}
+
+wire_enum! {
+/// A run whose result schema Orbyn supplies.
+pub enum RunPurpose {
+    /// A command for the terminal, reported as a `proposal` event the person runs with one click.
+    TerminalProposal,
 }
 }
 
@@ -203,8 +220,60 @@ pub enum SteerState {
 
 wire! {
 pub struct SteerResult {
+    /// The id the steer's message is logged under, or is queued under until it runs.
+    pub message_id: String,
     pub state: SteerState,
+    /// The queue row a queued steer waits in; absent once delivered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub queued_message_id: Option<String>,
 }
+}
+
+wire_enum! {
+/// Where a steer's message stands after a transition. `pending` is the client's
+/// own, before the service answers.
+pub enum SteerDelivery {
+    Delivered,
+    Queued,
+    Failed,
+}
+}
+
+wire! {
+/// `CUSTOM steer.state`: where a steer stands, so a timeline can mark its message.
+pub struct SteerStateEvent {
+    pub message_id: String,
+    pub state: SteerDelivery,
+}
+}
+
+impl SteerStateEvent {
+    /// The `CUSTOM steer.state` marker that carries this payload.
+    pub fn into_event(self) -> AgUiEvent {
+        AgUiEvent::Custom {
+            name: "steer.state".into(),
+            value: serde_json::to_value(self).expect("a steer state always serializes"),
+        }
+    }
+}
+
+wire! {
+/// `CUSTOM steer.failed`: the engine refused a steer, so its message moved to the queue.
+pub struct SteerFailed {
+    pub message_id: String,
+    pub prompt: String,
+}
+}
+
+impl SteerFailed {
+    /// The `CUSTOM steer.failed` marker that carries this payload.
+    pub fn into_event(self) -> AgUiEvent {
+        AgUiEvent::Custom {
+            name: "steer.failed".into(),
+            value: serde_json::to_value(self).expect("a steer failure always serializes"),
+        }
+    }
 }
 
 wire! {
@@ -239,6 +308,48 @@ mod tests {
             serde_json::to_value(event).unwrap(),
             serde_json::json!({"type":"TEXT_MESSAGE_CONTENT","messageId":"m","delta":"hi"})
         );
+    }
+
+    #[test]
+    fn steer_wire_carries_the_client_message_id() {
+        let delivered = SteerResult {
+            message_id: "m-1".into(),
+            state: SteerState::Delivered,
+            queued_message_id: None,
+        };
+        assert_eq!(
+            serde_json::to_value(delivered).unwrap(),
+            serde_json::json!({"message_id": "m-1", "state": "delivered"})
+        );
+        let queued = SteerResult {
+            message_id: "m-2".into(),
+            state: SteerState::Queued,
+            queued_message_id: Some("q-1".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(queued).unwrap(),
+            serde_json::json!({"message_id": "m-2", "state": "queued", "queued_message_id": "q-1"})
+        );
+        assert_eq!(
+            serde_json::to_value(SteerStateEvent {
+                message_id: "m-1".into(),
+                state: SteerDelivery::Failed,
+            })
+            .unwrap(),
+            serde_json::json!({"message_id": "m-1", "state": "failed"})
+        );
+        assert_eq!(
+            serde_json::to_value(SteerFailed {
+                message_id: "m-1".into(),
+                prompt: "retry".into(),
+            })
+            .unwrap(),
+            serde_json::json!({"message_id": "m-1", "prompt": "retry"})
+        );
+        // An older client sent no id; the service makes one.
+        let older: crate::SteerRun =
+            serde_json::from_value(serde_json::json!({"prompt": "hi"})).unwrap();
+        assert!(older.message_id.is_none());
     }
 
     #[test]

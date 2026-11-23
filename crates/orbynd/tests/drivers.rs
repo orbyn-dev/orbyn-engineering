@@ -87,6 +87,42 @@ async fn codex_run_ignores_a_completed_turn_that_is_not_its_own() {
     assert_eq!(text_of(&events), "hello from codex");
 }
 
+async fn assert_no_reply(service: &Service, thread: &str) {
+    assert_eq!(service.finished(thread).await, "failed");
+    let events = service.all_events(thread).await;
+    let last = events.last().expect("events");
+    assert!(
+        last["event"]["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with("No reply")),
+        "{last}"
+    );
+}
+
+#[tokio::test]
+async fn codex_words_of_an_earlier_turn_do_not_make_a_silent_prompt_a_reply() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "[leftover-turn] [silent]").await;
+    assert_no_reply(&service, &thread).await;
+    // The earlier turn's words are still shown.
+    assert!(text_of(&service.all_events(&thread).await).contains("the old turn spoke"));
+}
+
+#[tokio::test]
+async fn an_acp_update_for_another_session_does_not_make_a_silent_prompt_a_reply() {
+    let dir = TempDir::new();
+    let (service, _) = setup(&dir, Options::default(), "codex").await;
+    custom_engine(&service, "acp", FAKE, json!(["acp"])).await;
+    let projects = service.json("/api/projects").await;
+    let thread = service
+        .thread(projects[0]["id"].as_str().unwrap(), "custom")
+        .await;
+    service.admit(&thread, "[stray] [silent]").await;
+    assert_no_reply(&service, &thread).await;
+    assert!(!text_of(&service.all_events(&thread).await).contains("STRAY"));
+}
+
 #[tokio::test]
 async fn a_codex_turn_waits_for_its_tools_to_start() {
     let dir = TempDir::new();
@@ -104,7 +140,7 @@ async fn a_codex_turn_waits_for_its_tools_to_start() {
 }
 
 #[tokio::test]
-async fn codex_plan_mode_and_leaving_it_reach_native_collaboration() {
+async fn codex_runs_in_default_collaboration_even_with_plan_mode_saved() {
     let dir = TempDir::new();
     let file = dir.path().join("launches");
     let options = Options {
@@ -132,7 +168,7 @@ async fn codex_plan_mode_and_leaving_it_reach_native_collaboration() {
         .map(|entry| serde_json::from_str(entry["args"][0].as_str().unwrap()).unwrap())
         .collect();
     assert_eq!(turns.len(), 2);
-    for (turn, mode) in turns.iter().zip(["plan", "default"]) {
+    for (turn, mode) in turns.iter().zip(["default", "default"]) {
         assert_eq!(turn["collaborationMode"]["mode"], mode);
         assert_eq!(turn["collaborationMode"]["settings"]["model"], "fake-big");
         assert_eq!(
@@ -143,7 +179,8 @@ async fn codex_plan_mode_and_leaving_it_reach_native_collaboration() {
         assert_eq!(turn["approvalPolicy"], "on-request");
         assert_eq!(turn["serviceTier"], "priority");
     }
-    assert_eq!(turns[0]["sandboxPolicy"]["type"], "readOnly");
+    // A saved plan_mode no longer restricts a run (the web dropped plan mode): both turns can write.
+    assert_eq!(turns[0]["sandboxPolicy"]["type"], "workspaceWrite");
     assert_eq!(turns[1]["sandboxPolicy"]["type"], "workspaceWrite");
     assert_eq!(turns[0]["threadId"], turns[1]["threadId"]);
     let threads: Vec<Value> = entries
@@ -156,10 +193,10 @@ async fn codex_plan_mode_and_leaving_it_reach_native_collaboration() {
     let plan_context = threads[0]["developerInstructions"].as_str().unwrap();
     let ordinary_context = threads[1]["developerInstructions"].as_str().unwrap();
     let plan_instruction = "Plan mode: read and propose a plan. Change nothing.\n";
-    assert!(plan_context.contains(plan_instruction));
+    assert!(!plan_context.contains(plan_instruction));
     assert!(!ordinary_context.contains(plan_instruction));
     assert!(ordinary_context.starts_with("<orbyn_context>\nCheckout:"));
-    assert_eq!(plan_context.replace(plan_instruction, ""), ordinary_context);
+    assert_eq!(plan_context, ordinary_context);
 }
 
 #[tokio::test]

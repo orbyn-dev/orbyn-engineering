@@ -25,6 +25,7 @@ fn bundled_cli() -> Option<PathBuf> {
     Some(exe.parent()?.join(name))
 }
 
+#[cfg(windows)]
 fn windows_shim(target: &Path) -> String {
     format!(
         "@echo off\r\n{CLI_LINK_MARK}\r\n\"{}\" %*\r\n",

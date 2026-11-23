@@ -6,7 +6,7 @@ import { viewOf } from "./assemble";
 import { kindChips, NeedsBar, NeedsCard, NeedsEmpty, NeedsList, CHIP_NOTE, type Chip } from "./NeedsYou";
 import { NeedsYouInbox } from "./NeedsYouInbox";
 import type { NeedsItem } from "./model";
-import { BACKGROUND_ITEMS, DEMOTED_ITEMS, FULL_ITEMS, MAIN_ITEM, QUESTIONS_ITEM, MANY_GROUPS, MANY_ITEMS, NARROW_ITEMS, OFF_ITEMS, STOP_ITEMS } from "./samples";
+import { BACKGROUND_ITEMS, DAILY_NARROW_ITEMS, DAILY_NO_RESET_ITEMS, DAILY_STOP_ITEMS, DEMOTED_ITEMS, FULL_ITEMS, MAIN_ITEM, QUESTIONS_ITEM, MANY_GROUPS, MANY_ITEMS, NARROW_ITEMS, OFF_ITEMS, STOP_ITEMS } from "./samples";
 import type { NeedsYouFrameId } from "./names";
 
 const SUB = "Login redirect crew · Lead: Fix login redirect on Claude Code";
@@ -57,14 +57,8 @@ function ApproveDialog() {
         <h4>
           Approve a command <span className="cx-cwpv">Preview</span>
         </h4>
-        <p>Claude Code · Sonnet 5.5 asks to run a command in its worktree crew/redirect-impl.</p>
+        <p>claude asks to run a command in its worktree crew/redirect-impl.</p>
         <pre className="ny-guard"><code>npm publish --dry-run --workspace auth</code></pre>
-        <div className="cx-fbx">
-          <div className="cx-fkv">
-            <span>Waiting holds</span>
-            <b>1 task and its lease on auth/redirect.ts</b>
-          </div>
-        </div>
         <div className="cx-ra">
           <Btn className="cx-ghost">Deny</Btn>
           <Btn className="cx-btn">Approve once</Btn>
@@ -87,15 +81,16 @@ function Empty() {
 }
 
 function Many() {
+  const total = MANY_ITEMS.length + MANY_GROUPS.reduce((sum, group) => sum + group.count, 0);
   const chips: Chip[] = [
-    { key: "all", label: "All projects", count: 27 },
+    { key: "all", label: "Needs you", count: total },
     { key: "eng", label: "orbyn-engineering", count: 21 },
     { key: "docs", label: "orbyn-docs", count: 6 },
   ];
   return (
     <Frame height={560}>
-      <Page inbox="Inbox · 27" workers={9}>
-        <NeedsBar chips={chips} active="all" rule="Showing 4 of 27 · the rest are grouped below" label="Filter by project" />
+      <Page inbox={`Inbox · ${total}`} workers={9}>
+        <NeedsBar chips={chips} active="all" rule={`Showing ${MANY_ITEMS.length} of ${total} · the rest are grouped below`} label="Filter by project" />
         <NeedsList items={MANY_ITEMS} handlers={{}} />
         <ul className="ny-groups" aria-label="The rest, by crew">
           {MANY_GROUPS.map((group) => (
@@ -140,8 +135,8 @@ function PanelHead() {
       </div>
       <div className="cx-cwpseg" style={{ padding: "8px 10px", flex: "none" }}>
         <span className="cx-segx" aria-label="Crew views">
-          {["Flow", "Review", "Map", "Board", "Inbox 4"].map((name) => (
-            <span key={name} className={name === "Inbox 4" ? "cx-on" : undefined} aria-current={name === "Inbox 4" ? "true" : undefined}>{name}</span>
+          {["Flow", "Review", "Map", "Board", "Inbox"].map((name) => (
+            <span key={name} className={name === "Inbox" ? "cx-on" : undefined} aria-current={name === "Inbox" ? "true" : undefined}>{name}</span>
           ))}
           <Btn className="cx-ovf" aria-label="More Crew views" title="More Crew views"><Ic n="more" sm /></Btn>
         </span>
@@ -150,16 +145,18 @@ function PanelHead() {
   );
 }
 
-function NarrowPanel() {
+const narrowFrame = (items: NeedsItem[]): ComponentType => function NeedsYouNarrow() {
   return (
     <Frame panel>
       <PanelHead />
       <ol className="ny-cards" aria-label="Needs you">
-        {NARROW_ITEMS.map((item) => <NeedsCard key={item.id} item={item} handlers={{}} />)}
+        {items.map((item) => <NeedsCard key={item.id} item={item} handlers={{}} />)}
       </ol>
     </Frame>
   );
-}
+};
+
+const NarrowPanel = narrowFrame(NARROW_ITEMS);
 
 const RULES: [string, string, string][] = [
   ["1 · Risk", "What could go wrong if the answer is wrong: a command that touches the network, a deletion, a merge.", "“A change waiting for your review”: High"],
@@ -220,6 +217,9 @@ export const NEEDSYOU_SCREENS: Record<NeedsYouFrameId, ComponentType> = {
   "needsyou-demoted": listFrame(DEMOTED_ITEMS),
   "needsyou-stop": listFrame(STOP_ITEMS),
   "needsyou-background": listFrame(BACKGROUND_ITEMS),
+  "needsyou-daily-budget-stop": listFrame(DAILY_STOP_ITEMS),
+  "needsyou-daily-budget-stop-narrow": narrowFrame(DAILY_NARROW_ITEMS),
+  "needsyou-daily-budget-stop-no-reset": listFrame(DAILY_NO_RESET_ITEMS),
   "needsyou-source-error": listFrame([QUESTIONS_ITEM, MAIN_ITEM], { errors: ["held commands"] }),
   "needsyou-live": Live,
 };

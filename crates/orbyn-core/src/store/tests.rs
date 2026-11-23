@@ -82,6 +82,7 @@ fn pending(store: &Store, run: &str) -> orbyn_contracts::Approval {
                 source: "default".into(),
                 reason: "no rule".into(),
             },
+            via: None,
         })
         .unwrap()
 }
@@ -453,14 +454,29 @@ fn rejected_steer_holds_stopped_source_but_preserves_normal_enqueue_policy() {
     let run = running(&f.store, &f.thread);
     let ordinary = f
         .store
-        .requeue_failed_steer(&run, &f.thread, "active rejected steer")
+        .requeue_failed_steer(&run, &f.thread, "steer-1", "active rejected steer")
         .unwrap();
     assert!(!ordinary.held);
+    // The refusal names the message it moved, so a timeline can mark that one.
+    let failed = f
+        .store
+        .events_after(&f.thread, 0, 100)
+        .unwrap()
+        .into_iter()
+        .find_map(|event| match event.event {
+            AgUiEvent::Custom { name, value } if name == "steer.failed" => Some(value),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        failed,
+        json!({ "message_id": "steer-1", "prompt": "active rejected steer" })
+    );
     f.store.remove_queued(&ordinary.id).unwrap();
     f.store.request_stop(&run).unwrap();
     let stopped = f
         .store
-        .requeue_failed_steer(&run, &f.thread, "stopped rejected steer")
+        .requeue_failed_steer(&run, &f.thread, "steer-2", "stopped rejected steer")
         .unwrap();
     assert!(stopped.held);
     let owner: Option<String> = f
@@ -476,7 +492,7 @@ fn rejected_steer_holds_stopped_source_but_preserves_normal_enqueue_policy() {
     f.store.finish_run(&run, RunState::Completed, None).unwrap();
     let late = f
         .store
-        .requeue_failed_steer(&run, &f.thread, "late rejected steer")
+        .requeue_failed_steer(&run, &f.thread, "steer-3", "late rejected steer")
         .unwrap();
     assert!(late.held);
     f.store.remove_queued(&stopped.id).unwrap();
@@ -503,12 +519,12 @@ fn rejected_steer_rejects_foreign_epoch_or_thread_without_a_note() {
     let before = f.store.latest_seq(&f.thread).unwrap();
     let stale = Store::open(&f.path, "epoch-b").unwrap();
     assert!(matches!(
-        stale.requeue_failed_steer(&run, &f.thread, "stale"),
+        stale.requeue_failed_steer(&run, &f.thread, "steer-4", "stale"),
         Err(CoreError::StaleOwner)
     ));
     assert!(matches!(
         f.store
-            .requeue_failed_steer(&run, "other-thread", "wrong target"),
+            .requeue_failed_steer(&run, "other-thread", "steer-5", "wrong target"),
         Err(CoreError::StaleOwner)
     ));
     assert_eq!(f.store.latest_seq(&f.thread).unwrap(), before);
@@ -523,7 +539,7 @@ fn rejected_steer_note_failure_rolls_back_its_queue_insertion() {
     f.store.writer().execute_batch("CREATE TRIGGER fixture_reject_event BEFORE INSERT ON thread_events BEGIN SELECT RAISE(ABORT, 'fixture note failure'); END;").unwrap();
     assert!(
         f.store
-            .requeue_failed_steer(&run, &f.thread, "all or nothing")
+            .requeue_failed_steer(&run, &f.thread, "steer-6", "all or nothing")
             .is_err()
     );
     assert!(f.store.list_queue(&f.thread).unwrap().is_empty());
@@ -700,6 +716,7 @@ fn finishing_expires_pending_approvals_and_blocks_new_ones() {
             source: "default".into(),
             reason: String::new(),
         },
+        via: None,
     });
     assert!(matches!(late, Err(CoreError::RunClosed)));
 }
@@ -775,11 +792,44 @@ fn migration_versions_run_from_one_with_no_gap_through_the_account_owner() {
             "migration {version} is missing"
         );
     }
-    let (_, owner) = migrations::MIGRATIONS
+    // A database from before the owner column, with a sync zone already in it, upgraded through the store's own path:
+    // the zone has no owner until one is claimed, so migration 35 must not invent one by defaulting the column.
+    let dir = TempDir::new();
+    let path = dir.path().join("before-the-owner.db");
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)",
+    )
+    .unwrap();
+    for (version, sql) in migrations::MIGRATIONS
         .iter()
-        .find(|(version, _)| *version == 35)
+        .filter(|(version, _)| *version <= 34)
+    {
+        conn.execute_batch(sql).unwrap();
+        conn.execute(
+            "INSERT INTO schema_migrations VALUES (?1, 'fixture')",
+            [version],
+        )
         .unwrap();
-    assert!(owner.contains("account_sync") && owner.contains("account TEXT"));
+    }
+    conn.execute(
+        "INSERT INTO account_sync (zone, capture, device) VALUES ('zone-1', 1, 'device-1')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    let store = Store::open(&path, "epoch-b").unwrap();
+    assert_eq!(
+        store.account_owner("zone-1").unwrap(),
+        None,
+        "a zone from before the owner column has no owner, not a defaulted one"
+    );
+    store.account_claim("zone-1", "account-1").unwrap();
+    assert_eq!(
+        store.account_owner("zone-1").unwrap().as_deref(),
+        Some("account-1"),
+        "the column migration 35 adds holds the owner once one is claimed"
+    );
 }
 
 #[test]
@@ -1198,6 +1248,25 @@ fn automatic_continuations_run_out_and_your_message_resets_them() {
     assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
 }
 
+#[test]
+fn a_refunded_continuation_leaves_the_tries_for_a_start_that_runs() {
+    let f = fixture();
+    for _ in 0..3 {
+        assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
+        f.store.refund_resume_try(&f.thread).unwrap();
+    }
+    // Three refused starts used nothing: all three tries are still there.
+    for _ in 0..3 {
+        assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
+    }
+    assert!(!f.store.take_resume_try(&f.thread, 3).unwrap());
+    // A refund never goes below zero.
+    let run = running(&f.store, &f.thread);
+    f.store.finish_run(&run, RunState::Completed, None).unwrap();
+    f.store.refund_resume_try(&f.thread).unwrap();
+    assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
+}
+
 fn permission_updates(store: &Store, thread: &str) -> Vec<serde_json::Value> {
     store
         .events_after(thread, 0, 500)
@@ -1230,6 +1299,41 @@ fn a_mode_change_during_a_live_run_says_it_applies_next_run() {
         permission_updates(&f.store, &f.thread),
         vec![json!({ "mode": "full_access", "applies": "next_run" })]
     );
+}
+
+/// A run keeps whether Crew queued its prompt; a plain message, and a row from before the
+/// flag existed, are the person's.
+#[test]
+fn a_run_keeps_whether_crew_queued_its_prompt() {
+    let f = fixture();
+    let person = f
+        .store
+        .enqueue(
+            &f.thread,
+            "hello",
+            &[],
+            &orbyn_contracts::ModelSelection::default(),
+        )
+        .unwrap();
+    let (first, _) = f.store.admit_next(&f.thread, "t").unwrap().unwrap();
+    assert!(!f.store.run_is_crew_note(&first.id).unwrap(), "{person:?}");
+    f.store.mark_starting(&first.id).unwrap();
+    f.store.mark_running(&first.id).unwrap();
+    f.store
+        .finish_run(&first.id, RunState::Completed, None)
+        .unwrap();
+    f.store
+        .enqueue_crew_note(
+            &f.thread,
+            "result",
+            &[],
+            &orbyn_contracts::ModelSelection::default(),
+        )
+        .unwrap();
+    let (second, _) = f.store.admit_next(&f.thread, "t").unwrap().unwrap();
+    assert!(f.store.run_is_crew_note(&second.id).unwrap());
+    assert!(!f.store.run_is_crew_note(&first.id).unwrap());
+    assert!(!f.store.run_is_crew_note("no-such-run").unwrap());
 }
 
 #[test]

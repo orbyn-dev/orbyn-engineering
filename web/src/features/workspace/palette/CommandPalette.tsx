@@ -1,6 +1,6 @@
-import { File, FolderPlus, MessageSquare, RotateCcw, Search, Settings, SquarePen, SunMoon, TextSearch } from "lucide-react";
+import { File, FolderPlus, GitPullRequest, MessageSquare, RotateCcw, Search, Settings, Sparkles, SquarePen, SunMoon, TextSearch } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { api } from "../api";
+import { api, pullsApi } from "../api";
 import { compactAge } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { navigate, parseRoute, SETTINGS_SECTIONS, type Route } from "../../../product/state/route";
@@ -8,7 +8,9 @@ import { useUi, type PaletteStart } from "../../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
 import { ProjectBadge } from "../../../product/ui/badges";
 import { useAccountAvailable } from "../../account";
+import { Button } from "../../../ui/controls";
 import { AddProjectPalette } from "./AddProjectPalette";
+import { loadFrecency, rankEntries, recordUse, saveFrecency } from "./paletteRanking";
 
 interface Entry {
   key: string;
@@ -18,6 +20,8 @@ interface Entry {
   icon: ReactNode;
   /** Extra words that find this entry, such as a thread's project and branch. */
   search?: string;
+  /** Picking this row counts toward its frecency (threads and pull requests only). */
+  track?: boolean;
   route:
     | Route
     | "add-project"
@@ -64,6 +68,31 @@ function useMessageSearch(query: string, enabled: boolean) {
   return hits.data ?? [];
 }
 
+type PullEntry = Awaited<ReturnType<typeof pullsApi.list>>["pulls"][number];
+
+/** Open pull requests across projects, read from the list the Pull requests page uses, only once a query is typed. */
+function usePullSearch(query: string, enabled: boolean): { pulls: PullEntry[]; status: "idle" | "loading" | "error"; retry(): void } {
+  const on = enabled && query.trim().length >= MESSAGE_SEARCH_MIN;
+  const list = useAsync(`palette:pulls:${on ? "on" : "off"}`, async (signal) => {
+    if (!on) return [];
+    return (await pullsApi.list("open", "", signal)).pulls;
+  });
+  return { pulls: list.data ?? [], status: !on ? "idle" : list.status === "loading" ? "loading" : list.status === "error" ? "error" : "idle", retry: list.reload };
+}
+
+/** What the palette says in the Pull requests group while the list is read or cannot be (palette-prs-loading, palette-prs-unreadable). */
+function PullsNote({ status, onRetry }: { status: "loading" | "error"; onRetry(): void }) {
+  return (
+    <div>
+      <div className="palette-group">Pull requests</div>
+      <div className="palette-note" role="status">
+        <span>{status === "loading" ? "Looking for pull requests…" : "Couldn’t read pull requests. Threads and commands still work."}</span>
+        {status === "error" ? <Button small onClick={onRetry}>Retry</Button> : null}
+      </div>
+    </div>
+  );
+}
+
 export function CommandPalette({ start, onClose }: { start: PaletteStart; onClose(): void }) {
   const threads = useWorkspace((state) => state.threads);
   const allProjects = useWorkspace((state) => state.projects.data);
@@ -89,6 +118,8 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
   const hits = useCheckoutSearch(start, query);
   const messages = useMessageSearch(query, !searchTitle[start] && !newIn);
   const accountOn = useAccountAvailable();
+  const { pulls, status: pullStatus, retry: retryPulls } = usePullSearch(query, !searchTitle[start] && !newIn);
+  const [book, setBook] = useState(() => loadFrecency());
   const entries = useMemo<Entry[]>(() => {
     if (searchTitle[start]) {
       return hits.map((hit) => ({
@@ -104,6 +135,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
       { key: "theme", group: "Actions", label: "Toggle theme", icon: <SunMoon size={16} aria-hidden />, route: "toggle-theme" },
       { key: "new", group: "Actions", label: "New thread", icon: <SquarePen size={16} aria-hidden />, route: { name: "new", projectId: null } },
       { key: "new-in", group: "Actions", label: "New thread in...", icon: <SquarePen size={16} aria-hidden />, route: "new-in" },
+      { key: "welcome", group: "Actions", label: "Welcome", icon: <Sparkles size={16} aria-hidden />, route: { name: "welcome" } as Route },
       { key: "add", group: "Actions", label: "Add project", icon: <FolderPlus size={16} aria-hidden />, route: "add-project" },
       ...(parseRoute(window.location.hash).name === "thread"
         ? [
@@ -114,6 +146,8 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
         key: `settings:${section}`,
         group: "Settings",
         label: title(section),
+        // The group's own word finds these, so "sett" and "settings" list the Settings pages.
+        search: "settings preferences",
         icon: <Settings size={16} aria-hidden />,
         route: { name: "settings", section } as Route,
       })),
@@ -123,6 +157,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
       .map((thread) => ({
         key: thread.id,
+        track: true,
         group: "Threads",
         label: thread.title,
         meta: compactAge(thread.updated_at),
@@ -152,11 +187,30 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
       icon: <TextSearch size={16} aria-hidden />,
       route: { message: hit.message_id, thread: hit.thread_id },
     }));
-    return [...(needle ? all.filter(found) : all).slice(0, 50), ...inMessages];
-  }, [threads, query, newIn, projects, allProjects, hits, start, messages, accountOn]);
+    const inPulls: Entry[] = newIn
+      ? []
+      : pulls.map(({ project_id, pull }) => ({
+          key: `pull:${project_id}:${pull.number}`,
+          track: true,
+          group: "Pull requests",
+          label: pull.title,
+          meta: `#${pull.number}`,
+          search: `${allProjects?.find((project) => project.id === project_id)?.name ?? ""} ${pull.head}`,
+          icon: <GitPullRequest size={16} aria-hidden />,
+          route: { name: "pulls", project: project_id, number: Number(pull.number) } as Route,
+        }));
+    const matching = needle ? [...all, ...inPulls].filter(found) : all;
+    return [...rankEntries(matching, query, book, Date.now()).slice(0, 50), ...inMessages];
+  }, [threads, query, newIn, projects, allProjects, hits, start, messages, accountOn, pulls, book]);
 
   const choose = (entry: Entry | undefined) => {
     if (!entry) return;
+    // Only a person's pick is remembered; opening the palette or listing rows writes nothing.
+    if (entry.track) {
+      const next = recordUse(book, entry.key, Date.now());
+      setBook(next);
+      saveFrecency(next);
+    }
     if (entry.route === "add-project") {
       setAdding(true);
       return;
@@ -213,6 +267,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
   };
 
   let group = "";
+  const noteAt = entries.some((entry) => entry.group === "Messages") ? entries.findIndex((entry) => entry.group === "Messages") : entries.length;
   return (
     <dialog
       ref={ref}
@@ -243,7 +298,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
           aria-expanded
           aria-controls="palette-list"
           aria-label="Search"
-          placeholder={searchTitle[start] ?? "Search threads and commands"}
+          placeholder={searchTitle[start] ?? "Search threads, pull requests and commands"}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -256,12 +311,15 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
         />
       </div>
       <div id="palette-list" className="palette-list">
-        {entries.length === 0 ? <p className="sidebar-empty">No results</p> : null}
+        {entries.length === 0 && pullStatus === "idle" ? <p className="sidebar-empty">No results</p> : null}
         {entries.map((entry, at) => {
+          // The pull request line sits after the ranked groups, ahead of the messages.
+          const note = pullStatus !== "idle" && at === noteAt ? <PullsNote key="pulls-note" status={pullStatus} onRetry={retryPulls} /> : null;
           const heading = entry.group !== group ? entry.group : null;
           group = entry.group;
           return (
             <div key={entry.key}>
+              {note}
               {heading ? <div className="palette-group">{heading}</div> : null}
               <button
                 type="button"
@@ -276,6 +334,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
             </div>
           );
         })}
+        {pullStatus !== "idle" && noteAt >= entries.length ? <PullsNote status={pullStatus} onRetry={retryPulls} /> : null}
       </div>
       <footer className="palette-foot">
         <span>

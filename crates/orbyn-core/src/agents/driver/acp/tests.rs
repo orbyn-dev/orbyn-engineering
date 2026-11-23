@@ -1,6 +1,6 @@
 use super::events::UpdateMapper;
 use super::models::{parse_models, parse_session_options, require_offered};
-use super::permissions::{classify, permission_outcome};
+use super::permissions::{classify, gate_paths, permission_outcome};
 use super::sign_in::{MAX_SIGN_IN_ARGS, SignInSlot, known_sign_in, terminal_sign_in};
 use super::*;
 use crate::governance::approvals::Verdict;
@@ -213,6 +213,22 @@ fn a_handshake_records_and_clears_the_engine_sign_in() {
 }
 
 #[test]
+fn a_sign_in_needed_is_the_structured_code_not_the_words() {
+    let failure = |code: Option<i64>, message: &str| {
+        super::StartFailure::agent(
+            crate::agents::driver::rpc::RpcCallError {
+                code,
+                error: CoreError::EngineUnavailable(message.into()),
+            },
+            "the agent did not answer its handshake",
+        )
+    };
+    assert!(failure(Some(-32000), "Unknown session").auth_required);
+    assert!(!failure(Some(-32002), "Authentication required").auth_required);
+    assert!(!failure(None, "Authentication required").auth_required);
+}
+
+#[test]
 fn only_this_sessions_updates_reach_the_run() {
     assert!(about_session(&json!({"sessionId":"s","update":{}}), "s"));
     assert!(!about_session(
@@ -247,5 +263,194 @@ fn a_turn_that_stopped_early_or_without_a_reason_is_not_success() {
             matches!(stop(reply.clone()), EngineOutcome::Failed(_)),
             "{reply}"
         );
+    }
+}
+
+/// OpenCode 1.15.10 against a database a newer OpenCode already migrated fails inside
+/// its own prompt handler and still answers the call: `end_turn`, no updates, no `usage`.
+/// A turn that really ran reports its tokens, so a silent one without them is a failure
+/// to name, not a reply to ask the person to resend.
+#[test]
+fn a_silent_turn_that_reports_no_usage_fails_plainly() {
+    use super::permissions::stop_outcome_after;
+    const AGENT: &str = "OpenCode (/opt/homebrew/bin/opencode 1.15.10)";
+    let broken = json!({"stopReason":"end_turn","_meta":{}});
+    let EngineOutcome::Failed(message) = stop_outcome_after(&broken, 0, AGENT) else {
+        panic!("a turn that sent nothing and used nothing must fail");
+    };
+    assert_eq!(
+        message,
+        "OpenCode (/opt/homebrew/bin/opencode 1.15.10) ended the turn without running it. Check its log or update it."
+    );
+    // The same reply after the agent sent something is an ordinary turn.
+    assert_eq!(
+        stop_outcome_after(&broken, 1, AGENT),
+        EngineOutcome::Completed
+    );
+    // A turn that ran reports its tokens even when it said nothing: the run pump's "No reply".
+    let ran = json!({"stopReason":"end_turn","usage":{"inputTokens":124,"outputTokens":0,"totalTokens":8969},"_meta":{}});
+    assert_eq!(stop_outcome_after(&ran, 0, AGENT), EngineOutcome::Completed);
+    // Other endings keep their own words.
+    assert_eq!(
+        stop_outcome_after(&json!({"stopReason":"cancelled"}), 0, AGENT),
+        EngineOutcome::Cancelled
+    );
+}
+
+#[test]
+fn the_agent_is_named_with_its_program_and_version() {
+    let label = |name: &str, version: &str| {
+        super::agent_label_for(&(name.into(), version.into()), "/opt/homebrew/bin/opencode")
+    };
+    assert_eq!(
+        label("OpenCode", "1.15.10"),
+        "OpenCode (/opt/homebrew/bin/opencode 1.15.10)"
+    );
+    assert_eq!(label("", ""), "The agent (/opt/homebrew/bin/opencode)");
+}
+
+fn grok_driver(target: &str) -> AcpDriver {
+    let known = crate::agents::engines::known::known_engine("grok").unwrap();
+    let mut engine = known.as_custom();
+    engine.target = target.into();
+    AcpDriver::known(engine, known)
+}
+
+#[cfg(unix)]
+fn impostor_grok(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = dir.join("node_modules/@vibe-kit/grok-cli/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let marker = dir.join("started");
+    let program = bin.join("grok");
+    std::fs::write(
+        &program,
+        format!("#!/bin/sh\necho started > '{}'\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (program, marker)
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_program_that_is_another_cli_is_never_launched() {
+    use crate::agents::driver::{EngineDriver, RunKind, RunSpec};
+    let dir = crate::testing::TempDir::new();
+    let (program, marker) = impostor_grok(dir.path());
+    let driver = grok_driver(&program.to_string_lossy());
+    let refused = |error: CoreError| {
+        let text = error.to_string();
+        assert!(text.contains("another program"), "{text}");
+    };
+    refused(driver.check_launch_available().unwrap_err());
+    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let spec = RunSpec {
+        run_id: "run".into(),
+        thread_id: "thread".into(),
+        cwd: dir.path().to_path_buf(),
+        checkout: dir.path().to_path_buf(),
+        library: dir.path().to_path_buf(),
+        prompt: "secret prompt".into(),
+        user_prompt: "secret prompt".into(),
+        context: String::new(),
+        kind: RunKind::Turn,
+        mode: orbyn_contracts::PermissionMode::Supervised,
+        plan: false,
+        model: None,
+        effort: None,
+        options: std::collections::BTreeMap::new(),
+        resume: None,
+        mcp_url: None,
+        run_dir: dir.path().join("run"),
+        confine: None,
+        crew_task: None,
+    };
+    refused(driver.start_run(spec, tx).await.err().expect("refused"));
+    refused(driver.models().await.unwrap_err());
+    refused(driver.native_session_capabilities().await.unwrap_err());
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!marker.exists(), "the other program was started");
+}
+
+#[test]
+fn a_launch_names_the_other_cli_it_refuses() {
+    use crate::host::process::ResolvedCommand;
+    let path =
+        std::path::PathBuf::from("/usr/local/lib/node_modules/@vibe-kit/grok-cli/dist/index.js");
+    let other = ResolvedCommand {
+        program: "node".into(),
+        prefix: vec![path.clone().into_os_string()],
+        path: path.clone(),
+    };
+    let driver = grok_driver("grok");
+    let text = super::refusal(driver.known, &other).unwrap().to_string();
+    assert!(text.contains("grok-cli/dist/index.js"), "{text}");
+    assert!(text.contains("another program"), "{text}");
+    let real = ResolvedCommand {
+        program: "/usr/local/bin/grok".into(),
+        prefix: Vec::new(),
+        path: "/usr/local/bin/grok".into(),
+    };
+    assert!(super::refusal(driver.known, &real).is_none());
+    let own = AcpDriver::new(
+        crate::agents::engines::known::known_engine("grok")
+            .unwrap()
+            .as_custom(),
+    );
+    assert!(super::refusal(own.known, &other).is_none());
+}
+
+#[test]
+fn a_move_is_checked_at_every_location() {
+    let params = json!({ "toolCall": { "title": "Move file", "kind": "move", "locations": [
+        { "path": "src/a" }, { "path": "/Users/x/.ssh/config" },
+    ]}});
+    let (kind, _, _) = classify(&params);
+    assert_eq!(kind, ActionKind::FileChange);
+    assert_eq!(gate_paths(&params, kind), ["src/a", "/Users/x/.ssh/config"]);
+}
+
+#[test]
+fn a_file_change_with_no_location_is_never_taken_for_a_path_in_the_checkout() {
+    for kind in ["edit", "delete", "move"] {
+        for locations in [json!([]), json!(null), json!([{ "line": 3 }])] {
+            let params = json!({ "toolCall": { "title": "Move file", "kind": kind, "locations": locations }});
+            let (action, target, _) = classify(&params);
+            assert_eq!(action, ActionKind::FileChange);
+            assert!(
+                gate_paths(&params, action).is_empty(),
+                "{kind} with no location must be declined, not gated as {target:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn reads_and_fetches_keep_their_gate_paths() {
+    let read = json!({ "toolCall": { "title": "Read", "kind": "read", "locations": [{ "path": "/etc/hosts" }] }});
+    let (kind, _, _) = classify(&read);
+    assert!(gate_paths(&read, kind).is_empty());
+}
+
+#[test]
+fn an_engine_that_cannot_ask_offers_no_approvals_and_nothing_else() {
+    use crate::agents::driver::EngineDriver;
+    use crate::agents::engines::known::KNOWN_ENGINES;
+    for known in KNOWN_ENGINES {
+        let modes = super::AcpDriver::known(known.as_custom(), known)
+            .descriptor()
+            .capabilities
+            .permission_modes;
+        if known.asks {
+            assert!(modes.len() > 1, "{}", known.id);
+        } else {
+            assert_eq!(
+                modes,
+                vec![orbyn_contracts::PermissionMode::NoApprovals],
+                "{}",
+                known.id
+            );
+        }
     }
 }

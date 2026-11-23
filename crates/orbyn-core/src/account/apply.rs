@@ -241,7 +241,7 @@ mod tests {
                 fields.push((key.to_owned(), json!("anything")));
             }
         }
-        assert_eq!(fields.len(), 51);
+        assert_eq!(fields.len(), 57);
         fields.push(("a_future_key".into(), json!(1)));
         let plan = plan(&record(fields));
         assert_eq!(plan, ApplyPlan::default());
