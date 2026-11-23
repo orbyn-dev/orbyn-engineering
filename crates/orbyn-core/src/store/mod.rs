@@ -8,6 +8,9 @@ mod approvals;
 #[cfg(test)]
 mod attachment_sources_tests;
 mod automations;
+mod billed_events;
+#[cfg(test)]
+mod billed_events_tests;
 mod catalog;
 mod changes;
 mod checkpoints;
@@ -113,6 +116,7 @@ mod setup;
 mod tests;
 mod threads;
 
+pub use billed_events::{BilledEvent, BilledTotal, Recorded, parse_billed_events};
 pub use changes::{KeptChange, Snapshot};
 pub use crew::{CrewPinnedRef, CrewTask};
 pub use crew_autonomy::{AreaChange, AreaEvent, AreaMode, AreaWrite};
