@@ -1,19 +1,21 @@
-//! Crew lessons at rest (migration 80, KC5 slice 1): the short, device-local sentences the crew keeps about one
-//! repository or all of them, with where each came from.
+//! Crew lessons at rest (migrations 80 and 81, KC5 slices 1 and 2): the short, device-local sentences the crew keeps
+//! about one repository or all of them, with where each came from.
 //!
 //! A lesson is data in a brief, never a rule: nothing here routes, verifies, holds a lease, reads an answer key or
 //! changes a check. The table holds ids, enums and one short text; evidence is ids only, never content. It is device
 //! local and never synced: the settings sync is an allowlist of preference keys and does not name this table.
 //!
-//! Every write is one immediate transaction in this order (architecture rule 6): the ledger's audit row first, then
-//! the row. A fingerprint already remembered is never rewritten. At a cap (50 per repository, 20 global) one older
+//! Every lesson-content write is one immediate transaction in this order (architecture rule 6): the ledger's audit
+//! row first, then the row. A fingerprint already remembered is never rewritten. At a cap (50 per repository, 20 global) one older
 //! lesson becomes `hidden_by_cap` -- the least used first, then the oldest -- and stays readable; nothing is ever
 //! auto-deleted.
 //!
 //! Slice 2 adds the brief's bookkeeping: a lesson a brief carries grows `uses` and `last_used_at` in the same
 //! transaction that stores the brief (`record_lesson_use`), and one its answer-key check leaves out grows
-//! `left_out_of`. The per-repository "use lessons" switch lives in `project_preferences` under a key no setting
-//! reads, as the remembered default branch and the worker-provider choice do; absent is on.
+//! `left_out_of`. The counters are bookkeeping, not lesson content: they audit nothing and run inside the caller's
+//! transaction, the one that stores the brief. The per-repository "use lessons" switch lives in
+//! `project_preferences` under a key no setting reads, as the remembered default branch and the worker-provider
+//! choice do; absent is on.
 
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde::{Deserialize, Serialize};

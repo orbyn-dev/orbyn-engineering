@@ -434,9 +434,10 @@ impl Core {
         inherit_repo_checks(thread, &brief, &mut key, base.as_deref()).await?;
         // KC5 slice 2: the lessons this worker's brief carries. Chosen here, after H1, H2 and H11 and before anything
         // is stored, so their use is counted in the transaction that stores the brief; they never join the `Brief`
-        // object, so routing, the leases and the checks cannot read them. A reviewer's prompt is its own, so a review
-        // lane carries none.
-        let lessons = if prompt.is_none() {
+        // object, so routing, the leases and the checks cannot read them. A review lane's prompt is its own, not the
+        // brief: the recorded review link is what decides that, so a caller cannot forget to pass a prompt and leak
+        // lessons into a reviewer.
+        let lessons = if prompt.is_none() && links.review.is_none() {
             self.crew_lessons_brief(&thread.project_id, &key)
         } else {
             LessonBrief::none()
