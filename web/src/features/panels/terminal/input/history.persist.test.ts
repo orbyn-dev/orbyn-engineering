@@ -66,14 +66,23 @@ describe("saved history", () => {
     expect(mod.historyOf("k").map((e) => e.command)).toEqual(["ls"]);
   });
 
-  // Known gap (the terminal's local heuristic does not see these shapes; #1374): the line IS written to local storage today.
-  // `it.fails` keeps the suite green and turns red the day the heuristic learns them, so the marker cannot rot.
-  it.fails.each(["tool --password hunter2", "mysql -u root -pSecretValue db", "curl https://user:pass@host.test/x"])(
-    "known gap: %s is kept out of local storage",
+  it.each(["tool --password hunter2", "mysql -u root -pSecretValue db", "curl https://user:pass@host.test/x", "mysql --password $'hunter2'", "curl --pass ${PASS:-hunter2}", "curl --pass ${PASS:=hunter2}"])(
+    "keeps %s out of local storage",
     async (line) => {
       const mod = await fresh();
       mod.recordCommand("k", line, 1);
-      expect(mod.historyOf("k")).toEqual([]);
+      mod.recordCommand("k", "ls", 2);
+      expect(stored()).not.toMatch(/hunter2|SecretValue|user:pass/);
+      expect(mod.historyOf("k").map((e) => e.command)).toEqual(["ls"]);
+    },
+  );
+
+  it.each(["mkdir -p out/a", "docker run -p 8080:80 app", "tool --password-file ./pw.txt", "git push https://github.com/o/r.git", "mysql -u root -p", "ssh -p 22 host", "curl 'https://host.test?contact=team:x@example.test'", "curl https://host.test/#a:b@c", "tool --password $HOME_PASSWORD", "tool --password \"$HOME_PASSWORD\"", "tool --token=${API_TOKEN}"])(
+    "still keeps the ordinary line %s",
+    async (line) => {
+      const mod = await fresh();
+      mod.recordCommand("k", line, 1);
+      expect(mod.historyOf("k").map((e) => e.command)).toEqual([line]);
     },
   );
 
