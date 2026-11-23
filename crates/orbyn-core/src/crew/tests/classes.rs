@@ -1182,9 +1182,12 @@ async fn classes_of_pinned(w: &World, patterns: &[&str]) -> PathClasses {
     own.with_pinned(pin.name, pin.commit, side)
 }
 
+/// Issue #795: a write task reads `.orbyn/crew.json` at the commit it starts from for the repository's own checks,
+/// so a file that cannot be read there refuses the start before any engine is routed; a file that cannot be read only on
+/// the default branch still lets the class screen block every engine. Either way no task starts on a file nobody can read.
 #[tokio::test]
-async fn a_file_that_cannot_be_read_on_either_side_blocks_every_engine() {
-    // Invalid on the default branch, fine at HEAD.
+async fn a_file_that_cannot_be_read_on_either_side_never_starts_a_task() {
+    // Invalid on the default branch, fine at HEAD: the class screen blocks every engine.
     let w = two().await;
     commit_crew(&w.repo, "{ not json");
     pin_origin_here(&w.repo);
@@ -1204,13 +1207,22 @@ async fn a_file_that_cannot_be_read_on_either_side_blocks_every_engine() {
         "{texts:?}"
     );
 
-    // Invalid at HEAD, fine on the default branch.
+    // Invalid at HEAD, fine on the default branch: the commit the task starts from cannot be read, so the start
+    // itself is refused with the reader's problem in plain words, before routing, and nothing is stored (#795).
     let w = two().await;
     commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["alpha"])]));
     pin_origin_here(&w.repo);
     commit_crew(&w.repo, "{ not json");
-    let (answer, _) = w.start(brief(json!({})), key()).await;
-    assert_eq!(answer["routed"], false, "{answer}");
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(error, "{answer}");
+    assert_eq!(answer["code"], "invalid_object", "{answer}");
+    assert!(
+        answer["message"]
+            .as_str()
+            .unwrap()
+            .contains(".orbyn/crew.json"),
+        "{answer}"
+    );
 }
 
 #[tokio::test]
