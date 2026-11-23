@@ -304,6 +304,40 @@ describe("copy", () => {
     expect(within(card).queryByRole("button", { name: "Copy output" })).not.toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Run again" })).toBeInTheDocument();
   });
+
+  it("shows a strip instead of the block while a full-screen program runs", async () => {
+    install([
+      block({ command: "npm test" }),
+      block({ id: "b2", command: "vim notes.md", fullscreen: true, ended_at: null, exit_code: null, output_bytes: 0 }),
+    ]);
+    mount();
+    expect(await screen.findByText("Full-screen program running · vim notes.md")).toBeInTheDocument();
+    expect(screen.getByText("Blocks resume when it exits")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Command vim notes.md" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+    const strip = screen.getByRole("status");
+    expect(within(strip).queryByRole("button", { name: "Copy output" })).not.toBeInTheDocument();
+    expect(within(strip).queryByRole("button")).not.toBeInTheDocument();
+    expect(group("npm test")).toBeInTheDocument();
+  });
+
+  it("leaves the command out of the strip's first line when the block has none", async () => {
+    install([block({ command: null, fullscreen: true, ended_at: null, exit_code: null, output_bytes: 0 })]);
+    mount();
+    const strip = await screen.findByRole("status");
+    expect(within(strip).getByText("Full-screen program running")).toBeInTheDocument();
+    expect(within(strip).getByText("Blocks resume when it exits")).toBeInTheDocument();
+    expect(strip.textContent).not.toContain(" · ");
+  });
+
+  it("shows the finished full-screen card, not the strip, once the program ends", async () => {
+    install([block({ command: "vim notes.md", fullscreen: true, output_bytes: 0 })]);
+    mount();
+    const card = await screen.findByRole("group", { name: "Command vim notes.md" });
+    expect(within(card).getByText("Full-screen program, output not kept")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText("Full-screen program running")).not.toBeInTheDocument();
+  });
 });
 
 describe("run again", () => {

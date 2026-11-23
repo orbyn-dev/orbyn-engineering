@@ -391,7 +391,6 @@ input.welcome-radio:checked {
   margin: 0;
   min-width: 0;
   color: var(--color-text);
-  text-align: right;
 }
 .trust-path {
   font-family: var(--font-mono);

@@ -221,7 +221,7 @@ describe("capturing", () => {
     expect(phases.at(-1)).toBeNull();
   });
 
-  it("does not offer setup from a permission failure while setup is Planned", async () => {
+  it("offers Screen Recording setup from a permission failure now that setup is built", async () => {
     await start();
     useUi.getState().setPrefs({ snapshotEnabled: true });
     await vi.waitFor(() => expect(useSnapshot.getState().state?.enabled).toBe(true));
@@ -230,7 +230,7 @@ describe("capturing", () => {
     await useSnapshot.getState().captureFromPerson();
     mock.emit("snapshot://failed", { id: useSnapshot.getState().capture!.id, reason: "permission" });
     await vi.waitFor(() => expect(useUi.getState().toasts.at(-1)?.text).toContain("Screen Recording is not allowed"));
-    expect(useUi.getState().toasts.at(-1)?.action).toBeUndefined();
+    expect(useUi.getState().toasts.at(-1)?.action?.label).toBe("Allow Screen Recording");
   });
 
   it("accepts the test capture's own id, which snapshot_capture did not return", async () => {

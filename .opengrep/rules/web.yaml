@@ -60,6 +60,12 @@ rules:
     message: "replace() with a string literal changes only the first occurrence: use a global regex if every occurrence must change"
     pattern: $S.replace("...", $R)
     metadata: {category: security, subcategory: [audit], confidence: LOW, cwe: ["CWE-116: Improper Encoding or Escaping of Output"]}
+  - id: orbyn-js-regex-escape-skips-backslash
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: "Regex metacharacters are escaped by prefixing a backslash, but the character class does not escape a backslash itself: an input holding one loses it and the pattern changes; escape the backslash first"
+    pattern-regex: '\.replace\(\s*/\[(?:\\[^\\]|[^\]\\])*\]/g\s*,\s*"\\\\\$&"\s*\)'
+    metadata: {category: security, subcategory: [audit], confidence: HIGH, cwe: ["CWE-116: Improper Encoding or Escaping of Output"], references: ["CodeQL js/incomplete-sanitization"]}
   - id: orbyn-js-strip-html-comment-incomplete
     languages: [typescript, javascript]
     severity: INFO

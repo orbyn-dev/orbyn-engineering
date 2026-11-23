@@ -44,6 +44,13 @@ it("retains the body portal for an ordinary composer picker", async () => {
   expect(picker.parentElement).toBe(document.body);
 });
 
+it("draws the designs' down chevron on the model chip, so the chip says it opens a picker", () => {
+  // The designs draw the model `.pick` with `#i-down`; the chevron is aria-hidden and stays out of the accessible name.
+  render(<ModelPickerTrigger engines={engines} selected={{ engine: "codex", model: "small" }} onPick={() => undefined} />);
+  const trigger = screen.getByRole("button", { name: "Small model" });
+  expect(trigger.querySelector("svg.lucide-chevron-down")).not.toBeNull();
+});
+
 it("shows the supplied Mixed or Automatic label without changing the underlying selection", async () => {
   const props = { engines, selected: { engine: "codex", model: "small" }, onPick: vi.fn() };
   const { rerender } = render(<ModelPickerTrigger {...props} triggerLabel="Mixed" />);

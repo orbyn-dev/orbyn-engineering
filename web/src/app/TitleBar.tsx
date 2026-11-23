@@ -5,9 +5,8 @@ import { inDesktopApp, onShellChange, readShellStatus } from "../api/shell";
 import { SyncTitleButton, useSignedInAccount } from "../features/account";
 import { attentionRank, EnvironmentIdentity } from "../features/workspace";
 import { useAsync } from "../lib/useAsync";
-import { navigate } from "../product/state/route";
 import { useReadingNav } from "./readingNav";
-import { toggleSidebarDrawer, useSidebarDrawer } from "../product/shell/sidebarDrawer";
+import { togglePhoneSidebar, toggleSidebarDrawer } from "../product/shell/sidebarDrawer";
 import type { LayoutWidth } from "../lib/useLayout";
 import { useUi } from "../product/state/ui";
 import { useWaitingThreadIds } from "../product/state/waitingThreads";
@@ -105,8 +104,6 @@ function useWaitingCount(): number {
 export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: boolean }) {
   const phone = layout === "phone";
   const small = layout === "small";
-  const drawerOpen = useSidebarDrawer((state) => state.open);
-  const closeDrawer = useSidebarDrawer((state) => state.close);
   const lights = useTrafficLights();
   const toggleSidebar = useUi((state) => state.toggleSidebar);
   const reading = useUi((state) => state.workspaceLayout === "reading");
@@ -161,8 +158,9 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
           phone
             ? // The phone draws the sidebar as its home page and as a full-screen sheet over any other
               // page: this closes the sheet, leaves the home page where the sidebar already is, or opens
-              // the sheet over the page, so the places in it are reachable from anywhere.
-              drawerOpen ? closeDrawer : shown ? () => navigate({ name: "new", projectId: null }) : toggleSidebarDrawer
+              // the sheet over the page, so the places in it are reachable from anywhere. The sidebar
+              // shortcut runs the same function.
+              () => togglePhoneSidebar(shown)
             : small
               ? // On a small window it is a drawer over the thread.
                 toggleSidebarDrawer

@@ -29,6 +29,108 @@ rules:
       - pattern: $C.prepare(&format!(...))
       - pattern: $C.execute_batch(&format!(...))
     metadata: {category: security, subcategory: [vuln], confidence: MEDIUM, cwe: ["CWE-89: SQL Injection"]}
+  - id: orbyn-rust-request-path-to-fs
+    languages: [rust]
+    severity: WARNING
+    mode: taint
+    message: "The request's own URL text reaches a filesystem path without being confined to a base directory: resolve it the way routes/ui.rs does (reject any non-normal component) or it can escape"
+    pattern-sources:
+      - pattern: $REQ.uri()
+      - pattern: $REQ.query()
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: std::fs::read($P)
+              - pattern: std::fs::read_to_string($P)
+              - pattern: std::fs::write($P, ...)
+              - pattern: std::fs::read_dir($P)
+              - pattern: std::fs::metadata($P)
+              - pattern: std::fs::create_dir_all($P)
+              - pattern: std::fs::remove_file($P)
+              - pattern: std::fs::remove_dir_all($P)
+              - pattern: tokio::fs::read($P)
+              - pattern: tokio::fs::read_to_string($P)
+              - pattern: tokio::fs::write($P, ...)
+              - pattern: tokio::fs::read_dir($P)
+              - pattern: tokio::fs::metadata($P)
+              - pattern: File::open($P)
+              - pattern: File::create($P)
+          - focus-metavariable: $P
+    pattern-sanitizers:
+      - pattern: resolve(...)
+    metadata: {category: security, subcategory: [vuln], confidence: MEDIUM, cwe: ["CWE-22: Improper Limitation of a Pathname to a Restricted Directory"], references: ["CodeQL rust/path-injection"]}
+  - id: orbyn-rust-sql-built-query-reaches-execute
+    languages: [rust]
+    severity: ERROR
+    mode: taint
+    message: "A built SQL string reaches a query call: keep the statement literal and bind the values as parameters"
+    pattern-sources:
+      - pattern: format!(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $C.execute($Q, ...)
+              - pattern: $C.execute_batch($Q)
+              - pattern: $C.prepare($Q)
+              - pattern: $C.query($Q, ...)
+              - pattern: $C.query_row($Q, ...)
+              - pattern: $C.query_map($Q, ...)
+          - focus-metavariable: $Q
+          - metavariable-regex:
+              metavariable: $Q
+              regex: ^&?[a-z_][a-z0-9_]*$
+    metadata: {category: security, subcategory: [vuln], confidence: MEDIUM, cwe: ["CWE-89: SQL Injection"], references: ["CodeQL rust/sql-injection"]}
+  - id: orbyn-rust-secret-field-in-log
+    languages: [rust]
+    severity: WARNING
+    mode: taint
+    message: "A secret-named field reaches a log call through another value: log a redacted form, the length, or nothing"
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: $S.token
+              - pattern: $S.access_token
+              - pattern: $S.auth_token
+              - pattern: $S.refresh_token
+              - pattern: $S.api_key
+              - pattern: $S.apikey
+              - pattern: $S.password
+              - pattern: $S.passwd
+              - pattern: $S.secret
+              - pattern: $S.client_secret
+              - pattern: $S.private_key
+              - pattern: $S.bearer
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: println!(..., $X, ...)
+              - pattern: eprintln!(..., $X, ...)
+              - pattern: print!(..., $X, ...)
+              - pattern: eprint!(..., $X, ...)
+              - pattern: dbg!($X)
+              - pattern: info!(..., $X, ...)
+              - pattern: warn!(..., $X, ...)
+              - pattern: error!(..., $X, ...)
+              - pattern: debug!(..., $X, ...)
+              - pattern: trace!(..., $X, ...)
+              - pattern: tracing::info!(..., $X, ...)
+              - pattern: tracing::warn!(..., $X, ...)
+              - pattern: tracing::error!(..., $X, ...)
+              - pattern: tracing::debug!(..., $X, ...)
+              - pattern: tracing::trace!(..., $X, ...)
+              - pattern: log::info!(..., $X, ...)
+              - pattern: log::warn!(..., $X, ...)
+              - pattern: log::error!(..., $X, ...)
+              - pattern: log::debug!(..., $X, ...)
+              - pattern: log::trace!(..., $X, ...)
+          - focus-metavariable: $X
+    pattern-sanitizers:
+      - pattern: redact(...)
+      - pattern: redacted_tail(...)
+      - pattern: $X.len()
+      - pattern: $X.is_empty()
+      - pattern: $X.chars().count()
+    metadata: {category: security, subcategory: [vuln], confidence: MEDIUM, cwe: ["CWE-532: Insertion of Sensitive Information into Log File"], references: ["CodeQL rust/cleartext-logging"]}
   - id: orbyn-rust-tls-verify-off
     languages: [rust]
     severity: ERROR

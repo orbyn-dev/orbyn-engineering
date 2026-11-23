@@ -35,8 +35,8 @@ it("lists each repository with its folder, branch and trust state, and the actio
   expect(within(engine).getByText("Not trusted")).toBeVisible();
   expect(within(engine).getByRole("button", { name: "Trust…" })).toBeVisible();
   const notes = await rowOf("orbyn-notes");
-  expect(within(notes).getByText("Not a Git folder")).toBeVisible();
-  expect(within(notes).getByText("No branch")).toBeVisible();
+  expect(within(notes).getByText("Folder")).toBeVisible();
+  expect(within(notes).getByText("Not a Git repository")).toBeVisible();
   expect(within(notes).getByRole("button", { name: "Set up Git" })).toBeVisible();
   expect(screen.getByText("Beta")).toBeVisible();
 });
@@ -96,7 +96,7 @@ it("trusts the one folder and no other", async () => {
   await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Trust folder" }));
   await waitFor(() => expect(within(screen.getByText("orbyn-engine").closest("li") as HTMLElement).getByText("Trusted")).toBeVisible());
   expect(mock.writes).toEqual(["trust:orbyn-engine"]);
-  expect(within(screen.getByText("orbyn-notes").closest("li") as HTMLElement).getByText("Not a Git folder")).toBeVisible();
+  expect(within(screen.getByText("orbyn-notes").closest("li") as HTMLElement).getByText("Folder")).toBeVisible();
 });
 
 it("sets up Git after a confirmation", async () => {

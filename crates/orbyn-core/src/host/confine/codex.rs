@@ -328,6 +328,8 @@ fn make_private(path: &Path) -> Result<()> {
             Ok(())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // Only the unix branch sets a mode, so the binding is immutable on Windows.
+            #[cfg_attr(not(unix), allow(unused_mut))]
             let mut builder = std::fs::DirBuilder::new();
             #[cfg(unix)]
             {
