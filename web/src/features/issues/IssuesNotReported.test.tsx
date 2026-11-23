@@ -27,8 +27,8 @@ it("draws no entry, no marker, no list and no error while the service answers 40
 
 it("reads every write as unavailable on the default client", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => notFound()));
-  await expect(issuesApi().link("t", { tracker: "github", scope: "s", key: "1" })).rejects.toThrow();
-  await expect(issuesApi().startThread({ tracker: "github", scope: "s", key: "1" }, { message: "m", project_id: "p" })).rejects.toThrow();
+  await expect(issuesApi().link("t", { tracker: "github", scope: "s", key: "1" })).rejects.toThrow(/not reported/);
+  await expect(issuesApi().startThread({ tracker: "github", scope: "s", key: "1" }, { message: "m", project_id: "p" })).rejects.toThrow(/not reported/);
 });
 
 it("shows the sidebar entry once the service reports trackers", async () => {
