@@ -1,6 +1,6 @@
 # Who wrote a line: a positive person signal for merge provenance (4l)
 
-Design note for issue #711. Status: built (slice 4l, migration 55), except the person path that records `crew_person_commits` rows, which does not exist yet: until one does, no line is `person`, and coverage stays merge-level.
+Design note for issue #711. Status: built (slice 4l, migration 55), including the person path that records `crew_person_commits` rows: the app records the README "Initial commit" it makes at project creation. A commit the person makes outside the app is still not listed, so manual work reads `unknown` (counted as agent) until the design's attestation (item 5) is built.
 
 ## The problem
 
@@ -19,7 +19,7 @@ Mark agent commits positively, mark person commits positively only where the app
 
    Matching uses only the exact `worker+<task id>@orbyn.invalid` address, where the id has the app's id format and exists in the crew tasks table. The `<engine>` and `<model>` values in the display name are cleaned (anything outside `[A-Za-z0-9._:/-]` becomes `_`, at most 64 characters) and never used for matching. Codex workers cannot run today (`CODEX_WORKERS_ALLOWED = false`) and workers run on macOS only; the Codex part waits for that.
 2. **A trailer as a second mark, best effort.** The worker brief asks for `Orbyn-Task: <task id>` in commit messages. The app cannot enforce it (the person owns the repository's hooks), so the identity is the mark and the trailer only corroborates it.
-3. **Person commits only for commits the app makes on a person action. Future: no such path exists today.** The only commit made on a person's action is the optional README "Initial commit" at project creation (`project/projects.rs`), which is not recorded; every other production commit uses an app identity (`Orbyn Crew`, and `Orbyn <orbyn@localhost>` for workspace provisioning and snapshots). When a path exists, the app records the full commit id in a local table (`crew_person_commits`: project, commit, time, action) in the same transaction as the audit row, and `person_commits` is read from that table. A commit the person makes outside the app is not listed. A commit is listed only if it contains no worker-written change: workers write into the person's own checkout, so while any worker run has touched the staged files since the last commit, the commit is refused or recorded as `unknown`.
+3. **Person commits only for commits the app makes on a person action. Built for the one such commit.** The only commit made on a person's action is the optional README "Initial commit" at project creation (`project/projects.rs`), which the app now records as `project.readme`; every other production commit uses an app identity (`Orbyn Crew`, and `Orbyn <orbyn@localhost>` for workspace provisioning and snapshots). The app records the full commit id in a local table (`crew_person_commits`: project, commit, time, action) in the same transaction as the audit row, and `person_commits` is read from that table. A commit the person makes outside the app is not listed. A commit is listed only if it contains no worker-written change: workers write into the person's own checkout, so while any worker run has touched the staged files since the last commit, the commit is refused or recorded as `unknown`.
 4. **Three values, two counts.** A line is `agent` (the author or the committer is a worker address, or the task trailer matches), `person` (commit id is in the table) or `unknown` (anything else: the person's manual commits, history before this change, bots). Coverage counts `unknown` as agent: it is never credited as human-written. The service returns all three values; the coverage screens fold `unknown` into the agent count, labelled "Agent or unconfirmed". This reverses today's rule that author emails are never read (`provenance.rs`): reading author and committer emails can only split `agent` from `unknown` and can never produce `person`.
 5. **A person may attest.** Later, a person-key route can mark a merge "I wrote this" (audit first, `seen`). It adds those commit ids to the table. Nothing is inferred from an email match.
 
@@ -78,10 +78,13 @@ No route was added.
   Coverage counts `unknown` with the agent's lines (`crew/capacity/coverage.rs:109-111`); the wire shape did not change, so
   `agent_lines` is labelled "Agent or unconfirmed" (`crates/orbyn-contracts/src/crew_capacity.rs:166`,
   `web/src/features/crew/capacity/live/LiveCoverage.tsx`), not the three fields the design's item 4 described.
-- **The table, and what the person path still lacks.** `crew_person_commits` (project, full commit id, time, action) is written only
+- **The table, and the person path.** `crew_person_commits` (project, full commit id, time, action) is written only
   by `Store::record_person_commit`, in the same transaction as its `crew.person_commit` audit row
   (`store/crew_person_commits.rs:31-71`); the merge hook passes the project's list through `crew_person_commits_for_task`
-  (`crew/capacity/hooks.rs:88-116`). Nothing calls the writer outside tests: no app path records a person commit today (the only
-  commit made on a person's action, the optional README "Initial commit" at project creation, is not recorded), and no route
-  records one. So the list stays empty, no line is `person`, and coverage can only count agent and unconfirmed lines. The
-  design's person attestation (item 5) is not built, and nothing infers `person` from an email.
+  (`crew/capacity/hooks.rs:88-116`). Its one caller is project creation: `Core::new_project` records the README
+  "Initial commit" it just made as `project.readme` (`project/projects.rs`), after the project row exists, and a record
+  that fails is logged and never fails project creation (the commit then reads `unknown`, which counts as agent). That
+  commit holds nothing but the README the call itself wrote, so it cannot carry a worker-written change; a path that
+  stages other work must refuse or record `unknown` when a worker run has touched it since the last commit. A person's
+  manual commit is still not listed, no route records one, and the person attestation (item 5) is not built: nothing
+  infers `person` from an email.

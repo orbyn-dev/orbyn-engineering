@@ -275,6 +275,70 @@ async fn a_new_project_can_start_with_a_readme_and_first_commit() {
 }
 
 #[tokio::test]
+async fn the_readme_first_commit_is_recorded_as_the_persons() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let project = core.new_project("Notes", true, None).await.unwrap();
+    let path = Path::new(&project.path);
+    let recorded = core.store.crew_person_commits(&project.id).unwrap();
+    match git(path, &["rev-parse", "--verify", "HEAD"]).await {
+        // Git had an identity to make the commit, so the app must have recorded exactly that commit: the one it
+        // made on the person's action, holding nothing but the README it wrote.
+        Ok(head) => {
+            let head = text(&head);
+            assert_eq!(recorded.as_slice(), std::slice::from_ref(&head));
+            assert_eq!(
+                text(
+                    &git(path, &["show", "--name-only", "--format=", &head])
+                        .await
+                        .unwrap()
+                ),
+                "README.md",
+                "the recorded commit is the README commit, not later work"
+            );
+            let audits: i64 = core
+                .store
+                .reader()
+                .query_row(
+                    "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.person_commit' AND target = ?1",
+                    [&head],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(audits, 1, "one audit row, in the same transaction");
+        }
+        // No Git identity: the app makes no commit, so nothing may be recorded for one.
+        Err(_) => assert!(
+            recorded.is_empty(),
+            "a project without a commit records no person commit: {recorded:?}"
+        ),
+    }
+}
+
+#[tokio::test]
+async fn a_project_with_no_readme_records_no_person_commit() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let project = core.new_project("Plain", false, None).await.unwrap();
+    assert!(
+        core.store
+            .crew_person_commits(&project.id)
+            .unwrap()
+            .is_empty()
+    );
+    let audits: i64 = core
+        .store
+        .reader()
+        .query_row(
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.person_commit'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(audits, 0);
+}
+
+#[tokio::test]
 async fn init_git_makes_the_folder_a_repository_without_a_commit() {
     let dir = TempDir::new();
     let core = core(&dir).await;
