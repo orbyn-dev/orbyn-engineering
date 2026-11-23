@@ -336,3 +336,69 @@ async fn an_unknown_thread_is_not_found() {
     let answer: Value = response.json().await.unwrap();
     assert_eq!(answer["code"], "not_found");
 }
+
+#[tokio::test]
+async fn simultaneous_photo_uploads_wait_for_a_global_admission_slot() {
+    use std::time::Duration;
+
+    let served = serve("admission").await;
+    let (events, mut observed) = tokio::sync::mpsc::unbounded_channel();
+    *super::composer::PHOTO_ADMISSION_OBSERVER.lock().unwrap() = Some(events);
+
+    let first = super::composer::PHOTO_WORKERS.acquire().await.unwrap();
+    let second = super::composer::PHOTO_WORKERS.acquire().await.unwrap();
+
+    // An incomplete upload must not reach the conversion admission queue.
+    let mut partial = tokio::net::TcpStream::connect(("127.0.0.1", served.port))
+        .await
+        .unwrap();
+    let header = format!(
+        "POST /api/threads/{}/attachments/convert?name=concurrency-test-partial HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer token\r\nContent-Length: 100\r\nConnection: close\r\n\r\nx",
+        served.thread
+    );
+    partial.write_all(header.as_bytes()).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), observed.recv())
+            .await
+            .is_err()
+    );
+    drop(partial);
+
+    let url = format!(
+        "http://127.0.0.1:{}/api/threads/{}/attachments/convert?name=concurrency-test-three",
+        served.port, served.thread
+    );
+    let third = tokio::spawn(async move {
+        reqwest::Client::new()
+            .post(url)
+            .bearer_auth("token")
+            .body(png(&photo(8, 8)))
+            .send()
+            .await
+            .unwrap()
+    });
+    let event = tokio::time::timeout(Duration::from_secs(10), observed.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event, ("concurrency-test-three".into(), false));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), observed.recv())
+            .await
+            .is_err()
+    );
+
+    drop(first);
+    let event = tokio::time::timeout(Duration::from_secs(10), observed.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event, ("concurrency-test-three".into(), true));
+    let response = tokio::time::timeout(Duration::from_secs(10), third)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    drop(second);
+    *super::composer::PHOTO_ADMISSION_OBSERVER.lock().unwrap() = None;
+}

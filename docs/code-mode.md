@@ -259,7 +259,8 @@ code: the core then replays the script from the start with the recorded results.
 ### Cancel
 
 Only the person cancels, through `POST /api/code-runs/{id}/cancel` (Person-class, no body, over 1 KiB refused
-with "This route takes no body."). No MCP tool, script or Crew worker reaches it.
+with "This route takes no body."). No MCP tool, script or Crew worker reaches it. The web run block offers a
+Cancel run button to the person only, hidden where no person key can be sent (a plain browser tab).
 
 - A live run (`running` or `paused`) ends as `error: cancelled` with "The run was cancelled." Its task is
   aborted and its slot is released before the route answers, so a new start may take the place at the cap.
@@ -473,7 +474,8 @@ route below answers `404`.
   answers `409 run_finished`). Cancelling a cancelled run returns its record; a completed,
   errored or lost run is `409 run_finished`; an unknown id is `404 not_found`. The route is `POST /api/code-runs/{id}/cancel`, a
   body-less Person-class write in `ENFORCED`, `PERSON_ROUTES`, `routes.json` and `web/src/api/personKey.ts`.
-- **Not built.** The web UI's Stop button (the route is the web owner's to draw).
+- **Cancel in the web.** The run block draws the person's Cancel run button; no other web screen draws a stop, so the runs list
+  has no row action.
 
 ### Tested against the real service
 
