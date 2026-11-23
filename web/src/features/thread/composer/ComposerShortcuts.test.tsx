@@ -59,6 +59,7 @@ async function openThread(id: string) {
   const box = await screen.findByRole("textbox", { name: /^Message/ });
   await screen.findByRole("button", { name: /^Effort:/ });
   // The dispatcher needs the keymap, which loads asynchronously.
+  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
   return box;
 }
@@ -129,6 +130,7 @@ describe("composer menu shortcuts (K41)", () => {
     render(<App />);
     // The key lives on the thread's header, so it works with the Details popover closed.
     await screen.findByRole("button", { name: "Details" });
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     await chord(user, "g");
     const dialog = await screen.findByRole("dialog", { name: "Switch branch" });
@@ -142,6 +144,7 @@ describe("composer menu shortcuts (K41)", () => {
     render(<App />);
     // The key lives on the thread's header, so it works with the Details popover closed.
     await screen.findByRole("button", { name: "Details" });
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     await chord(user, "g");
     const dialog = await screen.findByRole("dialog", { name: "Switch branch" });
@@ -157,6 +160,7 @@ describe("composer menu shortcuts (K41)", () => {
       render(<App />);
       await screen.findByRole("heading", { name: /What should we build in/ });
       await screen.findByRole("button", { name: "Current checkout" });
+      // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     };
 

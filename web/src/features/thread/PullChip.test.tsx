@@ -314,11 +314,11 @@ describe("pull request cache", () => {
     const row = render(<PullsRow thread={thread} />);
     await screen.findAllByRole("button", { name: "Pull requests" });
     chip.unmount();
+    // Real wait: the entry must stay while the row still shows the thread, and a drop would come after a pause.
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(useThreadPulls.getState().byThread["t1"]?.pulls).toHaveLength(3);
     row.unmount();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(useThreadPulls.getState().byThread["t1"]).toBeUndefined();
+    await waitFor(() => expect(useThreadPulls.getState().byThread["t1"]).toBeUndefined());
   });
 });
 
@@ -373,7 +373,6 @@ describe("pull request store", () => {
     const { unmount } = render(<PullChip thread={thread} />);
     await screen.findByRole("button", { name: "Pull requests" });
     unmount();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(useThreadPulls.getState().byThread["t1"]).toBeUndefined();
+    await waitFor(() => expect(useThreadPulls.getState().byThread["t1"]).toBeUndefined());
   });
 });

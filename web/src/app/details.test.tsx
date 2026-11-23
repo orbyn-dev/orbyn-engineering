@@ -195,6 +195,7 @@ describe("the Details button and the Details popover", () => {
     const before = diff.mock.calls.length;
     act(() => useThreadLogs.setState((state) => ({ diffVersion: { ...state.diffVersion, "t-done": (state.diffVersion["t-done"] ?? 0) + 1 } })));
     await waitFor(() => expect(diff.mock.calls.length).toBeGreaterThan(before));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(within(card()!).queryByRole("alert")).toBeNull();
     expect(within(card()!).getByText("+4")).toBeInTheDocument();

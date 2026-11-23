@@ -33,6 +33,7 @@ describe("Settings › Providers › an engine", () => {
     mock.codeMode.setOffered(false);
     render(<ProviderDetail engine={engine()} store={store as never} onBack={() => undefined} onEdit={() => undefined} />);
     const toggle = await screen.findByRole("switch", { name: "Use Code Mode" });
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     const heads = [...document.querySelectorAll(".set-grp")].map((node) => node.textContent ?? "");
     expect(heads.find((text) => text.startsWith("Code Mode"))).toContain("Planned");

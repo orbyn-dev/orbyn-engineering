@@ -16,6 +16,7 @@ it("draws no entry, no marker, no list and no error while the service answers 40
   vi.stubGlobal("fetch", fetching);
   window.location.hash = "#/issues";
   render(<><IssuesNav current={false} /><IssueMark threadId="thread-1" /><IssuesPage /></>);
+  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
   expect(screen.queryByRole("link", { name: "Issues" })).toBeNull();
   expect(screen.queryByRole("img")).toBeNull();

@@ -46,6 +46,7 @@ afterEach(() => {
 });
 
 describe("the production client", () => {
+  // Real wait: one macrotask turn lets already-resolved promises settle; no clock is involved.
   const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 
   it("draws nothing and says nothing when its first list is empty", async () => {

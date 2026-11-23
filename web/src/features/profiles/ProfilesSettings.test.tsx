@@ -17,6 +17,7 @@ it("draws nothing, and no error, when the profiles route answers 404", async () 
   vi.stubGlobal("fetch", fetching);
   const { container } = render(<ProfilesSettings />);
   await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
+  // Real wait: one macrotask turn lets already-resolved promises settle; no clock is involved.
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(container).toBeEmptyDOMElement();
   expect(screen.queryByRole("alert")).toBeNull();

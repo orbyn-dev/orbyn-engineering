@@ -23,6 +23,7 @@ function holdFetch() {
   return { pending, fetchMock, inFlight: () => pending.filter((entry) => !entry.signal?.aborted) };
 }
 
+// Real wait: one macrotask turn lets already-resolved promises settle; no clock is involved.
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /** Answers everything that starts, including what only starts once a slot frees up. */
