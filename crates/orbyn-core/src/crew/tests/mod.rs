@@ -16,6 +16,7 @@ mod autopilot_risk;
 mod autopilot_rules;
 mod autopilot_support;
 mod autopilot_watch;
+mod audit_edges;
 mod background;
 mod background_daily;
 mod background_listeners;
