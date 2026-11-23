@@ -2,6 +2,7 @@ import { prettyJson } from "../../lib/format";
 import { outputSpans } from "../../lib/ansi";
 import type { ReasoningItem, ToolItem } from "../../product/timeline/types";
 import { baseName, callOutcome, parsed, paths, toolFailed, traceTool } from "../../product/timeline/toolTrace";
+import { crewStartOutcome, isCrewStartTool } from "../crew";
 
 /** The kind of row a tool call is drawn as; each has its own icon, words and block. */
 export type CallKind =
@@ -298,6 +299,11 @@ export function callLabel(item: ToolItem, cwd: string | null): CallLabel {
       return { verb: "Fetched", object: url ? hostOf(url) : "a page", note: null, fill: false };
     }
     case "mcp": {
+      // A crew start is the one tool a lead thread draws as its own task, not as a server call.
+      if (isCrewStartTool(item.name)) {
+        const outcome = crewStartOutcome(item.args);
+        return { verb: outcome ? "Start task:" : "Start task", object: outcome, note: null, fill: false };
+      }
       const { server, tool } = mcpParts(item.name);
       const first = firstScalar(body);
       return { verb: server, object: tool || null, note: first ? `· “${first}”` : null, fill: false };
