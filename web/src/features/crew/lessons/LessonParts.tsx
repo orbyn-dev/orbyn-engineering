@@ -153,16 +153,18 @@ export function SecretRefused() {
   );
 }
 
-/** The green line after a save: the card it left, with what briefs from now on carry. */
-export function Saved({ kind }: { kind: "added" | "edited" }) {
+/**
+ * The green line after a save: the card it left, with what briefs from now on carry. A lesson the read says is not in the
+ * next brief says so instead, rather than claiming briefs it will not reach.
+ */
+export function Saved({ kind, inNextBrief }: { kind: "added" | "edited"; inNextBrief: boolean }) {
   return (
     <div className="cx-cwbn cx-green" role="status" style={{ margin: "0" }}>
       <Ic n="ok" sm />
       <span>
         <b>Saved.</b>{" "}
-        {kind === "added"
-          ? "The lesson is on this device. Briefs that start from now on get this text."
-          : "The lesson is changed on this device. Briefs that start from now on get this text."}
+        {kind === "added" ? "The lesson is on this device. " : "The lesson is changed on this device. "}
+        {inNextBrief ? "Briefs that start from now on get this text." : "It is not in the next brief; the card says why."}
       </span>
     </div>
   );

@@ -99,8 +99,8 @@ describe("a lesson's card on the real route", () => {
         source: "person",
         chip: "Your correction",
         happened: /The lesson is the words you typed, capped, and it is marked as yours\./,
-        evidence: [],
-        line: null,
+        evidence: [{ kind: "task", id: "5d1c8e0" }],
+        line: "Task 5d1c8e0",
       },
     ] as const;
     for (const one of cases) {
@@ -112,11 +112,20 @@ describe("a lesson's card on the real route", () => {
       await loaded();
       expect(screen.getByText(one.chip)).toBeInTheDocument();
       expect(screen.getByText(one.happened)).toBeInTheDocument();
-      if (one.line) expect(screen.getByText(one.line)).toBeInTheDocument();
-      // Evidence is ids only: a person's correction has none, so the read draws no Source row.
-      else expect(screen.queryByText("Source")).toBeNull();
+      expect(screen.getByText(one.line)).toBeInTheDocument();
       unmount();
     }
+  });
+
+  it("draws no Source row for a lesson added by hand, which has no evidence behind it", async () => {
+    answers.detail = {
+      status: 200,
+      body: detail({ lesson: lesson({ id: "les-added-1", source: "person" }), evidence: [] }),
+    };
+    open();
+    await loaded();
+    expect(screen.getByText("Your correction")).toBeInTheDocument();
+    expect(screen.queryByText("Source")).toBeNull();
   });
 
   it("says Saved once on the card the Add page opened", async () => {
@@ -125,6 +134,50 @@ describe("a lesson's card on the real route", () => {
     await loaded();
     expect(await screen.findByText("Saved.")).toBeInTheDocument();
     expect(screen.getByText(/The lesson is on this device\. Briefs that start from now on get this text\./)).toBeInTheDocument();
+  });
+
+  it("says a hand-added lesson is not in the next brief when the read says it is not", async () => {
+    markAdded("les-1");
+    answers.detail = {
+      status: 200,
+      body: detail({ lesson: lesson({ source: "person", edited_by_person: true, in_next_brief: false }) }),
+    };
+    open();
+    await loaded();
+    expect(await screen.findByText("Saved.")).toBeInTheDocument();
+    expect(screen.getByText(/It is not in the next brief; the card says why\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Briefs that start from now on get this text\./)).toBeNull();
+  });
+
+  it("does not claim a hidden lesson goes into briefs, and says it is over the cap", async () => {
+    answers.detail = { status: 200, body: detail({ lesson: lesson({ hidden_by_cap: true, in_next_brief: false }) }) };
+    open();
+    await loaded();
+    expect(screen.getByText("On, but over the cap: readable under Hidden, never in a brief")).toBeInTheDocument();
+    expect(screen.queryByText("On: goes into briefs")).toBeNull();
+  });
+
+  it("says a lesson that became a skill leaves briefs while that skill exists", async () => {
+    answers.detail = {
+      status: 200,
+      body: detail({ lesson: lesson({ skill: { name: "Fixture first" }, in_next_brief: false }) }),
+    };
+    open();
+    await loaded();
+    expect(screen.getByText("On, but it became a skill: it leaves briefs while that skill exists")).toBeInTheDocument();
+    expect(screen.queryByText("On: goes into briefs")).toBeNull();
+  });
+
+  it("says an active lesson the switch or the cap keeps out is not in the next brief right now", async () => {
+    answers.detail = { status: 200, body: detail({ lesson: lesson({ in_next_brief: false }) }) };
+    open();
+    await loaded();
+    expect(
+      screen.getByText(
+        /On, but not in the next brief right now: the repository’s switch, the newest five or the 1500-character cap\./,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("On: goes into briefs")).toBeNull();
   });
 
   it("says a lesson is off and left out of two briefs, and offers Turn on", async () => {
@@ -200,6 +253,34 @@ describe("a lesson's card on the real route", () => {
     expect(screen.getByText("Ask before changing a test’s expected value.")).toBeInTheDocument();
     expect(writes(calls, "PATCH")).toHaveLength(1);
     expect(bodyOf(writes(calls, "PATCH")[0]?.init)).toEqual({ text: "Ask before changing a test’s expected value.", rev: 1 });
+  });
+
+  it("does not say briefs get the text when the saved lesson is not in the next brief", async () => {
+    answers.detail = { status: 200, body: detail({ lesson: lesson({ hidden_by_cap: true, in_next_brief: false }) }) };
+    answers.write = ({ method, url, body }) =>
+      method === "PATCH" && url === "/api/crew/lessons/les-1"
+        ? {
+            status: 200,
+            body: lesson({
+              text: String(body?.text),
+              edited_by_person: true,
+              hidden_by_cap: true,
+              in_next_brief: false,
+              rev: 2,
+            }),
+          }
+        : notFound;
+    const user = userEvent.setup();
+    open();
+    await loaded();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const field = await screen.findByRole("textbox", { name: "Lesson text" });
+    await user.clear(field);
+    await user.type(field, "Ask before changing a test’s expected value.");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Saved.")).toBeInTheDocument();
+    expect(screen.getByText(/It is not in the next brief; the card says why\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Briefs that start from now on get this text\./)).toBeNull();
   });
 
   it("keeps the typed text and says the scan refused it, in the contract's exact sentence", async () => {
@@ -324,6 +405,26 @@ describe("a lesson's card on the real route", () => {
     expect(screen.getByText("This lesson changed since you opened it.")).toBeInTheDocument();
     expect(window.location.hash).toBe("");
     expect(useLessonUndo.getState().pending).toBeNull();
+  });
+
+  it("draws nothing for a repository the route names but the project list does not show", async () => {
+    const { container } = render(<LessonCardPage id="les-1" repo="p-nowhere" />);
+    await waitFor(() => expect(calls.some(({ url }) => url.includes("/api/crew/preview"))).toBe(true));
+    expect(container).toBeEmptyDOMElement();
+    expect(calls.some(({ url }) => url.includes("/api/crew/lessons"))).toBe(false);
+  });
+
+  it("uses the first project when the route names no repository", async () => {
+    render(<LessonCardPage id="les-1" />);
+    await loaded();
+    expect(calls.some(({ url }) => url.includes("/api/crew/lessons/les-1") && url.includes("repo=p-app"))).toBe(true);
+  });
+
+  it("draws nothing and reads no lesson when the id is not one the service accepts", async () => {
+    const { container } = render(<LessonCardPage id="les 1/.." repo="p-app" />);
+    await waitFor(() => expect(calls.some(({ url }) => url.includes("/api/crew/preview"))).toBe(true));
+    expect(container).toBeEmptyDOMElement();
+    expect(calls.some(({ url }) => url.includes("/api/crew/lessons"))).toBe(false);
   });
 
   it("fails in one red banner that changes nothing, and Try again reads the card again", async () => {

@@ -107,6 +107,20 @@ describe("adding a lesson by hand", () => {
     await waitFor(() => expect(writes(calls, "POST")).toHaveLength(2));
   });
 
+  it("draws nothing for a repository the route names but the project list does not show", async () => {
+    const { container } = render(<LessonAddPage repo="p-nowhere" />);
+    await waitFor(() => expect(calls.some(({ url }) => url.includes("/api/crew/preview"))).toBe(true));
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByRole("textbox", { name: "Lesson text" })).toBeNull();
+  });
+
+  it("uses the first project when the route names no repository", async () => {
+    render(<LessonAddPage />);
+    expect(
+      await screen.findByText(/This repository is orbyn-engineering, and its lesson may name a path\./),
+    ).toBeInTheDocument();
+  });
+
   it("goes back to the list without sending anything", async () => {
     const user = userEvent.setup();
     open();

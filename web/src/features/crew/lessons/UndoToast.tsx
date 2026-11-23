@@ -39,7 +39,7 @@ export function LessonUndoToast({ onUndone }: { onUndone?: () => void }) {
   const share = Math.min(100, Math.max(0, (left / pending.seconds) * 100));
   return (
     <div className="toasts">
-      <div className="toast cx-lstoast" role="status" aria-label="Lesson deleted. Undo for 10 seconds">
+      <div className="toast cx-lstoast" role="status" aria-label={`Lesson deleted. Undo for ${pending.seconds} seconds`}>
         <Ic n="ok" sm />
         <span>Lesson deleted ·</span>
         <div className="cx-lsta">

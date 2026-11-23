@@ -29,8 +29,9 @@ function Card({ children }: { children: ReactNode }) {
 
 /**
  * Add a lesson by hand (KC5, part B): the person's own words, up to 300 characters, for this repository or for all of them.
- * Nothing is drawn, and no lessons route is read, while Crew Preview is off or there is no repository to add to. Saving is
- * a Person write and only the person's click sends it; a saved lesson opens its card, which says "Saved." once.
+ * Nothing is drawn, and no lessons route is read, while Crew Preview is off, there is no repository to add to, or the route
+ * names a repository the project list does not show (the contract answers 404 for an unknown repository). Saving is a
+ * Person write and only the person's click sends it; a saved lesson opens its card, which says "Saved." once.
  */
 export function LessonAddPage({ repo }: { repo?: string }) {
   const on = useCrewPreview();
@@ -47,8 +48,10 @@ export function LessonAddPage({ repo }: { repo?: string }) {
         {failure ? <ErrorState title="Can’t read the projects" failure={failure} onRetry={() => void refresh()} /> : <Loading label="Reading projects" rows={2} />}
       </Card>
     );
-  const project = projects.find((entry) => entry.id === repo) ?? projects[0];
-  if (!project) return <Card><Empty title="No project to show" /></Card>;
+  // A named repository must be one the person sees; only an address that names none falls back to the first project.
+  const named = repo !== undefined && repo !== "";
+  const project = named ? projects.find((entry) => entry.id === repo) : projects[0];
+  if (!project) return named ? null : <Card><Empty title="No project to show" /></Card>;
   return <AddLesson key={project.id} repo={project.id} name={project.name} />;
 }
 

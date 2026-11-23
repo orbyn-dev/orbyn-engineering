@@ -80,15 +80,16 @@ function Loaded({ read, repo, name }: { read: LessonReader & { status: "ready" }
   const detail = read.detail;
   const lesson = detail.lesson;
   const [editing, setEditing] = useState(false);
-  const [saved, setSaved] = useState<"added" | "edited" | null>(null);
+  // A save's line depends on the read's own answer: a lesson the next brief will not carry does not claim it will.
+  const [saved, setSaved] = useState<{ kind: "added" | "edited"; inNextBrief: boolean } | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [refused, setRefused] = useState(false);
   const [dialog, setDialog] = useState<"promote" | "move-back" | null>(null);
   const [busy, setBusy] = useState<"toggle" | "delete" | null>(null);
   // The Add page hands the card it just made over here, and the card says so once.
   useEffect(() => {
-    if (takeAdded(lesson.id)) setSaved("added");
-  }, [lesson.id]);
+    if (takeAdded(lesson.id)) setSaved({ kind: "added", inNextBrief: lesson.in_next_brief });
+  }, [lesson.id, lesson.in_next_brief]);
 
   const apply = (next: Lesson) => {
     read.setLesson(next);
@@ -150,14 +151,14 @@ function Loaded({ read, repo, name }: { read: LessonReader & { status: "ready" }
         onSaved={(next) => {
           apply(next);
           setEditing(false);
-          setSaved("edited");
+          setSaved({ kind: "edited", inNextBrief: next.in_next_brief });
         }}
       />
     );
   }
   return (
     <>
-      {saved ? <Saved kind={saved} /> : null}
+      {saved ? <Saved kind={saved.kind} inNextBrief={saved.inNextBrief} /> : null}
       {lesson.state === "disabled" ? <OffBanner /> : null}
       {lesson.left_out_of > 0 ? <LeftOutBanner count={lesson.left_out_of} /> : null}
       {refused ? <PromoteRefused onEdit={startEdit} /> : null}
@@ -256,19 +257,31 @@ function WhereItCameFrom({ detail, repo, name }: { detail: LessonDetail; repo: s
 }
 
 /**
+ * A lesson's state as the card says it: off, on and in the next brief, or on and out of it for the read's own reason.
+ * `in_next_brief` is the contract's answer, so the card never claims briefs a lesson the read says misses the next one.
+ */
+function stateWords(lesson: Lesson): string {
+  if (lesson.state === "disabled") return "Off: stays here and does not go into a brief";
+  if (lesson.in_next_brief) return "On: goes into briefs";
+  if (lesson.hidden_by_cap) return "On, but over the cap: readable under Hidden, never in a brief";
+  if (lesson.skill) return "On, but it became a skill: it leaves briefs while that skill exists";
+  return "On, but not in the next brief right now: the repository’s switch, the newest five or the 1500-character cap.";
+}
+
+/**
  * How the lesson is used, in the design's words: the state it is in, the briefs it reached, the ones it was left out of,
  * what a worker gets, the two checks on the way in and at start, what never reads it, whether it helped (not measured yet)
  * and where it is kept.
  */
 function HowItIsUsed({ lesson }: { lesson: Lesson }) {
   const rows: (readonly [string, ReactNode])[] = [
-    ["State", lesson.state === "active" ? "On: goes into briefs" : "Off: stays here and does not go into a brief"],
+    ["State", stateWords(lesson)],
     ["Used", usedWords(lesson)],
   ];
   if (lesson.left_out_of > 0) rows.push(["Left out", `${briefsWord(lesson.left_out_of)}. That task started without it`]);
   rows.push([
     "Given to",
-    `A worker, as text added to its brief after the route is chosen, among at most ${BRIEF_LESSONS} lessons. The text is marked as data and grants no permission`,
+    `A worker, when it is in the next brief, as text added to its brief after the route is chosen, among at most ${BRIEF_LESSONS} lessons. The text is marked as data and grants no permission`,
   ]);
   rows.push([
     "Checked",

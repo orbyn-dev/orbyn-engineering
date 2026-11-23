@@ -51,6 +51,13 @@ describe("the delete's Undo toast", () => {
     }
   });
 
+  it("names the seconds the service's window gives, not a hardcoded ten", () => {
+    showLessonUndo({ id: "les-1", until: Date.now() + 7_000, seconds: 7 });
+    render(<LessonUndoToast />);
+    const toast = screen.getByRole("status", { name: "Lesson deleted. Undo for 7 seconds" });
+    expect(within(toast).getByText("7 s")).toBeInTheDocument();
+  });
+
   it("hides an Undo whose window had already shut", () => {
     showLessonUndo({ id: "les-1", until: Date.now() - 1, seconds: 10 });
     render(<LessonUndoToast />);

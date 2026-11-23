@@ -23,7 +23,7 @@ const DEFAULT_BRIEF_CAP = { lessons: 5, chars: 1500 } as const;
 
 const SOURCE_WORD: Record<Lesson["source"], string> = {
   fingerprint: "Repeated failure",
-  escape: "Escape",
+  escape: "Confirmed escape",
   revert: "Revert",
   person: "Your correction",
 };
