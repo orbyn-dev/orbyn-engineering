@@ -261,6 +261,11 @@ impl LocalSkills {
     /// leaves the previous skill (or none) exactly as it was.
     pub(crate) fn write(&self, write: LocalSkillWrite, reserved: &[String]) -> Result<LocalSkill> {
         let (name, description) = parse_write(&write.text)?;
+        if self.root_is_link() {
+            return Err(invalid(
+                "The skills-local folder is a link, so nothing is saved there. Replace it with a real folder.",
+            ));
+        }
         let _writing = self
             .writing
             .lock()
@@ -383,7 +388,17 @@ impl LocalSkills {
         Ok(directory)
     }
 
+    /// Whether the area's own path is a symbolic link. A Windows junction is not detected here (it needs a Windows run).
+    fn root_is_link(&self) -> bool {
+        std::fs::symlink_metadata(&self.root)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    }
+
     fn existing_root(&self) -> Result<Option<PathBuf>> {
+        // The area is a real folder inside the data folder: a link there could point anywhere, so it is treated as no area.
+        if self.root_is_link() {
+            return Ok(None);
+        }
         match std::fs::metadata(&self.root) {
             Ok(metadata) if metadata.is_dir() => Ok(Some(canonicalize(&self.root)?)),
             Ok(_) => Ok(None),

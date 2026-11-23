@@ -721,3 +721,21 @@ fn a_failed_create_publish_leaves_no_skill_folder() {
     assert_eq!(local.list().unwrap(), Vec::new());
     assert_eq!(audits(&store).len(), 1);
 }
+
+#[cfg(unix)]
+#[test]
+fn an_area_that_is_a_link_is_refused_and_nothing_is_written_through_it() {
+    let (dir, _store, local) = fixture();
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, local.root()).unwrap();
+
+    let error = local
+        .write(LocalSkillWrite::create(SKILL), &[])
+        .unwrap_err();
+    assert!(
+        std::fs::read_dir(&elsewhere).unwrap().next().is_none(),
+        "the link's target must stay empty, got an error of {error}"
+    );
+    assert!(local.list().unwrap().is_empty());
+}

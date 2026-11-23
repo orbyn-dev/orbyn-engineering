@@ -2514,6 +2514,9 @@ the MCP server and the bootstrap list. On Windows `.claude/skills` and
 `.agents/skills` are Git symlinks; if they did not materialize, status says so and
 that session uses the MCP route. The tree is never rewritten.
 
+Approval does not write this file yet: the proposal store and its Approve route are not built, and
+`SkillService::write_local_skill` has no caller. It is the writer that approval will call once the route exists.
+
 A skill approved from a Crew proposal is the one skill that is not in the workspace: it is
 stored on the device at `<data>/skills-local/<slug>/SKILL.md`, one folder per skill, its
 front matter carrying a `local_revision`. A local skill is personal and applies to every

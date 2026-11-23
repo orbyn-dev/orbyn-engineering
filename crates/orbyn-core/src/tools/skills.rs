@@ -211,12 +211,19 @@ impl SkillService {
         if route.limited {
             return Ok(names);
         }
+        // A name the library holds is the library's: when the default selection leaves it out (a specialist
+        // category), a local skill of that name must not switch it back on, because `skill_load` serves the library copy.
+        let library: BTreeSet<String> = self
+            .catalog()?
+            .into_iter()
+            .map(|skill| skill.name)
+            .collect();
         match self.local.list() {
             Ok(skills) => {
                 let local: Vec<String> = skills
                     .into_iter()
                     .map(|skill| skill.name)
-                    .filter(|name| !names.contains(name))
+                    .filter(|name| !names.contains(name) && !library.contains(name))
                     .collect();
                 names.extend(local);
             }
@@ -640,6 +647,36 @@ Read this before changing how a redirect is followed.
         assert_eq!(
             entries[0].get("description").and_then(Value::as_str),
             Some("The library one.")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_library_skill_that_is_off_by_default_is_not_switched_on_by_a_local_one() {
+        let (dir, service) = fixture().await;
+        let local = "---\nname: social-checks\ndescription: \"A local one.\"\n---\n\n# Local\n";
+        service
+            .write_local_skill(LocalSkillWrite::create(local))
+            .unwrap();
+        // The library gains the same name in a category the default selection leaves out.
+        let root = dir.path().join("library");
+        std::fs::create_dir_all(root.join("skills/social-checks")).unwrap();
+        std::fs::write(root.join("skills/social-checks/SKILL.md"), local).unwrap();
+        let catalog_path = root.join("skills/catalog.json");
+        let mut catalog: Value =
+            serde_json::from_str(&std::fs::read_to_string(&catalog_path).unwrap()).unwrap();
+        catalog["skills"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "name": "social-checks", "category": "Social" }));
+        std::fs::write(&catalog_path, serde_json::to_string(&catalog).unwrap()).unwrap();
+
+        let route = service
+            .route(&[SkillDelivery::McpSkillServer], None)
+            .unwrap();
+        let allowed = service.tool_selection(&route).unwrap();
+        assert!(
+            !allowed.contains(&"social-checks".to_owned()),
+            "{allowed:?}"
         );
     }
 
