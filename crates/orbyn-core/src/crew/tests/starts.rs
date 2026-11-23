@@ -473,6 +473,43 @@ async fn an_in_flight_task_is_not_killed_by_the_crew_budget() {
     );
 }
 
+/// The disk guard (KC4): a start is refused, with the free space in the reason, when the lead's volume has less than the
+/// person's floor, and nothing is started. A floor of 0 turns it off. The largest floor a person can set is 1000 GB, so a
+/// machine with more than that free cannot show a refusal and the test ends there.
+#[tokio::test]
+async fn a_start_under_the_disk_floor_is_refused_and_a_zero_floor_turns_it_off() {
+    let w = quiet().await;
+    let cwd = w.core.store.thread(&w.lead).unwrap().cwd;
+    let free = crate::host::disk::free_bytes(std::path::Path::new(&cwd));
+    if free.is_none_or(|bytes| bytes >= 1000 * 1024 * 1024 * 1024) {
+        return;
+    }
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_min_free_gb".to_owned(), json!(1000))]),
+        )
+        .unwrap();
+    let (refused, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(error && refused["code"] == "not_authorized", "{refused}");
+    let message = refused["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("Not enough free disk space to start a worker:")
+            && message.contains("the project folder")
+            && message.contains("1000.0 GB are needed"),
+        "{message}"
+    );
+    assert!(w.prompts.lock().unwrap().is_empty(), "nothing was started");
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_min_free_gb".to_owned(), json!(0))]),
+        )
+        .unwrap();
+    let (answer, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(!error, "{answer}");
+}
+
 /// The budget is a device-local number measured per crew: a second crew has its own allowance,
 /// so one crew's spend never refuses another's start. The docs define no reset; the count is read
 /// from each crew's tasks, so a new crew starts at zero.
