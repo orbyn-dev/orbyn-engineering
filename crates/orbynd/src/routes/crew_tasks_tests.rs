@@ -144,6 +144,42 @@ async fn the_reads_answer_empty_views_and_refuse_bad_input() {
 }
 
 #[tokio::test]
+async fn a_lane_is_read_by_name_and_one_that_did_not_run_is_not_there() {
+    let app = serve("lane", true, false).await;
+    let (task, key_text) = seed_task(&app.core, "lane");
+    let key_id = app.core.store.crew_answer_key(&task).unwrap().unwrap().id;
+    // No review ran on this task, so its lanes are not there: the read refuses a missing name, a name that is not a
+    // lane, a task that is not one and a task that does not exist.
+    let base = format!("/api/crew/flow/tasks/{task}/lanes");
+    for path in [
+        base.clone(),
+        format!("{base}?lane=a%20b"),
+        format!("{base}?lane=Correctness"),
+        "/api/crew/flow/tasks/..%2F..%2Fetc/lanes?lane=correctness".to_owned(),
+    ] {
+        let (status, body) = app.get(&path).await;
+        assert_eq!(status, 400, "{path}");
+        assert_eq!(body["code"], "invalid_input", "{path}");
+    }
+    for path in [
+        format!("{base}?lane=correctness"),
+        "/api/crew/flow/tasks/sha256:abc/lanes?lane=correctness".to_owned(),
+    ] {
+        let (status, body) = app.get(&path).await;
+        assert_eq!(status, 404, "{path}");
+        let text = body.to_string();
+        assert!(
+            !text.contains(&key_text),
+            "a response holds the key's check"
+        );
+        assert!(
+            !text.contains(key_id.as_str()),
+            "a response holds the key's id"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_stored_task_is_listed_and_zoomed_without_its_key() {
     let app = serve("task", true, false).await;
     let (task, key_text) = seed_task(&app.core, "flow");

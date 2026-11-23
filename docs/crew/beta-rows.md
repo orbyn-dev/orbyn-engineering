@@ -387,7 +387,7 @@ Decided 2026-11-12: a block is one command or script the app itself runs (projec
 | `block-ask-crew` | Ask Crew about a block | missing | P2 |
 | `block-collapsed` | A collapsed block | missing | P2 |
 | `block-default` | A block | missing | P2 |
-| `block-empty` | No blocks yet: "Commands Orbyn runs appear here as blocks" | missing | P2 |
+| `block-empty` | No blocks yet: "Commands you run here appear as blocks" | missing | P2 |
 | `block-failed` | A failed block | missing | P2 |
 | `block-filter` | Filter blocks | missing | P2 |
 | `block-find` | Find in blocks | missing | P2 |

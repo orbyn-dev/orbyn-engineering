@@ -45,6 +45,8 @@ export type CrewOrigin = (typeof CREW_ORIGINS)[number];
 
 export type Route =
   | { name: "home" }
+  /** An address that names no screen: the page says so instead of drawing another page's fallback. */
+  | { name: "not-found"; path: string }
   | { name: "thread"; id: string }
   | { name: "new"; projectId: string | null }
   /** A project with no threads: the empty screen, or the composer once it has some. */
@@ -115,6 +117,9 @@ export function routeHref(route: Route): string {
   switch (route.name) {
     case "home":
       return "#/";
+    case "not-found":
+      // The address as it arrived: a not-found page never rewrites what the person asked for.
+      return route.path ? `#/${route.path}` : "#/";
     case "thread":
       return `#/threads/${enc(route.id)}`;
     case "new":
@@ -172,30 +177,31 @@ function crewPageOf(second: string | undefined, third: string | undefined, param
   };
 }
 
-export function parseRoute(hash: string): Route {
-  if (hash.startsWith("#/crew/flow/task")) {
-    const segment = /^#\/crew\/flow\/task\/([^/?#]+)$/.exec(hash)?.[1];
-    if (!segment) return { name: "home" };
-    try {
-      const task = decodeURIComponent(segment);
-      return isCrewTaskId(task) ? { name: "crew", tab: "flow", task } : { name: "home" };
-    } catch { return { name: "home" }; }
+/** A segment as typed: a malformed escape names nothing rather than throwing. */
+function segmentOf(part: string): string {
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return part;
   }
+}
+
+export function parseRoute(hash: string): Route {
   const separator = hash.indexOf("?");
   const path = separator < 0 ? hash : hash.slice(0, separator);
   const search = separator < 0 ? "" : hash.slice(separator + 1);
   const params = new URLSearchParams(search);
-  const parts = path
-    .replace(/^#\/?/, "")
+  /** The address as typed, without `#/`: a path that names no screen still has one to keep and show. */
+  const address = path.replace(/^#\/?/, "");
+  if (hash.startsWith("#/crew/flow/task")) {
+    const segment = /^#\/crew\/flow\/task\/([^/?#]+)$/.exec(hash)?.[1];
+    const task = segment === undefined ? null : segmentOf(segment);
+    return task !== null && isCrewTaskId(task) ? { name: "crew", tab: "flow", task } : { name: "not-found", path: address };
+  }
+  const parts = address
     .split("/")
     .filter(Boolean)
-    .map((part) => {
-      try {
-        return decodeURIComponent(part);
-      } catch {
-        return part;
-      }
-    });
+    .map(segmentOf);
   const [head, first, second, third] = parts;
   switch (head) {
     case "threads":
@@ -243,7 +249,8 @@ export function parseRoute(hash: string): Route {
       };
     }
     default:
-      return { name: "home" };
+      // A path that matches no screen is its own route: it keeps the address and says not found.
+      return address ? { name: "not-found", path: address } : { name: "home" };
   }
 }
 
@@ -255,19 +262,55 @@ export function navigate(route: Route): void {
 }
 
 /**
+ * Settings covers the page under it rather than standing beside it, so it keeps exactly one history entry,
+ * marked here: opening it pushes that entry, a move inside Settings replaces it, and closing it goes back.
+ * Back therefore never walks back into Settings, and closing adds no entry to walk back out of.
+ */
+const SETTINGS_ENTRY = "orbynSettings";
+
+const holdsSettingsEntry = (state: unknown): boolean =>
+  typeof state === "object" && state !== null && (state as Record<string, unknown>)[SETTINGS_ENTRY] === true;
+
+/**
  * Moves to a hash route. While a modal sheet holds its history entry (`history.state.sheet`), the
  * navigation replaces that entry instead of pushing one, and the sheet closes with it: the stack
  * [list, list + sheet] becomes [list, destination]. Typed addresses and links out can't be seen.
  */
 export function goToHash(hash: string): void {
   if (deferNavigation(() => goToHash(hash))) return;
-  if ((window.history.state as { sheet?: boolean } | null)?.sheet === true) {
+  const state = window.history.state as Record<string, unknown> | null;
+  const sheet = state?.sheet === true;
+  if (parseRoute(`#${hash}`).name === "settings") {
+    const held = holdsSettingsEntry(state);
+    if (held) {
+      // A move inside Settings keeps the entry the page underneath will find again.
+      window.history.replaceState({ ...(state ?? {}), [SETTINGS_ENTRY]: true }, "", `#${hash}`);
+    } else {
+      // One fresh entry either way: a page under Settings is replaced, and Settings itself arrives with
+      // no trail of the page's own, so the navigation reads as a new place rather than a Back step.
+      if (sheet) window.history.replaceState({ [SETTINGS_ENTRY]: true }, "", `#${hash}`);
+      else window.history.pushState({ [SETTINGS_ENTRY]: true }, "", `#${hash}`);
+    }
+    // pushState and replaceState say nothing, so tell the router.
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    return;
+  }
+  if (sheet) {
     window.history.replaceState(null, "", `#${hash}`);
-    // replaceState says nothing, so tell the router and the sheet.
     window.dispatchEvent(new HashChangeEvent("hashchange"));
     return;
   }
   window.location.hash = hash;
+}
+
+/**
+ * Closes Settings without adding a history entry. When Settings holds the entry it pushed, Back is the way
+ * out and the page underneath is already there. An address that arrived on its own (typed, or reloaded with
+ * nothing under it) swaps the entry for the page instead, so closing never leaves an entry to back out of.
+ */
+export function closeSettings(underneath: Route): void {
+  if (holdsSettingsEntry(window.history.state)) window.history.back();
+  else redirect(underneath);
 }
 
 /** Swaps the current history entry for a route, so Back skips the screen that only passed the person on. */

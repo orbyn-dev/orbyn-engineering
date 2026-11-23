@@ -42,6 +42,19 @@ artifact with a higher version and force a downgrade. Two consequences for relea
 - A release whose signature carries no version, or another version, is refused: the shell reports
   `app_update_failed` and never offers the download as ready.
 
+## Release notes
+
+The notes are written when a release is made. Two account changes the next one has to say, so they
+reach people who already have a build:
+
+- **No last seen.** Device rows do not say when a device was last seen, and `AccountDevice` has no
+  `last_seen`: the Engine's `Device` has none, so nothing is stored, synced or shown for it
+  ([account.md](account.md)).
+- **Sign-up makes no live account before the emailed code, and never replaces one.** The password step
+  only asks for one; the emailed code is what makes the account, and a sign-up for an address that
+  already has an account ends as a wrong code, with that account untouched
+  ([the threat model](account-threat-model.md)).
+
 ## Not yet verified on a real machine
 
 Each item is UNVERIFIED: only CI has run.

@@ -232,7 +232,7 @@ async fn every_orbyn_tool_off_the_allow_list_is_refused_to_a_worker() {
     assert!(names.len() > 40, "the registry is read");
     for name in ALLOWED {
         assert!(
-            names.iter().any(|n| n == name),
+            names.iter().any(|n| n == name) || crate::tools::mcp::code::is_tool(name),
             "{name} is no longer a tool"
         );
     }

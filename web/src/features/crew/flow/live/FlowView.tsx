@@ -12,7 +12,7 @@ import { FlowZoom } from "./FlowZoom";
 import { useFlowCrews, useFlowTasks, useRefresh } from "./useFlow";
 import "./flow-live.css";
 
-const PLANNED_NOTE = "Planned: no route yet. The beta has a Cancel on each task, when it is wired.";
+const PLANNED_NOTE = "Planned: no route yet. A task’s Cancel and Re-run checks are built, and each asks first.";
 
 /**
  * The Flow tab of the Crew view on the real Flow routes. Nothing is drawn while Crew Preview is off (a service with it off

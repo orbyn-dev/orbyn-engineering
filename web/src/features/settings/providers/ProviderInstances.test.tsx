@@ -220,4 +220,22 @@ describe("provider pages", () => {
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(entries).toEqual([{ id: "other", driver: "acp-base", enabled: true, forward: { nested: true } }]));
   });
+  it("opens a provider row from the keyboard and leaves a row with no detail behind it without a control", async () => {
+    const user = userEvent.setup(); render(<ProvidersSection />);
+    await screen.findByRole("rowgroup", { name: "In use" });
+    // The row's name button is its control: it is tabbable, it carries the designs' disclosure chevron, and Enter opens.
+    const name = await screen.findByRole("button", { name: "Claude Code · Work" });
+    expect(name.querySelector("svg")).not.toBeNull();
+    name.focus();
+    expect(name).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("heading", { name: "Claude Code · Work" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Providers" }));
+    // A table row is not a control: it takes no tabindex of its own, so only the name button is tabbable.
+    const row = (await screen.findByRole("button", { name: "Claude Code · Work" })).closest('[role="row"]');
+    expect(row).not.toBeNull();
+    expect(row).not.toHaveAttribute("tabindex");
+    // The ACP provider has no detail page to open, so its row offers no control at all.
+    expect(screen.queryByRole("button", { name: "Agent" })).toBeNull();
+  });
 });

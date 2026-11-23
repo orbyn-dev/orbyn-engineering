@@ -9,7 +9,8 @@
  * - A call's `status` is only `running`, `ok`, `failed` or `denied`. There is no "waiting": a call held for a person is a `running`
  *   call of a `paused` run that `pending` names, and a call a restart cut off stays `running` in a run that ended as `error`.
  * - `error.kind` is a plain string on the wire, and `result` over 64 KiB is `{ truncated, bytes, preview }`.
- * - `waited_ms` is always null for now. The approval's `via` is on the wire (`Approval.via`) and stays display-only (see `ApprovalVia`).
+ * - `waited_ms` is the run's recorded wait for a person; it is null only for a row stored before that was recorded. The approval's
+ *   `via` is on the wire (`Approval.via`) and stays display-only (see `ApprovalVia`).
  */
 import type { CodeModeSetting as CodeModeSettingWire } from "../../generated/CodeModeSetting";
 import type { CodeRunCall as CodeRunCallWire } from "../../generated/CodeRunCall";
@@ -28,9 +29,9 @@ export type CodeRunSummary = Wired<CodeRunSummaryWire>;
 export type CodeRunList = Wired<CodeRunListWire>;
 export type CodeModeSetting = Wired<CodeModeSettingWire>;
 
-export type CodeErrorKind = "syntax" | "runtime" | "limit" | "denied" | "lost";
+export type CodeErrorKind = "syntax" | "runtime" | "limit" | "denied" | "lost" | "cancelled";
 
-/** An error as the blocks draw it: the kind is one of the five, whatever the wire sent. */
+/** An error as the blocks draw it: the kind is one of the six, whatever the wire sent. */
 export interface RunError {
   kind: CodeErrorKind;
   message: string;

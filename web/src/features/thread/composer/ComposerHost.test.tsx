@@ -55,12 +55,13 @@ it("for Claude under the SDK path, the line gives the service's sentence with Us
   await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
 });
 
-it("with no driver, Send is off, the message stays and the line offers Restart engine host", async () => {
+it("with a wrapped driver, Send is still off, the message stays and the line offers Restart engine host", async () => {
   const start = vi.spyOn(api, "startRun").mockResolvedValue({ id: "r1" } as Run);
-  const mock = createEngineHostMock({ delayMs: 20, hosts: [stuck("cursor")] });
+  const mock = createEngineHostMock({ delayMs: 20, hosts: [stuck("cursor", { has_driver: true })] });
   setEngineHostApi(mock);
   setup("cursor", "Cursor");
   expect(await screen.findByText("Cursor can’t send: its engine host is unavailable and Cursor has no other way to run here. Last error: the engine host closed its output.")).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveAttribute("data-send", "off");
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   expect(screen.getByRole("textbox")).toHaveValue("Run the tests.");
   await userEvent.dblClick(screen.getByRole("button", { name: "Restart engine host" }));

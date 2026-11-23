@@ -59,6 +59,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/autopilot/review/{task_id}/looks-good"],
   ["POST", "/api/crew/autopilot/review/{task_id}/revert"],
   ["POST", "/api/crew/background/create"],
+  ["POST", "/api/crew/background/runs/{id}/acknowledge"],
   ["POST", "/api/crew/background/{id}/delete"],
   ["POST", "/api/crew/background/{id}/disable"],
   ["POST", "/api/crew/background/{id}/enable"],
@@ -194,8 +195,9 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/projects/{id}/repo-threads"],
   ["POST", "/api/threads/{id}/repos"],
   ["DELETE", "/api/threads/{id}/repos/{repo_id}"],
-  // Code Mode (docs/code-mode.md): switching an engine's Code Mode changes what the engine may call.
+  // Code Mode (docs/code-mode.md): switching an engine's Code Mode changes what the engine may call; cancelling a run is the person's stop.
   ["PUT", "/api/engines/{id}/code-mode"],
+  ["POST", "/api/code-runs/{id}/cancel"],
   // The personal library (docs/execution-profiles-and-library.md, Part 2): every write is Person-class, a workflow run included. The reads, the two renders and the export are Local.
   ["POST", "/api/library/workflows"],
   ["PATCH", "/api/library/workflows/{id}"],
@@ -268,11 +270,19 @@ export function forgetPersonKey(): void {
 }
 
 /**
+ * Whether this page can send the person key at all: it has the desktop shell's bridge to ask, or it is a dev preview,
+ * which sends the fixed key below to the mock. A plain browser tab has neither, so the service answers every enforced
+ * `Person` route with `403 desktop_required`. A route that needs a person must not be offered where this is false.
+ */
+export const canSendPersonKey = (): boolean => typeof bridge()?.invoke === "function" || __ORBYN_PREVIEWS__;
+
+/**
  * The key, from the shell's `person_key` command, or null when this page has no shell (a browser tab) or the shell has no
  * key. Without one the request goes out without the header, and the service answers 403 `desktop_required`.
  */
 export async function readPersonKey(): Promise<string | null> {
   if (cached) return cached;
+  if (!canSendPersonKey()) return null;
   const invoke = bridge()?.invoke;
   if (typeof invoke !== "function") return __ORBYN_PREVIEWS__ ? MOCK_KEY : null;
   let answer: unknown;

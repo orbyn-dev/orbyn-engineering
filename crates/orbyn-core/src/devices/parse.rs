@@ -82,7 +82,7 @@ pub(super) fn surface_orientation(text: &str) -> Option<DeviceOrientation> {
         .lines()
         .filter_map(|line| line.trim().strip_prefix("SurfaceOrientation:"))
         .filter_map(|value| value.trim().parse::<u8>().ok())
-        .last()?;
+        .next_back()?;
     match value {
         0 => Some(DeviceOrientation::Portrait),
         1 => Some(DeviceOrientation::LandscapeLeft),

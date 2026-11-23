@@ -1,6 +1,8 @@
 import { ChevronDown } from "lucide-react";
 import { settingsLabel } from "../settingsSearch";
 import { useState } from "react";
+import { api } from "../api";
+import { useAsync } from "../../../lib/useAsync";
 import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode";
 import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
@@ -85,6 +87,9 @@ export function GeneralSection() {
   const confirmDelete = useUi((state) => state.confirmDelete);
   const setPrefs = useUi((state) => state.setPrefs);
   const sound = useUi((state) => state.threadSound);
+  // ⌘Q is the macOS desktop app's key, so its confirmation is the only row drawn there.
+  const info = useAsync("environment-identity", (signal) => api.info(signal));
+  const macos = info.data?.platform === "macos";
   const order = [{ value: "updated_at", label: "Last user message" }, { value: "created_at", label: "Created" }] as const;
   return (
     <>
@@ -129,17 +134,19 @@ export function GeneralSection() {
           showWhen: (valueOf) => valueOf("terminal_attention_enabled") !== false,
           render: (value, save, control) => <NumberWithUnit value={value} unit="seconds" min={10} max={120} label={settingsLabel("general-terminal-agents-quiet-time")} save={save} disabled={control.disabled} /> },
       ] }]} />
-      <PreferenceGroups groups={[{ title: "", rows: [{
-        key: "quit_confirmation",
-        title: settingsLabel("general-quit-confirmation"),
-        description: "How ⌘Q quits the desktop app on macOS. The Quit menu item quits.",
-        segmented: true,
-        options: [
-          { value: "direct", label: "Quit at once" },
-          { value: "hold", label: "Hold ⌘Q" },
-          { value: "double_press", label: "Press ⌘Q twice" },
-        ],
-      }] }]} />
+      {macos ? (
+        <PreferenceGroups groups={[{ title: "", rows: [{
+          key: "quit_confirmation",
+          title: settingsLabel("general-quit-confirmation"),
+          description: "How ⌘Q quits the desktop app on macOS. The Quit menu item quits.",
+          segmented: true,
+          options: [
+            { value: "direct", label: "Quit at once" },
+            { value: "hold", label: "Hold ⌘Q" },
+            { value: "double_press", label: "Press ⌘Q twice" },
+          ],
+        }] }]} />
+      ) : null}
       <SettingGroup>
         <SettingRow title={settingsLabel("general-project-grouping")} description="How projects in the same repository are shown">
           <Segmented

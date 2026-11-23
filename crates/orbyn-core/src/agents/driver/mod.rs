@@ -543,8 +543,10 @@ pub trait EngineDriver: Send + Sync {
     }
 
     /// Drops `before_turn` and every later turn from `session`'s own history, for a
-    /// rewind that keeps the session. Files are not touched. The default says this
-    /// engine has no native rollback, and the rewind leaves a handoff instead.
+    /// rewind that keeps the session. Files are not touched. For the Claude host,
+    /// `before_turn` is the run's prompt message id: the host's own turn id is a counter
+    /// and never appears in the session file. The default says this engine has no native
+    /// rollback, and the rewind leaves a handoff instead.
     async fn revert_session(
         &self,
         _cwd: &std::path::Path,
@@ -555,6 +557,10 @@ pub trait EngineDriver: Send + Sync {
             "This engine has no native rollback.".into(),
         ))
     }
+
+    /// Drops a rewind point this driver noted for `session`, when the rewind that noted
+    /// it could not finish. Files are not touched. The default has nothing to drop.
+    async fn forget_revert(&self, _cwd: &std::path::Path, _session: &str) {}
 
     /// What a cached list depends on. An engine with a key keeps its list until the
     /// key changes; without one the list simply ages out.

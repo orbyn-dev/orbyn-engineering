@@ -16,6 +16,7 @@
 mod acp;
 mod confinement;
 mod connection;
+mod cursor_delta;
 mod delta;
 mod driver;
 mod frames;
@@ -38,11 +39,11 @@ use std::sync::{Arc, OnceLock, Weak};
 
 pub use acp::HostAcpAgent;
 pub use driver::{EnginePath, HostDriver, PathSetting};
-pub use frames::{ErrorKind, PROTOCOL};
+pub use frames::{ErrorKind, HostSdk, PROTOCOL};
 #[cfg(test)]
 pub(crate) use outcome::host_stopped;
 pub use outcome::{HOST_STOPPED, HOST_STOPPED_CODE};
-pub use pool::{HostStatus, Pool, Refusal, SecretSource};
+pub use pool::{HostRestart, HostStatus, Pool, Refusal, SecretSource};
 pub use process::HostSpec;
 pub use state::{CrashInfo, CrashKind, ExitRecord, HostState, NotUsed, Timings};
 
@@ -223,6 +224,7 @@ impl HostHub {
             if let Slot::Pool(pool) = slot
                 && pool.family == family
             {
+                pool.mark_wrapped();
                 return Arc::new(HostDriver::new(inner, pool.clone(), program).with_path(path));
             }
         }
@@ -259,6 +261,14 @@ impl HostHub {
                     last_crash: None,
                     threads: Vec::new(),
                     last_error: None,
+                    since: None,
+                    sdk: None,
+                    capabilities: None,
+                    pooled: false,
+                    restart: None,
+                    stops_in_window: None,
+                    has_driver: false,
+                    sdk_missing: false,
                 },
             });
         }

@@ -5,12 +5,13 @@
 mod acp;
 mod asks;
 mod control;
+mod cursor;
 mod pool;
 mod real;
 mod runs;
 mod secrets;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -78,6 +79,16 @@ pub(super) fn driver(pool: &Arc<Pool>) -> HostDriver {
         Arc::new(ClaudeDriver::new("claude".into(), Duration::from_secs(1))),
         pool.clone(),
         "claude".into(),
+    )
+}
+
+/// A host driver whose Claude program is `node`, so a test of the real `claude` family
+/// never needs the person's engine binary. The stand-in is the host either way.
+pub(super) fn driver_on_node(pool: &Arc<Pool>, node: &Path) -> HostDriver {
+    HostDriver::new(
+        Arc::new(ClaudeDriver::new("claude".into(), Duration::from_secs(1))),
+        pool.clone(),
+        node.to_string_lossy().into_owned(),
     )
 }
 

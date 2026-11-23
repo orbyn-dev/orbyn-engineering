@@ -40,7 +40,9 @@ impl LimitsReads {
 impl Core {
     /// Reads the engine's current subscription report without keeping a fallback.
     /// Neither its signed-in boolean nor its plan proves the account/workspace.
-    /// `force` remains accepted for compatibility; every read is fresh.
+    /// `force` is a person's refresh: it asks the driver again and skips nothing else.
+    /// There is no kept report to skip, and the fences below hold either way, so a
+    /// refresh can never answer with another account's figures.
     pub async fn engine_limits(&self, id: &str, _force: bool) -> Result<EngineLimits> {
         // Observe invalidation before lookup can resolve an older configuration.
         let epoch = self.engines.change_epoch();
@@ -75,6 +77,8 @@ impl Core {
 
     /// The overview never starts or awaits Claude, including its status probe.
     /// An explicit engine/thread limits read can still ask that driver.
+    /// `force` is forwarded to each engine read unchanged: a person's refresh is not a
+    /// reason to start a family the overview must never start.
     pub async fn limits_overview(&self, force: bool) -> Result<LimitsOverview> {
         let mut engines = Vec::new();
         let mut unavailable = Vec::new();

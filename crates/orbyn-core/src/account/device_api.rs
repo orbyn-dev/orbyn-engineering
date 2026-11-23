@@ -64,6 +64,10 @@ pub enum DeviceError {
     /// The tries ran out, or the digits were already used: the request is closed.
     #[error("digits locked")]
     DigitsLocked,
+    /// The request's own ten minutes are over: the server ended it on its clock, so it closes as
+    /// expired rather than as one a person or a trusted device ended.
+    #[error("approval expired")]
+    ApprovalExpired,
     /// The server asked for proof of work (a 428) and the client could not finish it.
     #[error("proof of work failed")]
     ProofFailed,
@@ -84,6 +88,17 @@ pub enum DeviceError {
     /// from an approver that cannot sign what this device accepts. The approval is closed.
     #[error("approval refused")]
     ApprovalRefused,
+}
+
+impl DeviceError {
+    /// Whether the request got as far as the server, so its answer is the one that counts. Only
+    /// [`DeviceError::Offline`] says it did not: the transport reports every way of getting no
+    /// answer as that one error, a timeout after the request may have arrived included. So a 5xx, a
+    /// rate limit or an expiry reached the server and keeps whatever it counted, and only an
+    /// `Offline` gives a reserved try back here.
+    pub fn reached_the_server(&self) -> bool {
+        !matches!(self, Self::Offline)
+    }
 }
 
 /// What the client reports about itself.

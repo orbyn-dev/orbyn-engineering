@@ -76,7 +76,7 @@ it("names SDK missing, not installed and sign in again; the CLI path still offer
   render(<ModelPickerTrigger engines={list} selected={{ engine: "claude", model: "claude-m" }} onPick={vi.fn()} />);
   await user.click(screen.getByRole("button", { name: "claude model" }));
   const picker = await screen.findByRole("dialog", { name: "Choose a model" });
-  expect(await within(picker).findByText("This build does not include the Claude Code SDK. Claude Code runs through its claude program.")).toBeVisible();
+  expect(await within(picker).findByText("This build does not include the Claude Code SDK, so a run on Claude Code fails with that message. Choose Claude (CLI) in Claude path to run it.")).toBeVisible();
   expect(within(picker).getByText("cursor isn’t installed on this computer.")).toBeVisible();
   expect(within(picker).getAllByText("Not found").length).toBeGreaterThan(0);
   expect(within(picker).getByText("Your sign-in expired. Sign in with muse.")).toBeVisible();

@@ -24,6 +24,7 @@ pub mod fixtures;
 mod flow;
 mod gather;
 mod guard;
+mod http_probe;
 mod index_flags;
 mod leases;
 pub(crate) mod lifecycle;
@@ -49,6 +50,8 @@ mod workers;
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) use workers::worker_refusal;
 
 pub(crate) use autopilot::GateReview;
 pub use autopilot::{

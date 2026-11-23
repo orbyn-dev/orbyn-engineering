@@ -380,6 +380,8 @@ impl Devices {
         if path.to_str().is_none() {
             return Err(tool_failed());
         }
+        // Only the unix branch sets a mode, so the binding is immutable on Windows.
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         {
@@ -770,7 +772,7 @@ enum ToolSource {
 impl ToolSource {
     fn get(&self) -> Option<Tool> {
         match self {
-            Self::Named(name) => resolve(*name).map(|resolved| Tool {
+            Self::Named(name) => resolve(name).map(|resolved| Tool {
                 program: resolved.program,
                 prefix: resolved.prefix,
             }),

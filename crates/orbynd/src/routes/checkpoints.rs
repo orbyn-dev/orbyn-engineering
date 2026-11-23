@@ -6,7 +6,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use orbyn_contracts::{RestoreChanges, RestoreWorkspace, RewindThread};
+use orbyn_contracts::{RestoreChanges, RestoreWorkspace, RewindResult, RewindThread};
 use serde::Deserialize;
 
 use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
@@ -78,7 +78,8 @@ async fn rewind_thread(
     State(state): State<AppState>,
     Path(id): Path<String>,
     ApiJson(body): ApiJson<RewindThread>,
-) -> ApiResult<StatusCode> {
-    state.core.rewind_thread(&id, &body, LOCAL_USER).await?;
-    Ok(StatusCode::NO_CONTENT)
+) -> ApiResult<Json<RewindResult>> {
+    Ok(Json(
+        state.core.rewind_thread(&id, &body, LOCAL_USER).await?,
+    ))
 }

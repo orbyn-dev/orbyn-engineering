@@ -1,7 +1,7 @@
 //! Background runs in the Review queue (docs/crew/background-engine-start.md, section 4, PR 4): a run that stops without a
 //! merge stays on its own row, and the queue that lists merges now joins those rows too, with the run's state, why it stopped
-//! and what it spent. A real `Core`, fake engines and real git. The person's answer to a background run has no route yet, so
-//! these tests read the join only. The wire queue pages the runs with the merges' window and counts them all.
+//! and what it spent. A real `Core`, fake engines and real git. The person's answer is the acknowledgement, which settles the
+//! wait and leaves the queue. The wire queue pages the runs with the merges' window and counts them all.
 
 use std::sync::Arc;
 
@@ -251,6 +251,139 @@ async fn the_wire_queue_is_not_found_with_the_preview_off() {
     let w = world(false, good()).await;
     let page = Page::new(None, None).unwrap();
     let error = w.core.autopilot_review_queue(NOW, page).unwrap_err();
+    assert!(matches!(error, CoreError::NotFound(_)), "{error}");
+}
+
+/// The person's acknowledgement is the answer to a waiting review: the wait clears under one write, the crew reads idle and the
+/// same crew starts again, while the run keeps its state, its spend and why it waited.
+#[tokio::test]
+async fn acknowledging_a_waiting_review_settles_it_and_the_crew_may_run_again() {
+    let w = world(true, good()).await;
+    let id = crew_with(&w, "Fix CI", 10, 30, true);
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    let waiting = until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+    assert!(waiting.review_waiting);
+    let before = w.core.background_get(&id).unwrap();
+    assert_eq!(
+        (before.state, before.reviews_waiting),
+        (wire::BackgroundState::NeedsReview, 1)
+    );
+    assert_eq!(
+        queue(&w).background.len(),
+        1,
+        "an unacknowledged review still waits"
+    );
+
+    let settled = w.core.background_acknowledge_review(&run.id).unwrap();
+    assert!(!settled.review_waiting);
+    assert_eq!(
+        settled.review_reason.as_deref(),
+        waiting.review_reason.as_deref(),
+        "the run keeps why it waited"
+    );
+    assert_eq!(
+        (
+            settled.state,
+            settled.stop_reason,
+            settled.turns_spent,
+            settled.minutes_spent,
+            settled.started_at.clone(),
+            settled.ended_at.clone(),
+        ),
+        (
+            waiting.state,
+            waiting.stop_reason,
+            waiting.turns_spent,
+            waiting.minutes_spent,
+            waiting.started_at.clone(),
+            waiting.ended_at.clone(),
+        ),
+        "nothing else about the run changes"
+    );
+    let after = w.core.background_get(&id).unwrap();
+    assert_eq!(
+        (after.state, after.reviews_waiting),
+        (wire::BackgroundState::Idle, 0)
+    );
+    assert!(
+        queue(&w).background.is_empty(),
+        "a settled review leaves the queue"
+    );
+    let paged = w
+        .core
+        .autopilot_review_queue(NOW, Page::new(None, None).unwrap())
+        .unwrap();
+    assert!(paged.background_runs.is_empty());
+    assert_eq!(
+        paged.background_total, 0,
+        "the paged queue counts a settled review as settled"
+    );
+    // The crew may run again, at once.
+    let next = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    assert_eq!(next.state, wire::BackgroundRunState::Running);
+
+    // One audit row, the person's, records what was settled.
+    let audits = w.core.store.list_audit(None, 100).unwrap();
+    let rows: Vec<_> = audits
+        .iter()
+        .filter(|row| row.action == "crew.background.run.acknowledge")
+        .collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].actor.as_str(), rows[0].source.as_str()),
+        ("user", "user")
+    );
+    assert_eq!(rows[0].target, id);
+    assert_eq!(rows[0].detail["run"], run.id);
+    assert_eq!(rows[0].detail["state"], "needs_review");
+    assert_eq!(
+        rows[0].detail["review_reason"],
+        waiting.review_reason.clone().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn acknowledging_a_review_that_is_not_waiting_is_refused_plainly_and_changes_nothing() {
+    let w = world(true, Arc::new(|_, _| Turn::Silent)).await;
+    let id = crew_with(&w, "Silent", 10, 30, true);
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    // A running run is not waiting.
+    let refused = |error: CoreError| {
+        assert!(
+            matches!(&error, CoreError::Invalid(why) if why == "this run is not waiting for the person's review"),
+            "{error}"
+        );
+    };
+    refused(w.core.background_acknowledge_review(&run.id).unwrap_err());
+    // A run that stopped for an engine error left nothing to review.
+    let stopped = until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
+    assert!(!stopped.review_waiting);
+    refused(w.core.background_acknowledge_review(&run.id).unwrap_err());
+    // A run that is not there is not found.
+    assert!(matches!(
+        w.core.background_acknowledge_review("nothing").unwrap_err(),
+        CoreError::NotFound(_)
+    ));
+    // Nothing was written.
+    assert!(
+        !w.core
+            .store
+            .list_audit(None, 100)
+            .unwrap()
+            .iter()
+            .any(|row| row.action == "crew.background.run.acknowledge")
+    );
+    assert_eq!(w.core.background_get(&id).unwrap().reviews_waiting, 0);
+    // A failed stop still shows in Review: it is not a waiting review, so it has no acknowledgement (PR 4's open question).
+    let listed = queue(&w);
+    assert_eq!(listed.background.len(), 1);
+    assert_eq!(listed.background[0].state, "stopped");
+}
+
+#[tokio::test]
+async fn acknowledging_is_not_found_with_the_preview_off() {
+    let w = world(false, good()).await;
+    let error = w.core.background_acknowledge_review("nothing").unwrap_err();
     assert!(matches!(error, CoreError::NotFound(_)), "{error}");
 }
 

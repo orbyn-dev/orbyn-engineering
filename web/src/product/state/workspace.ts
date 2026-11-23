@@ -13,6 +13,7 @@ import type {
   WorkspaceStatus,
 } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
+import { reuseThreads, sameData } from "./workspaceThreadMerge";
 
 export interface Loadable<T> {
   data: T | null;
@@ -29,31 +30,6 @@ function projectRevision(project: Project): bigint | null {
   if (typeof value !== "string" || value.length > 19 || !/^(0|[1-9][0-9]*)$/.test(value)) return null;
   const revision = BigInt(value);
   return revision <= 9223372036854775807n ? revision : null;
-}
-
-/** Deep equality over the plain JSON the API answers with: an unchanged poll compares equal at every key. */
-function sameData(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-  if (Array.isArray(a) !== Array.isArray(b)) return false;
-  const left = a as Record<string, unknown>;
-  const right = b as Record<string, unknown>;
-  const keys = Object.keys(left);
-  if (keys.length !== Object.keys(right).length) return false;
-  for (const key of keys) if (!sameData(left[key], right[key])) return false;
-  return true;
-}
-
-/** Merges polled threads, keeping the objects whose content did not change, so their rows keep their props. */
-function reuseThreads(base: Record<string, Thread>, list: readonly Thread[]) {
-  let next: Record<string, Thread> | null = null;
-  for (const thread of list) {
-    const known = (next ?? base)[thread.id];
-    if (known !== undefined && sameData(known, thread)) continue;
-    next ??= { ...base };
-    next[thread.id] = thread;
-  }
-  return { changed: next !== null, threads: next ?? base };
 }
 
 const idle = <T>(): Loadable<T> => ({ data: null, error: null, loading: false });
@@ -92,6 +68,7 @@ interface WorkspaceState {
   refreshThread(id: string): Promise<void>;
   /** Scratch threads sit behind hidden projects, which project lists leave out. */
   refreshScratch(): Promise<void>;
+  refreshPolledThreads(projectIds: string[]): Promise<void>;
   refreshApprovals(): Promise<void>;
   refreshEngines(): Promise<void>;
   /**
@@ -239,7 +216,6 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       await Promise.all([refreshUpdates(), refreshEngines(), refreshManaged()]);
     }
   },
-
   async refreshUpdates(options) {
     const quiet = options?.quiet === true;
     // An event's read never takes over one that is running: it waits and reads once that one ends.
@@ -276,7 +252,6 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     claim("updates");
     set({ updates: { data: status, error: null, loading: false } });
   },
-
   async refreshManaged(options) {
     const quiet = options?.quiet === true;
     if (quiet && running.managed > 0) {
@@ -313,7 +288,6 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     claim("managed");
     set({ managed: { data: status, error: null, loading: false } });
   },
-
   async refreshProjects() {
     const current = claim("projects");
     // Loading means the first read. A poll over data already on screen must not replace the objects the
@@ -340,7 +314,6 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       else set((state) => ({ projects: { data: state.projects.data, error: failure, loading: false } }));
     }
   },
-
   async refreshThreads(projectId) {
     const current = claim(`threads:${projectId}`);
     if (!get().threadIds[projectId]?.data) {
@@ -387,7 +360,6 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }));
     }
   },
-
   async refreshScratch() {
     const current = claim("scratch");
     try {
@@ -397,6 +369,48 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       if (merged.changed) set({ threads: merged.threads });
     } catch {
       // Project threads still load; the next poll tries again.
+    }
+  },
+
+  /** One global read supplies the project lists and the scratch threads during polling. */
+  async refreshPolledThreads(projectIds) {
+    const current = new Map(projectIds.map((id) => [id, claim(`threads:${id}`)]));
+    const scratchCurrent = claim("scratch");
+    set((state) => {
+      let threadIds = state.threadIds;
+      for (const id of projectIds) {
+        if (threadIds[id]?.data) continue;
+        if (threadIds === state.threadIds) threadIds = { ...threadIds };
+        threadIds[id] = { ...(threadIds[id] ?? idle()), loading: true };
+      }
+      return threadIds === state.threadIds ? state : { threadIds };
+    });
+    let list: Thread[];
+    try {
+      list = await api.allThreads();
+    } catch {
+      // Preserve independent project failures and keep scratch on a global-read failure.
+      await Promise.all(projectIds.filter((id) => current.get(id)?.()).map((id) => get().refreshThreads(id)));
+      return;
+    }
+    for (const id of projectIds) {
+      if (!current.get(id)?.()) continue;
+      const state = get();
+      const known = state.threadIds[id];
+      const projectThreads = list.filter((thread) => thread.project_id === id);
+      const ids = projectThreads.map((thread) => thread.id);
+      const orderChanged = !known?.data || known.data.length !== ids.length || known.data.some((value, at) => value !== ids[at]);
+      const merged = reuseThreads(state.threads, projectThreads);
+      const entryChanged = orderChanged || !known || known.loading || known.error;
+      if (merged.changed || entryChanged) set({
+        ...(merged.changed ? { threads: merged.threads } : {}),
+        ...(entryChanged ? { threadIds: { ...state.threadIds, [id]: { data: orderChanged ? ids : (known?.data ?? ids), error: null, loading: false } } } : {}),
+      });
+    }
+    if (scratchCurrent()) {
+      const scratch = list.filter((thread) => thread.scratch && (!current.has(thread.project_id) || current.get(thread.project_id)?.()));
+      const merged = reuseThreads(get().threads, scratch);
+      if (merged.changed) set({ threads: merged.threads });
     }
   },
 
@@ -468,8 +482,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     await refreshProjects();
     const projects = get().projects.data ?? [];
     await Promise.all([
-      ...projects.map((p) => refreshThreads(p.id)),
-      get().refreshScratch(),
+      ...(quick ? [get().refreshPolledThreads(projects.map((p) => p.id))]
+        : [...projects.map((p) => refreshThreads(p.id)), get().refreshScratch()]),
       refreshApprovals(),
       managed,
       quick ? Promise.resolve() : refreshUpdates(),

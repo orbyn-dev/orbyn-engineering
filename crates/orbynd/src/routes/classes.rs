@@ -85,6 +85,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/autopilot/review/{task_id}/looks-good"),
     ("POST", "/api/crew/autopilot/review/{task_id}/revert"),
     ("POST", "/api/crew/background/create"),
+    ("POST", "/api/crew/background/runs/{id}/acknowledge"),
     ("POST", "/api/crew/background/{id}/delete"),
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/enable"),
@@ -111,6 +112,8 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/merge"),
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
+    // Code Mode: stopping a live script run is the person's own stop button (docs/code-mode.md).
+    ("POST", "/api/code-runs/{id}/cancel"),
     // Devices: every action is a Person write (docs/devices.md).
     ("POST", "/api/devices/{id}/actions"),
     // Engines, updates, workspace and the shell.
@@ -521,6 +524,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/background/create",
         "Crew write behind local_only: creates a background worker",
+    ),
+    (
+        "POST",
+        "/api/crew/background/runs/{id}/acknowledge",
+        "Crew write behind local_only: the person settles one background review that waits; the wait clears and the run keeps its reason, state, stop reason and spend",
     ),
     (
         "POST",
@@ -1216,6 +1224,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/devices/{id}/actions",
         "controls a local device and can expose its screen; every action is a Person write (docs/devices.md)",
+    ),
+    (
+        "POST",
+        "/api/code-runs/{id}/cancel",
+        "the person stops a live Code Mode run and denies the approval it waits on; no engine or worker stops another's work (docs/code-mode.md)",
     ),
 ];
 

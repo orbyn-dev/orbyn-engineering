@@ -37,6 +37,16 @@ function readCrash(crash: unknown): EngineHostCrash | null {
 export function toHostRow(status: EngineHostStatus): HostRow | null {
   if (typeof status !== "object" || status === null || typeof status.family !== "string" || status.family === "") return null;
   const crash = readCrash(status.last_crash);
+  const since = optionalText(status.since);
+  const sdk = status.sdk && typeof status.sdk.name === "string" && typeof status.sdk.version === "string"
+    ? { name: cut(status.sdk.name, 80), version: cut(status.sdk.version, 40) }
+    : undefined;
+  const capabilities = Array.isArray(status.capabilities) ? status.capabilities.filter((word): word is string => typeof word === "string") : undefined;
+  const attempt = optionalNumber(status.restart?.attempt);
+  const limit = optionalNumber(status.restart?.limit);
+  const restart = attempt !== undefined && limit !== undefined
+    ? { attempt, limit, next_try_seconds: typeof status.restart?.next_try_seconds === "number" ? status.restart.next_try_seconds : null }
+    : undefined;
   return {
     id: status.family,
     name: familyName(status.family),
@@ -53,6 +63,14 @@ export function toHostRow(status: EngineHostStatus): HostRow | null {
     last_error: crash ? { message: crash.message, causes: [] } : null,
     // Only a family that gave up waits for the person; a crashed host is already restarting by itself.
     can_retry: status.state === "cant_start",
+    ...(since ? { since } : {}),
+    ...(sdk ? { sdk } : {}),
+    ...(capabilities ? { capabilities } : {}),
+    ...(status.pooled === true ? { pooled: true } : {}),
+    ...(restart ? { restart } : {}),
+    ...(status.stops_in_window !== undefined ? { stops_in_window: optionalNumber(status.stops_in_window) ?? null } : {}),
+    ...(status.has_driver === true ? { has_driver: true } : {}),
+    ...(status.sdk_missing === true ? { sdk_missing: true } : {}),
   };
 }
 

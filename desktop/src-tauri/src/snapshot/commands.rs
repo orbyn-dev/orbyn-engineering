@@ -145,16 +145,22 @@ pub async fn snapshot_setup(
     require_caller(&window)?;
     tauri::async_runtime::spawn_blocking(move || {
         let snapshot = app.state::<SnapShot>();
-        match action {
-            // Setup is Planned. Reading the grants back is safe; prompting or
-            // opening System Settings is not this command's job.
-            SetupAction::AllowScreenRecording | SetupAction::AllowAccessibility => {}
+        let state = match action {
+            // The person's click asks macOS for the grant and, when it is still
+            // missing, opens the Screen Recording pane. Accessibility only reads
+            // the grant back: accessible text is Planned and this build needs none.
+            SetupAction::AllowScreenRecording => snapshot.allow_screen_recording()?,
+            SetupAction::AllowAccessibility => snapshot.state(),
             SetupAction::TestCapture => {
                 snapshot.start_capture(&app)?;
+                snapshot.state()
             }
-            SetupAction::RetryShortcut => snapshot.apply_shortcut(&app),
-        }
-        Ok(snapshot.state())
+            SetupAction::RetryShortcut => {
+                snapshot.apply_shortcut(&app);
+                snapshot.state()
+            }
+        };
+        Ok(state)
     })
     .await
     .map_err(|_| UNAVAILABLE)?
