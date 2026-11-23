@@ -136,7 +136,7 @@ export function UseDialog({ item, kind, mode, where, onRun, onInsert, onClose }:
           {shown ? <pre className="lib-pre" data-testid="rendered">{shown.text}{shown.cut ? "…" : ""}</pre> : <p className="field-hint">{problems.size > 0 ? "The text can’t be built until every parameter is valid." : renderFailure ?? "Building the text…"}</p>}
           {renderFailure && shown === null && problems.size === 0 ? <p className="field-error" role="alert">{renderFailure}</p> : null}
         </div>
-        {kind === "workflow" && mode === "run" ? <p className="field-hint">It starts in a terminal for this thread’s checkout, like typing it there. Any environment sets it lists are applied by the run, and their values stay hidden.</p> : null}
+        {kind === "workflow" && mode === "run" ? <p className="field-hint">It starts in a terminal for this thread’s checkout, like typing it there. Any environment sets it lists are applied by the run, and their values are masked in the output when they match exactly.</p> : null}
         {mode === "terminal" ? <p className="field-hint">It is typed into the terminal line without Enter. Nothing runs until you press Enter there.</p> : null}
         {blocked ? <p className="field-error" role="alert">This command has more than one line, so it can’t be typed into the terminal line without running. Use Run…, or copy it.</p> : null}
         {failure ? <p className="field-error" role="alert">{failure}</p> : null}

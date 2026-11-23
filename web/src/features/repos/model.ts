@@ -12,7 +12,16 @@ export function repoState(row: Pick<RepoRow, "is_git" | "trusted">): RepoState {
   return row.is_git ? "trusted" : "not_git";
 }
 
-export const STATE_LABEL: Record<RepoState, string> = { trusted: "Trusted", untrusted: "Not trusted", not_git: "Not a Git folder" };
+export const STATE_LABEL: Record<RepoState, string> = { trusted: "Trusted", untrusted: "Not trusted", not_git: "Folder" };
+
+/**
+ * The folder's Git state where its branch would stand: a folder with no Git says so, rather than naming a branch it has
+ * none of. A project row has no `branch`, so the field is optional here.
+ */
+export function branchText(row: Pick<RepoRow, "is_git" | "trusted"> & { branch?: string | null }): string {
+  if (repoState(row) === "not_git") return "Not a Git repository";
+  return row.branch ?? "No branch";
+}
 
 /** Only a trusted Git folder that is not still cloning can join a thread. An untrusted one never runs anything. */
 export function canJoinThread(row: RepoRow): boolean {

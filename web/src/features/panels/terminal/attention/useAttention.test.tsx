@@ -1,6 +1,7 @@
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useUi } from "../../../../product/state/ui";
+import { createServiceAttentionApi } from "./client";
 import { setAttentionApi, type AttentionApi, type AttentionDelivery } from "./contract";
 import { useAttention } from "./store";
 import { useTerminalAttention } from "./useAttention";
@@ -83,6 +84,32 @@ describe("useTerminalAttention", () => {
     act(() => push(at(2, { v: 1, op: "clear", id: "a1", reason: "output" })));
     act(() => push(at(3, waiting({ id: "a2" }))));
     expect(Notice).toHaveBeenCalledTimes(1);
+  });
+  it("shows a thread's open items before following its log, with no toast or notification", async () => {
+    let notice: (threadId: string, seq: number) => void = () => undefined;
+    const follow = vi.fn((_threadId: string, _handlers: unknown) => () => undefined);
+    setAttentionApi(createServiceAttentionApi({
+      onNotice(listener) { notice = listener; return () => undefined; },
+      follow,
+      openItems: async () => ({ items: [waiting()] as never }),
+      terminalThreads: () => ["t1"],
+    }));
+    render(<Host />);
+    await vi.waitFor(() => expect(useAttention.getState().entries.has("a1")).toBe(true));
+    expect(follow).not.toHaveBeenCalled();
+    act(() => notice("t1", 5));
+    await vi.waitFor(() => expect(follow).toHaveBeenCalledTimes(1));
+    expect(follow.mock.calls[0]?.[0]).toBe("t1");
+    expect(useUi.getState().toasts).toHaveLength(0);
+    expect(Notice).not.toHaveBeenCalled();
+  });
+  it("draws an item read from the open-items route without a toast or a notification", () => {
+    setAttentionApi(api);
+    render(<Host />);
+    act(() => push({ ...at(0, waiting()), ts: "", source: "open" }));
+    expect(useAttention.getState().entries.get("a1")?.threadId).toBe("t1");
+    expect(useUi.getState().toasts).toHaveLength(0);
+    expect(Notice).not.toHaveBeenCalled();
   });
   it("unsubscribes on unmount", () => {
     setAttentionApi(api);

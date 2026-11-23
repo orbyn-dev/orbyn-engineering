@@ -495,6 +495,17 @@ impl Core {
                     check(definition, value)?;
                 }
                 refuse_agent_device_access(key, value)?;
+                if key == crate::agents::text_models::SETTING {
+                    let scopes: Vec<Option<&str>> = if ids.is_empty() {
+                        vec![None]
+                    } else {
+                        ids.iter().map(|id| Some(id.as_str())).collect()
+                    };
+                    for scope in scopes {
+                        let merged = set_value(&before, &files, key, scope, value)?;
+                        crate::agents::text_models::check_offered(&self.engines, &merged)?;
+                    }
+                }
                 if key == crate::agents::engines::instances::PREFERENCE {
                     self.engines
                         .check_instances(&crate::agents::engines::instances::parse(value)?)?;

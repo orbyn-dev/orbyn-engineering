@@ -44,6 +44,13 @@ it("retains the body portal for an ordinary composer picker", async () => {
   expect(picker.parentElement).toBe(document.body);
 });
 
+it("draws the designs' down chevron on the model chip, so the chip says it opens a picker", () => {
+  // The designs draw the model `.pick` with `#i-down`; the chevron is aria-hidden and stays out of the accessible name.
+  render(<ModelPickerTrigger engines={engines} selected={{ engine: "codex", model: "small" }} onPick={() => undefined} />);
+  const trigger = screen.getByRole("button", { name: "Small model" });
+  expect(trigger.querySelector("svg.lucide-chevron-down")).not.toBeNull();
+});
+
 it("shows the supplied Mixed or Automatic label without changing the underlying selection", async () => {
   const props = { engines, selected: { engine: "codex", model: "small" }, onPick: vi.fn() };
   const { rerender } = render(<ModelPickerTrigger {...props} triggerLabel="Mixed" />);
@@ -113,16 +120,17 @@ async function openTwo() {
 
 it("builds its chips from the engines it is given: All, then each by its full name", async () => {
   const { picker } = await openTwo();
-  expect(within(picker).getAllByRole("button").filter((button) => button.hasAttribute("aria-pressed")).map((tab) => tab.textContent)).toEqual(["All", "Claude Code", "Codex"]);
+  expect(within(picker).getAllByRole("button").filter((button) => button.hasAttribute("aria-pressed")).map((tab) => tab.textContent)).toEqual(["All", "Claude (SDK)", "Claude (CLI)", "Codex"]);
   expect(within(picker).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
 });
 
 it("lists every provider under its full name, with the note only where the engine reported one", async () => {
   const { picker } = await openTwo();
   const groups = within(picker).getAllByRole("group");
-  expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["Claude Code", "Codex"]);
-  expect(within(picker).getByRole("option", { name: /Opus 5.5/ })).toHaveTextContent("Deepest reasoning.");
-  const bare = within(picker).getByRole("option", { name: /Sonnet 5.5/ });
+  expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["Claude (SDK)", "Claude (CLI)", "Codex"]);
+  const sdk = within(picker).getByRole("group", { name: "Claude (SDK)" });
+  expect(within(sdk).getByRole("option", { name: /Opus 5.5/ })).toHaveTextContent("Deepest reasoning.");
+  const bare = within(sdk).getByRole("option", { name: /Sonnet 5.5/ });
   expect(bare.querySelector("small")).toBeNull();
   expect(within(picker).getByRole("option", { name: /Small model/ })).toHaveAttribute("aria-selected", "true");
 });
@@ -133,16 +141,16 @@ it("a chip shows only that provider's models, and the arrow keys move between ch
   expect(within(picker).getAllByRole("option").map((option) => option.querySelector("b")?.textContent)).toEqual(["Small model", "Big model"]);
   within(picker).getByRole("button", { name: "Codex" }).focus();
   await user.keyboard("{ArrowLeft}");
-  expect(within(picker).getByRole("button", { name: "Claude Code" })).toHaveFocus();
-  expect(within(picker).getByRole("button", { name: "Claude Code" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(picker).getByRole("button", { name: "Claude (CLI)" })).toHaveFocus();
+  expect(within(picker).getByRole("button", { name: "Claude (CLI)" })).toHaveAttribute("aria-pressed", "true");
   await user.keyboard("{Home}");
   expect(within(picker).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
-  expect(within(picker).getAllByRole("option")).toHaveLength(4);
+  expect(within(picker).getAllByRole("option")).toHaveLength(6);
 });
 
 it("typing filters across all providers and drops a heading that has no match", async () => {
   const { user, picker, search } = await openTwo();
-  await user.click(within(picker).getByRole("button", { name: "Claude Code" }));
+  await user.click(within(picker).getByRole("button", { name: "Claude (SDK)" }));
   await user.type(search, "big");
   expect(within(picker).getAllByRole("option").map((option) => option.querySelector("b")?.textContent)).toEqual(["Big model"]);
   expect(within(picker).getAllByRole("group")).toHaveLength(1);
@@ -164,7 +172,7 @@ it("moves through the rows with the arrow keys, announces the active one, and pi
   const rows = within(picker).getAllByRole("option");
   expect(search).toHaveAttribute("aria-activedescendant", rows[1]!.id);
   await user.keyboard("{ArrowUp}{ArrowUp}");
-  expect(search).toHaveAttribute("aria-activedescendant", rows[3]!.id);
+  expect(search).toHaveAttribute("aria-activedescendant", rows[5]!.id);
   await user.keyboard("{Enter}");
   expect(pick).toHaveBeenCalledWith({ engine: "codex", model: "big" });
 });
@@ -211,7 +219,7 @@ it("has no hidden shortcuts: a modifier and a number does not pick, and Shift-cl
   await user.keyboard("{Escape}");
   await user.click(screen.getByRole("button", { name: "Small model" }));
   await user.keyboard("{Shift>}");
-  await user.click(within(await screen.findByRole("dialog", { name: "Choose a model" })).getByRole("option", { name: /Opus 5.5/ }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Choose a model" })).getAllByRole("option", { name: /Opus 5.5/ })[0]!);
   await user.keyboard("{/Shift}");
   expect(pick).toHaveBeenCalledTimes(1);
   expect(pick).toHaveBeenCalledWith({ engine: "claude", model: "opus" });
@@ -237,7 +245,7 @@ it("a chip click clears the search and lists that provider's models", async () =
   const { user, picker, search } = await openTwo();
   await user.type(search, "big");
   expect(within(picker).getAllByRole("option")).toHaveLength(1);
-  await user.click(within(picker).getByRole("button", { name: "Claude Code" }));
+  await user.click(within(picker).getByRole("button", { name: "Claude (SDK)" }));
   expect(search).toHaveValue("");
   expect(within(picker).getAllByRole("option").map((option) => option.querySelector("b")?.textContent)).toEqual(["Opus 5.5", "Sonnet 5.5"]);
 });

@@ -10,10 +10,10 @@ const SHOWS: Record<ReviewFrameId, string[]> = {
   "risk-reasons": ["Risk tiers", "Merges by itself · review within 24 hours", "count as High unless the changes are in a path class marked Low in .orbyn/crew.json"],
   "risk-popover": ["Why Medium"],
   "risk-high-full": ["Merged by Crew at 15:02.", "Why High", "Key rotation under load. No check covers it."],
-  "risk-high-on": ["Waiting for you before the merge.", "Autopilot is On for this repo, and this change is High risk.", "Review", "Send back to Build", "Switch to Full", "Add reviewer", "Round 1", "Inbox · 3", "Planned: after the autonomy-by-area slice", "Revert rate"],
+  "risk-high-on": ["Waiting for you before the merge.", "Autopilot is On for this repo, and this change is High risk.", "Review", "Send back to Build", "Switch to Full", "Add reviewer", "Round 1", "Inbox", "Planned: after the autonomy-by-area slice", "Revert rate"],
   "risk-raised": ["Raised from Medium", "Same engine as author · lead tier", "Sign in to another engine"],
   "risk-board-card": ["Low · Full", "High · On", "Waiting for you before the merge (On)", "implement", "updated now", "2 of 2 checks passed", "3 of 3 checks passed", "5 of 5 checks passed", "Opus 5.5 · Medium"],
-  "risk-demoted": ["Area web/auth is on On: 2 reverts in 14 days · 9 merges", "Area docs/guides is on Full: 0 reverts in 14 days · 12 merges", "web/auth is on On after 2 reverts in 14 days, so a High risk diff in web/auth waits for you at the merge gate. The risk tier is unchanged: it stays Medium.", "docs/guides follows your ceiling, Full.", "Where the area mode comes from (Planned)", "Override… (its row in Settings › Crew is Planned)"],
+  "risk-demoted": ["Area web/server is on On: 2 reverts in 14 days · 9 merges", "Area docs/guides is on Full: 0 reverts in 14 days · 12 merges", "web/server is on On after 2 reverts in 14 days, so a High risk diff in web/server waits for you at the merge gate. The risk tier is unchanged: it stays Medium.", "docs/guides follows your ceiling, Full.", "Where the area mode comes from (Planned)", "Override… (its row in Settings › Crew is Planned)"],
   "mergequeue-main": ["Re-checking combined", "Merging is code", "How the queue works", "Merged onto 1 · re-running 2 of 3 checks on the combined state", "Waiting for 2 · will be merged onto the result", "merged onto the branch tip in a scratch checkout"],
   "mergequeue-forecast": ["Conflict forecast", "Run them in order, the rename, then the move", "Why ordered, not parallel"],
   "mergequeue-removed": ["Left the queue", "What happens next"],
@@ -56,7 +56,35 @@ describe("Autopilot review frames (Crew Designs v19)", () => {
   it.each(REVIEW_FRAMES)("#/preview/crew/%s draws its state and makes no request", async (name) => {
     const { container, fetchSpy } = await open(name);
     for (const text of SHOWS[name]) expect(container.textContent).toContain(text);
+    expect(container.textContent).not.toMatch(/Inbox\s*(?:·\s*\d+|\d+)/);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(REVIEW_FRAMES)("#/preview/crew/%s: the Inbox tab has no count, like the live Crew page", async (name) => {
+    await open(name);
+    const inboxTabs = screen.getAllByRole("tab").filter((tab) => tab.textContent?.startsWith("Inbox"));
+    expect(inboxTabs.length).toBeGreaterThan(0);
+    for (const tab of inboxTabs) expect(tab).toHaveTextContent(/^Inbox$/);
+  });
+
+  it("keeps the counts on the other page tabs", async () => {
+    await open("watch-broke");
+    expect(screen.getByRole("tab", { name: "Review · 7" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Inbox" })).toBeInTheDocument();
+  });
+
+  it("watch-asks and watch-flaky: Re-run the check on main is marked Planned", async () => {
+    for (const name of ["watch-asks", "watch-flaky"] as const) {
+      const { container, unmount } = await open(name);
+      const rerun = [...container.querySelectorAll("button")].filter((button) => button.textContent?.startsWith("Re-run the check"));
+      expect(rerun, name).toHaveLength(1);
+      expect(rerun[0]).toHaveTextContent(/^Re-run the checkPlanned$/);
+      expect(rerun[0]).toBeDisabled();
+      expect(rerun[0]).toHaveAttribute("aria-description", UNAVAILABLE_REASON);
+      expect(rerun[0]!.querySelector(".cx-cwpv")).toHaveTextContent("Planned");
+      expect(container.querySelectorAll("button .cx-cwpv"), name).toHaveLength(1);
+      unmount();
+    }
   });
 
   it.each(REVIEW_FRAMES)("#/preview/crew/%s: every action that would change a repository is disabled and says why", async (name) => {

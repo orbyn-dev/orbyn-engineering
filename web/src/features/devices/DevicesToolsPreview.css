@@ -1,0 +1,40 @@
+/* The dev-only tools and agent frames (#/preview/devices?frame=...). */
+.dtp-stage { display: flex; width: 100%; align-items: flex-start; justify-content: center; gap: 16px; }
+.dtp-stage-tools { justify-content: center; }
+.dtp-stage-agent { flex-wrap: wrap; }
+.dtp-tools-panel { position: relative; overflow: hidden; }
+.dtp-platform-panel .dev { overflow: visible; }
+.dtp-agent-panel { order: 2; }
+
+.dtp-thread {
+  display: flex;
+  width: 460px;
+  max-width: 100%;
+  min-height: 560px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  order: 1;
+}
+.dtp-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 10px 14px; border-bottom: 1px solid var(--color-border); }
+.dtp-head b { font-size: var(--text-body); font-weight: 600; }
+.dtp-branch { color: var(--color-muted); font-size: var(--text-meta); }
+.dtp-status { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--color-muted); font-size: var(--text-meta); }
+.dtp-wait { color: var(--color-warn); }
+.dtp-dot { width: 6px; height: 6px; border-radius: var(--radius-pill); background: var(--color-warn); }
+.dtp-body { display: flex; flex: 1; flex-direction: column; gap: 12px; padding: 14px; }
+.dtp-you { align-self: flex-start; margin: 0; padding: 8px 10px; border-radius: var(--radius-md); background: var(--color-message); font-size: var(--text-thread); line-height: 1.5; }
+.dtp-steps { display: flex; flex-direction: column; gap: 8px; }
+.dtp-step { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0; color: var(--color-textSoft); font-size: var(--text-meta); }
+.dtp-step b { font-weight: 600; }
+.dtp-t2 { color: var(--color-text); }
+.dtp-t3 { color: var(--color-muted); }
+.dtp-sep { color: var(--color-muted); }
+.dtp-failed { color: var(--color-danger); }
+.dtp-say { margin: 0; font-size: var(--text-thread); line-height: 1.55; }
+.dtp-note { margin: 0; color: var(--color-muted); font-size: var(--text-meta); }
+.dtp-device-note { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--color-border); }
+.dtp-error { margin: 0; color: var(--color-danger); font-size: var(--text-meta); }
+.dtp-composer { width: 100%; padding: 10px 14px; border: 0; border-top: 1px solid var(--color-border); background: transparent; color: var(--color-muted); font: inherit; font-size: var(--text-meta); }

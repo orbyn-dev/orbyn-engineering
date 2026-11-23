@@ -6,11 +6,11 @@ import type { EngineHostState } from "../../generated/EngineHostState";
 /**
  * The engine host's status and the API key storage choice, as the settings screens read them.
  *
- * The host status is REAL: `GET /api/engine-host` (Local read, Eng 2's HostDriver slice 1) answers one `EngineHostStatus` per family, and
+ * The host status is REAL: `GET /api/engine-host` (Local read) answers one `EngineHostStatus` per family, and
  * `hostStatus.ts` turns each into the `HostRow` below. Stop and restart are Person routes
  * (`POST /api/engine-host/{family}/stop` and `/restart`); Try again is the restart. A host with a background task open answers 409
- * `background_open`, and only a second request with `stopBackground: true`, sent after the person confirmed, goes through. Fields marked PLANNED are in docs/engine-host-protocol.md
- * (Host status, Planned) or guessed; the real client never fills them, and a screen draws one only when it is there. The mock fills them.
+ * `background_open`, and only a second request with `stopBackground: true`, sent after the person confirmed, goes through.
+ * A field marked GUESSED is one the real client does not fill; a screen draws one only when it is there. The mock fills them.
  *
  * Nothing a screen reads can carry a secret: the API key storage choice is a word and a date. The key goes outward once, as the argument of `saveKey`.
  */
@@ -69,23 +69,24 @@ export interface HostRow {
   last_error?: HostError | null;
   /** Only a family marked unavailable (`cant_start`) waits for the person: the real client sets it for that state. */
   can_retry: boolean;
-  /** PLANNED: one host serves every thread of the family (Cursor). */
+  /** One host process serves every thread of the family. */
   pooled?: boolean;
-  /** PLANNED: ISO time the host started running. */
+  /** ISO time the live host started running. */
   since?: string | null;
-  /** PLANNED: the host's own `hello` details. */
+  /** The SDK package and version the live host's hello named. */
   sdk?: { name: string; version: string } | null;
+  /** The requests the live host's hello says it implements. */
   capabilities?: string[];
-  /** PLANNED: the try and the next try. Slice 1 gives only `restart_count`. */
+  /** The automatic restart the family waits for, when it is restarting. */
   restart?: { attempt: number; limit: number; next_try_seconds: number | null } | null;
   failed_threads?: number | null;
-  /** PLANNED: for can't start, how many times it stopped inside the window. The protocol fixes it at five in five minutes. */
+  /** For can't start, how many times the host stopped inside the window. */
   stops_in_window?: number | null;
   /** GUESSED SHAPE: threads running on this host now, for the Stop question in Maintenance. */
   running_threads?: number;
-  /** GUESSED SHAPE (not in docs/engine-host-protocol.md): the app has a Rust driver the run can fall back to when the host is unavailable. */
+  /** A CLI driver is wrapped for this family. Nothing switches to it on its own: a run on a wrapped family whose host can't start fails. */
   has_driver?: boolean;
-  /** GUESSED SHAPE: this build does not carry the engine's SDK. */
+  /** The host answered that this build carries no SDK for the family. */
   sdk_missing?: boolean;
 }
 

@@ -6,7 +6,7 @@ export { SnapshotDraftChip, SnapshotCapturingChip } from "./SnapshotChip";
 export { SnapshotButton } from "./SnapshotButton";
 export { useSnapshotDraftFlow, type SnapshotDraftFlow } from "./useSnapshotDraftFlow";
 export { useSnapshot } from "./runtime";
-export type { SnapShotAttachment, SnapShotState, SnapShotSource, SnapShotDraft, SnapShotSettings, SnapShotShortcut, SnapShotTarget } from "./types";
+export type { SnapShotAttachment, SnapShotEventPayload, SnapShotState, SnapShotSource, SnapShotDraft, SnapShotSettings, SnapShotShortcut, SnapShotTarget } from "./types";
 export {
   ACCESSIBILITY_TEXT_WARNING,
   BUILT_IN_EXCLUDED_APPS,

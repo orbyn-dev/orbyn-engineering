@@ -8,4 +8,9 @@ export type CodeRunSummary = { run_id: string, status: CodeRunStatus, started_at
 /**
  * The first 120 characters of the script.
  */
-script_head?: string | null, };
+script_head?: string | null, 
+/**
+ * The total time the run waited for a person, in milliseconds; `null` for a run stored before
+ * waits were recorded.
+ */
+waited_ms?: bigint | null, };

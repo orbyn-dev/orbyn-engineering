@@ -161,6 +161,8 @@ export type { SearchHit } from "../generated/SearchHit";
 export type { MessageSearch } from "../generated/MessageSearch";
 export type { RunChanges } from "../generated/RunChanges";
 export type { TerminalInfo } from "../generated/TerminalInfo";
+export type { TerminalAttentionEvent } from "../generated/TerminalAttentionEvent";
+export type { TerminalAttentionOpen } from "../generated/TerminalAttentionOpen";
 export type Diagnostics = Wired<DiagnosticsWire>;
 export type ScheduledTask = Wired<ScheduledTaskWire>;
 export type { WebhookDelivery } from "../generated/WebhookDelivery";

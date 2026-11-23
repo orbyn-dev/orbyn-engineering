@@ -19,8 +19,8 @@ const DENIED = item({
   id: "s-denied",
   kind: "denied",
   title: "A request only you can approve was denied: publish the package",
-  from: "Claude Code · Sonnet 5.5 · person-only",
-  engine: "Claude Code · Sonnet 5.5",
+  from: "claude · person-only",
+  engine: "claude",
   cost: "The task went on without it. Nothing is blocked; do it yourself when you choose.",
   actions: [{ key: "open", label: "Open the request", primary: true }, { key: "dismiss", label: "Dismiss" }],
 });
@@ -28,35 +28,34 @@ const CONFLICT = item({
   id: "s-conflict",
   kind: "conflict",
   title: "Two workers disagree about the redirect rule",
-  from: "Codex · OpenCode · conflicting board writes",
-  engine: "Codex · OpenCode",
-  cost: "Waiting holds 2 tasks. The choice is yours; the evidence is side by side.",
+  from: "codex · opencode · conflicting board writes",
+  engine: "codex · opencode",
+  cost: "The choice is yours; the evidence is side by side.",
   actions: [{ key: "decide", label: "Decide", primary: true }, { key: "open-both", label: "Open both" }],
 });
 const QUESTIONS = item({
   id: "s-questions",
   kind: "questions",
   title: "3 questions from OpenCode, batched",
-  from: "OpenCode · DeepSeek V4 · questions",
-  engine: "OpenCode · DeepSeek V4",
-  cost: "Waiting holds 1 read-only task. Answer all three together.",
+  from: "opencode · questions",
+  engine: "opencode",
+  cost: "Answer all three together.",
   actions: [{ key: "answer", label: "Answer 3", primary: true }, { key: "open-thread", label: "Open thread" }],
 });
 const MAIN = item({
   id: "s-main",
   kind: "main",
   title: "Main broke and the cause isn’t certain",
-  from: "Watch on main · 9be4410 and f1a0c63 together",
+  from: "Watch on main · 9be4410",
   cost: "Nothing has been reverted. Main stays as it is until you choose.",
-  actions: [{ key: "open", label: "Open", primary: true }, { key: "rerun", label: "Re-run the check" }],
+  actions: [{ key: "open", label: "Open", primary: true }],
 });
 const APPROVAL = item({
   id: "s-approval",
   kind: "approval",
   title: "Approve: run “npm publish --dry-run” in auth/",
-  from: "Claude Code · Sonnet 5.5 · approval",
-  engine: "Claude Code · Sonnet 5.5",
-  cost: "Waiting holds 1 task and its lease on auth/redirect.ts. Nothing else is blocked.",
+  from: "claude · approval",
+  engine: "claude",
   actions: [{ key: "approve", label: "Approve", primary: true }, { key: "deny", label: "Deny" }],
 });
 const REVIEW = item({
@@ -66,7 +65,7 @@ const REVIEW = item({
   risk: "medium",
   undo: "easy",
   from: "Autopilot is Off · every change waits for you",
-  cost: "Waiting costs nothing now, and the change stays as it is.",
+  cost: "The change stays as it is.",
   actions: [{ key: "open-review", label: "Open review", primary: true }, { key: "later", label: "Later" }],
 });
 const AUTONOMY = item({
@@ -88,7 +87,7 @@ export const OFF_ITEMS: NeedsItem[] = [APPROVAL, CONFLICT, QUESTIONS, REVIEW];
 /** needsyou-demoted: the circuit breaker's line ranks first, below what waits on you in the frame's own order. */
 export const DEMOTED_ITEMS: NeedsItem[] = [AUTONOMY, DENIED, CONFLICT, QUESTIONS];
 
-const line = (id: string, kind: NeedsItem["kind"], title: string, from: string, cost: string): NeedsItem =>
+const line = (id: string, kind: NeedsItem["kind"], title: string, from: string, cost: string | null): NeedsItem =>
   item({ id, kind, title, from, cost, ...(kind === "review" ? { risk: "medium", undo: "easy" } : {}), actions: [{ key: "open", label: "Open" }] });
 
 const STOP_DENIALS = item({
@@ -142,10 +141,10 @@ export const DAILY_NARROW_ITEMS: NeedsItem[] = backgroundItems([{ crew: WEEKLY, 
 
 /** needsyou-many: the top four of 27, one line each. */
 export const MANY_ITEMS: NeedsItem[] = [
-  line("m1", "questions", "Answer: which package manager?", "Claude Code · docs crew", "Holds 1 task."),
-  line("m2", "review", "Review: licence file added", "Codex · deps crew", "Holds 1 task."),
-  line("m3", "approval", "Approve: rm -rf build/", "Claude Code · usage crew", "Holds 2 tasks."),
-  line("m4", "questions", "Answer: keep the old export name?", "OpenCode · usage crew", "Holds 1 task."),
+  line("m1", "questions", "Answer: which package manager?", "claude · docs crew", null),
+  line("m2", "review", "Review: licence file added", "codex · deps crew", null),
+  line("m3", "approval", "Approve: rm -rf build/", "claude · usage crew", null),
+  line("m4", "questions", "Answer: keep the old export name?", "opencode · usage crew", null),
 ];
 export const MANY_GROUPS = [
   { name: "Usage page crew", count: 9 },
@@ -154,7 +153,7 @@ export const MANY_GROUPS = [
 
 /** needsyou-narrow-panel: three cards. */
 export const NARROW_ITEMS: NeedsItem[] = [
-  { ...APPROVAL, title: "Run “npm publish --dry-run” in auth/", from: "Claude Code · Sonnet 5.5", cost: "Waiting holds 1 task and 1 lease" },
-  { ...CONFLICT, from: "Codex · OpenCode", cost: "Waiting holds 2 tasks", actions: [{ key: "decide", label: "Decide", primary: true }] },
-  { ...QUESTIONS, title: "3 questions from OpenCode", from: "OpenCode · DeepSeek V4", cost: null, actions: [{ key: "answer", label: "Answer 3", primary: true }] },
+  { ...APPROVAL, title: "Run “npm publish --dry-run” in auth/", from: "claude", cost: null },
+  { ...CONFLICT, from: "codex · opencode", cost: null, actions: [{ key: "decide", label: "Decide", primary: true }] },
+  { ...QUESTIONS, title: "3 questions from OpenCode", from: "opencode", cost: null, actions: [{ key: "answer", label: "Answer 3", primary: true }] },
 ];

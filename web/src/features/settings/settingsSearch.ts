@@ -6,6 +6,8 @@ export interface SettingSearchItem {
   title: string;
   section: SettingsSection;
   desktopOnly?: boolean;
+  /** The row is drawn only on macOS, where its behaviour exists. */
+  macosOnly?: boolean;
   availability?: "cli" | "accessibility" | "screen_recording";
 }
 
@@ -32,7 +34,7 @@ export const SETTINGS: readonly SettingSearchItem[] = [
   {"id": "general-unpin-confirmation", "title": "Unpin confirmation", "section": "general"},
   {"id": "general-archive-confirmation", "title": "Archive confirmation", "section": "general"},
   {"id": "general-delete-confirmation", "title": "Delete confirmation", "section": "general"},
-  {"id": "general-quit-confirmation", "title": "Quit confirmation", "section": "general"},
+  {"id": "general-quit-confirmation", "title": "Quit confirmation", "section": "general", "macosOnly": true},
   {"id": "threads-import-history", "title": "Import history", "section": "threads"},
   {"id": "about-triage", "title": "Triage a problem", "section": "about"},
   {"id": "chat-chat-width", "title": "Chat width", "section": "chat"},
@@ -133,9 +135,10 @@ export function settingSearchId(section: SettingsSection, title: string): string
   return SETTINGS.find((item) => item.section === section && item.title === title)?.id;
 }
 
-export function searchSettings(query: string, desktop: boolean, available?: ReadonlySet<SettingSearchItem["availability"]>): readonly SettingSearchItem[] {
+/** `macos` is the platform the service reports, from `api.info()`: a macOS-only row is left out everywhere else. */
+export function searchSettings(query: string, desktop: boolean, available?: ReadonlySet<SettingSearchItem["availability"]>, macos = false): readonly SettingSearchItem[] {
   const words = query.normalize("NFKC").toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
   if (!words.length) return [];
-  return SETTINGS.filter((item) => (!item.desktopOnly || desktop) && (!item.availability || !available || available.has(item.availability)) && words.every((word) =>
+  return SETTINGS.filter((item) => (!item.desktopOnly || desktop) && (!item.macosOnly || macos) && (!item.availability || !available || available.has(item.availability)) && words.every((word) =>
     `${item.title} ${item.section}`.normalize("NFKC").toLocaleLowerCase().includes(word)));
 }

@@ -54,7 +54,7 @@ describe("terminal input", () => {
     await user.type(field, "why is the build failing?");
     expect(screen.getByText(/prompt to Claude \(Sonnet\)/)).toBeTruthy();
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(api.startRun).toHaveBeenCalledExactlyOnceWith("th", "why is the build failing?"));
+    await waitFor(() => expect(api.startRun).toHaveBeenCalledExactlyOnceWith("th", "why is the build failing?", [], { purpose: "terminal_proposal" }));
     expect(write).not.toHaveBeenCalled();
     expect(await screen.findByText(/Sent to Claude as a prompt/)).toBeTruthy();
   });
@@ -109,6 +109,7 @@ describe("terminal input", () => {
     expect(api.startRun).not.toHaveBeenCalled();
     await user.keyboard("{Enter}");
     await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(1));
+    expect(api.startRun).toHaveBeenCalledWith("th", "ls -la | grep x", [], { purpose: "terminal_proposal" });
     expect(write).not.toHaveBeenCalled();
   });
   it("does not run a question in the shell when the engine is signed out, and says so", async () => {
