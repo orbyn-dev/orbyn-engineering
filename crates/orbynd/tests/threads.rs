@@ -430,6 +430,105 @@ async fn the_chosen_text_model_is_used_where_the_engine_lists_it() {
 }
 
 #[tokio::test]
+async fn the_per_engine_text_model_names_the_first_message_title() {
+    let dir = TempDir::new();
+    let (record, options) = title_options(&dir);
+    let (service, thread) = setup(&dir, options, "codex").await;
+    set_preference(
+        &service,
+        json!({ "text_generation_models": { "codex": "fake-big", "claude": "fable" } }),
+    )
+    .await;
+    service.admit(&thread, "first").await;
+    service.finished(&thread).await;
+    wait_for_title(&service, &thread, "A fresh title").await;
+    let args = std::fs::read_to_string(args_file(&record)).unwrap();
+    assert!(args.contains("fake-big"), "{args}");
+    assert!(!args.contains("fable"), "{args}");
+}
+
+#[tokio::test]
+async fn another_engines_entry_is_not_sent_to_this_titles_engine() {
+    let dir = TempDir::new();
+    let (record, options) = title_options(&dir);
+    let (service, thread) = setup(&dir, options, "codex").await;
+    set_preference(
+        &service,
+        json!({ "text_generation_models": { "claude": "fake-big" } }),
+    )
+    .await;
+    service.admit(&thread, "first").await;
+    service.finished(&thread).await;
+    wait_for_title(&service, &thread, "A fresh title").await;
+    let args = std::fs::read_to_string(args_file(&record)).unwrap();
+    assert!(args.contains("fake-small"), "the small model: {args}");
+    assert!(!args.contains("fake-big"), "{args}");
+}
+
+#[tokio::test]
+async fn the_text_generators_read_lists_models_choices_and_project_scope() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let project = service.json(&format!("/api/threads/{thread}")).await["project_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let engine = |read: &Value, id: &str| {
+        read["engines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["engine"] == id)
+            .unwrap_or_else(|| panic!("{id} not in {read}"))
+            .clone()
+    };
+
+    // The first read lists the catalog and resolves to the small model.
+    let read = service.json("/api/text-generators").await;
+    let codex = engine(&read, "codex");
+    assert!(
+        codex["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|model| model["id"] == "fake-big"),
+        "{codex}"
+    );
+    assert!(codex["chosen"].is_null(), "{codex}");
+    assert_eq!(codex["resolved"], "fake-small");
+    assert_eq!(codex["reason"], "small");
+
+    // A listed model is accepted, and the project read carries the same choice.
+    set_preference(
+        &service,
+        json!({ "text_generation_models": { "codex": "fake-big" } }),
+    )
+    .await;
+    let read = service
+        .json(&format!("/api/text-generators?project={project}"))
+        .await;
+    let codex = engine(&read, "codex");
+    assert_eq!(codex["chosen"], "fake-big");
+    assert_eq!(codex["resolved"], "fake-big");
+    assert_eq!(codex["reason"], "chosen");
+    assert_eq!(codex["project"]["project_id"], project);
+    assert_eq!(codex["project"]["chosen"], "fake-big");
+    assert_eq!(codex["project"]["resolved"], "fake-big");
+    assert_eq!(codex["project"]["reason"], "chosen");
+
+    // Once the engine has listed, a model it does not offer is refused.
+    let response = service
+        .client
+        .put(format!("{}/api/preferences", service.url))
+        .bearer_auth(&service.token)
+        .json(&json!({"values": {"text_generation_models": {"codex": "not-a-model"}}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 400);
+}
+
+#[tokio::test]
 async fn rename_during_title_generation_wins() {
     let dir = TempDir::new();
     let (_record, options) = title_options(&dir);

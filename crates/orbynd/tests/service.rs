@@ -952,7 +952,7 @@ async fn static_ui_has_csp_and_spa_fallback() {
             .unwrap()
             .contains("javascript")
     );
-    assert_eq!(script.headers()["cache-control"], "no-cache");
+    assert_eq!(script.headers()["cache-control"], "public, max-age=31536000, immutable");
     let script_etag = script.headers()["etag"].to_str().unwrap().to_owned();
     let plain_head = client
         .head(format!("{}/assets/app.js", service.url))
@@ -970,7 +970,7 @@ async fn static_ui_has_csp_and_spa_fallback() {
         .unwrap();
     assert_eq!(head.status(), 304);
     assert_eq!(head.headers()["etag"], script_etag);
-    assert_eq!(head.headers()["cache-control"], "no-cache");
+    assert_eq!(head.headers()["cache-control"], "public, max-age=31536000, immutable");
     assert!(head.headers().contains_key("content-security-policy"));
     assert!(head.bytes().await.unwrap().is_empty());
     let unmatched = client
@@ -1116,7 +1116,7 @@ async fn static_compression_negotiates_and_keeps_representation_validators_separ
         assert_eq!(response.headers()["vary"], "Accept-Encoding");
         assert_eq!(response.headers()["etag"], gzip_tag);
         assert_eq!(response.headers()["content-encoding"], "gzip");
-        assert_eq!(response.headers()["cache-control"], "no-cache");
+        assert_eq!(response.headers()["cache-control"], "public, max-age=31536000, immutable");
         assert!(response.headers().contains_key("content-security-policy"));
         assert!(response.bytes().await.unwrap().is_empty());
     }
@@ -1161,6 +1161,83 @@ async fn static_compression_negotiates_and_keeps_representation_validators_separ
         .unwrap();
     assert_eq!(missing_api.status(), 404);
     assert!(!missing_api.headers().contains_key("content-encoding"));
+}
+
+#[tokio::test]
+async fn static_build_output_is_pinned_and_the_shell_revalidates() {
+    const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+    const REVALIDATE: &str = "no-cache";
+    let dir = TempDir::new();
+    let ui = dir.path().join("ui");
+    write(&ui.join("index.html"), "<!doctype html><title>app</title>");
+    write(&ui.join("assets/index-3hrPZ_u3.js"), "console.log(1)");
+    // Real build names: a 7-character hash, and hashes that contain `-`.
+    write(&ui.join("assets/index--td0G00Q.css"), "body{color:red}");
+    write(&ui.join("assets/amphora-DCKmTK--.js"), "console.log(2)");
+    write(&ui.join("favicon.ico"), "icon");
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            args: vec!["--ui-dir".into(), ui.to_string_lossy().into_owned()],
+            ..Options::default()
+        },
+    );
+    let client = reqwest::Client::new();
+    let cache_control = |response: &reqwest::Response| {
+        response
+            .headers()
+            .get("cache-control")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+    };
+    for (path, pinned) in [
+        ("/assets/index-3hrPZ_u3.js", true),
+        ("/assets/index--td0G00Q.css", true),
+        ("/assets/amphora-DCKmTK--.js", true),
+        ("/", false),
+        ("/threads/abc", false),
+        ("/favicon.ico", false),
+    ] {
+        let expected = if pinned { IMMUTABLE } else { REVALIDATE };
+        let response = client
+            .get(format!("{}{path}", service.url))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{path}");
+        assert_eq!(
+            cache_control(&response).as_deref(),
+            Some(expected),
+            "{path}"
+        );
+        // The shell must never be pinned, or a deploy could not reach a stale tab.
+        if !pinned {
+            assert_ne!(
+                cache_control(&response).as_deref(),
+                Some(IMMUTABLE),
+                "{path}"
+            );
+        }
+        // HEAD carries the same policy, since a browser may probe before a GET.
+        let head = client
+            .head(format!("{}{path}", service.url))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            cache_control(&head).as_deref(),
+            Some(expected),
+            "HEAD {path}"
+        );
+    }
+    // A miss may be the shell today or a 404 tomorrow, but a name we never served
+    // must never be pinned: a stale tab would keep the wrong bytes for a year.
+    let missing = client
+        .get(format!("{}/assets/missing-B4xQ1k9t.js", service.url))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(cache_control(&missing).as_deref(), Some(IMMUTABLE));
 }
 
 #[tokio::test]

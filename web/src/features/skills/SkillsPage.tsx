@@ -2,11 +2,12 @@ import { Book, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { SkillSummary } from "../../generated/SkillSummary";
 import { useWaited } from "../../lib/motion";
+import { useLayoutWidth } from "../../lib/useLayout";
 import { DRAFT_KEY } from "../../product/state/draftStore";
 import { navigate, routeHref } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
 import { Button } from "../../ui/controls";
-import { ErrorState } from "../../product/ui/states";
+import { ErrorState, NarrowBack } from "../../product/ui/states";
 import { useSkills } from "./skillsStore";
 import "./skills.css";
 
@@ -25,6 +26,7 @@ function startThreadWithSkill(skill: SkillSummary) {
 
 export function SkillsPage({ skill }: { skill?: string }) {
   const result = useSkills();
+  const phone = useLayoutWidth() === "phone";
   const slow = useWaited(result.loading && !result.data);
   const [category, setCategory] = useState<string>("All");
   const [search, setSearch] = useState("");
@@ -32,6 +34,8 @@ export function SkillsPage({ skill }: { skill?: string }) {
   /** The card that was pressed, so going back lands on it. */
   const opened = useRef<string | null>(null);
   const grid = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const listScrollTop = useRef(0);
   const entries = result.data?.skills;
   const known = entries?.some((entry) => entry.name === skill);
   // A stale bookmark must not remain behind the catalog in the Back trail.
@@ -54,9 +58,32 @@ export function SkillsPage({ skill }: { skill?: string }) {
       return;
     }
     const card = opened.current ? grid.current?.querySelector<HTMLElement>(`[data-skill="${CSS.escape(opened.current)}"]`) : null;
-    (card ?? heading.current)?.focus();
+    (card ?? heading.current)?.focus({ preventScroll: true });
+    if (opened.current && content.current) {
+      const scroller = content.current;
+      scroller.scrollTop = listScrollTop.current;
+      if (card) {
+        const bounds = scroller.getBoundingClientRect();
+        const target = card.getBoundingClientRect();
+        if (target.top < bounds.top) scroller.scrollTop += target.top - bounds.top;
+        else if (target.bottom > bounds.bottom) scroller.scrollTop += target.bottom - bounds.bottom;
+      }
+    }
   }, [skill, ready, known]);
 
+  // The phone has no persistent sidebar: keep a way out even while the catalog cannot load.
+  if (phone && !result.data) {
+    return <section className="skills-page" aria-label={skill === undefined ? "Skills" : "Skill"}>
+      <header className="skills-heading">
+        <NarrowBack to={skill === undefined ? undefined : { name: "skills" }} />
+        <h1 tabIndex={-1} data-page-title>{skill ?? "Skills"}</h1>
+      </header>
+      {result.error ? <ErrorState title="Couldn't load skills" failure={result.error} onRetry={() => void result.reload()} />
+        : slow ? <div className="skills-loading" role="status" aria-label="Loading skills">
+          {Array.from({ length: 6 }, (_, index) => <div className="skills-placeholder" key={index} />)}
+        </div> : null}
+    </section>;
+  }
   if (!result.data && !result.error) {
     return slow ? (
       <div className="skills-loading" role="status" aria-label="Loading skills">
@@ -83,6 +110,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
     return (
       <section className="skills-page" aria-label="Skill">
         <header className="skills-heading">
+          <NarrowBack to={{ name: "skills" }} />
           <h1 ref={heading} tabIndex={-1} data-page-title>
             {selected.name}
           </h1>
@@ -112,6 +140,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
     return (
       <section className="skills-page" aria-label="Skills">
         <header className="skills-heading">
+          <NarrowBack />
           <h1 ref={heading} tabIndex={-1} data-page-title>
             Skills
           </h1>
@@ -129,6 +158,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
   return (
     <section className="skills-page" aria-label="Skills">
       <header className="skills-heading">
+        <NarrowBack />
         <h1 ref={heading} tabIndex={-1} data-page-title>
           Skills
         </h1>
@@ -150,7 +180,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
           </span>
         </label>
       </div>
-      <div className="skills-content">
+      <div className="skills-content" ref={content}>
         <div role="status">
           {shown.length === 0 ? (
             <div className="skills-empty">
@@ -174,6 +204,7 @@ export function SkillsPage({ skill }: { skill?: string }) {
             <button type="button" className="skills-card" key={entry.name} data-skill={entry.name} data-autofocus={entry.name === opened.current || undefined} onClick={() => {
                 // Noted at the press, not when the page opens: going back may come before the page has drawn.
                 opened.current = entry.name;
+                listScrollTop.current = content.current?.scrollTop ?? 0;
                 navigate({ name: "skills", skill: entry.name });
               }}>
               <strong>{entry.name}</strong>

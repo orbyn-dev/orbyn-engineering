@@ -104,6 +104,9 @@ function Footer({ view, now, inspect }: { view: RunView; now: number; inspect: R
     add(time);
     if (view.hasRecord) add(callWord(calls));
     if (view.waitedMs !== null && view.waitedMs > 0) add(`waited ${callDuration(view.waitedMs)} for you`);
+  } else if (view.error?.kind === "cancelled") {
+    parts.push("Cancelled");
+    if (view.hasRecord) add(callWord(calls));
   } else if (view.error?.kind === "lost") {
     parts.push("Lost");
     // A call that was in flight when the core restarted is not a recorded call.

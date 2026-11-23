@@ -8,7 +8,7 @@ export function CapacitySampling() {
       <div className="cx-cwpg">
         <PageHead sub="Login redirect crew · Lead: Fix login redirect on Claude Code · 3 workers" acts />
         <div className="cx-cwtabs">
-          <Seg kind="segx" on={1} items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox · 4", "Report"]} />
+          <Seg kind="segx" on={1} items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox", "Report"]} />
           <span className="cx-end">Claude Code 412k of 1M tokens · Codex 62% of its weekly limit · 2h 14m</span>
         </div>
         <div className="cx-flcr">

@@ -86,6 +86,23 @@ pub fn setsid_sleeper(pid_file: &Path, ignore_term: bool) -> String {
     )
 }
 
+/// A sleeper of the same kind as [`setsid_sleeper`], but in the double-fork shape a daemon uses: `perl` forks, the middle process exits
+/// at once, and the grandchild calls `setsid` and writes its pid. Its parent link is gone before any walk can read it, so only a leader
+/// that adopts the orphan (`PR_SET_CHILD_SUBREAPER` on Linux) still reaches it. The shell's `wait` returns immediately here, because the
+/// middle process is gone: append `sleep 600` to keep the leader alive. Linux only, because only there does a leader adopt the orphan.
+#[cfg(target_os = "linux")]
+pub fn double_fork_sleeper(pid_file: &Path, ignore_term: bool) -> String {
+    let ignore = if ignore_term {
+        "$SIG{TERM}=\"IGNORE\"; "
+    } else {
+        ""
+    };
+    format!(
+        "perl -e 'use POSIX; my $middle = fork(); exit 0 if $middle; POSIX::setsid(); {ignore}open(F, \">{p}.tmp\"); print F $$; close F; rename(\"{p}.tmp\", \"{p}\"); sleep 600' &",
+        p = pid_file.display()
+    )
+}
+
 /// The pid the sleeper wrote, polled (no fixed delay) for up to ten seconds.
 #[cfg(unix)]
 pub async fn sleeper_pid(pid_file: &Path) -> i32 {
@@ -124,5 +141,5 @@ pub async fn assert_process_reaped(pid: i32, how: &str) {
     unsafe {
         libc::kill(pid, libc::SIGKILL);
     }
-    panic!("a setsid descendant survived {how}");
+    panic!("a descendant survived {how}");
 }

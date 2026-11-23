@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { EngineStatus, ModelInfo, PermissionMode } from "../../../api/types";
 import { EffortTrigger, offeredModes, oneModeReason, refusalSentence, refusedModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
@@ -119,4 +120,18 @@ describe("an engine that never asks before acting", () => {
     expect(onAccess).not.toHaveBeenCalled();
     expect(onRefused).toHaveBeenCalledTimes(1);
   });
+});
+
+it("reaches the effort pill by Tab and opens its menu with Enter and with Space", async () => {
+  const user = userEvent.setup();
+  const opened = vi.fn();
+  render(<EffortTrigger model={withEffort([{ id: "low", label: "Low" }])} effort={null} access={null} onOpen={opened} />);
+  const trigger = screen.getByRole("button", { name: "Effort: Default" });
+  expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+  await user.tab();
+  expect(trigger).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(opened).toHaveBeenCalledTimes(1);
+  await user.keyboard(" ");
+  expect(opened).toHaveBeenCalledTimes(2);
 });

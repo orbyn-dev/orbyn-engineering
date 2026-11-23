@@ -231,16 +231,18 @@ impl Core {
         actor: &str,
     ) -> Result<()> {
         let mut action = prepared.action.clone();
-        let configured = self.preference("text_generation_model", Some(&thread.project_id))?;
-        let model = configured
-            .as_str()
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_owned)
-            .or_else(|| thread.model.clone())
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
-                invalid("Choose a text generation or thread model, or enter text manually.")
-            })?;
+        let model = crate::agents::text_models::text_model_for(
+            &self.store,
+            &self.engines,
+            &thread.engine,
+            Some(&thread.project_id),
+            thread.model.as_deref(),
+        )
+        .await?
+        .ok_or_else(|| {
+            invalid("Choose a text generation or thread model, or enter text manually.")
+        })?
+        .model;
         self.engines.check_selection(
             &thread.engine,
             &ModelSelection {
