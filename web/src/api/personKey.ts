@@ -283,7 +283,7 @@ export async function readPersonKey(): Promise<string | null> {
   if (cached) return cached;
   if (!canSendPersonKey()) return null;
   const invoke = bridge()?.invoke;
-  if (typeof invoke !== "function") return MOCK_KEY;
+  if (typeof invoke !== "function") return __ORBYN_PREVIEWS__ ? MOCK_KEY : null;
   let answer: unknown;
   try {
     answer = await invoke.call(bridge(), "person_key");
