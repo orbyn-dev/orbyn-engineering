@@ -8,7 +8,7 @@ import { Toasts } from "../../product/ui/Toasts";
 import { usePanelMotionRoot } from "../../product/panels/panelAnimations";
 import { useTaskRunNotifications } from "../taskNotifications";
 import { useLayoutWidth } from "../../lib/useLayout";
-import { navigate, routeHref, useRoute } from "../../product/state/route";
+import { closeSettings, goToHash, routeHref, useRoute } from "../../product/state/route";
 import { DRAFT_LAYOUT, useUi } from "../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../product/state/workspace";
 import { TitleBar } from "../TitleBar";
@@ -105,6 +105,22 @@ export function Shell() {
   useEffect(() => {
     closeDrawer();
   }, [routeKey, small, phone, closeDrawer]);
+  // Settings links are plain addresses, and a browser navigation would push an entry for each one. Sending
+  // them through the router keeps Settings on the single entry it holds, so Close goes back to the page
+  // instead of leaving entries behind to back out of.
+  useEffect(() => {
+    const intercept = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href^="#/settings"]');
+      const href = anchor?.getAttribute("href");
+      if (!href) return;
+      event.preventDefault();
+      goToHash(href.slice(1));
+    };
+    document.addEventListener("click", intercept);
+    return () => document.removeEventListener("click", intercept);
+  }, []);
   useEscapeClose(overlaid, closeDrawer, () => document.querySelector<HTMLElement>("[data-sidebar-toggle]"));
   const dismissDrawer = () => {
     closeDrawer();
@@ -179,7 +195,7 @@ export function Shell() {
       ) : (
         // The page under the phone's sheet stays mounted, so its scroll and its terminal survive.
         <main id="main" ref={main} tabIndex={-1} className="main" hidden={phone && drawerOpen}>
-          {route.name === "settings" ? <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} row={route.row} onClose={() => navigate(underneath)} /> : null}
+          {route.name === "settings" ? <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} row={route.row} onClose={() => closeSettings(underneath)} /> : null}
           {/* The page behind settings stays mounted, so a terminal, preview or scroll position survives. `hidden` takes it out of the
               accessibility tree and the tab order while Settings is open, so the open page owns the only h1. Not `inert`: the theme
               editor's element picker shows this page again (`html[data-inspecting]`) and inert content cannot be pointed at. */}
