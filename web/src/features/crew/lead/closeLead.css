@@ -1,0 +1,45 @@
+/* The close-lead confirm: the tasks settling or archiving would cancel, in the dialog's own type. */
+.dialog.close-lead {
+  width: min(480px, calc(100% - 32px));
+}
+.close-lead-heading {
+  margin: 2px 0 -4px;
+  color: var(--color-textSoft);
+  font-size: var(--text-meta);
+  font-weight: 500;
+}
+.close-lead-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.close-lead-task {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+}
+.close-lead-name {
+  min-width: 0;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+.close-lead-state {
+  flex: none;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.close-lead-more,
+.close-lead-muted,
+.close-lead-busy {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.close-lead-busy {
+  color: var(--color-textSoft);
+}

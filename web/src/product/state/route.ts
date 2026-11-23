@@ -36,7 +36,7 @@ const ROW_KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const CREW_TABS = ["approvals", "trust", "background", "inbox", "flow", "board", "map", "lanes"] as const;
 export type CrewTab = (typeof CREW_TABS)[number];
 
-export const CREW_SETTINGS_PAGES = ["areas", "thresholds", "capacity", "coverage", "dashboard", "escapes", "possible", "escape-settings", "escape", "backtest", "estimate", "report"] as const;
+export const CREW_SETTINGS_PAGES = ["areas", "thresholds", "capacity", "coverage", "dashboard", "escapes", "possible", "escape-settings", "escape", "backtest", "estimate", "report", "lessons", "lesson", "lesson-add"] as const;
 export type CrewSettingsPage = (typeof CREW_SETTINGS_PAGES)[number];
 
 /** Where the coverage map was opened from. It comes from the address the link carried, never from history: no origin, no way back drawn. */
@@ -68,13 +68,13 @@ export type Route =
       edit?: boolean;
       /**
        * Settings › Crew › Autopilot by area (and its thresholds), for the repository `repo` (the first one when absent), or a
-       * page that picks its own project: Review capacity and its coverage map, the Crew dashboard (`repo` names the project each opens for), the escape log and one escape (`id`), the reviewer backtest, its estimate and one run's report (`id`).
+       * page that picks its own project: Review capacity and its coverage map, the Crew dashboard (`repo` names the project each opens for), the escape log and one escape (`id`), the reviewer backtest, its estimate and one run's report (`id`), and the lessons list, one lesson (`id`) and the add page.
        */
       crewPage?: CrewSettingsPage;
       repo?: string;
       /** With the coverage page: the page whose link opened it, so it can offer the way back. */
       from?: CrewOrigin;
-      /** The escape or backtest run an `escape` or `report` page names. */
+      /** The escape, backtest run or lesson an `escape`, `report` or `lesson` page names. */
       id?: string;
     }
   | { name: "usage" }
@@ -105,10 +105,13 @@ const CREW_PAGE_PATH: Record<CrewSettingsPage, string> = {
   backtest: "backtest",
   estimate: "backtest/estimate",
   report: "backtest/report",
+  lessons: "lessons",
+  lesson: "lessons/lesson",
+  "lesson-add": "lessons/add",
 };
-const CREW_PAGES_WITH_REPO: readonly CrewSettingsPage[] = ["areas", "thresholds", "capacity", "coverage", "dashboard", "escapes", "possible"];
+const CREW_PAGES_WITH_REPO: readonly CrewSettingsPage[] = ["areas", "thresholds", "capacity", "coverage", "dashboard", "escapes", "possible", "lessons", "lesson", "lesson-add"];
 const CREW_PAGES_WITH_ORIGIN: readonly CrewSettingsPage[] = ["coverage"];
-const CREW_PAGES_WITH_ID: readonly CrewSettingsPage[] = ["escape", "report"];
+const CREW_PAGES_WITH_ID: readonly CrewSettingsPage[] = ["escape", "report", "lesson"];
 
 // Same grammar as Core Flow valid_id. A locator identifies a read, never an action.
 export const isCrewTaskId = (id: string): boolean => /^[A-Za-z0-9_:-][A-Za-z0-9_.:-]{0,95}$/.test(id);

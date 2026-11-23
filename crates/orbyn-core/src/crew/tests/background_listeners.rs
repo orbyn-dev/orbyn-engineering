@@ -31,36 +31,38 @@ fn project(w: &World) -> String {
     w.core.store.thread(&w.lead).unwrap().project_id
 }
 
-fn crew_with(w: &World, name: &str, trigger: Value, on: bool) -> String {
+async fn crew_with(w: &World, name: &str, trigger: Value, on: bool) -> String {
     let body: wire::BackgroundCrewCreate = serde_json::from_value(json!({
         "project_id": project(w), "name": name, "template": "fix_failing_ci",
         "trigger": trigger, "budget": { "turns": 10, "minutes": 30 },
         "daily": { "runs": 100, "turns": 1000 }, "utc_offset_minutes": 600
     }))
     .unwrap();
-    let crew = w.core.background_create(&body).unwrap();
+    let crew = w.core.background_create(&body).await.unwrap();
     if on {
         w.core.background_set_enabled(&crew.id, true).unwrap();
     }
     crew.id
 }
 
-fn schedule_crew(w: &World, name: &str, hours: u32, on: bool) -> String {
+async fn schedule_crew(w: &World, name: &str, hours: u32, on: bool) -> String {
     crew_with(
         w,
         name,
         json!({ "kind": "schedule", "every_hours": hours }),
         on,
     )
+    .await
 }
 
-fn ci_crew(w: &World, name: &str, branch: &str, on: bool) -> String {
+async fn ci_crew(w: &World, name: &str, branch: &str, on: bool) -> String {
     crew_with(
         w,
         name,
         json!({ "kind": "ci_failure", "branch": branch }),
         on,
     )
+    .await
 }
 
 fn runs_of(w: &World, crew: &str) -> Vec<wire::BackgroundRun> {
@@ -191,7 +193,7 @@ fn capacity(w: &World, limit: u32, pause: bool) {
 #[tokio::test]
 async fn a_schedule_firing_starts_one_run_and_the_same_bucket_starts_nothing_new() {
     let w = world(true, good()).await;
-    let id = schedule_crew(&w, "Hourly", 1, true);
+    let id = schedule_crew(&w, "Hourly", 1, true).await;
     let before = threads(&w);
     w.core.crew_background_listeners_tick(NOW).await.unwrap();
     let run = until_run(&w, &id, wire::BackgroundRunState::Running).await;
@@ -225,7 +227,7 @@ async fn a_failed_check_at_the_watched_head_starts_one_run_and_a_repeat_starts_n
     let branch = main_branch(&w.repo).await;
     let head = gitq(&w.repo, &["rev-parse", &branch]).await;
     add_origin(&w);
-    let id = ci_crew(&w, "Fix CI", &branch, true);
+    let id = ci_crew(&w, "Fix CI", &branch, true).await;
     let remote = Arc::new(Mutex::new(Remote {
         heads: [(branch.clone(), head.clone())].into_iter().collect(),
         checks: vec![(head.clone(), "ci".into(), "failure".into())],
@@ -286,7 +288,7 @@ async fn two_failed_checks_at_one_head_are_two_events_and_a_repeat_starts_nothin
     let branch = main_branch(&w.repo).await;
     let head = gitq(&w.repo, &["rev-parse", &branch]).await;
     add_origin(&w);
-    let id = ci_crew(&w, "Fix CI", &branch, true);
+    let id = ci_crew(&w, "Fix CI", &branch, true).await;
     let remote = Arc::new(Mutex::new(Remote {
         heads: [(branch.clone(), head.clone())].into_iter().collect(),
         checks: vec![(head.clone(), "ci".into(), "failure".into())],
@@ -374,8 +376,8 @@ async fn an_off_crew_never_reaches_the_forge_or_claims_an_event() {
     let branch = main_branch(&w.repo).await;
     let head = gitq(&w.repo, &["rev-parse", &branch]).await;
     add_origin(&w);
-    let id = ci_crew(&w, "Off", &branch, false);
-    let sched = schedule_crew(&w, "Off hourly", 1, false);
+    let id = ci_crew(&w, "Off", &branch, false).await;
+    let sched = schedule_crew(&w, "Off hourly", 1, false).await;
     let before = threads(&w);
     let remote = Arc::new(Mutex::new(Remote {
         heads: [(branch.clone(), head.clone())].into_iter().collect(),
@@ -416,7 +418,7 @@ async fn a_refused_event_is_never_retried_and_a_new_head_is_a_new_event() {
     let branch = main_branch(&w.repo).await;
     let head = gitq(&w.repo, &["rev-parse", &branch]).await;
     add_origin(&w);
-    let id = ci_crew(&w, "Busy", &branch, true);
+    let id = ci_crew(&w, "Busy", &branch, true).await;
     let remote = Arc::new(Mutex::new(Remote {
         heads: [(branch.clone(), head.clone())].into_iter().collect(),
         checks: vec![
@@ -461,7 +463,7 @@ async fn one_pass_attempts_at_most_one_start_per_crew() {
     let branch = main_branch(&w.repo).await;
     let head = gitq(&w.repo, &["rev-parse", &branch]).await;
     add_origin(&w);
-    let id = ci_crew(&w, "Many failures", &branch, true);
+    let id = ci_crew(&w, "Many failures", &branch, true).await;
     waiting_merges(&w, 3).await;
     capacity(&w, 2, true);
     let names: Vec<String> = (0..6).map(|n| format!("check-{n}")).collect();
@@ -493,8 +495,8 @@ async fn a_stop_before_a_firing_claims_and_starts_nothing() {
     let branch = main_branch(&w.repo).await;
     let head = gitq(&w.repo, &["rev-parse", &branch]).await;
     add_origin(&w);
-    let sched = schedule_crew(&w, "Hourly", 1, true);
-    let ci = ci_crew(&w, "Fix CI", &branch, true);
+    let sched = schedule_crew(&w, "Hourly", 1, true).await;
+    let ci = ci_crew(&w, "Fix CI", &branch, true).await;
     let remote = Arc::new(Mutex::new(Remote {
         heads: [(branch.clone(), head.clone())].into_iter().collect(),
         checks: vec![(head.clone(), "ci".into(), "failure".into())],
@@ -545,7 +547,7 @@ async fn a_stop_before_a_firing_claims_and_starts_nothing() {
 #[tokio::test]
 async fn a_clock_that_moves_back_does_not_fire_an_earlier_bucket() {
     let w = world(true, hung()).await;
-    let id = schedule_crew(&w, "Hourly", 1, true);
+    let id = schedule_crew(&w, "Hourly", 1, true).await;
     w.core.crew_background_listeners_tick(NOW).await.unwrap();
     assert_eq!(runs_of(&w, &id).len(), 1);
     let bucket = NOW.div_euclid(3600);
@@ -604,7 +606,7 @@ async fn a_file_trigger_with_no_matching_crew_is_ignored() {
     commit_all(&w.repo, "quiet");
     let quiet = gitq(&w.repo, &["rev-parse", "HEAD"]).await;
     run_git(&w.repo, &["checkout", "-q", &branch]);
-    let other = ci_crew(&w, "Other", "quiet", true);
+    let other = ci_crew(&w, "Other", "quiet", true).await;
 
     // The repository asks for a crew that was never created.
     std::fs::create_dir_all(w.repo.join(".orbyn")).unwrap();
@@ -659,8 +661,8 @@ async fn a_firing_refused_by_capacity_is_held_with_its_event_key() {
     let branch = main_branch(&w.repo).await;
     let head = gitq(&w.repo, &["rev-parse", &branch]).await;
     add_origin(&w);
-    let ci = ci_crew(&w, "Held CI", &branch, true);
-    let sched = schedule_crew(&w, "Held hourly", 1, true);
+    let ci = ci_crew(&w, "Held CI", &branch, true).await;
+    let sched = schedule_crew(&w, "Held hourly", 1, true).await;
     waiting_merges(&w, 3).await;
     capacity(&w, 2, true);
     let remote = Arc::new(Mutex::new(Remote {
@@ -706,7 +708,7 @@ async fn a_very_long_check_name_still_makes_a_held_row_and_never_appears_in_it()
     let branch = main_branch(&w.repo).await;
     let head = gitq(&w.repo, &["rev-parse", &branch]).await;
     add_origin(&w);
-    let ci = ci_crew(&w, "Long name", &branch, true);
+    let ci = ci_crew(&w, "Long name", &branch, true).await;
     waiting_merges(&w, 3).await;
     capacity(&w, 2, true);
     let name = "n".repeat(300);
@@ -736,7 +738,7 @@ async fn outside_event_text_selects_the_run_and_never_becomes_its_prompt() {
     let branch = main_branch(&w.repo).await;
     let head = gitq(&w.repo, &["rev-parse", &branch]).await;
     add_origin(&w);
-    let id = ci_crew(&w, "Fix CI", &branch, true);
+    let id = ci_crew(&w, "Fix CI", &branch, true).await;
     let remote = Arc::new(Mutex::new(Remote {
         heads: [(branch.clone(), head.clone())].into_iter().collect(),
         checks: vec![(head.clone(), POISON.into(), "failure".into())],
@@ -799,7 +801,7 @@ async fn outside_event_text_selects_the_run_and_never_becomes_its_prompt() {
 async fn no_interval_means_no_pass_and_a_stop_ends_the_looping_future() {
     // With no interval there is no pass at all, not even at startup: the future returns at once and fires nothing.
     let w = world(true, hung()).await;
-    let id = schedule_crew(&w, "Hourly", 1, true);
+    let id = schedule_crew(&w, "Hourly", 1, true).await;
     let token = CancellationToken::new();
     let (core, startup_token) = (w.core.clone(), token.clone());
     let listeners =

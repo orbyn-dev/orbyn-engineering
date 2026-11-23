@@ -305,6 +305,12 @@ impl Core {
                     "An issue label crew cannot run yet: Orbyn cannot see new issue labels.".into(),
                 ));
             }
+            "watch" => {
+                return Err(CoreError::PolicyDenied(
+                    "A watch crew cannot run yet: Orbyn runs its command from the schedule, not on demand."
+                        .into(),
+                ));
+            }
             kind => {
                 let words = kind.replace('_', " ");
                 return Err(CoreError::PolicyDenied(format!(

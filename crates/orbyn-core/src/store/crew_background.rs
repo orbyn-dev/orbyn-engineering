@@ -13,6 +13,8 @@ use crate::util::{new_id, now};
 
 /// The most background crews one project may have, so the list stays readable and a loop cannot fill the table.
 pub const PER_PROJECT_MAX: u32 = 50;
+/// The most watches one project may have: a watch runs a command on a timer, so a project gets a small, fixed handful.
+pub const WATCHES_PER_PROJECT_MAX: u32 = 10;
 
 /// One background crew as stored.
 #[derive(Clone, Debug, PartialEq)]
@@ -178,6 +180,15 @@ fn running_in(tx: &Transaction<'_>, crew: &str) -> Result<Option<BackgroundRunRo
         .optional()?)
 }
 
+/// How many watches one project has, read inside the transaction that would add another.
+fn watches_in(tx: &Transaction<'_>, project: &str) -> Result<u32> {
+    Ok(tx.query_row(
+        "SELECT COUNT(*) FROM crew_background WHERE project_id = ?1 AND trigger_kind = 'watch'",
+        [project],
+        |row| row.get(0),
+    )?)
+}
+
 /// Whether `name` is taken by another crew of the project: compared without regard to case for any script, which the unique index
 /// does for ASCII only. A project holds at most `PER_PROJECT_MAX` crews, so reading their names is cheap.
 fn name_taken(
@@ -335,6 +346,12 @@ impl Store {
                     "a project has at most {PER_PROJECT_MAX} background crews"
                 )));
             }
+            if new.trigger_kind == "watch" && watches_in(tx, new.project_id)? >= WATCHES_PER_PROJECT_MAX
+            {
+                return Err(CoreError::Invalid(format!(
+                    "A project can have {WATCHES_PER_PROJECT_MAX} watches."
+                )));
+            }
             if name_taken(tx, new.project_id, new.name, None)? {
                 return Err(CoreError::Invalid(
                     "this project already has a background crew with that name".into(),
@@ -398,6 +415,22 @@ impl Store {
                     "this project already has a background crew with that name".into(),
                 ));
             }
+            let (kind, settings) = match trigger {
+                Some((kind, settings)) => (kind.to_owned(), serde_json::to_string(settings)?),
+                None => (
+                    current.trigger_kind.clone(),
+                    serde_json::to_string(&current.trigger_settings)?,
+                ),
+            };
+            // A trigger that turns a crew into a watch takes one of the project's ten places, checked in the same transaction.
+            if kind == "watch"
+                && current.trigger_kind != "watch"
+                && watches_in(tx, &current.project_id)? >= WATCHES_PER_PROJECT_MAX
+            {
+                return Err(CoreError::Invalid(format!(
+                    "A project can have {WATCHES_PER_PROJECT_MAX} watches."
+                )));
+            }
             audit(
                 tx,
                 actor,
@@ -410,13 +443,6 @@ impl Store {
                 }),
             )?;
             let name = name.unwrap_or(&current.name);
-            let (kind, settings) = match trigger {
-                Some((kind, settings)) => (kind.to_owned(), serde_json::to_string(settings)?),
-                None => (
-                    current.trigger_kind.clone(),
-                    serde_json::to_string(&current.trigger_settings)?,
-                ),
-            };
             tx.execute(
                 "UPDATE crew_background SET name = ?2, trigger_kind = ?3, trigger_settings = ?4, updated_at = ?5 WHERE id = ?1",
                 params![id, name, kind, settings, now()],
@@ -711,7 +737,7 @@ impl Store {
     }
 
     /// The background crews of one trigger kind, by name. The listeners' observation set; a kind nothing can start
-    /// (issue labels, dependency updates) has no listener and is never listed by one.
+    /// (issue labels, dependency updates, watches) has no listener and is never listed by one.
     pub fn background_crews_of_kind(&self, kind: &str) -> Result<Vec<BackgroundRow>> {
         let conn = self.reader();
         let mut statement =

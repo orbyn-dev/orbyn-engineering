@@ -155,12 +155,12 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     (
         "POST",
         "/api/crew/background/create",
-        "core background_create: a live project, bounded name, run budget, daily per-engine budget with the person's UTC offset, and trigger settings of the trigger's own kind, redacted, created off, audited in the same transaction; local only",
+        "core background_create: a live project, bounded name, run budget, daily per-engine budget with the person's UTC offset, and trigger settings of the trigger's own kind, redacted (a watch command also screened), created off, audited in the same transaction; local only",
     ),
     (
         "POST",
         "/api/crew/background/{id}/update",
-        "core background_update: the name and trigger only (project, template and budget are fixed, also by the table), redacted, audited in the same transaction; local only",
+        "core background_update: the name and trigger only (project, template and budget are fixed, also by the table), redacted (a watch command also screened), audited in the same transaction; local only",
     ),
     (
         "POST",
@@ -953,7 +953,7 @@ async fn background_create(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<wire::BackgroundCrewCreate>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.background_create(&body)?))
+    Ok(Json(state.core.background_create(&body).await?))
 }
 
 async fn background_update(
@@ -961,7 +961,7 @@ async fn background_update(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<wire::BackgroundCrewUpdate>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.background_update(&id, &body)?))
+    Ok(Json(state.core.background_update(&id, &body).await?))
 }
 
 async fn background_enable(

@@ -8,8 +8,8 @@
 //!
 //! **What is watched.** A stored crew is the authority: the schedule timer reads each `schedule` crew's `every_hours`,
 //! and the CI watch reads each `ci_failure` crew's branch (its setting, else the project's default) and its optional
-//! workflow filter. `issue_label` and `dependency_update` crews have no listener and are never listed here; the start
-//! seam still refuses them with a plain reason. A trigger declared in a project's `.orbyn/crew.json` that has no
+//! workflow filter. `issue_label`, `dependency_update` and `watch` crews have no listener and are never listed here; the
+//! start seam still refuses them with a plain reason. A trigger declared in a project's `.orbyn/crew.json` that has no
 //! stored crew is ignored: nothing starts, nothing is adopted, and the most it earns is a diagnostic line
 //! ("found in .orbyn/crew.json, no matching crew") that no screen shows.
 //!

@@ -1,0 +1,50 @@
+/* The lessons list (KC5). Design values mapped to the app tokens the neighbouring crew screens use:
+   sunken = chip, borderStrong = line, textSoft and muted = the two quiet text levels. */
+
+.cx-lsintro { margin: 0; color: var(--color-muted); font-size: 12.5px; line-height: 1.5; }
+
+.cx-cwbn.cx-lsbanner { flex-direction: column; align-items: flex-start; gap: 3px; margin: 0; line-height: 1.45; }
+.cx-cwbn.cx-lsbanner b { font-weight: 500; color: var(--color-text); }
+
+.cx-lsfilters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.cx-lschip {
+  height: 26px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--color-sunken);
+  color: var(--color-textSoft);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cx-lschip.cx-on { background: var(--color-surface); color: var(--color-text); box-shadow: inset 0 0 0 1px var(--color-borderStrong); }
+.cx-lschip:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.cx-lsadd { margin-left: auto; }
+
+.cx-lsgroup { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cx-lscount { margin-left: auto; font-weight: 400; color: var(--color-textSoft); font-variant-numeric: tabular-nums; }
+.cx-lssub { margin: 0; color: var(--color-muted); font-size: 12px; line-height: 1.45; }
+
+.cx-lsrows {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: inset 0 0 0 1px var(--color-borderStrong);
+}
+.cx-lsrow { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 10px 12px; border-top: 1px solid var(--color-border); min-width: 0; }
+.cx-lsrow:first-child { border-top: 0; }
+.cx-lsmain { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cx-lsmain > b { font-weight: 500; color: var(--color-text); font-size: 12.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.cx-lsmeta { display: flex; gap: 6px; flex-wrap: wrap; color: var(--color-muted); font-size: 11.5px; line-height: 1.4; }
+.cx-lstags { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cx-lsnote { color: var(--color-muted); font-size: 11.5px; }
+
+@container (max-width: 460px) {
+  .cx-lsrow { flex-direction: column; align-items: stretch; }
+  .cx-lsadd { margin-left: 0; }
+}
