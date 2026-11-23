@@ -10,10 +10,11 @@ import { ErrorState, Loading } from "../../../product/ui/states";
 import { Button } from "../../../ui/controls";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
-import { listTextGenerators, saveTextGeneratorModel } from "../api";
+import { listTextGenerators, queryPreferences, updatePreferences } from "../api";
 import { SettingRow } from "../rows/SettingRow";
 import { useSettingsScope } from "../rows/SettingsScopeContext";
 import { settingsLabel } from "../settingsSearch";
+import { TEXT_GENERATOR_MODELS, textGeneratorChange } from "./textGeneratorModels";
 import "./textGenerators.css";
 
 const modelLabel = (models: ModelInfo[], id: string | null) =>
@@ -37,25 +38,25 @@ function Row({ engine, project, chosen, resolved, reason, disabled, error, save 
   reason: TextModelReason | null;
   disabled: boolean;
   error: string | null;
-  save(model: string): void;
+  save(model: string | null): void;
 }) {
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   const chosenLabel = modelLabel(engine.models, chosen);
   const automaticLabel = chosen === null ? modelLabel(engine.models, resolved) : null;
-  const projectChoice = project && engine.project?.chosen !== null && engine.project?.chosen !== undefined;
+  const projectChoice = project && engine.project?.own === true;
   const items: MenuItem[] = [{
     label: "Automatic",
     selected: chosen === null,
-    disabled: chosen !== null,
     leadCheck: true,
-    title: chosen === null ? undefined : "Can’t be cleared yet",
     content: (
       <span className="menu-planned-row">
         <span>Automatic</span>
         {automaticLabel ? <span className="textgen-menu-right">{automaticLabel}</span> : null}
       </span>
     ),
-    onSelect: () => undefined,
+    onSelect: () => {
+      if (chosen !== null) save(null);
+    },
   }, ...engine.models.map((model): MenuItem => {
     const tag = model.is_default ? "Default" : model.custom ? "Added in settings" : null;
     return {
@@ -107,22 +108,28 @@ export function TextGenerators() {
   const scope = useSettingsScope();
   const selection = scope?.query.selection;
   const project = selection?.kind === "checkout" ? selection.project_id : null;
+  const preferenceScope = scope?.active ? scope.query : {};
   const list = useAsync(`text-generators:${project ?? "global"}`, (signal) => listTextGenerators(project, signal), { keep: true });
   const [error, setError] = useState<{ engine: string; message: string } | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
 
-  const save = (engine: TextGeneratorEngine, model: string) => {
+  const save = (engine: TextGeneratorEngine, model: string | null) => {
     setError(null);
     setSaving(engine.engine);
     void (async () => {
+      let wrote = false;
       try {
-        await saveTextGeneratorModel(project, engine.engine, model);
+        const current = await queryPreferences({ scope: preferenceScope, keys: [TEXT_GENERATOR_MODELS] });
+        const change = textGeneratorChange(current, preferenceScope, project, engine.engine, model);
+        if (!change) return;
+        wrote = true;
+        await updatePreferences(change);
         useUi.getState().bumpPreferencesRevision();
       } catch (failure) {
         setError({ engine: engine.engine, message: toFailure(failure).message });
       } finally {
         setSaving(null);
-        list.reload();
+        if (wrote) list.reload();
       }
     })();
   };
