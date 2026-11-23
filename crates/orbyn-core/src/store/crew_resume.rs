@@ -132,8 +132,6 @@ impl Store {
             // The lost turn is one more attempt, and the round it resumes is the one the worker is told.
             let round = run.attempts.saturating_add(1);
             let now = crate::util::unix_now();
-            let last = last_event(tx, task_id)?.unwrap_or(now);
-            let downtime = now.saturating_sub(last).max(0);
             // Rule 6: the row is written before the effect it describes, in this transaction.
             audit(
                 tx,
@@ -148,12 +146,27 @@ impl Store {
                 task
             };
             tx.execute(
-                "UPDATE crew_runs SET resume_count = 1, resumed_at = ?2, attempts = attempts + 1,
-                 downtime_secs = ?3 WHERE task_id = ?1 AND resume_count = 0",
-                params![task_id, crate::util::format_unix(now), downtime],
+                "UPDATE crew_runs SET resume_count = 1, resumed_at = ?2, attempts = attempts + 1
+                 WHERE task_id = ?1 AND resume_count = 0",
+                params![task_id, crate::util::format_unix(now)],
             )?;
             let run = find_run(tx, task_id)?;
             Ok(ResumeOutcome::Resumed { task, run: Box::new(run) })
+        })
+    }
+
+    /// Adds the time the app was off to what the task's budget does not pay for, once per restart and for every task the
+    /// restart picks up (a verifying one included), so a live verification reads the same allowance as the budget timer.
+    pub fn excuse_crew_downtime(&self, task_id: &str, secs: i64) -> Result<()> {
+        if secs <= 0 {
+            return Ok(());
+        }
+        self.commit(|tx, _| {
+            tx.execute(
+                "UPDATE crew_runs SET downtime_secs = downtime_secs + ?2 WHERE task_id = ?1",
+                params![task_id, secs],
+            )?;
+            Ok(())
         })
     }
 

@@ -56,6 +56,11 @@ impl Core {
                     last,
                     run.downtime_secs,
                 );
+                // Excused only after the allowance above was read from the earlier restarts' downtime.
+                let off = crate::util::unix_now().saturating_sub(last);
+                if let Err(error) = self.store.excuse_crew_downtime(&task.id, off) {
+                    tracing::warn!(%error, task = %task.id, "could not record a crew task's off time");
+                }
                 if left.is_zero() {
                     self.crew_budget_ended(&task.id);
                     continue;
