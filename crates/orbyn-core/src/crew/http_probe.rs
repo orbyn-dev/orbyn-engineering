@@ -29,6 +29,9 @@ pub(super) async fn probe(
     }
     let client = match reqwest::Client::builder()
         .timeout(allowed)
+        // The URL is loopback by type, so no `HTTP_PROXY` or `ALL_PROXY` of the person's may carry it away:
+        // a proxy would see the request and could answer for the page.
+        .no_proxy()
         // A redirect is never followed: the status compared is the one this URL answered, so a
         // page cannot hand the probe to another path or host.
         .redirect(reqwest::redirect::Policy::none())
