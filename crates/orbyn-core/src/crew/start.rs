@@ -73,22 +73,28 @@ pub(super) enum Caller {
     },
 }
 
-/// Why a worker cannot start on the volumes it uses: the first volume below `floor` names itself.
-/// A volume whose free space cannot be read never blocks.
-pub(super) fn low_disk_reason(volumes: &[(&str, Option<u64>)], floor: u64) -> Option<String> {
-    for &(label, free) in volumes {
-        let Some(free) = free else {
-            continue;
-        };
-        if free < floor {
-            return Some(format!(
-                "Not enough free disk space to start a worker: {:.1} GB free on {label}; at least {:.1} GB are needed. Free some space, then start the task again.",
-                crate::host::disk::gib(free),
-                crate::host::disk::gib(floor)
-            ));
-        }
+/// Why a worker cannot start on a volume with `free` bytes: below the `floor_gb` floor it
+/// carries the free space. A volume whose free space cannot be read never blocks.
+pub(super) fn low_disk_reason(free: Option<u64>, floor_gb: u64) -> Option<String> {
+    let free = free?;
+    if free >= floor_gb.saturating_mul(1024 * 1024 * 1024) {
+        return None;
     }
-    None
+    Some(format!(
+        "Not started: {} free, Crew needs {} GB. Free space and try again.",
+        free_text(free),
+        floor_gb
+    ))
+}
+
+/// `bytes` as the disk refusal says it: whole MiB below a gibibyte, else GiB to one decimal.
+pub(super) fn free_text(bytes: u64) -> String {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    if bytes < GIB {
+        return format!("{} MB", bytes / (1024 * 1024));
+    }
+    let tenths = u128::from(bytes) * 10 / u128::from(GIB);
+    format!("{}.{} GB", tenths / 10, tenths % 10)
 }
 
 impl Core {
@@ -312,6 +318,8 @@ impl Core {
         // Before anything is stored, routed or started: a crew that spent its turn budget starts
         // no new task. It never stops a task already running.
         self.refuse_spent_crew_budget(&brief)?;
+        // Before anything is stored, routed or started: a lead whose volume is low on disk starts no worker.
+        self.refuse_low_disk(thread).await?;
         self.crew_start_bus_limits(&bus_lead).await?;
         let now = crate::util::unix_now();
         // Before anything is stored: when no allowed engine is left because the run start would refuse the ones that are, the
@@ -673,9 +681,8 @@ impl Core {
         prompt: Option<String>,
         base: Option<&str>,
     ) -> Result<Value, CrewError> {
-        // Before anything is started: the worker's folder needs room, and a worker that cannot be
-        // restricted is refused; the task shows the reason in the "refused by the app" item.
-        self.refuse_low_disk(lead).await?;
+        // Before anything is started: a worker that cannot be restricted is refused; the task
+        // shows the reason in the "refused by the app" item.
         self.refuse_unrestricted_worker(&decision.engine).await?;
         let prompt = match prompt {
             Some(text) => text,
@@ -803,11 +810,11 @@ impl Core {
         Ok(thread)
     }
 
-    /// Refuses a worker when the project's volume has less free space than the
-    /// `crew_min_free_gb` preference (default 5 GB; 0 is no floor). A volume that cannot be read
-    /// does not block the start.
+    /// Refuses a start when the volume that holds the lead thread's folder has less free space than the
+    /// `crew_min_free_gb` preference (default 5 GB; a stored 0 from an old install is 5 GB now). A volume
+    /// that cannot be read does not block the start.
     async fn refuse_low_disk(&self, lead: &orbyn_contracts::Thread) -> Result<(), CrewError> {
-        let gigabytes = match self.preference(CREW_MIN_FREE_GB, None) {
+        let floor_gb = match self.preference(CREW_MIN_FREE_GB, None) {
             Ok(value) => value.as_u64(),
             Err(error) => {
                 tracing::warn!(
@@ -817,22 +824,17 @@ impl Core {
                 None
             }
         }
+        .filter(|gigabytes| *gigabytes > 0)
         .unwrap_or(5);
-        if gigabytes == 0 {
+        let cwd = std::path::PathBuf::from(&lead.cwd);
+        let free = tokio::task::spawn_blocking(move || crate::host::disk::free_bytes(&cwd))
+            .await
+            .map_err(|error| invalid(error.to_string()))?;
+        let Some(free) = free else {
             return Ok(());
-        }
-        let floor = gigabytes.saturating_mul(1024 * 1024 * 1024);
-        let project_dir = std::path::PathBuf::from(&lead.cwd);
-        let volumes = tokio::task::spawn_blocking(move || {
-            [(
-                "the project folder",
-                crate::host::disk::free_bytes(&project_dir),
-            )]
-        })
-        .await
-        .map_err(|error| invalid(error.to_string()))?;
-        match low_disk_reason(&volumes, floor) {
-            Some(reason) => Err(CrewError::new(ErrorCode::NotAuthorized, reason)),
+        };
+        match low_disk_reason(Some(free), floor_gb) {
+            Some(reason) => Err(CrewError::disk_low(reason, free, floor_gb)),
             None => Ok(()),
         }
     }

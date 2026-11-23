@@ -464,8 +464,11 @@ fn spec_error_codes_match_the_error_schema_and_the_cases() {
             }
         }
     }
-    // Codes the router, the join flow and transfers will exercise once those exist.
-    let later: BTreeSet<&str> = ["invalid_token", "unknown_member"].into_iter().collect();
+    // Codes the router, the join flow and transfers will exercise once those exist; `disk_low`
+    // is raised by the app's start guard, outside the protocol model.
+    let later: BTreeSet<&str> = ["invalid_token", "unknown_member", "disk_low"]
+        .into_iter()
+        .collect();
     for code in &codes {
         assert!(
             used.contains(code) || later.contains(code.as_str()),
