@@ -1768,7 +1768,7 @@ writes `crew.task.resumed` in the same transaction as the state, attempt and res
 `crew.task.restart_stopped` with `why` (`reviewer`, `already_resumed`, `not_resumable` or `send_failed`) in
 the same transaction as its `stopped`/`engine_error` move.
 
-**As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342); its core route is not built. KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
+**As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342) and its service side is built (not run against a real service). KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
 
 **Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
 (our router never swaps an engine) and release channels.
@@ -1985,6 +1985,37 @@ The person's stop button for a Crew task (Preview). Backend only: the card actio
 - **Known limits.** A cancel cannot undo what the worker already wrote in its worktree, and commits already merged stay merged; the
   worktree itself is left as the existing end of a task leaves it. A check command already running when the cancel lands finishes
   first (its result is discarded). The stop waits up to four seconds for the engine before it closes the run by force.
+
+## As built (close lead)
+
+Closing or archiving a lead thread cancels the live Crew work it leads (KC2, Crew Preview). Backend; the web dialog, toasts and
+the person key were merged first (#1342).
+
+- **What exists.** `Core::crew_close_lead(thread_id, actor)` -> `{ closed, failed }`, ids only, and
+  `Core::crew_lead_live(thread_id)` -> `{ tasks: [{ id, name, state }] }`. Over HTTP: `GET /api/crew/lead/{thread_id}/live` (a read,
+  open to a remote viewer) and `POST /api/crew/lead/{thread_id}/close` (`Person`, behind `local_only`). Both hide behind the Preview
+  flag exactly as every other Crew route. The close is audited by the cancels it runs, one intent row and one outcome row per task.
+- **What a close tries.** The non-final tasks (`briefed`, `routed`, `running`, `verifying`, `failed`, `changed_approach`,
+  `needs_person`) whose `crew_runs.lead_thread_id` is this thread, oldest first. A task another thread leads is never one and a task
+  that already ended (`passed`, `stopped`, `cancelled`) is skipped. One private function chooses that list for both routes, so the
+  confirm's count is exactly what the close will try.
+- **One by one, the audited cancel.** Each task runs the existing person's cancel (`crew_cancel_task`) with the reason
+  "The lead thread was closed.": the intent row first, the worker's engine stopped and confirmed, then the state and its row, and the
+  task's leases, final `cancelled` result and end all as any cancel. An `Ok` is a task closed; `TaskEnded` (it ended between the read
+  and the try) is skipped; any other refusal is a task named in `failed` and the loop goes on, so one stuck worker never stops the rest.
+- **The thread closes regardless.** The thread's own settle or archive is the person's `PATCH /api/threads/{id}` (`settled` or
+  `archived` true) and, with Preview on, that handler runs the close first and then the patch whatever the close answered. A task that
+  could not be stopped keeps its state, so its worker may still run.
+- **The lead is not told.** A cancelled result normally queues a note on the lead thread, and a note on an idle thread starts it: a
+  close therefore tells the lead nothing. `tell_lead` skips a cancelled result whose latest cancel intent row says
+  "The lead thread was closed."; a later cancel with another reason still tells it. Without this the note would start the thread the
+  person is closing and the patch would answer `409 thread_busy`.
+- **Could not stop.** A task whose last cancel attempt failed is an item of the person's *needs you* inbox with kind
+  `could_not_stop` (not dismissible): the read joins non-final tasks to their latest `crew.task.cancel_failed` row with no
+  `crew.task.cancelled` row after it, and shows that row's time as `since`. It adds no storage and moves nothing. The item clears when
+  the person stops the task again and it ends `cancelled`.
+- **Not run against a real service.** The routes, the agreement between the live read and the close, the failed-task path, the inbox
+  item and the thread's own close are covered by fake-engine and route tests; the web half hides until the Preview flag is on.
 
 ## Open risks
 

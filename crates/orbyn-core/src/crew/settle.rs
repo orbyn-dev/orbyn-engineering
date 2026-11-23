@@ -172,6 +172,18 @@ impl Core {
         if self.crew_background_lead(&run.lead_thread_id) {
             return;
         }
+        // A lead thread that closed its tasks is not told: its close is what cancelled them, and the note would start the
+        // closed thread again. The reason is the cancel's own intent row, so a later attempt with another reason still tells it.
+        if result.state == ResultState::Cancelled
+            && self
+                .store
+                .crew_cancel_reason(run.task_id.as_str())
+                .ok()
+                .flatten()
+                .is_some_and(|reason| reason == super::close_lead::REASON)
+        {
+            return;
+        }
         // Held messages for the lead ride along, capped. They are recorded as sent only once the
         // prompt is accepted; if it is refused with them, the result goes alone.
         let held = self.held_for_lead(run, result.crew_id.as_str());

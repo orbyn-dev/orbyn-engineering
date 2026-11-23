@@ -297,6 +297,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "/api/crew/profile/apply",
         "core apply_profile_to_crew: a person applies an execution profile to a crew, a copy and never a link; a profile that grants full access or Autopilot Full needs its grant codes acknowledged or answers confirm_required and applies nothing; the audit row first in the same transaction; no agent tool reaches it; local only",
     ),
+    (
+        "POST",
+        "/api/crew/lead/{thread_id}/close",
+        "core crew_close_lead: Preview; every non-final task the thread leads is cancelled one by one through the audited cancel with a fixed reason, ids only in the answer; one that ended meanwhile is skipped and one that could not be stopped is named and the loop goes on; the thread's own close or archive proceeds either way; no agent tool reaches it; local only",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -382,6 +387,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
             post(retry_elsewhere),
         )
         .route("/api/crew/needs-you/dismiss", post(needs_you_dismiss))
+        .route("/api/crew/lead/{thread_id}/close", post(lead_close))
         .route("/api/crew/tasks/{id}/merge", post(merge_request))
         .route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
@@ -411,6 +417,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/trust", get(trust))
         .route("/api/crew/dashboard", get(dashboard))
         .route("/api/crew/needs-you", get(needs_you))
+        .route("/api/crew/lead/{thread_id}/live", get(lead_live))
         .route("/api/crew/background", get(background_list))
         .route("/api/crew/background/{id}", get(background_get))
         .route("/api/crew/background/{id}/runs", get(background_runs))
@@ -1106,6 +1113,23 @@ async fn needs_you_dismiss(
             .core
             .crew_needs_you_dismiss(body.kind, &body.id, "user")?,
     ))
+}
+
+/// The live Crew tasks a lead thread leads: exactly what closing or archiving it would cancel. Read-only.
+async fn lead_live(
+    State(state): State<AppState>,
+    Path(thread_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_lead_live(&thread_id)?))
+}
+
+/// Closing a lead thread: cancel the live tasks it leads, one by one, and answer their ids. The thread's own settle or archive
+/// is the person's `PATCH /api/threads/{id}` and proceeds whatever this answers.
+async fn lead_close(
+    State(state): State<AppState>,
+    Path(thread_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_close_lead(&thread_id, "user").await?))
 }
 
 /// The person's re-run of a task's key checks. The body may be empty, or `{ "reason": "..." }`. The answer is counts and outcomes.

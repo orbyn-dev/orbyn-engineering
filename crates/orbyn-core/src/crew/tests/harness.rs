@@ -691,6 +691,51 @@ impl World {
     }
 }
 
+/// Makes a running worker's run look like another process's, so the service cannot confirm its stop and a cancel fails closed.
+/// Returns the epoch to put back with [`give_back_worker_run`].
+pub fn take_worker_run(w: &World, task: &str) -> String {
+    let db = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    db.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+    let run_id = w
+        .core
+        .store
+        .thread(&w.worker(task))
+        .unwrap()
+        .active_run
+        .unwrap()
+        .id;
+    let own: String = db
+        .query_row(
+            "SELECT owner_epoch FROM runs WHERE id = ?1",
+            [&run_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    db.execute(
+        "UPDATE runs SET owner_epoch = 'another-process' WHERE id = ?1",
+        [&run_id],
+    )
+    .unwrap();
+    own
+}
+
+/// Puts back the epoch [`take_worker_run`] saved, once the stop may be confirmed again.
+pub fn give_back_worker_run(w: &World, task: &str, epoch: &str) {
+    let db = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    let run_id = w
+        .core
+        .store
+        .thread(&w.worker(task))
+        .unwrap()
+        .active_run
+        .unwrap()
+        .id;
+    db.execute(
+        "UPDATE runs SET owner_epoch = ?2 WHERE id = ?1",
+        rusqlite::params![run_id, epoch],
+    )
+    .unwrap();
+}
 /// A brief draft that writes under `src/`, and a key whose checks keep to it. The command
 /// check's text is what the leak tests look for.
 pub const KEY_MARKER: &str = "orbyn-key-marker-77";

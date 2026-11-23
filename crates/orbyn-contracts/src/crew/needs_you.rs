@@ -16,6 +16,8 @@ pub enum NeedsYouKind {
     BackgroundReview,
     TripwireStop,
     WorkerStoppedTwice,
+    /// The task's last cancel attempt could not stop its worker; the task keeps its state and the stop is tried again.
+    CouldNotStop,
 }
 }
 

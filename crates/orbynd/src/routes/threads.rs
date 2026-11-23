@@ -138,6 +138,14 @@ async fn update_thread(
     Path(id): Path<String>,
     ApiJson(patch): ApiJson<UpdateThread>,
 ) -> ApiResult<impl IntoResponse> {
+    // Closing or archiving a lead Crew thread first stops the live tasks it leads (Preview). The thread closes whatever that
+    // answered: one that could not be stopped keeps its state and waits for the person.
+    if state.core.config.crew_preview
+        && (patch.settled == Some(true) || patch.archived == Some(true))
+        && let Err(error) = state.core.crew_close_lead(&id, LOCAL_USER).await
+    {
+        tracing::warn!(%error, "could not close the lead thread's live crew tasks");
+    }
     Ok(Json(state.core.update_thread(&id, &patch, LOCAL_USER)?))
 }
 

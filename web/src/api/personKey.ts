@@ -67,6 +67,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/background/{id}/update"],
   ["POST", "/api/crew/guard/targets/add"],
   ["POST", "/api/crew/guard/targets/{id}/remove"],
+  ["POST", "/api/crew/lead/{thread_id}/close"],
   ["POST", "/api/crew/escapes/mark"],
   ["POST", "/api/crew/escapes/{id}/confirm"],
   ["POST", "/api/crew/escapes/{id}/dismiss"],

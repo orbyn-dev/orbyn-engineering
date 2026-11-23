@@ -4,10 +4,11 @@
 //! check). Nothing here moves a task, answers a merge or settles a run; the dismissal is a row of its own and touches nothing
 //! behind the item.
 //!
-//! A task appears once. The first rule that matches wins, in this order: a task waiting on a person, then a merge waiting on
-//! the person, then a background run waiting for review, then a stopped task with a trip wire, then a stopped task whose worker
-//! stopped twice. Other stopped and cancelled tasks are not items. Every text is one line, redacted and capped at 160
-//! characters; only a task that waits on a person carries its own scrubbed reason, every other kind carries fixed core words.
+//! A task appears once. The first rule that matches wins, in this order: a task waiting on a person, then a task whose last
+//! cancel attempt could not stop its worker, then a merge waiting on the person, then a background run waiting for review, then
+//! a stopped task with a trip wire, then a stopped task whose worker stopped twice. Other stopped and cancelled tasks are not
+//! items. Every text is one line, redacted and capped at 160 characters; only a task that waits on a person carries its own
+//! scrubbed reason, every other kind carries fixed core words.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -42,6 +43,7 @@ fn fixed_reason(kind: wire::NeedsYouKind) -> Option<&'static str> {
         }
         wire::NeedsYouKind::TripwireStop => Some("A trip wire stopped the task."),
         wire::NeedsYouKind::WorkerStoppedTwice => Some("The worker stopped twice."),
+        wire::NeedsYouKind::CouldNotStop => Some("The worker could not be stopped. Stop it again."),
     }
 }
 
@@ -130,6 +132,22 @@ impl Core {
                     reason,
                 });
             }
+        }
+
+        for waiting in self.store.crew_could_not_stop()? {
+            if !seen.insert(waiting.task.id.clone()) {
+                continue;
+            }
+            let kind = wire::NeedsYouKind::CouldNotStop;
+            items.push(wire::NeedsYouItem {
+                id: waiting.task.id.clone(),
+                kind,
+                project_id: waiting.project_id,
+                crew_id: Some(waiting.task.crew_id),
+                since: waiting.since,
+                dismissible: dismissible(kind),
+                reason: fixed_reason(kind).map(str::to_owned),
+            });
         }
 
         let merges: Vec<_> = self

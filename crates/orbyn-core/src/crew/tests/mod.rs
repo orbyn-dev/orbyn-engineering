@@ -40,6 +40,7 @@ mod capacity_sampling;
 mod classes;
 mod classes_pin;
 mod classes_project;
+mod close_lead;
 mod code_mode;
 mod confined;
 mod core;

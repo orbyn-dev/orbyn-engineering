@@ -113,6 +113,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
     ("POST", "/api/crew/tasks/{id}/checks/{check}/decide"),
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
+    ("POST", "/api/crew/lead/{thread_id}/close"),
     // Code Mode: stopping a live script run is the person's own stop button (docs/code-mode.md).
     ("POST", "/api/code-runs/{id}/cancel"),
     // Devices: every action is a Person write (docs/devices.md).
@@ -652,6 +653,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/settings/engine-tiers/save",
         "Crew write behind local_only: the person assigns ACP engines to tiers",
+    ),
+    (
+        "POST",
+        "/api/crew/lead/{thread_id}/close",
+        "Crew write behind local_only: closing a lead thread stops the live tasks it leads",
     ),
     (
         "POST",

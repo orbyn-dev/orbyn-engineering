@@ -36,5 +36,5 @@ export const leadApi = {
   close: (threadId: string): Promise<CloseAnswer> => request<CloseAnswer>("POST", path(threadId, "close")),
 };
 
-// The service enforces this close as a person route when it lands: `["POST", "/api/crew/lead/{thread_id}/close"]` joins
-// PERSON_ROUTES in web/src/api/personKey.ts in the same change as the service route. Until then the page sends no key for it.
+// The service enforces this close as a person route: `["POST", "/api/crew/lead/{thread_id}/close"]` is in PERSON_ROUTES in
+// web/src/api/personKey.ts, so the page sends the key for it.

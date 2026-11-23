@@ -7,7 +7,7 @@
 //! state-changing path is still refused, and a path under `/api/account/` that this module does
 //! not know is treated as changing state until someone lists it as a read.
 
-/// Every route under `/api/account` that changes state, as `(method, path)`. A `{id}` segment matches any one segment.
+/// Every route under `/api/account` that changes state, as `(method, path)`. A `{name}` segment matches any one segment.
 pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("DELETE", "/api/account/devices/{id}"),
     ("POST", "/api/account/approvals/{id}/approve"),
@@ -55,7 +55,8 @@ fn matches(pattern: &str, path: &str) -> bool {
         && pattern
             .iter()
             .zip(&path)
-            .all(|(want, got)| *want == "{id}" || want == got)
+            // A `{name}` segment is a placeholder: the route table spells the same parameter `{id}` and `{thread_id}`.
+            .all(|(want, got)| (want.starts_with('{') && want.ends_with('}')) || want == got)
 }
 
 /// `text` with the percent-encoding of letters, digits and `-._~` undone.
