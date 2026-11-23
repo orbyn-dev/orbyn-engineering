@@ -77,7 +77,7 @@ export function createCodeModeMock() {
       if (list && method === "GET") {
         const summaries = [...runs.values()].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at)).map((record) => ({
           run_id: record.run_id, status: record.status, started_at: record.started_at, ended_at: record.ended_at ?? null, calls: record.calls.length,
-          script_head: record.script ? record.script.slice(0, 120) : null, waited_ms: record.waited_ms ?? null,
+          script_head: record.script ? record.script.slice(0, 120) : null, waited_ms: record.waited_ms ?? null, error_kind: record.error?.kind ?? null,
         }));
         return { status: 200, body: { runs: summaries } };
       }
