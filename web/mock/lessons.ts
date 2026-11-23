@@ -99,6 +99,7 @@ const proposalSeeds = (): Lesson[] => [
     id: "les-navcleanup",
     source: "fingerprint",
     text: "Checks like a unit test failed on web/nav before: old returnTo links stopped redirecting after a helper was renamed.",
+    names_path: true,
     uses: 1,
     last_used_at: "2026-11-07T16:05:00Z",
     created_at: "2026-11-07T15:40:00Z",
@@ -107,6 +108,7 @@ const proposalSeeds = (): Lesson[] => [
     id: "les-loginlink",
     source: "fingerprint",
     text: "Checks like a unit test failed on web/nav before: a login link kept a returnTo from another host.",
+    names_path: true,
     created_at: "2026-11-07T16:30:00Z",
   }),
 ];
@@ -303,5 +305,7 @@ export function createLessonsMock() {
     rows = rows.map((one) => (lessonIds.includes(one.id) ? { ...one, skill: { name }, in_next_brief: false } : one));
   }
 
-  return { reset, handle, approveSkill };
+  const lessonNow = (id: string): Lesson | undefined => rows.find((one) => one.id === id);
+
+  return { reset, handle, approveSkill, lessonNow };
 }

@@ -6,7 +6,9 @@ import { forgetSkillAdded, markSkillAdded, takeSkillAdded } from "./marks";
 import { moment } from "./model";
 import { ProposalsSection } from "./ProposalsSection";
 import {
+  SKILL_TEXT,
   bodyOf,
+  lesson,
   lessons,
   proposal,
   stubFetch,
@@ -17,7 +19,7 @@ import {
 } from "./support";
 
 let calls: Call[] = [];
-let answers: { preview?: Answer; projects?: Answer; proposals?: Answer; lessons?: Answer; write?: (one: Write) => Answer };
+let answers: { preview?: Answer; projects?: Answer; proposals?: Answer; lessons?: Answer; write?: (one: Write) => Answer | Promise<Answer> };
 
 const notFound = { status: 404, body: { code: "not_found", message: "No such route." } } as const;
 const open = () => render(<ProposalsSection project="p-app" name="orbyn-engineering" />);
@@ -234,5 +236,58 @@ describe("the Skill proposals section of the Lessons page", () => {
     expect(writes(calls, "PATCH")).toHaveLength(0);
     expect(writes(calls, "PUT")).toHaveLength(0);
     expect(writes(calls, "DELETE")).toHaveLength(0);
+  });
+
+  it("says what is true when Approve is off although three active lessons remain", async () => {
+    const four = [...lessons().lessons, lesson({ id: "les-fourth", text: "A fourth repeated failure.", created_at: "2026-11-07T17:00:00Z" })];
+    answers.lessons = {
+      status: 200,
+      body: lessons({
+        counts: { active: 3, disabled: 1, hidden: 0 },
+        lessons: four.map((one) => (one.id === "les-fourth" ? { ...one, state: "disabled", in_next_brief: false } : one)),
+      }),
+    };
+    answers.proposals = {
+      status: 200,
+      body: { proposals: [proposal({ can_approve: false, lessons: ["les-returnto", "les-navcleanup", "les-loginlink", "les-fourth"] })] },
+    };
+    open();
+    const region = await card();
+    const note = within(region)
+      .getByText("Based on 3 active lessons now, 4 when it was proposed.", { selector: "b.cx-pplead" })
+      .parentElement as HTMLElement;
+    expect(note).not.toHaveTextContent(/needs 3/);
+    expect(note).not.toHaveTextContent(/no longer has three/);
+    expect(within(region).getByRole("button", { name: "Approve" })).toBeDisabled();
+  });
+
+  it("sends the proposal's new revision when the person retries after a refused write", async () => {
+    const reread = proposal({
+      rev: 2,
+      text: SKILL_TEXT.replace("Check where a redirect or returnTo link goes", "Check twice where a redirect goes"),
+    });
+    let first = true;
+    answers.write = ({ method }) => {
+      if (method !== "POST") return notFound;
+      if (first) {
+        first = false;
+        // Someone else changed the proposal: the service refuses the old revision, and a new read carries the new one.
+        answers.proposals = { status: 200, body: { proposals: [reread] } };
+        return { status: 409, body: { code: "stale", message: "This proposal changed since you opened it." } };
+      }
+      return { status: 200, body: proposal({ state: "approved", skill: { name: "redirect-checks" }, rev: 3 }) };
+    };
+    const user = userEvent.setup();
+    open();
+    await card();
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    const box = await dialog();
+    await user.click(within(box).getByRole("button", { name: "Add to skills-local" }));
+    expect(await within(box).findByRole("alert")).toHaveTextContent("This proposal changed since you opened it.");
+    // The card behind the dialog shows the text of the new read: the confirm now holds that one.
+    await screen.findByText(/Check twice where a redirect goes/, { selector: ".cx-ppdesc" });
+    await user.click(within(box).getByRole("button", { name: "Add to skills-local" }));
+    expect(await screen.findByText("Added to skills-local.")).toBeInTheDocument();
+    expect(writes(calls, "POST").map(({ init }) => bodyOf(init).rev)).toEqual([1, 2]);
   });
 });

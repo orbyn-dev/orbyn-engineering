@@ -173,7 +173,8 @@ it("draws one skill added from lessons on its own page", async () => {
     body: { proposals: [proposal({ state: "approved", skill: { name: "redirect-checks" }, rev: 2 })] },
   };
   render(<SkillsPage skill="redirect-checks" />);
-  expect(await screen.findByRole("heading", { name: "redirect-checks" })).toBeInTheDocument();
+  expect(await screen.findByText("Personal · Added from 3 lessons · All your projects")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "redirect-checks" })).toBeInTheDocument();
   expect(screen.getByText("Personal · Added from 3 lessons · All your projects")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "What it does" })).toBeInTheDocument();
   expect(screen.getByText("Check where a redirect or returnTo link goes before changing code that follows it.")).toBeInTheDocument();
@@ -183,14 +184,40 @@ it("draws one skill added from lessons on its own page", async () => {
   expect(screen.getByRole("button", { name: "Use in a new thread" })).toBeInTheDocument();
 });
 
-it("keeps a just-added skill's address while its read is still running", async () => {
+it("keeps a just-added skill's address while its read is still running, with a loading line, not a blank page", async () => {
   window.location.hash = "#/skills/redirect-checks";
   answers.proposals = "never";
-  const { container } = render(<SkillsPage skill="redirect-checks" />);
+  render(<SkillsPage skill="redirect-checks" />);
   await waitFor(() => expect(calls.some((url) => url.includes("/api/crew/skill-proposals?"))).toBe(true));
-  // The address is not rewritten and nothing is drawn: the proposals read has not said whether the skill exists.
+  // The address is not rewritten: the proposals read has not said whether the skill exists, and the page says it is waiting.
   expect(window.location.hash).toBe("#/skills/redirect-checks");
-  expect(container).toBeEmptyDOMElement();
+  expect(screen.getByRole("heading", { name: "redirect-checks" })).toBeInTheDocument();
+  expect(screen.getByRole("status", { name: "Loading skills" })).toBeInTheDocument();
+});
+
+it("keeps a bookmark to a skill when the Crew read failed, since a failed read proves nothing", async () => {
+  window.location.hash = "#/skills/redirect-checks";
+  answers.proposals = { status: 500, body: { code: "internal", message: "The service failed." } };
+  render(<SkillsPage skill="redirect-checks" />);
+  await waitFor(() => expect(calls.some((url) => url.includes("/api/crew/skill-proposals?"))).toBe(true));
+  // One turn of the event loop after the answer, so the read's failure has been drawn before the address is judged.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(window.location.hash).toBe("#/skills/redirect-checks");
+});
+
+it("rewrites a bookmark to a skill that does not exist once the Crew read answered without it", async () => {
+  window.location.hash = "#/skills/redirect-checks";
+  render(<SkillsPage skill="redirect-checks" />);
+  await waitFor(() => expect(window.location.hash).toBe("#/skills"));
+});
+
+it("draws the Crew groups when the built-in catalog is empty", async () => {
+  vi.spyOn(api, "skills").mockResolvedValue({ ...catalog, skills: [] });
+  answers.proposals = { status: 200, body: { proposals: [proposal()] } };
+  render(<SkillsPage />);
+  expect(await screen.findByRole("heading", { name: /^Proposed/ })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Proposed skill redirect-checks" })).toBeInTheDocument();
+  expect(screen.getByText("No skills in this workspace yet.")).toBeInTheDocument();
 });
 
 it("keeps the Crew groups off a filtered page", async () => {

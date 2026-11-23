@@ -42,8 +42,10 @@ describe("the skill-proposals mock", () => {
     expect(one?.state).toBe("approved");
     expect(one?.skill).toEqual({ name: "redirect-checks" });
     const lessons = api("crew-proposals-approved").handle("GET", "/api/crew/lessons?repo=p-app&filter=all").body as LessonList;
-    expect(lessons.lessons.every((lesson) => lesson.skill?.name === "redirect-checks")).toBe(true);
-    expect(lessons.lessons.every((lesson) => lesson.in_next_brief === false)).toBe(true);
+    const sources = lessons.lessons.filter((lesson) => one?.lessons.includes(lesson.id));
+    expect(sources.map((lesson) => lesson.id).sort()).toEqual(["les-loginlink", "les-navcleanup", "les-returnto"]);
+    expect(sources.every((lesson) => lesson.skill?.name === "redirect-checks")).toBe(true);
+    expect(sources.every((lesson) => lesson.in_next_brief === false)).toBe(true);
   });
 
   it("approves once, marking the lessons as a skill, then refuses a second answer", () => {
@@ -97,5 +99,43 @@ describe("the skill-proposals mock", () => {
 
   it("names the repository a read must carry", () => {
     expect(api("crew-proposals").handle("GET", "/api/crew/skill-proposals").status).toBe(400);
+  });
+
+  it("approves the very text it served, which the contract's 600 characters allow", () => {
+    const mock = api("crew-proposals");
+    const [one] = (mock.handle("GET", "/api/crew/skill-proposals?repo=p-app").body as SkillProposalList).proposals;
+    expect(one?.text.length).toBeLessThanOrEqual(600);
+    const answer = mock.handle("POST", "/api/crew/skill-proposals/prop-redirect-checks/approve", { text: one?.text, rev: 1 });
+    expect(answer.status).toBe(200);
+  });
+
+  it("refuses a text over the contract's 600 characters", () => {
+    const answer = api("crew-proposals").handle("POST", "/api/crew/skill-proposals/prop-redirect-checks/approve", {
+      text: "x".repeat(601),
+      rev: 1,
+    });
+    expect(answer.status).toBe(400);
+  });
+
+  it("answers 404 for a repository it does not know", () => {
+    expect(api("crew-proposals").handle("GET", "/api/crew/skill-proposals?repo=p-nowhere").status).toBe(404);
+  });
+
+  it("takes approve and dismiss as POST only", () => {
+    const mock = api("crew-proposals");
+    expect(mock.handle("GET", "/api/crew/skill-proposals/prop-redirect-checks/approve").status).toBe(405);
+    expect(mock.handle("PUT", "/api/crew/skill-proposals/prop-redirect-checks/dismiss", { rev: 1 }).status).toBe(405);
+    expect(proposalsOf("crew-proposals")[0]?.state).toBe("open");
+  });
+
+  it("works out can_approve from the lessons as they are now", () => {
+    const mock = api("crew-proposals");
+    const read = () => (mock.handle("GET", "/api/crew/skill-proposals?repo=p-app").body as SkillProposalList).proposals[0];
+    expect(read()?.can_approve).toBe(true);
+    const lesson = (mock.handle("GET", "/api/crew/lessons/les-loginlink?repo=p-app").body as { lesson: { rev: number } }).lesson;
+    mock.handle("POST", "/api/crew/lessons/les-loginlink/disable", { rev: lesson.rev });
+    expect(read()?.can_approve).toBe(false);
+    const refused = mock.handle("POST", "/api/crew/skill-proposals/prop-redirect-checks/approve", { text: "x", rev: 1 });
+    expect(refused.status).toBe(400);
   });
 });

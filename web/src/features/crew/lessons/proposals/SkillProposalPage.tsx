@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { NETWORK_ERROR } from "../../../../api/client";
 import { toFailure } from "../../../../lib/useAsync";
@@ -15,6 +15,7 @@ import {
   APPROVING_BANNER,
   DEFAULT_SELECTION_NOTE,
   REFUSED_FOOT,
+  UNKNOWN_FOOT,
   REVIEW_BANNER,
   REVIEW_FOOT,
   REVIEW_NOTE,
@@ -71,6 +72,14 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
   const proposals = useProposals(repo);
   const [text, setText] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // False once the person left this review: a write already sent finishes, but it no longer moves the page.
+  const here = useRef(true);
+  useEffect(() => {
+    here.current = true;
+    return () => {
+      here.current = false;
+    };
+  }, []);
   const [failure, setFailure] = useState<{ secret: boolean; message: string; code: string } | null>(null);
   const proposal = proposals.status === "ready" ? proposals.list.proposals.find((one) => one.id === id && one.state === "open") : undefined;
   // The person's own words start from the text the read carried, once it has answered.
@@ -117,15 +126,18 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
     try {
       const answer = await skillProposalsApi.approve(proposal.id, { text: padding, rev: proposal.rev });
       markSkillAdded(answer.skill?.name ?? title, answer.lessons.length);
-      navigate({ name: "settings", section: "crew", crewPage: "lessons", repo });
+      if (here.current) navigate({ name: "settings", section: "crew", crewPage: "lessons", repo });
     } catch (error) {
       const one = toFailure(error);
       // A proposal that moved on is read again by the list it came from: the person goes back to it, told why.
       if (one.code === "stale" || one.code === "not_open") {
         useUi.getState().pushToast(one.message);
-        navigate({ name: "settings", section: "crew", crewPage: "lessons", repo });
+        if (here.current) navigate({ name: "settings", section: "crew", crewPage: "lessons", repo });
         return;
       }
+      // The write may have reached the service before the connection failed: read the proposal again to see where it is.
+      if (one.code === NETWORK_ERROR) void proposals.reload();
+      if (!here.current) return;
       setBusy(false);
       setFailure({ secret: one.code === "secret_refused", message: one.message, code: one.code });
     }
@@ -227,7 +239,9 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
               Adding {title} to skills-local.
             </span>
           ) : failure ? (
-            <span className="cx-hint">{failure.secret ? REVIEW_FOOT : REFUSED_FOOT}</span>
+            <span className="cx-hint">
+              {failure.secret ? REVIEW_FOOT : failure.code === NETWORK_ERROR ? UNKNOWN_FOOT : REFUSED_FOOT}
+            </span>
           ) : proposal.can_approve ? (
             <span className="cx-hint">{REVIEW_FOOT}</span>
           ) : null}
@@ -287,9 +301,10 @@ function Lead({ colon, children }: { colon?: boolean; children: string }) {
   );
 }
 
-/** What a failed approval says: the service's own words, then the drawn tail that nothing was added. */
+/** What a failed approval says: the service's own words and, for a service refusal, that nothing was added. When the
+ *  service did not answer, the write may have gone through, so the outcome is said to be unknown. */
 function refusal(failure: { code: string; message: string }): string {
   return failure.code === NETWORK_ERROR
-    ? "Check that the Orbyn service is running. Nothing was added. Your text is still here and the proposal is still open."
+    ? "Check that the Orbyn service is running. Whether the skill was added is not known: the proposal is read again, and if it is still open your text is still here."
     : `${failure.message} Nothing was added. Your text is still here and the proposal is still open.`;
 }

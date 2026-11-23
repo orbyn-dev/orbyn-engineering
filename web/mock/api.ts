@@ -256,7 +256,11 @@ export function createMockApi(options: MockOptions = {}) {
   const capacityMock = createCapacityMock();
   const escapesMock = createEscapesMock();
   const lessonsMock = createLessonsMock();
-  const proposalsMock = createSkillProposalsMock({ onApproved: (name, lessons) => lessonsMock.approveSkill(name, lessons) });
+  const proposalsMock = createSkillProposalsMock({
+    onApproved: (name, lessons) => lessonsMock.approveSkill(name, lessons),
+    lessonNow: (id) => lessonsMock.lessonNow(id),
+    knownRepo: (repo) => projects.some((one) => one.id === repo),
+  });
   const backtestMock = createBacktestMock();
   const backgroundMock = createBackgroundMock();
   const reviewControlsMock = createReviewControlsMock();

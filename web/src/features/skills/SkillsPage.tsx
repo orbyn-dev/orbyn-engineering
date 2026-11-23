@@ -44,8 +44,9 @@ export function SkillsPage({ skill }: { skill?: string }) {
   const entries = result.data?.skills;
   const personal = crew.status === "ready" ? crew.added.find((entry) => entry.name === skill) : undefined;
   const known = entries?.some((entry) => entry.name === skill) || personal !== undefined;
-  // A skill added from lessons is known only once its read has answered: the address is not stale while that read runs.
-  const crewSettled = crew.status !== "loading";
+  // A skill added from lessons is known only once its read has answered with the list: while it runs, and when it failed,
+  // the address is not known to be stale, so a bookmark to a personal skill is never rewritten on a failed read.
+  const crewSettled = crew.status === "ready" || crew.status === "off";
   // A stale bookmark must not remain behind the catalog in the Back trail.
   useEffect(() => {
     if (!entries || skill === undefined || known || !crewSettled) return;
@@ -125,6 +126,21 @@ export function SkillsPage({ skill }: { skill?: string }) {
   if (skill !== undefined) {
     if (!selected) {
       if (personal) return <PersonalSkill skill={personal} heading={heading} />;
+      // The address may name a skill added from lessons whose read has not answered yet: wait, do not draw a blank page.
+      if (!crewSettled)
+        return (
+          <section className="skills-page" aria-label="Skill">
+            <header className="skills-heading">
+              <NarrowBack to={{ name: "skills" }} />
+              <h1 ref={heading} tabIndex={-1} data-page-title>
+                {skill}
+              </h1>
+            </header>
+            <div className="skills-loading" role="status" aria-label="Loading skills">
+              <div className="skills-placeholder" />
+            </div>
+          </section>
+        );
       return null;
     }
     const label = selected.category.trim();
@@ -156,7 +172,8 @@ export function SkillsPage({ skill }: { skill?: string }) {
     );
   }
 
-  // No workspace, or a library with nothing in it: the header stays, with no count, no filters and no grid.
+  // No workspace, or a library with nothing in it: the header stays, with no count, no filters and no grid. The Crew groups
+  // are not built-in skills, so they are still drawn above the line.
   if (entries.length === 0) {
     return (
       <section className="skills-page" aria-label="Skills">
@@ -165,8 +182,11 @@ export function SkillsPage({ skill }: { skill?: string }) {
           <h1 ref={heading} tabIndex={-1} data-page-title>
             Skills
           </h1>
+          {crewParts.length > 0 ? <span className="skills-subtitle">{crewParts.join(" · ")}</span> : null}
         </header>
         <div className="skills-content">
+          {crewReady && crew.proposed.length > 0 ? <ProposedGroup items={crew.proposed} /> : null}
+          {crewReady && crew.added.length > 0 ? <AddedGroup items={crew.added} /> : null}
           <div className="skills-empty">
             <Book size={16} aria-hidden />
             <p role="status">No skills in this workspace yet.</p>

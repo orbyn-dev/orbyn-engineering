@@ -8,7 +8,7 @@ import { SkillProposalPage } from "./SkillProposalPage";
 import { SKILL_TEXT, bodyOf, project, proposal, stubFetch, writes, type Answer, type Call, type Write } from "./support";
 
 let calls: Call[] = [];
-let answers: { preview?: Answer; projects?: Answer; proposals?: Answer; lessons?: Answer; write?: (one: Write) => Answer };
+let answers: { preview?: Answer; projects?: Answer; proposals?: Answer; lessons?: Answer; write?: (one: Write) => Answer | Promise<Answer> };
 
 const notFound = { status: 404, body: { code: "not_found", message: "No such route." } } as const;
 const open = () => render(<SkillProposalPage id="prop-redirect-checks" repo="p-app" />);
@@ -35,8 +35,10 @@ describe("the proposed skill's review page", () => {
   it("draws nothing when the service has no skill-proposal routes or the proposal is not open", async () => {
     answers.proposals = notFound;
     const { container } = open();
+    // The page first draws its loading state; only the answer takes it away, so wait for that, then assert it is empty.
     await waitFor(() => expect(calls.some(({ url }) => url.includes("/api/crew/skill-proposals?"))).toBe(true));
-    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("draws nothing when the address names a repository the person cannot see", async () => {
@@ -191,5 +193,36 @@ describe("the proposed skill's review page", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(window.location.hash).toBe("#/settings/crew/lessons?repo=p-app");
     expect(writes(calls, "POST")).toHaveLength(0);
+  });
+
+  it("says the outcome is unknown, not that nothing was added, when the connection failed mid-write", async () => {
+    answers.write = () => "network";
+    const user = userEvent.setup();
+    open();
+    await loaded();
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    expect(await screen.findByText("Can’t add the skill")).toBeInTheDocument();
+    expect(screen.getByText(/Whether the skill was added is not known/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing was added\./)).toBeNull();
+    expect(screen.queryByText(/Nothing was written\./)).toBeNull();
+    // The proposal is read again, to see where the write left it.
+    await waitFor(() => expect(calls.filter(({ url }) => url.includes("/api/crew/skill-proposals?"))).toHaveLength(2));
+  });
+
+  it("does not move the page when the person left while the write was still out", async () => {
+    let answer: (one: Answer) => void = () => undefined;
+    answers.write = () => new Promise<Answer>((resolve) => (answer = resolve));
+    const user = userEvent.setup();
+    const { unmount } = open();
+    await loaded();
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await screen.findByText("Adding the skill. It is not listed or used until the write has finished.");
+    // The person follows Back to Lessons, then opens another proposal's page; this review is gone.
+    unmount();
+    window.location.hash = "#/settings/crew/lessons/proposal?repo=p-app&id=prop-other";
+    answer({ status: 200, body: proposal({ state: "approved", skill: { name: "redirect-checks" }, rev: 2 }) });
+    // The write still counts: its mark is kept for the Lessons page, but the finished request does not navigate.
+    await waitFor(() => expect(takeSkillAdded()).toEqual({ name: "redirect-checks", lessons: 3 }));
+    expect(window.location.hash).toBe("#/settings/crew/lessons/proposal?repo=p-app&id=prop-other");
   });
 });

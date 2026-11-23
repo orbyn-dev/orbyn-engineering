@@ -66,12 +66,10 @@
 .cx-pptext.cx-invalid { box-shadow: inset 0 0 0 1px var(--color-danger); }
 .cx-pptext.cx-readonly { box-shadow: inset 0 0 0 1px var(--color-borderStrong); }
 .cx-ppnotes { display: flex; flex-direction: column; gap: 3px; color: var(--color-muted); font-size: 12px; line-height: 1.5; }
-.cx-ppnotes b { font-weight: 500; color: var(--color-text); }
 .cx-ppacts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
 .cx-ppacts .cx-ppdismiss { margin-left: auto; }
 .cx-ppfoot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cx-ppfoot .cx-hint { color: var(--color-muted); font-size: 12px; flex: 1; min-width: 200px; }
 .cx-ppfoot .cx-acts { margin-left: auto; display: flex; gap: 8px; }
-.cx-ppnames { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .cx-pplead { font-weight: 500; }
 .cx-ppfkv b.cx-ppbasedline { font-weight: 500; }

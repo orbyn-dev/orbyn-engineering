@@ -134,8 +134,14 @@ function SectionBody({
   onSetAdded(mark: { name: string; lessons: number } | null): void;
   onLessonsChanged?: () => void;
 }) {
-  const [confirming, setConfirming] = useState<{ kind: "approve" | "dismiss"; proposal: SkillProposal } | null>(null);
+  const [asked, setAsked] = useState<{ kind: "approve" | "dismiss"; id: string } | null>(null);
   const open = openProposals(proposals.list.proposals);
+  // The confirm always holds the proposal as the last read has it, so a retry after a refused write carries the new `rev`;
+  // a proposal that is no longer open closes the confirm.
+  const live = asked ? open.find((one) => one.id === asked.id) : undefined;
+  const confirming = asked && live ? { kind: asked.kind, proposal: live } : null;
+  const setConfirming = (next: { kind: "approve" | "dismiss"; proposal: SkillProposal } | null) =>
+    setAsked(next ? { kind: next.kind, id: next.proposal.id } : null);
   const approve = async (proposal: SkillProposal) => {
     try {
       const answer = await skillProposalsApi.approve(proposal.id, { text: proposal.text, rev: proposal.rev });

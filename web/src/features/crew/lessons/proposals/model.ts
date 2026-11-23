@@ -48,6 +48,8 @@ export const STALE_APPROVE_OFF =
   "Approve is off: a lesson it was based on was deleted or turned off. You can still read the text; go back to dismiss it.";
 /** The refused-write frame's sentence: that frame offers Try again, so it is drawn on a failed write and not on the scan refusal. */
 export const REFUSED_FOOT = "Nothing was written. Approve or Try again sends the same text once more.";
+/** The footer when the service did not answer: the write may or may not have been made, so "nothing was written" is not said. */
+export const UNKNOWN_FOOT = "It is not known whether the skill was written. Try again sends the same text once more if the proposal is still open.";
 
 /** The dismiss confirm's questions. */
 export const DISMISS_NOTE = "Nothing was added to skills-local. The lessons it was based on stay as they are.";
@@ -128,7 +130,11 @@ export function basedOnWords(proposal: SkillProposal, lessons: readonly Lesson[]
 /** The amber line of a proposal whose pattern lost a lesson: the count now, and that Approve is off. */
 export function staleWords(proposal: SkillProposal, lessons: readonly Lesson[]): string {
   const active = activeLessons(proposal, lessons);
-  return `Based on ${active} active ${lessonsOnly(active)} now: needs 3. A lesson it was based on was deleted or turned off, so the pattern no longer has three active ones. You can still read the text or dismiss it; Approve is off.`;
+  const rest = "You can still read the text or dismiss it; Approve is off.";
+  // The contract turns Approve off when any source lesson is gone, so three or more can remain: say what is true then.
+  if (active >= 3)
+    return `Based on ${active} active ${lessonsOnly(active)} now, ${proposal.lessons.length} when it was proposed. A lesson it was based on was deleted or turned off, so the text no longer matches its lessons. ${rest}`;
+  return `Based on ${active} active ${lessonsOnly(active)} now: needs 3. A lesson it was based on was deleted or turned off, so the pattern no longer has three active ones. ${rest}`;
 }
 
 /** The name a proposal's text gives, falling back to the row's own word. */
