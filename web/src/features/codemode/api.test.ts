@@ -27,7 +27,7 @@ describe("the Code Mode client on the service's own routes", () => {
     mock.codeMode.putRun(codeRun({ run_id: "run_new", status: "running", started_at: "2026-11-21T11:00:00.000Z", script: "x".repeat(300) }));
     const runs = await listCodeRuns("t-1");
     expect(runs?.map((run) => run.run_id)).toEqual(["run_new", "run_old"]);
-    expect(runs?.[0]).toEqual({ run_id: "run_new", status: "running", started_at: "2026-11-21T11:00:00.000Z", ended_at: null, calls: 0, script_head: "x".repeat(120), waited_ms: null });
+    expect(runs?.[0]).toEqual({ run_id: "run_new", status: "running", started_at: "2026-11-21T11:00:00.000Z", ended_at: null, calls: 0, script_head: "x".repeat(120), waited_ms: null, error_kind: null });
     expect(runs?.[1]).toMatchObject({ status: "completed", ended_at: "2026-11-21T10:00:03.000Z", calls: 1, script_head: "return 1;" });
     expect(calls()).toEqual(["GET /api/threads/t-1/code-runs"]);
   });
