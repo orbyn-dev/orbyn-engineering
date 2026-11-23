@@ -108,7 +108,8 @@ impl Store {
 
     /// The tasks whose last cancel attempt could not stop the worker, newest first, with the project of their lead thread and
     /// when that attempt failed. The try is the last `crew.task.cancel_failed` row of the task, with no `crew.task.cancelled` row
-    /// after it; a task in a final state is never one, since a failed attempt never moved it. Reads the audit rows the cancel
+    /// after it. A task in a final state is not one: a failed first stop leaves the state alone, but a failed second stop leaves a
+    /// task already `cancelled` with a live worker, which this read does not show (#1400). Reads the audit rows the cancel
     /// already writes and adds no storage.
     pub fn crew_could_not_stop(&self) -> Result<Vec<CouldNotStopTask>> {
         let conn = self.reader();
