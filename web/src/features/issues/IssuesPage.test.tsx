@@ -232,6 +232,7 @@ it("drops a page that lands after the filter changed: the latest request wins", 
   await user.click(loadMore()!);
   await user.click(screen.getByRole("button", { name: /^Closed/ }));
   await waitFor(() => expect(screen.getByText("Closed as not planned")).toBeVisible());
+  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
   await new Promise((resolve) => setTimeout(resolve, 120));
   expect(rows()).toHaveLength(2);
   expect(loadMore()).toBeNull();

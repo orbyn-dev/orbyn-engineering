@@ -26,6 +26,7 @@ it("draws nothing, and asks only for the trackers, while the service answers 404
   const fetching = vi.fn(async (_url: string) => new Response(JSON.stringify({ code: "not_found", message: "Not found." }), { status: 404 }));
   vi.stubGlobal("fetch", fetching);
   render(<IssueTrackersSettings />);
+  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
   expect(screen.queryByText("Issue trackers")).toBeNull();
   expect(fetching.mock.calls.map(([url]) => new URL(String(url), "http://x").pathname)).toEqual(["/api/issues/trackers"]);

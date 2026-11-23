@@ -43,6 +43,7 @@ it("reads Not reported on the Limits row for OpenCode, Claude and a custom engin
 
 it("leaves Codex to its own window: no Not reported while it has none", async () => {
   render(<LimitsRow threadId="t-1" engine="codex" />);
+  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(screen.queryByText("Not reported")).toBeNull();
 });
@@ -59,6 +60,7 @@ it("reads again on remount instead of showing another account's five-minute prom
   const stop = startDataRefresh();
   try {
     act(() => { dataChanged("limits"); });
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((done) => setTimeout(done, COALESCE_MS + 50));
   } finally { stop(); }
   render(<LimitsRow threadId="account-b" engine="codex" />);

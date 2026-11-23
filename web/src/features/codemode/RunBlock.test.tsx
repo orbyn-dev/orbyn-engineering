@@ -373,6 +373,7 @@ describe("a run id the model chose", () => {
     const row = await open();
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/api/code-runs/"))).toBe(true));
     expect(row).toHaveClass("s-run");
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(document.querySelector("button.tcr")).not.toBeNull();
   });
