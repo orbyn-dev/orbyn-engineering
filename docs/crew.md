@@ -366,7 +366,8 @@ retries with the reason. The same failure twice means one change of approach, an
     counts at least one turn.
   - The worker runs in the lead's checkout through `delegate`. A worktree of its own is not created yet.
   - **Check kinds this version runs (#437):** besides the command kinds, `file_scope` and `diff_size`,
-    `schema`, `secret_scan` and `repo_required` run in the checkout and record their Evidence:
+    `schema`, `secret_scan` and `repo_required` run in the checkout, and `http_probe` sends one
+    request, each recording its Evidence:
     - `schema`: `{schema, instance}` name two files in the checkout. The instance must be JSON that validates
       against the schema (draft 2020-12). A mismatch, or an instance that is not JSON, is a finding (fail) that
       names the instance locations and never the value; a missing or unreadable file, a schema that is not JSON,
@@ -383,9 +384,18 @@ retries with the reason. The same failure twice means one change of approach, an
       error. `name` and `note` are labels for the log. No declared
       checks is a pass with that fact in the log; a failing check is a finding that names the check, and a check
       that cannot run is an error. `when` is not read, as the merge queue does not read it.
-  - **Check kinds this version does not run** (`http_probe`, `preview`, `visual_compare`, `manual`,
+    - `http_probe`: `{url, expect_status}`. `url` is an `http://` URL on `127.0.0.1`, `localhost` or
+      `[::1]` and `expect_status` is 100 to 599, so the probe never leaves the machine. One GET: the
+      expected status is a pass, another status is a finding that names the answer observed, and a
+      request that got no answer (refused, timed out, a broken connection) is an error, never a pass
+      over what it did not see. No redirect is followed, so the status compared is the one that URL
+      answered, and the request is sent once, with no retry. It has no timeout of its own: it runs
+      inside the budget every check gets, and a value shorter than that is the key author's
+      decision. Nothing here starts the service a `url` names; the key's author does, before
+      verification.
+  - **Check kinds this version does not run** (`preview`, `visual_compare`, `manual`,
     `screenshot_only`, `accessibility_audit`, `performance_budget`, `licence_scan`) report `skipped` and are listed as
-    not verified. `http_probe` and the page kinds need a live loopback page or the app's browser; `manual` needs a
+    not verified. The page kinds need the app's browser; `manual` needs a
     person's Gate, which no route writes yet; `licence_scan` needs a licence policy and an offline source of
     dependency licences. A key with nothing it can run goes to `needs_person`.
 
@@ -1073,36 +1083,44 @@ background crew is per device and is not shared through git. A repository's own 
 - **Runs and state:** a run is `running`, `stopped` (with a reason: `budget`, `repeated_failure`, `engine_error`, `disabled`) or
   `needs_review`, with turns and minutes spent against the budget it was given. At most one run per crew is running, and a run opens only for
   an enabled crew. A crew's state, first match wins: `running` while a run is
-  running; `needs_review` when its newest run finished with work to review; `stopped` when its newest run stopped for the budget or a
+  running; `needs_review` while its newest run waits for the person's review; `stopped` when its newest run stopped for the budget or a
   failure (`budget`, `repeated_failure`, `engine_error`), even with older reviews waiting; `needs_review` when the crew has no run or its
-  newest run was stopped as `disabled` while an older review still waits; otherwise `idle` (never ran, or the newest run was stopped by the
-  person's own switch and nothing waits). Spending to either number of the budget stops the run with the reason `budget` and puts it in
-  the review queue (`review_waiting`). Turning a crew off stops its run with the reason `disabled`, logged as the person. **Delete is
-  refused only while a run is in progress**; a crew with waiting reviews can be deleted (nothing clears a waiting review yet), its runs
+  newest run was stopped as `disabled` while an older review still waits; otherwise `idle` (never ran, the newest run was stopped by the
+  person's own switch and nothing waits, or the person acknowledged the newest run's review). Spending to either number of the budget
+  stops the run with the reason `budget` and puts it in the review queue (`review_waiting`). Turning a crew off stops its run with the reason `disabled`, logged as the person. **Delete is
+  refused only while a run is in progress**; a crew with waiting reviews can be deleted (a waiting review is settled by the person's acknowledgement), its runs
   and waiting reviews are removed with it, and the audit row records `runs_removed` and `reviews_waiting_removed`.
-- **Audit:** create, update, enable, disable, delete, and each run's start, spend, stop and review write an `audit_events` row in the same
-  transaction as the change (rule 6), before the row it describes changes (a spend that reaches the budget writes the spend row, then the
-  stop row, then updates the run once); a failed audit row rolls the change back, and the rows stay after a crew is deleted. A person's
-  disable, and the stop it causes, are logged with the person as actor and source; a run's start, spend and other ends as `crew`.
+- **Audit:** create, update, enable, disable, delete, and each run's start, spend, stop, review and acknowledgement write an `audit_events`
+  row in the same transaction as the change (rule 6), before the row it describes changes (a spend that reaches the budget writes the spend
+  row, then the stop row, then updates the run once; an acknowledgement writes its row with the run, its state, its stop reason and the
+  reason the review kept, then clears the wait); a failed audit row rolls the change back, and the rows stay after a crew is deleted. A
+  person's disable, the stop it causes and an acknowledgement are logged with the person as actor and source; a run's start, spend and
+  other ends as `crew`.
 - **Routes**, all under `/api/crew/background`, behind the Preview flag like every Crew route (404 with it off, 401 without the token, writes
   refused for a remote viewer and listed in `crew::changes` so N1 refuses an agent's request): reads `GET /` (`project`, `limit`, `offset`),
   `GET /{id}`, `GET /{id}/runs`; writes, local only (a Person route: a remote viewer gets 403 `local_only`, an agent is refused by N1),
   `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`, and `/{id}/run-now`, which starts one run of an enabled
   crew by hand (the `manual` event: `crew_background_run_now`, one run and its lead thread, as a Low Crew-started task that the daily
-  budget and review capacity may refuse; a refusal stores no run). There is no route that spends, merges or reverts.
+  budget and review capacity may refuse; a refusal stores no run), and `/runs/{id}/acknowledge`, which settles one waiting review
+  (`background_acknowledge_review`: one write clears `review_waiting` and returns the run with its reason, state, stop reason and spend
+  unchanged; a run that is not waiting is refused plainly). There is no route that spends, merges or reverts.
 - **In the Review queue.** A run that stops without a merge waits on its own run row (`needs_review`, or `stopped` for the budget or a
   failure), and `GET /api/crew/autopilot/review` lists it beside the merges as `background_runs`, oldest first, in the same `limit`/`offset`
   window as the merges, with `background_total` counting all of them (`next_offset` is set while either list has more): the run's state,
   stop reason, plain reason, spend and budget. It carries no merge, commit or risk, because it has none, and it is not listed while running or
-  when the person's own switch stopped it. **The person's answer to one is not built:** no route settles or dismisses a waiting background
-  review, so that row is read-only.
+  when the person's own switch stopped it. **The person's answer to one is acknowledge-only (owner ruling, 2026-11-20):**
+  `POST /api/crew/background/runs/{id}/acknowledge` clears the run's wait and returns it with its reason, state, stop reason and spend
+  unchanged, so the run keeps why it waited for the record; the crew's `reviews_waiting` drops, the same crew may run again, and the run
+  leaves the queue (`background_total` no longer counts it). It changes nothing else and a run that is not waiting is refused plainly. A
+  run that stopped for a failure still appears (it has nothing to review and nothing to acknowledge), and the Review screen itself is not
+  in the beta.
 
 What is not built: **a run starts** when a person presses Run now (`POST /api/crew/background/{id}/run-now`, the `manual` event of
 [the engine start](crew/background-engine-start.md)), when a listener fires (next paragraph) or when a test calls the run functions. A start creates one Crew
-worker task for the run; the lead thread of the run runs no engine and takes no message. Turning the crew off cancels that task. The person's
-answer to a waiting run, and a background crew with merge authority, wait for later work (every merge of a background run waits for a
-person). Known limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone); crews are per
-device; a template's prompt and checks are code-owned and defined only for the four templates a run can start (`background_start.rs`);
+worker task for the run; the lead thread of the run runs no engine and takes no message. Turning the crew off cancels that task. A
+background crew with merge authority waits for later work (every merge of a background run waits for a person); the person's answer is
+the acknowledgement above. Known limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone);
+crews are per device; a template's prompt and checks are code-owned and defined only for the four templates a run can start (`background_start.rs`);
 any other template is refused.
 
 **As built (slice 4h, listeners, migration 59):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
@@ -1470,7 +1488,9 @@ elapsed time; usage; worktree and branch; file lease; unread messages.
 | Needs you inbox | Questions, approvals, reviews and conflicting board writes, each with the one action it needs. Order: risk first, then the items that block nothing (a demotion) last within a risk tier, then oldest first. An **Autonomy** row appears when the circuit breaker demotes an area from Full to On; it blocks nothing, shows the trip's record, and offers Review, Override… and Dismiss (Dismiss is remembered per browser and repository, and returns only after a new trip). It reads the first Git repository only; with several repositories the inbox says so |
 | Task report | What changed (the diff), what was verified, what was not, risks, cost, and a timeline the person can replay |
 
-**As built (slice 5, the wide Map tree and the swim lanes, Crew Designs' `crew-map` and `lanes-main`):** `web/src/features/crew/map/MapView.tsx` draws the wide tree of frame `crew-map` from `GET /api/crew/flow/map`: the lead in the first column, every worker whose node names the lead as `started_by` under it with a solid line, every `FlowEdge` between members as a dashed line labelled with its kind and its newest delivery (never a message's text), and each worker's subagent report beside it (reported engines say "Subagents reported"; ACP and the rest say "Subagents not reported", "Not an empty tree: not reported."). A node shows the engine, model and effort, the task's state (the lead says Lead), Quiet or May be stuck, the engine's registry word when it is not Ready, the brief's outcome, elapsed time, the lease and unread; the details also say when it was updated. Selecting a node opens the details beside the tree (under it below 640 px) exactly as `crew-map-list` draws them. `web/src/features/crew/map/LanesView.tsx` draws the swim lanes of frame `lanes-main` from the map and message reads: one lane per member, the lead first, with the engine and model; the time axis is taken from the messages' own times (the 10-minute mark at or before the earliest and at or after the newest, widening the step rather than crowding it); every message is an arrow from its sender's lane to its receiver's, labelled with how it arrived and its fixed kind, and a message to everyone is drawn to each other lane and labelled once; each worker's brief outcome is a bar over its run. The shared board's facts stay beside them and the beta's message list stays under them. What no read carries is a Planned chip naming the missing read, never a value: per-worker tokens and a worker's branch on the tree ("no Map route reports per-worker tokens yet", "… a branch"), the subagent rows ("no Map route names a worker's subagents"), and a lane's level ("no route reports a lane's level"). The design frames `crew-map` and `lanes-main` still carry the designer's "Planned" note for the beta's nested list and message list; the next design version should drop it, since the app now builds both from the reads. The Flow task's artifacts, artifact diff and check results stay undrawn: there is no artifacts route (the checks' names and results, a diff pinned to a commit, the evidence rows), so the frames `flow-artifacts`, `flow-artifact-diff`, `flow-artifact-pruned`, `flow-check-failed` and `flow-gates` stay samples and the live Flow has no artifacts list, diff or checks bar. A reviewer lane has no page of its own either: `lane-anatomy`, `lane-finding`, `lane-finding-states`, `lane-locked`, `lane-rules`, `lane-security`, `lane-add` and `lane-after-pass` need a per-lane read and route (what the lane was given: the diff and the check results; its findings' evidence, repro and confirmation) that no route serves, so a lane stays a row of the Flow zoom with its tier, the commit it read, the same-engine flag and its findings under it.
+**As built (slice 5, the wide Map tree and the swim lanes, Crew Designs' `crew-map` and `lanes-main`):** `web/src/features/crew/map/MapView.tsx` draws the wide tree of frame `crew-map` from `GET /api/crew/flow/map`: the lead in the first column, every worker whose node names the lead as `started_by` under it with a solid line, every `FlowEdge` between members as a dashed line labelled with its kind and its newest delivery (never a message's text), and each worker's subagent report beside it (reported engines say "Subagents reported"; ACP and the rest say "Subagents not reported", "Not an empty tree: not reported."). A node shows the engine, model and effort, the task's state (the lead says Lead), Quiet or May be stuck, the engine's registry word when it is not Ready, the brief's outcome, elapsed time, the lease and unread; the details also say when it was updated. Selecting a node opens the details beside the tree (under it below 640 px) exactly as `crew-map-list` draws them. `web/src/features/crew/map/LanesView.tsx` draws the swim lanes of frame `lanes-main` from the map and message reads: one lane per member, the lead first, with the engine and model; the time axis is taken from the messages' own times (the 10-minute mark at or before the earliest and at or after the newest, widening the step rather than crowding it); every message is an arrow from its sender's lane to its receiver's, labelled with how it arrived and its fixed kind, and a message to everyone is drawn to each other lane and labelled once; each worker's brief outcome is a bar over its run. The shared board's facts stay beside them and the beta's message list stays under them. What no read carries is a Planned chip naming the missing read, never a value: per-worker tokens and a worker's branch on the tree ("no Map route reports per-worker tokens yet", "… a branch"), the subagent rows ("no Map route names a worker's subagents"), and a lane's level ("no route reports a lane's level"). The design frames `crew-map` and `lanes-main` still carry the designer's "Planned" note for the beta's nested list and message list; the next design version should drop it, since the app now builds both from the reads. The Flow task's artifacts, artifact diff and check results stay undrawn: there is no artifacts route (the checks' names and results, a diff pinned to a commit, the evidence rows), so the frames `flow-artifacts`, `flow-artifact-diff`, `flow-artifact-pruned`, `flow-check-failed` and `flow-gates` stay samples and the live Flow has no artifacts list, diff or checks bar.
+
+A reviewer lane has a read of its own — `GET /api/crew/flow/tasks/{id}/lanes?lane=<lane>`, `FlowLaneDetail` — but no page yet: it serves the row the zoom shows, what the lane was given (the work's purpose, the commit it read, the checks its brief named and how many of them passed) and the findings the lane filed in every round, each with the reviewer's own evidence. The pages `lane-anatomy`, `lane-finding`, `lane-finding-states`, `lane-locked`, `lane-rules`, `lane-security`, `lane-add` and `lane-after-pass` stay Planned until they are drawn, and a lane stays a row of the Flow zoom with its tier, the commit it read, the same-engine flag and its findings under it. Three parts of those pages are still not served: the diff the lane read (no commit-pinned diff read exists), and a finding's repro and confirmation (the lead's repro check is key material under H1, and a check's name and result need the artifacts route), so `lane-finding` stays Planned.
 
 **UI decisions** (2026-11-11, Designer part 1, orbyn-designs pull request #129, frames `crew-*`):
 
@@ -1745,7 +1765,7 @@ The person's "Re-run checks" for a Crew task (Preview). Backend only: the card t
   field that says "a person's re-run", which this PR does not change. So a re-run's record is its two audit rows, counts only; its
   logs are not kept. A later Flow route that shows a re-run needs its own table or a protocol field.
 - **What runs.** The key's checks only, in the task's own checkout: the command kinds, `file_scope`, `diff_size`,
-  `schema`, `secret_scan` and `repo_required`; any other kind is `skipped`, as in a live verification. A `repo_required`
+  `schema`, `secret_scan`, `repo_required` and `http_probe`; any other kind is `skipped`, as in a live verification. A `repo_required`
   check runs the repository's own checks (`.orbyn/crew.json`) unscreened, as the merge queue runs them; the re-run does not
   otherwise touch the merge queue. A key with protected paths is compared with the record taken when the task started, so a checkout whose protected
   files changed runs nothing, as a live verification does (N7, H9).

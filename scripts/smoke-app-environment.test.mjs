@@ -12,6 +12,23 @@ test("packaged smoke disables host provider discovery even with an inherited sel
   assert.equal(environment.ORBYN_OFFLINE, "1");
 });
 
+for (const [platform, sandbox] of [
+  ["darwin", "/synthetic/smoke"],
+  ["win32", "C:\\synthetic\\smoke"],
+]) {
+  test(`${platform} declares the smoke launch and the sandbox that owns its profile`, () => {
+    const { environment, directories } = smokeAppEnvironment({
+      PATH: "/synthetic/host-tools", HOME: "/synthetic/owner", ORBYN_LAUNCH_PROFILE: "personal",
+    }, sandbox, platform);
+    assert.equal(environment.ORBYN_LAUNCH_PROFILE, "smoke");
+    assert.equal(environment.ORBYN_SMOKE_SANDBOX, sandbox);
+    // The declaration itself is no directory to create before launch.
+    assert.equal(directories.includes(sandbox), false);
+    assert.equal(Object.keys(environment).filter((key) => key === "ORBYN_LAUNCH_PROFILE").length, 1);
+    assert.equal(Object.hasOwn(environment, "orbyn_launch_profile"), false);
+  });
+}
+
 for (const [platform, sandbox, paths] of [
   ["darwin", "/synthetic/smoke", posix],
   ["win32", "C:\\synthetic\\smoke", win32],

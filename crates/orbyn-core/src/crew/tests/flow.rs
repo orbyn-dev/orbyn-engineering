@@ -7,7 +7,7 @@ use orbyn_contracts::{
 };
 use serde_json::{Value, json};
 
-use super::harness::{Turn, brief, key, world};
+use super::harness::{KEY_MARKER, Turn, brief, key, world};
 use super::review_support::{arc, built, crew, finding, reviewed};
 use crate::crew::Page;
 use crate::store::FindingRepro;
@@ -73,11 +73,20 @@ fn everything(w: &super::harness::World, crew_id: &str, task: &str) -> String {
         .unwrap();
     let detail = w.core.crew_flow_task(task).unwrap();
     let crews = w.core.crew_flow_crews(page()).unwrap();
+    // Each lane on its own, named as the zoom shows it.
+    let lanes: Vec<String> = detail
+        .lanes
+        .iter()
+        .map(|lane| {
+            serde_json::to_string(&w.core.crew_flow_lane(task, &lane.lane).unwrap()).unwrap()
+        })
+        .collect();
     format!(
-        "{} {} {}",
+        "{} {} {} {}",
         serde_json::to_string(&list).unwrap(),
         serde_json::to_string(&detail).unwrap(),
-        serde_json::to_string(&crews).unwrap()
+        serde_json::to_string(&crews).unwrap(),
+        lanes.join(" ")
     )
 }
 
@@ -197,6 +206,50 @@ async fn the_cells_follow_a_task_through_its_review_and_the_reads_change_nothing
     // A reviewer's task is not a task to zoom into.
     assert!(w.core.crew_flow_task(&lanes[0]).is_err());
 
+    // A lane is read on its own: the row the zoom shows, what it was given, and the finding it filed with the
+    // reviewer's own evidence.
+    let one = w.core.crew_flow_lane(&subject, "correctness").unwrap();
+    assert_eq!(one.task, subject);
+    assert_eq!(one.crew, crew_id);
+    assert_eq!(
+        (one.lane.lane.as_str(), one.lane.group.as_str()),
+        ("correctness", "code")
+    );
+    assert_eq!(one.lane.findings, 1);
+    assert_eq!(one.lane.confirmed, 0, "the finding is unchecked");
+    assert!(one.lane.commit.is_some(), "the commit the lane read");
+    assert!(one.lane.task != subject, "the lane's own task is named");
+    assert_eq!(one.given.purpose, "Add a parse_duration function.");
+    assert!(one.given.checks_of.is_some_and(|of| of >= 1));
+    assert!(one.given.checks_passed.is_some());
+    assert_eq!(one.given.commit, one.lane.commit);
+    assert_eq!(one.findings.len(), 1);
+    let filed = &one.findings[0];
+    assert_eq!(
+        (filed.lane.as_str(), filed.path.as_str(), filed.line),
+        ("correctness", "src/lib.txt", 1)
+    );
+    assert_eq!(filed.claim, "It wraps on a large value.");
+    assert_eq!(filed.evidence, "Reading the code shows it.");
+    assert_eq!(filed.severity, "high");
+    assert!(!one.truncated);
+    // The security lane is read for itself and does not carry the code lane's finding.
+    let security = w.core.crew_flow_lane(&subject, "security").unwrap();
+    assert_eq!(security.lane.group, "security");
+    assert!(security.findings.iter().all(|f| f.lane == "security"));
+    // A lane that did not run, a reviewer's own task and a name that is not a lane are refused.
+    for (task, lane) in [
+        (&subject, "nope"),
+        (&lanes[0], "correctness"),
+        (&subject, "Correctness"),
+        (&subject, "a lane"),
+    ] {
+        assert!(
+            w.core.crew_flow_lane(task, lane).is_err(),
+            "{lane} answered for {task}"
+        );
+    }
+
     // Filters: nothing needs the person, so that filter is empty and the counts still say all.
     let none = w
         .core
@@ -277,6 +330,76 @@ async fn the_answer_key_and_a_checks_text_are_never_in_a_read() {
     if let Some(path) = worktree {
         assert!(!text.contains(&path), "a read holds a path on this machine");
     }
+}
+
+#[tokio::test]
+async fn a_findings_evidence_is_withheld_and_cut_and_keeps_a_path() {
+    // A key's command is a needle: longer than the eight characters `withhold` matches, it is replaced wherever it is
+    // quoted. The absolute path is not: nothing strips one from a text a Flow screen reads, here or in a claim.
+    let command = format!("echo {KEY_MARKER}");
+    let path = "/home/someone/repo/src/lib.rs";
+    let tail = "words ".repeat(200).trim_end().to_owned();
+    let written = format!("The command {command} ran on {path}. {tail}");
+    let mut draft = finding("src/lib.txt", 1, "It wraps on a large value.");
+    draft["evidence"] = json!(written);
+    let w = crew(arc(move |n, root| match n {
+        0 => built(root),
+        _ => reviewed(vec![draft.clone()]),
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let crew_id = w.task(&subject).crew_id;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    w.until_state(&lanes[0], "passed").await;
+
+    // What the reviewer wrote is stored whole; only a read scrubs it.
+    let stored = w.core.store.crew_findings_of(&subject).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].finding.evidence.as_str(), written);
+    let key_id = w
+        .core
+        .store
+        .crew_answer_key(&subject)
+        .unwrap()
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+
+    let detail = w.core.crew_flow_task(&subject).unwrap();
+    let evidence = &detail.findings[0].evidence;
+    assert!(
+        !evidence.contains(&command),
+        "the key's command reached a read: {evidence}"
+    );
+    assert!(
+        evidence.contains("[check]"),
+        "it is withheld, not dropped: {evidence}"
+    );
+    assert!(
+        evidence.contains(path),
+        "an absolute path is not stripped: {evidence}"
+    );
+    assert!(
+        evidence.chars().count() <= 300,
+        "the text is cut at 300: {}",
+        evidence.chars().count()
+    );
+    assert_ne!(
+        evidence, "Withheld.",
+        "withholding happens before the leak check"
+    );
+    // The lane read serves the same scrubbed text, and never the key's id.
+    let one = w.core.crew_flow_lane(&subject, "correctness").unwrap();
+    assert_eq!(&one.findings[0].evidence, evidence);
+    assert!(!one.findings[0].evidence.contains(&key_id));
+    // The crew's whole read surface is held to it, the lane read included.
+    let everything = everything(&w, &crew_id, &subject);
+    assert!(
+        !everything.contains(KEY_MARKER),
+        "the key's command reached a read"
+    );
+    assert!(!everything.contains(&key_id), "the key's id reached a read");
 }
 
 #[tokio::test]
