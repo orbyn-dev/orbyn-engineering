@@ -13,7 +13,7 @@ beforeEach(() => useWorkspace.getState().putThread(thread));
 afterEach(() => vi.restoreAllMocks());
 it("edits a user message in the same thread without offering another fork action", async () => {
   const user = userEvent.setup();
-  const rewind = vi.spyOn(api, "rewindThread").mockResolvedValue(undefined);
+  const rewind = vi.spyOn(api, "rewindThread").mockResolvedValue({ native: false, mode: "handoff" });
   vi.spyOn(api, "thread").mockResolvedValue(thread);
   const fork = vi.spyOn(api, "forkBefore");
   render(<ThreadScope value="t"><MessageActions text="Original prompt" runId="r" role="user" /></ThreadScope>);
