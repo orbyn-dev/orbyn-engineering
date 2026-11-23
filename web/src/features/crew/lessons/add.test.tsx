@@ -1,16 +1,19 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useWorkspace } from "../../../product/state/workspace";
+import { takeAdded } from "./saved";
 import { LessonAddPage } from "./LessonAddPage";
 import { lesson, project, stubFetch, writes, type Answer, type Call, type Write } from "./support";
 
 let calls: Call[] = [];
-let answers: { preview?: Answer; projects?: Answer; list?: Answer; write?: (one: Write) => Answer };
+let answers: { preview?: Answer; projects?: Answer; list?: Answer; write?: (one: Write) => Answer | Promise<Answer> };
 
 const notFound = { status: 404, body: { code: "not_found", message: "No such route." } } as const;
 
 beforeEach(() => {
+  window.location.hash = "";
+  takeAdded("les-new");
   calls = [];
   answers = {
     preview: { status: 200, body: { enabled: true } },
@@ -76,6 +79,51 @@ describe("adding a lesson by hand", () => {
       repo: "p-app",
       text: "A new sentence.",
     });
+  });
+
+  it("has one tab stop for the scope, and the arrow keys change it", async () => {
+    const user = userEvent.setup();
+    open();
+    await user.click(await field());
+    await user.tab();
+    expect(screen.getByRole("radio", { name: "This repository" })).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("radio", { name: "All repositories" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "All repositories" })).toHaveFocus();
+    await user.keyboard("{ArrowUp}");
+    expect(screen.getByRole("radio", { name: "This repository" })).toBeChecked();
+    await user.tab();
+    expect(document.activeElement).not.toBeNull();
+    expect(screen.queryAllByRole("radio").includes(document.activeElement as HTMLElement)).toBe(false);
+  });
+
+  it("finishes a save the person left the page during, without opening the card or marking it added", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    answers.write = async () => {
+      await gate;
+      return { status: 201, body: lesson({ id: "les-new", source: "person", rev: 1 }) };
+    };
+    const inner = fetch;
+    let late: Response | undefined;
+    vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+      const answer = await inner(...args);
+      if ((args[1]?.method ?? "GET") === "POST") late = answer;
+      return answer;
+    });
+    const user = userEvent.setup();
+    const { unmount } = open();
+    await user.type(await field(), "A new sentence.");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(writes(calls, "POST")).toHaveLength(1));
+    unmount();
+    release();
+    await waitFor(() => expect(late?.bodyUsed).toBe(true));
+    await act(async () => undefined);
+    expect(window.location.hash).toBe("");
+    expect(takeAdded("les-new")).toBe(false);
   });
 
   it("adds one for all repositories without naming a repository", async () => {

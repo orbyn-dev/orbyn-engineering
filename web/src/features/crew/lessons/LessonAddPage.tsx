@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { toFailure } from "../../../lib/useAsync";
 import { Empty, ErrorState, Loading } from "../../../product/ui/states";
 import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
@@ -80,6 +80,25 @@ function AddLesson({ repo, name }: { repo: string; name: string }) {
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [refused, setRefused] = useState(false);
+  // A save the person left the page during still completes; it just does not take them anywhere afterwards.
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+    };
+  }, []);
+  const radios = useRef<(HTMLButtonElement | null)[]>([]);
+  // One tab stop for the scope: the arrow keys move the choice and the focus, as a native radio group does.
+  const arrow = (event: KeyboardEvent) => {
+    const step = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 0;
+    if (step === 0 || saving) return;
+    event.preventDefault();
+    const at = SCOPES.findIndex(([value]) => value === scope);
+    const to = (at + step + SCOPES.length) % SCOPES.length;
+    setScope(SCOPES[to]![0]);
+    radios.current[to]?.focus();
+  };
   const save = () => {
     if (saving) return;
     const next = text.trim();
@@ -90,10 +109,12 @@ function AddLesson({ repo, name }: { repo: string; name: string }) {
     void lessonsApi
       .add({ scope, ...(scope === "repo" ? { repo } : {}), text: next })
       .then((lesson) => {
+        if (!active.current) return;
         markAdded(lesson.id);
         navigate({ name: "settings", section: "crew", crewPage: "lesson", id: lesson.id, repo });
       })
       .catch((error: unknown) => {
+        if (!active.current) return;
         const one = toFailure(error);
         setSaving(false);
         if (one.code === "secret_refused") setRefused(true);
@@ -114,11 +135,15 @@ function AddLesson({ repo, name }: { repo: string; name: string }) {
         <LessonField value={text} onChange={setText} invalid={refused} readOnly={saving} autoFocus />
         <div className="cx-t12fl">
           <span className="cx-t12lb">Applies to</span>
-          <span className="cx-segx" role="radiogroup" aria-label="Applies to" style={{ alignSelf: "flex-start" }}>
-            {SCOPES.map(([value, label]) => (
+          <span className="cx-segx" role="radiogroup" aria-label="Applies to" style={{ alignSelf: "flex-start" }} onKeyDown={arrow}>
+            {SCOPES.map(([value, label], index) => (
               <button
                 key={value}
+                ref={(node) => {
+                  radios.current[index] = node;
+                }}
                 type="button"
+                tabIndex={scope === value ? 0 : -1}
                 role="radio"
                 aria-checked={scope === value}
                 className={scope === value ? "cx-on" : undefined}
