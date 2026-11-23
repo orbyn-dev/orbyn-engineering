@@ -35,7 +35,7 @@ import "./proposals.css";
 /** The source chip's word, as the lessons list names the same source. */
 const SOURCE_WORD: Record<Lesson["source"], string> = {
   fingerprint: "Repeated failure",
-  escape: "Escape",
+  escape: "Confirmed escape",
   revert: "Revert",
   person: "Your correction",
 };

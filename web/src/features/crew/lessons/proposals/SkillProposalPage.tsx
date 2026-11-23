@@ -57,8 +57,10 @@ export function SkillProposalPage({ id, repo }: { id?: string; repo?: string }) 
         {failure ? <ErrorState title="Can’t read the projects" failure={failure} onRetry={() => void refresh()} /> : <Loading label="Reading projects" rows={2} />}
       </Card>
     );
-  const project = projects.find((entry) => entry.id === repo) ?? projects[0];
-  if (!project) return <Card><Empty title="No project to show" /></Card>;
+  // A named repository must be one the person sees; only an address that names none falls back to the first project.
+  const named = repo !== undefined && repo !== "";
+  const project = named ? projects.find((entry) => entry.id === repo) : projects[0];
+  if (!project) return named ? null : <Card><Empty title="No project to show" /></Card>;
   if (!id) return <Card><Empty title="No proposal to show" /></Card>;
   return <ProposalReview key={`${project.id}:${id}`} id={id} repo={project.id} />;
 }
