@@ -554,7 +554,8 @@ next run. A rewind does the same unless the engine rolls its own session back. D
 stays until a run that carried it completes, so a failed start, a stop or a restart
 leaves it pending, and until then `/compact` and `/goal`, which reach an engine bare, are
 `422 unsupported`. The log stays whole; a rewind is logged as `CUSTOM
-thread.rewound` for clients to hide what follows.
+thread.rewound` for clients to hide what follows. The web hides events between `through` and
+the rewound event, and says "went back" only on `native: true`.
 
 Each run keeps the engine session and the first turn id it spoke in; for the Claude host
 the turn it keeps is the prompt's message id, because the host's own turn id is a counter
