@@ -1213,7 +1213,11 @@ fn migration_77_keeps_background_rows_and_adds_the_watch_tables() {
 
     let store = Store::open(&path, "watch-upgrade").unwrap();
     let upgrade = store.upgrade().expect("an upgrade");
-    assert_eq!((upgrade.from, upgrade.to), (before, 77));
+    assert_eq!(
+        (upgrade.from, upgrade.to),
+        (before, *versions.last().unwrap()),
+        "every later migration is applied too"
+    );
 
     // Every column and row of the rebuilt table survived.
     let crew = store.background_crew("old").unwrap().unwrap();

@@ -20,12 +20,12 @@
 mod artifacts;
 mod board;
 mod cells;
-mod facts;
+pub(super) mod facts;
 mod map;
 mod messages;
 mod review_controls;
 mod run_page;
-mod scrub;
+pub(super) mod scrub;
 
 use orbyn_contracts as wire;
 use serde_json::Value;

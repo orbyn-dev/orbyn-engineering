@@ -67,6 +67,7 @@ mod issues;
 mod lifecycle;
 mod merging_recovery;
 mod model_ids;
+mod needs_you;
 mod overrides;
 mod person_check;
 mod protect;
