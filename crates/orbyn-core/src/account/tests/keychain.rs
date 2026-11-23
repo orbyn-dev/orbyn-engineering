@@ -572,7 +572,10 @@ async fn connect_local_over_a_locked_keychain_is_unavailable_and_makes_no_second
     assert_eq!(keys.load().unwrap().unwrap().device_id, FIRST);
     // The profile stays on the keychain when it goes away later.
     fake.down(Some(Failure::Unusable));
-    assert!(connect_local_with("http://127.0.0.1:1", "x", dir.path(), "p", Some(keys)).is_err());
+    assert!(matches!(
+        connect_local_with("http://127.0.0.1:1", "x", dir.path(), "p", Some(keys)),
+        Err(crate::account::DeviceError::Server { retryable: true })
+    ));
 }
 
 #[tokio::test]

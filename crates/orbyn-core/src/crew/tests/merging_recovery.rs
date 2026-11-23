@@ -239,7 +239,11 @@ async fn a_state_write_never_overwrites_what_another_writer_decided() {
 async fn a_person_cannot_reject_a_merge_that_is_already_merging() {
     let (m, id) = queued().await;
     crash(&m.w, &id);
-    assert!(m.w.core.crew_reject_merge(&id, "no").is_err());
+    let refused = m.w.core.crew_reject_merge(&id, "no").unwrap_err();
+    assert!(
+        matches!(&refused, crate::error::CoreError::Invalid(why) if why == "this merge is no longer in the queue"),
+        "{refused:?}"
+    );
     assert_eq!(
         m.w.core.store.merge_entry(&id).unwrap().unwrap().state,
         "merging"
