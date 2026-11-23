@@ -127,7 +127,7 @@ fn a_queued_message_marks_its_attachments_as_sent() {
         .enqueue(
             &thread,
             "later",
-            &[image.id.clone()],
+            std::slice::from_ref(&image.id),
             &ModelSelection::default(),
         )
         .unwrap();

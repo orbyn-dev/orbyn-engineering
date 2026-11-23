@@ -26,7 +26,8 @@ import { ComposerBar } from "./ComposerBar";
 import { ComposerField } from "./ComposerField";
 import { useCommand as useSharedCommand } from "../../../product/shell/shortcuts";
 import { useQueueReload } from "./useQueueReload";
-import { ComposerHostLine, useHostLine } from "../../enginehost";
+import { ComposerHostLine, ClaudePathLine, useHostLine } from "../../enginehost";
+import { isClaudeEngine } from "../../../product/engines/claudePath";
 import { cursorThreadApi, overrideRun } from "../../cursorthread";
 import { useEngineGate } from "./useEngineGate";
 import { useStopRun } from "./useStopRun";
@@ -166,7 +167,7 @@ export function Composer({
   const serviceDown = useConnectionKind() === "service-down";
   const compacting = useCompacting(thread);
   const ready = outbound !== "" && !sending && !uploading && !transcripts.reading && overBy === 0 && !serviceDown && !compacting;
-  const hostLine = useHostLine(thread.engine, engine?.name ?? thread.engine);
+  const hostLine = useHostLine(thread.engine, engine?.name ?? thread.engine, engine?.instance_of);
   const canSend = ready && !gate.noticeOpen && !gate.refused && !hostLine.sendBlocked;
   const queue = useAsync(`queue:${thread.id}`, (signal) => api.queue(thread.id, signal));
   const reloadQueue = queue.reload;
@@ -463,6 +464,7 @@ export function Composer({
       {stashOpen ? (
         <StashDrawer entries={stashes} onRestore={restoreStash} onDelete={dropStash} onClose={() => setStashOpen(false)} />
       ) : null}
+      {isClaudeEngine(thread.engine, engine?.instance_of) ? <ClaudePathLine engineId={thread.engine} instanceOf={engine?.instance_of} /> : null}
       <div
         className="composer-box"
         {...boxProps}

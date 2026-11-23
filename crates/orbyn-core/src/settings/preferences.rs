@@ -108,6 +108,7 @@ const DEFINITIONS: &[Definition] = defs![
     "worktree_submodules" Kind::OneOf(SUBMODULES), "recursive", true;
     "add_project_base_directory" Kind::Text, "", false;
     "text_generation_model" Kind::Text, "", true;
+    "text_generation_models" Kind::Object, {}, true;
     "auto_thread_titles" Kind::Bool, true, true;
     "project_title_instructions" Kind::Text, "", true;
     "branch_naming_mode" Kind::OneOf(NAMING), "static", true;
@@ -232,6 +233,9 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
             "Model options are option ids with one value each, and effort is set on its own."
                 .into(),
         ));
+    }
+    if fits && definition.key == crate::agents::text_models::SETTING {
+        crate::agents::text_models::validate_syntax(value)?;
     }
     if fits && definition.key == CREW_TURN_BUDGET && value.as_u64().is_none() {
         // Whole turns only: a fraction could never be spent, and 0 is no crew-wide budget.
@@ -437,6 +441,9 @@ impl Core {
             if !value.is_null() {
                 check(definition, value)?;
                 refuse_agent_device_access(key, value)?;
+                if key == crate::agents::text_models::SETTING {
+                    crate::agents::text_models::check_offered(&self.engines, value)?;
+                }
             }
             if key == crate::agents::engines::instances::PREFERENCE && !value.is_null() {
                 let list = crate::agents::engines::instances::parse(value)?;
@@ -523,7 +530,8 @@ impl Core {
             .is_some_and(|list| list.iter().any(|item| item.as_str() == Some(engine)));
         if off {
             return Err(CoreError::Invalid(format!(
-                "{engine} is turned off for this project."
+                "{} is turned off for this project.",
+                self.engines.display_name(engine)
             )));
         }
         Ok(())

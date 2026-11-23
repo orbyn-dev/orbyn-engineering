@@ -76,11 +76,46 @@ export function runningClock(startedIso: string, nowMs: number): string {
   return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}` : `${minutes}:${seconds}`;
 }
 
+/** The lines of `text`; one final newline does not start a line. */
+export function outputLines(text: string): string[] {
+  if (text === "") return [];
+  return (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n");
+}
+
 /** The last `count` lines of `text` and how many it has in all; one final newline does not start a line. */
 export function lastLines(text: string, count: number): { text: string; total: number; cut: boolean } {
-  if (text === "") return { text: "", total: 0, cut: false };
-  const lines = (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n");
+  const lines = outputLines(text);
   return lines.length > count
     ? { text: lines.slice(lines.length - count).join("\n"), total: lines.length, cut: true }
     : { text: lines.join("\n"), total: lines.length, cut: false };
+}
+
+export interface TextMatch {
+  start: number;
+  end: number;
+}
+
+/**
+ * Every non-overlapping match of `query` in `text`, by offset, ignoring case. It is plain text, never a pattern: a dot matches a dot.
+ * An empty query has no matches. Adjacent matches are found; a match that would overlap an earlier one is not counted twice.
+ */
+export function findTextMatches(text: string, query: string): TextMatch[] {
+  if (query === "") return [];
+  const hay = text.toLowerCase();
+  const needle = query.toLowerCase();
+  const found: TextMatch[] = [];
+  for (let at = hay.indexOf(needle); at >= 0; at = hay.indexOf(needle, at + needle.length)) found.push({ start: at, end: at + needle.length });
+  return found;
+}
+
+/**
+ * The lines of `text` a filter keeps: those holding `query` as plain text, ignoring case. An empty query keeps every line. `total` counts
+ * the block's held lines and `kept` how many remain. One final newline does not start a line.
+ */
+export function filterBlockLines(text: string, query: string): { text: string; total: number; kept: number } {
+  const lines = outputLines(text);
+  if (query === "") return { text: lines.join("\n"), total: lines.length, kept: lines.length };
+  const needle = query.toLowerCase();
+  const kept = lines.filter((line) => line.toLowerCase().includes(needle));
+  return { text: kept.join("\n"), total: lines.length, kept: kept.length };
 }

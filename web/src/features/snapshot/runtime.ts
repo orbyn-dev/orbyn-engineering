@@ -10,6 +10,7 @@ import { useUi } from "../../product/state/ui";
 import { readSnapShotGate, type SnapShotClient } from "./shell";
 import {
   EXCLUDED_TEXT,
+  SNAPSHOT_SETUP_AVAILABLE,
   withoutAccessibleText,
   FAILURE_COPY,
   SNAPSHOT_EVENTS,
@@ -17,6 +18,7 @@ import {
   snapshotSettingsOf,
   type SnapShotDraft,
   type SnapShotEventName,
+  type SnapShotEventPayload,
   type SnapShotFailureReason,
   type SnapShotSetupAction,
   type SnapShotState,
@@ -25,11 +27,14 @@ import {
 
 const FLASH_MS = 120;
 const TOAST_MS = 6000;
+const MAX_BUFFERED_EVENT_IDS = 16;
+const BUFFERED_EVENT_TTL_MS = 10_000;
 
 type SetupFocus = "all" | "accessibility";
 type WaitingFor = "screen_recording" | "accessibility" | null;
 
 interface Capture { id: string; target: SnapShotTarget }
+interface BufferedEvent { at: number; events: { event: SnapShotEventName; payload: unknown }[] }
 
 interface SnapshotRuntimeState {
   status: "idle" | "hidden" | "ready";
@@ -68,9 +73,42 @@ let flashTimer: ReturnType<typeof setTimeout> | null = null;
 /** The settings the runtime last put on the wire, so a re-render or another pref does not resend them. */
 let sent = "";
 let acceptForeignCapture = false;
+let captureInFlight = false;
 let pending: SnapShotDraft[] = [];
 let discardedIds = new Set<string>();
+let bufferedEvents = new Map<string, BufferedEvent>();
 let quietPreview = false;
+
+/** Drops expired buffers and keeps only the newest ids; events may arrive before `snapshot_capture` names the id. */
+const pruneBufferedEvents = (at = Date.now()): void => {
+  for (const [id, entry] of bufferedEvents) {
+    if (at - entry.at >= BUFFERED_EVENT_TTL_MS) bufferedEvents.delete(id);
+  }
+  while (bufferedEvents.size > MAX_BUFFERED_EVENT_IDS) {
+    const oldest = bufferedEvents.keys().next().value;
+    if (oldest === undefined) break;
+    bufferedEvents.delete(oldest);
+  }
+};
+
+const bufferEvent = (id: string, event: SnapShotEventName, payload: unknown): void => {
+  pruneBufferedEvents();
+  const entry = bufferedEvents.get(id);
+  if (entry) entry.events.push({ event, payload });
+  else bufferedEvents.set(id, { at: Date.now(), events: [{ event, payload }] });
+  pruneBufferedEvents();
+};
+
+const takeBufferedEvents = (id: string): { event: SnapShotEventName; payload: unknown }[] => {
+  pruneBufferedEvents();
+  const entry = bufferedEvents.get(id);
+  bufferedEvents.delete(id);
+  return entry?.events ?? [];
+};
+
+const settleBufferedEvents = (id: string): void => {
+  bufferedEvents.delete(id);
+};
 
 const settingsNow = () => snapshotSettingsOf(useUi.getState());
 const serialized = () => JSON.stringify(settingsNow());
@@ -85,15 +123,14 @@ export function setSnapshotPreviewQuiet(quiet: boolean): void {
 
 const failureToast = (reason: SnapShotFailureReason) => {
   const copy = FAILURE_COPY[reason] ?? FAILURE_COPY.capture_error;
-  toast(
-    `${copy.title}. ${copy.body}`,
-    "failed",
-    copy.action === "allow_screen_recording"
+  const action = !SNAPSHOT_SETUP_AVAILABLE
+    ? undefined
+    : copy.action === "allow_screen_recording"
       ? { label: "Allow Screen Recording", run: () => void useSnapshot.getState().setupAction("allow_screen_recording") }
       : copy.action === "setup"
         ? { label: "Set up Snap Shot…", run: () => useSnapshot.getState().openSetup("all") }
-        : undefined,
-  );
+        : undefined;
+  toast(`${copy.title}. ${copy.body}`, "failed", action);
 };
 
 const flash = () => {
@@ -183,22 +220,30 @@ export const useSnapshot = create<SnapshotRuntimeState>((set, get) => ({
 
   async captureFromPerson() {
     const { status, client, state, capture, target } = get();
-    if (status !== "ready" || !client || !state?.enabled || !useUi.getState().snapshotEnabled || capture || !target) return;
+    if (status !== "ready" || !client || !state?.enabled || !useUi.getState().snapshotEnabled || capture || captureInFlight || !target) return;
+    captureInFlight = true;
     try {
+      pruneBufferedEvents();
       const { id } = await client.capture();
       if (!target) {
+        settleBufferedEvents(id);
         await client.discard(id).catch(() => undefined);
         return;
       }
       set({ capture: { id, target } });
       target.phase("capturing");
+      // The shell emits `started` and a fast `failed` before `snapshot_capture` answers the id; replay them now.
+      for (const held of takeBufferedEvents(id)) get().receiveEvent(held.event, held.payload);
     } catch {
       failureToast("capture_error");
+    } finally {
+      captureInFlight = false;
     }
   },
 
   async discard(id) {
     discardedIds.add(id);
+    settleBufferedEvents(id);
     const { client, capture, target } = get();
     if (capture?.id === id) set({ capture: null });
     if (get().testDraft?.captureId === id) set({ testDraft: null });
@@ -208,9 +253,12 @@ export const useSnapshot = create<SnapshotRuntimeState>((set, get) => ({
   },
 
   receiveEvent(event, payload) {
-    const data = typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
+    const data = (typeof payload === "object" && payload !== null ? payload : {}) as SnapShotEventPayload;
     const id = typeof data.id === "string" ? data.id : null;
-    if (id !== null && discardedIds.has(id)) return;
+    if (id !== null && discardedIds.has(id)) {
+      settleBufferedEvents(id);
+      return;
+    }
     const runtime = get();
     if (event === "snapshot://requested") {
       void runtime.captureFromPerson();
@@ -220,9 +268,17 @@ export const useSnapshot = create<SnapshotRuntimeState>((set, get) => ({
       void runtime.refreshState();
       return;
     }
+    const current = runtime.capture;
     if (event === "snapshot://excluded") {
+      if (id !== null && current?.id !== id && !(acceptForeignCapture && current === null)) {
+        if (current === null) bufferEvent(id, event, payload);
+        return;
+      }
+      if (id !== null) settleBufferedEvents(id);
+      else if (current) settleBufferedEvents(current.id);
+      acceptForeignCapture = false;
       const name = typeof data.app_name === "string" ? data.app_name : null;
-      runtime.capture?.target.phase(null);
+      current?.target.phase(null);
       set({ capture: null });
       toast(
         name ? `Not captured: ${name}. ${EXCLUDED_TEXT}` : EXCLUDED_TEXT,
@@ -232,23 +288,29 @@ export const useSnapshot = create<SnapshotRuntimeState>((set, get) => ({
       return;
     }
     if (id === null) return;
-    const current = runtime.capture;
-    if (current?.id !== id && !(acceptForeignCapture && current === null)) return;
+    if (current?.id !== id && !(acceptForeignCapture && current === null)) {
+      if (current === null) bufferEvent(id, event, payload);
+      return;
+    }
     if (event === "snapshot://failed") {
-      const reason = typeof data.reason === "string" ? (data.reason as SnapShotFailureReason) : "capture_error";
+      acceptForeignCapture = false;
+      settleBufferedEvents(id);
       if (current) current.target.phase(null);
       set({ capture: null });
+      const reason = typeof data.reason === "string" ? data.reason : "capture_error";
       failureToast(reason);
       return;
     }
     if (event !== "snapshot://ready") return;
     const wasTest = acceptForeignCapture;
     acceptForeignCapture = false;
+    settleBufferedEvents(id);
     if (wasTest) set({ testCaptureWorked: true });
     void takeAndDeliver(id, current?.target ?? runtime.target, wasTest);
   },
 
   openSetup(focus = "all") {
+    if (!SNAPSHOT_SETUP_AVAILABLE) return;
     set({ setupOpen: true, setupFocus: focus });
   },
 
@@ -257,6 +319,7 @@ export const useSnapshot = create<SnapshotRuntimeState>((set, get) => ({
   },
 
   async setupAction(action) {
+    if (!SNAPSHOT_SETUP_AVAILABLE && (action === "allow_screen_recording" || action === "allow_accessibility")) return;
     const { client, state } = get();
     if (!client) return;
     if (action === "test_capture") {
@@ -379,8 +442,10 @@ export function resetSnapshotRuntimeForTests(): void {
   configureQueue = Promise.resolve();
   sent = "";
   acceptForeignCapture = false;
+  captureInFlight = false;
   pending = [];
   discardedIds = new Set<string>();
+  bufferedEvents = new Map<string, BufferedEvent>();
   quietPreview = false;
   useSnapshot.setState(useSnapshot.getInitialState(), true);
 }

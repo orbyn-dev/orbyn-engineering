@@ -218,6 +218,9 @@ impl Core {
             }
             Err(error) => tracing::warn!(%error, "could not write a crew task's result"),
         }
+        // The task is over (the worker's run above is being stopped), so its private Codex
+        // home has no later turn to serve.
+        self.remove_crew_codex_home(&task.id);
         // The run of a background crew that this task belongs to ends with it.
         self.crew_background_task_ended(task, state, stop);
         // A fix that ends without passing may be the last one a deferred rerun of the lanes was waiting for.

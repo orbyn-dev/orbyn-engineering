@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../../../api/client";
+import type { WireThreadEvent } from "../../../../api/types";
 import { useConnection } from "../../../../product/state/connection";
 import { useThreadLogs } from "../../../../product/state/threadLogs";
 import { useUi } from "../../../../product/state/ui";
@@ -97,10 +98,14 @@ describe("Undo after the engine started", () => {
 });
 
 describe("the service proposes a command (typed field)", () => {
+  let nextSeq = 1;
   const propose = (command: string, note = "Lists the files changed. It does not change files.", runId = "r1") =>
     act(() => offerProposal("th", runId, { command, note }));
+  const arrived = (value: unknown, runId: string | null = "r1") => {
+    const event = { seq: nextSeq++, thread_id: "th", run_id: runId, ts: "", event: { type: "CUSTOM", name: "orbyn.proposal", value } } as unknown as WireThreadEvent;
+    act(() => useThreadLogs.getState().ingest("th", [event]));
+  };
   const asked = async () => {
-    useProposalSource.getState().setSource("service");
     const view = setup();
     await view.user.type(view.field, "list the files that changed since main?{Enter}");
     await screen.findByText(/Sent to Claude/);
@@ -112,11 +117,53 @@ describe("the service proposes a command (typed field)", () => {
     await view.user.type(view.field, "list the files that changed since main?{Enter}");
     await screen.findByText(/Sent to Claude/);
     answer("Try this.\n<proposed_command>git status</proposed_command>");
-    act(() => offerProposal("th", "r1", { command: "git status" }));
     expect(document.querySelector(".term-proposal")).toBeNull();
     expect(write).not.toHaveBeenCalled();
   });
-  it("ignores command text in the model's answer even when the source is on", async () => {
+  it("shows the card for the orbyn.proposal event of the run the editor started", async () => {
+    await asked();
+    arrived({ command: "git status --short", note: "Lists the files changed." });
+    expect(await screen.findByText("git status --short")).toBeTruthy();
+    expect(screen.getByText("Lists the files changed.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Run" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(write).not.toHaveBeenCalled();
+  });
+  it("ignores a proposal recorded for another run", async () => {
+    await asked();
+    arrived({ command: "git status" }, "r99");
+    expect(document.querySelector(".term-proposal")).toBeNull();
+  });
+  it("drops a malformed value whole", async () => {
+    await asked();
+    for (const value of [null, "git status", 5, [], {}, { command: 5 }, { command: "git status", note: 5 }, { note: "no command" }]) arrived(value);
+    expect(document.querySelector(".term-proposal")).toBeNull();
+  });
+  it.each([
+    ["two lines", "printf 'a\nb'"],
+    ["a carriage return", "printf 'a\rb'"],
+    ["a control character", "printf '\u001b[2J'"],
+    ["an over-long command", `echo ${"a".repeat(4096)}`],
+  ])("drops a command with %s", async (_name, command) => {
+    await asked();
+    arrived({ command });
+    expect(document.querySelector(".term-proposal")).toBeNull();
+  });
+  it("keeps a queued prompt with no card, because its run is not known", async () => {
+    const view = setup({ active: true });
+    await view.user.type(view.field, "list the files that changed since main?{Enter}");
+    await screen.findByText(/Queued behind/);
+    arrived({ command: "git status" }, "r2");
+    expect(document.querySelector(".term-proposal")).toBeNull();
+  });
+  it("turns the card off for a test with proposalSource none", async () => {
+    useProposalSource.getState().setSource("none");
+    await asked();
+    arrived({ command: "git status" });
+    expect(document.querySelector(".term-proposal")).toBeNull();
+  });
+  it("ignores command text in the model's answer", async () => {
     await asked();
     answer("Try this.\n<proposed_command>rm -rf x</proposed_command>");
     expect(document.querySelector(".term-proposal")).toBeNull();
@@ -162,13 +209,14 @@ describe("the service proposes a command (typed field)", () => {
     expect(code.closest(".term-proposal")?.querySelector("img, p b")).toBeNull();
     expect(screen.getByText("<b>bold</b> says hi")).toBeTruthy();
   });
-  it("never fills in or runs a command that looks like a secret", async () => {
+  it("never fills in or runs a secret-looking command the service reports", async () => {
     const { field } = await asked();
-    propose("export OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwx");
+    arrived({ command: "export OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwx" });
     expect(await screen.findByText(/looks like a secret/i)).toBeTruthy();
     expect(screen.queryByText(/sk-abcdefghijklmnopqrstuvwx/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
     expect(field.value).toBe("");
     expect(write).not.toHaveBeenCalled();
   });
@@ -232,7 +280,7 @@ describe("Sign in and Try again", () => {
     const again = screen.getByRole("button", { name: "Try again" });
     fireEvent.click(again);
     fireEvent.click(again);
-    await waitFor(() => expect(api.startRun).toHaveBeenCalledExactlyOnceWith("th", "why is it slow?"));
+    await waitFor(() => expect(api.startRun).toHaveBeenCalledExactlyOnceWith("th", "why is it slow?", [], { purpose: "terminal_proposal" }));
     expect(api.refreshEngines).toHaveBeenCalledTimes(1);
     expect(write).not.toHaveBeenCalled();
   });

@@ -22,19 +22,28 @@ export function Act({
   primary,
   onAct,
   busy,
+  planned,
 }: {
   label: string;
   primary?: boolean;
   onAct?: () => void | Promise<void>;
   busy?: boolean;
+  /** Not built in the app: the frame draws the shared Planned pill after the label. */
+  planned?: boolean;
 }) {
+  const content = (
+    <>
+      {label}
+      {planned ? <span className="cx-cwpv">Planned</span> : null}
+    </>
+  );
   return onAct ? (
     <Button small tone={primary ? "primary" : "secondary"} onClick={() => void onAct()} busy={busy}>
-      {label}
+      {content}
     </Button>
   ) : (
     <Button small tone={primary ? "primary" : "secondary"} {...unavailable}>
-      {label}
+      {content}
     </Button>
   );
 }

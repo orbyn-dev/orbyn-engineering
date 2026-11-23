@@ -14,6 +14,7 @@ pub(crate) mod capacity;
 pub mod changes;
 mod checks;
 mod classes;
+mod codex_homes;
 mod dashboard;
 mod draft;
 pub mod escapes;
@@ -49,6 +50,8 @@ mod workers;
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) use workers::worker_refusal;
 
 pub(crate) use autopilot::GateReview;
 pub use autopilot::{
