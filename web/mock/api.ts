@@ -70,6 +70,8 @@ export type Scenario =
   | "reference"
   /** The service on another computer, for the rows only macOS shows: "platform-windows", "platform-linux". */
   | `platform-${"windows" | "linux"}`
+  /** Two checkouts of one repository (the app and a worktree of it) beside the other projects, so Settings can scope to the project or to one checkout. */
+  | "settings-checkouts"
   /** The sign-in gate is on, signed out; see `mock/account.ts` for the throwaway accounts. */
   | "account"
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
@@ -299,6 +301,10 @@ export function createMockApi(options: MockOptions = {}) {
     // Autopilot by area is drawn for one repository (the design has a separate frame for several): its scenarios keep the first project.
     if (next.startsWith("crew-areas")) projects = projects.slice(0, 1);
     threads = blank ? [] : fixtures.threads();
+    if (next === "settings-checkouts") {
+      projects = [...projects, { id: "p-app-fix", name: "orbyn-engineering-app (fix-login)", path: "/Users/dev/code/orbyn-engineering-app-wt/fix-login",
+        trusted: true, is_git: true, managed: false, scratch: false, created_at: fixtures.projects[0]!.created_at }];
+    }
     if (next === "transcript-imported") threads = [...threads, fixtures.importedThread()];
     approvals = blank ? [] : fixtures.pendingApprovals();
     tasks = blank ? [] : fixtures.scheduledTasks();
@@ -605,12 +611,21 @@ export function createMockApi(options: MockOptions = {}) {
   }
 
   function scopeCatalog(scope: ProjectScopesQuery): ProjectScopeCatalog {
-    const groups = projects.filter((project) => !project.scratch && project.path !== managed.library?.path).map((project) => ({
-      key: `mock:${project.id}`, label: project.name, members: [{
+    /** The repository a checkout belongs to; every other project is its own group. */
+    const repositoryOf = (project: Project) => (scenario === "settings-checkouts" && project.id.startsWith("p-app") ? "orbyn-engineering-app" : null);
+    const grouped = new Map<string, Project[]>();
+    for (const project of projects.filter((entry) => !entry.scratch && entry.path !== managed.library?.path)) {
+      const repository = repositoryOf(project);
+      const key = repository ? `repo:${repository}` : `mock:${project.id}`;
+      grouped.set(key, [...(grouped.get(key) ?? []), project]);
+    }
+    const groups = [...grouped].map(([key, members]) => ({
+      key, label: repositoryOf(members[0]!) ?? members[0]!.name, members: members.map((project) => ({
         project_id: project.id, physical_key: `mock-physical:${project.id}`, name: project.name, path: project.path,
-        repository_key: null, repository_label: null, repository_relative_path: "", grouping_mode: "separate" as const,
+        repository_key: repositoryOf(project), repository_label: repositoryOf(project), repository_relative_path: "",
+        grouping_mode: repositoryOf(project) ? "repository" as const : "separate" as const,
         metadata_complete: true, unavailable: null,
-      }],
+      })),
     }));
     const selection = scope.selection;
     const selected = selection && selection.kind !== "all_projects" ? groups.find((group) => group.key === selection.group_key) : undefined;

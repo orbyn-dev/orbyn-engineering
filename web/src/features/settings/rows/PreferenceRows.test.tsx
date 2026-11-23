@@ -1,63 +1,50 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiFailure, request } from "../../../api/client";
+import type { MockApi } from "../../../../mock/api";
 import type { PreferenceView } from "../../../api/types";
+import { installMockFetch } from "../../../test-support";
 import { PreferenceGroups } from "./PreferenceRows";
-import type { ScopedPreferencesChange } from "../../../generated/ScopedPreferencesChange";
-import type { ScopedPreferencesQuery } from "../../../generated/ScopedPreferencesQuery";
-import { preferenceCatalog, scopedFixture } from "./scopedPreferenceFixture.test-support";
+import { preferenceWrites } from "./preferenceWrites.test-support";
 
-vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 const groups = [{ title: "Source control", rows: [{ key: "auto_pull", title: "Auto pull", inheritance: true }] }];
-const requestMock = vi.mocked(request);
-let globalValue: boolean | undefined;
-let overrides: Record<string, boolean>;
-let failRead: boolean;
-let failWrite: boolean;
-let holdWrite: Promise<void> | undefined;
-let writes: { project: string; values: Record<string, unknown> }[];
-function views(project?: string): PreferenceView[] {
-  const own = project === undefined ? undefined : overrides[project];
-  return [{ key: "auto_pull", value: own ?? globalValue ?? false, default: false,
-    source: own !== undefined ? "project" : globalValue !== undefined ? "global" : "default", project_scoped: true }];
-}
+/** The two checkouts the mock service lists, standing in for the two projects the old fixture invented. */
+const A = "p-app";
+const B = "p-site";
+const UNAVAILABLE = ["unavailable", "The service is unavailable."] as const;
+let mock: MockApi;
+
+/** What the service stores for Auto pull at the device (no project) or for one project. */
+const stored = (project?: string): PreferenceView => {
+  const views = mock.handle("GET", `/api/preferences${project ? `?project_id=${project}` : ""}`).body as PreferenceView[];
+  return views.find((view) => view.key === "auto_pull")!;
+};
+const overrideSet = (project: string) => stored(project).source === "project";
+
 beforeEach(() => {
-  globalValue = true; overrides = { a: false, b: true }; failRead = false; failWrite = false; holdWrite = undefined; writes = [];
-  requestMock.mockReset();
-  requestMock.mockImplementation(async (method, path, body) => {
-    if (path === "/api/settings/project-scopes") return preferenceCatalog(["a", "b"]) as never;
-    if (method === "POST" && path === "/api/settings/preferences/query") {
-      if (failRead) throw new ApiFailure("unavailable", "Read failed.", 503);
-      const selection = (body as ScopedPreferencesQuery).scope.selection;
-      const project = selection?.kind === "checkout" ? selection.project_id : undefined;
-      return scopedFixture(views(project), views(), project) as never;
-    }
-    const change = body as ScopedPreferencesChange;
-    const selection = change.scope.selection;
-    const project = selection?.kind === "checkout" ? selection.project_id : "";
-    const edit = change.edits.auto_pull;
-    const values = { auto_pull: edit?.op === "set" ? edit.value : null };
-    writes.push({ project, values });
-    if (holdWrite) await holdWrite;
-    if (failWrite) throw new ApiFailure("unavailable", "Save failed.", 503);
-    if (values.auto_pull === null) delete overrides[project];
-    else overrides[project] = values.auto_pull === true;
-    return scopedFixture(views(project), views(), project) as never;
-  });
+  mock = installMockFetch();
+  window.location.hash = "";
+  mock.handle("PUT", "/api/preferences", { values: { auto_pull: true } });
+  mock.handle("PUT", `/api/projects/${A}/preferences`, { values: { auto_pull: false } });
+  mock.handle("PUT", `/api/projects/${B}/preferences`, { values: { auto_pull: true } });
 });
 
 describe("project preference inheritance", () => {
   it("removes only the selected override and follows later global changes", async () => {
     const user = userEvent.setup();
-    const first = render(<PreferenceGroups groups={groups} projectId="a" />);
+    const first = render(<PreferenceGroups groups={groups} projectId={A} />);
     expect(await screen.findByRole("switch", { name: "Auto pull" })).not.toBeChecked();
     await user.click(screen.getByRole("button", { name: "Reset Auto pull to default" }));
     await waitFor(() => expect(screen.getByRole("switch")).toBeChecked());
-    expect(writes).toEqual([{ project: "a", values: { auto_pull: null } }]);
-    expect(overrides).toEqual({ b: true }); expect(globalValue).toBe(true);
-    first.unmount(); globalValue = false;
-    render(<PreferenceGroups groups={groups} projectId="a" />);
+    expect(preferenceWrites().map((write) => [write.scope.selection, write.edits])).toEqual([
+      [expect.objectContaining({ kind: "checkout", project_id: A }), { auto_pull: { op: "inherit" } }],
+    ]);
+    expect(overrideSet(A)).toBe(false);
+    expect(overrideSet(B)).toBe(true);
+    expect(stored().value).toBe(true);
+    first.unmount();
+    mock.handle("PUT", "/api/preferences", { values: { auto_pull: false } });
+    render(<PreferenceGroups groups={groups} projectId={A} />);
     // The kept answer draws first; the fresh read then follows the global change.
     await waitFor(() => expect(screen.getByRole("switch")).not.toBeChecked());
     expect(screen.queryByRole("button", { name: "Reset Auto pull to default" })).toBeNull();
@@ -65,7 +52,7 @@ describe("project preference inheritance", () => {
 
   it("keeps an equal-valued explicit override resettable and explains all three layers", async () => {
     const user = userEvent.setup();
-    render(<PreferenceGroups groups={groups} projectId="b" />);
+    render(<PreferenceGroups groups={groups} projectId={B} />);
     await screen.findByRole("switch");
     expect(screen.getByRole("button", { name: "Reset Auto pull to default" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Reset Auto pull to default" })).toHaveAttribute("title", "Reset to inherited value");
@@ -78,42 +65,51 @@ describe("project preference inheritance", () => {
     expect(within(popup).queryByText("t3.json")).toBeNull();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Auto pull" })).toBeNull(); expect(source).toHaveFocus();
-    expect(writes).toHaveLength(0);
+    expect(preferenceWrites()).toHaveLength(0);
   });
 
   it("retains an override after a failed reset", async () => {
-    const user = userEvent.setup(); failWrite = true;
-    render(<PreferenceGroups groups={groups} projectId="a" />);
+    const user = userEvent.setup();
+    render(<PreferenceGroups groups={groups} projectId={A} />);
     await screen.findByRole("switch");
+    mock.fail("/api/settings/preferences", 1, 503, ...UNAVAILABLE);
     await user.click(screen.getByRole("button", { name: "Reset Auto pull to default" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Save failed.");
-    expect(screen.getByRole("switch")).not.toBeChecked(); expect(overrides.a).toBe(false);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The service is unavailable.");
+    expect(screen.getByRole("switch")).not.toBeChecked(); expect(stored(A)).toMatchObject({ value: false, source: "project" });
     expect(screen.getByRole("button", { name: "Reset Auto pull to default" })).toBeEnabled();
   });
 
   it("does not fabricate inherited values when the global layer cannot be read", async () => {
-    failRead = true;
-    render(<PreferenceGroups groups={groups} projectId="a" />);
+    mock.fail("/api/settings/preferences/query", 1, 503, ...UNAVAILABLE);
+    render(<PreferenceGroups groups={groups} projectId={A} />);
     expect(await screen.findByText("Couldn't load settings")).toBeVisible();
     expect(screen.queryByRole("switch")).toBeNull();
     expect(screen.queryByRole("button", { name: /Set for this project|From this device|Default/ })).toBeNull();
-    failRead = false;
     await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("switch")).not.toBeChecked();
     expect(screen.getByRole("button", { name: "Reset Auto pull to default" })).toBeEnabled();
   });
 
   it("does not show an earlier project's pending save under the replacement project", async () => {
-    const user = userEvent.setup(); let release = () => {};
-    holdWrite = new Promise<void>((resolve) => { release = resolve; }); overrides.b = false;
-    const view = render(<PreferenceGroups groups={groups} projectId="a" />);
+    const user = userEvent.setup();
+    mock.handle("PUT", `/api/projects/${B}/preferences`, { values: { auto_pull: false } });
+    // The network holds the save back until the test lets it through.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const through = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (init?.method === "PUT" && String(input) === "/api/settings/preferences") await held;
+      return through(input, init);
+    });
+    const view = render(<PreferenceGroups groups={groups} projectId={A} />);
     await user.click(await screen.findByRole("switch"));
-    await waitFor(() => expect(writes).toHaveLength(1));
-    view.rerender(<PreferenceGroups groups={groups} projectId="b" />);
+    await waitFor(() => expect(preferenceWrites()).toHaveLength(1));
+    view.rerender(<PreferenceGroups groups={groups} projectId={B} />);
     expect(await screen.findByRole("switch")).not.toBeChecked();
-    await act(async () => { release(); await holdWrite; });
-    await waitFor(() => expect(overrides.a).toBe(true));
+    await act(async () => { release(); await held; });
+    await waitFor(() => expect(stored(A).value).toBe(true));
     expect(screen.getByRole("switch")).not.toBeChecked();
-    expect(writes[0]?.project).toBe("a"); expect(overrides.b).toBe(false);
+    expect(preferenceWrites()[0]?.scope.selection).toMatchObject({ kind: "checkout", project_id: A });
+    expect(stored(B).value).toBe(false);
   });
 });
