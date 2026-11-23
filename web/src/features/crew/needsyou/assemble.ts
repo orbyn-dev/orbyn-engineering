@@ -217,7 +217,10 @@ export function watchItems(read: { items: WatchNeedsItem[]; names: Record<string
       title: failing ? `Watch failing: ${name}` : `Watch could not run: ${name}`,
       risk: null,
       undo: null,
-      from: `Watch · ${name} · ${failing ? "turned failing" : streak ? `${streak} checks in a row, since` : "since"} ${whenLong(item.since)}`,
+      // `since` is the latest check (the service's row time), not the streak's first error: only a "one row since" claim is true.
+      from: failing
+        ? `Watch · ${name} · turned failing ${whenLong(item.since)}`
+        : `Watch · ${name} · ${streak ? `${streak} checks in a row · one row since` : "one row since"} ${whenLong(item.since)}`,
       cost: failing
         ? `${reason} This is raised once for this change and is meant not to repeat while the check keeps failing. It resolves itself when a check passes.`
         : `${reason} One row for the whole stretch: it is updated at each later check, not repeated, and it resolves itself when a check passes.`,

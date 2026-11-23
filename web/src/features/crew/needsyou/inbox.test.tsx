@@ -404,6 +404,8 @@ describe("the watch rows (KC6)", () => {
     expect(failing).toHaveTextContent("This is raised once for this change and is meant not to repeat while the check keeps failing.");
     const couldNotRun = items.find((one) => one.textContent?.includes("Watch could not run: Lockfile check"))!;
     expect(couldNotRun).toHaveTextContent("3 checks in a row could not run: timed out.");
+    // The service's row time is the latest check, not the streak's first error: it is a "one row since" claim, not "3 since".
+    expect(couldNotRun).toHaveTextContent("3 checks in a row · one row since ");
     expect(couldNotRun).toHaveTextContent("One row for the whole stretch");
     const bar = screen.getByRole("group", { name: "Filter the inbox" });
     expect(within(bar).getAllByRole("button").map((one) => one.textContent)).toEqual(["Needs you 3", "Background 3"]);

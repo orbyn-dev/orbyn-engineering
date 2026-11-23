@@ -35,11 +35,8 @@ const change = (id: number, kind: BackgroundWatchChange["kind"], action: Backgro
 });
 
 const T = "2026-11-07T";
-const baseline = change(1, "baseline", "none", "2026-11-05T09:02:00Z", 0);
-const raisedAt1402 = change(4, "failing", "needs_you", T + "14:02:00Z", 1);
-const recoveredYesterday = change(3, "passing", "resolved", "2026-11-06T09:02:00Z", 0);
-const raisedThursday = change(2, "failing", "needs_you", "2026-11-05T16:02:00Z", 1);
 const PASSING_TAIL = "> npm test web/nav/redirect\nTests: 12 passed, 12 total";
+/** The tail a failing check kept: the output watch-failing draws, and the change detail watch-history draws. */
 const FAILING_TAIL = [
   "> npm test web/nav/redirect",
   "",
@@ -55,6 +52,12 @@ const STILL_FAILING_TAIL = [
   "  at Object.<anonymous> (web/nav/redirect.test.ts:3:1)",
   "  Test suite failed to run",
 ].join("\n");
+
+const baseline = change(1, "baseline", "none", "2026-11-05T09:02:00Z", 0);
+// The change that turned the watch failing kept the output too: watch-history's change detail reads it from this row.
+const raisedAt1402 = change(4, "failing", "needs_you", T + "14:02:00Z", 1, FAILING_TAIL);
+const recoveredYesterday = change(3, "passing", "resolved", "2026-11-06T09:02:00Z", 0);
+const raisedThursday = change(2, "failing", "needs_you", "2026-11-05T16:02:00Z", 1);
 
 /** The list the watch-list frame draws: four watches in their states beside a normal crew. */
 const WATCH_LIST: BackgroundCrew[] = [
@@ -88,6 +91,20 @@ interface Seed {
   crews: BackgroundCrew[];
   runs: BackgroundRun[];
   watches: Record<string, { status: BackgroundWatchStatus; changes: BackgroundWatchChange[] }>;
+}
+
+/** A watch whose first check failed: Failing from the baseline, and no Needs you row was ever raised (watch-failing's baseline case). */
+function failingBaselineScenario(): Seed {
+  return {
+    crews: [watch("bg-watch-baseline", "Redirect tests", "npm test web/nav/redirect", 1, "needs_you", true)],
+    runs: [],
+    watches: {
+      "bg-watch-baseline": {
+        status: status("bg-watch-baseline", "failing", { last_checked_at: "2026-11-05T09:02:00Z", last_exit_code: 1, tail: FAILING_TAIL }),
+        changes: [change(1, "baseline", "none", "2026-11-05T09:02:00Z", 1)],
+      },
+    },
+  };
 }
 
 /** The seed of one `crew-background*` scenario. */
@@ -171,6 +188,7 @@ function seedFor(scenario: string): Seed {
       },
     };
   }
+  if (scenario === "crew-background-watch-failing-baseline") return failingBaselineScenario();
   if (scenario === "crew-background-watch-could-not-run") {
     return {
       crews: [watch("bg-watch-lock", "Lockfile check", "npm run lockfile:check", 6, "needs_you", true)],

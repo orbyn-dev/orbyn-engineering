@@ -6,6 +6,7 @@ import type { Project } from "../../../../generated/Project";
 import { useWorkspace } from "../../../../product/state/workspace";
 import { installMockFetch } from "../../../../test-support";
 import { BackgroundTab } from "./Background";
+import { WATCH_SCREENS } from "./watchScreens";
 
 let mock: MockApi;
 beforeEach(() => {
@@ -57,8 +58,10 @@ describe("watches in the Background list", () => {
     expect(within(panel).getByText("Every 1 hour · no network · 5 minutes at most")).toBeVisible();
     expect(within(panel).getByText("Raise Needs you")).toBeVisible();
     expect(within(panel).getByText("None. A check makes no model call.")).toBeVisible();
-    expect(within(panel).getByText(/Latest output · the check at \d\d:\d\d · exit 1/)).toBeVisible();
+    // One output box: the page draws the latest tail, never the history frame's change detail as a second box.
+    expect(within(panel).getAllByText(/Latest output · the check at \d\d:\d\d · exit 1/)).toHaveLength(1);
     expect(within(panel).getByText(/FAIL web\/nav\/redirect.test.ts/)).toBeVisible();
+    expect(within(panel).queryByLabelText("Change detail")).toBeNull();
     const changes = within(panel).getByRole("table", { name: "Watch changes" });
     const when = expect.stringMatching(/^\w{3} \d{1,2} \w{3}, \d\d:\d\d$/);
     expect(within(changes).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent))).toEqual([
@@ -107,6 +110,7 @@ describe("watches in the Background list", () => {
     expect(within(panel).getByText("Could not run: timed out")).toBeVisible();
     expect(within(panel).getByText(/This is not a failing result\./)).toBeVisible();
     expect(within(panel).getByText("3 checks in a row")).toBeVisible();
+    expect(within(panel).getByText("Next check")).toBeVisible();
     expect(within(panel).queryByText(/Latest output/)).toBeNull();
   });
 
@@ -119,6 +123,16 @@ describe("watches in the Background list", () => {
     expect(within(panel).getByRole("table", { name: "Watch changes" })).toHaveTextContent("Passing again");
   });
 
+  it("a failing baseline reads Failing, says a first failing check never raises, and offers no Needs you action", async () => {
+    const user = await openBackground("crew-background-watch-failing-baseline");
+    await user.click(screen.getByRole("button", { name: "Open the Redirect tests watch" }));
+    const panel = await screen.findByRole("region", { name: "Redirect tests watch" });
+    expect(within(panel).getByRole("heading", { name: "Failing: baseline" })).toBeVisible();
+    expect(within(panel).getByText(/first failing check never raises/)).toBeVisible();
+    expect(within(panel).queryByRole("button", { name: "Open in Needs you" })).toBeNull();
+    expect(within(panel).getByText(/FAIL web\/nav\/redirect.test.ts/)).toBeVisible();
+  });
+
   it("a quiet pass says nothing is raised and names the baseline", async () => {
     const user = await openBackground("crew-background-watch-passing");
     await user.click(screen.getByRole("button", { name: "Open the Redirect tests watch" }));
@@ -126,5 +140,17 @@ describe("watches in the Background list", () => {
     expect(within(panel).getByRole("heading", { name: "Passing" })).toBeVisible();
     expect(within(panel).getByText(/nothing is raised and no run starts/)).toBeVisible();
     expect(within(panel).getByText(/was a baseline: recorded, never raised/)).toBeVisible();
+  });
+});
+
+describe("the watch history frame", () => {
+  it("draws the newest kept tail as the change detail under the table, where a watch's page draws no second box", async () => {
+    mock.reset("crew-background-watch-failing");
+    const Screen = WATCH_SCREENS["watch-history"];
+    render(<Screen />);
+    expect(await screen.findByText(/Change detail ·/)).toBeVisible();
+    expect(screen.getByText(/FAIL web\/nav\/redirect.test.ts/)).toBeVisible();
+    // The page test above shows the same read on the watch's page: one Latest output box and no change detail there.
+    expect(screen.queryByText(/Latest output/)).toBeNull();
   });
 });

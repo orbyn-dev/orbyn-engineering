@@ -8,6 +8,7 @@ import { crewApi } from "./api";
 import { useCrewPreview } from "./useCrew";
 import { Chip } from "./parts";
 import { WatchChanges } from "./WatchPanel";
+import type { WatchFrameId } from "./watchNames";
 import { watchChangesView } from "./watchModel";
 
 /**
@@ -16,8 +17,6 @@ import { watchChangesView } from "./watchModel";
  * (`#/crew/background`), so the list, the create dialog and a watch's page need no frame here. Nothing is drawn while
  * Crew Preview is off, and a service whose watch route answers 404 draws nothing either (the read's own answer is used).
  */
-export const WATCH_FRAMES = ["watch-history"] as const;
-export type WatchFrameId = (typeof WATCH_FRAMES)[number];
 
 /** The page card these screens draw in, so a state before a project is known is not flush to the corner. */
 function Card({ children }: { children: ReactNode }) {

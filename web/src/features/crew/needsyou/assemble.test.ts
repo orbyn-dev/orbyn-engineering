@@ -79,7 +79,7 @@ describe("each source becomes one inbox row", () => {
       ["watch:bg-watch-lock", "background", "Watch could not run: Lockfile check", "bg-watch-lock"],
     ]);
     expect(items[0]?.from).toMatch(/^Watch · Redirect tests · turned failing /);
-    expect(items[1]?.from).toMatch(/^Watch · Lockfile check · 3 checks in a row, since /);
+    expect(items[1]?.from).toMatch(/^Watch · Lockfile check · 3 checks in a row · one row since /);
     expect(items[0]?.cost).toBe("The watch’s command is failing. This is raised once for this change and is meant not to repeat while the check keeps failing. It resolves itself when a check passes.");
     expect(items[1]?.cost).toBe("3 checks in a row could not run: timed out. One row for the whole stretch: it is updated at each later check, not repeated, and it resolves itself when a check passes.");
     expect(items.map((one) => one.actions)).toEqual([[{ key: "open", label: "Open", primary: true }], [{ key: "open", label: "Open", primary: true }]]);

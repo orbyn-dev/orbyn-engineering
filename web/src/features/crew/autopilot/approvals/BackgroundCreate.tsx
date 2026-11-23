@@ -114,6 +114,11 @@ export function BackgroundCreate({ project, template: first, onClose, onCreated 
     setStarts(triggerOf(next));
     if (!named) setName(nameOf(next));
   };
+  /** A watch's template is what a failing result starts: choosing one must not change the watch's own "Starts when". */
+  const chooseWatchTemplate = (next: TemplateId) => {
+    setTemplate(next);
+    if (!named) setName(nameOf(next));
+  };
   const turnsN = whole(turns, LIMITS.turns);
   const minutesN = whole(minutes, LIMITS.minutes);
   const dailyRunsN = whole(dailyRuns, LIMITS.dailyRuns);
@@ -184,7 +189,8 @@ export function BackgroundCreate({ project, template: first, onClose, onCreated 
         <Entry id="bg-name" label="Name" hint={`1 to ${LIMITS.name} characters`} error={nameError}>
           <input id="bg-name" value={name} onChange={(event) => { setName(event.target.value); setNamed(true); clear("name"); }} />
         </Entry>
-        {asksBudget ? (
+        {/* The watch frame puts the template with the budgets, after the failing choice; every other kind keeps it first. */}
+        {asksBudget && !watch ? (
           <div className="field">
             <label>Template</label>
             <Segmented label="Template" value={template} onChange={choose} options={TEMPLATES.map((one) => ({ value: one.id, label: one.name }))} />
@@ -233,6 +239,12 @@ export function BackgroundCreate({ project, template: first, onClose, onCreated 
             </span>
           </div>
         ) : null}
+        {watch && asksBudget ? (
+          <div className="field">
+            <label>Template</label>
+            <Segmented label="Template" value={template} onChange={chooseWatchTemplate} options={TEMPLATES.map((one) => ({ value: one.id, label: one.name }))} />
+          </div>
+        ) : null}
         {asksBudget ? (
           <>
             <div className="ap-pair">
@@ -243,7 +255,7 @@ export function BackgroundCreate({ project, template: first, onClose, onCreated 
                 <input id="bg-minutes" type="number" min={1} max={LIMITS.minutes} value={minutes} onChange={(event) => { setMinutes(event.target.value); clear("minutes"); }} />
               </Entry>
             </div>
-            <span className="field-hint" id="bg-budget-hint">Budget for each run. Turns 1 to {LIMITS.turns}, minutes 1 to {LIMITS.minutes}. It is set now and does not change after.</span>
+            <span className="field-hint" id="bg-budget-hint">{watch ? "Budget for each run the watch starts." : "Budget for each run."} Turns 1 to {LIMITS.turns}, minutes 1 to {LIMITS.minutes}. It is set now and does not change after.</span>
             <div className="ap-pair">
               <Entry id="bg-daily-runs" label="Runs a day" hintId="bg-daily-hint" error={dailyRunsError}>
                 <input id="bg-daily-runs" type="number" min={1} max={LIMITS.dailyRuns} value={dailyRuns} onChange={(event) => { setDailyRuns(event.target.value); clear("dailyRuns"); }} />

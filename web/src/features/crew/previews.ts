@@ -1,5 +1,5 @@
 import { lazy } from "react";
-import { WATCH_FRAMES } from "./autopilot/approvals/watchScreens";
+import { WATCH_FRAMES } from "./autopilot/approvals/watchNames";
 import { REVIEW_FRAMES } from "./autopilot/review/names";
 import { BACKTEST_FRAMES } from "./backtest/names";
 import { CAPACITY_LIVE_FRAMES } from "./capacity/live/names";

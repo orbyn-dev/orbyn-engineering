@@ -63,7 +63,11 @@ const run = (): BackgroundRun => ({
   ended_at: "2026-11-07T14:00:00Z",
 });
 
-/** The two watch rows the Needs you read carries in `crew-background-watch-needsyou` (watch-needsyou). */
+/**
+ * The two watch rows the Needs you read carries in `crew-background-watch-needsyou` (watch-needsyou). `since` is the
+ * latest check of each watch in `mock/background.ts` (Redirect tests 14:02, Lockfile check 12:02), which is what the
+ * service's item time means; the could-not-run row is not claiming that stretch began then, only that it is one row since.
+ */
 const watchRows = () => [
   {
     id: "bg-watch-redirect",

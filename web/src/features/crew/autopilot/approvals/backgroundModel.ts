@@ -51,7 +51,6 @@ export interface BackgroundView {
   configured?: Partial<Record<TriggerId, string>>;
 }
 
-
 export const TEMPLATE_OF: Record<BackgroundTemplate, TemplateId> = TEMPLATE_ID_OF;
 export const WIRE_TEMPLATE: Record<TemplateId, BackgroundTemplate> = {
   fix_ci: "fix_failing_ci",
@@ -79,8 +78,6 @@ export const WIRE_TRIGGER: Record<TriggerId, BackgroundTriggerKind> = {
 export const DEFAULT_BUDGET: BackgroundBudget = { turns: 40, minutes: 60 };
 export const DEFAULT_DAILY: BackgroundDailyBudget = { runs: 2, turns: 80 };
 export const LIMITS = { turns: 1000, minutes: 1440, dailyRuns: 1000, dailyTurns: 10_000, hours: 720, text: 100, name: 80, command: 500 } as const;
-
-
 
 /** "When CI fails on main": the trigger of a crew, in words. A watch's own row carries its schedule and action. */
 export function startsWhen(crew: Pick<WireCrew, "trigger"> & { template?: WireCrew["template"] }): string {

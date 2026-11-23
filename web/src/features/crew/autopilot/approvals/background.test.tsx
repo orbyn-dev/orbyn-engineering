@@ -508,6 +508,16 @@ describe("The watch kind in the create dialog (KC6)", () => {
     expect(within(dialog).getByLabelText("Runs a day")).toHaveValue(2);
     expect(within(dialog).getByLabelText("Turns a day")).toHaveValue(80);
     expect(within(dialog).getByText("Starts one run of the template each time the result turns failing, not while it stays failing.")).toBeVisible();
+    // The watch's template and budgets come after the failing choice, as watch-setup-template draws them.
+    const order = [...dialog.querySelectorAll("label")].map((one) => one.textContent);
+    expect(order.indexOf("Every N hours")).toBeLessThan(order.indexOf("When it turns failing"));
+    expect(order.indexOf("When it turns failing")).toBeLessThan(order.indexOf("Template"));
+    expect(order.indexOf("Template")).toBeLessThan(order.indexOf("Turns"));
+    expect(within(dialog).getByText(/^Budget for each run the watch starts\./)).toBeVisible();
+    // Choosing the template a failing result starts must not turn the watch into that template's own trigger kind.
+    await user.click(within(dialog).getByRole("radio", { name: "Dependency bump" }));
+    expect(within(dialog).getByRole("radio", { name: "Watch" })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: "Dependency bump" })).toBeChecked();
     expect(within(dialog).getByRole("region", { name: "The check has no model budget" })).toHaveTextContent("Only a run it starts spends the budget above.");
   });
 

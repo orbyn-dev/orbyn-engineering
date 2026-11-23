@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BackgroundCrew } from "../../../../generated/BackgroundCrew";
-import { watchBanner, watchChip, watchFacts, watchLastLine, watchRow, watchStartsWhen, watchTail, watchView, everyHours } from "./watchModel";
-import { clockOf, dayOfIso, plusHours, whenMoment, whenShort } from "./when";
+import { watchBanner, watchChangesView, watchChip, watchFacts, watchLastLine, watchRow, watchStartsWhen, watchTail, watchView, everyHours } from "./watchModel";
+import { clockOf, dayOfIso, plusHours, whenLong, whenMoment, whenShort } from "./when";
 import type { BackgroundWatchChange, BackgroundWatchStatus } from "./watchTypes";
 
 const NOW = new Date("2026-11-07T18:00:00Z");
@@ -97,6 +97,35 @@ describe("a watch's page", () => {
     expect(banner.action).toBe("run");
   });
 
+  it("a first failing check is the baseline: it reads Failing, never raises, and offers no Needs you action", () => {
+    const firstFailed = change(1, "baseline", "none", "2026-11-05T09:02:00Z", 1);
+    const banner = watchBanner(crew(), status({ state: "failing", last_checked_at: "2026-11-05T09:02:00Z", last_exit_code: 1 }), [firstFailed], NOW);
+    expect(banner.title).toBe("Failing: baseline");
+    expect(banner.text).toContain("first failing check never raises");
+    expect(banner.text).toContain("no Needs you row opens until a check fails after a pass");
+    expect(banner.action).toBeNull();
+    // Facts still say the page is failing, with its exit code.
+    const facts = watchFacts(crew(), status({ state: "failing", last_checked_at: "2026-11-05T09:02:00Z", last_exit_code: 1 }), [firstFailed], NOW, "orbyn-engineering");
+    expect(facts.find((one) => one.label === "Last checked")?.text).toContain("exit 1");
+  });
+
+  it("a paused watch claims nothing about a row: its last result stays in the facts", () => {
+    const firstFailed = change(1, "baseline", "none", "2026-11-05T09:02:00Z", 1);
+    const banner = watchBanner(crew({ enabled: false }), status({ state: "failing", last_checked_at: "2026-11-05T09:02:00Z", last_exit_code: 1 }), [firstFailed], NOW);
+    expect(banner.title).toBe("Paused: it is off");
+    expect(banner.text).toBe("No check runs while it is off. When you turn it on, the next check is compared with that last result. A change during the pause is acted on once, on the first check after you turn it on.");
+    expect(banner.text).not.toContain("raised");
+    expect(banner.action).toBeNull();
+    const facts = watchFacts(crew({ enabled: false }), status({ state: "failing", last_checked_at: "2026-11-05T09:02:00Z", last_exit_code: 1 }), [firstFailed], NOW, "orbyn-engineering");
+    expect(facts.find((one) => one.label === "Last checked")?.text).toContain("exit 1");
+    expect(facts.find((one) => one.label === "Next check")?.text).toBe("None while it is off");
+  });
+
+  it("a failing change names its moment with the design's on … at … punctuation", () => {
+    const banner = watchBanner(crew(), status({ state: "failing", last_checked_at: "2026-11-07T14:02:00Z", last_exit_code: 1 }), CHANGES, NOW);
+    expect(banner.text).toContain(`turned failing on ${dayOfIso(RAISED_1402.at)} at ${clockOf(RAISED_1402.at)}`);
+  });
+
   it("a later failing check is Still failing and raises nothing new", () => {
     const banner = watchBanner(crew(), status({ state: "failing", last_checked_at: "2026-11-07T16:02:00Z", last_exit_code: 2 }), CHANGES, NOW);
     expect(banner.title).toBe("Still failing: already raised");
@@ -142,6 +171,23 @@ describe("a watch's page", () => {
     expect(recovered.find((one) => one.label === "Needs you")?.text).toBe(`The row from ${whenMoment(RAISED_1402.at, NOW)} is resolved`);
     const off = watchFacts(crew({ enabled: false }), status({ state: "failing", last_checked_at: "2026-11-06T15:04:00Z", last_exit_code: 1 }), [BASELINE], NOW, "orbyn-engineering");
     expect(off.find((one) => one.label === "Next check")?.text).toBe("None while it is off");
+  });
+
+  it("a check that could not run still says when the next one is due", () => {
+    const at = "2026-11-07T12:02:00Z";
+    const facts = watchFacts(crew(), status({ state: "could_not_run", last_checked_at: at, reason: "timed out", error_streak: 3 }), [BASELINE], NOW, "orbyn-engineering");
+    expect(facts.find((one) => one.label === "Next check")?.text).toBe(whenLong(plusHours(at, 1)));
+    const off = watchFacts(crew({ enabled: false }), status({ state: "could_not_run", last_checked_at: at, reason: "timed out", error_streak: 3 }), [BASELINE], NOW, "orbyn-engineering");
+    expect(off.find((one) => one.label === "Next check")?.text).toBe("None while it is off");
+  });
+
+  it("draws the change detail only for the history frame, never as a second output box on a watch's page", () => {
+    const withTail = { ...RAISED_1402, tail: "FAIL web/nav/redirect.test.ts" };
+    const changes = [withTail, BASELINE];
+    // The page draws the latest tail once, from the status read.
+    expect(watchView(crew(), status({ state: "failing", last_checked_at: RAISED_1402.at, last_exit_code: 1 }), changes, NOW, "orbyn-engineering").changes.detail).toBeNull();
+    // The history frame draws the newest change's kept tail under the table.
+    expect(watchChangesView(changes, crew(), NOW).detail?.body).toBe("FAIL web/nav/redirect.test.ts");
   });
 
   it("lists only changes of result, says what each did, and names an exit it has no number for as a dash", () => {

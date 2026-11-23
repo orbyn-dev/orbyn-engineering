@@ -984,7 +984,7 @@ export const FRAMES = {
   },
   "watch-setup-saved": {
     route: "#/crew/background",
-    scenario: "crew-background",
+    scenario: "crew-background-watch",
     steps: [
       click("button", "New background crew"),
       click("radio", "Watch"),
