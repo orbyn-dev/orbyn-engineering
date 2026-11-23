@@ -13,10 +13,11 @@ async function menuOf(user: ReturnType<typeof userEvent.setup>, name: string, it
 }
 
 it("draws nothing, and no error, when the profiles route answers 404", async () => {
-  const fetching = vi.fn(async () => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404 }));
+  const fetching = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404 }));
   vi.stubGlobal("fetch", fetching);
   const { container } = render(<ProfilesSettings />);
   await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
+  expect(String(fetching.mock.calls[0]?.[0])).toMatch(/\/api\/profiles/);
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(container).toBeEmptyDOMElement();
   expect(screen.queryByRole("alert")).toBeNull();
