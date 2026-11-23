@@ -983,6 +983,9 @@ export function createMockApi(options: MockOptions = {}) {
       }
       case "GET /api/acp":
         return { status: 200, body: acpRegistry };
+      // Installing or removing a registry agent: answered, but the mock keeps its engines as they are.
+      case "POST /api/acp":
+        return acpRegistry.some((entry) => entry.id === seg[3]) ? { status: 204 } : err(404, "not_found", "That agent is not in the registry.");
       case "GET /api/diagnostics":
         return { status: 200, body: diagnostics(Date.now()) };
       case "POST /api/diagnostics":
@@ -1530,6 +1533,7 @@ export function createMockApi(options: MockOptions = {}) {
         browserProfiles = browserProfiles.filter((entry) => entry.id !== seg[2]);
         return { status: 204 };
       }
+      if (seg[1] === "acp" && seg[2] === "registry") return { status: 204 };
       if (seg[1] === "engines" && seg[2] === "custom") {
         if (threads.some((t) => t.engine === seg[3] && t.active_run)) {
           return err(409, "engine_busy", `${seg[3]} has an active run or update`);
