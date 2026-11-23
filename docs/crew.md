@@ -1149,7 +1149,8 @@ guard, whose lists may have changed since the crew was made). Its last 20 lines 
 locked redactor; nothing else of its output is stored. **The first check that runs is a baseline and raises nothing** (a failing baseline is
 recorded as failing); after it, only a turn between passing and failing is a change. A turn to failing writes one change row and either
 raises one Needs you row (`on_failing` = `needs_you`) or starts the crew's template once through `crew_background_start`
-(`template`); a turn to passing writes "Passing again" and resolves the row. A different failure while it stays failing updates the last
+(`template`); a turn to passing writes "Passing again" and resolves a raised row, or writes the `passing` row with action `none` when the
+failure was a baseline or a started template, so nothing claims to resolve a row that never existed. A different failure while it stays failing updates the last
 exit code and tail and writes no row. A check that could not run (it timed out, could not start, the screen refuses the command now, or
 the folder is not trusted) counts a streak: three in a row raise one Needs you row, and a check that runs again resolves it. A single command
 that could not run never raises by itself, and no model is called while the result stays the same. A template start the listener is

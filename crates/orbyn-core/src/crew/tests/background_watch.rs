@@ -178,6 +178,7 @@ fn the_state_machine_raises_nothing_on_a_baseline_and_only_pass_fail_changes_are
             &blank("crew"),
             &ran(pass, Some(if pass { 0 } else { 1 }), None),
             true,
+            false,
             10,
         );
         assert!(step.next.baseline_done);
@@ -194,17 +195,24 @@ fn the_state_machine_raises_nothing_on_a_baseline_and_only_pass_fail_changes_are
         assert_eq!(step.next.last_checked_unix, Some(10));
     }
 
-    let passing = plan(&blank("crew"), &ran(true, Some(0), None), false, 10).next;
+    let passing = plan(&blank("crew"), &ran(true, Some(0), None), false, false, 10).next;
 
     // The same result again: the latest exit code and tail replace the last ones, and no row is written.
-    let same = plan(&passing, &ran(true, Some(0), Some("again")), false, 20);
+    let same = plan(
+        &passing,
+        &ran(true, Some(0), Some("again")),
+        false,
+        false,
+        20,
+    );
     assert!(same.change.is_none());
     assert_eq!(same.next.last_state, "passing");
     assert_eq!(same.next.tail.as_deref(), Some("again"));
     let same_fail = plan(
-        &plan(&passing, &ran(false, Some(2), None), false, 20).next,
+        &plan(&passing, &ran(false, Some(2), None), false, false, 20).next,
         &ran(false, Some(3), Some("another failure")),
         false,
+        true,
         30,
     );
     assert!(
@@ -215,7 +223,13 @@ fn the_state_machine_raises_nothing_on_a_baseline_and_only_pass_fail_changes_are
     assert_eq!(same_fail.next.tail.as_deref(), Some("another failure"));
 
     // Passing to failing is the one change that acts: needs_you by itself, or the template when the trigger says so.
-    let failing = plan(&passing, &ran(false, Some(2), Some("boom")), false, 20);
+    let failing = plan(
+        &passing,
+        &ran(false, Some(2), Some("boom")),
+        false,
+        false,
+        20,
+    );
     assert_eq!(
         failing.change,
         Some(("failing", Some(2), Some("boom".to_owned())))
@@ -223,25 +237,44 @@ fn the_state_machine_raises_nothing_on_a_baseline_and_only_pass_fail_changes_are
     assert_eq!(failing.action, "needs_you");
     assert!(!failing.start_template);
     assert_eq!(failing.next.last_state, "failing");
-    let template = plan(&passing, &ran(false, Some(2), None), true, 20);
+    let template = plan(&passing, &ran(false, Some(2), None), true, false, 20);
     assert_eq!(template.action, "started_template");
     assert!(template.start_template);
 
-    // Failing to passing is the recovery, and its row is "Passing again".
+    // Failing to passing is the recovery, and its row is "Passing again" when a raised failing change put a row up.
     let failing = failing.next;
-    let recovered = plan(&failing, &ran(true, Some(0), None), false, 30);
+    let recovered = plan(&failing, &ran(true, Some(0), None), false, true, 30);
     assert_eq!(recovered.change, Some(("passing", Some(0), None)));
     assert_eq!(recovered.action, "resolved");
     assert_eq!(recovered.next.last_state, "passing");
     assert!(!recovered.start_template);
+
+    // A failing baseline raised nothing, so the pass after it is a passing row with no action: the web must not draw
+    // "Resolved the Needs you row" for a row that never existed.
+    let failing_baseline = plan(&blank("crew"), &ran(false, Some(1), None), false, false, 5).next;
+    let after_baseline = plan(
+        &failing_baseline,
+        &ran(true, Some(0), None),
+        false,
+        false,
+        15,
+    );
+    assert_eq!(after_baseline.change, Some(("passing", Some(0), None)));
+    assert_eq!(after_baseline.action, "none");
+
+    // A failure whose template started raised nothing either, so its recovery has no action.
+    let started = plan(&passing, &ran(false, Some(2), None), true, false, 20).next;
+    let after_start = plan(&started, &ran(true, Some(0), None), true, false, 30);
+    assert_eq!(after_start.change, Some(("passing", Some(0), None)));
+    assert_eq!(after_start.action, "none");
 }
 
 #[test]
 fn three_checks_that_could_not_run_count_a_streak_and_a_check_that_runs_again_resolves_it() {
-    let passing = plan(&blank("crew"), &ran(true, Some(0), None), false, 10).next;
+    let passing = plan(&blank("crew"), &ran(true, Some(0), None), false, false, 10).next;
     let mut state = passing.clone();
     for (n, at) in (1..=3).zip([20, 30, 40]) {
-        let step = plan(&state, &missing(CouldNotRun::TimedOut), false, at);
+        let step = plan(&state, &missing(CouldNotRun::TimedOut), false, false, at);
         assert!(
             step.change.is_none(),
             "a check that could not run is not a change"
@@ -258,12 +291,12 @@ fn three_checks_that_could_not_run_count_a_streak_and_a_check_that_runs_again_re
     }
     assert_eq!(state.error_streak, 3);
     // A refusal now says so instead, and still counts.
-    let refused = plan(&state, &missing(CouldNotRun::Refused), false, 50);
+    let refused = plan(&state, &missing(CouldNotRun::Refused), false, false, 50);
     assert_eq!(refused.next.error_streak, 4);
     assert_eq!(refused.next.last_reason.as_deref(), Some("refused"));
 
     // A check that runs again clears the streak; the same result it had is no change, so it only resolves.
-    let recovered = plan(&refused.next, &ran(true, Some(0), None), false, 60);
+    let recovered = plan(&refused.next, &ran(true, Some(0), None), false, false, 60);
     assert!(recovered.change.is_none());
     assert_eq!(recovered.next.error_streak, 0);
     assert_eq!(recovered.next.last_state, "passing");
@@ -274,10 +307,11 @@ fn three_checks_that_could_not_run_count_a_streak_and_a_check_that_runs_again_re
         &blank("crew"),
         &missing(CouldNotRun::CouldNotStart),
         false,
+        false,
         70,
     )
     .next;
-    let baseline = plan(&early, &ran(true, Some(0), None), false, 80);
+    let baseline = plan(&early, &ran(true, Some(0), None), false, false, 80);
     assert_eq!(
         baseline.change.map(|(kind, _, _)| kind),
         Some("baseline"),
@@ -389,6 +423,31 @@ async fn a_failing_watch_raises_one_needs_you_row_and_a_pass_again_resolves_it()
 }
 
 #[tokio::test]
+async fn a_recovery_from_a_failing_baseline_writes_passing_with_no_action() {
+    let w = world(true, hung()).await;
+    let id = watch(&w, "Diff", "git diff --exit-code", "needs_you").await;
+
+    // The very first check fails: a baseline, so no Needs you row is ever raised.
+    make_dirty(&w);
+    tick(&w, NOW).await;
+    let rows = changes(&w, &id);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].kind, wire::BackgroundWatchChangeKind::Baseline);
+    assert_eq!(rows[0].action, wire::BackgroundWatchChangeAction::None);
+    assert!(w.core.crew_needs_you().unwrap().items.is_empty());
+
+    // The next check passes: a passing row, but there was no raised row to resolve, so its action is none.
+    make_clean(&w);
+    tick(&w, NOW + BUCKET).await;
+    let rows = changes(&w, &id);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].kind, wire::BackgroundWatchChangeKind::Passing);
+    assert_eq!(rows[0].action, wire::BackgroundWatchChangeAction::None);
+    assert_eq!(status(&w, &id).state, wire::BackgroundWatchState::Passing);
+    assert!(w.core.crew_needs_you().unwrap().items.is_empty());
+}
+
+#[tokio::test]
 async fn a_template_watch_starts_one_run_and_nothing_while_nothing_changes() {
     let w = world(true, hung()).await;
     let id = watch(&w, "Template", "git diff --exit-code", "template").await;
@@ -430,13 +489,14 @@ async fn a_template_watch_starts_one_run_and_nothing_while_nothing_changes() {
     assert_eq!(runs(&w, &id).len(), 1);
     assert_eq!(changes(&w, &id).len(), 2);
 
-    // A pass resolves the row; failing again while the first run still holds the crew is a refused start, and the Needs you
-    // row stays raised with one audit row beside it.
+    // A pass after a started template is a passing row with no action: the start put no Needs you row up to resolve. Failing
+    // again while the first run still holds the crew is a refused start, and the Needs you row stays raised with one audit row
+    // beside it.
     make_clean(&w);
     tick(&w, NOW + 3 * BUCKET).await;
     assert_eq!(
         changes(&w, &id)[0].action,
-        wire::BackgroundWatchChangeAction::Resolved
+        wire::BackgroundWatchChangeAction::None
     );
     make_dirty(&w);
     tick(&w, NOW + 4 * BUCKET).await;

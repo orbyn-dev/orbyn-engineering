@@ -1389,6 +1389,18 @@ impl Store {
         })
     }
 
+    /// The newest change row of a watch, if it has one: what the state it is in came from.
+    pub fn latest_watch_change(&self, crew: &str) -> Result<Option<WatchChangeRow>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT * FROM crew_watch_changes WHERE background_id = ?1 ORDER BY id DESC LIMIT 1",
+                [crew],
+                watch_change_row,
+            )
+            .optional()?)
+    }
+
     /// One page of a watch's change history, newest first, and how many rows it has.
     pub fn watch_changes_page(
         &self,

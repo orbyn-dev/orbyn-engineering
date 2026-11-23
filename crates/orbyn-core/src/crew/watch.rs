@@ -147,10 +147,13 @@ fn result_word(pass: bool) -> &'static str {
 }
 
 /// The state machine: one check applied to the state the watch had. Pure; the store write and the template start follow it.
+/// `raised` says the failing state came from a failing change that put a Needs you row up, so a pass resolves that row; a
+/// failing baseline, or a failure whose template started, put no row up and recovers with action `none`.
 pub fn plan(
     previous: &WatchStateRow,
     check: &WatchCheck,
     on_failing_template: bool,
+    raised: bool,
     at: i64,
 ) -> Planned {
     let mut next = previous.clone();
@@ -203,7 +206,7 @@ pub fn plan(
                 };
             }
             let action = if pass {
-                "resolved"
+                if raised { "resolved" } else { "none" }
             } else if on_failing_template {
                 "started_template"
             } else {
@@ -335,7 +338,13 @@ impl Core {
             .watch_state(&crew.id)?
             .unwrap_or_else(|| blank_state(&crew.id));
         let on_failing_template = crew.trigger_settings["on_failing"].as_str() == Some("template");
-        let planned = plan(&previous, &check, on_failing_template, at);
+        // A pass resolves only a row that was raised: the newest change row must be the failing change action `needs_you`. A
+        // failing baseline, a started template, or a turn-off in between recovers with no action.
+        let raised = self
+            .store
+            .latest_watch_change(&crew.id)?
+            .is_some_and(|row| row.kind == "failing" && row.action == "needs_you");
+        let planned = plan(&previous, &check, on_failing_template, raised, at);
         let mut action = planned.action;
         if planned.start_template && !self.fire_background_event(&crew.id, "watch", event).await {
             action = "needs_you";
