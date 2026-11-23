@@ -68,6 +68,8 @@ export type Scenario =
   | "remote"
   | "offline"
   | "reference"
+  /** The service on another computer, for the rows only macOS shows: "platform-windows", "platform-linux". */
+  | `platform-${"windows" | "linux"}`
   /** The sign-in gate is on, signed out; see `mock/account.ts` for the throwaway accounts. */
   | "account"
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
@@ -1048,7 +1050,7 @@ export function createMockApi(options: MockOptions = {}) {
       case "GET /api/engine-host":
         return err(404, "not_found", "Not found.");
       case "GET /api/info":
-        return { status: 200, body: { ...fixtures.info, ...infoPatch, remote: scenario === "remote", ...(scenario === "crew" || scenario.startsWith("crew-") ? { crew_preview: true } : {}) } };
+        return { status: 200, body: { ...fixtures.info, ...(scenario.startsWith("platform-") ? { platform: scenario.slice("platform-".length) } : {}), ...infoPatch, remote: scenario === "remote", ...(scenario === "crew" || scenario.startsWith("crew-") ? { crew_preview: true } : {}) } };
       case "POST /auth/session":
         if (data.key === "orbyn-demo-key") {
           signedIn = true;
