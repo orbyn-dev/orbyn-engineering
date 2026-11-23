@@ -1428,7 +1428,11 @@ mod tests {
             json!({"release_id":"r1","operation":0.5}),
             json!({"release_id":"r1","operation":u64::from(u32::MAX)+1}),
         ] {
-            assert!(checked_app_request(&app).is_err(), "{app}");
+            assert_eq!(
+                checked_app_request(&app).unwrap_err().message,
+                "The service did not identify the checked update. Check again before updating.",
+                "{app}"
+            );
         }
         for operation in [0, u32::MAX] {
             let selected =
