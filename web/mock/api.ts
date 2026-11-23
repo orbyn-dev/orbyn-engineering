@@ -214,6 +214,9 @@ export function createMockApi(options: MockOptions = {}) {
   let browserProfiles: { id: string; name: string; in_use: boolean }[] = [];
   /** The thread each imported agent-history session became, by `engine:session_id`. */
   const importedHistory = new Map<string, string>();
+  /** The thread each imported ACP-agent session became, and the ones deleted, by `engine:session_id`. */
+  const importedNative = new Map<string, string>();
+  const nativeDeleted = new Set<string>();
   /** What a test changed of the diagnostics the service reports (events, processes, database). */
   let diagnosticsPatch: Partial<Diagnostics> = {};
   /** Tasks whose webhook has an address; the token itself is never kept, as in the service. */
@@ -311,6 +314,8 @@ export function createMockApi(options: MockOptions = {}) {
     failures = [];
     clones = [];
     importedHistory.clear();
+    importedNative.clear();
+    nativeDeleted.clear();
     diagnosticsPatch = {};
     cloneError = null;
     reviewsSent.clear();
@@ -692,6 +697,14 @@ export function createMockApi(options: MockOptions = {}) {
       target[key] = value !== null && typeof value === "object" && !Array.isArray(value) && kept !== null && typeof kept === "object" && !Array.isArray(kept)
         ? { ...kept, ...value } : value;
     }
+  }
+
+  /** The failure a test queued for this path, if one is still waiting, used up by one request. */
+  function takeFailure(pathname: string): MockResponse | null {
+    const failure = failures.find((f) => pathname.startsWith(f.path) && f.remaining > 0);
+    if (!failure) return null;
+    failure.remaining -= 1;
+    return err(failure.status, failure.code, failure.message);
   }
 
   function route(method: string, path: string, query: URLSearchParams, body: unknown): MockResponse {
@@ -1339,6 +1352,12 @@ export function createMockApi(options: MockOptions = {}) {
         if (seg[3] === "native-sessions" && seg[4] === "count") {
           return { status: 200, body: { engine: seg[2], count: fixtures.nativeSessionCounts[seg[2] ?? ""] ?? 0, truncated: false } };
         }
+        // An ACP agent's own saved conversations: the mock agent lists one and says it can load and delete it.
+        if (seg[3] === "native-sessions" && seg[4] === "capabilities") return { status: 200, body: { can_list: true, can_load: true, can_resume: false, can_delete: true } };
+        if (seg[3] === "native-sessions" && !seg[4]) {
+          const chat = { session_id: "native-1", cwd: projects[0]?.path ?? "/Users/dev/code", additional_directories: [], title: "First chat", updated_at: now(), imported_thread_id: importedNative.get(`${seg[2]}:native-1`) ?? null };
+          return { status: 200, body: { sessions: nativeDeleted.has(`${seg[2]}:native-1`) ? [] : [chat], next_cursor: null, can_load: true, can_resume: false, can_delete: true } };
+        }
         if (seg[3] === "installs") {
           // Only an engine that is not installed has the vendor's page.
           const missing = engines.find((e) => e.id === seg[2])?.installed === false;
@@ -1471,6 +1490,37 @@ export function createMockApi(options: MockOptions = {}) {
         return decide(approval, data.allow === true);
       }
       if (seg[1] === "engines" && seg[2] === "refresh") return { status: 200, body: engines };
+      if (seg[1] === "engines" && seg[3] === "native-sessions" && seg[4] === "import") {
+        const thread_id = nextId("t");
+        importedNative.set(`${seg[2]}:${String(data.session_id)}`, thread_id);
+        return { status: 200, body: { thread_id, imported: true } };
+      }
+      if (seg[1] === "engines" && seg[3] === "native-sessions" && seg[4] === "delete") {
+        nativeDeleted.add(`${seg[2]}:${String(data.session_id)}`);
+        return { status: 204 };
+      }
+      if (seg[1] === "engines" && seg[3] === "install-recommended") {
+        const engine = engines.find((e) => e.id === seg[2]);
+        if (!engine) return err(404, "not_found", "Engine not found.");
+        if (!engine.compatibility?.recommended_command) return err(422, "update_unavailable", `No recommended version is recorded for ${engine.id}.`);
+        engine.version = engine.compatibility.recommended_version ?? engine.version;
+        engine.support = "tested";
+        engine.compatibility = undefined;
+        return { status: 200, body: null };
+      }
+      // Codex reports a problem to OpenAI and answers with the thread it opened; no other engine has the route.
+      if (seg[1] === "engines" && seg[3] === "feedback") {
+        if (seg[2] !== "codex") return err(422, "unsupported", "This engine cannot send feedback.");
+        return { status: 200, body: { thread_id: nextId("report"), prompt_hash: null } };
+      }
+      // Updates every engine that owns an installer and has a newer version, one after another, as one update each would.
+      if (seg[1] === "engines" && seg[2] === "update-all") {
+        const outcomes = engines.filter((engine) => engine.installed && !engine.instance_of && engine.update_command !== null && engine.latest !== null && engine.latest !== engine.version).map((engine) => {
+          const answer = takeFailure(`/api/engines/${engine.id}/update`) ?? route("POST", `/api/engines/${engine.id}/update`, new URLSearchParams(), {});
+          return answer.status < 400 ? { id: engine.id, name: engine.name, version: engine.latest ?? undefined } : { id: engine.id, name: engine.name, error: String((answer.body as { message?: string }).message) };
+        });
+        return { status: 200, body: outcomes };
+      }
       if (seg[1] === "engines" && seg[2] === "probe-binary") {
         const path = String(data.path ?? "");
         return { status: 200, body: path.endsWith("/claude") ? { exists: true, path, version: "2.1.318", problem: null } : { exists: false, path: null, version: null, problem: "No file at this path." } };
@@ -1581,6 +1631,8 @@ export function createMockApi(options: MockOptions = {}) {
         failure.remaining -= 1;
         return err(failure.status, failure.code, failure.message);
       }
+      const refused = takeFailure(parsed.pathname);
+      if (refused) return refused;
       if (parsed.pathname.startsWith("/api/code-runs") || /^\/api\/engines\/[^/]+\/code-mode$/.test(parsed.pathname) || /^\/api\/threads\/[^/]+\/code-runs$/.test(parsed.pathname)) {
         const answered = codeModeMock.handle(method, parsed.pathname, body);
         if (answered) return answered;
@@ -1653,6 +1705,10 @@ export function createMockApi(options: MockOptions = {}) {
     /** Changes what Settings › Maintenance reads as the service's diagnostics, until the next reset. */
     patchDiagnostics(patch: Partial<Diagnostics>) {
       diagnosticsPatch = { ...diagnosticsPatch, ...patch };
+    },
+    /** Replaces the engines the service reports, for states the fixtures do not hold (an engine below its supported range, one that cannot be updated). */
+    setEngines(next: EngineStatus[]) {
+      engines = structuredClone(next);
     },
     patchWorkspace(patch: Partial<WorkspaceStatus>) {
       managed = { ...managed, ...patch };
