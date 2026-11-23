@@ -1,19 +1,19 @@
 import { act, render, screen } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
-import { api } from "../../../api/client";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { MockApi } from "../../../../mock/api";
+import { installMockFetch } from "../../../test-support";
 import type { ReleaseChannel } from "../../../generated/ReleaseChannel";
 import { useUi } from "../../../product/state/ui";
 import { EnvironmentIdentity } from "./EnvironmentIdentity";
 
-vi.mock("../../../api/client", async (original) => {
-  const actual = await original<typeof import("../../../api/client")>();
-  return { ...actual, api: { ...actual.api, info: vi.fn() } };
+let mock: MockApi;
+const serve = (channel: ReleaseChannel) => mock.patchInfo({ version: "0.4.1", channel });
+
+beforeEach(() => {
+  mock = installMockFetch();
+  useUi.getState().setPrefs({ environmentIdentification: "artwork" });
 });
-
-const serve = (channel: ReleaseChannel) =>
-  vi.mocked(api.info).mockResolvedValue({ version: "0.4.1", remote: false, platform: "test", environment_label: "Test computer", channel });
-
-beforeEach(() => useUi.getState().setPrefs({ environmentIdentification: "artwork" }));
+afterEach(() => vi.unstubAllGlobals());
 
 it("shows Dev and Nightly artwork but nothing for a stable build", async () => {
   serve("dev");

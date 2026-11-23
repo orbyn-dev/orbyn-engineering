@@ -527,7 +527,16 @@ async fn a_session_ended_on_a_screen_call_destroys_the_keys() {
     .await
     .unwrap();
     a.stand_in().sign_out_elsewhere();
-    assert!(a.devices().await.is_err());
+    assert!(
+        matches!(
+            a.devices().await,
+            Err(crate::error::CoreError::Account {
+                code: "session_ended",
+                ..
+            })
+        ),
+        "a session ended elsewhere answers session_ended"
+    );
     assert_eq!(a.stand_in().wipes(), 1);
 }
 
@@ -549,7 +558,10 @@ async fn failed_delete_then_retry(trigger: Trigger, mode: u8) {
     match trigger {
         Trigger::OwnRemoval => {
             // Removed on the server, but the local keys could not be deleted: told so.
-            assert!(d.account.remove_device(FIRST).await.is_err());
+            assert!(matches!(
+                d.account.remove_device(FIRST).await,
+                Err(crate::account::DeviceError::Server { retryable: true })
+            ));
         }
         Trigger::EndedSession => {
             server.refuse("/v1/zones", 401, "unauthorized");

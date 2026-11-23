@@ -254,7 +254,9 @@ fn the_internal_fix_digest_is_withheld_from_worker_reports() {
         "params": { "name": "crew-fix-touched", "note": digest } }),
     );
     let needles = crate::crew::guard::check_needles(&[c]);
-    assert!(crate::crew::guard::refuse_leak(&json!({ "summary": digest }), &needles).is_err());
+    let leak =
+        crate::crew::guard::refuse_leak(&json!({ "summary": digest }), &needles).unwrap_err();
+    assert_eq!(leak.code, orbyn_contracts::ErrorCode::AnswerKeyForbidden);
     assert!(!withhold(&digest, &needles).contains(&digest));
 }
 

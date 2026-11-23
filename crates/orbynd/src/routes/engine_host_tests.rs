@@ -24,6 +24,19 @@ struct Served {
     _dir: std::path::PathBuf,
 }
 
+/// What a test does when node is missing: skip, or fail when the run says node must be there.
+/// The build box sets `ORBYN_REQUIRE_NODE=1`, so a missing node there is a red run, not a quiet pass.
+fn node_or_skip(found: Option<String>, required: bool) -> Option<String> {
+    if found.is_none() {
+        assert!(
+            !required,
+            "ORBYN_REQUIRE_NODE=1 and node was not found, so no engine host process can run here"
+        );
+        eprintln!("SKIPPED: node was not found, so no engine host process can run here");
+    }
+    found
+}
+
 fn node() -> Option<String> {
     let found = std::process::Command::new("sh")
         .args(["-c", "command -v node"])
@@ -32,10 +45,21 @@ fn node() -> Option<String> {
         .filter(|out| out.status.success())
         .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
         .filter(|path| !path.is_empty());
-    if found.is_none() {
-        eprintln!("SKIPPED: node was not found, so no engine host process can run here");
-    }
-    found
+    node_or_skip(
+        found,
+        std::env::var("ORBYN_REQUIRE_NODE").is_ok_and(|v| v == "1"),
+    )
+}
+
+#[test]
+#[should_panic(expected = "ORBYN_REQUIRE_NODE=1")]
+fn a_missing_node_fails_the_run_when_the_run_requires_it() {
+    node_or_skip(None, true);
+}
+
+#[test]
+fn a_missing_node_skips_when_it_is_not_required() {
+    assert_eq!(node_or_skip(None, false), None);
 }
 
 /// A service whose Claude host is the stand-in, started through a launcher script that ignores the

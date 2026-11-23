@@ -1,24 +1,21 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { reserveStreamConnection } from "../../../api/lanes";
 import { dataChanged } from "../../../api/shell";
+import { reserveStreamConnection, resetLanesForTests, SLOW_LANE_CAP } from "../../../api/lanes";
 import type { ExplorerWorktree } from "../../../generated/ExplorerWorktree";
 import type { Row } from "./model";
 import { followExplorer, watchedWorktrees } from "./watch";
 
-vi.mock("../../../api/lanes", () => ({ reserveStreamConnection: vi.fn() }));
 vi.mock("../../../api/shell", () => ({ dataChanged: vi.fn() }));
-vi.mock("../../../api/client", () => ({ authHeaders: () => ({}) }));
-vi.mock("../../../api/origin", () => ({ serviceUrl: (path: string) => path }));
 
 let stop: (() => void) | undefined;
 const fetcher = vi.fn<typeof fetch>();
 let focused = true;
 let hidden = false;
 beforeEach(() => {
+  resetLanesForTests();
   vi.useFakeTimers();
   focused = true;
   hidden = false;
-  vi.mocked(reserveStreamConnection).mockReset().mockResolvedValue(vi.fn());
   vi.spyOn(document, "hasFocus").mockImplementation(() => focused);
   vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
   fetcher.mockReset().mockImplementation((_url, options) => new Promise((_resolve, reject) => {
@@ -182,22 +179,31 @@ it("a focus retry replaces the pending reconnect instead of starting a second ti
 });
 
 it("releases its connection reservation on blur and aborts a queued reservation before fetching", async () => {
-  const release = vi.fn();
-  vi.mocked(reserveStreamConnection).mockResolvedValueOnce(release);
+  // The follower holds one of the slow slots, so one fewer is free for another stream.
   stop = followExplorer(pair);
   await vi.advanceTimersByTimeAsync(0);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  const holds: (() => void)[] = [];
+  const take = () => reserveStreamConnection(new AbortController().signal).then((release) => { holds.push(release); });
+  for (let at = 1; at < SLOW_LANE_CAP; at += 1) void take();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(holds).toHaveLength(SLOW_LANE_CAP - 1);
+  void take();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(holds).toHaveLength(SLOW_LANE_CAP - 1);
   focused = false;
   window.dispatchEvent(new Event("blur"));
   await vi.advanceTimersByTimeAsync(0);
-  expect(release).toHaveBeenCalledTimes(1);
+  // Its slot went to the waiting stream, which now holds every slot.
+  expect(holds).toHaveLength(SLOW_LANE_CAP);
   stop();
-  vi.mocked(reserveStreamConnection).mockImplementation((signal) => new Promise((_resolve, reject) => {
-    signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-  }));
+  // A follower that has to wait for a slot is aborted by the blur, and never fetches once a slot frees.
   focused = true;
   stop = followExplorer(pair);
   focused = false;
   window.dispatchEvent(new Event("blur"));
+  await vi.advanceTimersByTimeAsync(0);
+  for (const release of holds) release();
   await vi.advanceTimersByTimeAsync(0);
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
