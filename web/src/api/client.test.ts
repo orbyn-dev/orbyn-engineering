@@ -129,3 +129,20 @@ describe("repo_id on thread Git calls", () => {
     ]);
   });
 });
+
+describe("run purpose", () => {
+  it("puts purpose on the start body only when a run asks for Orbyn's schema", async () => {
+    const fetchMock = respond(200, { id: "r1" });
+    vi.stubGlobal("fetch", fetchMock);
+    await api.startRun("t1", "why is it slow?");
+    await api.startRun("t1", "why is it slow?", [], { purpose: "terminal_proposal" });
+    const bodies = fetchMock.mock.calls.map((call) => {
+      const [, init] = call as unknown as [string, RequestInit];
+      return JSON.parse(String(init.body)) as unknown;
+    });
+    expect(bodies).toEqual([
+      { prompt: "why is it slow?" },
+      { prompt: "why is it slow?", purpose: "terminal_proposal" },
+    ]);
+  });
+});

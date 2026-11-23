@@ -8,7 +8,7 @@ const q = encodeURIComponent;
 const isMissing = (error: unknown) => error instanceof ApiFailure && error.status === 404;
 
 /**
- * The real client for the routes of docs/devices.md (provisional; not run against a real service). `GET /api/devices` answering `404`
+ * The real client for the routes of docs/devices.md (answered by the service since #1250; not run against a real adb or simctl by the web). `GET /api/devices` answering `404`
  * is "this service has no devices" and is answered as `null` with no error, so nothing draws. Every write is Person-class
  * (`personKey.ts`): `request` adds the key. The device id in a path is encoded, and only ever one the list gave.
  */

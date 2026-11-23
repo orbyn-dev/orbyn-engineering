@@ -48,6 +48,38 @@ async fn a_setsid_child_that_ignores_sigterm_dies_after_terminate_wait_and_drop(
     assert_process_reaped(escaped, "terminate, wait and drop").await;
 }
 
+/// A double fork whose middle process has exited orphans the `setsid` grandchild to `init` before any walk can see its parent link, so
+/// the group kill alone left it running after a timeout or a withdraw. Linux makes the leader a subreaper, which adopts the orphan, so
+/// the walk finds it again; macOS has no such flag and keeps that documented limit, which is why the case is Linux-only. The
+/// `terminate` case ignores SIGTERM, so only a walk that recorded the orphan before the leader exited can still finish it.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_double_forked_grandchild_dies_on_drop_and_after_terminate() {
+    use crate::testing::double_fork_sleeper;
+
+    for how in ["its owner", "terminate, wait and drop"] {
+        let dir = TempDir::new();
+        let pid_file = dir.path().join("pid");
+        let mut child = spawn(
+            dir.path(),
+            format!(
+                "{} sleep 600",
+                double_fork_sleeper(&pid_file, how != "its owner")
+            ),
+        );
+        let escaped = sleeper_pid(&pid_file).await;
+        assert!(process_alive(escaped));
+        if how == "its owner" {
+            drop(child);
+        } else {
+            child.terminate();
+            child.wait().await.unwrap();
+            drop(child);
+        }
+        assert_process_reaped(escaped, how).await;
+    }
+}
+
 /// A smoke test, not a proof of pid-reuse safety: after the leader was waited for, `id()` is `None`, nothing is walked, and the drop
 /// signals nothing but the group and what was recorded. A process of the test's own (its parent is this test, not the leader) lives on.
 #[tokio::test]

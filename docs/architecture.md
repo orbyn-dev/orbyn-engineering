@@ -42,7 +42,7 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    run the unmodified `claude` binary, never collect, read or store Claude.ai credentials (the engine keeps its own
    login), and never use `--bare`, which ignores subscription login. The person's `claude_engine_path` setting (`sdk`,
    the default, or `cli`, a device-local preference) is read at the start of each run; `ORBYN_ENGINE_HOST_CLAUDE` is opt-out
-   (only `0` turns the host off). The core default is on; the Settings › Providers › Claude Code page sets `claude_engine_path` (the engine picker rows are *Planned*), and a packaged turn on the SDK path is not yet observed
+   (only `0` turns the host off). The core default is on; the Settings › Providers › Claude Code page sets `claude_engine_path` (the engine picker rows are built), and a packaged turn on the SDK path is not yet observed
    (docs/sdk-default-plan.md). A person's choice is never switched silently: when the host is down the person sees why and may pick the CLI.
 4. Orbyn writes nothing into target repositories or engine user config: no skills,
    instructions, excludes or context maps. The project file is read-only to Orbyn.
@@ -549,15 +549,21 @@ leaves it pending, and until then `/compact` and `/goal`, which reach an engine 
 `422 unsupported`. The log stays whole; a rewind is logged as `CUSTOM
 thread.rewound` for clients to hide what follows.
 
-Each run keeps the engine session and the first turn id it spoke in. No run is admitted
-while a rewind is under way. Rewinding a Codex thread before a run whose session is
-still the thread's, with no handoff waiting and an earlier run in that same session (a
-session's first run may have carried a handoff), loads
-that thread in a short-lived app-server and sends `thread/revert` with that run's turn,
-which keeps only the earlier turns. The session then goes on, nothing is handed off,
-and the event and audit carry `native: true`. Files are restored only by the rewind's
-own checkpoint step. Any refusal, a missing turn id or another engine falls back to the
-handoff above.
+Each run keeps the engine session and the first turn id it spoke in; for the Claude host
+the turn it keeps is the prompt's message id, because the host's own turn id is a counter
+that never appears in the session file. No run is admitted while a rewind is under way.
+Rewinding a Codex thread before a run whose session is still the thread's, with no handoff
+waiting and an earlier run in that same session (a session's first run may have carried a
+handoff), loads that thread in a short-lived app-server and sends `thread/revert` with
+that run's turn, which keeps only the earlier turns. Rewinding a Claude thread whose run
+went through the engine host reads the session file by the stored session id and names the
+nearest top-level assistant ancestor of the run's prompt, falling back to the last one
+before it in file order when the file has no parent links; the next run's `open` carries it
+as `resumeAt` once, within two minutes, and a create, a different session or a changed
+thread session drops it. The session then goes on, nothing is handed off, and the event and
+audit carry `native: true`. Files are restored only by the rewind's own checkpoint step.
+Any refusal, a missing turn id or point, a missing or changed session file, or another
+engine falls back to the handoff above.
 
 ## What a run changed
 
@@ -599,9 +605,11 @@ refuse the action. A reply may be bare JSON or one Markdown fence around it. Gen
 needs Git 2.40 or later, which honours `GIT_ATTR_SOURCE`; older Git could apply
 the working tree's clean filters while the diff is read, so it falls back instead.
 
-Writing uses the selected thread engine and the configured text-generation model,
-or the thread's explicit model when that setting is empty. It never chooses another
-provider or guesses a smaller model. Only the guarded Claude one-shot path supports
+Writing uses the selected thread engine and the one-shot model resolved for that
+engine ([Text generators](#text-generators)): the per-engine choice, then the legacy
+setting, then the engine's small model, then the thread's model. A name the engine
+does not list is passed over, never sent, and it never chooses another provider.
+Only the guarded Claude one-shot path supports
 repository-derived text: an owned temporary folder, empty tools, strict empty MCP
 configuration, disabled hooks/cloud MCP/IDE connections and slash commands,
 `dontAsk`, and no session persistence. Rejected flags fail without a retry.
@@ -615,8 +623,7 @@ remote's tracking ref (the branch's configured remote, else `origin`) when it
 exists, else the local base branch; the staleness check uses the same ref. The
 checked snapshot includes the symbolic branch name (a fixed marker on a detached
 HEAD), so switching branches at the same commit during generation is refused.
-Existing title calls retain their separate model policy and
-Codex path; this change does not qualify that path as tool-free. No credential
+Existing title calls share that model policy; the Codex path is still not qualified as tool-free writing. No credential
 configuration or MCP server list is read to implement writing. Prompts and patches
 are not saved by the generation audit, which records purpose, engine and model.
 
@@ -1569,6 +1576,39 @@ client may stop reading early. Both routes share one scanner, so the stream neve
 a different set or order, and a message written while a streamed search runs may not be
 in it.
 
+## Text generators
+
+Two one-shot calls spend engine usage for text a person did not ask a model for: a
+thread's first-message title and a confirmed Git action's commit or pull request text.
+Both go through one resolver: the model `text_generation_models` names for the thread's
+engine when that engine lists it, then the legacy `text_generation_model` when that
+engine lists it, then the engine's small model (a `haiku`, `luna`, `mini`, `flash` or
+`small` family name), then the thread's model. The reason travels with the choice
+(`chosen`, `legacy`, `small` or `thread`), and a name an engine does not list is passed
+over, never sent. A failed model-list read is an empty list, so the next fallback applies
+instead of failing the call.
+
+`text_generation_models` is a JSON object of engine id to model id, global or per
+project, at most 64 entries. An engine id is at most 64 letters, digits, `-` and `_`,
+starting with a letter or digit; a model id is at most 256 plain characters and cannot
+start with `-`. A write always checks that shape, and when the engine has already listed
+its models, it refuses a model that list does not offer. An engine that has not answered
+yet cannot say, so the write is accepted and the run's own start check still applies. The
+key never syncs ([account](account.md#never-synced)), and the old `text_generation_model`
+stays as the fallback with no data migration.
+
+`GET /api/text-generators` is a read. It lists every known engine that is not turned
+off for the scope, with its display name, up to 200 of the models its catalog returned (a
+failed listing is an empty list, not an error), the global chosen model or null, and the
+resolved model with its reason or null. `?project=<id>` adds the project's effective
+chosen and resolved choice. A write goes through the ordinary preferences routes
+(`PUT /api/preferences`, `PUT /api/projects/{id}/preferences` or the scoped settings
+route); there is no text-generator write route.
+
+Branch names and cleanup have no generator in the service yet: branch names come from
+`branch_name_prefix`, and the stored `branch_naming_mode` semantic and custom modes are
+not called, so no branch or cleanup call reaches the resolver.
+
 ## Automatic requests
 
 `GET /api/network` and `crates/orbyn-core/src/governance/network.rs` list every outbound request
@@ -1578,9 +1618,10 @@ The two-minute pull request poll has its own, `poll_pull_requests`. Engines make
 
 A thread's first message also spends one short engine call on its title, in the
 background, unless `auto_thread_titles` is off. It sees only that message and goes through
-the thread's own engine with no tools and no session. The model is
-`text_generation_model` when that engine lists it, otherwise the engine's small model,
-otherwise the thread's. A thread with a chosen title, a delegated thread, and a goal
+the thread's own engine with no tools and no session. The model is the one
+[Text generators](#text-generators) resolves for that engine: its per-engine choice,
+then `text_generation_model`, then its small model, then the thread's. A thread with a
+chosen title, a delegated thread, and a goal
 command are left alone. A failure keeps the default title, and a rename that lands first
 wins.
 

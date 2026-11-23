@@ -49,8 +49,8 @@ function RunDetail({ run }: { run: CodeRunSummary }) {
 
 /**
  * The runs of this thread, newest first: id, status, when, call count and the first 120 characters of the script. The list holds no
- * calls; opening a run shows the same block as in the thread. There is no Stop: a paused run ends when its pending approval is
- * declined. Where this opens is not settled, so it sits under the Tools tab for now. When the service does not offer Code Mode
+ * calls; opening a run shows the same block as in the thread. There is no Stop in the web UI yet: the service's Person cancel
+ * route is not drawn here. Where this opens is not settled, so it sits under the Tools tab for now. When the service does not offer Code Mode
  * (every route answers 404) or the thread has no runs, nothing is drawn.
  */
 export function CodeRunsList({ threadId }: { threadId: string }) {

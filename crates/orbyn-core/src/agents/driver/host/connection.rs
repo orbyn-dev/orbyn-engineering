@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
-use super::frames::{AskFrame, HostError, Incoming, RunDone, decode, is_gated, request};
+use super::frames::{AskFrame, HostError, HostSdk, Incoming, RunDone, decode, is_gated, request};
 use super::process::{Read, Ready, Transport};
 use super::state::{CrashInfo, CrashKind, ExitRecord, MalformedWindow, Timings};
 
@@ -25,6 +25,8 @@ pub enum RunFrame {
         engine_session_id: Option<String>,
         turn_id: Option<String>,
     },
+    /// The host took the prompt: frames after this one are the prompt's own turn.
+    Accepted,
     Done(RunDone),
     Background(Value),
 }
@@ -53,6 +55,13 @@ pub enum RequestError {
     Closed,
 }
 
+impl RequestError {
+    /// Whether the host answered that this build carries no SDK for the family.
+    pub fn sdk_missing(&self) -> bool {
+        matches!(self, Self::Failed(error) if error.sdk_missing())
+    }
+}
+
 /// The connection is closing and takes no new run.
 #[derive(Debug)]
 pub struct Closing;
@@ -71,7 +80,11 @@ struct Book {
     closing: bool,
 }
 
-type Pending = oneshot::Sender<Result<Value, HostError>>;
+struct Pending {
+    reply: oneshot::Sender<Result<Value, HostError>>,
+    /// The run to tell when this request is accepted; the `send` response does it.
+    accepted: Option<u64>,
+}
 
 struct Shared {
     next_id: AtomicU64,
@@ -91,7 +104,11 @@ pub struct Connection {
     pub id: u64,
     pub capabilities: Vec<String>,
     pub host_version: String,
+    /// The SDK package and version the host's hello named, when it named both.
+    pub sdk: Option<HostSdk>,
     started: Instant,
+    /// Unix seconds when this host became ready, for the UI's `since`.
+    started_at: i64,
     shared: Arc<Shared>,
     outbox: mpsc::UnboundedSender<String>,
     closed: watch::Receiver<Option<ClosedReason>>,
@@ -140,7 +157,9 @@ impl Connection {
             id,
             capabilities: ready.hello.capabilities,
             host_version: ready.hello.host,
+            sdk: ready.hello.sdk,
             started: Instant::now(),
+            started_at: crate::util::unix_now(),
             shared: shared.clone(),
             outbox: transport.outbox.clone(),
             closed,
@@ -153,6 +172,11 @@ impl Connection {
 
     pub fn uptime(&self) -> std::time::Duration {
         self.started.elapsed()
+    }
+
+    /// Unix seconds when this host became ready.
+    pub fn started_at(&self) -> i64 {
+        self.started_at
     }
 
     pub fn has_capability(&self, name: &str) -> bool {
@@ -176,11 +200,40 @@ impl Connection {
         kind: &str,
         fields: Value,
     ) -> Result<Value, RequestError> {
+        self.request_inner(id, kind, fields, None).await
+    }
+
+    /// A request whose acceptance belongs to run `send_id`: the response dispatches an
+    /// `Accepted` frame to that run before this future wakes, so every frame the host
+    /// sent before taking the prompt is ordered ahead of it.
+    pub async fn request_accepting(
+        &self,
+        id: u64,
+        kind: &str,
+        fields: Value,
+        send_id: u64,
+    ) -> Result<Value, RequestError> {
+        self.request_inner(id, kind, fields, Some(send_id)).await
+    }
+
+    async fn request_inner(
+        &self,
+        id: u64,
+        kind: &str,
+        fields: Value,
+        accepted: Option<u64>,
+    ) -> Result<Value, RequestError> {
         if is_gated(kind) && !self.has_capability(kind) {
             return Err(RequestError::Unsupported(kind.to_owned()));
         }
         let (tx, rx) = oneshot::channel();
-        lock(&self.shared.pending).insert(id, tx);
+        lock(&self.shared.pending).insert(
+            id,
+            Pending {
+                reply: tx,
+                accepted,
+            },
+        );
         if self.outbox.send(request(id, kind, fields)).is_err() {
             lock(&self.shared.pending).remove(&id);
             return Err(RequestError::Closed);
@@ -284,8 +337,13 @@ fn dispatch(shared: &Shared, frame: Incoming, pings: &mut HashSet<u64>) -> bool 
                 pings.clear();
                 return true;
             }
-            if let Some(reply) = lock(&shared.pending).remove(&response.id) {
-                let _ = reply.send(response.result);
+            if let Some(pending) = lock(&shared.pending).remove(&response.id) {
+                if let Some(send_id) = pending.accepted
+                    && response.result.is_ok()
+                {
+                    route(send_id, RunFrame::Accepted);
+                }
+                let _ = pending.reply.send(response.result);
             }
         }
         Incoming::Delta { send_id, update } => route(send_id, RunFrame::Delta(update)),

@@ -7,6 +7,8 @@ import {
   BUILT_IN_EXCLUDED_APPS,
   MAX_EXCLUDED_APP_LENGTH,
   MAX_EXCLUDED_APPS,
+  SNAPSHOT_ACCESSIBILITY_SETUP_AVAILABLE,
+  SNAPSHOT_SETUP_AVAILABLE,
   excludedAppProblem,
   shortcutKeys,
   shortcutText,
@@ -242,7 +244,7 @@ export function SnapshotSettingsSection() {
             <p className="banner snapshot-warn">
               Accessibility is not allowed for Orbyn, so no text is read. Captures still work without it.
               {waiting ? <span className="snapshot-waiting"><i className="spin" aria-label="Waiting" />Waiting</span> : null}
-              <Button small tone="primary" onClick={() => void setupAction("allow_accessibility")}>Allow Accessibility</Button>
+              {SNAPSHOT_ACCESSIBILITY_SETUP_AVAILABLE ? <Button small tone="primary" onClick={() => void setupAction("allow_accessibility")}>Allow Accessibility</Button> : null}
             </p>
           ) : null}
 
@@ -263,7 +265,7 @@ export function SnapshotSettingsSection() {
             <span className="snapshot-added-count">{excluded.length === 0 ? "None added" : `${excluded.length} added`}</span>
             <Button small tone="quiet" onClick={() => setEditingExclusions(true)}>Edit list…</Button>
           </Row>
-          <Setup state={state} onOpen={() => openSetup("all")} />
+          {SNAPSHOT_SETUP_AVAILABLE ? <Setup state={state} onOpen={() => openSetup("all")} /> : null}
         </>
       ) : null}
 

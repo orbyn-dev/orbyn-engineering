@@ -35,3 +35,27 @@ for (const [name, theme] of THEMES) {
     await expect(page.getByRole("heading", { name: "Explain how the event log resumes" })).toBeVisible();
   });
 }
+
+for (const [width, route, reading] of [
+  [768, "archive", false],
+  [1024, "general", true],
+] as const) {
+  test(`settings title aligns with content when navigation is hidden at ${width}px`, async ({ page }) => {
+    if (reading) {
+      await page.addInitScript(() => localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ workspaceLayout: "reading", sidebarCollapsed: true })));
+    }
+    await page.setViewportSize({ width, height: 820 });
+    await page.goto("/__mock/scenario/default");
+    await page.goto(`/#/settings/${route}`);
+    await expect(page.locator('.shell[data-nav="hidden"] > .titlebar[data-bar="float"]')).toBeVisible();
+    const title = page.locator(".settings-head .settings-title");
+    const body = page.locator(".settings-body");
+    await expect(title).toBeVisible();
+    await expect(body).toBeVisible();
+    await expect.poll(async () => {
+      const titleX = (await title.boundingBox())?.x ?? -1;
+      const contentX = await body.evaluate((element) => element.getBoundingClientRect().left + parseFloat(getComputedStyle(element).paddingLeft));
+      return Math.abs(titleX - contentX);
+    }).toBeLessThanOrEqual(1);
+  });
+}

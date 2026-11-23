@@ -1,4 +1,4 @@
-//! The check a person makes at rest (migration 74): the wait a `manual` check parks, the person's decision on it, and the audit row that
+//! The check a person makes at rest (migration 75): the wait a `manual` check parks, the person's decision on it, and the audit row that
 //! comes with it. No engine and no checkout: the stored shapes only.
 
 use rusqlite::params;

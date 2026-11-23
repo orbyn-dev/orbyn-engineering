@@ -1,6 +1,6 @@
 import type { EngineStatus } from "../../../api/types";
 import { Button } from "../../../ui/controls";
-import { engineGap, plain, programOf, useEngineHosts, type Gap } from "../../enginehost";
+import { engineGap, plain, useEngineHosts, type Gap } from "../../enginehost";
 import { SettingRow } from "../rows/SettingRow";
 import { HostPill } from "./HostParts";
 import "./engineHost.css";
@@ -47,9 +47,9 @@ export function NeedsAttentionGroup({ engines, onOpen }: { engines: EngineStatus
 }
 
 /**
- * The card on a provider's detail page for what stops this engine: the SDK missing from the build (with a Rust driver to fall back
- * to, or without one) or an expired sign-in. Sign in with the engine's own command, shown in the Login row above; the app opens
- * nothing here.
+ * The card on a provider's detail page for what stops this engine: the SDK missing from the build (a run fails, and only the
+ * Claude CLI path still runs it) or an expired sign-in. Sign in with the engine's own command, shown in the Login row above;
+ * the app opens nothing here.
  */
 export function EngineGapCard({ engine }: { engine: EngineStatus }) {
   const gap = useGap(engine);
@@ -59,11 +59,7 @@ export function EngineGapCard({ engine }: { engine: EngineStatus }) {
     <section className="setting-group" role="group" aria-label="Needs attention">
       <h2>{gap.kind === "expired" ? "Login" : `${name} SDK missing in this build`}</h2>
       <div className="setting-list">
-        {gap.kind === "sdk_missing" ? <SettingRow title="What runs" description={`${name} runs through its ${programOf(engine)} program. Each run says “Running without the engine host”.`}><HostPill chip={gap.chip} /></SettingRow> : null}
-        {gap.kind === "unavailable" ? <>
-          <SettingRow title="State" description={gap.sentence}><HostPill chip={gap.chip} /></SettingRow>
-          <SettingRow title="Send" description={`Off for ${name} threads. ${name} can’t run here.`} />
-        </> : null}
+        {gap.kind === "sdk_missing" ? <SettingRow title="What happens" description={`A run fails with “This build does not include the engine's SDK.”${engine.id === "claude" ? " Claude (CLI) in Claude path still runs it." : ""}`}><HostPill chip={gap.chip} /></SettingRow> : null}
         {gap.kind === "expired" ? <SettingRow title="Login" description={gap.sentence}><HostPill chip={gap.chip} /></SettingRow> : null}
       </div>
     </section>

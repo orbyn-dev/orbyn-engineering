@@ -1,4 +1,4 @@
-//! The check a person makes (issue #794; migration 74). A `manual` check of an answer key is not something code can run: it waits for a
+//! The check a person makes (issue #794; migration 75). A `manual` check of an answer key is not something code can run: it waits for a
 //! person to look and decide. One row per (task, check) in `crew_manual_checks`: `awaiting` while the task waits, then `passed` or `failed`
 //! with the person's note and when they decided. The table holds no command, no output and no key text.
 //!

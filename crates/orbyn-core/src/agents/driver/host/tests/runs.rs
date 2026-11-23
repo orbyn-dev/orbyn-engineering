@@ -342,6 +342,38 @@ async fn the_prompts_own_words_after_a_leftover_turn_are_not_marked() {
 }
 
 #[tokio::test]
+async fn a_claude_run_keeps_the_prompts_message_id_as_the_engine_turn() {
+    let Some(node) = node() else {
+        return;
+    };
+    let Some(rig) = standin_family("claude", &[], fast()) else {
+        return;
+    };
+    let driver = driver_on_node(&rig.pool, &node);
+    let (events, outcome) = start(&driver, spec("hi")).await.unwrap().outcome().await;
+    assert_eq!(outcome, EngineOutcome::Completed);
+    let sent = rig
+        .log()
+        .into_iter()
+        .find(|line| line["type"] == "send")
+        .expect("a send request");
+    let message_id = sent["messageId"].as_str().expect("send carries an id");
+    let turns: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::Turn(id) => Some(id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(!turns.is_empty(), "{events:?}");
+    assert!(
+        turns.iter().all(|id| *id == message_id),
+        "the host's synthetic turn must not replace the prompt id: {turns:?}"
+    );
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
 async fn the_prompt_goes_to_the_host_under_an_id_the_engines_frames_can_name() {
     let Some(rig) = standin(&[], fast()) else {
         return;

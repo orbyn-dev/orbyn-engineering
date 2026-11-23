@@ -5,6 +5,7 @@ import { readToken } from "./token";
 import { inBackground, inLane, laneFor } from "./lanes";
 import type { CreateBranch } from "../generated/CreateBranch";
 import type { SwitchBranch } from "../generated/SwitchBranch";
+import type { StartRun } from "../generated/StartRun";
 import type { SteerResult } from "../generated/SteerResult";
 import type { SkillPackStatus } from "../generated/SkillPackStatus";
 import type { EngineUpdateOutcome } from "../generated/EngineUpdateOutcome";
@@ -50,7 +51,6 @@ import type {
   LibraryUpdateResult,
   LimitsOverview,
   Mentions,
-  PermissionMode,
   PreviewTab,
   Project,
   ProjectRemoval,
@@ -107,7 +107,7 @@ export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function failureFrom(response: Response): Promise<ApiFailure> {
+export async function failureFrom(response: Response): Promise<ApiFailure> {
   let code = `http_${response.status}`;
   let message = `The server answered ${response.status}.`;
   let detail: unknown;
@@ -408,6 +408,8 @@ export const api = {
 
   projects: (signal?: AbortSignal) => request<Project[]>("GET", "/api/projects", undefined, signal),
   trustProject: (id: string) => request<Project>("POST", `/api/projects/${q(id)}/trust`),
+  /** Starts Git in an added project's folder; the service refuses one that is untrusted, already a repository or gone. */
+  initProjectGit: (id: string) => request<Project>("POST", `/api/projects/${q(id)}/git/init`),
   browse: (path: string | null, signal?: AbortSignal) =>
     request<FsListing>("GET", `/api/fs/browse${path ? `?path=${q(path)}` : ""}`, undefined, signal),
 
@@ -428,12 +430,7 @@ export const api = {
     threadId: string,
     prompt: string,
     attachmentIds: string[] = [],
-    turn: {
-      model?: string;
-      effort?: string;
-      permission_mode?: PermissionMode;
-      options?: Record<string, string>;
-    } = {},
+    turn: Pick<StartRun, "model" | "effort" | "permission_mode" | "options" | "purpose"> = {},
   ) =>
     request<Run>("POST", `/api/threads/${q(threadId)}/runs`, {
       prompt,

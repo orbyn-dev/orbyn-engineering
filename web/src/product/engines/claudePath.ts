@@ -7,6 +7,10 @@ import { useUi } from "../state/ui";
 /** The two values the service accepts; anything else is read as the default. */
 export type ClaudeEnginePath = "sdk" | "cli";
 
+/** The one helper line under each Claude path, in the Providers list and the engine picker. */
+export const CLAUDE_SDK_NOTE = "Runs through Orbyn’s engine host with the Claude Agent SDK, using your own Claude Code. Default.";
+export const CLAUDE_CLI_NOTE = "Runs your Claude Code directly, without the engine host.";
+
 /** The one catalog key the Claude path reads and writes. It is app-only: one choice for this computer. */
 export const CLAUDE_ENGINE_PATH_KEY = "claude_engine_path";
 export const CLAUDE_ENGINE_PATH_DEFAULT: ClaudeEnginePath = "sdk";
