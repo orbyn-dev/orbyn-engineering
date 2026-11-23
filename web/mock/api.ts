@@ -650,29 +650,23 @@ export function createMockApi(options: MockOptions = {}) {
   function scopeCatalog(scope: ProjectScopesQuery): ProjectScopeCatalog {
     /** The repository a checkout belongs to; every other project is its own group. */
     const repositoryOf = (project: Project) => (scenario === "settings-checkouts" && project.id.startsWith("p-app") ? "orbyn-engineering-app" : null);
+    const member = (project: Project) => ({
+      project_id: project.id, physical_key: `mock-physical:${project.id}`, name: project.name, path: project.path,
+      repository_key: repositoryOf(project), repository_label: repositoryOf(project), repository_relative_path: "",
+      grouping_mode: repositoryOf(project) ? "repository" as const : "separate" as const,
+      metadata_complete: true, unavailable: null,
+    });
+    const listed = projects.filter((project) => !project.scratch && project.path !== managed.library?.path);
+    // Checkouts of one repository are one group; so are the projects a test asked to be grouped (`groupProjects`).
+    const together = listed.filter((project) => groupedProjects.includes(project.id));
     const grouped = new Map<string, Project[]>();
-    for (const project of projects.filter((entry) => !entry.scratch && entry.path !== managed.library?.path)) {
+    for (const project of listed.filter((entry) => !groupedProjects.includes(entry.id))) {
       const repository = repositoryOf(project);
       const key = repository ? `repo:${repository}` : `mock:${project.id}`;
       grouped.set(key, [...(grouped.get(key) ?? []), project]);
     }
-    const groups = [...grouped].map(([key, members]) => ({
-      key, label: repositoryOf(members[0]!) ?? members[0]!.name, members: members.map((project) => ({
-        project_id: project.id, physical_key: `mock-physical:${project.id}`, name: project.name, path: project.path,
-        repository_key: repositoryOf(project), repository_label: repositoryOf(project), repository_relative_path: "",
-        grouping_mode: repositoryOf(project) ? "repository" as const : "separate" as const,
-        metadata_complete: true, unavailable: null,
-      })),
-    }));
-    const member = (project: Project) => ({
-      project_id: project.id, physical_key: `mock-physical:${project.id}`, name: project.name, path: project.path,
-      repository_key: null, repository_label: null, repository_relative_path: "", grouping_mode: "separate" as const,
-      metadata_complete: true, unavailable: null,
-    });
-    const listed = projects.filter((project) => !project.scratch && project.path !== managed.library?.path);
-    const together = listed.filter((project) => groupedProjects.includes(project.id));
     const groups = [
-      ...listed.filter((project) => !groupedProjects.includes(project.id)).map((project) => ({ key: `mock:${project.id}`, label: project.name, members: [member(project)] })),
+      ...[...grouped].map(([key, members]) => ({ key, label: repositoryOf(members[0]!) ?? members[0]!.name, members: members.map(member) })),
       ...(together.length > 1 ? [{ key: `mock:group:${together.map((project) => project.id).join("+")}`, label: together[0]?.name ?? "", members: together.map(member) }] : []),
     ];
     const selection = scope.selection;
