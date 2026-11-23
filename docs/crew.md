@@ -1142,7 +1142,7 @@ is screened at create and update with the always-denied list (N1 to N10) and the
 worktree; a refusal names the rule in one fixed sentence and never repeats the command. `needs_you` stores the template and budgets as
 given (they must be in range, and no model run follows); `template` validates them like any other crew. The command is stored redacted.
 
-**As built (KC6 slice 2, service only):** the listener's watch tick runs each enabled watch's stored command once per
+**As built (KC6 slices 2 and 3, service only):** the listener's watch tick runs each enabled watch's stored command once per
 `every_hours` bucket, in the project's checkout, for at most five minutes, and claims `watch:<crew>:<bucket>` before it runs so a
 crash mid-check does not repeat it. The command is screened again before every check (the always-denied list and the blast-radius
 guard, whose lists may have changed since the crew was made). Its last 20 lines and 2 KiB are kept, redacted through the locked
@@ -1153,10 +1153,13 @@ raises one Needs you row (`on_failing` = `needs_you`) or starts the crew's templ
 exit code and tail and writes no row. A check that could not run (it timed out, could not start, the screen refuses the command now, or
 the folder is not trusted) counts a streak: three in a row raise one Needs you row, and a check that runs again resolves it. A command
 that could not run never raises by itself, and no model is called while the result stays the same. A template start the listener is
-refused (a run already in progress, the daily budget, no engine, review capacity) leaves the change row saying the person is needed
-and writes one `crew.background.listener.refused` audit row; the refusal's sentence is not stored. Run now still refuses a watch: its
-command runs on its own schedule. No migration was needed: migration 77's two tables hold the state and the change rows. No screen is
-built in this slice.
+refused (a run already in progress, the daily budget, no engine, review capacity) leaves the Needs you row raised and writes one
+`crew.background.listener.refused` audit row; the refusal's sentence is not stored. Run now still refuses a watch: its command runs on
+its own schedule. Reads: `GET /api/crew/background/{id}/watch` (its state, last check time, exit code and reason, and the redacted
+tail) and `GET /api/crew/background/{id}/watch/changes` (the change history, newest first, paged); the Needs you inbox lists a failing
+watch and one that could not run three times in a row, beside the Review queue's background runs. No migration was needed: migration
+77's two tables hold the state and the history. No screen is built in these slices, and the "Not built yet" chip stays until the web
+slice.
 
 **As built (slice 4h, listeners, migration 59):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
 service starts behind the Preview flag **only when it sets an interval** (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60 s to 24 h; unset means no pass, not even at
@@ -1785,8 +1788,7 @@ writes `crew.task.resumed` in the same transaction as the state, attempt and res
 `crew.task.restart_stopped` with `why` (`reviewer`, `already_resumed`, `not_resumable` or `send_failed`) in
 the same transaction as its `stopped`/`engine_error` move.
 
-**As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342); its core route is not built. KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slices 1 and 2 on this branch (#1343 slice 1; slice 2 is the runner, state machine, watch tick and template start,
-service only, no web). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
+**As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342); its core route is not built. KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slices 1 to 3 (#1343 slice 1; slices 2 and 3 service only, no web). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
 
 **Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
 (our router never swaps an engine) and release channels.

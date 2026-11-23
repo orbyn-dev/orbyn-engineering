@@ -1,7 +1,7 @@
 //! Watches (docs/crew.md, "Kiro Crew features" KC6, slice 2): the runner, the state machine and the watch tick, with fake
 //! engines and real git. A check is a fixed command run in the project's checkout; the first check that runs is a baseline and
-//! raises nothing, only a turn between passing and failing is a change, three checks in a row that could not run count a streak,
-//! and a check that runs again clears it. Nothing calls a model while the result stays the same.
+//! raises nothing, only a turn between passing and failing is a change, three checks in a row that could not run raise one
+//! Needs you row, and a check that runs again resolves it. Nothing calls a model while the result stays the same.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -9,12 +9,13 @@ use std::time::Duration;
 use orbyn_contracts as wire;
 use serde_json::json;
 
-use super::harness::{Script, Turn, World, world};
+use super::harness::{Script, Turn, World, report, world};
 use super::review_support::commit_all;
+use crate::crew::Page;
 use crate::crew::checks::tail_lines_bytes;
 use crate::crew::fixtures::audit_actions;
 use crate::crew::watch::{CouldNotRun, WatchCheck, WatchFound, plan};
-use crate::store::{NewBackground, WatchChangeRow, WatchStateRow};
+use crate::store::{NewBackground, WatchStateRow};
 use crate::testing::run_git;
 
 const NOW: i64 = 1_800_000_000;
@@ -23,6 +24,10 @@ const BUCKET: i64 = HOURS as i64 * 3600;
 
 fn project(w: &World) -> String {
     w.core.store.thread(&w.lead).unwrap().project_id
+}
+
+fn page() -> Page {
+    Page::new(None, None).unwrap()
 }
 
 fn watch_body(
@@ -51,21 +56,16 @@ async fn watch(w: &World, name: &str, command: &str, on_failing: &str) -> String
     crew.id
 }
 
-fn state(w: &World, id: &str) -> WatchStateRow {
-    w.core
-        .store
-        .watch_state(id)
-        .unwrap()
-        .unwrap_or_else(|| panic!("no watch state for {id}"))
+fn status(w: &World, id: &str) -> wire::BackgroundWatchStatus {
+    w.core.background_watch(id).unwrap()
 }
 
-fn changes(w: &World, id: &str) -> Vec<WatchChangeRow> {
-    w.core.store.watch_changes_page(id, 100, 0).unwrap().0
+fn changes(w: &World, id: &str) -> Vec<wire::BackgroundWatchChange> {
+    w.core.background_watch_changes(id, page()).unwrap().changes
 }
 
 fn runs(w: &World, id: &str) -> Vec<wire::BackgroundRun> {
-    let page = crate::crew::Page::new(None, None).unwrap();
-    w.core.background_runs(id, page).unwrap().runs
+    w.core.background_runs(id, page()).unwrap().runs
 }
 
 fn threads(w: &World) -> i64 {
@@ -106,6 +106,14 @@ fn make_clean(w: &World) {
 /// A worker that never ends, so a run it started stays running.
 fn hung() -> Script {
     Arc::new(|_, _| Turn::Hang)
+}
+
+/// A worker that changes a file it may change and reports, as a real engine does.
+fn good() -> Script {
+    Arc::new(|n, root| {
+        std::fs::write(root.join(format!("src/fix-{n}.txt")), "fixed\n").unwrap();
+        Turn::Say(report("done"))
+    })
 }
 
 async fn tick(w: &World, now: i64) {
@@ -284,14 +292,14 @@ async fn a_watch_checks_once_per_bucket_and_keeps_the_watch_claim_key() {
     let bucket = NOW.div_euclid(BUCKET);
 
     tick(&w, NOW).await;
-    assert_eq!(state(&w, &id).last_state, "passing");
+    assert_eq!(status(&w, &id).state, wire::BackgroundWatchState::Passing);
     assert_eq!(claims(&w), [format!("watch:{id}:{bucket}")]);
-    let checked = state(&w, &id).last_checked_unix;
+    let checked = status(&w, &id).last_checked_at;
 
     // The same bucket again: the claim the first check kept checks nothing new.
     tick(&w, NOW).await;
     assert_eq!(claims(&w).len(), 1);
-    assert_eq!(state(&w, &id).last_checked_unix, checked);
+    assert_eq!(status(&w, &id).last_checked_at, checked);
 
     // The next bucket is a new check.
     tick(&w, NOW + BUCKET).await;
@@ -313,6 +321,65 @@ async fn a_watch_checks_once_per_bucket_and_keeps_the_watch_claim_key() {
 }
 
 #[tokio::test]
+async fn a_failing_watch_raises_one_needs_you_row_and_a_pass_again_resolves_it() {
+    let w = world(true, hung()).await;
+    let id = watch(&w, "Diff", "git diff --exit-code", "needs_you").await;
+
+    tick(&w, NOW).await;
+    let baseline = changes(&w, &id);
+    assert_eq!(baseline.len(), 1);
+    assert_eq!(baseline[0].kind, wire::BackgroundWatchChangeKind::Baseline);
+    assert_eq!(baseline[0].action, wire::BackgroundWatchChangeAction::None);
+    assert!(w.core.crew_needs_you().unwrap().items.is_empty());
+
+    make_dirty(&w);
+    tick(&w, NOW + BUCKET).await;
+    let failing = status(&w, &id);
+    assert_eq!(failing.state, wire::BackgroundWatchState::Failing);
+    assert_eq!(failing.last_exit_code, Some(1));
+    assert!(
+        failing
+            .tail
+            .as_deref()
+            .is_some_and(|tail| tail.contains("changed")),
+        "{failing:?}"
+    );
+    let rows = changes(&w, &id);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].kind, wire::BackgroundWatchChangeKind::Failing);
+    assert_eq!(rows[0].action, wire::BackgroundWatchChangeAction::NeedsYou);
+    let items = w.core.crew_needs_you().unwrap().items;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(items[0].kind, wire::NeedsYouKind::WatchFailing);
+    assert_eq!(items[0].id, id);
+    assert_eq!(items[0].crew_id.as_deref(), Some(id.as_str()));
+    assert_eq!(
+        items[0].reason.as_deref(),
+        Some("The watch's command is failing.")
+    );
+
+    // Still failing with a different exit code: the last code and tail update and no second row or row-repeat appears.
+    std::fs::write(w.repo.join("src/base.txt"), "changed again\n").unwrap();
+    tick(&w, NOW + 2 * BUCKET).await;
+    assert_eq!(changes(&w, &id).len(), 2, "a repeat is not a row");
+    assert_eq!(w.core.crew_needs_you().unwrap().items.len(), 1);
+
+    make_clean(&w);
+    tick(&w, NOW + 3 * BUCKET).await;
+    let recovered = status(&w, &id);
+    assert_eq!(recovered.state, wire::BackgroundWatchState::Passing);
+    assert_eq!(recovered.error_streak, 0);
+    let rows = changes(&w, &id);
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].kind, wire::BackgroundWatchChangeKind::Passing);
+    assert_eq!(rows[0].action, wire::BackgroundWatchChangeAction::Resolved);
+    assert!(
+        w.core.crew_needs_you().unwrap().items.is_empty(),
+        "Passing again resolves it"
+    );
+}
+
+#[tokio::test]
 async fn a_template_watch_starts_one_run_and_nothing_while_nothing_changes() {
     let w = world(true, hung()).await;
     let id = watch(&w, "Template", "git diff --exit-code", "template").await;
@@ -326,7 +393,6 @@ async fn a_template_watch_starts_one_run_and_nothing_while_nothing_changes() {
         w.prompts.lock().unwrap().is_empty(),
         "no model call while nothing changes"
     );
-    assert_eq!(changes(&w, &id)[0].kind, "baseline");
 
     // Turning failing starts the crew's template once, through the same start as Run now.
     make_dirty(&w);
@@ -335,8 +401,12 @@ async fn a_template_watch_starts_one_run_and_nothing_while_nothing_changes() {
     assert_eq!(started.len(), 1, "{started:?}");
     let rows = changes(&w, &id);
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].kind, "failing");
-    assert_eq!(rows[0].action, "started_template");
+    assert_eq!(rows[0].kind, wire::BackgroundWatchChangeKind::Failing);
+    assert_eq!(
+        rows[0].action,
+        wire::BackgroundWatchChangeAction::StartedTemplate
+    );
+    assert!(w.core.crew_needs_you().unwrap().items.is_empty());
     let tasks = w.core.store.crew_tasks_in_crew(&started[0].id).unwrap();
     assert_eq!(tasks.len(), 1, "one task per started run");
     let brief = w.core.store.crew_brief(&tasks[0].0.id).unwrap().unwrap();
@@ -351,16 +421,18 @@ async fn a_template_watch_starts_one_run_and_nothing_while_nothing_changes() {
     assert_eq!(runs(&w, &id).len(), 1);
     assert_eq!(changes(&w, &id).len(), 2);
 
-    // A pass resolves the row; failing again while the first run still holds the crew is a refused start, and the change
-    // records that the person is needed, with one audit row beside it.
+    // A pass resolves the row; failing again while the first run still holds the crew is a refused start, and the Needs you
+    // row stays raised with one audit row beside it.
     make_clean(&w);
     tick(&w, NOW + 3 * BUCKET).await;
-    assert_eq!(changes(&w, &id)[0].action, "resolved");
+    assert_eq!(
+        changes(&w, &id)[0].action,
+        wire::BackgroundWatchChangeAction::Resolved
+    );
     make_dirty(&w);
     tick(&w, NOW + 4 * BUCKET).await;
     let rows = changes(&w, &id);
-    assert_eq!(rows[0].kind, "failing");
-    assert_eq!(rows[0].action, "needs_you");
+    assert_eq!(rows[0].action, wire::BackgroundWatchChangeAction::NeedsYou);
     assert_eq!(
         runs(&w, &id).len(),
         1,
@@ -371,10 +443,34 @@ async fn a_template_watch_starts_one_run_and_nothing_while_nothing_changes() {
         1,
         "a refused template start is audited like the other listeners'"
     );
+    let items = w.core.crew_needs_you().unwrap().items;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(items[0].kind, wire::NeedsYouKind::WatchFailing);
 }
 
 #[tokio::test]
-async fn three_checks_that_could_not_run_count_one_streak_and_a_check_that_runs_clears_it() {
+async fn a_finished_template_run_leaves_one_change_row_and_the_watch_reads_nothing_after_it() {
+    let w = world(true, good()).await;
+    let id = watch(&w, "Good template", "git diff --exit-code", "template").await;
+    tick(&w, NOW).await;
+    make_dirty(&w);
+    tick(&w, NOW + BUCKET).await;
+    let run = runs(&w, &id).remove(0);
+    let task = w.core.store.crew_tasks_in_crew(&run.id).unwrap()[0]
+        .0
+        .id
+        .clone();
+    w.until_state(&task, "passed").await;
+    let run = w.core.background_runs(&id, page()).unwrap().runs.remove(0);
+    assert_eq!(
+        run.state,
+        wire::BackgroundRunState::NeedsReview,
+        "the started run is an ordinary background run, for the person to review"
+    );
+}
+
+#[tokio::test]
+async fn three_checks_that_could_not_run_raise_one_row_and_a_check_that_runs_resolves_it() {
     let w = world(true, hung()).await;
     // Stored the way a watch is, but with a command the screen refuses now: the check must be screened again before it runs.
     let settings = json!({
@@ -406,16 +502,30 @@ async fn three_checks_that_could_not_run_count_one_streak_and_a_check_that_runs_
         .enumerate()
     {
         tick(&w, tick_at).await;
-        let checked = state(&w, &crew.id);
-        assert_eq!(checked.last_state, "could_not_run");
-        assert_eq!(checked.last_reason.as_deref(), Some("refused"));
-        assert_eq!(checked.error_streak, n as u32 + 1);
+        let state = status(&w, &crew.id);
+        assert_eq!(state.state, wire::BackgroundWatchState::CouldNotRun);
+        assert_eq!(state.reason.as_deref(), Some("refused"));
+        assert_eq!(state.error_streak, n as u32 + 1);
         assert_eq!(changes(&w, &crew.id).len(), 0, "not a change, no row");
+        let items = w.core.crew_needs_you().unwrap().items;
+        if n < 2 {
+            assert!(items.is_empty(), "two in a row raise nothing: {items:?}");
+        } else {
+            assert_eq!(items.len(), 1, "{items:?}");
+            assert_eq!(items[0].kind, wire::NeedsYouKind::WatchCouldNotRun);
+            assert_eq!(
+                items[0].reason.as_deref(),
+                Some("3 checks in a row could not run: refused.")
+            );
+        }
     }
-    tick(&w, NOW + 3 * BUCKET).await;
-    assert_eq!(state(&w, &crew.id).error_streak, 4);
 
-    // A command that runs again is the baseline (no check ever ran) and clears the streak.
+    // A fourth could not run updates the one row and does not repeat it.
+    tick(&w, NOW + 3 * BUCKET).await;
+    assert_eq!(status(&w, &crew.id).error_streak, 4);
+    assert_eq!(w.core.crew_needs_you().unwrap().items.len(), 1);
+
+    // A command that runs again is the baseline (no check ever ran), and it resolves the row.
     let safe = json!({
         "command": "git diff --exit-code", "every_hours": HOURS, "on_failing": "needs_you"
     });
@@ -424,16 +534,17 @@ async fn three_checks_that_could_not_run_count_one_streak_and_a_check_that_runs_
         .update_background_crew(&crew.id, None, Some(("watch", &safe)), "test")
         .unwrap();
     tick(&w, NOW + 4 * BUCKET).await;
-    let checked = state(&w, &crew.id);
-    assert_eq!(checked.last_state, "passing");
-    assert!(checked.baseline_done);
-    assert_eq!(checked.error_streak, 0);
-    assert_eq!(checked.last_reason, None);
+    let state = status(&w, &crew.id);
+    assert_eq!(state.state, wire::BackgroundWatchState::Passing);
+    assert!(state.baseline_done);
+    assert_eq!(state.error_streak, 0);
+    assert_eq!(state.reason, None);
     assert_eq!(
         changes(&w, &crew.id).len(),
         1,
         "the first check that ran is the baseline"
     );
+    assert!(w.core.crew_needs_you().unwrap().items.is_empty());
 }
 
 #[tokio::test]
@@ -526,6 +637,66 @@ async fn a_command_that_runs_too_long_is_stopped_and_is_could_not_run_timed_out(
         WatchFound::CouldNotRun(CouldNotRun::TimedOut),
         "{check:?}"
     );
+}
+
+#[tokio::test]
+async fn the_watch_reads_page_the_history_and_refuse_a_crew_that_is_not_a_watch() {
+    let off = world(false, hung()).await;
+    assert!(matches!(
+        off.core.background_watch("x").unwrap_err(),
+        crate::error::CoreError::NotFound(_)
+    ));
+
+    let w = world(true, hung()).await;
+    let id = watch(&w, "Diff", "git diff --exit-code", "needs_you").await;
+    make_dirty(&w);
+    tick(&w, NOW).await;
+    make_clean(&w);
+    tick(&w, NOW + BUCKET).await;
+
+    let first = w
+        .core
+        .background_watch_changes(&id, crate::crew::Page::new(Some(1), None).unwrap())
+        .unwrap();
+    assert_eq!(first.total, 2, "the baseline and the recovery");
+    assert_eq!(first.changes.len(), 1);
+    assert_eq!(first.next_offset, Some(1));
+    assert_eq!(
+        first.changes[0].kind,
+        wire::BackgroundWatchChangeKind::Passing,
+        "newest first"
+    );
+    let second = w
+        .core
+        .background_watch_changes(&id, crate::crew::Page::new(Some(1), Some(1)).unwrap())
+        .unwrap();
+    assert_eq!(second.changes.len(), 1);
+    assert_eq!(second.next_offset, None);
+
+    // A crew that is not a watch has no watch state and no history.
+    let plain = w
+        .core
+        .background_create(
+            &serde_json::from_value(json!({
+                "project_id": project(&w), "name": "Plain", "template": "fix_failing_ci",
+                "trigger": { "kind": "schedule", "every_hours": 6 },
+                "budget": { "turns": 1, "minutes": 1 },
+                "daily": { "runs": 1, "turns": 1 }, "utc_offset_minutes": 0
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        w.core.background_watch(&plain.id).unwrap_err(),
+        crate::error::CoreError::Invalid(_)
+    ));
+    assert!(matches!(
+        w.core
+            .background_watch_changes(&plain.id, page())
+            .unwrap_err(),
+        crate::error::CoreError::Invalid(_)
+    ));
 }
 
 #[test]

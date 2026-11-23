@@ -21,14 +21,17 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use orbyn_contracts as wire;
 use orbyn_contracts::CheckOutcome;
 
 use super::autopilot::Screened;
+use super::background::{next_offset, parse_wire};
 use super::checks::{self, COULD_NOT_START, RAN_OUT_OF_TIME};
-use super::redact;
+use super::{Page, redact, valid_id};
 use crate::app::Core;
-use crate::error::Result;
-use crate::store::{BackgroundRow, NewWatchChange, WatchStateRow};
+use crate::error::{CoreError, Result};
+use crate::store::{BackgroundRow, NewWatchChange, WatchChangeRow, WatchStateRow};
+use crate::util::format_unix;
 
 /// No check of a watch runs longer than this.
 pub const CHECK_LIMIT: Duration = Duration::from_secs(5 * 60);
@@ -68,6 +71,17 @@ impl CouldNotRun {
             Self::CouldNotStart => "could not start",
             Self::Refused => "refused",
             Self::Untrusted => "folder not trusted",
+        }
+    }
+
+    /// The reason a stored word names, for a row this code wrote.
+    pub fn of_word(word: &str) -> Option<Self> {
+        match word {
+            "timed_out" => Some(Self::TimedOut),
+            "could_not_start" => Some(Self::CouldNotStart),
+            "refused" => Some(Self::Refused),
+            "untrusted" => Some(Self::Untrusted),
+            _ => None,
         }
     }
 }
@@ -224,6 +238,17 @@ fn kept_tail(log: &str) -> Option<String> {
     (!tail.is_empty()).then_some(tail)
 }
 
+fn change_wire(row: WatchChangeRow) -> Result<wire::BackgroundWatchChange> {
+    Ok(wire::BackgroundWatchChange {
+        id: row.id,
+        kind: parse_wire(&row.kind)?,
+        action: parse_wire(&row.action)?,
+        at: format_unix(row.at_unix),
+        exit_code: row.exit_code.and_then(|code| i32::try_from(code).ok()),
+        tail: row.tail,
+    })
+}
+
 /// The state a watch that has never been checked reads as.
 fn blank_state(crew: &str) -> WatchStateRow {
     WatchStateRow {
@@ -237,6 +262,26 @@ fn blank_state(crew: &str) -> WatchStateRow {
         last_reason: None,
         tail: None,
     }
+}
+
+fn status_wire(crew: &str, state: Option<WatchStateRow>) -> Result<wire::BackgroundWatchStatus> {
+    let state = state.unwrap_or_else(|| blank_state(crew));
+    Ok(wire::BackgroundWatchStatus {
+        crew_id: state.background_id,
+        state: parse_wire(&state.last_state)?,
+        last_checked_at: state.last_checked_unix.map(format_unix),
+        last_exit_code: state
+            .last_exit_code
+            .and_then(|code| i32::try_from(code).ok()),
+        reason: state
+            .last_reason
+            .as_deref()
+            .and_then(CouldNotRun::of_word)
+            .map(|why| why.sentence().to_owned()),
+        baseline_done: state.baseline_done,
+        error_streak: state.error_streak,
+        tail: state.tail,
+    })
 }
 
 impl Core {
@@ -306,6 +351,43 @@ impl Core {
                 tail: tail.as_deref(),
             });
         self.store.save_watch_check(&planned.next, change.as_ref())
+    }
+
+    /// The person's read of a watch's last check. Behind the Crew Preview flag; a crew that is not a watch is refused plainly.
+    pub fn background_watch(&self, id: &str) -> Result<wire::BackgroundWatchStatus> {
+        self.crew_preview_only()?;
+        valid_id(id)?;
+        let crew = self.background_row(id)?;
+        if crew.trigger_kind != "watch" {
+            return Err(CoreError::Invalid(
+                "This background crew is not a watch.".into(),
+            ));
+        }
+        status_wire(&crew.id, self.store.watch_state(&crew.id)?)
+    }
+
+    /// One page of a watch's change history, newest first. Behind the Crew Preview flag.
+    pub fn background_watch_changes(
+        &self,
+        id: &str,
+        page: Page,
+    ) -> Result<wire::BackgroundWatchChanges> {
+        self.crew_preview_only()?;
+        valid_id(id)?;
+        let crew = self.background_row(id)?;
+        if crew.trigger_kind != "watch" {
+            return Err(CoreError::Invalid(
+                "This background crew is not a watch.".into(),
+            ));
+        }
+        let (rows, total) = self
+            .store
+            .watch_changes_page(&crew.id, page.limit, page.offset)?;
+        Ok(wire::BackgroundWatchChanges {
+            changes: rows.into_iter().map(change_wire).collect::<Result<_>>()?,
+            total,
+            next_offset: next_offset(page, total),
+        })
     }
 }
 
