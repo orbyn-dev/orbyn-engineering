@@ -648,3 +648,75 @@ fn a_write_keeps_at_most_five_evidence_ids_in_the_row_and_the_audit() {
         "{detail}"
     );
 }
+
+#[test]
+fn a_failed_lesson_counter_never_refuses_the_task() {
+    let (_dir, store) = open();
+    seed_project(&store, "p1");
+    let used = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Use pnpm.", None))
+        .unwrap()
+        .unwrap();
+    // A counter that cannot be written: the update is refused by the table itself.
+    store
+        .writer()
+        .execute_batch(
+            "CREATE TRIGGER refuse_counts BEFORE UPDATE ON crew_lessons
+             BEGIN SELECT RAISE(ABORT, 'counter refused'); END;",
+        )
+        .unwrap();
+    let task = store
+        .create_crew_task_with_lessons(
+            &brief(),
+            &key(),
+            "run-01",
+            std::slice::from_ref(&used.id),
+            &[],
+        )
+        .unwrap();
+    assert_eq!(task.id, brief().id.as_str());
+    assert!(
+        store.crew_task(&task.id).unwrap().is_some(),
+        "the task is stored"
+    );
+    assert_eq!(store.crew_lesson(&used.id).unwrap().unwrap().uses, 0);
+}
+
+#[test]
+fn the_brief_read_holds_only_active_visible_lessons_newest_first() {
+    let (_dir, store) = open();
+    let a = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "First.", None))
+        .unwrap()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let b = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Second.", None))
+        .unwrap()
+        .unwrap();
+    store
+        .writer()
+        .execute(
+            "UPDATE crew_lessons SET state = 'disabled' WHERE id = ?1",
+            [&a.id],
+        )
+        .unwrap();
+    let c = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Third.", None))
+        .unwrap()
+        .unwrap();
+    store
+        .writer()
+        .execute(
+            "UPDATE crew_lessons SET hidden_by_cap = 1 WHERE id = ?1",
+            [&c.id],
+        )
+        .unwrap();
+    let ids: Vec<String> = store
+        .crew_lessons_for_brief("repo", Some("p1"))
+        .unwrap()
+        .into_iter()
+        .map(|lesson| lesson.id)
+        .collect();
+    assert_eq!(ids, [b.id]);
+}

@@ -134,6 +134,25 @@ impl Store {
         Ok(rows)
     }
 
+    /// The lessons one brief may carry: active and not hidden by the cap, of one scope, newest first. The start path
+    /// reads this, not the full history, so a start never pays for lessons it cannot use; the caps bound it.
+    pub fn crew_lessons_for_brief(
+        &self,
+        scope: &str,
+        project: Option<&str>,
+    ) -> Result<Vec<CrewLesson>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT * FROM crew_lessons
+             WHERE scope = ?1 AND project_id IS ?2 AND state = 'active' AND hidden_by_cap = 0
+             ORDER BY created_at DESC, id DESC",
+        )?;
+        let rows = statement
+            .query_map(params![scope, project], lesson_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// One lesson by id, whatever its scope.
     pub fn crew_lesson(&self, id: &str) -> Result<Option<CrewLesson>> {
         let conn = self.reader();
@@ -303,18 +322,29 @@ pub(super) fn record_lesson_use(
     left_out: &[String],
     at: &str,
 ) -> Result<()> {
-    for id in used {
-        tx.execute(
-            "UPDATE crew_lessons SET uses = uses + 1, last_used_at = ?2, updated_at = ?2 WHERE id = ?1",
-            params![id, at],
-        )?;
+    // Bookkeeping is never a reason to refuse a start: it runs in a savepoint, and a failure rolls only the counters back
+    // while the task the caller is storing goes on.
+    tx.execute_batch("SAVEPOINT lesson_use")?;
+    let counted = (|| -> Result<()> {
+        for id in used {
+            tx.execute(
+                "UPDATE crew_lessons SET uses = uses + 1, last_used_at = ?2, updated_at = ?2 WHERE id = ?1",
+                params![id, at],
+            )?;
+        }
+        for id in left_out {
+            tx.execute(
+                "UPDATE crew_lessons SET left_out_of = left_out_of + 1, updated_at = ?2 WHERE id = ?1",
+                params![id, at],
+            )?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = counted {
+        tracing::warn!(%error, "a brief's lessons could not be counted, so none is");
+        tx.execute_batch("ROLLBACK TO lesson_use")?;
     }
-    for id in left_out {
-        tx.execute(
-            "UPDATE crew_lessons SET left_out_of = left_out_of + 1, updated_at = ?2 WHERE id = ?1",
-            params![id, at],
-        )?;
-    }
+    tx.execute_batch("RELEASE lesson_use")?;
     Ok(())
 }
 

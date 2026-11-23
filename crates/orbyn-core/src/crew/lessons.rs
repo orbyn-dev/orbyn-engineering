@@ -116,8 +116,8 @@ impl Core {
         // start is never refused for the lesson store.
         lessons_brief(
             self.store.crew_use_lessons(project_id),
-            self.store.crew_lessons("repo", Some(project_id)),
-            self.store.crew_lessons("global", None),
+            self.store.crew_lessons_for_brief("repo", Some(project_id)),
+            self.store.crew_lessons_for_brief("global", None),
             &key_needles(key),
         )
     }
