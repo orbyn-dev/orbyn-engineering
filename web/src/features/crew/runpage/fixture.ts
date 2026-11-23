@@ -6,7 +6,7 @@ export function taskDetail(over: Partial<FlowTaskDetail> = {}): FlowTaskDetail {
   return {
     crew: "crew-redirect",
     row: {
-      id: "task-redirect", name: "Use next in the auth redirect", kind: "implement", engine: "claude", owner: "lead", state: "passed", could_not_start: false, round: 2,
+      id: "task-redirect", name: "Use next in the auth redirect", kind: "implement", engine: "claude", owner: "lead", state: "passed", could_not_start: false, resumed: false, round: 2,
       cells: [
         { stage: "checks", state: "done", passed: 3, of: 3 },
         { stage: "code", state: "done", lanes: 1 },
