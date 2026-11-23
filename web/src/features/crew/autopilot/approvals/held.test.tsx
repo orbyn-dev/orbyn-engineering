@@ -178,6 +178,7 @@ describe("the held-command card (approval-confirm)", () => {
     await openCard(user);
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
     await trustedClick(approveButton(), 0);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(invoke).not.toHaveBeenCalled();
     expect(approveButton()).toBeDisabled();
@@ -277,6 +278,7 @@ describe("the held-command card (approval-confirm)", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(calls("approve-once")).toHaveLength(0);
     // No retry of its own, however long it waits.
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(invoke).toHaveBeenCalledTimes(1);
   });
@@ -297,6 +299,7 @@ describe("the held-command card (approval-confirm)", () => {
       expect(within(d).getAllByRole("button").map((b) => b.textContent)).toEqual(["Approve once", "Deny", "Dismiss"]);
       for (const name of ["Approve once", "Deny", "Dismiss"]) expect(within(d).getByRole("button", { name })).toBeEnabled();
       expect(calls("approve-once")).toHaveLength(0);
+      // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(invoke).toHaveBeenCalledTimes(1);
       expect(screen.getByText("Needs you · 3")).toBeVisible();
@@ -323,6 +326,7 @@ describe("the held-command card (approval-confirm)", () => {
     await waitFor(() => expect(card()).toHaveTextContent(REFUSED));
     expect(card()).toHaveTextContent("Held for you");
     expect(within(card()).getByRole("button", { name: "Approve once" })).toBeEnabled();
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(calls("approve-once")).toHaveLength(1);
@@ -495,6 +499,7 @@ describe("a request that ended or was decided", () => {
       expect(card()).toHaveTextContent("Held for you");
       expect(invoke).toHaveBeenCalledTimes(1);
       expect(within(card()).getByRole("button", { name: "Approve once" })).toBeEnabled();
+      // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(invoke).toHaveBeenCalledTimes(1);
       expect(calls("approve-once")).toHaveLength(1);

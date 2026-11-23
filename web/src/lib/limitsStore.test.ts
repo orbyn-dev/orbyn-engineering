@@ -118,7 +118,7 @@ describe("limits store", () => {
   it("owns no timers, so nothing is left running after a screen unmounts", async () => {
     const load = vi.fn().mockResolvedValue({});
     await readLimits("codex", load);
-    await expect(readLimits("claude", vi.fn().mockRejectedValue(new Error("x")))).rejects.toThrow();
+    await expect(readLimits("claude", vi.fn().mockRejectedValue(new Error("x")))).rejects.toThrow("x");
     expect(vi.getTimerCount()).toBe(0);
   });
 });

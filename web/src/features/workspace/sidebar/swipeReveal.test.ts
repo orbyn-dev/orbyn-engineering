@@ -20,7 +20,7 @@ describe("createSwipeReveal", () => {
     swipe.down(touch(100));
     swipe.move(touch(100 + SWIPE_DISTANCE));
     expect(change).toHaveBeenLastCalledWith(false);
-    expect(change).toHaveBeenCalledTimes(2);
+    expect(change.mock.calls).toEqual([[true], [false]]);
   });
 
   it("ignores a short move, a mostly vertical move (a scroll) and a mouse", () => {

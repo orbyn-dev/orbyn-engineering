@@ -1,57 +1,53 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api, ApiFailure, request } from "../../../api/client";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { MockApi } from "../../../../mock/api";
 import type { EngineStatus, JsonValue } from "../../../api/types";
+import type { ScopedPreferencesChange } from "../../../generated/ScopedPreferencesChange";
+import type { ScopedPreferencesResult } from "../../../generated/ScopedPreferencesResult";
+import { useWorkspace } from "../../../product/state/workspace";
+import { installMockFetch } from "../../../test-support";
+import { wire, wireWrites } from "../../../wire.test-support";
+import { seedPreference } from "../rows/seedPreference.test-support";
 import { ProvidersSection } from "./Providers";
 
-const mock = vi.hoisted(() => ({ refresh: vi.fn(), engines: [] as EngineStatus[] }));
-vi.mock("../../../api/client", async (original) => ({ ...await original<typeof import("../../../api/client")>(), request: vi.fn() }));
-vi.mock("../../../product/state/workspace", () => ({
-  useWorkspace: (select: (state: unknown) => unknown) => select({ refreshEngines: mock.refresh, engines: { data: mock.engines, error: null }, projects: { data: [], error: null }, threads: {} }),
-}));
-vi.mock("../rows/SettingsScopeContext", () => ({ useSettingsScope: () => null }));
-const base = { capabilities: {}, installed: true, version: "2.1.318", auth: "logged_in", latest: null, support: "tested", update_command: null, sign_in_command: null, updating: false, problem: null } as const;
-const engine = (patch: Partial<EngineStatus>) => ({ ...base, ...patch }) as EngineStatus;
-let entries: JsonValue[], revision: string, conflict: string | null;
-let inUseWrites: JsonValue[][] = [];
-let writes: { scope: unknown; membership_version: string; if_match: { provider_instances: string }; edits: { provider_instances: { value: JsonValue[] } } }[];
-function snapshot() { return { catalog: { version: "members-1", selection: { kind: "all_projects" } }, rows: [{ key: "provider_instances", revision, value: entries }] }; }
-beforeEach(() => {
-  vi.restoreAllMocks();
-  mock.engines = [
-    engine({ id: "claude", name: "Claude Code", tier: "native", path: "/opt/claude" }),
-    engine({ id: "work", name: "Claude Code · Work", tier: "native", path: "/opt/work", instance_of: "claude" }),
-    engine({ id: "acp-base", name: "Agent", tier: "acp", path: "/opt/agent" }),
-  ];
-  entries = [{ id: "work", driver: "claude", name: "Work", enabled: false, forward: "mine", program: "/opt/work" }, { id: "other", driver: "acp-base", enabled: true, forward: { nested: true } }];
-  revision = "revision-1"; conflict = null; writes = []; inUseWrites = []; mock.refresh.mockReset();
-  vi.mocked(request).mockReset();
-  vi.mocked(request).mockImplementation(async (method, path, body) => {
-    // The grouped list is a read of its own, and it names every engine here, so the grouped page runs these tests.
-    if (method === "GET" && path === "/api/providers") {
-      return { providers: mock.engines.map((one) => ({ id: one.id, name: one.name, group: "in_use", labels: [], registered: true, openable: true })) } as never;
-    }
-    // The engine host status is a read of its own; this service does not report it, so the group draws nothing.
-    if (method === "GET" && path === "/api/engine-host") throw new ApiFailure("not_found", "No engine host.", 404);
-    // API key storage reads its own status; this service keeps no key, so the group draws nothing.
-    if (method === "GET" && path.startsWith("/api/settings/engine-credentials/")) throw new ApiFailure("not_found", "This engine does not keep a key.", 404);
-    const wanted = (body as { keys?: string[]; edits?: Record<string, { value: JsonValue[] }> });
-    if (method === "POST" && wanted.keys?.[0] === "disabled_engines") return { catalog: { version: "members-1", selection: { kind: "all_projects" } }, rows: [{ key: "disabled_engines", revision: "r", value: [], mixed: false, default: [], project_scoped: true, environment: { source: "default", value: [], default: [] }, members: [], overrides: [] }] } as never;
-    if (method === "PUT" && wanted.edits?.disabled_engines) { inUseWrites.push(wanted.edits.disabled_engines.value); return {} as never; }
-    if (method === "POST") return snapshot() as never;
-    const change = body as typeof writes[number]; writes.push(change);
-    if (conflict) throw new ApiFailure("invalid_path", conflict, 400);
-    entries = change.edits.provider_instances.value; revision = "revision-2";
-    return snapshot() as never;
-  });
+const base = { capabilities: { managed: true, approvals: true }, installed: true, version: "2.1.318", auth: "logged_in", latest: null, support: "tested", update_command: null, sign_in_command: null, updating: false, problem: null } as const;
+const engine = (patch: Partial<EngineStatus>) => ({ ...base, ...patch }) as unknown as EngineStatus;
+const engines = () => [
+  engine({ id: "claude", name: "Claude Code", tier: "native", path: "/opt/claude" }),
+  engine({ id: "work", name: "Claude Code · Work", tier: "native", path: "/opt/work", instance_of: "claude" }),
+  engine({ id: "acp-base", name: "Agent", tier: "acp", path: "/opt/agent" }),
+];
+let mock: MockApi;
+/** The service reports these engines, and the page has read them. */
+async function report(list: EngineStatus[]) {
+  mock.setEngines(list);
+  await useWorkspace.getState().refreshEngines();
+}
+/** What the service holds for the person's provider instances, with the catalogue version and revision a save must start from. */
+const read = () => mock.handle("POST", "/api/settings/preferences/query", { scope: {}, keys: ["provider_instances"] }).body as ScopedPreferencesResult;
+const entries = () => read().rows[0]?.value as JsonValue[];
+const changes = () => wireWrites().filter((call) => call.method === "PUT" && call.path === "/api/settings/preferences").map((call) => call.body as ScopedPreferencesChange);
+const instanceWrites = () => changes().filter((change) => change.edits.provider_instances);
+const inUseWrites = () => changes().flatMap((change) => change.edits.disabled_engines ? [(change.edits.disabled_engines as { value: JsonValue }).value] : []);
+const probes = () => wire().filter((call) => call.path === "/api/engines/probe-binary");
+// Reading the list is its own request, and the page replaces its rows when it arrives: act once the groups are drawn.
+const settled = () => screen.findByRole("rowgroup", { name: "In use" });
+
+beforeEach(async () => {
+  mock = installMockFetch();
+  seedPreference(mock, "provider_instances", [{ id: "work", driver: "claude", name: "Work", enabled: false, forward: "mine", program: "/opt/work" }, { id: "other", driver: "acp-base", enabled: true, forward: { nested: true } }]);
+  seedPreference(mock, "disabled_engines", []);
+  await report(engines());
 });
 
 describe("provider instance dialog", () => {
   it("keeps Save off until something changes, then saves through environment CAS and keeps peers", async () => {
     const user = userEvent.setup(); render(<ProvidersSection />);
+    await settled();
     await user.click(await screen.findByRole("button", { name: "Edit Claude Code · Work" }));
     const dialog = await screen.findByRole("dialog", { name: /Edit/ });
+    const held = read();
     const save = within(dialog).getByRole("button", { name: "Save" });
     expect(save).toBeDisabled();
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
@@ -59,13 +55,14 @@ describe("provider instance dialog", () => {
     await user.clear(name); await user.type(name, "Work renamed");
     await user.click(within(dialog).getByRole("button", { name: "Colour #3b82f6" }));
     await user.click(save);
-    await waitFor(() => expect(writes).toHaveLength(1));
-    expect(writes[0]).toMatchObject({ scope: {}, membership_version: "members-1", if_match: { provider_instances: "revision-1" } });
-    expect(entries).toEqual([{ id: "work", driver: "claude", name: "Work renamed", accent: "#3b82f6", enabled: false, forward: "mine", program: "/opt/work" }, { id: "other", driver: "acp-base", enabled: true, forward: { nested: true } }]);
+    await waitFor(() => expect(instanceWrites()).toHaveLength(1));
+    expect(instanceWrites()[0]).toMatchObject({ scope: {}, membership_version: held.catalog.version, if_match: { provider_instances: held.rows[0]?.revision } });
+    expect(entries()).toEqual([{ id: "work", driver: "claude", name: "Work renamed", accent: "#3b82f6", enabled: false, forward: "mine", program: "/opt/work" }, { id: "other", driver: "acp-base", enabled: true, forward: { nested: true } }]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
   it("saves a Claude auto-compact window only inside its range", async () => {
     const user = userEvent.setup(); render(<ProvidersSection />);
+    await settled();
     await user.click(await screen.findByRole("button", { name: "Edit Claude Code · Work" }));
     const dialog = await screen.findByRole("dialog");
     const field = within(dialog).getByRole("textbox", { name: "Auto-compact window" });
@@ -74,39 +71,42 @@ describe("provider instance dialog", () => {
     expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
     await user.clear(field); await user.type(field, "300000");
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(entries[0]).toMatchObject({ auto_compact_window: "300000" }));
+    await waitFor(() => expect(entries()[0]).toMatchObject({ auto_compact_window: "300000" }));
   });
   it("names the reason under the path when the save is refused and leaves the list alone", async () => {
-    const user = userEvent.setup(); conflict = "No file at this path.";
+    const user = userEvent.setup();
     render(<ProvidersSection />);
+    await settled();
     await user.click(await screen.findByRole("button", { name: "Edit Claude Code · Work" }));
     const dialog = await screen.findByRole("dialog");
     const path = within(dialog).getByRole("textbox", { name: "Binary path" });
-    await user.clear(path); await user.type(path, "/opt/claud");
+    await user.clear(path); await user.type(path, "/opt/claude");
+    const before = entries();
+    mock.fail("/api/settings/preferences", 1, 400, "invalid_input", "work names an empty program.");
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
-    expect(await within(dialog).findByText("No file at this path.")).toBeVisible();
+    expect(await within(dialog).findByText("work names an empty program.")).toBeVisible();
+    expect(entries()).toEqual(before);
     expect(path).toBeInvalid();
     expect(within(dialog).getByRole("button", { name: "Save" })).toBeEnabled();
   });
   const openPath = async (user: ReturnType<typeof userEvent.setup>) => {
     render(<ProvidersSection />);
+    await settled();
     await user.click(await screen.findByRole("button", { name: "Edit Claude Code · Work" }));
     const dialog = await screen.findByRole("dialog");
     return { dialog, path: within(dialog).getByRole("textbox", { name: "Binary path" }), save: () => within(dialog).getByRole("button", { name: "Save" }) };
   };
   it("runs the program check when you leave the path field, not while you type", async () => {
     const user = userEvent.setup();
-    const probe = vi.spyOn(api, "probeBinary").mockResolvedValue({ exists: true, path: "/opt/work2", version: "2.1.318", problem: null });
     const { dialog, path } = await openPath(user);
-    await user.clear(path); await user.type(path, "/opt/work2");
-    expect(probe).not.toHaveBeenCalled();
+    await user.clear(path); await user.type(path, "/opt/claude");
+    expect(probes()).toHaveLength(0);
     await user.tab();
     expect(await within(dialog).findByText("Found. Version 2.1.318.")).toBeVisible();
-    expect(probe).toHaveBeenCalledTimes(1);
+    expect(probes()).toEqual([{ method: "POST", path: "/api/engines/probe-binary", body: { path: "/opt/claude" } }]);
   });
   it("saves a bare program name the engines find on PATH", async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, "probeBinary").mockResolvedValue({ exists: false, path: null, version: null, problem: "Give the full path to the program." });
     const { dialog, path, save } = await openPath(user);
     await user.clear(path); await user.type(path, "my-agent"); await user.tab();
     expect(await within(dialog).findByText("Give the full path to the program.")).toBeVisible();
@@ -114,7 +114,6 @@ describe("provider instance dialog", () => {
   });
   it("blocks Save on an absolute path with no file", async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, "probeBinary").mockResolvedValue({ exists: false, path: null, version: null, problem: "No file at this path." });
     const { dialog, path, save } = await openPath(user);
     await user.clear(path); await user.type(path, "/opt/claud"); await user.tab();
     expect(await within(dialog).findByText("No file at this path.")).toBeVisible();
@@ -122,9 +121,8 @@ describe("provider instance dialog", () => {
   });
   it("does not block Save when the program exists but its version check fails", async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, "probeBinary").mockResolvedValue({ exists: true, path: "/opt/work2", version: null, problem: "Its version command failed." });
     const { dialog, path, save } = await openPath(user);
-    await user.clear(path); await user.type(path, "/opt/work2"); await user.tab();
+    await user.clear(path); await user.type(path, "/opt/broken"); await user.tab();
     expect(await within(dialog).findByText("Its version command failed.")).toBeVisible();
     expect(save()).toBeEnabled();
   });
@@ -133,10 +131,11 @@ describe("provider instance dialog", () => {
     const toggle = await screen.findByRole("switch", { name: "Use Claude Code · Work" });
     await waitFor(() => expect(toggle).toBeEnabled());
     await user.click(toggle);
-    await waitFor(() => expect(inUseWrites).toEqual([["work"]]));
+    await waitFor(() => expect(inUseWrites()).toEqual([["work"]]));
   });
   it("offers Edit on instances only", async () => {
     render(<ProvidersSection />);
+    await settled();
     await screen.findByRole("button", { name: "Edit Claude Code · Work" });
     expect(screen.queryByRole("button", { name: "Edit Claude Code" })).toBeNull();
   });
@@ -145,6 +144,7 @@ describe("provider instance dialog", () => {
 describe("provider pages", () => {
   it("adds an instance from what was found, with the path filled in", async () => {
     const user = userEvent.setup(); render(<ProvidersSection />);
+    await settled();
     await user.click(await screen.findByRole("button", { name: "Add provider" }));
     const choose = await screen.findByRole("dialog", { name: "Add a provider" });
     expect(within(choose).getByText("Found at /opt/claude · 2.1.318")).toBeVisible();
@@ -153,13 +153,13 @@ describe("provider pages", () => {
     expect(within(editor).getByRole("textbox", { name: "Binary path" })).toHaveValue("/opt/claude");
     await user.type(within(editor).getByRole("textbox", { name: "Display name" }), "Personal");
     await user.click(within(editor).getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(entries).toHaveLength(3));
-    expect(entries[2]).toMatchObject({ id: "claude_personal", driver: "claude", name: "Personal", program: "/opt/claude", enabled: true });
+    await waitFor(() => expect(entries()).toHaveLength(3));
+    expect(entries()[2]).toMatchObject({ id: "claude_personal", driver: "claude", name: "Personal", program: "/opt/claude", enabled: true });
   });
   it("names who is signed in under each provider, and the instance beside it", async () => {
-    mock.engines = [engine({ id: "claude", name: "Claude Code", tier: "native", account: "sam@example.com" }),
+    await report([engine({ id: "claude", name: "Claude Code", tier: "native", account: "sam@example.com" }),
       engine({ id: "work", name: "Claude Code · Work", tier: "native", instance_of: "claude", account: "sam@acme.com" }),
-      engine({ id: "codex", name: "Codex", tier: "native", auth: "logged_out" })];
+      engine({ id: "codex", name: "Codex", tier: "native", auth: "logged_out" })]);
     render(<ProvidersSection />);
     await screen.findByRole("rowgroup", { name: "In use" });
     expect(await screen.findByText(/Runs through Orbyn’s engine host with the Claude Agent SDK/)).toBeVisible();
@@ -168,7 +168,7 @@ describe("provider pages", () => {
   });
   it("shows the signed-in account on the provider's page", async () => {
     const user = userEvent.setup();
-    mock.engines = [engine({ id: "claude", name: "Claude Code", tier: "native", account: "sam@example.com" })];
+    await report([engine({ id: "claude", name: "Claude Code", tier: "native", account: "sam@example.com" })]);
     render(<ProvidersSection />);
     await screen.findByRole("rowgroup", { name: "In use" });
     await user.click(await screen.findByRole("button", { name: "Claude (SDK)" }));
@@ -176,29 +176,30 @@ describe("provider pages", () => {
   });
   it("offers Review with the count of sessions the service finds, and opens the history import", async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, "nativeSessionCount").mockImplementation(async (id) => ({ engine: id, count: id === "claude" ? 12 : 6, truncated: false }));
-    mock.engines = [engine({ id: "claude", name: "Claude Code", tier: "native" }), engine({ id: "codex", name: "Codex", tier: "native" })];
+    await report([engine({ id: "claude", name: "Claude Code", tier: "native" }), engine({ id: "codex", name: "Codex", tier: "native" })]);
+    mock.setNativeSessionCount("claude", 12);
+    mock.setNativeSessionCount("codex", 6);
     render(<ProvidersSection />);
     expect(await screen.findByText("Provider sessions this computer keeps")).toBeVisible();
     await user.click(await screen.findByRole("button", { name: "Review 18" }));
     expect(await screen.findByRole("button", { name: "Providers" })).toBeVisible();
   });
   it("marks the count as a lower bound when the history folder was too large to count to the end", async () => {
-    vi.spyOn(api, "nativeSessionCount").mockImplementation(async (id) => ({ engine: id, count: id === "claude" ? 12 : 0, truncated: id === "claude" }));
-    mock.engines = [engine({ id: "claude", name: "Claude Code", tier: "native" }), engine({ id: "codex", name: "Codex", tier: "native" })];
+    await report([engine({ id: "claude", name: "Claude Code", tier: "native" }), engine({ id: "codex", name: "Codex", tier: "native" })]);
+    mock.setNativeSessionCount("claude", 12, true);
+    mock.setNativeSessionCount("codex", 0);
     render(<ProvidersSection />);
     expect(await screen.findByRole("button", { name: "Review 12+" })).toBeVisible();
   });
   it("still shows Native sessions when only one engine fails to count", async () => {
-    vi.spyOn(api, "nativeSessionCount").mockImplementation(async (id) => {
-      if (id === "codex") throw new ApiFailure("unsupported", "No history folder.", 400);
-      return { engine: id, count: 12, truncated: false };
-    });
+    await report([engine({ id: "claude", name: "Claude Code", tier: "native" }), engine({ id: "codex", name: "Codex", tier: "native" })]);
+    mock.setNativeSessionCount("claude", 12);
+    mock.fail("/api/engines/codex/native-sessions/count", 99, 422, "unsupported", "This engine cannot count its sessions.");
     render(<ProvidersSection />);
     expect(await screen.findByRole("button", { name: "Review 12" })).toBeVisible();
   });
   it("hides Native sessions when the service has no count to give", async () => {
-    vi.spyOn(api, "nativeSessionCount").mockRejectedValue(new ApiFailure("unsupported", "No history folder.", 400));
+    for (const id of ["claude", "work", "acp-base"]) mock.fail(`/api/engines/${id}/native-sessions/count`, 99, 422, "unsupported", "This engine cannot count its sessions.");
     render(<ProvidersSection />);
     await screen.findByRole("rowgroup", { name: "In use" });
     expect(screen.queryByText("Native sessions")).toBeNull();
@@ -218,7 +219,7 @@ describe("provider pages", () => {
     await user.click(await screen.findByRole("button", { name: "Claude Code · Work" }));
     await user.click(await screen.findByRole("button", { name: "Remove Claude Code · Work" }));
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove" }));
-    await waitFor(() => expect(entries).toEqual([{ id: "other", driver: "acp-base", enabled: true, forward: { nested: true } }]));
+    await waitFor(() => expect(entries()).toEqual([{ id: "other", driver: "acp-base", enabled: true, forward: { nested: true } }]));
   });
   it("opens a provider row from the keyboard and leaves a row with no detail behind it without a control", async () => {
     const user = userEvent.setup(); render(<ProvidersSection />);

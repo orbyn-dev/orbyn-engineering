@@ -85,6 +85,7 @@ it("a 409 background_open shows the question and sends again with stop_backgroun
   const ask = await screen.findByRole("dialog", { name: /anyway/ });
   expect(within(ask).getByText(words)).toBeVisible();
   // Nothing was sent again by itself.
+  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
   expect(stub.writes()).toHaveLength(1);
   fireEvent.click(within(ask).getByRole("button", { name: "Stop anyway" }));
