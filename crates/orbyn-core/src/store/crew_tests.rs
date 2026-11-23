@@ -128,6 +128,7 @@ fn the_answer_key_lives_in_its_own_table() {
         "crew_evidence",
         "crew_gates",
         "crew_results",
+        "crew_lessons",
     ] {
         let rows: Vec<String> = {
             let conn = store.reader();

@@ -10,7 +10,7 @@ use super::autopilot_areas::{DAY, rig};
 use super::autopilot_merge::{merging, passed};
 use super::autopilot_watch::NOW;
 use super::harness::{Turn, World, brief, key, report, world};
-use crate::crew::lessons::{LessonScope, SECRET_REFUSAL, TEXT_MAX};
+use crate::crew::lessons::{LessonScope, TEXT_MAX};
 use crate::crew::{Answering, Mode, Page};
 use crate::error::CoreError;
 use crate::store::{CrewLesson, LessonEvidence};
@@ -117,11 +117,17 @@ async fn two_tasks_of_one_repository_with_the_same_failure_write_one_lesson() {
         ids.contains(&first.as_str()) && ids.contains(&second.as_str()),
         "{ids:?}"
     );
+    // The sentence names the check's KIND, never its id: H1 keeps every part of the key out of a lesson.
     assert!(
         lesson
             .text
-            .starts_with("Checks like `chk-scope` failed on files under `docs` before:"),
+            .starts_with("Checks like `file_scope` failed on files under `docs` before:"),
         "{}",
+        lesson.text
+    );
+    assert!(
+        !lesson.text.contains("chk-"),
+        "a check id never enters a lesson: {}",
         lesson.text
     );
     assert!(lesson.text.chars().count() <= TEXT_MAX, "{}", lesson.text);
@@ -340,7 +346,12 @@ async fn the_person_write_path_refuses_empty_long_and_secret_words() {
             ..
         } => assert_eq!(
             (status, code, message.as_str()),
-            (400, "secret_refused", SECRET_REFUSAL)
+            (
+                400,
+                "secret_refused",
+                // Word for word from the wire contract (docs/crew-lessons.md, "Errors").
+                "Not saved: this looks like it holds a secret. Edit it and save again."
+            )
         ),
         other => panic!("{other}"),
     }

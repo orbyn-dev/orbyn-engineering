@@ -96,7 +96,7 @@ fn migration_80_follows_79_and_a_lesson_round_trips_with_its_evidence() {
             "repo",
             Some("p1"),
             "fingerprint",
-            "Checks like `chk-scope` failed on files under `docs` before: Files changed outside the paths you were given.",
+            "Checks like `file_scope` failed on files under `docs` before: Files changed outside the paths you were given.",
             Some(&fingerprint),
         ))
         .unwrap()
@@ -154,7 +154,7 @@ fn the_same_fingerprint_is_never_rewritten() {
                 "repo",
                 Some("p1"),
                 "fingerprint",
-                "Checks like `chk-scope` failed before.",
+                "Checks like `file_scope` failed before.",
                 Some(&fingerprint),
             ))
             .unwrap()

@@ -6,7 +6,8 @@
 //! worker output: a **repeated failure fingerprint** (the loop guard's own hash, on two tasks of one repository
 //! within 60 days), a **confirmed escape** (the escape log; a revert is its own source) and a **person's correction**
 //! (only their own typed words). Text is code-owned from names the guard already redacts for the worker, or the
-//! person's own words; the secret scan refuses a lesson before it is stored.
+//! person's own words; the secret scan refuses a lesson before it is stored. The failure sentence names the
+//! failing check's KIND, never its id or its command (H1), so a stored lesson cannot leak any part of the key.
 //!
 //! Every write goes through one path: text cleaned and capped at 300 characters, the secret scan, the path rule (a
 //! global lesson names path classes, not paths), then `Store::write_crew_lesson`, which audits in the same
@@ -247,18 +248,22 @@ impl Core {
     }
 }
 
-/// Source 1's sentence: the failing checks, where they failed and the guard's safe failure sentence.
+/// Source 1's sentence: the failing checks by kind, where they failed and the guard's safe failure sentence.
+/// A check's id, its command or any other part of the key never enters the text (H1); only its kind does.
 fn fingerprint_text(failures: &[Failed]) -> Option<String> {
-    let mut checks: Vec<&str> = failures.iter().map(|failure| failure.id.as_str()).collect();
-    checks.sort_unstable();
-    checks.dedup();
-    if checks.is_empty() {
+    let mut kinds: Vec<String> = failures
+        .iter()
+        .map(|failure| one_line(&failure.kind.word()))
+        .collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    if kinds.is_empty() {
         return None;
     }
-    let checks: Vec<String> = checks
+    let kinds: Vec<String> = kinds
         .iter()
         .take(3)
-        .map(|id| format!("`{}`", one_line(id)))
+        .map(|kind| format!("`{kind}`"))
         .collect();
     let area = failures
         .iter()
@@ -276,7 +281,7 @@ fn fingerprint_text(failures: &[Failed]) -> Option<String> {
     let sentence = one_line(&failures[0].reason);
     clean_generated(&format!(
         "Checks like {} failed on {where_it_failed} before: {sentence}",
-        checks.join(", ")
+        kinds.join(", ")
     ))
 }
 
