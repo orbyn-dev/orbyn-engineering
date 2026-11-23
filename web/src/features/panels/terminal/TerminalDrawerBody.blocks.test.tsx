@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { request } from "../../../api/client";
@@ -37,15 +37,54 @@ beforeEach(() => {
 afterEach(() => {
   setBlocksApi(null);
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("command blocks in the drawer", () => {
-  it("leaves the terminal as it was while no client is installed, and asks nobody for blocks", async () => {
-    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
-    await screen.findByRole("tab", { name: /npm test/ });
+  it("leaves the terminal unchanged when the real client answers an empty list", async () => {
+    const fetching = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      blocks: [],
+      next_before: null,
+      limits: { max_blocks: 500, max_block_bytes: 1_048_576, max_total_bytes: 8_388_608 },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetching);
+    setBlocksApi(null);
+    const user = userEvent.setup();
+    const { container } = render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+
+    await user.click(await screen.findByRole("tab", { name: /npm test/ }));
+    await waitFor(() => expect(fetching).toHaveBeenCalled());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    expect(String(fetching.mock.calls[0]?.[0])).toBe("/api/threads/th/terminals/t2/blocks");
+    expect(screen.getByText("Output of t2")).toBeInTheDocument();
+    expect(container.querySelector(".cb-list")).toBeNull();
     expect(screen.queryByRole("group", { name: "Command blocks" })).not.toBeInTheDocument();
-    expect(mock.mock.calls.every(([, path]) => !String(path).includes("blocks"))).toBe(true);
+    expect(screen.queryByText("Commands you run here appear as blocks")).not.toBeInTheDocument();
+    expect(screen.queryByText("Couldn't read this terminal's blocks.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    expect(useUi.getState().toasts).toEqual([]);
   });
+
+  it("shows the first command of a terminal that answered an empty list, by reading again while idle", async () => {
+    const answer = (blocks: CommandBlock[]) => new Response(JSON.stringify({
+      blocks, next_before: null, limits: { max_blocks: 500, max_block_bytes: 1_048_576, max_total_bytes: 8_388_608 },
+    }), { status: 200 });
+    const fetching = vi.fn()
+      .mockResolvedValueOnce(answer([]))
+      .mockImplementation(async () => answer([block]));
+    vi.stubGlobal("fetch", fetching);
+    setBlocksApi(null);
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+
+    await user.click(await screen.findByRole("tab", { name: /npm test/ }));
+    await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("group", { name: "Command blocks" })).not.toBeInTheDocument();
+
+    await waitFor(() => expect(fetching.mock.calls.length).toBeGreaterThan(1), { timeout: 7000 });
+    expect(await screen.findByRole("group", { name: "Command blocks" })).toBeInTheDocument();
+  }, 12000);
 
   it("draws the blocks of the shown terminal, and Run again types the line into that terminal's input without a newline", async () => {
     const list = vi.fn().mockResolvedValue({ blocks: [block], next_before: null, limits });

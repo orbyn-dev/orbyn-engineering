@@ -39,24 +39,29 @@ it("adds nothing while the service reports no engine host", () => {
   expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
 });
 
-it("with a Rust driver, the red line says so with Try again and Send still works", async () => {
+it("for Claude under the SDK path, the line gives the service's sentence with Use Claude (CLI) and Try again, and Send still works", async () => {
   const start = vi.spyOn(api, "startRun").mockResolvedValue({ id: "r1" } as Run);
-  setEngineHostApi(createEngineHostMock({ hosts: [stuck("claude", { has_driver: true })] }));
+  const reason = "The engine host is unavailable after repeated failures: the engine host closed its output";
+  setEngineHostApi(createEngineHostMock({ hosts: [stuck("claude", { has_driver: true, detail: reason })] }));
   setup("claude", "Claude Code");
-  expect(await screen.findByText("Claude Code can’t start: its engine host stopped 5 times in 5 minutes. Last error: the engine host closed its output.")).toBeVisible();
+  expect(await screen.findByText(reason)).toBeVisible();
+  expect(screen.getByRole("alert")).not.toHaveClass("info");
+  expect(screen.getByRole("button", { name: "Use Claude (CLI)" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  expect(screen.queryByText(/no other way to run here/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Restart engine host" })).toBeNull();
   expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
 });
 
-it("with no driver, Send is off, the message stays and the line offers Restart engine host", async () => {
+it("with a wrapped driver, Send is still off, the message stays and the line offers Restart engine host", async () => {
   const start = vi.spyOn(api, "startRun").mockResolvedValue({ id: "r1" } as Run);
-  const mock = createEngineHostMock({ delayMs: 20, hosts: [stuck("cursor")] });
+  const mock = createEngineHostMock({ delayMs: 20, hosts: [stuck("cursor", { has_driver: true })] });
   setEngineHostApi(mock);
   setup("cursor", "Cursor");
   expect(await screen.findByText("Cursor can’t send: its engine host is unavailable and Cursor has no other way to run here. Last error: the engine host closed its output.")).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveAttribute("data-send", "off");
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   expect(screen.getByRole("textbox")).toHaveValue("Run the tests.");
   await userEvent.dblClick(screen.getByRole("button", { name: "Restart engine host" }));
@@ -64,9 +69,13 @@ it("with no driver, Send is off, the message stays and the line offers Restart e
   expect(start).not.toHaveBeenCalled();
 });
 
-it("says nothing when the host is only restarting", async () => {
-  setEngineHostApi(createEngineHostMock({ hosts: [{ id: "claude", name: "Claude Code", state: "restarting", can_retry: false }] }));
+it("for Claude under the SDK path, a restarting host says so with Use Claude (CLI) and no Try again", async () => {
+  setEngineHostApi(createEngineHostMock({ hosts: [{ id: "claude", name: "Claude Code", state: "restarting", can_retry: false,
+    detail: "The engine host stopped and is restarting." }] }));
   setup("claude", "Claude Code");
-  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
-  expect(screen.queryByText(/can’t start|can’t send/)).toBeNull();
+  expect(await screen.findByText("The engine host stopped and is restarting.")).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveClass("eh-line", "info");
+  expect(screen.getByRole("button", { name: "Use Claude (CLI)" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
 });

@@ -1,17 +1,18 @@
 # Command blocks (W1)
 
-What the terminal drawer needs from the service to show one block per command. **Planned**: the web side is built hidden, the
-service routes are not built. In a production build the web has no client and sends nothing, so the terminal is unchanged; a dev-only
-preview (`#/preview/command-blocks`) installs the mock in `web/mock/commandBlocks.ts`. Names here change only if the service pull
-request says so. Row: G17 in [parity](parity.md). Frames: `block-*` in Engineer Designs. Owner of the service side: Eng 2.
+What the terminal drawer needs from the service to show one block per command. **Service built, web client wired**: the service keeps,
+redacts and serves blocks through the two routes below, and `blocksClient.ts` reads them in production. A shell that emits no marks
+answers an empty list, and the drawer then draws the terminal exactly as it does without blocks. A dev-only preview
+(`#/preview/command-blocks`) installs the mock in `web/mock/commandBlocks.ts`. Names here change only if the service pull request says
+so. Row: G17 in [parity](parity.md). Frames: `block-*` in Engineer Designs.
 
 ## What the service keeps
 
 Per terminal (a thread's `main` shell or a named terminal), an ordered list of blocks, oldest first. A block starts at an OSC 133 `C`
 mark (output starts) and ends at the `D` mark (or at the next `A` or `C` mark when no `D` arrives, with no exit code). The marks are
 the ones the web already reads in `web/src/features/panels/terminal/shellMarks.ts`; Orbyn installs no shell integration, so a shell
-that emits none yields no blocks. A command Orbyn itself runs (a project script, a Crew check, an agent command) is one block with
-the same fields.
+that emits none yields no blocks. A command Orbyn itself runs (a project script, a Crew check, an agent command) would be one block
+with the same fields only when a single marked-terminal write path already exists; the service adds none today (see Decisions).
 
 | Field | Type | Rules |
 | --- | --- | --- |
@@ -83,23 +84,35 @@ terminal output stream does. Neither writes. There is **no** service-side run, r
 | Copy command | The web | The block's `command`, as text. Disabled when it is null. |
 | Run again | The web, over the terminal socket | **A click writes the command text into the terminal's input and nothing more.** No newline is added, so the shell shows the line and waits; the person presses Enter in the terminal. It is the same write path the terminal already has (`/ws/terminal/{thread}/{terminal}`, the Person-class connection that carries typing). It never calls a service route, and the service never runs a block's command on its own. A command that is empty, longer than 4096 characters or holds a newline or control character is not written. |
 | Stop | The web, over the terminal socket | Writes Ctrl-C, as the drawer's Stop does today. |
+| Filter output | The web, per block | A bar under the block's header keeps the lines of the text the block already holds that contain the typed text (plain text, case-insensitive, never a pattern) and says how many of the block's lines remain, such as `1 of 7 lines`; the block's own line numbers are not shown. Show all and Esc clear it, and collapsing the block drops it. It calls no route; a running block filters only the text its live view holds. |
+| Find in output | The web, per block | A bar under the block's header marks every match in the held output, with the current one filled, and shows a count, Previous and Next. Enter goes to the next match and Shift+Enter to the previous; with no match the bar says `No matches` and keeps the field's text. It binds no global shortcut. It calls no route; a running block sees only the text its live view holds. |
 
 The service cannot tell a rerun from typing, which is the point: the line is the person's to run.
 
-Not in this version (listed in the [parity row](parity.md)): Send to agent, Ask Crew to fix, Filter, Find, Run again in a new tab, Clear
-all blocks, and the full-screen frame while the program runs. Clear all would need a delete route; that is a decision for Eng 2 and
+Not in this version (listed in the [parity row](parity.md)): Send to agent, Ask Crew to fix, Run again in a new tab, Clear all
+blocks, and the full-screen frame while the program runs. Clear all would need a delete route; that is a decision for Eng 2 and
 Products Research, not something the web invents.
 
 ## Security
 
 - **Output is untrusted terminal text.** A program can print anything: markup, escape sequences, a fake prompt, a link. The web draws
   it as text in a `pre`, never as HTML, never as a link, never evaluates it. It strips escape sequences and control characters before
-  drawing and before copying, and caps what it keeps in memory (see `web/src/features/panels/terminal/blocks/blockText.ts`).
+  drawing and before copying, and caps what it keeps in memory (see `web/src/features/panels/terminal/blocks/blockText.ts`). Find marks
+  are built from string offsets as React text nodes and `<mark>` elements; no HTML is parsed, inserted or evaluated.
 - **The service redacts, the web does not trust that it did.** The service runs its secret rules (the Redactor, per the `redact-*`
   frames) over both `command` and the output text **before** it stores them and again before it answers, so a secret printed by a
   command is never in the list or the output. The hook is a single function in the block store, `redact(text) -> text`, so the rule set
-  can change without touching the routes. Until the Redactor exists the hook is the identity and the routes stay behind the hidden
-  flag: **do not turn blocks on in a build before redaction lands**.
+  can change without touching the routes. If the rules cannot be read, that terminal keeps nothing and the list answers empty.
+- **Marks are not verified.** A block's boundaries, `exit_code` and `command` come from marks (OSC 133, OSC 633;E, OSC 7) in the
+  terminal's own output, so any program or `cat file` can forge them: a failing build can show exit 0 and a Run again line can be
+  chosen by a file's content. The web shows the command before Run again and never sends Enter; treat `exit_code` as advisory until
+  the shell integration passes a nonce (not built). A flood of forged `C` marks can fill the 500-block cap and evict real history.
+- **Only a partial last line is held back.** A complete line of a running block is readable as soon as its newline arrives, and
+  `output_bytes` counts it, so a command that prints "Compiling..." and then waits shows that line before it ends. A last line with no
+  newline yet (a prompt, a progress line) stays pending until its newline arrives or the command ends.
+- The working directory (`cwd`) is redacted like the command.
+- **A terminal that carries a workflow run's env values keeps no blocks.** Those values are masked on the output stream after the block
+  parser reads it, so the parser never records such a terminal (tested: `a_terminal_with_run_secrets_keeps_no_command_blocks`).
 - Redaction applies to what the web copies too: the web copies what the service sent. A copy therefore never holds more than the drawer
   showed.
 - A block's `command` and `cwd` are labels. The web never opens a path from them, never builds a URL from them and never puts them in a
@@ -109,15 +122,48 @@ Products Research, not something the web invents.
 
 ## Web side
 
-`web/src/features/panels/terminal/blocks/`: `blocksContract.ts` (the typed client interface, `blocksApi()` is null in production),
-`blockText.ts` (cleaning, caps, durations), `CommandBlocks.tsx` and `BlockCard.tsx` (the drawer's blocks), `CommandBlocksPreview.tsx`
-(the dev-only screen). The mock, `web/mock/commandBlocks.ts`, is never in a production bundle: `scripts/assert-no-previews.mjs` fails the
-build if its marker or the route appears.
+`web/src/features/panels/terminal/blocks/`: `blocksContract.ts` (the client contract and default: `blocksApi()` answers the
+production client, and `setBlocksApi(null)` puts it back), `blocksTypes.ts` (the block, page and limit shapes), `blocksClient.ts` (the
+production client for both routes: every path segment and cursor encoded, the session header and no person key, `410` as
+`cursor_expired`, and a `404` list as an empty list),
+`readOutput.ts` (every output page, started again from the top once after `410`), `blockText.ts` (cleaning, caps, durations, the
+case-insensitive plain-text line filter and match finder), `CommandBlocks.tsx` and `BlockCard.tsx` (the drawer's blocks, the filter and
+find bars of `block-filter` and `block-find`, and their header controls), `CommandBlocksPreview.tsx` (the dev-only screen). Filter and
+Find run in the web over the text `readBlockOutput` already returned: they call no route, draw matches as text nodes and `<mark>`
+elements, and the preview mock exercises both. The real client draws
+nothing until it has blocks: an empty list, a `404` and any other list failure leave the terminal exactly as it was, with no empty state
+and no error. Only the preview mock (and tests that install a client) shows the loading, empty and error frames. The mock,
+`web/mock/commandBlocks.ts`, is never in a production bundle: `scripts/assert-no-previews.mjs` fails the build if its marker or the
+route appears.
 
-## Questions for Eng 2
+## Decisions
 
-1. Route names and paths above (`/api/threads/{id}/terminals/{terminal}/blocks…`): confirm or rename.
-2. Are `max_blocks`, `max_block_bytes` and `max_total_bytes` right, and is "in memory, cleared by a restart" acceptable for the first version?
-3. Does `orbynd` see OSC 133 marks, or only the web's xterm? Today only the web reads them (`shellMarks.ts`), so the service needs its own
-   parser on the pty stream; the OSC 133 `D` exit code is the one source for `exit_code`.
-4. Full-screen detection (`fullscreen`) needs the alternate-screen switch (`CSI ? 1049 h/l`) parsed on the same stream.
+The service side of #974 is built in `crates/orbyn-core/src/host/blocks/` (parser, store, text) and
+`crates/orbynd/src/routes/blocks.rs`, with module tests and a service test in `crates/orbynd/tests/command_blocks.rs`. The web reads
+them through the production client above.
+
+1. **Routes stay as written.** `GET /api/threads/{id}/terminals/{terminal}/blocks?before=&limit=` and
+   `GET .../blocks/{block_id}/output?after=&limit=` are both Local reads, like the neighbouring terminal reads. Neither writes. There
+   is no service-side run, rerun or delete route.
+2. **Limits stay as written.** 500 blocks per terminal, 1 MiB of text per block, 8 MiB per terminal; the oldest is dropped whole and a
+   running block is never dropped. The list returns `limits`. Blocks are in memory only: an `orbynd` restart clears them and closing,
+   settling or archiving a terminal drops them with it. A running block ends there with no exit code.
+3. **The service parses the pty stream.** A small streaming state machine reads OSC 133 and 633 across read boundaries (`A`, `B`, `C`,
+   `D;<code>`), plus `633;E` for `command`, OSC 7 and `633;P;Cwd=` for `cwd`, and the alternate-screen switch (`CSI ? 1049 h/l`, also
+   `?1047` and `?47`) for `fullscreen`. It emits no block for a shell that emits no marks; that is an empty list, never an error. A
+   block ends at `D`, at the next `A` or `C` when no `D` arrived, or when the terminal closes. A block that used the alternate screen
+   keeps no output: `output_bytes` is 0 and the output route answers an empty page.
+4. **Text is stored plain.** Bytes are decoded as UTF-8 lossily, then CSI, OSC, DCS and every other ESC sequence and every control
+   character except newline and tab are removed; a carriage return that redraws a line keeps the last text of that line. `command` is
+   one line, cut (not wrapped) at 4096 characters, taken from `633;E` when the shell sent it and null otherwise.
+5. **Redaction runs before storage.** Every command and every chunk of output goes through the `Redactor` for `Surface::Terminal`
+   through one `redact(text) -> text` in the block store before it is stored, and again before it is answered. If no redactor can be
+   obtained the store keeps nothing and the list is empty. Nothing logs command text or output; a log line names the terminal id, block
+   id and a byte count.
+6. **Cursors are opaque and validated.** A cursor into text the service dropped is `410 cursor_expired`; a malformed cursor is
+   `422 bad_cursor`; a gone thread, terminal or block is `404 not_found`, and a thread the person cannot open answers the same `404`.
+   Output pages never cut a UTF-8 character and prefer a line boundary.
+7. **A command Orbyn itself runs is not a block yet.** Project scripts, Crew checks and agent commands either run as a separate
+   `shell -lc` process that emits no marks or are typed into an engine's pty; there is no single place that writes a shell command into
+   a marked terminal. The parser would read the marks if such a terminal emitted them, but the service adds no synthetic block. This
+   stays listed in G17.

@@ -1,4 +1,4 @@
-import { describeFrames } from "../shared/test-support";
+import { describeFrames, describeInboxLabel } from "../shared/test-support";
 import { BACKTEST_LIVE_FRAMES } from "./live/screens";
 import { BACKTEST_FRAMES } from "./names";
 
@@ -24,3 +24,4 @@ const SHOWS: Record<string, string[]> = {
 const DRAWN: readonly string[] = BACKTEST_FRAMES.filter((name) => !(BACKTEST_LIVE_FRAMES as readonly string[]).includes(name));
 
 describeFrames("Reviewer backtest frames still drawn (Crew Designs v23)", DRAWN, SHOWS);
+describeInboxLabel(DRAWN);

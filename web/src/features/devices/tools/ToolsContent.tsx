@@ -14,7 +14,7 @@ export function NotVerified() {
   );
 }
 
-function Switch({ label, on, disabled, onChange }: { label: string; on: boolean; disabled?: boolean; onChange(on: boolean): void }) {
+function Switch({ label, on, disabled, title, onChange }: { label: string; on: boolean; disabled?: boolean; title?: string; onChange(on: boolean): void }) {
   return (
     <button
       type="button"
@@ -23,6 +23,7 @@ function Switch({ label, on, disabled, onChange }: { label: string; on: boolean;
       aria-label={label}
       className="dev-switch"
       disabled={disabled}
+      title={title}
       onClick={() => onChange(!on)}
     >
       <span className="dev-switch-knob" aria-hidden />
@@ -85,18 +86,28 @@ export function TextPane({ state, busy, onChange }: Props) {
   );
 }
 
-export function AccessibilityPane({ state, busy, onChange }: Props) {
+export function AccessibilityPane({ state, busy, live, onChange }: Props & { live: boolean }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const reason = live ? null : "Outlines need a live screen.";
   return (
     <>
       <NotVerified />
       <div className="dt-row">
-        <div className="dt-row-label"><b>Show elements</b><small>Outline every element the device exposes</small></div>
-        <Switch label="Show elements" on={state.accessibility.showElements} disabled={busy} onChange={(on) => onChange({ type: "show_elements", on })} />
+        <div className="dt-row-label">
+          <b>Show elements</b>
+          <small>{reason ?? "Outline every element the device exposes"}</small>
+        </div>
+        <Switch
+          label="Show elements"
+          title={reason ?? undefined}
+          on={state.accessibility.showElements}
+          disabled={busy || !live}
+          onChange={(on) => onChange({ type: "show_elements", on })}
+        />
       </div>
-      {state.accessibility.elements.map((element) => (
+      {live ? state.accessibility.elements.map((element) => (
         <ElementRow key={element.id} element={element} selected={selected === element.id} onSelect={() => setSelected(element.id)} />
-      ))}
+      )) : <p className="dt-note">No screen is live.</p>}
     </>
   );
 }

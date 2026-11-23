@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { request } from "./client";
-import { forgetPersonKey, PENDING_PERSON_ROUTES, PERSON_HEADER, PERSON_ROUTES, personKeyHeaders, personKeyProtocols, sendsPersonKey } from "./personKey";
+import { canSendPersonKey, forgetPersonKey, PENDING_PERSON_ROUTES, PERSON_HEADER, PERSON_ROUTES, personKeyHeaders, personKeyProtocols, sendsPersonKey } from "./personKey";
 
 const ok = () => vi.fn(async () => new Response(null, { status: 204 }));
 const sentHeaders = (fetchMock: ReturnType<typeof ok>) => new Headers((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].headers);
@@ -235,5 +235,19 @@ describe("the profile writes of docs/execution-profiles-and-library.md", () => {
     expect(sendsPersonKey("PUT", "/api/threads/t1/profile")).toBe(true);
     expect(sendsPersonKey("POST", "/api/crew/profile/apply")).toBe(true);
     for (const [method, path] of [["GET", "/api/profiles"], ["GET", "/api/profiles/01j0"], ["POST", "/api/profiles/check"]] as const) expect(sendsPersonKey(method, path), path).toBe(false);
+  });
+});
+
+describe("which pages may send the key", () => {
+  it("is true in the desktop app, whose shell has the bridge to ask", () => {
+    shell(vi.fn(async () => "shell-key"));
+    expect(canSendPersonKey()).toBe(true);
+  });
+
+  it("stays true in a dev preview, which sends the mock's fixed key, so the designed frames stay reachable there", () => {
+    // No bridge: a browser tab. The preview build compiles `__ORBYN_PREVIEWS__` true (vite.config.ts), which is what the
+    // prompt and the mock both rely on; a production build has it false and this answers false.
+    expect(window as unknown as { __TAURI_INTERNALS__?: unknown }).not.toHaveProperty("__TAURI_INTERNALS__");
+    expect(canSendPersonKey()).toBe(__ORBYN_PREVIEWS__);
   });
 });

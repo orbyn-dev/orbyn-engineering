@@ -32,9 +32,10 @@ it("shows each provider's state in the table and opens its editor from Edit", as
   ]} />);
   const rows = screen.getAllByRole("row").slice(1);
   expect(within(rows[0]!).getByText("Ready")).toBeVisible();
-  expect(within(rows[1]!).getByText("codex login")).toBeVisible();
-  expect(within(rows[2]!).getByText("Update 0.33")).toBeVisible();
-  expect(within(rows[2]!).getByText("via ACP")).toBeVisible();
+  expect(within(rows[1]!).getByText("Ready")).toBeVisible();
+  expect(within(rows[2]!).getByText("codex login")).toBeVisible();
+  expect(within(rows[3]!).getByText("Update 0.33")).toBeVisible();
+  expect(within(rows[3]!).getByText("via ACP")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Edit Codex" }));
   expect(edit).toHaveBeenCalledWith("codex");
 });

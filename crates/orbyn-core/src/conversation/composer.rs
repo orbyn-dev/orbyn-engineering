@@ -710,7 +710,7 @@ mod tests {
             .enqueue(
                 &f.thread,
                 "later",
-                &[image.id.clone()],
+                std::slice::from_ref(&image.id),
                 &ModelSelection::default(),
             )
             .unwrap();

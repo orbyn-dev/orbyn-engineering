@@ -271,6 +271,12 @@ fn scope_ok(scope: &str) -> Result<()> {
 impl IssueSource for GitHub {
     async fn list(&self, scope: &str, query: &IssueQuery) -> Result<ScopeList> {
         scope_ok(scope)?;
+        if query.cursors.contains_key(&format!("github {scope}")) {
+            // GitHub's answer has one page and issues no cursor, so any that arrives was not ours.
+            return Err(CoreError::Invalid(
+                "That page cursor was not issued for this repository.".into(),
+            ));
+        }
         let listed = run(&self.cwd, &list_args(scope, query)).await?;
         let issues = listed
             .as_array()
@@ -500,6 +506,19 @@ mod tests {
             classify(CoreError::Unsupported("Install gh".into())),
             CoreError::TrackerNotConnected(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn a_page_cursor_is_refused_because_github_issues_none() {
+        let github = GitHub {
+            cwd: std::env::temp_dir(),
+        };
+        let query = IssueQuery {
+            cursors: [("github o/r".to_owned(), "2.abc".to_owned())].into(),
+            ..IssueQuery::default()
+        };
+        let refused = github.list("o/r", &query).await.map(|_| ());
+        assert!(matches!(refused, Err(CoreError::Invalid(_))));
     }
 
     #[test]

@@ -9,6 +9,9 @@ use crate::agents::driver::{
 pub const HOST_STOPPED: &str =
     "The engine host stopped. Your work in the project is kept; send your message again.";
 
+/// The stable code a stopped host gives the run, so a client never has to match the sentence.
+pub const HOST_STOPPED_CODE: &str = "engine_host_stopped";
+
 fn disposition(text: Option<&str>) -> ThreadDisposition {
     match text {
         Some("reusable") => ThreadDisposition::Reusable,
@@ -36,6 +39,7 @@ pub fn host_stopped() -> EngineOutcome {
         message: HOST_STOPPED.into(),
         retry: None,
         disposition: ThreadDisposition::Unknown,
+        code: Some(HOST_STOPPED_CODE),
     })
 }
 
@@ -49,6 +53,26 @@ fn sentence(reason: Option<Reason>, error: Option<&HostError>) -> String {
         Some(Reason::Refused) => "The engine declined to continue this request.".into(),
         Some(Reason::Other) => "The engine ended the turn in a way this app does not know.".into(),
         _ => "The engine could not finish this turn.".into(),
+    }
+}
+
+/// The outcome of a `runDone` for a family, and the events that go with it. ACP's
+/// `auth` failure is a sign-in to the agent, said in the core's own words.
+pub fn map_family(family: &str, done: &RunDone) -> (EngineOutcome, Vec<EngineEvent>) {
+    let (outcome, events) = map(done);
+    if family != "acp" {
+        return (outcome, events);
+    }
+    let signed_out = done
+        .error
+        .as_ref()
+        .is_some_and(|error| error.effective_kind() == ErrorKind::Auth);
+    match outcome {
+        EngineOutcome::FailedWith(mut failure) if signed_out => {
+            failure.message = super::acp::auth_sentence();
+            (EngineOutcome::FailedWith(failure), events)
+        }
+        other => (other, events),
     }
 }
 
@@ -74,6 +98,7 @@ pub fn map(done: &RunDone) -> (EngineOutcome, Vec<EngineEvent>) {
             message: sentence(reason, done.error.as_ref()),
             retry: hint.and_then(retry),
             disposition: disposition(done.disposition.as_deref()),
+            code: None,
         })
     };
     let outcome = if kind == ErrorKind::SessionLost {

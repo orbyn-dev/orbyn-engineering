@@ -1,4 +1,4 @@
-import { Check, Plus, RefreshCw } from "lucide-react";
+import { Check, ChevronRight, Plus, RefreshCw } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { listProviders, queryPreferences, updatePreferences } from "../api";
 import type { ProviderEntry } from "../../../generated/ProviderEntry";
@@ -7,12 +7,14 @@ import { GROUPS, LABEL_TEXT, type PlaceKey } from "./providerLabels";
 import type { EngineStatus } from "../../../api/types";
 import type { PreferenceEdit } from "../../../generated/PreferenceEdit";
 import { toFailure, useAsync } from "../../../lib/useAsync";
+import { useClaudeEnginePath } from "../../../product/engines/claudePath";
 import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
 import type { InstanceStore } from "./ProviderInstances";
 import { PreferenceInheritance } from "../rows/PreferenceInheritance";
 import { useSettingsScope } from "../rows/SettingsScopeContext";
 import { hasProviderDetail } from "./providerDetailFamily";
+import { claudePathRows, type ClaudePathRow } from "./ClaudePathRows";
 
 const KEY = "disabled_engines";
 
@@ -97,6 +99,7 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
   catalog?: ProviderList | null;
 }) {
   const inUse = useProvidersInUse();
+  const { path: claudePath } = useClaudeEnginePath();
   const row = inUse.row;
   const all = inUse.scope?.catalog?.selection.kind === "all_projects";
   const head = (
@@ -113,26 +116,37 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
       ) : null}</span>
     </div>
   );
-  const engineRow = (engine: EngineStatus, entry?: ProviderEntry) => {
-    const note = subtitle(engine, entry?.note);
+  const engineRow = (engine: EngineStatus, entry?: ProviderEntry, variant?: ClaudePathRow) => {
+    const note = variant?.note ?? subtitle(engine, entry?.note);
+    const title = variant?.name ?? rowNames(engine).title;
+    // The row's own name opens it; an instance keeps its whole `Provider · Name` (the visible name is split).
+    const accessibleName = variant?.name ?? engine.name;
+    // The path setting is chosen on the Claude page: its row alone carries the engine switch.
+    const isChosenPath = !variant || variant.path === claudePath;
     const instance = store.instances.find((candidate) => candidate.id === engine.id);
     const openable = hasProviderDetail(engine) && (entry?.openable ?? true);
     return (
-      <div key={engine.id} role="row" className={openable ? "set-tr set-tr-open" : "set-tr"} onClick={openable ? () => onOpen(engine.id) : undefined}>
+      <div key={variant?.key ?? engine.id} role="row" className={openable ? "set-tr set-tr-open" : "set-tr"} onClick={openable ? () => onOpen(engine.id) : undefined}>
         <span role="cell"><span className="set-mark" style={engine.accent ? { background: engine.accent, color: "#fff" } : undefined}>{engine.name.charAt(0).toUpperCase()}</span></span>
         <span role="cell">
           {openable
-            ? <button type="button" className="set-row-open name" aria-label={engine.name} onClick={(event) => { event.stopPropagation(); onOpen(engine.id); }}>{rowNames(engine).title}</button>
-            : <span className="name">{rowNames(engine).title}</span>}
+            ? <button type="button" className="set-row-open name" aria-label={accessibleName} onClick={(event) => { event.stopPropagation(); onOpen(engine.id); }}>{title}<ChevronRight size={12} aria-hidden /></button>
+            : <span className="name">{title}</span>}
           {note ? <><br /><span className="sub">{note}</span></> : null}
+          {variant && !isChosenPath ? (
+            <><br /><span className="sub"><button type="button" className="set-link" aria-label={`Choose in Claude path for ${accessibleName}`}
+              onClick={(event) => { event.stopPropagation(); onOpen(engine.id); }}>Choose in Claude path</button></span></>
+          ) : null}
         </span>
         <span role="cell" className="t3">{engine.version ?? ""}</span>
-        <span role="cell" className="set-states"><Status engine={engine} labelled={entry?.labels.includes("not_found") ?? false} entry={entry} /><Labels entry={entry} showsCantStart={engine.installed} /></span>
+        <span role="cell" className="set-states"><Status engine={engine} labelled={entry?.labels.includes("not_found") ?? false} entry={entry} />{variant?.chip}<Labels entry={entry} showsCantStart={engine.installed} /></span>
         <span role="cell">{instance ? <Button small aria-label={`Edit ${engine.name}`} onClick={(event) => { event.stopPropagation(); onEdit(engine.id); }}>Edit</Button> : null}</span>
         <span role="cell" onClick={(event) => event.stopPropagation()}>
-          {row ? <input type="checkbox" role="switch" aria-label={`Use ${engine.name}`} aria-checked={row.mixed ? "mixed" : !inUse.off.includes(engine.id)}
-            ref={(element) => { if (element) element.indeterminate = row.mixed; }} checked={!row.mixed && !inUse.off.includes(engine.id)} disabled={inUse.blocked}
-            onChange={(event) => void inUse.set(engine.id, event.target.checked)} /> : null}
+          {variant && !isChosenPath
+            ? <span className="set-pill">Not selected</span>
+            : row ? <input type="checkbox" role="switch" aria-label={`Use ${accessibleName}`} aria-checked={row.mixed ? "mixed" : !inUse.off.includes(engine.id)}
+              ref={(element) => { if (element) element.indeterminate = row.mixed; }} checked={!row.mixed && !inUse.off.includes(engine.id)} disabled={inUse.blocked}
+              onChange={(event) => void inUse.set(engine.id, event.target.checked)} /> : null}
         </span>
       </div>
     );
@@ -156,7 +170,7 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
         ?? { id: engine.id, name: engine.name, group: engine.installed ? "in_use" : "not_found", labels: engine.installed ? [] : ["not_found"], registered: true, openable: true } satisfies ProviderEntry;
       const startable = entry.group === "in_use" || entry.group === "found" || entry.group === "more";
       const place: PlaceKey = startable ? (!row?.mixed && inUse.off.includes(engine.id) ? (entry.group === "more" ? "more" : "found") : "in_use") : entry.group;
-      rows.push({ place, node: engineRow(engine, entry) });
+      rows.push(...(claudePathRows(engine, entry, engineRow) ?? [engineRow(engine, entry)]).map((node) => ({ place, node })));
     }
     for (const entry of catalog.providers.filter((candidate) => !candidate.registered)) rows.push({ place: entry.group === "in_use" ? "found" : entry.group, node: plainRow(entry) });
     return rows;
@@ -171,7 +185,7 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
             {note ? <div role="row" className="set-grp-row"><span role="cell" className="setting-line-desc">{note}</span></div> : null}
             {nodes}
           </div>
-        )) : engines.map((engine) => engineRow(engine))}
+        )) : engines.flatMap((engine) => claudePathRows(engine, undefined, engineRow) ?? [engineRow(engine)])}
       </div>
       {inUse.error ? <p className="field-error" role="alert">{inUse.error} <Button small onClick={inUse.reload}>Reload</Button></p> : null}
     </>
