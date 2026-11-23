@@ -59,6 +59,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/autopilot/review/{task_id}/looks-good"],
   ["POST", "/api/crew/autopilot/review/{task_id}/revert"],
   ["POST", "/api/crew/background/create"],
+  ["POST", "/api/crew/background/runs/{id}/acknowledge"],
   ["POST", "/api/crew/background/{id}/delete"],
   ["POST", "/api/crew/background/{id}/disable"],
   ["POST", "/api/crew/background/{id}/enable"],
@@ -283,7 +284,7 @@ export async function readPersonKey(): Promise<string | null> {
   if (cached) return cached;
   if (!canSendPersonKey()) return null;
   const invoke = bridge()?.invoke;
-  if (typeof invoke !== "function") return MOCK_KEY;
+  if (typeof invoke !== "function") return __ORBYN_PREVIEWS__ ? MOCK_KEY : null;
   let answer: unknown;
   try {
     answer = await invoke.call(bridge(), "person_key");

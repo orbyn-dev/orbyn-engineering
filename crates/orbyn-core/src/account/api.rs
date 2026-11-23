@@ -215,6 +215,9 @@ pub fn refusal(error: &DeviceError) -> CoreError {
             "Too many tries. This request is closed.",
             None,
         ),
+        // The request's own clock ended it. Its new device closes it as expired before an error
+        // reaches a screen, so what is left is the trusted side answering one that is gone.
+        DeviceError::ApprovalExpired => ("request_gone", "That request has ended.", None),
         DeviceError::ProofFailed => (
             "check_failed",
             "Couldn't finish checking this device.",

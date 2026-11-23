@@ -12,7 +12,7 @@ use crate::CoreError;
 use crate::account::ApprovalDigits;
 use crate::account::dev::{Answer, PASSWORD};
 use crate::account::settings_record::{self as record, ZONE};
-use crate::account::{ConfirmFor, FirstSync, Password, SyncState};
+use crate::account::{ConfirmFor, DeviceError, FirstSync, Password, SyncState};
 use crate::testing::TempDir;
 
 fn pw(text: &str) -> Password {
@@ -341,6 +341,93 @@ async fn digits_typed_after_the_ten_minutes_do_not_sign_in() {
         .unwrap()
         .unwrap();
     assert_eq!(late.state, AccountApprovalState::TimedOut);
+    assert!(core.account.view("macos").await.session.is_none());
+}
+
+#[tokio::test]
+async fn a_digits_call_the_server_answered_keeps_the_try_it_reserved() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "try-kept");
+    asking(&core, "late@example.com").await;
+    core.account.stand_in().answer(Answer::Allow);
+    core.account.poll_approval().await.unwrap();
+    let right = shown(&core);
+    // A 5xx reached the server, so its own count is the one that applies: the try is not given back
+    // here, and the digits still finish the request on the tries that are left.
+    core.account
+        .stand_in()
+        .fail_next_digits_with(DeviceError::Server { retryable: true });
+    assert_eq!(
+        code(core.account.submit_digits(typed(&right)).await.unwrap_err()),
+        "account_unavailable"
+    );
+    assert_eq!(core.account.spent_digit_tries().await, Some(1));
+    let signed = core
+        .account
+        .submit_digits(typed(&right))
+        .await
+        .unwrap()
+        .expect("the allowed request is still open");
+    assert_eq!(signed.state, AccountApprovalState::Approved);
+}
+
+#[tokio::test]
+async fn a_digits_call_that_never_reached_the_server_gives_its_try_back() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "try-back");
+    asking(&core, "late@example.com").await;
+    core.account.stand_in().answer(Answer::Allow);
+    core.account.poll_approval().await.unwrap();
+    let right = shown(&core);
+    // Nothing left this computer, so the server never counted it: the try goes back.
+    core.account
+        .stand_in()
+        .fail_next_digits_with(DeviceError::Offline);
+    assert_eq!(
+        code(core.account.submit_digits(typed(&right)).await.unwrap_err()),
+        "account_offline"
+    );
+    assert_eq!(core.account.spent_digit_tries().await, Some(0));
+}
+
+#[tokio::test]
+async fn the_stand_ins_digits_die_with_the_request_not_with_the_allowance() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "digits-life");
+    // The request lives 800 ms; the trusted device answers 150 ms into it.
+    core.account
+        .stand_in()
+        .set_incoming_life(Duration::from_millis(800));
+    asking(&core, "late@example.com").await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    core.account.stand_in().answer(Answer::Allow);
+    // What is left of the request, not the full life from the allowance: the Engine issues the
+    // digits inside the request they belong to.
+    assert!(!core.account.stand_in().digits_expired());
+    // 725 ms on, the request is 875 ms old and over its 800 ms, though only 725 ms have passed
+    // since the allowance a clock that started there would still be serving.
+    tokio::time::sleep(Duration::from_millis(725)).await;
+    assert!(core.account.stand_in().digits_expired());
+}
+
+#[tokio::test]
+async fn digits_that_expired_on_the_server_close_the_request_as_expired() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "server-expiry");
+    asking(&core, "late@example.com").await;
+    core.account.stand_in().answer(Answer::Allow);
+    core.account.poll_approval().await.unwrap();
+    let right = shown(&core);
+    // The request's own clock ran out on the server while this screen still showed its digits.
+    core.account.stand_in().expire_digits();
+    let closed = core
+        .account
+        .submit_digits(typed(&right))
+        .await
+        .unwrap()
+        .expect("the request closes with a reason");
+    // "Expired", not "Denied or cancelled": nobody refused this request and nobody gave it up.
+    assert_eq!(closed.state, AccountApprovalState::TimedOut);
     assert!(core.account.view("macos").await.session.is_none());
 }
 

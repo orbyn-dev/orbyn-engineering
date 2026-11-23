@@ -5,9 +5,10 @@
 //! This module validates and redacts what the person sends, then hands it to `store::crew_background`, which audits every change
 //! in the same transaction and holds the rules that must stand whatever the caller does. **No trigger fires and no engine starts
 //! here:** the run functions are the seam slice 4h will call, and today only tests do. A run that reaches its budget stops with the
-//! reason `budget` and waits for the person's review; it has no merge authority (there is nothing to merge until a later slice
-//! brings a result through the Autopilot merge queue). The crew also carries what each engine may spend on it in a day, fixed here
-//! and enforced by `background_daily`. With the Crew Preview flag off every function answers "not found".
+//! reason `budget` and waits for the person's review; the person settles that wait by acknowledging it, and the run keeps why it
+//! waited. It has no merge authority (there is nothing to merge until a later slice brings a result through the Autopilot merge
+//! queue). The crew also carries what each engine may spend on it in a day, fixed here and enforced by `background_daily`. With
+//! the Crew Preview flag off every function answers "not found".
 
 use orbyn_contracts as wire;
 use serde::de::DeserializeOwned;
@@ -191,13 +192,15 @@ impl Core {
     fn background_wire(&self, crew: BackgroundRow) -> Result<wire::BackgroundCrew> {
         let (newest, waiting) = self.store.background_standing(&crew.id)?;
         // `idle`: nothing is running, nothing waits for the person, and the newest run did not stop for a reason that still needs them.
-        // A run stopped by the person's own switch (`disabled`) needs nothing; a stop for the budget or a failure does.
+        // A run stopped by the person's own switch (`disabled`) needs nothing; a stop for the budget or a failure does. A run that
+        // finished with work needs the person only while its review waits: once the person acknowledges it, the crew reads idle.
         let state = match newest
             .as_ref()
             .map(|run| (run.state.as_str(), run.stop_reason.as_deref()))
         {
             Some(("running", _)) => wire::BackgroundState::Running,
-            Some(("needs_review", _)) => wire::BackgroundState::NeedsReview,
+            Some(("needs_review", _)) if waiting > 0 => wire::BackgroundState::NeedsReview,
+            Some(("needs_review", _)) => wire::BackgroundState::Idle,
             Some(("stopped", Some("disabled"))) | None if waiting == 0 => {
                 wire::BackgroundState::Idle
             }
@@ -438,5 +441,14 @@ impl Core {
             }
         };
         run_wire(self.store.end_background_run(run_id, end)?)
+    }
+
+    /// The person's acknowledgement of one background run's waiting review: the wait is cleared and the run is returned as it now
+    /// stands. The run keeps its state, its stop reason, its spend and why it waited, and the crew's state follows: a crew whose
+    /// newest run finished with work reads idle once nothing waits. A run that is not waiting is refused plainly and nothing changes.
+    pub fn background_acknowledge_review(&self, run_id: &str) -> Result<wire::BackgroundRun> {
+        self.crew_preview_only()?;
+        valid_id(run_id)?;
+        run_wire(self.store.acknowledge_background_review(run_id, "user")?)
     }
 }

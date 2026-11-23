@@ -589,6 +589,14 @@ impl EngineDriver for HostDriver {
         self.pool.note_resume_at(&engine, session, &at)
     }
 
+    async fn forget_revert(&self, _cwd: &Path, session: &str) {
+        if self.pool.family != "claude" {
+            return;
+        }
+        let engine = self.inner.descriptor().id;
+        self.pool.forget_resume_at(&engine, session);
+    }
+
     async fn catalog_key(&self) -> Option<String> {
         self.inner.catalog_key().await
     }

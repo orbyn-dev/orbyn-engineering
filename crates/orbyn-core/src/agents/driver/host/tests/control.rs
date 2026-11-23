@@ -1,8 +1,6 @@
 //! The person's stop and restart of a family's host, and the rule that a host with background work
 //! open is not stopped unless the person's stop says so.
 
-use std::time::Instant;
-
 use serde_json::{Value, json};
 
 use super::*;
@@ -526,7 +524,7 @@ async fn resume_at_is_never_sent_on_create_or_for_another_family() {
 }
 
 #[tokio::test]
-async fn an_expired_rewind_point_is_not_sent_and_leaves_nothing_behind() {
+async fn a_rewind_point_waits_for_the_next_resume_however_late_it_comes() {
     let Some(node) = node() else {
         return;
     };
@@ -534,27 +532,66 @@ async fn an_expired_rewind_point_is_not_sent_and_leaves_nothing_behind() {
         return;
     };
     let driver = driver_on_node(&rig.pool, &node);
-    let noted = Instant::now();
-    rig.pool.set_resume_at_now(Some(noted));
+    // The point has no clock or TTL: the core hides the rewound messages immediately, so
+    // a send minutes later still carries it, exactly once.
     rig.pool
         .note_resume_at("claude", "session-1", HEAD)
         .unwrap();
-    rig.pool
-        .set_resume_at_now(Some(noted + Duration::from_secs(121)));
 
     let mut resumed = spec("resume");
     resumed.resume = Some("session-1".into());
     let (_, outcome) = start(&driver, resumed).await.unwrap().outcome().await;
     assert_eq!(outcome, EngineOutcome::Completed);
     let open = opens(&rig);
-    assert_eq!(open[0]["operation"], "resume");
-    assert!(
-        open[0].get("resumeAt").is_none(),
-        "an expired point is never sent: {:?}",
-        open[0]
-    );
+    assert_eq!(open[0]["resumeAt"], HEAD);
     assert_eq!(rig.pool.take_resume_at("claude", "session-1"), None);
-    rig.pool.set_resume_at_now(None);
+
+    let mut again = spec("again");
+    again.resume = Some("session-1".into());
+    let (_, outcome) = start(&driver, again).await.unwrap().outcome().await;
+    assert_eq!(outcome, EngineOutcome::Completed);
+    let both = opens(&rig);
+    assert!(
+        both[1].get("resumeAt").is_none(),
+        "one shot, never every resume: {:?}",
+        both[1]
+    );
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_rewind_point_is_dropped_when_the_rewind_cannot_finish() {
+    let Some(node) = node() else {
+        return;
+    };
+    let Some(rig) = standin_family("claude", &[], fast()) else {
+        return;
+    };
+    let history = TempDir::new();
+    let projects = history.path().join("projects");
+    let cwd = history.path().join("repo").to_string_lossy().into_owned();
+    transcript(&projects, &cwd, &[assistant(HEAD), user(PROMPT)]);
+    let driver = driver_on_node(&rig.pool, &node)
+        .with_history_root(projects)
+        .with_path(Arc::new(|| Ok(EnginePath::Sdk)));
+    driver
+        .revert_session(Path::new(&cwd), SESSION, PROMPT)
+        .await
+        .unwrap();
+    assert_eq!(
+        rig.pool.take_resume_at("claude", SESSION),
+        Some(HEAD.to_owned())
+    );
+    driver
+        .revert_session(Path::new(&cwd), SESSION, PROMPT)
+        .await
+        .unwrap();
+    driver.forget_revert(Path::new(&cwd), SESSION).await;
+    assert_eq!(
+        rig.pool.take_resume_at("claude", SESSION),
+        None,
+        "a rewind that cannot finish leaves no point behind"
+    );
     rig.pool.shutdown().await;
 }
 
