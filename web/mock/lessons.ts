@@ -124,15 +124,21 @@ export function createLessonsMock() {
     lessons: filtered(filter),
   });
 
+  // Evidence is ids only; the samples are the design's own (two tasks for a repeated failure, the escape or the merge
+  // behind the other two sources, and nothing behind a person's own correction).
   const detail = (one: Lesson): LessonDetail => ({
     lesson: one,
     evidence:
       one.source === "person"
         ? []
-        : [
-            { kind: "task", id: "task-1" },
-            { kind: one.source === "revert" ? "merge" : "escape", id: one.source === "revert" ? "esc-1" : "esc-2" },
-          ],
+        : one.source === "fingerprint"
+          ? [
+              { kind: "task", id: "5b2d8a3" },
+              { kind: "task", id: "91c4e07" },
+            ]
+          : one.source === "escape"
+            ? [{ kind: "escape", id: "9be4410" }]
+            : [{ kind: "merge", id: "3b9f2c1" }],
   });
 
   /** The service refuses a write made against another revision. */
