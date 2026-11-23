@@ -7,7 +7,7 @@
 //! could not be stopped keeps its state and appears in the person's "needs you" inbox as `could_not_stop`.
 //!
 //! The lead is not told about the tasks this close cancelled: `tell_lead` skips a cancelled result whose cancel says
-//! [`REASON`], because a note would start the thread the person is closing. A later cancel with another reason still tells it.
+//! [`REASON`], because a note would start the thread the person is closing. A cancel with another reason still tells it.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;

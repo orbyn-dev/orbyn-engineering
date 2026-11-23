@@ -2005,10 +2005,11 @@ the person key were merged first (#1342).
   and the try) is skipped; any other refusal is a task named in `failed` and the loop goes on, so one stuck worker never stops the rest.
 - **The thread closes regardless.** The thread's own settle or archive is the person's `PATCH /api/threads/{id}` (`settled` or
   `archived` true) and, with Preview on, that handler runs the close first and then the patch whatever the close answered. A task that
-  could not be stopped keeps its state, so its worker may still run.
+  could not be stopped keeps its state, so its worker may still run. The merged web dialog also POSTs `/close` before its PATCH, so a
+  lead thread it closes may be tried twice: an already-cancelled task is skipped and a failed one is tried once more.
 - **The lead is not told.** A cancelled result normally queues a note on the lead thread, and a note on an idle thread starts it: a
   close therefore tells the lead nothing. `tell_lead` skips a cancelled result whose latest cancel intent row says
-  "The lead thread was closed."; a later cancel with another reason still tells it. Without this the note would start the thread the
+  "The lead thread was closed."; a cancel with another reason still tells it. Without this the note would start the thread the
   person is closing and the patch would answer `409 thread_busy`.
 - **Could not stop.** A task whose last cancel attempt failed is an item of the person's *needs you* inbox with kind
   `could_not_stop` (not dismissible): the read joins non-final tasks to their latest `crew.task.cancel_failed` row with no

@@ -1,5 +1,5 @@
-//! Closing a lead thread's Crew work (Crew Preview): the live tasks a close would cancel, and what a close did. Both routes
-//! are local: the read is a plain read, the close runs the person's cancel for each task.
+//! Closing a lead thread's Crew work (Crew Preview): the live tasks a close would cancel, and what a close did. The live
+//! read is local; the close is a Person route behind `local_only` that runs the person's cancel for each task.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
