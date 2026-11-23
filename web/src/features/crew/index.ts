@@ -1,7 +1,11 @@
 // Front door of the Crew feature: the only module outside crew imports from it.
 export { CrewPreview, crewPreviewRoute } from "./previews";
+export { askCloseLead, type CloseOutcome } from "./lead/closeLead";
+export { CloseLeadDialog } from "./lead/CloseLeadDialog";
 export * from "./autopilot/approvals";
 export { CrewNavRow } from "./flow/live/CrewNavRow";
 export { useCrewFlag } from "./flow/live/useCrewFlag";
 export { RunTab } from "./runpage/RunPage";
 export { runLinkClient, setRunLinkClient, type RunLink, type RunLinkClient } from "./runpage/link";
+export { crewStartDiskLow, crewStartOutcome, diskLowOf, diskSentence, floorText, freeText, isCrewStartTool, NO_WORKER_RAN, type DiskLow } from "./tool";
+export { CrewToolBlock } from "./thread/CrewToolBlock";

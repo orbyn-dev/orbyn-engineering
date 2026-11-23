@@ -1,0 +1,29 @@
+/* A crew tool answer in the thread (kc4-low-disk-lead-thread): a plain sentence, with the row's own
+   "Not started" chip drawn in the shared tool-call row. Values are app tokens. */
+.crew-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 10px;
+  min-width: 0;
+  color: var(--color-textSoft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.crew-tool-line {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.crew-tool-state {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 9px;
+  background: var(--color-dangerSoft);
+  color: var(--color-danger);
+  font-size: 11px;
+  white-space: nowrap;
+}

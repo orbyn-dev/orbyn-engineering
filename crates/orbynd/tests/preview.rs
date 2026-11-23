@@ -7,7 +7,7 @@ use std::net::TcpListener;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use serde_json::json;
+use serde_json::{Value, json};
 use support::{Options, Service, TempDir, setup};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -996,5 +996,97 @@ async fn a_crashed_browser_comes_back_on_its_page() {
         }
     }
     assert!(working, "the browser never came back");
+    service.stop().await;
+}
+
+/// `POST .../rename` with the service token, and the key only when `key` is given.
+async fn rename_profile(
+    service: &Service,
+    path: &str,
+    name: &str,
+    key: Option<&str>,
+) -> (u16, Value) {
+    let mut request = service.post(path).json(&json!({ "name": name }));
+    if let Some(key) = key {
+        request = request.header("x-orbyn-person", key);
+    }
+    let response = request.send().await.unwrap();
+    let status = response.status().as_u16();
+    let text = response.text().await.unwrap();
+    (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn a_browser_profile_rename_is_person_only_and_updates_the_stored_name() {
+    let dir = TempDir::new();
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            args: vec!["--parent-stdin".into()],
+            env: vec![("ORBYN_DEV_DISABLE_PERSON_KEY".into(), "0".into())],
+        },
+    );
+    let key = service
+        .person_key
+        .clone()
+        .expect("a shell gets a person key");
+    let (status, profile) = service
+        .send("/api/browser-profiles", json!({ "name": "Work" }))
+        .await;
+    assert_eq!(status, 201, "{profile}");
+    let id = profile["id"].as_str().unwrap().to_owned();
+    let path = format!("/api/browser-profiles/{id}/rename");
+
+    // The service token alone, or a wrong key, is refused and changes nothing.
+    for key in [None, Some("wrong")] {
+        let (status, answer) = rename_profile(&service, &path, "Nope", key).await;
+        assert_eq!(
+            (status, &answer["code"]),
+            (403, &json!("person_required")),
+            "{key:?}"
+        );
+    }
+    assert_eq!(
+        service.json("/api/browser-profiles").await[0]["name"],
+        "Work"
+    );
+
+    // The right key trims the name and answers the profile as it is now.
+    let (status, renamed) = rename_profile(&service, &path, "  Research  ", Some(&key)).await;
+    assert_eq!(status, 200, "{renamed}");
+    assert_eq!(renamed["id"], profile["id"]);
+    assert_eq!(renamed["name"], "Research");
+    assert_eq!(renamed["in_use"], false);
+    assert_eq!(
+        service.json("/api/browser-profiles").await[0]["name"],
+        "Research"
+    );
+
+    let (status, answer) = rename_profile(
+        &service,
+        "/api/browser-profiles/missing/rename",
+        "Research",
+        Some(&key),
+    )
+    .await;
+    assert_eq!(status, 404, "{answer}");
+    assert_eq!(answer["code"], "not_found");
+    assert_eq!(answer["message"], "browser profile not found");
+
+    // The same name rule as create: 1 to 64 characters and the same sentence.
+    let sixty_five = "x".repeat(65);
+    let (status, create_refusal) = service
+        .send("/api/browser-profiles", json!({ "name": sixty_five }))
+        .await;
+    assert_eq!(status, 400, "{create_refusal}");
+    assert_eq!(
+        create_refusal["message"],
+        "A profile name is 1 to 64 characters."
+    );
+    for name in ["", "   ", sixty_five.as_str()] {
+        let (status, answer) = rename_profile(&service, &path, name, Some(&key)).await;
+        assert_eq!(status, 400, "{name:?}: {answer}");
+        assert_eq!(answer["message"], create_refusal["message"]);
+    }
     service.stop().await;
 }

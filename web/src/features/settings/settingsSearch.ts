@@ -27,6 +27,7 @@ export const SETTINGS: readonly SettingSearchItem[] = [
   {"id": "general-git-fetch-interval-minutes", "title": "Git fetch interval", "section": "general"},
   {"id": "general-provider-health-interval-minutes", "title": "Provider health interval", "section": "general"},
   {"id": "general-crew-turn-budget", "title": "Crew turn budget", "section": "general"},
+  {"id": "crew-free-disk-space", "title": "Free disk space Crew needs", "section": "crew"},
   {"id": "general-keep-the-computer-awake-during-runs", "title": "Keep the computer awake during runs", "section": "general"},
   {"id": "general-check-providers-for-updates", "title": "Check providers for updates", "section": "general"},
   {"id": "threads-continue-after-update", "title": "Continue threads after an update", "section": "threads"},

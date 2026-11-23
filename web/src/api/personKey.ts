@@ -177,6 +177,8 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/issues/start-thread"],
   ["POST", "/api/threads/{id}/issue-links"],
   ["POST", "/api/threads/{id}/issue-links/remove"],
+  // Browser profiles: a rename is the person's own action; the other profile routes stay Local.
+  ["POST", "/api/browser-profiles/{id}/rename"],
   // Execution profiles (docs/execution-profiles-and-library.md, Part 1): every write is Person-class. The reads and `POST /api/profiles/check` are Local.
   ["POST", "/api/profiles"],
   ["PATCH", "/api/profiles/{id}"],

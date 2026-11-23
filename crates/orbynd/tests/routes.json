@@ -283,6 +283,7 @@
     ["POST","/api/approvals/{id}/decide","person"],
     ["POST","/api/browser-profiles","local"],
     ["POST","/api/browser-profiles/{id}/clear","local"],
+    ["POST","/api/browser-profiles/{id}/rename","person"],
     ["POST","/api/clones","local"],
     ["POST","/api/clones/{id}/cancel","local"],
     ["POST","/api/clones/{id}/retry","local"],

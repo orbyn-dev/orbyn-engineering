@@ -10,6 +10,7 @@ import type { FlowCard } from "../../../generated/FlowCard";
 import { modeName, plural } from "../autopilot/approvals/areas";
 import { stopOf } from "../autopilot/approvals/ledger";
 import type { ApprovalRow, Risk } from "../autopilot/approvals/model";
+import { diskLowOf, diskSentence, NO_WORKER_RAN } from "../tool";
 import { KIND_FILTER, NEEDS_KINDS, type NeedsItem, type NeedsKind, type NeedsView } from "./model";
 
 const time = (text: string | null | undefined) => {
@@ -58,27 +59,45 @@ export function heldItems(rows: ApprovalRow[], now: number): NeedsItem[] {
 export const NEVER_RAN = "The worker never ran.";
 
 /**
+ * A could-not-start card with the refusal's structured fields, when the service sends them: the
+ * `CrewError`'s code and the two numbers (never a path). A card without them is an older answer and
+ * keeps the reason it carries.
+ */
+export type CouldNotStartCard = FlowCard & {
+  code?: string | null;
+  free_bytes?: number | null;
+  floor_gb?: number | null;
+};
+
+/**
  * Tasks refused at their start, from the Needs you column of each crew's board. Not an approval: nothing is asked of the person but
  * to retry the task on another engine or dismiss it, so the item has no Approve or Deny. The reason is the service's own redacted
- * text, drawn as text.
+ * text, drawn as text. A `disk_low` refusal is read from its code and numbers, never from that sentence: it writes the disk
+ * sentence, says what did not happen, and offers Dismiss only (another engine writes to the same disk).
  */
-export function couldNotStartItems(cards: FlowCard[]): NeedsItem[] {
+export function couldNotStartItems(cards: CouldNotStartCard[]): NeedsItem[] {
   return cards
     .filter((card) => card.could_not_start)
-    .map((card) => ({
-      id: `task:${card.id}`,
-      kind: "could_not_start" as const,
-      // The task's name: the narrow card's title (its kind label says "Could not start"). The wide row keeps the drawn frame's "Could not start" in bold (NeedsRow).
-      title: card.name?.trim() || card.id,
-      risk: null,
-      undo: null,
-      from: `Task ${card.name?.trim() || card.id}${card.engine ? ` · ${card.engine}` : ""}`,
-      cost: card.reason?.trim() || NEVER_RAN,
-      since: time(card.updated_at),
-      engine: card.engine ?? undefined,
-      actions: [{ key: "retry" as const, label: "Retry on another engine", primary: true }, { key: "dismiss" as const, label: "Dismiss" }],
-      ref: card.id,
-    }));
+    .map((card) => {
+      const lowDisk = diskLowOf(card);
+      return {
+        id: `task:${card.id}`,
+        kind: "could_not_start" as const,
+        // The task's name: the narrow card's title (its kind label says "Could not start"). The wide row keeps the drawn frame's "Could not start" in bold (NeedsRow).
+        title: card.name?.trim() || card.id,
+        risk: null,
+        undo: null,
+        from: `Task ${card.name?.trim() || card.id}${card.engine ? ` · ${card.engine}` : ""}`,
+        cost: lowDisk ? diskSentence(lowDisk.free_bytes, lowDisk.floor_gb) : (card.reason?.trim() || NEVER_RAN),
+        hint: lowDisk ? NO_WORKER_RAN : undefined,
+        since: time(card.updated_at),
+        engine: card.engine ?? undefined,
+        actions: lowDisk
+          ? [{ key: "dismiss" as const, label: "Dismiss" }]
+          : [{ key: "retry" as const, label: "Retry on another engine", primary: true }, { key: "dismiss" as const, label: "Dismiss" }],
+        ref: card.id,
+      };
+    });
 }
 
 /** Dismissing a stop is local to this device: nothing is sent to the service. */
