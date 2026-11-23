@@ -226,8 +226,6 @@ export function createMockApi(options: MockOptions = {}) {
   /** What a test set for how many saved conversations an engine keeps, by engine. */
   const nativeCounts = new Map<string, { count: number; truncated: boolean }>();
   let groupedProjects: string[] = [];
-  /** The model lists a test replaced, by engine. */
-  const modelLists = new Map<string, ModelInfo[]>();
   /** Tasks whose webhook has an address; the token itself is never kept, as in the service. */
   const hooks = new Set<string>(["task-hook"]);
   let failures: Failure[] = [];
@@ -329,7 +327,6 @@ export function createMockApi(options: MockOptions = {}) {
     groupedProjects = [];
     nativeCounts.clear();
     foundPrograms = [];
-    modelLists.clear();
     cloneError = null;
     reviewsSent.clear();
     detailsReads = 0;
@@ -1394,8 +1391,7 @@ export function createMockApi(options: MockOptions = {}) {
         if (seg[3] === "models") {
           // The service merges the person's custom models into the list it returns.
           const listing = modelLists[seg[2] ?? ""] ?? fixtures.engineModels(seg[2] ?? "");
-          const listing = fixtures.engineModels(seg[2] ?? "");
-          const listed: ModelInfo[] = modelLists.get(seg[2] ?? "") ?? listing.models;
+          const listed: ModelInfo[] = listing.models;
           const custom = (Array.isArray(preferenceValues.custom_models) ? preferenceValues.custom_models : [])
             .flatMap((entry) => entry && typeof entry === "object" && !Array.isArray(entry) && entry.engine === seg[2] && typeof entry.id === "string"
               ? [{ id: entry.id, label: typeof entry.label === "string" ? entry.label : entry.id, description: null, is_default: false, custom: true, options: [] }] : []);
@@ -1724,8 +1720,10 @@ export function createMockApi(options: MockOptions = {}) {
       infoPatch = { ...infoPatch, ...patch };
     },
     /** Gives an engine this model list (the service merges the person's custom models into it). */
-    setEngineModels(engine: string, models: EngineModels) {
-      modelLists = { ...modelLists, [engine]: models };
+    setEngineModels(engine: string, models: EngineModels | ModelInfo[]) {
+      // A bare list keeps the engine's own default and options; a full listing replaces them.
+      const listing: EngineModels = Array.isArray(models) ? { ...fixtures.engineModels(engine), models: structuredClone(models) } : models;
+      modelLists = { ...modelLists, [engine]: listing };
     },
     patchUpdates(patch: Partial<UpdateStatus>) {
       updates = { ...updates, ...patch };
@@ -1749,10 +1747,6 @@ export function createMockApi(options: MockOptions = {}) {
     /** Settings treats these projects as checkouts of one repository: one group, selected as `mock:group:<ids joined by +>`. */
     groupProjects(ids: string[]) {
       groupedProjects = ids;
-    },
-    /** Replaces the models one engine lists, for lists the fixtures do not hold. */
-    setEngineModels(engine: string, models: ModelInfo[]) {
-      modelLists.set(engine, structuredClone(models));
     },
     /** Replaces the engines the service reports, for states the fixtures do not hold (an engine below its supported range, one that cannot be updated). */
     setEngines(next: EngineStatus[]) {
