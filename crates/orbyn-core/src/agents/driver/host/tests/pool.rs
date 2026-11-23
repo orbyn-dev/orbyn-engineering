@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::json;
 
@@ -378,6 +378,7 @@ const HEAD: &str = "b2b2b2b2-1111-4222-8333-444455556666";
 fn a_rewind_point_is_remembered_once_for_the_engine_session_it_was_noted_for() {
     let pool = test_pool();
     pool.note_resume_at("claude", "session-1", HEAD).unwrap();
+    // Nothing ages a point while the thread stays idle: no clock or TTL exists.
     assert_eq!(
         pool.take_resume_at("claude", "session-1"),
         Some(HEAD.to_owned())
@@ -419,39 +420,6 @@ fn a_rewind_point_is_remembered_once_for_the_engine_session_it_was_noted_for() {
     ));
     assert_eq!(pool.take_resume_at("claude", ""), None);
     assert_eq!(pool.take_resume_at("claude", "session-1"), None);
-}
-
-#[test]
-fn a_rewind_point_expires_two_minutes_after_it_is_noted() {
-    let pool = test_pool();
-    let noted = Instant::now();
-    pool.set_resume_at_now(Some(noted));
-    pool.note_resume_at("claude", "session-1", HEAD).unwrap();
-
-    pool.set_resume_at_now(Some(noted + Duration::from_secs(119)));
-    assert_eq!(
-        pool.take_resume_at("claude", "session-1"),
-        Some(HEAD.to_owned()),
-        "inside the window it still works"
-    );
-    pool.set_resume_at_now(None);
-
-    let noted = Instant::now();
-    pool.set_resume_at_now(Some(noted));
-    pool.note_resume_at("claude", "session-1", HEAD).unwrap();
-    pool.set_resume_at_now(Some(noted + Duration::from_secs(120)));
-    assert_eq!(
-        pool.take_resume_at("claude", "session-1"),
-        None,
-        "at the TTL the point is expired"
-    );
-    pool.set_resume_at_now(Some(noted));
-    assert_eq!(
-        pool.take_resume_at("claude", "session-1"),
-        None,
-        "taking an expired point dropped it, so moving the clock back does not revive it"
-    );
-    pool.set_resume_at_now(None);
 }
 
 #[test]

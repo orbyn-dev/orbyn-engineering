@@ -1,4 +1,4 @@
--- Migration 74: additive (issue #911). The billed events an engine's account reports for its own
+-- Migration 75: additive (issue #911). The billed events an engine's account reports for its own
 -- spend, kept so a history outlives one read. One row per billed event, keyed by a content
 -- identity the engine's event carries no id for: an event re-reported by a later read counts once.
 -- Counters are the account's own and are not derived here: `input_tokens` is the uncached input,

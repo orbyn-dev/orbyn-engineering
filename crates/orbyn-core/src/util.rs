@@ -20,6 +20,92 @@ fn home_from(home: Option<OsString>, profile: Option<OsString>) -> Option<PathBu
     home.or(profile).map(PathBuf::from)
 }
 
+/// The account's own home folder from the operating system, never from `HOME` or
+/// `USERPROFILE`: a launcher can relocate those, so a path that decides which profile the
+/// app reads is not taken from an environment it may have inherited (#1105).
+#[cfg(unix)]
+pub fn account_home() -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    let mut buffer = vec![0u8; 16 * 1024];
+    // SAFETY: `passwd` is plain data; the buffer outlives the call and its size is passed; `pw_dir` is read only on success, while
+    // the buffer is alive, and copied out.
+    unsafe {
+        let mut entry: libc::passwd = std::mem::zeroed();
+        let mut found: *mut libc::passwd = std::ptr::null_mut();
+        let status = libc::getpwuid_r(
+            libc::getuid(),
+            &mut entry,
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut found,
+        );
+        if status != 0 || found.is_null() || entry.pw_dir.is_null() {
+            return None;
+        }
+        let dir = std::ffi::CStr::from_ptr(entry.pw_dir).to_bytes().to_vec();
+        (!dir.is_empty()).then(|| PathBuf::from(OsString::from_vec(dir)))
+    }
+}
+
+/// The account's profile folder from the shell's known-folder database, for the same
+/// reason as the Unix branch.
+#[cfg(windows)]
+pub fn account_home() -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{FOLDERID_Profile, SHGetKnownFolderPath};
+    let mut raw: *mut u16 = std::ptr::null_mut();
+    // SAFETY: the known-folder id is a valid constant; the call either fails or writes one null-terminated string allocated with
+    // `CoTaskMemAlloc`, which is copied out before it is freed.
+    unsafe {
+        if SHGetKnownFolderPath(&FOLDERID_Profile, 0, std::ptr::null_mut(), &mut raw) < 0
+            || raw.is_null()
+        {
+            return None;
+        }
+        let mut len = 0usize;
+        while *raw.add(len) != 0 {
+            len += 1;
+        }
+        let text = std::slice::from_raw_parts(raw, len).to_vec();
+        CoTaskMemFree(raw.cast());
+        let home = PathBuf::from(OsString::from_wide(&text));
+        (!home.as_os_str().is_empty()).then_some(home)
+    }
+}
+
+/// A platform without a user database the app can ask reports no account home, and the
+/// caller then keeps the home its environment names.
+#[cfg(not(any(unix, windows)))]
+pub fn account_home() -> Option<PathBuf> {
+    None
+}
+
+/// Every mounted drive root, such as `C:\`, in the order Windows reports them.
+/// Empty elsewhere: one Unix tree already reaches every folder.
+#[cfg(windows)]
+pub fn drive_roots() -> Vec<PathBuf> {
+    use windows_sys::Win32::Storage::FileSystem::GetLogicalDrives;
+    // SAFETY: GetLogicalDrives takes no arguments and writes no memory this
+    // process owns; a zero answer means the call failed and names no drive.
+    let mask = unsafe { GetLogicalDrives() };
+    drive_roots_from_mask(mask)
+}
+
+#[cfg(not(windows))]
+pub fn drive_roots() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+/// The drive roots a `GetLogicalDrives` bitmap names, bit 0 being `A:`. Windows
+/// has 26 letters, so higher bits name nothing.
+pub fn drive_roots_from_mask(mask: u32) -> Vec<PathBuf> {
+    (0..26u8)
+        .filter(|letter| mask & (1 << letter) != 0)
+        .map(|letter| PathBuf::from(format!("{}:\\", char::from(b'A' + letter))))
+        .collect()
+}
+
 pub fn new_id() -> String {
     ulid::Ulid::generate().to_string().to_lowercase()
 }
@@ -449,6 +535,57 @@ mod tests {
         assert_eq!(strip_verbatim(r"\\?\C:\repo"), r"C:\repo");
         assert_eq!(strip_verbatim(r"\\?\UNC\host\share"), r"\\host\share");
         assert_eq!(strip_verbatim("/usr/bin"), "/usr/bin");
+    }
+
+    #[test]
+    fn drive_roots_follow_the_bitmap() {
+        assert!(drive_roots_from_mask(0).is_empty());
+        assert_eq!(
+            drive_roots_from_mask(0b111),
+            [
+                PathBuf::from(r"A:\"),
+                PathBuf::from(r"B:\"),
+                PathBuf::from(r"C:\"),
+            ]
+        );
+        assert_eq!(
+            drive_roots_from_mask((1 << 2) | (1 << 7) | (1 << 25)),
+            [
+                PathBuf::from(r"C:\"),
+                PathBuf::from(r"H:\"),
+                PathBuf::from(r"Z:\"),
+            ]
+        );
+        assert!(drive_roots_from_mask(1 << 26).is_empty());
+        assert_eq!(drive_roots_from_mask(u32::MAX).len(), 26);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn one_unix_tree_has_no_drive_roots() {
+        assert!(drive_roots().is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn every_mounted_drive_root_is_the_root_of_its_drive() {
+        let roots = drive_roots();
+        let cwd = canonicalize(&std::env::current_dir().expect("current directory"))
+            .expect("canonical current directory");
+        let current = cwd.ancestors().last().expect("drive root").to_path_buf();
+        assert!(
+            roots.contains(&current),
+            "{roots:?} misses the current drive root {}",
+            current.display()
+        );
+        let mut named: Vec<String> = Vec::new();
+        for root in &roots {
+            assert!(root.is_absolute(), "{root:?} is not absolute");
+            assert_eq!(root.parent(), None, "{root:?} is not a root");
+            let text = root.to_string_lossy().into_owned();
+            assert!(!named.contains(&text), "{text} is listed twice");
+            named.push(text);
+        }
     }
 
     #[test]

@@ -3,9 +3,10 @@
 //! model, and it never decides pass or fail for the whole key: `verify` does that.
 //!
 //! This version runs the command kinds (`command`, `test`, `lint`, `typecheck`,
-//! `custom_script`), `file_scope`, `diff_size`, `schema`, `secret_scan` and `repo_required`.
-//! Any other kind reports `skipped`, so the result lists it as not verified rather than passing
-//! or failing on a guess; `manual` is one of those until a person's Gate exists to wait for.
+//! `custom_script`), `file_scope`, `diff_size`, `schema`, `secret_scan`, `repo_required` and
+//! `http_probe`. Any other kind reports `skipped`, so the result lists it as not verified rather
+//! than passing or failing on a guess; `manual` is one of those until a person's Gate exists to
+//! wait for.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -57,7 +58,7 @@ pub struct Site<'a> {
     pub base: Option<&'a str>,
 }
 
-fn ran(outcome: CheckOutcome, command: String, log: String, started: Instant) -> Ran {
+pub(super) fn ran(outcome: CheckOutcome, command: String, log: String, started: Instant) -> Ran {
     Ran {
         outcome,
         exit_code: None,
@@ -155,6 +156,10 @@ pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
             .await
         }
         Ok(CheckParams::Schema(params)) => schema(&params, site, description, started),
+        Ok(CheckParams::HttpProbe(params)) => {
+            let allowed = TIMEOUT.min(site.deadline.saturating_duration_since(Instant::now()));
+            super::http_probe::probe(&params, allowed, description, started).await
+        }
         Ok(CheckParams::Named(params)) => {
             if check.kind == CheckKind::RepoRequired {
                 repo_required(&params, site, description, started).await

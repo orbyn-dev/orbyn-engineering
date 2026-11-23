@@ -340,10 +340,14 @@ turn heads, and the core opens a new host session for every run), so the core do
   messages are skipped. A prompt with no `parentUuid` field, or a chain that leaves the file before an assistant, falls
   back to the last top-level assistant before the prompt in file order; a chain that reaches the root with no assistant
   names no point.
-- It remembers the uuid in the host pool for that engine session for two minutes; the next run's `open` takes it once,
-  for `operation: "resume"` only, and a create or another family never carries it. A create, a resume of a different
-  session, or a thread whose session id changed drops the waiting point. A failed `open` or the run's `session` frame
-  leaves nothing for a later run.
+- It remembers the uuid in the host pool for that engine session with no expiry: the core hides the rewound messages
+  immediately, so the engine must roll them back on the thread's next send, however late it comes. The next run's
+  `open` takes it once, for `operation: "resume"` only, and a create or another family never carries it. A create, a
+  resume of a different session, a thread whose session id changed, or a new rewind on the same session drops or
+  replaces the waiting point. A failed `open` or the run's `session` frame leaves nothing for a later run.
+- The point lives in memory only. A service restart between the rewind and the next send loses it, so that run
+  resumes with the engine's full history; the thread view and the `thread.rewound` event still say the rewind was
+  native, because it was when it happened. This is a known limit, not a rollback.
 - With no earlier top-level assistant message, a missing, unreadable or changed session file, an unknown prompt uuid, a
   file that is not a regular file or is over the read cap, or any error, `revert_session` fails and the rewind leaves the
   handoff as before. Runs stored before this change (their engine turn is the synthetic host id) fall back the same way.

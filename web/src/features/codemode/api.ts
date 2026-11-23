@@ -26,6 +26,14 @@ export function getCodeRun(runId: string, signal?: AbortSignal): Promise<CodeRun
   return orNull(request<CodeRunRecord>("GET", `/api/code-runs/${q(runId)}`, undefined, signal));
 }
 
+/**
+ * `POST /api/code-runs/{id}/cancel` (a Person route, no body): ends a live run and answers the updated record.
+ * `null` when there is none, or Code Mode is not offered.
+ */
+export function cancelCodeRun(runId: string): Promise<CodeRunRecord | null> {
+  return orNull(request<CodeRunRecord>("POST", `/api/code-runs/${q(runId)}/cancel`));
+}
+
 /** `GET /api/engines/{id}/code-mode`: the engine's switch (off is the default). `null` when Code Mode is not offered. */
 export function getCodeMode(engineId: string, signal?: AbortSignal): Promise<CodeModeSetting | null> {
   return orNull(request<CodeModeSetting>("GET", `/api/engines/${q(engineId)}/code-mode`, undefined, signal));

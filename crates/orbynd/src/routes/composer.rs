@@ -14,7 +14,7 @@ use orbyn_contracts::{
 };
 use orbyn_core::CoreError;
 use orbyn_core::agents::selection;
-use orbyn_core::conversation::photo_conversion::MAX_PHOTO_INPUT_BYTES;
+use orbyn_core::conversation::photo_conversion::{MAX_CONCURRENT_PHOTOS, MAX_PHOTO_INPUT_BYTES};
 use serde::Deserialize;
 
 use crate::http::{ApiFailure, ApiJson, ApiResult, AppState, LOCAL_USER};
@@ -24,6 +24,31 @@ const UPLOAD_LIMIT: usize = 51 * 1024 * 1024;
 /// The same headroom for the photo route, so core answers `413 file_too_large` in its own words
 /// instead of this layer's body limit.
 const PHOTO_LIMIT: usize = 51 * 1024 * 1024;
+// Queue requests asynchronously, before taking a thread from Tokio's blocking pool.
+pub(super) static PHOTO_WORKERS: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(MAX_CONCURRENT_PHOTOS);
+#[cfg(test)]
+pub(super) static PHOTO_ADMISSION_OBSERVER: std::sync::Mutex<
+    Option<tokio::sync::mpsc::UnboundedSender<(String, bool)>>,
+> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn observe_photo_admission(name: &str, admitted: bool) {
+    if name.starts_with("concurrency-test-")
+        && let Some(observer) = PHOTO_ADMISSION_OBSERVER.lock().unwrap().as_ref()
+    {
+        let _ = observer.send((name.to_owned(), admitted));
+    }
+}
+fn start_photo_work<T: Send + 'static>(
+    permit: tokio::sync::SemaphorePermit<'static>,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> tokio::task::JoinHandle<T> {
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+}
 /// The largest source body; core enforces the character limits.
 const SOURCE_LIMIT: usize = 64 * 1024;
 
@@ -185,13 +210,24 @@ async fn convert_attachment(
     if let Some(size) = claimed.filter(|size| *size > MAX_PHOTO_INPUT_BYTES) {
         return Err(too_large(size));
     }
-    // Then a counting read, so a request without a length still stops at the cap.
+    // Read with the existing size cap before joining the conversion queue.
     let body = axum::body::to_bytes(request.into_body(), MAX_PHOTO_INPUT_BYTES as usize + 1)
         .await
         .map_err(|_| too_large(claimed.unwrap_or(MAX_PHOTO_INPUT_BYTES + 1)))?;
+    // Wait asynchronously before using a blocking worker; cancellation of the
+    // request after conversion starts must not release the worker's permit.
+    #[cfg(test)]
+    observe_photo_admission(&query.name, false);
+    let permit = PHOTO_WORKERS.acquire().await.map_err(|_| {
+        ApiFailure::from(CoreError::Internal(
+            "the photo converter is unavailable".into(),
+        ))
+    })?;
+    #[cfg(test)]
+    observe_photo_admission(&query.name, true);
     let core = state.core.clone();
     let name = query.name;
-    let photo = tokio::task::spawn_blocking(move || core.convert_photo(&id, &name, &body))
+    let photo = start_photo_work(permit, move || core.convert_photo(&id, &name, &body))
         .await
         .map_err(|_| {
             ApiFailure::from(CoreError::Internal(
@@ -287,4 +323,34 @@ async fn slash_commands(
 ) -> ApiResult<impl IntoResponse> {
     let skills = query.get("skills").is_some_and(|value| value == "true");
     Ok(Json(state.core.slash_commands(&id, skills).await?))
+}
+
+#[cfg(test)]
+mod photo_admission_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn cancellation_does_not_release_a_running_workers_slot() {
+        let semaphore = Box::leak(Box::new(tokio::sync::Semaphore::new(1)));
+        let permit = semaphore.acquire().await.unwrap();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let task = start_photo_work(permit, move || {
+            let _ = started_tx.send(());
+            release_rx.recv().unwrap();
+        });
+        started_rx.await.unwrap();
+        task.abort();
+        assert!(semaphore.try_acquire().is_err());
+        tokio::time::timeout(Duration::from_secs(5), tokio::task::spawn_blocking(|| 42))
+            .await
+            .unwrap()
+            .unwrap();
+        release_tx.send(()).unwrap();
+        let _permit = tokio::time::timeout(Duration::from_secs(5), semaphore.acquire())
+            .await
+            .unwrap()
+            .unwrap();
+    }
 }

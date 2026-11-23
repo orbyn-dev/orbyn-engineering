@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use orbyn_code_sandbox::{ToolFailure, ToolHost};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Instant;
 
@@ -30,12 +30,15 @@ pub(super) struct RunHost {
     /// The calls a lost run recorded, by index, when this run is its replay.
     replay: HashMap<u32, StoredCodeCall>,
     failure: ReplayFailure,
+    /// Set by a cancel before its task is stopped. A call checks it before it records itself.
+    cancelled: Arc<AtomicBool>,
     /// Calls with an effect run one at a time, in the order the script made them, so a script
     /// cannot ask for many approvals at once.
     effects: tokio::sync::Mutex<()>,
 }
 
 impl RunHost {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         core: &Arc<Core>,
         binding: &McpBinding,
@@ -44,6 +47,7 @@ impl RunHost {
         script_sha256: &str,
         replay: HashMap<u32, StoredCodeCall>,
         failure: ReplayFailure,
+        cancelled: Arc<AtomicBool>,
     ) -> Self {
         Self {
             core: Arc::downgrade(core),
@@ -54,6 +58,7 @@ impl RunHost {
             script_sha256: script_sha256.to_owned(),
             replay,
             failure,
+            cancelled,
             effects: tokio::sync::Mutex::new(()),
         }
     }
@@ -154,6 +159,9 @@ impl ToolHost for RunHost {
         {
             return Err(failure("lost", message));
         }
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Err(failure("failed", super::CANCELLED));
+        }
         let digest = crate::util::sha256_hex(args.to_string().as_bytes());
         if let Some(recorded) = self.replay.get(&index) {
             // A replay answers from the record, but a tightened allow list still wins: the recorded
@@ -166,11 +174,18 @@ impl ToolHost for RunHost {
             }
         }
         let effect = crate::tools::mcp_tools::has_effect(name);
-        if let Err(error) = core
+        // The token is checked again here, and the store only begins a call of a run that is still
+        // running or paused: after a cancel answers, no new call can record itself.
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Err(failure("failed", super::CANCELLED));
+        }
+        match core
             .store
             .code_call_begin(&self.run_id, index, name, &digest, effect)
         {
-            tracing::warn!(%error, "could not record a script call");
+            Ok(true) => {}
+            Ok(false) => return Err(failure("failed", super::CANCELLED)),
+            Err(error) => tracing::warn!(%error, "could not record a script call"),
         }
         let began = Instant::now();
         self.pending
