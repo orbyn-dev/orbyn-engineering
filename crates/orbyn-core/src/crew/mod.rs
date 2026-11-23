@@ -28,6 +28,7 @@ mod http_probe;
 mod index_flags;
 mod leases;
 pub(crate) mod lifecycle;
+mod needs_you;
 mod persist;
 mod person_check;
 mod protect;
@@ -76,6 +77,7 @@ pub use classes::{
 pub use gather::{LeftOut, Machine};
 pub use guard::{find_secret, key_needles, redact, refuse_leak, refuse_secret, withhold};
 pub use leases::refuse_protected;
+pub use needs_you::WORKER_STOPPED_TWICE;
 pub use protect::protected_changes;
 pub use review::{
     CHECK_FINDING_TOOL, CODE_LANE, FINDING_TOOL, FindingStatus, REVIEW_TOOL, REVIEW_TOOLS,

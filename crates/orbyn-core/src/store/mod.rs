@@ -60,6 +60,7 @@ mod crew_manual_checks;
 #[cfg(test)]
 mod crew_manual_checks_tests;
 mod crew_merges;
+mod crew_needs_you;
 mod crew_paused_starts;
 #[cfg(test)]
 mod crew_paused_starts_tests;
@@ -150,6 +151,7 @@ pub use crew_guard::ENTRIES_MAX as GUARD_ENTRIES_MAX;
 pub use crew_manual_checks::{ManualCheck, ManualCheckState, NOTE_MAX as MANUAL_CHECK_NOTE_MAX};
 pub use crew_merge_forge::{ForgeMerge, ForgePhase, ForgeResolution};
 pub use crew_merges::{MergeEntry, MergeRecord, MergeStateMove, OPEN_MERGE_STATES};
+pub use crew_needs_you::{NeedsYouDismissal, NeedsYouTask};
 pub use crew_paused_starts::{PAUSED_STARTS_PER_PROJECT, PausedStartRow};
 pub use crew_provenance::StoredHunk;
 pub use crew_resume::ResumeOutcome;
