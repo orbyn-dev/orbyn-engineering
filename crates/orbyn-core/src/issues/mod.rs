@@ -20,6 +20,7 @@ pub(crate) use forgejo::Forgejo;
 #[cfg(test)]
 pub(crate) use gitlab::GitLab;
 pub use host::validate_host;
+pub(crate) use query::MAX_LIMIT;
 pub use query::{AssigneeFilter, IssueQuery, StateFilter};
 
 use crate::app::Core;
@@ -29,7 +30,8 @@ use crate::store::{TrackerConnection, tracker_name};
 use async_trait::async_trait;
 use orbyn_contracts::{
     ConnectTracker, CreateThread, IssueCounts, IssueDetail, IssueDraft, IssueKey, IssueList,
-    IssueListFailure, IssueRef, IssueSummary, StartIssueThread, Thread, TrackerKind, TrackerRow,
+    IssueListFailure, IssueRef, IssueSummary, Project, StartIssueThread, Thread, TrackerKind,
+    TrackerRow,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -56,6 +58,30 @@ pub(crate) struct ScopeList {
     pub next: Option<String>,
 }
 
+/// One dependency or advisory update a tracker reports for one scope.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DependencyUpdate {
+    /// A stable identity the tracker gives the update (an alert's number, or a package and version): the
+    /// listener claims it first write wins, so the same update starts one run.
+    pub key: String,
+    /// The ecosystem the tracker names (`npm`, `cargo`, ...), when it names one. It is compared with the stored
+    /// trigger's own `ecosystem` setting and never reaches a prompt.
+    pub ecosystem: Option<String>,
+}
+
+/// What a tracker can report about dependency or advisory updates for one scope.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DependencyFeed {
+    /// The tracker has no feed Orbyn reads for this scope. Nothing is claimed and no refusal is written: a
+    /// tracker that cannot answer is not a refusal.
+    Cannot,
+    /// The updates the tracker reports for the scope. No reader constructs this yet (follow-up #1360), so the
+    /// variant is only built by the listener tests that prove the claim and start path; it is kept here, not
+    /// behind a cfg, because a reader that gains the feed answers it without changing the listener.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Updates(Vec<DependencyUpdate>),
+}
+
 /// What a tracker offers. A scope and a key are checked by the source before anything is sent.
 #[async_trait]
 pub(crate) trait IssueSource: Send + Sync {
@@ -65,6 +91,14 @@ pub(crate) trait IssueSource: Send + Sync {
     /// cannot be read from a git remote (docs/issues.md, "Linear as built").
     async fn scopes(&self) -> Result<Vec<String>> {
         Ok(Vec::new())
+    }
+    /// What this tracker can report about dependency or advisory updates for one scope. The default is
+    /// [`DependencyFeed::Cannot`] and every reader takes it today: no reader has such a feed yet (the GitHub
+    /// Dependabot alerts feed is follow-up #1360), and a tracker that cannot answer spends no event. A reader
+    /// that gains a feed answers [`DependencyFeed::Updates`]; the listener's claim, start and refusal path
+    /// already handles it, so nothing else changes here.
+    async fn dependency_updates(&self, _scope: &str) -> Result<DependencyFeed> {
+        Ok(DependencyFeed::Cannot)
     }
 }
 
@@ -220,6 +254,16 @@ impl IssueDesk {
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
     }
+
+    /// Drops the 30-second listing cache. Tests call it between passes when a fake tracker changes its answer inside
+    /// the cache window; no production path needs it, because a listener's interval is 60 seconds at least.
+    #[cfg(test)]
+    pub(crate) fn clear_cache(&self) {
+        self.cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
 }
 
 fn credential_error(error: CredentialError) -> CoreError {
@@ -258,7 +302,97 @@ pub(crate) fn github_repo_of_remote(url: &str) -> Option<String> {
         .then(|| format!("{owner}/{repo}"))
 }
 
+/// The issue reader that can answer for one project: the tracker its checkout's origin remote names, and the
+/// scope that remote maps to. Only a connected tracker whose host matches the remote can answer, and Linear reads
+/// team keys that no git remote names, so it never answers for a project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ProjectReader {
+    pub tracker: TrackerKind,
+    pub scope: String,
+}
+
 impl Core {
+    /// The issue reader for one project, or none. A folder Orbyn is not trusted with, a folder that is not a git
+    /// checkout, a checkout with no `origin` remote and a project whose tracker is not connected or is on another
+    /// host all answer none: a listener reads nothing for them and spends no event. The scope is derived from the
+    /// project's own remote exactly as `issue_scopes` derives it, so nothing outside the connection's scopes is read.
+    pub(crate) async fn project_issue_reader(
+        &self,
+        project: &Project,
+    ) -> Result<Option<ProjectReader>> {
+        if project.scratch || !project.is_git || !project.trusted {
+            return Ok(None);
+        }
+        let root = std::path::Path::new(&project.path);
+        let Ok(url) = crate::source_control::git::git(root, &["remote", "get-url", "origin"]).await
+        else {
+            return Ok(None);
+        };
+        let remote = crate::source_control::git::text(&url);
+        let connections = self.store.tracker_connections()?;
+        for row in self
+            .issue_trackers()
+            .await?
+            .into_iter()
+            .filter(|row| row.connected)
+        {
+            let connection = connections
+                .iter()
+                .find(|connection| connection.tracker == row.tracker)
+                .cloned()
+                .unwrap_or(TrackerConnection {
+                    tracker: row.tracker,
+                    host: None,
+                    scopes: Vec::new(),
+                });
+            let scope = match row.tracker {
+                TrackerKind::Github => github_repo_of_remote(&remote),
+                TrackerKind::Gitlab => gitlab::gitlab_path_of_remote(
+                    &remote,
+                    connection.host.as_deref().unwrap_or(GITLAB_DEFAULT_HOST),
+                ),
+                TrackerKind::AzureDevops => azure::azure_scope_of_remote(
+                    &remote,
+                    connection.host.as_deref().unwrap_or_default(),
+                ),
+                TrackerKind::Forgejo => forgejo::forgejo_path_of_remote(
+                    &remote,
+                    connection.host.as_deref().unwrap_or_default(),
+                ),
+                // Linear's scope is a team key, which a git remote cannot name (docs/issues.md, "Linear as built").
+                TrackerKind::Linear => None,
+            };
+            if let Some(scope) = scope.filter(|scope| !scope.is_empty()) {
+                return Ok(Some(ProjectReader {
+                    tracker: row.tracker,
+                    scope,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// One scope's page of issues for a background listener: only the tracker and scope a project's reader named,
+    /// so a listener can read no other project's issues. Reads only; the listing's 30-second cache applies.
+    pub(crate) async fn scope_issues(
+        &self,
+        tracker: TrackerKind,
+        scope: &str,
+        query: &IssueQuery,
+    ) -> Result<ScopeList> {
+        self.scope_list(tracker, scope, query).await
+    }
+
+    /// What the project's tracker reports about dependency or advisory updates. No reader answers today, so this
+    /// is [`DependencyFeed::Cannot`] for every tracker (follow-up #1360); the listener then spends no event.
+    pub(crate) async fn tracker_dependency_updates(
+        &self,
+        tracker: TrackerKind,
+        scope: &str,
+    ) -> Result<DependencyFeed> {
+        self.issue_source(tracker)?.dependency_updates(scope).await
+    }
+
     fn issue_source(&self, kind: TrackerKind) -> Result<Arc<dyn IssueSource>> {
         if let Some(source) = self
             .issues

@@ -34,7 +34,8 @@ Design note. Status: PR 1 (the `manual` event, Run now through the core), PR 2 (
 - A pass watches at most 64 CI crews, from a rotating start, so a store with more is covered over a few passes.
 - Refused for capacity, the daily budget, an untrusted folder, no engine, a run in progress or a crew that was turned off meanwhile: dropped, never retried. One code-owned audit row (`crew.background.listener.refused`: the crew, the listener, a fixed reason word) records it, and capacity also leaves its held row.
 - A stop is looked at between firings and never inside one, so a claim is always followed by its whole start. A run a crash leaves behind is settled when the core next opens (`recover_background_starts`).
-- Text from outside (a check's name, a head sha, a file trigger's name) only decides whether a run starts: it never reaches the brief, a prompt, the lead thread or an audit row. The listener's audit actor is the constant `crew`.
+- Text from outside (a check's name, a head sha, a file trigger's name, an issue's key) only decides whether a run starts: it never reaches the brief, a prompt, the lead thread or an audit row. The listener's audit actor is the constant `crew`.
+- KC7 (later): the `issue_label` listener reads the project's one tracker reader, baselines the labels already there on its first pass per stored label (claiming them and starting nothing), and claims per issue, label and the issue's sorted label set (the held key keeps hashes of the scope, key and label); with no per-label event time in the readers, an edit is inert, a label-set change fires once, and a removal and re-add is not fired (a label feed is a follow-up). The `dependency_update` tick and its claim/start/refusal path are built too, but no issue reader reports a dependency or advisory update yet, so it starts nothing (follow-up #1360).
 - Not done: `crew_background_events` grows by one row per firing and is not pruned or removed with the crew.
 
 ## 3. Budget

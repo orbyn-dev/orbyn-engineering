@@ -748,6 +748,19 @@ impl Store {
         Ok(rows)
     }
 
+    /// Whether one exact background event has already been claimed. The issue-label listener uses it to tell its
+    /// first sight of a crew (when it must baseline the labels already there) from a later pass, without reading the
+    /// whole claim table.
+    pub fn background_event_claimed(&self, identity: &str) -> Result<bool> {
+        let conn = self.reader();
+        let claimed: i64 = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM crew_background_events WHERE identity = ?1)",
+            [identity],
+            |row| row.get(0),
+        )?;
+        Ok(claimed == 1)
+    }
+
     /// First-write-wins claim of one background event: true when this firing is new, false when the same event has
     /// already fired. The row is never removed, so a repeat of the same event starts nothing new, and a firing that
     /// was refused keeps its row: nothing is retried on a timer (docs/crew/background-engine-start.md, section 2).
