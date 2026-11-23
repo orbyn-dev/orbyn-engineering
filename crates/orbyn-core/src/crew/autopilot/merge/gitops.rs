@@ -410,8 +410,16 @@ struct Entry {
     /// Advertised by `docs/crew.md`: `checks` hold a `run` and a `when`. The condition is not implemented
     /// (issue #795), and a verdict that ignores it would run the check unconditionally, so it is read here
     /// only to refuse it by name rather than let it vanish.
-    #[serde(default)]
-    when: Option<serde_json::Value>,
+    /// `Some(None)` is an explicit `"when": null`: declared, so refused like any other value.
+    #[serde(default, deserialize_with = "declared")]
+    when: Option<Option<serde_json::Value>>,
+}
+
+/// Keeps a present key apart from an absent one: serde reads `null` as `None`, which would let a declared `when` pass.
+fn declared<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<serde_json::Value>>, D::Error> {
+    Option::<serde_json::Value>::deserialize(deserializer).map(Some)
 }
 
 /// The `checks` of `.orbyn/crew.json` at `commit`: the repository's own checks, trusted at a commit the crew did not write.
@@ -564,6 +572,10 @@ mod tests {
             .public_message();
         assert!(why.contains("checks[].when"), "{why}");
         assert!(why.contains("not implemented"), "{why}");
+        // An explicit null is a declared condition too; an absent one is fine.
+        rules(r#"{"checks":[{"run":"exit 0","when":null}]}"#);
+        let head = rev(&repo, "HEAD").await.unwrap();
+        assert!(repo_checks(&repo, &head).await.is_err());
         // Any other field of a check is refused too: it is not silently read as a check with no condition.
         rules(r#"{"checks":[{"run":"exit 0","branch":"main"}]}"#);
         let head = rev(&repo, "HEAD").await.unwrap();

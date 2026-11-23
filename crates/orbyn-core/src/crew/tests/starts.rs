@@ -788,6 +788,14 @@ async fn a_review_task_inherits_no_repository_checks() {
     }));
     let declared_key = stamper.answer_key(&declared, &writing.id).unwrap();
     assert!(!needs_repo_checks(&writing, &declared_key));
+    // A fix key's internal byte comparison has the same kind but runs no repository command: it does not count as coverage.
+    let mut fix = key();
+    fix["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-fix-touched", "kind": "repo_required", "params": { "name": "crew-fix-touched" },
+        "proves": "The fix touched what it said.",
+    }));
+    let fix_key = stamper.answer_key(&fix, &writing.id).unwrap();
+    assert!(needs_repo_checks(&writing, &fix_key));
     w.core.shutdown().await;
 }
 

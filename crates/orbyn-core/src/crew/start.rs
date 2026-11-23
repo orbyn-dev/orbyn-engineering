@@ -76,7 +76,12 @@ pub(super) fn needs_repo_checks(brief: &Brief, key: &AnswerKey) -> bool {
         && !key
             .checks
             .iter()
-            .any(|check| matches!(check.kind, CheckKind::RepoRequired))
+            .any(|check| {
+                // The fix key's byte comparison is a `repo_required` kind too, but it runs no repository command.
+                matches!(check.kind, CheckKind::RepoRequired)
+                    && check.id.as_str() != "chk-fix-touched"
+                    && check.params["name"] != "crew-fix-touched"
+            })
 }
 
 /// Adds the repository's own checks to the key of a task that writes, at the commit it starts from
