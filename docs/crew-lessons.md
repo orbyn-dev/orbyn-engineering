@@ -116,6 +116,7 @@ lessons "Now a skill" and they leave briefs while that skill exists; if the skil
 
 ## KC8: resumed after restart
 
-On the Crew task read: `resumed: boolean` (the task resumed once after a restart) and `round: number` (the attempt it resumed
-from; show "its last verified round" when absent). Audit rows `crew.task.resumed` and `crew.task.restart_stopped`. A worker
-stopped after its one resume has stop reason `worker_stopped_twice`.
+On the Flow task row (`FlowTaskRow`): `resumed: boolean` (the task resumed once after a restart) and the existing `round: number`,
+the attempt now running (a resume counts the lost turn as used); "resumed from round N" is `round - 1`. Audit rows `crew.task.resumed` and `crew.task.restart_stopped`. A worker
+stopped after its one resume keeps stop reason `engine_error`; its `crew.task.restart_stopped` row says `why: already_resumed`
+(a typed `worker_stopped_twice` stop reason needs a rebuild of the `crew_tasks` stop-reason constraint and is not built yet).
