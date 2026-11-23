@@ -142,6 +142,7 @@ function MenuList({
               aria-haspopup={item.children ? "menu" : undefined}
               aria-expanded={item.children ? open?.item === item : undefined}
               disabled={item.disabled}
+              aria-disabled={item.disabled || undefined}
               title={item.title}
               aria-current={item.keepOpen || item.checkbox ? undefined : item.selected || undefined}
               data-checked={item.keepOpen && item.selected ? "" : undefined}

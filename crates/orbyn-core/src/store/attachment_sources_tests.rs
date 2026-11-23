@@ -157,7 +157,8 @@ fn migration_73_follows_72_and_adds_the_attachment_sources_table() {
         .iter()
         .map(|(version, _)| *version)
         .collect();
-    let at = versions.iter().position(|v| *v == 73).unwrap();
+    // Later migrations may follow; 73 must come straight after 72.
+    let at = versions.iter().position(|version| *version == 73).unwrap();
     assert_eq!(versions[at - 1], 72);
     let (_, sql) = migrations::MIGRATIONS
         .iter()

@@ -2,7 +2,8 @@
 //! proof, what was not verified and the cost. The person answers "Looks good", "Comment" or "Revert". A revert is
 //! opened and verified by the crew: it is made in a scratch checkout, the checks run on the result, and only then does the
 //! branch move. Beside the merges the queue lists the background runs that stopped without a merge and wait for the person
-//! (docs/crew/background-engine-start.md, section 4): the read side only, because no answer path exists for them yet.
+//! (docs/crew/background-engine-start.md, section 4). The person settles one by acknowledging it through the background module
+//! (`Core::background_acknowledge_review`): the queue itself only reads.
 
 use std::sync::Arc;
 
@@ -117,7 +118,7 @@ fn item(record: &MergeRecord, now: i64) -> ReviewItem {
 impl Core {
     /// What waits for the person: the merges, most urgent first (a break that needs a decision, then by risk, then oldest),
     /// and the background runs that stopped without a merge, oldest first. A background run stopped by the person's own
-    /// switch, or one still running, is not waiting.
+    /// switch, one still running, and one whose review the person already acknowledged is not waiting.
     pub fn crew_review_queue(&self, now: i64) -> Result<ReviewQueue> {
         let mut merges: Vec<ReviewItem> = self
             .store

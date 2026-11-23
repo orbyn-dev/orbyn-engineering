@@ -387,6 +387,9 @@ impl Run {
                         for event in extra {
                             let _ = self.events.send(event).await;
                         }
+                        // The host's result usage is the run total; a mapper that has been
+                        // accumulating deltas prefers it over their sum.
+                        self.mapper.note_result_usage(done.usage.as_ref());
                         break outcome;
                     }
                 },

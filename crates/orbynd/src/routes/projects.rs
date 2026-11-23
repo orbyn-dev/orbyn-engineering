@@ -237,6 +237,42 @@ struct BrowseQuery {
     path: Option<String>,
 }
 
+/// Windows attributes that keep a folder out of the picker: `FILE_ATTRIBUTE_HIDDEN` and
+/// `FILE_ATTRIBUTE_SYSTEM` are the ones Windows puts on its own folders, such as `AppData`
+/// in a profile and `$Recycle.Bin` on a drive, and `FILE_ATTRIBUTE_REPARSE_POINT` is a
+/// junction or a link, which can point at a folder above it and loop when opened.
+#[cfg(any(windows, test))]
+const HIDING_ATTRIBUTES: u32 = 0x2 | 0x4 | 0x400;
+
+/// Whether the attributes Windows reports take a folder out of the picker. They are handed
+/// in rather than read, so the rule can be tested where no hidden, system or junction folder
+/// can be made.
+#[cfg(any(windows, test))]
+pub(super) fn attributes_hide_folder(attributes: u32) -> bool {
+    attributes & HIDING_ATTRIBUTES != 0
+}
+
+/// Whether the picker lists one folder: a directory, and on Windows not one that Windows
+/// marks hidden or system, and not a junction or a link.
+#[cfg(windows)]
+fn is_listed_folder(entry: &std::fs::DirEntry) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    // This is the entry's own metadata, not the target of a reparse point.
+    let Ok(metadata) = entry.metadata() else {
+        return false;
+    };
+    metadata.is_dir() && !attributes_hide_folder(metadata.file_attributes())
+}
+
+#[cfg(not(windows))]
+fn is_listed_folder(entry: &std::fs::DirEntry) -> bool {
+    entry.path().is_dir()
+}
+
+/// The folder picker under Add a folder: a parent link, and the folders a person may choose
+/// from. A `.`-named folder is left out on every platform; on Windows so is a folder Windows
+/// hides or marks system, and a junction or a link.
 async fn browse(Query(query): Query<BrowseQuery>) -> ApiResult<Json<FsListing>> {
     let requested = query
         .path
@@ -251,20 +287,33 @@ async fn browse(Query(query): Query<BrowseQuery>) -> ApiResult<Json<FsListing>> 
         .map_err(|_| CoreError::Invalid(format!("{} cannot be opened.", requested.display())))?;
     let reader = std::fs::read_dir(&path)
         .map_err(|_| CoreError::Invalid(format!("{} cannot be read.", path.display())))?;
+    // A folder row is where the picker goes next. A drive root has no file name,
+    // so it keeps its whole path as the name.
+    let row = |folder: &FsPath| FsEntry {
+        name: folder
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| folder.to_string_lossy().into_owned()),
+        is_git: orbyn_core::source_control::git::is_git_repo(folder),
+        path: folder.to_string_lossy().into_owned(),
+    };
     let mut entries: Vec<FsEntry> = reader
         .filter_map(Result::ok)
         .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
-        .filter(|entry| entry.path().is_dir())
-        .map(|entry| {
-            let full = entry.path();
-            FsEntry {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                is_git: orbyn_core::source_control::git::is_git_repo(&full),
-                path: full.to_string_lossy().into_owned(),
-            }
-        })
+        .filter(is_listed_folder)
+        .map(|entry| row(&entry.path()))
         .collect();
     entries.sort_by_key(|entry| entry.name.to_lowercase());
+    if path.parent().is_none() {
+        // Nothing is above a root, so a drive root also offers the mounted
+        // drives: that is how a person leaves the drive they started on. A
+        // drive that cannot be read, an empty card reader, is no way in.
+        let drives = orbyn_core::util::drive_roots()
+            .into_iter()
+            .filter(|drive| drive != &path && std::fs::read_dir(drive).is_ok())
+            .map(|drive| row(&drive));
+        entries.splice(0..0, drives);
+    }
     Ok(Json(FsListing {
         parent: path
             .parent()

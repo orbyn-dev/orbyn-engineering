@@ -776,7 +776,7 @@ async fn a_fork_is_searchable_and_a_rewind_hides_what_it_undid() {
             json!({ "run_id": run, "restore_files": false }),
         )
         .await;
-    assert!(status < 300, "{status} {body}");
+    assert_eq!(status, 200, "{body}");
     let found = search(&service, &[("q", "walrus")]).await;
     assert_eq!(found["hits"].as_array().unwrap().len(), 1);
     assert_eq!(found["hits"][0]["thread_id"], fork["id"]);

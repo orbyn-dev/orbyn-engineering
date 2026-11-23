@@ -9,7 +9,7 @@ use zeroize::Zeroizing;
 use super::*;
 use crate::credentials::{Credentials, DEV_SERVICE, Failure, SecretBackend};
 
-const KEY: &str = "sk-live-0123456789abcdef";
+pub(super) const KEY: &str = "sk-live-0123456789abcdef";
 
 #[derive(Default)]
 struct Memory(Mutex<HashMap<(String, String), Vec<u8>>>);
@@ -39,7 +39,7 @@ impl SecretBackend for Memory {
 }
 
 /// A source that hands out `KEY` for `cursor`, as the core's would after an opt-in.
-fn source() -> SecretSource {
+pub(super) fn source() -> SecretSource {
     let memory = Arc::new(Memory::default());
     let credentials = Credentials::new(memory.clone(), DEV_SERVICE);
     credentials.save("cursor", true, KEY).unwrap();

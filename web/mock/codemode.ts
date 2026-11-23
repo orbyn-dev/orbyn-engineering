@@ -16,6 +16,7 @@ export function codeRun(record: Pick<CodeRunRecord, "run_id" | "status" | "start
  * build. With `setOffered(false)` every route answers 404, as the service does when `ORBYN_CODE_MODE` is off.
  *
  *   GET /api/code-runs/<id>             one run record, 404 when there is none
+ *   POST /api/code-runs/<id>/cancel     ends a live run as error/cancelled and answers the record
  *   GET /api/engines/<id>/code-mode     { enabled }, off until a person turns it on
  *   PUT /api/engines/<id>/code-mode     { enabled } writes it and answers with what is stored
  *   GET /api/threads/<id>/code-runs     { runs } one summary per stored run, newest first
@@ -55,6 +56,18 @@ export function createCodeModeMock() {
     },
     handle(method: string, path: string, body?: unknown): MockResponse | null {
       if (!offered) return err(404, "not_found", "Not found.");
+      const cancel = /^\/api\/code-runs\/([^/]+)\/cancel$/.exec(path);
+      if (cancel && method === "POST") {
+        const record = runs.get(decodeURIComponent(cancel[1] ?? ""));
+        if (!record) return err(404, "not_found", "That run is gone.");
+        if (record.status !== "running" && record.status !== "paused") return err(409, "run_finished", "This run already ended.");
+        const cancelled: CodeRunRecord = {
+          ...record, status: "error", ended_at: new Date().toISOString(), error: { kind: "cancelled", message: "The run was cancelled." }, pending: [],
+          calls: record.calls.map((call) => (call.status === "running" ? { ...call, status: "failed" } : call)),
+        };
+        runs.set(record.run_id, cancelled);
+        return { status: 200, body: cancelled };
+      }
       const run = /^\/api\/code-runs\/([^/]+)$/.exec(path);
       if (run && method === "GET") {
         const record = runs.get(decodeURIComponent(run[1] ?? ""));

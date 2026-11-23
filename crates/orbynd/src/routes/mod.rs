@@ -30,6 +30,7 @@ mod issues;
 mod library;
 mod mcp_apps;
 mod media;
+mod precompressed;
 mod preview;
 mod profiles;
 mod projects;
@@ -114,6 +115,8 @@ mod never_asks_tests;
 mod photo_conversion_tests;
 #[cfg(test)]
 mod profiles_tests;
+#[cfg(test)]
+mod projects_tests;
 #[cfg(test)]
 mod secrets_tests;
 #[cfg(test)]

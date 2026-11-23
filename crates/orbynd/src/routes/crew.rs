@@ -1,5 +1,6 @@
 //! Crew (Preview) over HTTP: the Preview flag, background crews' state (`/api/crew/background`: list, read, create, update, on, off,
-//! delete, the runs and Run now, which starts one run by hand; nothing fires a trigger on its own), Autopilot's modes, trust, risk, the Review queue, the merge queue, the watch on
+//! delete, the runs, Run now, which starts one run by hand, and the acknowledgement that settles a run's waiting review; nothing
+//! fires a trigger on its own), Autopilot's modes, trust, risk, the Review queue, the merge queue, the watch on
 //! main, the digest, the approval ledger, the trip wires and the guards, and three reads of the repository's data classes (`/api/crew/classes`,
 //! `/api/crew/classes/test`, `/api/crew/route/{task}`). Transport only: `orbyn_core::crew` builds every view and
 //! owns every rule.
@@ -183,6 +184,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/background/runs/{id}/acknowledge",
+        "core background_acknowledge_review: the person settles one background review that waits. Preview, a run whose review is waiting, the audit row first in the same transaction; the wait clears and the run keeps its reason, state, stop reason and spend; a run that is not waiting is refused plainly and nothing is written; local only",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/cancel",
         "core crew_cancel_task: the person's stop button; the intent audit row before any effect, the worker's engine stopped and confirmed (else the state is kept and a failed-attempt row is written), then the state and its row in one transaction; already cancelled answers already and writes nothing; passed or stopped is a conflict; optional reason 1 to 200 characters, redacted; no agent tool reaches it; local only",
     ),
@@ -336,6 +342,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route(
             "/api/crew/background/{id}/run-now",
             post(background_run_now),
+        )
+        .route(
+            "/api/crew/background/runs/{id}/acknowledge",
+            post(background_acknowledge),
         )
         .route("/api/crew/tasks/{id}/cancel", post(cancel_task))
         .route(
@@ -983,6 +993,15 @@ async fn background_run_now(
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.crew_background_run_now(&id, "user").await?))
+}
+
+/// The person's acknowledgement of one background run waiting in Review: the wait clears and the run is returned as it now
+/// stands, still holding its state, its stop reason and why it waited. A run that is not waiting is refused with a plain reason.
+async fn background_acknowledge(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.background_acknowledge_review(&id)?))
 }
 
 /// The person's stop button: cancels a task. The body may be empty, or `{ "reason": "..." }`.

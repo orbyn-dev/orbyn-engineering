@@ -37,6 +37,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/delete"),
     ("POST", "/api/crew/background/{id}/run-now"),
+    ("POST", "/api/crew/background/runs/{id}/acknowledge"),
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
     ("POST", "/api/crew/tasks/{id}/checks/{check}/decide"),
     ("POST", "/api/crew/tasks/{id}/cancel"),
@@ -108,6 +109,8 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/flow/messages"),
     ("GET", "/api/crew/flow/tasks"),
     ("GET", "/api/crew/flow/tasks/{id}"),
+    ("GET", "/api/crew/flow/tasks/{id}/artifacts"),
+    ("GET", "/api/crew/flow/tasks/{id}/lanes"),
     ("GET", "/api/crew/flow/tasks/{id}/run"),
 ];
 

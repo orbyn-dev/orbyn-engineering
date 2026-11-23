@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use orbyn_contracts as wire;
 use orbyn_core::crew::changes::changes_crew_state;
 use orbyn_core::crew::fixtures;
 use orbyn_core::{Core, CoreConfig};
@@ -23,6 +24,23 @@ struct Served {
 }
 
 async fn serve(name: &str) -> Served {
+    serve_with(
+        name,
+        Access::new("token", vec![], None).with_dev_person_override(true),
+    )
+    .await
+}
+
+/// A service whose person key is this launch's only way into a `Person` route, as in a build the person uses.
+async fn serve_keyed(name: &str) -> Served {
+    serve_with(
+        name,
+        Access::new("token", vec![], None).with_person_key(Some("the-key")),
+    )
+    .await
+}
+
+async fn serve_with(name: &str, access: Access) -> Served {
     let dir = std::env::temp_dir().join(format!("orbynd-bg-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -32,7 +50,7 @@ async fn serve(name: &str) -> Served {
     let project = fixtures::add_project(&core, dir.join("repo").to_str().unwrap());
     let app = router(AppState {
         core: core.clone(),
-        access: Arc::new(Access::new("token", vec![], None).with_dev_person_override(true)),
+        access: Arc::new(access),
         remote: false,
         ui_dir: None,
         images: Arc::new(orbyn_core::browser::remote_images::ImageProxy::default()),
@@ -50,10 +68,26 @@ async fn serve(name: &str) -> Served {
 
 impl Served {
     async fn call(&self, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
+        self.call_as(method, path, body, Some("token"), None).await
+    }
+
+    /// One request, with the service token and the person key when each is given.
+    async fn call_as(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        token: Option<&str>,
+        key: Option<&str>,
+    ) -> (u16, Value) {
         let url = format!("http://127.0.0.1:{}{path}", self.port);
-        let mut request = reqwest::Client::new()
-            .request(method.parse().unwrap(), url)
-            .bearer_auth("token");
+        let mut request = reqwest::Client::new().request(method.parse().unwrap(), url);
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        if let Some(key) = key {
+            request = request.header("x-orbyn-person", key);
+        }
         if let Some(body) = body {
             request = request.json(&body);
         }
@@ -406,6 +440,7 @@ fn an_agent_is_refused_every_background_change_by_path() {
         "/api/crew/background/t-1/disable",
         "/api/crew/background/t-1/delete",
         "/api/crew/background/t-1/run-now",
+        "/api/crew/background/runs/t-1/acknowledge",
         "/api/CREW/background//t-1/./enable",
         "/api/crew/background/x/../t-1/delete",
         "/api/crew/background/t-1/start",
@@ -420,4 +455,160 @@ fn an_agent_is_refused_every_background_change_by_path() {
     ] {
         assert!(!changes_crew_state(path), "{path}");
     }
+}
+
+/// A crew started by hand and stopped at its budget: one run waits for the person.
+fn waiting_run(app: &Served) -> (String, String) {
+    let body: wire::BackgroundCrewCreate = serde_json::from_value(app.body("Settled")).unwrap();
+    let crew = app.core.background_create(&body).unwrap();
+    app.core.background_set_enabled(&crew.id, true).unwrap();
+    let run = app.core.crew_background_start_run(&crew.id).unwrap();
+    let waiting = app.core.crew_background_spend(&run.id, 8, 0).unwrap();
+    assert!(waiting.review_waiting);
+    (crew.id, run.id)
+}
+
+/// The person settles a waiting review over HTTP: the wait clears, the run keeps its reason, the crew reads nothing waiting,
+/// Review drops it, and the same crew starts again.
+#[tokio::test]
+async fn a_person_acknowledges_a_waiting_review_and_the_crew_may_run_again() {
+    let app = serve("acknowledge").await;
+    let (crew_id, run_id) = waiting_run(&app);
+    let crew_path = format!("/api/crew/background/{crew_id}");
+    // Unacknowledged: the crew counts it and Review lists it.
+    let (_, crew) = app.call("GET", &crew_path, None).await;
+    assert_eq!(
+        (crew["state"].as_str(), crew["reviews_waiting"].clone()),
+        (Some("stopped"), json!(1))
+    );
+    let (_, queue) = app.call("GET", "/api/crew/autopilot/review", None).await;
+    assert_eq!(queue["background_runs"].as_array().unwrap().len(), 1);
+
+    let path = format!("/api/crew/background/runs/{run_id}/acknowledge");
+    let (status, settled) = app.call("POST", &path, None).await;
+    assert_eq!(status, 200, "{settled}");
+    assert_eq!(settled["id"], run_id.as_str());
+    assert_eq!(settled["review_waiting"], false);
+    assert_eq!(settled["state"], "stopped");
+    assert_eq!(settled["stop_reason"], "budget");
+    assert!(
+        settled["review_reason"]
+            .as_str()
+            .unwrap()
+            .contains("budget"),
+        "the run keeps why it waited: {settled}"
+    );
+
+    // The crew has nothing waiting, Review drops the run, and the run's own page keeps the reason.
+    let (_, crew) = app.call("GET", &crew_path, None).await;
+    assert_eq!(
+        (crew["state"].as_str(), crew["reviews_waiting"].clone()),
+        (Some("stopped"), json!(0))
+    );
+    let (_, queue) = app.call("GET", "/api/crew/autopilot/review", None).await;
+    assert_eq!(queue["background_runs"], json!([]));
+    let (_, runs) = app.call("GET", &format!("{crew_path}/runs"), None).await;
+    assert_eq!(runs["runs"][0]["review_waiting"], false);
+    assert!(
+        runs["runs"][0]["review_reason"]
+            .as_str()
+            .unwrap()
+            .contains("budget")
+    );
+    // The same crew starts again, at once.
+    let next = app.core.crew_background_start_run(&crew_id).unwrap();
+    assert_eq!(next.state, wire::BackgroundRunState::Running);
+    // One person audit row records what was settled.
+    let audit = fixtures::audit_actions(&app.core, "crew.background");
+    assert_eq!(
+        audit
+            .iter()
+            .filter(|action| action.as_str() == "crew.background.run.acknowledge")
+            .count(),
+        1,
+        "{audit:?}"
+    );
+}
+
+/// A run that does not wait has nothing to settle: the refusal is plain and nothing changes.
+#[tokio::test]
+async fn acknowledging_a_run_that_is_not_waiting_is_refused_plainly() {
+    let app = serve("acknowledge-refused").await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/crew/background/runs/nothing/acknowledge",
+            None,
+        )
+        .await;
+    assert_eq!((status, &body["code"]), (404, &json!("not_found")));
+
+    let body: wire::BackgroundCrewCreate = serde_json::from_value(app.body("Running")).unwrap();
+    let crew = app.core.background_create(&body).unwrap();
+    app.core.background_set_enabled(&crew.id, true).unwrap();
+    let run = app.core.crew_background_start_run(&crew.id).unwrap();
+    let path = format!("/api/crew/background/runs/{}/acknowledge", run.id);
+    let (status, body) = app.call("POST", &path, None).await;
+    assert_eq!((status, &body["code"]), (400, &json!("invalid_input")));
+    assert_eq!(
+        body["message"],
+        "this run is not waiting for the person's review"
+    );
+    // Wrong method is not a route.
+    let (status, _) = app.call("GET", &path, None).await;
+    assert!(matches!(status, 404 | 405), "{status}");
+    // Nothing changed and nothing was audited.
+    let (_, runs) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/{}/runs", crew.id),
+            None,
+        )
+        .await;
+    assert_eq!(runs["runs"][0]["state"], "running");
+    let audit = fixtures::audit_actions(&app.core, "crew.background");
+    assert!(
+        audit
+            .iter()
+            .all(|action| action.as_str() != "crew.background.run.acknowledge"),
+        "{audit:?}"
+    );
+}
+
+/// The acknowledgement is a `Person` route: the service token alone, or a wrong key, is refused and changes nothing.
+#[tokio::test]
+async fn acknowledging_needs_the_person_key_and_changes_nothing_without_it() {
+    let app = serve_keyed("acknowledge-key").await;
+    let (crew_id, run_id) = waiting_run(&app);
+    let path = format!("/api/crew/background/runs/{run_id}/acknowledge");
+    let (status, _) = app.call_as("POST", &path, None, None, None).await;
+    assert_eq!(status, 401, "the service token comes first");
+    for key in [None, Some("wrong")] {
+        let (status, body) = app.call_as("POST", &path, None, Some("token"), key).await;
+        assert_eq!(
+            (status, &body["code"]),
+            (403, &json!("person_required")),
+            "{key:?}"
+        );
+    }
+    // Every refused call left the review waiting and wrote no row.
+    let (_, crew) = app
+        .call("GET", &format!("/api/crew/background/{crew_id}"), None)
+        .await;
+    assert_eq!(crew["reviews_waiting"], json!(1));
+    assert!(
+        fixtures::audit_actions(&app.core, "crew.background")
+            .iter()
+            .all(|action| action.as_str() != "crew.background.run.acknowledge")
+    );
+    // The key this launch holds settles it.
+    let (status, settled) = app
+        .call_as("POST", &path, None, Some("token"), Some("the-key"))
+        .await;
+    assert_eq!(status, 200, "{settled}");
+    assert_eq!(settled["review_waiting"], false);
+    let (_, crew) = app
+        .call("GET", &format!("/api/crew/background/{crew_id}"), None)
+        .await;
+    assert_eq!(crew["reviews_waiting"], json!(0));
 }

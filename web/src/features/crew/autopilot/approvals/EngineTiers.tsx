@@ -4,7 +4,7 @@ import { useAsync } from "../../../../lib/useAsync";
 import { useWorkspace } from "../../../../product/state/workspace";
 import { CrewRoleNote, type CrewRoleFields } from "../../../cursorthread";
 import { useConnection } from "../../../../product/state/connection";
-import { deferNavigation, registerNavigationGuard, type NavigationResume, type NavigationGuardOwner } from "../../../../product/state/navigationGuard";
+import { deferNavigation, navigationGuarded, registerNavigationGuard, type NavigationResume, type NavigationGuardOwner } from "../../../../product/state/navigationGuard";
 import { goToHash } from "../../../../product/state/route";
 import { Button } from "../../../../ui/controls";
 import { ErrorState, Loading } from "../../../../product/ui/states";
@@ -51,7 +51,8 @@ export function EngineTiers() {
       event.preventDefault(); event.stopPropagation(); deferNavigation(() => goToHash(hash.slice(1)));
     };
     const hash = (event: HashChangeEvent) => {
-      if (window.location.href === original) return;
+      // Once Discard has released the guard the move is the person's: a synchronous router event must not be put back.
+      if (window.location.href === original || !navigationGuarded()) return;
       const next = window.location.hash;
       window.history.replaceState(historyState, "", original); event.stopImmediatePropagation();
       deferNavigation(() => goToHash(next.slice(1)));

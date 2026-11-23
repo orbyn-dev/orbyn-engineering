@@ -558,6 +558,10 @@ pub trait EngineDriver: Send + Sync {
         ))
     }
 
+    /// Drops a rewind point this driver noted for `session`, when the rewind that noted
+    /// it could not finish. Files are not touched. The default has nothing to drop.
+    async fn forget_revert(&self, _cwd: &std::path::Path, _session: &str) {}
+
     /// What a cached list depends on. An engine with a key keeps its list until the
     /// key changes; without one the list simply ages out.
     async fn catalog_key(&self) -> Option<String> {
