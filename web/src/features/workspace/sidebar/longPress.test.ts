@@ -45,7 +45,7 @@ describe("createLongPress", () => {
     press.down(touch(40, 60));
     press.move(touch(40, 60 + DRAG_DISTANCE - 1));
     vi.advanceTimersByTime(LONG_PRESS_MS + 1);
-    expect(fire).toHaveBeenCalledTimes(1);
+    expect(fire.mock.calls).toEqual([[{ clientX: 40, clientY: 60 }]]);
   });
 
   it("ignores another pointer's movement", () => {
@@ -53,7 +53,7 @@ describe("createLongPress", () => {
     press.down(touch(40, 60, 1));
     press.move(touch(40, 200, 2));
     vi.advanceTimersByTime(LONG_PRESS_MS + 1);
-    expect(fire).toHaveBeenCalledTimes(1);
+    expect(fire.mock.calls).toEqual([[{ clientX: 40, clientY: 60 }]]);
   });
 
   it("swallows the click that ends a long press once, and lets the next one through", () => {
