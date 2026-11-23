@@ -3741,7 +3741,7 @@ every method, path and which routes need a credential.
 | `POST /api/projects/clone`, `/create` | Make a folder, by default under `repo/`, or at `path`; `create` takes `readme` for a first commit |
 | `PATCH /api/projects/:id` | `RenameProject`: the name shown; the folder stays |
 | `DELETE /api/projects/:id?delete_files=&confirm=` | `ProjectRemoval`: unregisters; `delete_files` is `400` unless Orbyn made the folder, and can be `409 project_has_work` |
-| `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home |
+| `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home. Folders only, never a `.`-named one, and on Windows never one marked hidden or system and never a junction or link, which a person does not pick as a project and some of which loop when opened |
 | `GET /api/threads?project_id=&archived=`, `POST /api/threads`, `GET, DELETE /api/threads/:id` | Threads; no `project_id` on create makes a scratch folder |
 | `GET /api/threads/:id/family` | `ThreadFamily`: the topmost thread and every thread below it, so any member answers the same tree; the stored edge is `parent_thread_id` with its `fork`, `side` or `subagent` relation, and archived members stay |
 | `POST /api/threads/batch` | `BatchThreads` to `BatchThreadResult[]`; at most 100 entries, oversized batches return `400 invalid_input` before creating any thread; one item failure does not stop an accepted batch |
