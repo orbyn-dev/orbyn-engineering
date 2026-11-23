@@ -39,7 +39,7 @@ desktop_required`), audited in the same transaction as the change (`crew.lesson.
 | Method and path | Class | Body | Answer |
 |---|---|---|---|
 | `GET /api/crew/lessons?repo=<project id>&filter=active\|disabled\|hidden\|all` | Local | none | `200 LessonList` |
-| `GET /api/crew/lessons/{id}` | Local | none | `200 LessonDetail` |
+| `GET /api/crew/lessons/{id}?repo=<project id>` | Local | none | `200 LessonDetail` |
 | `POST /api/crew/lessons` | Person | `{ scope, repo?, text }` | `201 Lesson` (add by hand; `source: "person"`) |
 | `PATCH /api/crew/lessons/{id}` | Person | `{ text, rev }` | `200 Lesson` (sets `edited_by_person`, re-runs the scan) |
 | `POST /api/crew/lessons/{id}/disable` and `/enable` | Person | `{ rev }` | `200 Lesson` |
@@ -61,7 +61,9 @@ desktop_required`), audited in the same transaction as the change (`crew.lesson.
 }
 ```
 
-`LessonDetail`: `{ "lesson": Lesson, "evidence": [ { "kind", "id" } ] }`.
+`LessonDetail`: `{ "lesson": Lesson, "evidence": [ { "kind", "id" } ] }`. A global lesson's `in_next_brief` depends on a repository's switch
+and cap, so `repo` is required for a global lesson and the value describes that repository; a repository lesson ignores it. Without it a
+global lesson answers `in_next_brief: false`.
 
 Rules a client can rely on:
 
@@ -109,7 +111,7 @@ nothing and does not feed the needs-you field. Under `/api/crew/skill-proposals`
 ```
 
 Errors: `409 stale` for a wrong `rev`, `409 not_open` for approve or dismiss of a proposal that is not open, `400 invalid` for
-empty or over-long approved text or `can_approve: false`, `400 secret_refused` as above. An approved proposal marks its source
+empty approved text or text over 600 characters or `can_approve: false`, `400 secret_refused` as above. An approved proposal marks its source
 lessons "Now a skill" and they leave briefs while that skill exists; if the skill is removed they return to normal.
 
 ## KC8: resumed after restart
