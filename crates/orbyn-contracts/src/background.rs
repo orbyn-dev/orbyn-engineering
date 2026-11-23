@@ -253,7 +253,7 @@ pub struct BackgroundWatchStatus {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub last_exit_code: Option<i32>,
-    /// Why the last check could not run: `timed out`, `could not start`, `refused` or `folder not trusted`. Absent when it ran.
+    /// Why the last check could not run: `timed out`, `could not start`, `refused`, `folder not trusted` or `printed too much`. Absent when it ran.
     #[serde(default)]
     #[ts(optional = nullable)]
     pub reason: Option<String>,

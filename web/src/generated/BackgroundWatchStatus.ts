@@ -15,7 +15,7 @@ last_checked_at?: string | null,
  */
 last_exit_code?: number | null, 
 /**
- * Why the last check could not run: `timed out`, `could not start`, `refused` or `folder not trusted`. Absent when it ran.
+ * Why the last check could not run: `timed out`, `could not start`, `refused`, `folder not trusted` or `printed too much`. Absent when it ran.
  */
 reason?: string | null, 
 /**

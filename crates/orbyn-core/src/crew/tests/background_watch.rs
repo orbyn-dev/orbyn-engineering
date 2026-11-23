@@ -323,7 +323,7 @@ fn three_checks_that_could_not_run_count_a_streak_and_a_check_that_runs_again_re
 async fn a_watch_checks_once_per_bucket_and_keeps_the_watch_claim_key() {
     let w = world(true, hung()).await;
     let id = watch(&w, "Diff", "git diff --exit-code", "needs_you").await;
-    let bucket = NOW.div_euclid(BUCKET);
+    let bucket = NOW.div_euclid(BUCKET) * BUCKET;
 
     tick(&w, NOW).await;
     assert_eq!(status(&w, &id).state, wire::BackgroundWatchState::Passing);
@@ -342,7 +342,7 @@ async fn a_watch_checks_once_per_bucket_and_keeps_the_watch_claim_key() {
         claims(&w),
         [
             format!("watch:{id}:{bucket}"),
-            format!("watch:{id}:{}", bucket + 1)
+            format!("watch:{id}:{}", bucket + BUCKET)
         ]
     );
 
@@ -904,17 +904,71 @@ async fn a_watch_on_an_untrusted_project_could_not_run_and_never_raises_by_itsel
     );
 }
 
-#[test]
-fn a_watch_event_names_its_bucket_in_the_claim_and_the_held_row_key() {
-    let bucket = crate::crew::watch::bucket_of(NOW, HOURS);
-    assert_eq!(bucket, NOW.div_euclid(BUCKET));
-    let event = crate::crew::watch::event_key(bucket);
-    assert_eq!(event, format!("watch:{bucket}"));
-    // The tick passes the event; the start builds the held row's key as `<crew>:<event>`, beside the claim
-    // `watch:<crew>:<bucket>`.
-    assert_eq!(format!("crew-1:{event}"), format!("crew-1:watch:{bucket}"));
-    assert_eq!(
-        format!("watch:crew-1:{bucket}"),
-        format!("watch:crew-1:{}", NOW.div_euclid(BUCKET))
+#[tokio::test]
+async fn a_watch_whose_interval_grows_checks_again_when_its_new_interval_has_passed() {
+    let w = world(true, hung()).await;
+    let id = watch(&w, "Diff", "git diff --exit-code", "needs_you").await;
+    tick(&w, NOW).await;
+    let first = status(&w, &id).last_checked_at;
+    assert!(first.is_some());
+
+    // The person lengthens the interval from 6 hours to 24: the old claims must not hold the new schedule back.
+    let update: wire::BackgroundCrewUpdate = serde_json::from_value(json!({
+        "trigger": { "kind": "watch", "command": "git diff --exit-code", "every_hours": 24, "on_failing": "needs_you" }
+    }))
+    .unwrap();
+    w.core.background_update(&id, &update).await.unwrap();
+    tick(&w, NOW + 2 * 24 * 3600).await;
+    assert_ne!(
+        status(&w, &id).last_checked_at,
+        first,
+        "a day-long interval that has passed twice over checks again"
     );
+}
+
+#[tokio::test]
+async fn a_failing_watch_asks_for_the_person_again_when_it_is_turned_back_on() {
+    let w = world(true, hung()).await;
+    let id = watch(&w, "Diff", "git diff --exit-code", "needs_you").await;
+    tick(&w, NOW).await;
+    make_dirty(&w);
+    tick(&w, NOW + BUCKET).await;
+    assert_eq!(w.core.crew_needs_you().unwrap().items.len(), 1);
+
+    w.core.background_turn_off(&id).await.unwrap();
+    assert!(w.core.crew_needs_you().unwrap().items.is_empty());
+
+    // Still failing when it is turned back on: the unresolved failure is asked about again, before and after the next check.
+    w.core.background_set_enabled(&id, true).unwrap();
+    assert_eq!(w.core.crew_needs_you().unwrap().items.len(), 1);
+    tick(&w, NOW + 2 * BUCKET).await;
+    assert_eq!(w.core.crew_needs_you().unwrap().items.len(), 1);
+
+    // A pass after that still resolves it.
+    make_clean(&w);
+    tick(&w, NOW + 3 * BUCKET).await;
+    assert!(w.core.crew_needs_you().unwrap().items.is_empty());
+    assert_eq!(
+        changes(&w, &id)[0].action,
+        wire::BackgroundWatchChangeAction::Resolved
+    );
+}
+
+#[tokio::test]
+async fn a_command_that_prints_far_more_than_the_cap_is_stopped_and_could_not_run() {
+    let w = world(true, hung()).await;
+    // A 3 MiB change makes `git diff` print about 3 MiB, more than a check may buffer.
+    let line = "x".repeat(99);
+    let big: String = (0..32_000).map(|_| format!("{line}\n")).collect();
+    std::fs::write(w.repo.join("src/base.txt"), big).unwrap();
+    let check = w
+        .core
+        .watch_check(&w.repo, "git diff --exit-code", Duration::from_secs(60))
+        .await;
+    assert_eq!(
+        check.found,
+        WatchFound::CouldNotRun(CouldNotRun::TooMuchOutput),
+        "{check:?}"
+    );
+    assert_eq!(check.tail, None, "{check:?}");
 }

@@ -1143,8 +1143,8 @@ worktree; a refusal names the rule in one fixed sentence and never repeats the c
 given (they must be in range, and no model run follows); `template` validates them like any other crew. The command is stored redacted.
 
 **As built (KC6 slices 2 and 3, service only):** the listener's watch tick runs each enabled watch's stored command once per
-`every_hours` bucket, in the project's checkout, for at most five minutes, and claims `watch:<crew>:<bucket>` before it runs so a
-crash mid-check does not repeat it. The command is screened again before every check (the always-denied list and the blast-radius
+`every_hours` window, in the project's checkout, for at most five minutes (and at most 1 MiB printed on each stream: a command over it is stopped and could not run, `printed too much`), and claims `watch:<crew>:<start>` (the window's start in unix seconds, so a changed `every_hours` never waits on the old interval's claims) before it runs so a
+crash mid-check does not repeat it. The crew is read again just before its claim, so a watch turned off or changed during a long pass is not run on the old row. The command is screened again before every check (the always-denied list and the blast-radius
 guard, whose lists may have changed since the crew was made). Its last 20 lines and at most 2 KiB are kept, redacted through the
 locked redactor; nothing else of its output is stored. **The first check that runs is a baseline and raises nothing** (a failing baseline is
 recorded as failing); after it, only a turn between passing and failing is a change. A turn to failing writes one change row and either
@@ -1173,7 +1173,7 @@ narrowed by its optional workflow filter. Every firing first claims a row in `cr
 | Event | Claim | Held-start key |
 | --- | --- | --- |
 | schedule | `schedule:<crew>:<bucket>` | `<crew>:schedule:<bucket>` |
-| watch | `watch:<crew>:<bucket>` | `<crew>:watch:<bucket>` |
+| watch | `watch:<crew>:<start>` (the window's start, in unix seconds) | `<crew>:watch:<start>` |
 | CI failure | `ci:<crew>:<head>:<hash>` | `<crew>:ci:<head>:<hash>` |
 
 `<hash>` is the first 16 hex characters of the SHA-256 of the failing check's name. A repeat of an event starts nothing new, and a bucket at or before the newest claimed one

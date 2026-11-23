@@ -26,7 +26,7 @@ use orbyn_contracts::CheckOutcome;
 
 use super::autopilot::Screened;
 use super::background::{next_offset, parse_wire};
-use super::checks::{self, COULD_NOT_START, RAN_OUT_OF_TIME};
+use super::checks::{self, COULD_NOT_START, RAN_OUT_OF_TIME, TOO_MUCH_OUTPUT};
 use super::{Page, redact, valid_id};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -39,6 +39,9 @@ pub const CHECK_LIMIT: Duration = Duration::from_secs(5 * 60);
 pub const TAIL_LINES: usize = 20;
 /// How many bytes of that output are kept.
 pub const TAIL_BYTES: usize = 2 * 1024;
+/// The most a check may print on each of its two streams: a command over it is stopped and could not run. A check is a status
+/// command, not a log stream, and this keeps a periodic check from filling memory.
+const OUTPUT_CAP: usize = 1024 * 1024;
 /// The most of a check's raw log is read before it is redacted and cut, so a command that prints megabytes costs at most this.
 const RAW_KEEP: usize = 64 * 1024;
 
@@ -51,6 +54,8 @@ pub enum CouldNotRun {
     Refused,
     /// The project's folder is no longer trusted, so nothing runs in it.
     Untrusted,
+    /// The command printed more than a check may buffer, so it was stopped.
+    TooMuchOutput,
 }
 
 impl CouldNotRun {
@@ -61,6 +66,7 @@ impl CouldNotRun {
             Self::CouldNotStart => "could_not_start",
             Self::Refused => "refused",
             Self::Untrusted => "untrusted",
+            Self::TooMuchOutput => "too_much_output",
         }
     }
 
@@ -71,6 +77,7 @@ impl CouldNotRun {
             Self::CouldNotStart => "could not start",
             Self::Refused => "refused",
             Self::Untrusted => "folder not trusted",
+            Self::TooMuchOutput => "printed too much",
         }
     }
 
@@ -81,6 +88,7 @@ impl CouldNotRun {
             "could_not_start" => Some(Self::CouldNotStart),
             "refused" => Some(Self::Refused),
             "untrusted" => Some(Self::Untrusted),
+            "too_much_output" => Some(Self::TooMuchOutput),
             _ => None,
         }
     }
@@ -300,7 +308,7 @@ impl Core {
             return WatchCheck::could_not_run(CouldNotRun::Refused);
         }
         let deadline = Instant::now() + limit;
-        let ran = checks::run_line(command, worktree, deadline).await;
+        let ran = checks::run_line_capped(command, worktree, deadline, OUTPUT_CAP).await;
         match ran.outcome {
             CheckOutcome::Pass | CheckOutcome::Fail => WatchCheck {
                 found: WatchFound::Ran {
@@ -312,6 +320,7 @@ impl Core {
             _ => {
                 let why = match ran.reason.as_deref() {
                     Some(RAN_OUT_OF_TIME) => CouldNotRun::TimedOut,
+                    Some(TOO_MUCH_OUTPUT) => CouldNotRun::TooMuchOutput,
                     Some(reason) if reason.starts_with(COULD_NOT_START) => {
                         CouldNotRun::CouldNotStart
                     }
@@ -338,11 +347,11 @@ impl Core {
             .watch_state(&crew.id)?
             .unwrap_or_else(|| blank_state(&crew.id));
         let on_failing_template = crew.trigger_settings["on_failing"].as_str() == Some("template");
-        // A pass resolves only a row that was raised: the newest change row must be the failing change action `needs_you`. A
-        // failing baseline, a started template, or a turn-off in between recovers with no action.
+        // A pass resolves only a row that was raised: the newest result change (a turn-off is history, not a result) must be the
+        // failing change action `needs_you`. A failing baseline or a started template recovers with no action.
         let raised = self
             .store
-            .latest_watch_change(&crew.id)?
+            .latest_watch_result_change(&crew.id)?
             .is_some_and(|row| row.kind == "failing" && row.action == "needs_you");
         let planned = plan(&previous, &check, on_failing_template, raised, at);
         let mut action = planned.action;
@@ -400,14 +409,16 @@ impl Core {
     }
 }
 
-/// The event the watch tick fires a start with: `watch:<bucket>`. The tick passes it to `crew_background_start`, which builds
-/// the held row's key as `<crew>:<event>` (so `<crew>:watch:<bucket>`); the bucket claim is `watch:<crew>:<bucket>`.
-pub fn event_key(bucket: i64) -> String {
-    format!("watch:{bucket}")
+/// The event the watch tick fires a start with: `watch:<start>`. The tick passes it to `crew_background_start`, which builds
+/// the held row's key as `<crew>:<event>` (so `<crew>:watch:<start>`); the claim is `watch:<crew>:<start>`.
+pub fn event_key(start: i64) -> String {
+    format!("watch:{start}")
 }
 
-/// The watch's own schedule bucket, which the tick claims (`watch:<crew>:<bucket>`) and names its event with
-/// (`watch:<bucket>`).
-pub fn bucket_of(now: i64, hours: u32) -> i64 {
-    now.div_euclid(i64::from(hours) * 3600)
+/// The start, in unix seconds, of the `every_hours` window `now` falls in. The tick claims `watch:<crew>:<start>` and names its
+/// event `watch:<start>`. A start is comparable across intervals, so a person who changes `every_hours` is never held back
+/// by claims the old interval made: a window that starts after the newest claim checks, one that starts at or before it does not.
+pub fn window_start(now: i64, hours: u32) -> i64 {
+    let window = i64::from(hours) * 3600;
+    now.div_euclid(window) * window
 }

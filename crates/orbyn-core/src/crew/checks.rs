@@ -24,6 +24,8 @@ use crate::redaction::Redactor;
 const TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// The reason a command that hit its deadline carries; a watch reads it to say `timed out`.
 pub const RAN_OUT_OF_TIME: &str = "The check ran out of time and was stopped.";
+/// The reason a command that printed more than a check may buffer carries; a watch reads it to say `printed too much`.
+pub const TOO_MUCH_OUTPUT: &str = "The check printed too much output and was stopped.";
 /// The first words of the reason a command that could not start carries; a watch reads them to say `could not start`.
 pub const COULD_NOT_START: &str = "The check could not start:";
 /// The most a diff-size count reads of an untracked file.
@@ -144,7 +146,7 @@ pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
     let description = format!("{}: {}", kind_name(check), check.id);
     match check.typed_params() {
         Ok(CheckParams::Run(params)) => {
-            run_command(&params.run, params.expect_exit.unwrap_or(0), site, started).await
+            run_command(&params.run, params.expect_exit.unwrap_or(0), site, started, None).await
         }
         Ok(CheckParams::FileScope(params)) => {
             file_scope(&params.only, site, description, started).await
@@ -200,10 +202,32 @@ pub(crate) async fn run_line(run: &str, worktree: &Path, deadline: Instant) -> R
         deadline,
         base: None,
     };
-    run_command(run, 0, &site, Instant::now()).await
+    run_command(run, 0, &site, Instant::now(), None).await
 }
 
-async fn run_command(run: &str, expect: u32, site: &Site<'_>, started: Instant) -> Ran {
+/// [`run_line`] with a bound on what the command may print on each stream: a command over it is stopped with its whole process
+/// tree and answers an error whose reason is [`TOO_MUCH_OUTPUT`], so a periodic check cannot make the service buffer without limit.
+pub(crate) async fn run_line_capped(
+    run: &str,
+    worktree: &Path,
+    deadline: Instant,
+    cap: usize,
+) -> Ran {
+    let site = Site {
+        worktree,
+        deadline,
+        base: None,
+    };
+    run_command(run, 0, &site, Instant::now(), Some(cap)).await
+}
+
+async fn run_command(
+    run: &str,
+    expect: u32,
+    site: &Site<'_>,
+    started: Instant,
+    cap: Option<usize>,
+) -> Ran {
     let cwd = site.worktree;
     let allowed = TIMEOUT.min(site.deadline.saturating_duration_since(Instant::now()));
     if allowed.is_zero() {
@@ -224,18 +248,32 @@ async fn run_command(run: &str, expect: u32, site: &Site<'_>, started: Instant) 
         .kill_on_drop(true);
     crate::host::child_env::for_tool(command.as_std_mut());
     let output = async {
-        crate::host::process::ManagedChild::spawn(command)?
-            .output()
-            .await
+        let child = crate::host::process::ManagedChild::spawn(command)
+            .map_err(|why| format!("{COULD_NOT_START} {}", why.public_message()))?;
+        match cap {
+            None => child
+                .output()
+                .await
+                .map_err(|why| format!("{COULD_NOT_START} {}", why.public_message())),
+            Some(cap) => match child.output_capped(cap, cap).await {
+                Ok(done) => Ok(std::process::Output {
+                    status: done.status,
+                    stdout: done.stdout,
+                    stderr: done.stderr,
+                }),
+                Err(crate::host::process::CappedOutputError::TooLarge) => {
+                    Err(TOO_MUCH_OUTPUT.to_owned())
+                }
+                Err(crate::host::process::CappedOutputError::Io(why)) => {
+                    Err(format!("{COULD_NOT_START} {why}"))
+                }
+            },
+        }
     };
     let output = match tokio::time::timeout(allowed, output).await {
         Ok(Ok(output)) => output,
-        Ok(Err(why)) => {
-            return error(
-                run.to_owned(),
-                &format!("{COULD_NOT_START} {}", why.public_message()),
-                started,
-            );
+        Ok(Err(reason)) => {
+            return error(run.to_owned(), &reason, started);
         }
         Err(_) => {
             return error(run.to_owned(), RAN_OUT_OF_TIME, started);

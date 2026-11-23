@@ -395,10 +395,20 @@ impl Core {
                 tracing::warn!(%error, "the watch crews could not be read");
                 Vec::new()
             });
-        for crew in crews.into_iter().filter(|crew| crew.enabled) {
+        for listed in crews.into_iter().filter(|crew| crew.enabled) {
             if stop.is_cancelled() {
                 return;
             }
+            // The list was read before earlier checks of this pass, which may have taken minutes: read the crew again, so a watch
+            // the person turned off, changed or deleted in the meantime is not claimed or run on the old row.
+            let crew = match self.background_row(&listed.id) {
+                Ok(crew) if crew.enabled && crew.trigger_kind == "watch" => crew,
+                Ok(_) => continue,
+                Err(error) => {
+                    tracing::warn!(%error, crew = %listed.id, "a watch crew could not be read again; nothing checked");
+                    continue;
+                }
+            };
             let Some(hours) = every_hours(&crew) else {
                 tracing::warn!(crew = %crew.id, "a watch crew has no usable every_hours; nothing checked");
                 continue;
@@ -414,7 +424,7 @@ impl Core {
                     continue;
                 }
             };
-            let bucket = crate::crew::watch::bucket_of(now, hours);
+            let bucket = crate::crew::watch::window_start(now, hours);
             match self.store.latest_watch_bucket(&crew.id) {
                 Ok(Some(newest)) if bucket <= newest => continue,
                 Ok(_) => {}

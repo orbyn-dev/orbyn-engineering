@@ -129,7 +129,7 @@ pub struct WatchRaisedRow {
     pub error_streak: u32,
     pub last_checked_unix: Option<i64>,
     pub last_reason: Option<String>,
-    /// The newest change row's kind and action, when there is one.
+    /// The newest result change row's kind and action (a `turned_off` row is not one), when there is one.
     pub change_kind: Option<String>,
     pub change_action: Option<String>,
     pub change_at: Option<i64>,
@@ -1389,12 +1389,13 @@ impl Store {
         })
     }
 
-    /// The newest change row of a watch, if it has one: what the state it is in came from.
-    pub fn latest_watch_change(&self, crew: &str) -> Result<Option<WatchChangeRow>> {
+    /// The newest change row of a watch that records a result (`baseline`, `failing` or `passing`), if it has one: what the state
+    /// it is in came from. A `turned_off` row is history of the switch and says nothing about the result.
+    pub fn latest_watch_result_change(&self, crew: &str) -> Result<Option<WatchChangeRow>> {
         Ok(self
             .reader()
             .query_row(
-                "SELECT * FROM crew_watch_changes WHERE background_id = ?1 ORDER BY id DESC LIMIT 1",
+                "SELECT * FROM crew_watch_changes WHERE background_id = ?1 AND kind <> 'turned_off' ORDER BY id DESC LIMIT 1",
                 [crew],
                 watch_change_row,
             )
@@ -1437,7 +1438,8 @@ impl Store {
              FROM crew_watch_state s
              JOIN crew_background c ON c.id = s.background_id
              LEFT JOIN crew_watch_changes ch
-                ON ch.id = (SELECT MAX(id) FROM crew_watch_changes WHERE background_id = s.background_id)
+                ON ch.id = (SELECT MAX(id) FROM crew_watch_changes
+                            WHERE background_id = s.background_id AND kind <> 'turned_off')
              WHERE c.trigger_kind = 'watch' AND c.enabled = 1
                AND ((s.last_state = 'could_not_run' AND s.error_streak >= 3)
                     OR (s.last_result = 'fail' AND ch.kind = 'failing' AND ch.action = 'needs_you'))
