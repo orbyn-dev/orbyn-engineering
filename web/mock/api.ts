@@ -156,6 +156,8 @@ export function createMockApi(options: MockOptions = {}) {
   const hooks = new Set<string>(["task-hook"]);
   let failures: Failure[] = [];
   let clones: unknown[] = [];
+  /** Why the next clone ends failed, or null while clones succeed. */
+  let cloneError: string | null = null;
   /** The notes of the reviews sent from a pull request page, by number. */
   const reviewsSent = new Map<number, string[]>();
   /** The details reads since the scenario began: the limited scenarios answer the first in full and then hit the limit. */
@@ -227,6 +229,7 @@ export function createMockApi(options: MockOptions = {}) {
     preferenceOverrides = {};
     failures = [];
     clones = [];
+    cloneError = null;
     reviewsSent.clear();
     detailsReads = 0;
     delayMs = 0;
@@ -1034,6 +1037,13 @@ export function createMockApi(options: MockOptions = {}) {
       case "GET /api/clones":
         return { status: 200, body: clones };
       case "POST /api/clones": {
+        // A bad URL fails as the job starts, which is when the toast has to announce it.
+        if (cloneError !== null) {
+          const failed = { id: `c-${clones.length}`, url: data.url, name: null, path: null, state: "failed", project: null, error: cloneError, used_https: false, started_at: now() };
+          cloneError = null;
+          clones = [...clones, failed];
+          return { status: 202, body: failed };
+        }
         const project = newProject(String(data.url ?? "repo").split("/").at(-1)?.replace(".git", "") ?? "repo");
         const job = { id: `c-${clones.length}`, url: data.url, name: null, state: "done", project, error: null, used_https: false, started_at: now() };
         clones = [...clones, job];
@@ -1420,6 +1430,10 @@ export function createMockApi(options: MockOptions = {}) {
     /** Makes the next setup attempt end in the failed state. */
     failSetup() {
       failNextSetup = true;
+    },
+    /** Makes the next clone end failed, with the Git error a bad URL answers. */
+    failClone(message = "fatal: repository 'bad url with spaces' does not exist") {
+      cloneError = message;
     },
     /** Fails the given step of the next apply, once. */
     failUpdateStep(id: string) {
