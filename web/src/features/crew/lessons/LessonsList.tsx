@@ -5,7 +5,7 @@ import { toFailure } from "../../../lib/useAsync";
 import { Button } from "../../../ui/controls";
 import { navigate } from "../../../product/state/route";
 import type { Lesson, LessonFilter } from "./types";
-import { dayOf } from "../map/model";
+import { dayOf } from "../autopilot/approvals/ledger";
 import { ProjectChip } from "../escape/live/parts";
 import { Frame } from "../shared/Frame";
 import { Ic } from "../shared/parts";
