@@ -211,6 +211,8 @@ export function createMockApi(options: MockOptions = {}) {
   let tasks: ScheduledTask[] = [];
   let cursorSends = 0;
   let browserProfiles: { id: string; name: string; in_use: boolean }[] = [];
+  /** The thread each imported agent-history session became, by `engine:session_id`. */
+  const importedHistory = new Map<string, string>();
   /** Tasks whose webhook has an address; the token itself is never kept, as in the service. */
   const hooks = new Set<string>(["task-hook"]);
   let failures: Failure[] = [];
@@ -305,6 +307,7 @@ export function createMockApi(options: MockOptions = {}) {
     preferenceOverrides = {};
     failures = [];
     clones = [];
+    importedHistory.clear();
     cloneError = null;
     reviewsSent.clear();
     detailsReads = 0;
@@ -964,10 +967,20 @@ export function createMockApi(options: MockOptions = {}) {
             : { status: 200, body: result };
         }
         break;
-      case "GET /api/history":
-        return { status: 200, body: historyScan(Date.now()) };
-      case "POST /api/history":
-        return { status: 200, body: { thread_id: nextId("t"), imported: true } };
+      case "GET /api/history": {
+        // As the service reads them: a session whose folder was added since sits under that project (importable once it is trusted), and an imported one names its thread.
+        const scan = historyScan(Date.now());
+        return { status: 200, body: { ...scan, sessions: scan.sessions.map((session) => {
+          const project = session.project_id === null ? projects.find((entry) => entry.path === session.cwd) : undefined;
+          const placed = project ? { ...session, project_id: project.id, importable: project.trusted } : session;
+          return { ...placed, thread_id: importedHistory.get(`${session.engine}:${session.session_id}`) ?? null };
+        }) } };
+      }
+      case "POST /api/history": {
+        const thread_id = nextId("t");
+        importedHistory.set(`${String(data.engine)}:${String(data.session_id)}`, thread_id);
+        return { status: 200, body: { thread_id, imported: true } };
+      }
       case "GET /api/acp":
         return { status: 200, body: acpRegistry };
       case "GET /api/diagnostics":
