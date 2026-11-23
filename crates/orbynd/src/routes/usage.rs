@@ -47,7 +47,13 @@ async fn usage(
     }
     let settings = state.core.store.settings()?;
     let days = period(&query)?;
-    Ok(Json(state.core.usage.report(&settings, days).await?))
+    Ok(Json(
+        state
+            .core
+            .usage
+            .report(Some(&state.core.store), &settings, days)
+            .await?,
+    ))
 }
 
 /// Reads history and limits again from their sources, and rereads prices.
@@ -58,7 +64,13 @@ async fn refresh_usage(
     state.core.usage.forget();
     let settings = state.core.store.settings()?;
     let days = period(&query)?;
-    Ok(Json(state.core.usage.report(&settings, days).await?))
+    Ok(Json(
+        state
+            .core
+            .usage
+            .report(Some(&state.core.store), &settings, days)
+            .await?,
+    ))
 }
 
 fn forced(query: &HashMap<String, String>) -> bool {

@@ -511,7 +511,26 @@ standard rate, so its tokens stay unpriced. Each estimate is also split by token
 the same period's figures and chart during an explicit local refresh, dimming them
 after 150 ms while the scan is pending. A failed refresh keeps those figures and
 offers Retry. Changing the period clears them, and an earlier response cannot
-replace the new period or clear its pending state. Subscription
+replace the new period or clear its pending state. Cursor keeps no local history of its own: its spend is billed to the account, so the core keeps
+the account's billed events in `billed_events`, one row per event, keyed by a digest of the
+conversation, timestamp, model and counters because Cursor sends no event id. Nothing produces
+those events yet: the engine host answers `usage` with limits only and lists Cursor's
+`accountUsage.ts` as not added, so the table stays empty and no `cursor` row appears in
+`/api/usage` — the row is drawn only when the store holds events, never as an always-empty engine.
+Three states stay apart: no store and no rows are no row at all, and a period that holds none of
+the stored events is a scanned engine of nothing. When the host read lands it must hand over one
+complete window, as T3 reconciles against `totalUsageEventsCount`: a report replaces the rows of
+the days it names, so reading a window twice writes the same rows and a window of two events is
+stored as two, while an amount that settles later updates its row instead of adding one. A record
+that cannot be read as a billed event — no usage block, no timestamp or model that names a day,
+a negative counter — is dropped rather than counted as zero. The account's counters are separate,
+not inclusive: `inputTokens` is the uncached input, and cached input and cache writes are their own
+counters; reasoning stays inside `outputTokens`, which is where Cursor bills it, so no separate
+reasoning counter is kept or added. Cost has one source for every engine, the configured
+`model_prices`; the account's own billed cents are stored but not yet shown, because a day row
+costed from them would disagree with the model rows that are priced from the table.
+
+Subscription
 limits appear only where an engine reports them itself, as Codex does through
 `account/rateLimits/read`. Subscription reports are read fresh on every request:
 the supported drivers do not expose an authoritative current account/workspace binding
@@ -522,8 +541,10 @@ cannot answer after a newer read, a forget or an engine configuration change. No
 report is exposed through the no-I/O `cached_limits` path: Crew treats it as not reported,
 and scheduled near-limit checks still ask the engine afresh. Only Codex's `rateLimits`,
 `rateLimitsByLimitId` and plan leave the driver; its account ID, upsell copy and
-reset-credit offers are dropped; `?force=true` reads again and
-spends no model usage. `/api/limits` also gives one number per window length across
+reset-credit offers are dropped; `?force=true` reads again, spends no model usage and
+skips no window or fence, because no report is kept: a forced read takes the same
+fences and the same bounded provider read.
+`/api/limits` also gives one number per window length across
 engines, the highest used percentage, since that engine stops first. The overview excludes
 the Claude family, including named instances, before any status or usage probe; an explicit
 engine/thread limits read can still ask Claude.
@@ -3753,7 +3774,7 @@ every method, path and which routes need a credential.
 | `POST /api/settings/projects/icon` | `ChangeProjectIcon` → `Project[]`; selected structured icon/reset with membership and metadata revision compare-and-set |
 | `POST /api/settings/projects/rename` | `RenameSelectedProjects` → `Project[]`; selected names with membership and raw-name compare-and-set |
 | `POST /api/settings/project-scopes` | `ProjectScopesQuery` → `ProjectScopeCatalog`; full-app read, stale selections remain unavailable |
-| `POST /api/projects/clone`, `/create` | Make a folder, by default under `repo/`, or at `path`; `create` takes `readme` for a first commit |
+| `POST /api/projects/clone`, `/create` | Make a folder, by default under `repo/`, or at `path`; `create` takes `readme` for a first commit. Before filesystem or audit changes, `create` rejects names with path separators or control characters, empty names and dot components; Windows additionally rejects reserved characters and device names and names ending in a dot or space, checking the actual default slug or chosen folder leaf |
 | `PATCH /api/projects/:id` | `RenameProject`: the name shown; the folder stays |
 | `DELETE /api/projects/:id?delete_files=&confirm=` | `ProjectRemoval`: unregisters; `delete_files` is `400` unless Orbyn made the folder, and can be `409 project_has_work` |
 | `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home. Folders only, never a `.`-named one, and on Windows never one marked hidden or system and never a junction or link, which a person does not pick as a project and some of which loop when opened. A filesystem root, a Windows drive or a share, also lists the mounted drives that can be read, first, because nothing is above a root |

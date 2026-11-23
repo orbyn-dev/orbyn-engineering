@@ -156,6 +156,15 @@ pub(crate) const CREW_TURN_BUDGET: &str = "crew_turn_budget";
 /// Keys the service writes itself; a client edit names them only through their owner.
 const SERVICE_OWNED: &[&str] = &["default_theme_set_at"];
 
+/// The minutes-apart settings whose field in Settings › General shows a minimum of 1.
+const BACKGROUND_INTERVALS: [&str; 2] = [
+    "automatic_git_fetch_minutes",
+    "provider_health_refresh_minutes",
+];
+
+/// The fewest minutes those fields accept, matching the `min` each row draws.
+const INTERVAL_MIN_MINUTES: f64 = 1.0;
+
 /// A catalog key a client may write.
 fn writable(key: &str) -> Result<&'static Definition> {
     if SERVICE_OWNED.contains(&key) {
@@ -253,6 +262,18 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
                 "Quiet time is a whole number of seconds from 10 to 120.".into(),
             ));
         }
+    }
+    if fits
+        && BACKGROUND_INTERVALS.contains(&definition.key)
+        && value
+            .as_f64()
+            .is_some_and(|minutes| minutes < INTERVAL_MIN_MINUTES)
+    {
+        // The rows in Settings show `min: 1` on their fields; a client that sends 0
+        // would be stored and read back as a pause the field cannot show.
+        return Err(CoreError::Invalid(format!(
+            "The shortest background interval is {INTERVAL_MIN_MINUTES} minute."
+        )));
     }
     if fits {
         Ok(())
@@ -614,6 +635,23 @@ mod tests {
         assert!(check(budget, &json!(1.5)).is_err());
         assert!(check(budget, &json!("30")).is_err());
         assert!(check(budget, &json!(-1)).is_err());
+    }
+
+    #[test]
+    fn a_background_interval_is_at_least_a_minute() {
+        for key in BACKGROUND_INTERVALS {
+            let interval = definition(key).unwrap();
+            assert!(check(interval, &json!(0)).is_err(), "{key} accepted 0");
+            assert!(check(interval, &json!(-5)).is_err(), "{key} accepted -5");
+            assert!(
+                check(interval, &json!(1)).is_ok(),
+                "{key} refused its own min"
+            );
+            assert!(
+                check(interval, &json!(5)).is_ok(),
+                "{key} refused a normal value"
+            );
+        }
     }
 
     #[test]
