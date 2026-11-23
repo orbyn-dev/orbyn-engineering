@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use orbyn_contracts::{CrewPathPattern, LeaseMode};
+use orbyn_contracts::{CheckKind, CheckOutcome, CrewObject, CrewPathPattern, LeaseMode};
 use serde_json::{Value, json};
 
 use super::harness::{KEY_MARKER, Turn, World, bind, brief, key, report, world};
@@ -474,40 +474,39 @@ async fn an_in_flight_task_is_not_killed_by_the_crew_budget() {
 }
 
 /// The disk guard (KC4): a start is refused, with the free space in the reason, when the lead's volume has less than the
-/// person's floor, and nothing is started. A floor of 0 turns it off. The largest floor a person can set is 1000 GB, so a
-/// machine with more than that free cannot show a refusal and the test ends there.
+/// person's floor, and nothing is started. The default floor is 5 GB; faked free space lets this run on any machine.
 #[tokio::test]
-async fn a_start_under_the_disk_floor_is_refused_and_a_zero_floor_turns_it_off() {
+async fn a_start_under_the_disk_floor_is_refused_with_the_free_space() {
+    const GIB: u64 = 1024 * 1024 * 1024;
     let w = quiet().await;
     let cwd = w.core.store.thread(&w.lead).unwrap().cwd;
-    let free = crate::host::disk::free_bytes(std::path::Path::new(&cwd));
-    if free.is_none_or(|bytes| bytes >= 1000 * 1024 * 1024 * 1024) {
-        return;
-    }
-    w.core
-        .set_preferences(
-            None,
-            &BTreeMap::from([("crew_min_free_gb".to_owned(), json!(1000))]),
-        )
-        .unwrap();
+    let path = std::path::Path::new(&cwd);
+    crate::host::disk::set_free_for_test(path, Some(7 * GIB / 2));
     let (refused, error) = w.start(leased("src/a.txt"), key()).await;
-    assert!(error && refused["code"] == "not_authorized", "{refused}");
-    let message = refused["message"].as_str().unwrap();
-    assert!(
-        message.starts_with("Not enough free disk space to start a worker:")
-            && message.contains("the project folder")
-            && message.contains("1000.0 GB are needed"),
-        "{message}"
+    assert!(error, "the start was not refused: {refused}");
+    assert_eq!(refused["code"], "disk_low");
+    assert_eq!(refused["free_bytes"].as_u64(), Some(7 * GIB / 2));
+    assert_eq!(refused["floor_gb"].as_u64(), Some(5));
+    assert_eq!(
+        refused["message"],
+        "Not started: 3.5 GB free, Crew needs 5 GB. Free space and try again."
     );
     assert!(w.prompts.lock().unwrap().is_empty(), "nothing was started");
-    w.core
-        .set_preferences(
-            None,
-            &BTreeMap::from([("crew_min_free_gb".to_owned(), json!(0))]),
-        )
-        .unwrap();
+
+    crate::host::disk::set_free_for_test(path, Some(640 * 1024 * 1024));
+    let (refused, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(error, "the start was not refused: {refused}");
+    assert_eq!(refused["code"], "disk_low");
+    assert_eq!(refused["free_bytes"].as_u64(), Some(640 * 1024 * 1024));
+    assert_eq!(refused["floor_gb"].as_u64(), Some(5));
+    let message = refused["message"].as_str().unwrap();
+    assert!(message.contains("640 MB free"), "{message}");
+    assert!(w.prompts.lock().unwrap().is_empty(), "nothing was started");
+
+    crate::host::disk::set_free_for_test(path, Some(20 * GIB));
     let (answer, error) = w.start(leased("src/a.txt"), key()).await;
     assert!(!error, "{answer}");
+    crate::host::disk::set_free_for_test(path, None);
 }
 
 /// The budget is a device-local number measured per crew: a second crew has its own allowance,
@@ -601,4 +600,242 @@ async fn a_task_whose_first_prompt_is_queued_counts_a_turn() {
     assert!(error, "a queued start was counted as free: {refusal}");
     assert_eq!(refusal["code"], "not_authorized");
     assert_eq!(count(&w, "crew_tasks"), 1);
+}
+
+/// Writes the repository's rules file and commits it, so it is part of the commit a task starts from.
+fn crew_json(w: &World, text: &str) {
+    std::fs::create_dir_all(w.repo.join(".orbyn")).unwrap();
+    std::fs::write(w.repo.join(".orbyn/crew.json"), text).unwrap();
+    crate::testing::run_git(&w.repo, &["add", "-f", ".orbyn/crew.json"]);
+    super::review_support::commit_all(&w.repo, "repository checks");
+}
+
+/// The key a task was started with, as the store holds it.
+fn stored_key(w: &World, task: &str) -> orbyn_contracts::AnswerKey {
+    w.core.store.crew_answer_key(task).unwrap().unwrap()
+}
+
+/// Issue #795: every task that writes inherits the repository's own checks at the commit it starts from, and
+/// the task runs them, so a lead does not have to declare one and a worker cannot lower the bar.
+#[tokio::test]
+async fn a_task_that_writes_inherits_the_repositorys_checks_at_its_start() {
+    let w = world(
+        true,
+        Arc::new(|_, root| {
+            std::fs::write(root.join("src/lib.txt"), "fn parse_duration() {}\n").unwrap();
+            Turn::Report(report("done"))
+        }),
+    )
+    .await;
+    crew_json(&w, r#"{"checks":[{"run":"echo repository-check"}]}"#);
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let stored = stored_key(&w, &id);
+    let inherited: Vec<_> = stored
+        .checks
+        .iter()
+        .filter(|check| matches!(check.kind, CheckKind::RepoRequired))
+        .collect();
+    assert_eq!(inherited.len(), 1, "{:?}", stored.checks);
+    assert_eq!(inherited[0].id.as_str(), "chk-repo-required");
+    assert_eq!(
+        inherited[0].params["name"], "inherited",
+        "the inherited check is not marked as inherited"
+    );
+    // Nothing the lead declared was dropped, and the key's id is the hash of what now runs.
+    assert_eq!(stored.checks.len(), 4, "{:?}", stored.checks);
+    assert_eq!(
+        stored.id,
+        CrewObject::AnswerKey(stored.clone()).computed_id().unwrap()
+    );
+    // The inherited check runs in the task and records its Evidence.
+    w.until_state(&id, "passed").await;
+    let evidence = w.core.store.crew_evidence(&id).unwrap();
+    let ran = evidence
+        .iter()
+        .find(|one| one.check.as_str() == "chk-repo-required")
+        .unwrap_or_else(|| panic!("the inherited check did not run: {evidence:?}"));
+    assert_eq!(ran.outcome, CheckOutcome::Pass);
+    assert_eq!(ran.command.as_str(), "repo_required: chk-repo-required");
+    assert!(
+        ran.excerpt.contains("echo repository-check"),
+        "the log does not show the repository's own check: {}",
+        ran.excerpt
+    );
+    w.core.shutdown().await;
+}
+
+/// Issue #795: a repository that declares no check, or no rules file at all, leaves the key as the lead sent it.
+#[tokio::test]
+async fn a_repository_that_declares_no_check_inherits_nothing() {
+    for rules in [None, Some(r#"{"checks":[]}"#)] {
+        let w = quiet().await;
+        if let Some(rules) = rules {
+            crew_json(&w, rules);
+        }
+        let (answer, error) = w.start(brief(json!({})), key()).await;
+        assert!(!error, "{answer}");
+        let id = answer["task"].as_str().unwrap().to_owned();
+        let stored = stored_key(&w, &id);
+        assert_eq!(stored.checks.len(), 3, "{rules:?}: {:?}", stored.checks);
+        assert!(
+            !stored
+                .checks
+                .iter()
+                .any(|check| matches!(check.kind, CheckKind::RepoRequired)),
+            "{rules:?}: an empty repository config added a check"
+        );
+        w.core.shutdown().await;
+    }
+}
+
+/// Issue #795: a key that already runs the repository's checks keeps its own check rather than gaining a second.
+#[tokio::test]
+async fn a_key_that_already_runs_the_repositorys_checks_gets_no_second_one() {
+    let w = quiet().await;
+    crew_json(&w, r#"{"checks":[{"run":"echo repository-check"}]}"#);
+    let mut declared = key();
+    declared["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-repo", "kind": "repo_required", "params": {},
+        "proves": "The repository's own checks pass.",
+    }));
+    let (answer, error) = w.start(brief(json!({})), declared).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let stored = stored_key(&w, &id);
+    let repo_required: Vec<_> = stored
+        .checks
+        .iter()
+        .filter(|check| matches!(check.kind, CheckKind::RepoRequired))
+        .collect();
+    assert_eq!(repo_required.len(), 1, "{:?}", stored.checks);
+    assert_eq!(
+        repo_required[0].id.as_str(),
+        "chk-repo",
+        "the start replaced the lead's own check"
+    );
+    w.core.shutdown().await;
+}
+
+/// Issue #795: repository rules only add or tighten (docs/crew.md, "Rules"), so a check the brief declares
+/// stays beside the inherited one and is never removed to make room for it.
+#[tokio::test]
+async fn a_briefs_own_check_coexists_with_the_inherited_one() {
+    let w = quiet().await;
+    crew_json(&w, r#"{"checks":[{"run":"echo repository-check"}]}"#);
+    let mut declared = key();
+    declared["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-same-line", "kind": "command",
+        "params": { "run": "echo repository-check" },
+        "proves": "The same line passes for the brief.",
+    }));
+    let (answer, error) = w.start(brief(json!({})), declared).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let stored = stored_key(&w, &id);
+    let ids: Vec<&str> = stored
+        .checks
+        .iter()
+        .map(|check| check.id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "chk-scope",
+            "chk-run",
+            "chk-probe",
+            "chk-same-line",
+            "chk-repo-required"
+        ],
+        "{ids:?}"
+    );
+    w.core.shutdown().await;
+}
+
+/// Issue #795: a review writes nothing, so it runs no repository check; the reviewed work's own key carries
+/// them. A key that already runs them needs no second one either.
+#[tokio::test]
+async fn a_review_task_inherits_no_repository_checks() {
+    use crate::crew::stamp::Stamper;
+    use crate::crew::start::needs_repo_checks;
+    use crate::crew::tool::stamp_now;
+    use orbyn_contracts::{CrewId, CrewMember, CrewToken};
+
+    let w = quiet().await;
+    let lead = w.core.store.thread(&w.lead).unwrap();
+    let stamper = Stamper {
+        crew_id: CrewId::new(lead.id.clone()).unwrap(),
+        engine: CrewToken::new("alpha").unwrap(),
+        member: CrewMember::new("lead-01").unwrap(),
+        now: stamp_now().unwrap(),
+    };
+    let writing = stamper.brief(&brief(json!({}))).unwrap();
+    let writing_key = stamper.answer_key(&key(), &writing.id).unwrap();
+    assert!(needs_repo_checks(&writing, &writing_key));
+    let review = stamper
+        .brief(&brief(
+            json!({ "kind": "review", "files": [], "allowed_effects": ["read_repo"] }),
+        ))
+        .unwrap();
+    let review_key = stamper.answer_key(&key(), &review.id).unwrap();
+    assert!(!needs_repo_checks(&review, &review_key));
+    let mut declared = key();
+    declared["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-repo", "kind": "repo_required", "params": {},
+        "proves": "The repository's own checks pass.",
+    }));
+    let declared_key = stamper.answer_key(&declared, &writing.id).unwrap();
+    assert!(!needs_repo_checks(&writing, &declared_key));
+    // A fix key's internal byte comparison has the same kind but runs no repository command: it does not count as coverage.
+    let mut fix = key();
+    fix["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-fix-touched", "kind": "repo_required", "params": { "name": "crew-fix-touched" },
+        "proves": "The fix touched what it said.",
+    }));
+    let fix_key = stamper.answer_key(&fix, &writing.id).unwrap();
+    assert!(needs_repo_checks(&writing, &fix_key));
+    w.core.shutdown().await;
+}
+
+/// Issue #795: a rules file that cannot be read refuses the start, rather than starting a task whose bar
+/// nobody can read (docs/crew.md: a broken rule file is never an empty rule set).
+#[tokio::test]
+async fn a_repository_check_file_that_cannot_be_read_refuses_the_start() {
+    let w = quiet().await;
+    crew_json(&w, "{");
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(error, "{answer}");
+    assert_eq!(answer["code"], "invalid_object");
+    assert!(
+        answer["message"]
+            .as_str()
+            .unwrap()
+            .contains(".orbyn/crew.json"),
+        "{answer}"
+    );
+    assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
+    w.core.shutdown().await;
+}
+
+/// Issue #795: a check that declares the `when` this version does not read refuses the start, so a condition is
+/// never silently dropped and its check never runs unconditionally.
+#[tokio::test]
+async fn a_repository_that_declares_a_check_condition_refuses_the_start() {
+    let w = quiet().await;
+    crew_json(
+        &w,
+        r#"{"checks":[{"run":"echo repository-check","when":{"paths":["src/**"]}}]}"#,
+    );
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(error, "{answer}");
+    assert!(
+        answer["message"]
+            .as_str()
+            .unwrap()
+            .contains("checks[].when"),
+        "{answer}"
+    );
+    assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
+    w.core.shutdown().await;
 }

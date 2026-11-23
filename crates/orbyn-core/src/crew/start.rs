@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use orbyn_contracts::{
-    AnswerKey, Brief, CrewError, CrewHash, CrewId, CrewMember, CrewObject, CrewToken, DelegateTask,
-    ErrorCode, ModelSelection, RouteDecision, WorkerObject,
+    AnswerKey, Brief, CheckKind, CrewCheck, CrewError, CrewHash, CrewId, CrewMember, CrewObject,
+    CrewToken, DelegateTask, ErrorCode, ModelSelection, RouteDecision, WorkerObject,
 };
 use serde_json::{Value, json};
 
@@ -64,6 +64,81 @@ pub(super) fn member_of(prefix: &str, brief: &Brief) -> Result<CrewMember, CrewE
     CrewMember::new(format!("{prefix}-{}", &brief.id.as_str()[7..15])).map_err(invalid)
 }
 
+/// The check a start adds for the repository's own checks, and the label its log line carries.
+const INHERITED_CHECK: &str = "chk-repo-required";
+const INHERITED_LABEL: &str = "inherited";
+
+/// Whether this start still has to inherit the repository's own checks (issue #795): every task that writes
+/// gets them (docs/crew.md, "Verification without limits"), a review writes nothing so it runs none, and a key
+/// that already runs them keeps its own rather than gaining a second.
+pub(super) fn needs_repo_checks(brief: &Brief, key: &AnswerKey) -> bool {
+    !is_reviewer(brief)
+        && !key
+            .checks
+            .iter()
+            .any(|check| {
+                // The fix key's byte comparison is a `repo_required` kind too, but it runs no repository command.
+                matches!(check.kind, CheckKind::RepoRequired)
+                    && check.id.as_str() != "chk-fix-touched"
+                    && check.params["name"] != "crew-fix-touched"
+            })
+}
+
+/// Adds the repository's own checks to the key of a task that writes, at the commit it starts from
+/// (issue #795). One `repo_required` check is added, marked [`INHERITED_LABEL`]; it reads the file at that
+/// commit through [`super::autopilot::merge::repo_checks`], the reader the verifier and the merge queue also
+/// use, so a worker's edit to the file cannot lower the bar. The file's lines are not copied into the key,
+/// which is why the check reads them where they are trusted. A repository that declares no check, and a
+/// checkout with no starting commit to read them at, add nothing.
+async fn inherit_repo_checks(
+    thread: &orbyn_contracts::Thread,
+    brief: &Brief,
+    key: &mut AnswerKey,
+    base: Option<&str>,
+) -> Result<(), CrewError> {
+    if !needs_repo_checks(brief, key) {
+        return Ok(());
+    }
+    // No starting commit is nothing to inherit, by decision rather than by omission: with no commit there is no
+    // committed `.orbyn/crew.json`, so the checkout has declared no check and nothing is dropped. (An explicit
+    // `repo_required` check reports that missing commit as an error when it runs.) A checkout that is not a Git
+    // repository never reaches here, because the index check refuses that start.
+    let Some(base) = base else {
+        return Ok(());
+    };
+    let declared = super::autopilot::merge::repo_checks(std::path::Path::new(&thread.cwd), base)
+        .await
+        .map_err(|why| invalid(why.public_message()))?;
+    if declared.is_empty() {
+        return Ok(());
+    }
+    let inherited: CrewCheck = serde_json::from_value(json!({
+        "id": free_check_id(key, INHERITED_CHECK),
+        "kind": "repo_required",
+        "params": { "name": INHERITED_LABEL },
+        "proves": "The repository's own checks from .orbyn/crew.json pass at the commit this task started from.",
+        "does_not_prove": "That the scripts those checks run were left as the worker found them.",
+    }))
+    .map_err(|why| invalid(format!("the inherited repository check: {why}")))?;
+    inherited.validate()?;
+    key.checks.push(inherited);
+    // A key's id is its content's hash, taken again now that the start added a check to it.
+    key.id = CrewObject::AnswerKey(key.clone()).computed_id()?;
+    Ok(())
+}
+
+/// `base`, or the first free `base-N`: the lead's own key may already use the inherited check's id.
+fn free_check_id(key: &AnswerKey, base: &str) -> String {
+    let taken = |id: &str| key.checks.iter().any(|check| check.id.as_str() == id);
+    if !taken(base) {
+        return base.to_owned();
+    }
+    (2..=key.checks.len() + 2)
+        .map(|n| format!("{base}-{n}"))
+        .find(|id| !taken(id))
+        .unwrap_or_else(|| format!("{base}-{}", key.checks.len() + 2))
+}
+
 /// Who is calling a Crew tool.
 pub(super) enum Caller {
     Lead,
@@ -73,22 +148,28 @@ pub(super) enum Caller {
     },
 }
 
-/// Why a worker cannot start on the volumes it uses: the first volume below `floor` names itself.
-/// A volume whose free space cannot be read never blocks.
-pub(super) fn low_disk_reason(volumes: &[(&str, Option<u64>)], floor: u64) -> Option<String> {
-    for &(label, free) in volumes {
-        let Some(free) = free else {
-            continue;
-        };
-        if free < floor {
-            return Some(format!(
-                "Not enough free disk space to start a worker: {:.1} GB free on {label}; at least {:.1} GB are needed. Free some space, then start the task again.",
-                crate::host::disk::gib(free),
-                crate::host::disk::gib(floor)
-            ));
-        }
+/// Why a worker cannot start on a volume with `free` bytes: below the `floor_gb` floor it
+/// carries the free space. A volume whose free space cannot be read never blocks.
+pub(super) fn low_disk_reason(free: Option<u64>, floor_gb: u64) -> Option<String> {
+    let free = free?;
+    if free >= floor_gb.saturating_mul(1024 * 1024 * 1024) {
+        return None;
     }
-    None
+    Some(format!(
+        "Not started: {} free, Crew needs {} GB. Free space and try again.",
+        free_text(free),
+        floor_gb
+    ))
+}
+
+/// `bytes` as the disk refusal says it: whole MiB below a gibibyte, else GiB to one decimal.
+pub(super) fn free_text(bytes: u64) -> String {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    if bytes < GIB {
+        return format!("{} MB", bytes / (1024 * 1024));
+    }
+    let tenths = u128::from(bytes) * 10 / u128::from(GIB);
+    format!("{}.{} GB", tenths / 10, tenths % 10)
 }
 
 impl Core {
@@ -312,6 +393,8 @@ impl Core {
         // Before anything is stored, routed or started: a crew that spent its turn budget starts
         // no new task. It never stops a task already running.
         self.refuse_spent_crew_budget(&brief)?;
+        // Before anything is stored, routed or started: a lead whose volume is low on disk starts no worker.
+        self.refuse_low_disk(thread).await?;
         self.crew_start_bus_limits(&bus_lead).await?;
         let now = crate::util::unix_now();
         // Before anything is stored: when no allowed engine is left because the run start would refuse the ones that are, the
@@ -342,6 +425,12 @@ impl Core {
         // task. They are read before the task exists so a refusal that needs the router's answer (the daily budget) sees
         // exactly the route the task would get.
         let (base, classes) = self.crew_path_classes(thread, &brief, true).await;
+        // Issue #795: the repository's own checks join the key of every task that writes, read at the commit
+        // this task starts from. It is added here, after H1, H2 and H11 above, and before anything is stored:
+        // the check holds fixed text and none of the file's lines, so no text from the repository can reach
+        // the key, the brief or a secret scan, and the file is read again at that commit when it runs.
+        let mut key = key;
+        inherit_repo_checks(thread, &brief, &mut key, base.as_deref()).await?;
         let trigger = links.crew_started.then(|| {
             links.trigger.clone().unwrap_or_else(|| {
                 tracing::warn!(
@@ -673,9 +762,8 @@ impl Core {
         prompt: Option<String>,
         base: Option<&str>,
     ) -> Result<Value, CrewError> {
-        // Before anything is started: the worker's folder needs room, and a worker that cannot be
-        // restricted is refused; the task shows the reason in the "refused by the app" item.
-        self.refuse_low_disk(lead).await?;
+        // Before anything is started: a worker that cannot be restricted is refused; the task
+        // shows the reason in the "refused by the app" item.
         self.refuse_unrestricted_worker(&decision.engine).await?;
         let prompt = match prompt {
             Some(text) => text,
@@ -803,11 +891,11 @@ impl Core {
         Ok(thread)
     }
 
-    /// Refuses a worker when the project's volume has less free space than the
-    /// `crew_min_free_gb` preference (default 5 GB; 0 is no floor). A volume that cannot be read
-    /// does not block the start.
+    /// Refuses a start when the volume that holds the lead thread's folder has less free space than the
+    /// `crew_min_free_gb` preference (default 5 GB; a stored 0 from an old install is 5 GB now). A volume
+    /// that cannot be read does not block the start.
     async fn refuse_low_disk(&self, lead: &orbyn_contracts::Thread) -> Result<(), CrewError> {
-        let gigabytes = match self.preference(CREW_MIN_FREE_GB, None) {
+        let floor_gb = match self.preference(CREW_MIN_FREE_GB, None) {
             Ok(value) => value.as_u64(),
             Err(error) => {
                 tracing::warn!(
@@ -817,22 +905,17 @@ impl Core {
                 None
             }
         }
+        .filter(|gigabytes| *gigabytes > 0)
         .unwrap_or(5);
-        if gigabytes == 0 {
+        let cwd = std::path::PathBuf::from(&lead.cwd);
+        let free = tokio::task::spawn_blocking(move || crate::host::disk::free_bytes(&cwd))
+            .await
+            .map_err(|error| invalid(error.to_string()))?;
+        let Some(free) = free else {
             return Ok(());
-        }
-        let floor = gigabytes.saturating_mul(1024 * 1024 * 1024);
-        let project_dir = std::path::PathBuf::from(&lead.cwd);
-        let volumes = tokio::task::spawn_blocking(move || {
-            [(
-                "the project folder",
-                crate::host::disk::free_bytes(&project_dir),
-            )]
-        })
-        .await
-        .map_err(|error| invalid(error.to_string()))?;
-        match low_disk_reason(&volumes, floor) {
-            Some(reason) => Err(CrewError::new(ErrorCode::NotAuthorized, reason)),
+        };
+        match low_disk_reason(Some(free), floor_gb) {
+            Some(reason) => Err(CrewError::disk_low(reason, free, floor_gb)),
             None => Ok(()),
         }
     }

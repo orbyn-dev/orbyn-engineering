@@ -41,13 +41,6 @@ export function listTextGenerators(project: string | null, signal?: AbortSignal)
   return request<TextGenerators>("GET", project === null ? "/api/text-generators" : `/api/text-generators?project=${q(project)}`, undefined, signal);
 }
 
-/** One engine's model, written through the ordinary preferences route; the service merges the engine entries. */
-export function saveTextGeneratorModel(project: string | null, engine: string, model: string) {
-  return request("PUT", project === null ? "/api/preferences" : `/api/projects/${q(project)}/preferences`, {
-    values: { text_generation_models: { [engine]: model } },
-  });
-}
-
 export { queryPreferences, updatePreferences } from "../../api/preferences";
 
 export function queryProjectScopes(body: unknown, signal?: AbortSignal) {

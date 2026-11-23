@@ -9,8 +9,9 @@
 use std::path::Path;
 
 use orbyn_contracts::{
-    AnswerKey, CheckOutcome, CrewAuthor, CrewCommit, CrewError, CrewHash, CrewId, CrewObject,
-    CrewShortText, ErrorCode, Evidence, Gate, GateDecider, GateDecision, GateStage, ResultCheck,
+    AnswerKey, CheckKind, CheckOutcome, CrewAuthor, CrewCheck, CrewCommit, CrewError, CrewHash,
+    CrewId, CrewObject, CrewShortText, ErrorCode, Evidence, Gate, GateDecider, GateDecision,
+    GateStage, ResultCheck,
 };
 use sha2::{Digest, Sha256};
 
@@ -19,7 +20,7 @@ use super::guard::{key_needles, redact, refuse_leak, refuse_secret, withhold};
 use super::leases::{core_author, internal, timestamp};
 use super::protect::{Snapshot, protected_changes};
 use crate::app::Core;
-use crate::store::{CrewRun, CrewTask};
+use crate::store::{CrewRun, CrewTask, ManualCheckState};
 
 const ZERO_COMMIT: &str = "0000000000000000000000000000000000000000";
 const NOT_PROVEN: &str = "Anything this check does not run.";
@@ -46,17 +47,25 @@ pub struct Judgement {
     pub failures: Vec<Failed>,
     /// Checks this version does not run, so the result never implies more than was checked.
     pub not_verified: Vec<String>,
+    /// The `manual` checks nobody has decided yet, by id: the task waits for a person and must not be judged either way.
+    pub awaiting: Vec<String>,
     pub passes: usize,
 }
 
 impl Judgement {
+    /// Nothing failed, at least one check passed, and no check is still waiting for a person.
     pub fn passed(&self) -> bool {
-        self.failures.is_empty() && self.passes > 0
+        self.failures.is_empty() && self.passes > 0 && self.awaiting.is_empty()
     }
 
     /// Nothing failed, and nothing passed either: every check was one this version cannot run.
     pub fn undecided(&self) -> bool {
-        self.failures.is_empty() && self.passes == 0
+        self.failures.is_empty() && self.passes == 0 && self.awaiting.is_empty()
+    }
+
+    /// A check waits for a person's decision: the task parks instead of passing or failing.
+    pub fn waiting(&self) -> bool {
+        !self.awaiting.is_empty()
     }
 
     /// A hash of the failures, so the loop guard can tell the same failure from another: the
@@ -131,6 +140,63 @@ fn refused_check(check: &orbyn_contracts::CrewCheck, rule: &str) -> Ran {
         duration_ms: 0,
         reason: Some(why),
         names: Vec::new(),
+    }
+}
+
+/// One `manual` check of the key: the person's stored decision once they made it, and otherwise the wait for one. A wait parks the check
+/// in `crew_manual_checks` and is listed on the judgement's `awaiting`, so the task holds rather than passing on the other checks or
+/// failing on a check nobody ran. A person's own words go only into the worker-facing reason, where the usual leak and secret checks
+/// apply; no Evidence excerpt carries them, and the pass and fail cases log nothing of their own.
+fn manual_check(
+    core: &Core,
+    task: &CrewTask,
+    check: &CrewCheck,
+    verdict: &mut Judgement,
+) -> Result<Ran, CrewError> {
+    let held = core
+        .store
+        .crew_manual_check(&task.id, check.id.as_str())
+        .map_err(internal)?;
+    let (decided, note) = match held {
+        Some(row) => (row.state, row.note),
+        None => (ManualCheckState::Awaiting, None),
+    };
+    let ran = |outcome: CheckOutcome, command: String| Ran {
+        outcome,
+        exit_code: None,
+        command,
+        log: String::new(),
+        duration_ms: 0,
+        reason: None,
+        names: Vec::new(),
+    };
+    match decided {
+        ManualCheckState::Passed => Ok(ran(
+            CheckOutcome::Pass,
+            format!("manual: {} checked by a person", check.id),
+        )),
+        ManualCheckState::Failed => {
+            let why = note
+                .filter(|text| !text.trim().is_empty())
+                .unwrap_or_else(|| "A person checked this and it does not hold.".to_owned());
+            let mut failed = ran(
+                CheckOutcome::Fail,
+                format!("manual: {} checked by a person", check.id),
+            );
+            failed.reason = Some(why);
+            failed.names = vec![check.id.as_str().to_owned()];
+            Ok(failed)
+        }
+        ManualCheckState::Awaiting => {
+            core.store
+                .park_manual_check(&task.id, check.id.as_str(), crate::util::unix_now())
+                .map_err(internal)?;
+            verdict.awaiting.push(check.id.as_str().to_owned());
+            Ok(ran(
+                CheckOutcome::Skipped,
+                format!("manual: {} waits for a person", check.id),
+            ))
+        }
     }
 }
 
@@ -256,6 +322,7 @@ impl Core {
             evidence: Vec::new(),
             failures: Vec::new(),
             not_verified: Vec::new(),
+            awaiting: Vec::new(),
             passes: 0,
         };
         // N7, H9 and H11: if the worker changed a file the checks use, nothing is run. The
@@ -406,6 +473,9 @@ impl Core {
                             check.params["note"].as_str().unwrap_or(""),
                             &site,
                         )
+                    } else if check.kind == CheckKind::Manual {
+                        // A check only a person can make: their stored answer, or the wait for one.
+                        manual_check(self, task, check, &mut verdict)?
                     } else {
                         run_check(check, &site).await
                     }
@@ -474,7 +544,12 @@ impl Core {
                 }),
             }
         }
-        if rerun.is_none() && !verdict.undecided() && !verdict.evidence.is_empty() {
+        // A check waiting for a person decides nothing yet: the checks gate is written once the wait is answered.
+        if rerun.is_none()
+            && !verdict.undecided()
+            && !verdict.evidence.is_empty()
+            && !verdict.waiting()
+        {
             self.store_checks_gate(task, key, &run_id, &verdict)?;
         }
         Ok(verdict)

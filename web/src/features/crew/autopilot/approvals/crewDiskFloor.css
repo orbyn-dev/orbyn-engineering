@@ -1,0 +1,55 @@
+/* Settings › Crew: the free-space floor (kc4-low-disk-floor-setting and its error, saved, failed
+   and narrow frames). A plain text field, its unit, Save and the saved word; every value is an app
+   token. */
+.crew-floor-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.crew-floor-field {
+  width: 64px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--color-sunken);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  text-align: right;
+}
+
+.crew-floor-field:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+.crew-floor-field::placeholder {
+  color: var(--color-muted);
+  text-align: left;
+}
+
+.crew-floor-unit {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.crew-floor-saved {
+  color: var(--color-green);
+  font-size: 12px;
+}
+
+.crew-floor-error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .crew-floor-control {
+    justify-content: flex-start;
+  }
+}

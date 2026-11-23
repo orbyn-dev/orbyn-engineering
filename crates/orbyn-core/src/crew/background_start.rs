@@ -124,7 +124,7 @@ async fn write_entries(root: &std::path::Path) -> Result<Vec<String>> {
 
 /// A refusal from the start, as the plain sentence a person reads.
 fn refusal(error: CrewError) -> CoreError {
-    if error.code == ErrorCode::NotAuthorized {
+    if matches!(error.code, ErrorCode::NotAuthorized | ErrorCode::DiskLow) {
         CoreError::PolicyDenied(error.message)
     } else {
         CoreError::Invalid(error.message)

@@ -3,4 +3,4 @@
 /**
  * The tool refusals of SPEC.md section 9.
  */
-export type ErrorCode = "invalid_object" | "unsupported_version" | "id_mismatch" | "secret_detected" | "answer_key_forbidden" | "protected_path_conflict" | "unknown_tool" | "not_authorized" | "depth_exceeded" | "run_ended" | "hop_limit_exceeded" | "post_limit_exceeded" | "lease_conflict" | "lease_not_held" | "lease_expired" | "board_conflict" | "gate_needs_evidence" | "invalid_transition" | "invalid_token" | "unknown_member";
+export type ErrorCode = "invalid_object" | "unsupported_version" | "id_mismatch" | "secret_detected" | "answer_key_forbidden" | "protected_path_conflict" | "unknown_tool" | "not_authorized" | "depth_exceeded" | "run_ended" | "hop_limit_exceeded" | "post_limit_exceeded" | "lease_conflict" | "lease_not_held" | "lease_expired" | "board_conflict" | "gate_needs_evidence" | "invalid_transition" | "invalid_token" | "unknown_member" | "disk_low";

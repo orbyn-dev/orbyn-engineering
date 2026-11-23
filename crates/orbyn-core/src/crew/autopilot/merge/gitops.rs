@@ -404,8 +404,22 @@ struct Rules {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Entry {
     run: String,
+    /// Advertised by `docs/crew.md`: `checks` hold a `run` and a `when`. The condition is not implemented
+    /// (issue #795), and a verdict that ignores it would run the check unconditionally, so it is read here
+    /// only to refuse it by name rather than let it vanish.
+    /// `Some(None)` is an explicit `"when": null`: declared, so refused like any other value.
+    #[serde(default, deserialize_with = "declared")]
+    when: Option<Option<serde_json::Value>>,
+}
+
+/// Keeps a present key apart from an absent one: serde reads `null` as `None`, which would let a declared `when` pass.
+fn declared<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<serde_json::Value>>, D::Error> {
+    Option::<serde_json::Value>::deserialize(deserializer).map(Some)
 }
 
 /// The `checks` of `.orbyn/crew.json` at `commit`: the repository's own checks, trusted at a commit the crew did not write.
@@ -424,6 +438,14 @@ pub async fn repo_checks(repo: &Path, commit: &str) -> Result<Vec<String>> {
     }
     let rules: Rules = serde_json::from_str(&text(&shown))
         .map_err(|e| CoreError::Invalid(format!("{file} is not valid: {e}")))?;
+    // A condition this version does not read is refused, never ignored: running the check regardless is the one
+    // outcome the repository did not ask for, and it would look enforced.
+    if rules.checks.iter().any(|entry| entry.when.is_some()) {
+        return Err(CoreError::Invalid(format!(
+            "{file}: checks[].when is not implemented yet, so a conditional check would run unconditionally; \
+             remove the condition, or wait for the merge queue and the verifier to read it"
+        )));
+    }
     Ok(rules.checks.into_iter().map(|c| c.run).collect())
 }
 
@@ -513,6 +535,52 @@ mod tests {
         let (paths, lines) = diff_facts(&repo, &before, &candidate).await.unwrap();
         assert_eq!(paths, ["feature.txt"]);
         assert_eq!(lines, 2);
+    }
+
+    /// Issue #795: a check that declares the `when` this version does not read is refused by name, never run
+    /// unconditionally. The verifier and the merge queue both read this one function.
+    #[tokio::test]
+    async fn a_declared_check_condition_is_refused_rather_than_ignored() {
+        let repo = repo("when");
+        let rules = |text: &str| {
+            std::fs::create_dir_all(repo.join(".orbyn")).unwrap();
+            std::fs::write(repo.join(".orbyn/crew.json"), text).unwrap();
+            run_git(&repo, &["add", ".orbyn/crew.json"]);
+            run_git(
+                &repo,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@example.com",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "rules",
+                ],
+            );
+        };
+        rules(r#"{"checks":[{"run":"exit 0"}]}"#);
+        let head = rev(&repo, "HEAD").await.unwrap();
+        assert_eq!(repo_checks(&repo, &head).await.unwrap(), ["exit 0"]);
+        // A condition is refused, with the reason a person can act on.
+        rules(r#"{"checks":[{"run":"exit 0","when":{"paths":["src/**"]}}]}"#);
+        let head = rev(&repo, "HEAD").await.unwrap();
+        let why = repo_checks(&repo, &head)
+            .await
+            .unwrap_err()
+            .public_message();
+        assert!(why.contains("checks[].when"), "{why}");
+        assert!(why.contains("not implemented"), "{why}");
+        // An explicit null is a declared condition too; an absent one is fine.
+        rules(r#"{"checks":[{"run":"exit 0","when":null}]}"#);
+        let head = rev(&repo, "HEAD").await.unwrap();
+        assert!(repo_checks(&repo, &head).await.is_err());
+        // Any other field of a check is refused too: it is not silently read as a check with no condition.
+        rules(r#"{"checks":[{"run":"exit 0","branch":"main"}]}"#);
+        let head = rev(&repo, "HEAD").await.unwrap();
+        assert!(repo_checks(&repo, &head).await.is_err());
+        let _ = std::fs::remove_dir_all(&repo);
     }
 
     #[tokio::test]

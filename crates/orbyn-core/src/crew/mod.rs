@@ -29,6 +29,7 @@ mod index_flags;
 mod leases;
 pub(crate) mod lifecycle;
 mod persist;
+mod person_check;
 mod protect;
 mod recover;
 mod report;

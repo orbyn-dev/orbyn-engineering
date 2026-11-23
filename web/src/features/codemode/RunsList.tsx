@@ -21,6 +21,16 @@ const STATUS_WORDS = new Map<string, { label: string; tone: "run" | "wait" | "do
 /** A status the list does not know is shown as Unknown, never as a success. */
 const statusOf = (status: string) => STATUS_WORDS.get(status) ?? { label: "Unknown", tone: "unknown" as const };
 
+/**
+ * The word for a run. A cancelled run was stopped by the person, so it is not drawn as a failure, and a lost one was
+ * interrupted by a restart; every other error, and an error whose kind was not recorded, stays Error.
+ */
+function wordOf(run: CodeRunSummary) {
+  if (run.status === "error" && run.error_kind === "cancelled") return { label: "Cancelled", tone: "done" as const };
+  if (run.status === "error" && run.error_kind === "lost") return { label: "Lost", tone: "wait" as const };
+  return statusOf(run.status);
+}
+
 /** `12:41:08`, 24-hour, with seconds, as the frame writes a run's times. */
 const stamp = (iso: string | null): string => {
   const at = iso ? new Date(iso) : null;
@@ -49,8 +59,7 @@ function RunDetail({ run }: { run: CodeRunSummary }) {
 
 /**
  * The runs of this thread, newest first: id, status, when, call count and the first 120 characters of the script. The list holds no
- * calls; opening a run shows the same block as in the thread. There is no Stop in the web UI yet: the service's Person cancel
- * route is not drawn here. Where this opens is not settled, so it sits under the Tools tab for now. When the service does not offer Code Mode
+ * calls; opening a run shows the same block as in the thread. A run the person cancelled reads Cancelled (from `error_kind`), not Error. The Cancel run button lives on the run block, not on a row. Where this opens is not settled, so it sits under the Tools tab for now. When the service does not offer Code Mode
  * (every route answers 404) or the thread has no runs, nothing is drawn.
  */
 export function CodeRunsList({ threadId }: { threadId: string }) {
@@ -70,7 +79,7 @@ export function CodeRunsList({ threadId }: { threadId: string }) {
     <section className="cm-runs" aria-label="Code runs">
       <div className="cm-runs-h">Code runs</div>
       {runs.slice(0, 100).map((run, at) => {
-        const word = statusOf(run.status);
+        const word = wordOf(run);
         const opened = open === run.run_id;
         return (
           <div key={`${at}-${run.run_id}`} className="cm-run" data-status={word.tone}>

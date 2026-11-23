@@ -36,7 +36,8 @@
         "gate_needs_evidence",
         "invalid_transition",
         "invalid_token",
-        "unknown_member"
+        "unknown_member",
+        "disk_low"
       ]
     },
     "message": {
@@ -47,6 +48,16 @@
     "object": {
       "description": "The id of the object that was refused, when it had one.",
       "$ref": "common.schema.json#/$defs/hash"
+    },
+    "free_bytes": {
+      "description": "The free bytes measured on the volume, for `disk_low`.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "floor_gb": {
+      "description": "The person's free-space floor in whole gigabytes, for `disk_low`.",
+      "type": "integer",
+      "minimum": 0
     }
   }
 }

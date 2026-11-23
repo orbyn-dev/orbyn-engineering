@@ -111,6 +111,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/cancel"),
     ("POST", "/api/crew/tasks/{id}/merge"),
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
+    ("POST", "/api/crew/tasks/{id}/checks/{check}/decide"),
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
     // Code Mode: stopping a live script run is the person's own stop button (docs/code-mode.md).
     ("POST", "/api/code-runs/{id}/cancel"),
@@ -137,6 +138,8 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/workspace/rollback"),
     ("POST", "/api/workspace/setup"),
     ("POST", "/api/workspace/update"),
+    // Browser profiles: a rename is the person's own action; the other profile routes stay Local.
+    ("POST", "/api/browser-profiles/{id}/rename"),
     // Preferences, policy and redaction.
     ("POST", "/api/policy/rules"),
     ("DELETE", "/api/policy/rules/{id}"),
@@ -667,6 +670,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/tasks/{id}/checks/{check}/decide",
+        "Crew write behind local_only: the person passes or denies a manual check that holds the task",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/retry-elsewhere",
         "Crew write behind local_only: the person's retry of a task that could not start, on another engine",
     ),
@@ -714,6 +722,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/engines/{id}/update",
         "updates engine software",
+    ),
+    (
+        "POST",
+        "/api/browser-profiles/{id}/rename",
+        "the person renames their own browser profile; only the stored name changes, so a profile open in a tab can be renamed",
     ),
     (
         "POST",

@@ -883,7 +883,7 @@ export function createMockApi(options: MockOptions = {}) {
             ...(projectId === null ? {} : {
               project: (() => {
                 const choice = resolveTextModel(sample.engine, sample.models, { ...globalMap, ...projectMap }, projectLegacy);
-                return { project_id: projectId, chosen: choice.chosen, resolved: choice.resolved, reason: choice.reason };
+                return { project_id: projectId, chosen: choice.chosen, own: Object.hasOwn(projectMap, sample.engine), resolved: choice.resolved, reason: choice.reason };
               })(),
             }),
           };

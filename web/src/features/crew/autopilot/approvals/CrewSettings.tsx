@@ -15,6 +15,7 @@ import { ProductionTargets } from "./ProductionTargets";
 import { ProfilesSettings } from "../../../profiles";
 import { EngineTiers } from "./EngineTiers";
 import { WorkerProvider } from "./WorkerProvider";
+import { CrewDiskFloor } from "./CrewDiskFloor";
 
 /** Settings › Crew: Autopilot, the production-linked targets the guard watches, then the path classes of the repo. Autopilot by area, its thresholds, Review capacity (and its coverage map), the Dashboard, the escape log, the reviewer backtest and its estimate and report are pages of their own. */
 export function CrewSettingsSection() {
@@ -60,6 +61,7 @@ export function CrewSettingsSection() {
             <EscapesEntry />
             <OracleEntry />
             <BacktestEntry />
+            <CrewDiskFloor />
             <WorkerProvider />
             <EngineTiers />
             <ProductionTargets />

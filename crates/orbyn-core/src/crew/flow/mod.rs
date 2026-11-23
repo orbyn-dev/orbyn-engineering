@@ -17,6 +17,7 @@
 //! a key the crew holds is withheld from it, but a command shorter than the eight characters `withhold` matches and an
 //! absolute path are not stripped from it (neither are they from a claim or a gate's reason).
 
+mod artifacts;
 mod board;
 mod cells;
 mod facts;

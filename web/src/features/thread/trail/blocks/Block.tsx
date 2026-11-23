@@ -13,6 +13,7 @@ import { ListBlock } from "./ListBlock";
 import { fetchBlock, mcpBlock, subagentBlock } from "./RemoteBlocks";
 import { SearchBlock } from "./SearchBlock";
 import { CodeDescribeBlock, CodeRunBlock, CodeSearchBlock, codeToolOf } from "../../../codemode";
+import { CrewToolBlock, crewStartDiskLow } from "../../../crew";
 import { InspectItem } from "./InspectItem";
 import type { BlockContext } from "./types";
 
@@ -69,6 +70,10 @@ export function Block({ item, running, state, ms, cwd, live = false }: { item: T
   if (code === "run") return <CodeRunBlock item={item} live={live} inspect={<InspectItem item={item} />} />;
   if (code === "search") return <CodeSearchBlock item={item} ms={ms} inspect={<InspectItem item={item} />} />;
   if (code === "describe") return <CodeDescribeBlock item={item} ms={ms} inspect={<InspectItem item={item} />} />;
+
+  // A crew start refused for low disk draws the disk sentence, from the numbers in its answer.
+  const lowDisk = crewStartDiskLow(item);
+  if (lowDisk) return <CrewToolBlock refusal={lowDisk} />;
 
   switch (kind) {
     case "command":
