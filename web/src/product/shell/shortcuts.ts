@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { KeybindingRule } from "../../api/types";
 import { inDesktopApp } from "../../api/shell";
-import { clientPlatform } from "../../lib/platform";
+import { clientPlatform, isMacClient, isMacPlatform } from "../../lib/platform";
 import { actionIdFromCommand } from "../composer/actionCommand";
 
 /** Handlers live with what they act on, and register while mounted. */
@@ -35,7 +35,7 @@ export function useCommand(command: string, handler: (argument?: string) => bool
   }, [command]);
 }
 
-const mac = () => /mac/i.test(navigator.platform);
+const mac = () => isMacClient();
 const SHIFTED_CODE = /^(Digit|Bracket)/;
 
 type ShortcutEvent = Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">;
@@ -171,7 +171,7 @@ export function formatShortcut(rule: string, platform = clientPlatform()): strin
   const parts = rule.toLowerCase().split(/\+(?=.)/);
   const key = parts.pop() ?? "";
   const has = (name: string) => parts.includes(name);
-  const onMac = /mac/i.test(platform);
+  const onMac = isMacPlatform(platform);
   const modifiers: string[] = [];
   const add = (label: string) => {
     if (!modifiers.includes(label)) modifiers.push(label);

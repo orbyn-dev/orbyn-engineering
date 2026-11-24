@@ -44,6 +44,12 @@ it("finds Font smoothing through the Mac user agent when navigator.platform is e
   expect(searchSettings("font smoothing", true).map((item) => item.title)).toEqual(["Font smoothing"]);
 });
 
+it("leaves Font smoothing out for an iPhone user agent that says like Mac OS X", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("");
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)");
+  expect(searchSettings("font smoothing", true)).toEqual([]);
+});
+
 it("navigates from an exact result to an asynchronously loaded row", async () => {
   const user = userEvent.setup();
   installMockFetch();

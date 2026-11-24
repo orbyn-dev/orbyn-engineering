@@ -134,6 +134,20 @@ it("leaves Font smoothing out on a Windows client", () => {
   expect(screen.queryByRole("switch", { name: "Font smoothing" })).toBeNull();
 });
 
+it("shows Font smoothing through a Mac user agent when navigator.platform is empty", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("");
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X)");
+  render(<AppearanceSection />);
+  expect(screen.getByRole("switch", { name: "Font smoothing" })).toBeInTheDocument();
+});
+
+it("leaves Font smoothing out for an iPhone user agent that says like Mac OS X", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("");
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)");
+  render(<AppearanceSection />);
+  expect(screen.queryByRole("switch", { name: "Font smoothing" })).toBeNull();
+});
+
 it("describes the Ledger layout and the two font fields in the design's words", async () => {
   render(<AppearanceSection />);
   expect(await screen.findByText("What needs you at the top")).toBeVisible();
