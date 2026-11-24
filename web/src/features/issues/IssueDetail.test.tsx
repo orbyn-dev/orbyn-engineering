@@ -231,6 +231,17 @@ it("draws no Host row when the tracker reports no host", async () => {
   expect(within(facts).queryByText("Host", { selector: "dt" })).toBeNull();
 });
 
+it("draws another tracker's host, between Tracker and Author", async () => {
+  // The rows are the mock's: Linear reports its fixed API host, so a tracker other than GitHub exercises the row.
+  setIssuesApi(createIssuesMock());
+  at("#/issues/linear/Orbyn%20team/ORB-87");
+  const facts = await screen.findByRole("group", { name: "Facts" });
+  expect(within(facts).getByText("Host", { selector: "dt" }).nextElementSibling).toHaveTextContent("https://api.linear.app");
+  const terms = [...facts.querySelectorAll("dt")].map((term) => term.textContent);
+  expect(terms.indexOf("Host")).toBe(terms.indexOf("Tracker") + 1);
+  expect(terms.indexOf("Author")).toBe(terms.indexOf("Host") + 1);
+});
+
 it("lists the linked pull requests the tracker reports: state, title, number, repository and whether it closes the issue", async () => {
   const merged = { ...PR, number: 131, title: "Keep the next parameter when signing in", state: "merged", closes_issue: false } as const;
   const draft = { ...PR, number: 150, title: "Try cookies", repository: "orbyn-planner", is_draft: true, closes_issue: false } as const;
