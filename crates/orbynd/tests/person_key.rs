@@ -412,6 +412,34 @@ async fn a_service_without_a_desktop_shell_has_no_key_and_refuses_person_routes(
     assert!(!f.dir.path().join("app/made.txt").exists());
 }
 
+/// A `Person` route that is a `GET` is reachable with `HEAD` too, because the router answers `HEAD` from the `GET` handler. The
+/// key is still needed: a `HEAD` with the token alone must not learn whether the secret pattern exists.
+#[tokio::test]
+async fn a_head_on_a_person_get_route_is_refused_without_the_key() {
+    let f = fixture(true).await;
+    let key = f.service.person_key.clone().expect("a shell has a key");
+    let path = "/api/settings/secrets/patterns/x";
+    let url = format!("{}{path}", f.service.url);
+    let client = reqwest::Client::new();
+    for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
+        let refused = client
+            .request(method.clone(), &url)
+            .bearer_auth(&f.service.token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refused.status().as_u16(), 403, "{method} without the key");
+        let kept = client
+            .request(method.clone(), &url)
+            .bearer_auth(&f.service.token)
+            .header(KEY_HEADER, &key)
+            .send()
+            .await
+            .unwrap();
+        assert_ne!(kept.status().as_u16(), 403, "{method} with the key");
+    }
+}
+
 /// A refused `Person` call writes one audit row through the real service: the route pattern and the caller class, with no
 /// body, header or token, and a second refusal of the same route inside the minute adds none. The refusal itself is unchanged.
 #[tokio::test]
