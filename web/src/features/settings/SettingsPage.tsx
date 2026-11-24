@@ -249,7 +249,15 @@ function SettingsPageContent({ section, sub, unknown, row: addressRow, onClose }
             </> : <p role="status">No settings found</p>}
           </div>
         ) : null}
-        <nav className="settings-nav" aria-label="Settings sections">
+        <nav
+          className="settings-nav"
+          aria-label="Settings sections"
+          onFocus={(event) => {
+            // The browser's focus scroll only moves the row when the focused chip is wholly outside it, so at a phone
+            // width the row's last chip can stay half-cut under the edge. Reveal the chip the keyboard reached.
+            if (event.target instanceof HTMLElement) event.target.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+          }}
+        >
           {groups.map((group) => (
             <div key={group.label ?? group.sections[0]} className="settings-group-list">
               {group.label ? <p className="settings-group">{group.label}</p> : null}
