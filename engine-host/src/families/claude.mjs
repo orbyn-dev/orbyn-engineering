@@ -7,6 +7,15 @@ import { AsyncQueue } from "../asyncQueue.mjs";
 // see the README (Anthropic terms gate). Nothing here has run against the real SDK yet.
 
 const EXTRA_ENV_PREFIXES = ["CLAUDE_CODE_", "CLAUDE_AGENT_SDK_"];
+// The core refuses a credential-named variable from a confined child's allowlist (crates/orbyn-core/src/agents/driver/host/confinement.rs,
+// `names_a_secret`). The SDK hands back the host process environment, so a key under an allowed prefix gets the same refusal here: a
+// `CLAUDE_CODE_OAUTH_TOKEN` set in the service environment must not re-enter a confined worker. The core rule's account names cannot
+// start with either prefix, so these credential parts are the whole rule that can be reached.
+const SECRET_NAME_PARTS = ["SECRET", "TOKEN", "PASSWORD", "PASSPHRASE", "CREDENTIAL", "API_KEY", "ACCESS_KEY", "PRIVATE_KEY"];
+const namesASecret = (name) => {
+  const upper = name.toUpperCase();
+  return SECRET_NAME_PARTS.some((part) => upper.includes(part)) || upper.endsWith("_KEY");
+};
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "killed", "stopped", "cancelled"]);
 const TURN_HEADS_KEPT = 500;
 const HISTORY_BUDGET_BYTES = 6 * 1024 * 1024; // the same limit as the OpenCode family's history
@@ -76,7 +85,7 @@ export function claudeFamily({ loadSdk }) {
         const env = { ...c.env };
         const added = [];
         for (const [k, v] of Object.entries(spawnOptions.env ?? {})) {
-          if (!(k in env) && EXTRA_ENV_PREFIXES.some((p) => k.startsWith(p))) {
+          if (!(k in env) && EXTRA_ENV_PREFIXES.some((p) => k.startsWith(p)) && !namesASecret(k)) {
             env[k] = v;
             added.push(k);
           }

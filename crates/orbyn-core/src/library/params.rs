@@ -395,3 +395,65 @@ pub fn render_prompt(
 ) -> Result<String> {
     fill(body, params, values, |value| Ok(value.to_owned()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One value rendered by the `cmd` path as the whole command.
+    fn cmd_word(value: &str) -> Result<String> {
+        let one = Param {
+            name: "v".into(),
+            label: "v".into(),
+            kind: ParamKind::Text,
+            default: Some(value.to_owned()),
+            required: false,
+            choices: None,
+        };
+        render_command("{{v}}", &[one], &BTreeMap::new(), Shell::Cmd)
+    }
+
+    /// What the `cmd` path should write for `value`: one double-quoted word, with `extra` backslashes
+    /// added before the closing quote when the value ends in a backslash.
+    fn quoted(value: &str, extra: usize) -> String {
+        format!("\"{value}{}\"", "\\".repeat(extra))
+    }
+
+    #[test]
+    fn the_cmd_shell_refuses_every_character_it_cannot_quote() {
+        for refused in ['"', '%', '^', '!', '\n', '\r'] {
+            let value = format!("safe{refused}value");
+            let error = cmd_word(&value).unwrap_err();
+            assert!(matches!(error, CoreError::Invalid(_)), "{refused:?}");
+            assert!(
+                !error.to_string().contains(&value),
+                "{refused:?}: never the value"
+            );
+            // The same character alone, so the check is on the value rather than on a pattern around it.
+            assert!(cmd_word(&refused.to_string()).is_err(), "{refused:?}");
+        }
+    }
+
+    #[test]
+    fn the_cmd_shell_writes_one_double_quoted_word_and_doubles_trailing_backslashes() {
+        assert_eq!(cmd_word("plain").unwrap(), quoted("plain", 0));
+        assert_eq!(cmd_word("two words").unwrap(), quoted("two words", 0));
+        // cmd's own metacharacters are literal inside the one pair of double quotes.
+        assert_eq!(
+            cmd_word("a & b | c < d > e").unwrap(),
+            quoted("a & b | c < d > e", 0)
+        );
+        // A single quote is ordinary text to cmd, where a naive single-quoting would break it.
+        assert_eq!(cmd_word("it's").unwrap(), quoted("it's", 0));
+        // A trailing backslash is doubled, or it would escape the closing quote: the case a naive quoting breaks.
+        assert_eq!(
+            cmd_word("C:\\Program Files\\").unwrap(),
+            quoted("C:\\Program Files\\", 1)
+        );
+        assert_eq!(cmd_word("C:\\\\").unwrap(), quoted("C:\\\\", 2));
+        // A backslash that does not touch the closing quote is left alone.
+        assert_eq!(cmd_word("a\\\\b").unwrap(), quoted("a\\\\b", 0));
+        // An empty optional value is no word at all (quote's contract).
+        assert_eq!(cmd_word("").unwrap(), "");
+    }
+}

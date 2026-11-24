@@ -1214,6 +1214,45 @@ async fn a_run_with_no_sets_or_a_local_entry_needs_no_ack_and_is_audited() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_run_uses_the_apps_posix_shell_and_never_the_persons_shell() {
+    let f = fixture();
+    let marker = f.dir.path().join("pwned");
+    // A parameter default is validated but not shell-checked: this one would run `touch` if it were not one word.
+    let mut hostile = param("v", ParamKind::Text);
+    let value = format!("x'; touch {} #", marker.display());
+    hostile.default = Some(value.clone());
+    let workflow = f
+        .core
+        .create_workflow(&wf(
+            "Shell",
+            "printf 'SHELL=%s|%s' \"$0\" {{v}}",
+            vec![hostile],
+            vec![],
+        ))
+        .unwrap();
+    let ran = f
+        .core
+        .run_workflow(&workflow.id, &run_body(&f.thread, vec![]))
+        .await
+        .unwrap();
+    let shown = finished_output(&f, &ran.terminal_id).await;
+    // `$0` is the shell the run picked: the app's fixed `/bin/sh`, not the person's `$SHELL`. The last
+    // `SHELL=` is the run's own output, after anything a login profile printed.
+    let shell = shown
+        .rsplit("SHELL=")
+        .next()
+        .unwrap_or_default()
+        .split('|')
+        .next()
+        .unwrap_or_default()
+        .trim();
+    assert!(matches!(shell, "/bin/sh" | "sh"), "{shown}");
+    assert!(shown.contains(&value), "{shown}");
+    assert!(!marker.exists(), "the value added no command");
+}
+
 #[tokio::test]
 async fn a_run_needs_one_of_thread_or_project_and_a_trusted_folder() {
     let f = fixture();
