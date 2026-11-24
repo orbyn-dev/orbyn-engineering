@@ -87,6 +87,9 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/lessons/{id}/promote"],
   ["POST", "/api/crew/lessons/{id}/demote"],
   ["PUT", "/api/crew/lessons/settings"],
+  // Crew skill proposals (docs/crew-lessons.md, KC9): both writes are Person-class; the read is Local.
+  ["POST", "/api/crew/skill-proposals/{id}/approve"],
+  ["POST", "/api/crew/skill-proposals/{id}/dismiss"],
   ["POST", "/api/crew/projects/{id}/pinned-ref/confirm"],
   ["POST", "/api/crew/projects/{id}/pinned-ref/reset"],
   ["POST", "/api/crew/projects/{id}/worker-provider/set"],

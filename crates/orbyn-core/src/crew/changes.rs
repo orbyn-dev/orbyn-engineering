@@ -65,6 +65,8 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/lessons/{id}/promote"),
     ("POST", "/api/crew/lessons/{id}/demote"),
     ("PUT", "/api/crew/lessons/settings"),
+    ("POST", "/api/crew/skill-proposals/{id}/approve"),
+    ("POST", "/api/crew/skill-proposals/{id}/dismiss"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
     ("POST", "/api/crew/projects/{id}/worker-provider/set"),
@@ -118,6 +120,7 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/escapes/{id}"),
     ("GET", "/api/crew/lessons"),
     ("GET", "/api/crew/lessons/{id}"),
+    ("GET", "/api/crew/skill-proposals"),
     ("GET", "/api/crew/flow/board"),
     ("GET", "/api/crew/needs-you"),
     ("GET", "/api/crew/lead/{thread_id}/live"),
@@ -205,6 +208,25 @@ mod tests {
             "/api/crew/lessons/settings",
         ] {
             assert!(changes_crew_state(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn the_skill_proposal_read_has_no_write_on_its_path_and_is_not_refused() {
+        assert!(!changes_crew_state("/api/crew/skill-proposals"));
+        assert!(!crew_change(
+            "curl http://127.0.0.1:9/api/crew/skill-proposals"
+        ));
+        assert!(READS.contains(&("GET", "/api/crew/skill-proposals")));
+        for path in [
+            "/api/crew/skill-proposals/prop_1/approve",
+            "/api/crew/skill-proposals/prop_1/dismiss",
+        ] {
+            assert!(changes_crew_state(path), "{path}");
+            assert!(
+                crew_change(&format!("curl -X POST http://127.0.0.1:9{path} -d '{{}}'")),
+                "{path}"
+            );
         }
     }
 

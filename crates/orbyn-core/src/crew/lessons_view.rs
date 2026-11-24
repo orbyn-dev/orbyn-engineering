@@ -26,11 +26,14 @@ impl LessonFilter {
     }
 }
 
-/// One lesson as a card shows it, with the same answer `in_next_brief` the contract gives.
+/// One lesson as a card shows it, with the same answer `in_next_brief` the contract gives. `in_next_brief` is false
+/// while the lesson is a source of an approved proposal whose skill still exists, and `skill` names it then.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LessonView {
     pub lesson: CrewLesson,
     pub in_next_brief: bool,
+    /// The skill this lesson is now, while that skill exists; none when it is an ordinary lesson.
+    pub skill: Option<String>,
 }
 
 /// One repository's lesson list: its switch, the brief's caps, the counts and the lessons (repository ones then global,

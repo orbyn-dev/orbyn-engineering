@@ -231,7 +231,19 @@ fn answer_lesson(state: &AppState, written: &CrewLesson) -> ApiResult<wire::Less
 }
 
 fn lesson_of(view: LessonView) -> wire::Lesson {
-    let lesson = view.lesson;
+    let LessonView {
+        lesson,
+        in_next_brief,
+        skill,
+    } = view;
+    let evidence = lesson
+        .evidence
+        .iter()
+        .map(|evidence| wire::LessonEvidence {
+            kind: evidence.kind.clone(),
+            id: evidence.id.clone(),
+        })
+        .collect();
     wire::Lesson {
         id: lesson.id,
         scope: if lesson.scope == "global" {
@@ -248,11 +260,13 @@ fn lesson_of(view: LessonView) -> wire::Lesson {
         edited_by_person: lesson.edited_by_person,
         uses: lesson.uses,
         left_out_of: lesson.left_out_of,
+        skill,
+        evidence,
         created_at: lesson.created_at,
         updated_at: lesson.updated_at,
         last_used_at: lesson.last_used_at,
         rev: lesson.rev,
-        in_next_brief: view.in_next_brief,
+        in_next_brief,
     }
 }
 
