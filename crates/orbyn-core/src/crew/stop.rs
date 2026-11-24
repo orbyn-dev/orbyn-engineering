@@ -1,10 +1,10 @@
 //! The lead's stop of a Crew task: `crew_stop` ends a task the lead thread leads as `stopped` with the reason
 //! `lead_stopped` (Crew Protocol, `crew.stop`). It takes the path the core's own stops take: the state and its reason move in
-//! one transaction, then the task's end releases its leases, stops its worker's run and writes its final result.
+//! one transaction, then the task's end releases its leases, requests its worker's run to stop and writes its final result.
 //!
-//! Only the lead thread that leads the task may call it: a worker's token, and a thread that leads another crew, are refused.
-//! A task that already ended is refused, and so is one the lifecycle cannot stop from (`briefed` or `routed`). The person's
-//! cancel is not this: it ends `cancelled` and stays theirs.
+//! Only the lead thread that leads the task may call it: a worker's token, and a thread that leads another crew, are refused,
+//! and the requested task is not read for a worker. A task that already ended is refused, and so is one the lifecycle cannot
+//! stop from (`briefed` or `routed`). The person's cancel is not this: it ends `cancelled` and stays theirs.
 
 use std::sync::Arc;
 
@@ -47,8 +47,8 @@ impl Core {
         if !self.crew_enabled() {
             return Err(CrewError::new(ErrorCode::UnknownTool, "crew_stop"));
         }
-        // Only the lead stops a task. A worker's token is refused before anything is read, as the report tool refuses a
-        // caller that is not a worker.
+        // Only the lead stops a task. A worker's token is refused before the requested task is read: the caller's own run row
+        // is what tells them apart, as it does for the report tool, which refuses a caller that is not a worker.
         if !matches!(self.crew_caller(binding)?, Caller::Lead) {
             return Err(CrewError::new(
                 ErrorCode::NotAuthorized,
@@ -71,6 +71,8 @@ impl Core {
             .crew_run(&task.id)
             .map_err(internal)?
             .ok_or_else(|| no_task_in_crew(&task.id))?;
+        // Defence in depth: the store writes a task's `crew_id` and its run's `lead_thread_id` from the same lead thread, so a
+        // task of this crew is this thread's to stop. The check stays in case those two ever come from different threads.
         if run.lead_thread_id != owner {
             return Err(CrewError::new(
                 ErrorCode::NotAuthorized,
@@ -91,8 +93,8 @@ impl Core {
             ));
         }
         // The same move the core's own stops make (a spent budget, a repeated failure): the state and the stored reason change
-        // in one transaction. A task that ends between the read and this write refuses the move instead of overwriting an ending
-        // it already got.
+        // in one transaction. A task that moves between the read and this write refuses the move instead of overwriting the state
+        // it moved to; where it moved decides the answer, so it is read again.
         let stopped = match self.store.move_crew_task(
             &task.id,
             "stopped",
@@ -100,10 +102,18 @@ impl Core {
         ) {
             Ok(stopped) => stopped,
             Err(CoreError::InvalidTransition { .. }) => {
-                return Err(CrewError::new(
-                    ErrorCode::RunEnded,
-                    "this task ended before it could be stopped",
-                ));
+                // `run_ended` only for a task that ended. One still live moved to a state the lifecycle will not stop from
+                // (a `needs_person` task routed again, say), so the refusal is that transition and never claims it ended.
+                return Err(match self.store.crew_task(&task.id).map_err(internal)? {
+                    Some(now) if lifecycle::is_final(&now.state) => {
+                        CrewError::new(ErrorCode::RunEnded, "this task has ended")
+                    }
+                    Some(now) => CrewError::new(
+                        ErrorCode::InvalidTransition,
+                        format!("the task moved to {} while it was being stopped", now.state),
+                    ),
+                    None => CrewError::new(ErrorCode::RunEnded, "this task has ended"),
+                });
             }
             Err(error) => return Err(internal(error)),
         };

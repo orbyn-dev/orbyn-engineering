@@ -1,5 +1,5 @@
 //! The lead's stop: `crew_stop` ends a task the lead thread leads as `stopped` for `lead_stopped`, and nothing a worker
-//! or another thread sends can stop a task.
+//! or another crew sends can stop a task.
 
 use std::sync::Arc;
 
@@ -16,6 +16,38 @@ fn last_result(w: &World, id: &str) -> CrewResult {
         .into_iter()
         .last()
         .expect("the task has a result")
+}
+
+/// A stored task of this crew that never got a worker: `briefed` as created, or moved on to `routed`. The store's own rows,
+/// because `crew_start` routes and launches in one call, so it cannot leave a task at either state for a test.
+fn seeded_task(w: &World, state: &str) -> String {
+    use orbyn_contracts as wire;
+    let stamper = crate::crew::Stamper {
+        crew_id: wire::CrewId::new(w.lead.clone()).unwrap(),
+        engine: wire::CrewToken::new("alpha").unwrap(),
+        member: wire::CrewMember::new("lead-01").unwrap(),
+        now: wire::CrewTimestamp::new("2026-11-12T10:00:00Z").unwrap(),
+    };
+    let brief = stamper
+        .brief(&brief(json!({ "outcome": format!("Seed {state}.") })))
+        .unwrap();
+    let key = stamper.answer_key(&key(), &brief.id).unwrap();
+    let task = w
+        .core
+        .store
+        .create_crew_task(&brief, &key, &format!("run-{state}"))
+        .unwrap();
+    w.core
+        .store
+        .add_crew_run(&task.id, &w.lead, "worker-01")
+        .unwrap();
+    if state == "routed" {
+        w.core
+            .store
+            .move_crew_task(&task.id, "routed", None)
+            .unwrap();
+    }
+    task.id
 }
 
 #[tokio::test]
@@ -86,6 +118,32 @@ async fn the_lead_stops_a_held_task() {
     );
 }
 
+/// The lifecycle has no move from `briefed` or `routed` to `stopped`, so a task that never started a worker is refused as
+/// an invalid transition (the store's own move would refuse it too, but without the guard it would read as `run_ended`).
+#[tokio::test]
+async fn a_task_the_lifecycle_cannot_stop_is_refused() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    for state in ["briefed", "routed"] {
+        let id = seeded_task(&w, state);
+        assert_eq!(w.task(&id).state, state);
+        let before = w.task(&id);
+        let (answer, refused) = w
+            .call(&w.lead_token, "crew_stop", json!({ "task": id }))
+            .await;
+        assert!(refused, "{state}: {answer}");
+        assert_eq!(
+            answer["code"],
+            json!("invalid_transition"),
+            "{state}: {answer}"
+        );
+        assert_eq!(w.task(&id), before, "{state}: nothing changed");
+        assert!(
+            w.core.store.crew_results(&id).unwrap().is_empty(),
+            "{state}: no result is written"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_worker_cannot_stop_a_task() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
@@ -100,8 +158,9 @@ async fn a_worker_cannot_stop_a_task() {
     assert_eq!(w.task(&id).state, before, "nothing changed");
 }
 
+/// A task of another crew is not in this crew to stop, even for a lead thread of its own.
 #[tokio::test]
-async fn another_thread_cannot_stop_a_task_it_does_not_lead() {
+async fn another_crew_cannot_stop_a_task() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
     let (started, _) = w.start(brief(json!({})), key()).await;
     let id = started["task"].as_str().unwrap().to_owned();

@@ -70,8 +70,8 @@ pub fn tool_specs() -> Vec<Value> {
         json!({
             "name": STOP_TOOL,
             "description": "Preview, lead only: stop a task this thread leads that has not ended. The task ends \
-                `stopped` with the reason `lead_stopped`: its leases are released, its worker's run is stopped and its \
-                final result is written. A task that already ended is refused, and so is one the lifecycle cannot stop \
+                `stopped` with the reason `lead_stopped`: its leases are released, its worker's run is asked to stop \
+                and its final result is written. A task that already ended is refused, and so is one the lifecycle cannot stop \
                 (`briefed`, `routed`). The person's cancel is separate and stays theirs.",
             "inputSchema": {
                 "type": "object",
