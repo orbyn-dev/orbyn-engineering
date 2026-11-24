@@ -222,6 +222,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/threads/{id}/pulls/{number}/merge"),
     ("POST", "/api/threads/{id}/pulls/{number}/review"),
     ("POST", "/api/threads/{id}/scripts"),
+    ("DELETE", "/api/threads/{id}/terminals/{terminal}/blocks"),
     ("POST", "/api/threads/{id}/terminals"),
     ("POST", "/api/threads/{id}/vcs/refs"),
     ("POST", "/api/threads/{id}/vcs/refs/switch"),
@@ -1073,6 +1074,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/threads/{id}/scripts",
         "runs a project script as the person",
+    ),
+    (
+        "DELETE",
+        "/api/threads/{id}/terminals/{terminal}/blocks",
+        "clears the person's own terminal history: the recorded blocks and their output, never the terminal",
     ),
     (
         "POST",

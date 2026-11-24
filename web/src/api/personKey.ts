@@ -175,6 +175,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/threads/{id}/pulls/{number}/merge"],
   ["POST", "/api/threads/{id}/pulls/{number}/review"],
   ["POST", "/api/threads/{id}/scripts"],
+  ["DELETE", "/api/threads/{id}/terminals/{terminal}/blocks"],
   ["POST", "/api/threads/{id}/terminals"],
   ["POST", "/api/threads/{id}/vcs/refs"],
   ["POST", "/api/threads/{id}/vcs/refs/switch"],

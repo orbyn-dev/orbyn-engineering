@@ -6,6 +6,6 @@ mod store;
 mod text;
 
 pub use store::{
-    BlockStore, DEFAULT_OUTPUT_BYTES, DEFAULT_PAGE, MAX_BLOCK_BYTES, MAX_BLOCKS, MAX_OUTPUT_BYTES,
-    MAX_PAGE, MAX_TOTAL_BYTES, TerminalBlocks, limits,
+    BlockStore, ClearOutcome, DEFAULT_OUTPUT_BYTES, DEFAULT_PAGE, MAX_BLOCK_BYTES, MAX_BLOCKS,
+    MAX_OUTPUT_BYTES, MAX_PAGE, MAX_TOTAL_BYTES, TerminalBlocks, limits,
 };

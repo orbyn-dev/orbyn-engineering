@@ -14,6 +14,7 @@ mod acp;
 mod agui;
 mod claude;
 mod codex;
+mod command_blocks;
 mod one_shot;
 mod pty;
 mod shared;
@@ -78,6 +79,8 @@ fn main() {
         }
         "agui" => agui(&args),
         "pty" => pty(),
+        "blocks" => command_blocks::finished(),
+        "blocks-running" => command_blocks::running(),
         "--resume" => console("claude-console", &args),
         "resume" => console("codex-console", &args),
         other => {
