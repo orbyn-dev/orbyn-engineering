@@ -124,7 +124,12 @@ impl Store {
                 if !stop_failed(tx, task_id)? {
                     return Ok(CancelStart::Already);
                 }
-                let run = find_run(tx, task_id).ok().map(Box::new);
+                // Only a task with no worker record is "no run"; a failed read must not read as a stop that held.
+                let run = match find_run(tx, task_id) {
+                    Ok(run) => Some(Box::new(run)),
+                    Err(CoreError::NotFound(_)) => None,
+                    Err(error) => return Err(error),
+                };
                 audit(
                     tx,
                     actor,
