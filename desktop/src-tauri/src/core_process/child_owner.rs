@@ -73,15 +73,34 @@ mod tests {
         }
     }
 
+    /// A child that exits when its stdin closes, as the service does once the shell drops the parent pipe.
+    #[test]
+    #[ignore = "subprocess fixture"]
+    fn fixture_exits_on_eof() {
+        if std::env::var_os("ORBYN_STARTUP_CHILD_EOF_FIXTURE").is_some() {
+            println!("fixture ready");
+            let mut sink = String::new();
+            while std::io::stdin().read_line(&mut sink).unwrap_or(0) > 0 {
+                sink.clear();
+            }
+            // Out before the harness prints its result into a pipe the parent has already let go of.
+            std::process::exit(0);
+        }
+    }
+
     fn child() -> Arc<Mutex<Child>> {
+        spawn("fixture", "ORBYN_STARTUP_CHILD_FIXTURE")
+    }
+
+    fn spawn(name: &str, variable: &str) -> Arc<Mutex<Child>> {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                &format!("{}::fixture", module_path!().split_once("::").unwrap().1),
+                &format!("{}::{name}", module_path!().split_once("::").unwrap().1),
                 "--ignored",
                 "--nocapture",
             ])
-            .env("ORBYN_STARTUP_CHILD_FIXTURE", "1")
+            .env(variable, "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -125,5 +144,27 @@ mod tests {
         assert!(child.try_wait().unwrap().is_none());
         child.kill().unwrap();
         child.wait().unwrap();
+    }
+
+    /// A stop is a closed pipe and a reaper: a service that exits on the closed pipe is reaped at once, not after the grace,
+    /// and is never killed (its exit status is its own, not a kill signal).
+    #[test]
+    fn a_child_that_exits_on_eof_is_reaped_well_before_the_grace_ends() {
+        let child = spawn("fixture_exits_on_eof", "ORBYN_STARTUP_CHILD_EOF_FIXTURE");
+        let stdin = child.lock().unwrap().stdin.take();
+        drop(stdin);
+        reap_after_grace(child.clone());
+        let started = Instant::now();
+        let status = loop {
+            if let Some(status) = child.lock().unwrap().try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                started.elapsed() < STOP_GRACE / 2,
+                "the child that closed on EOF was still alive halfway through the grace"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(status.success(), "it exited by itself: {status}");
     }
 }
