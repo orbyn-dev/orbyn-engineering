@@ -3,7 +3,7 @@
 Issue trackers beside the code: a list of issues from GitHub, GitLab, Azure DevOps, Forgejo and Linear, a
 thread started from an issue, and a link between a thread and the issues it works on. Beta: read-only
 against the tracker, with Orbyn's own writes only (connect, disconnect, link, start a thread, and — through
-the person's own account, GitHub only so far — create, comment and react).
+the person's own account — create, comment and react).
 Behind a flag until it ships; with the flag off every route here answers `404` and the web app hides Issues.
 
 Field names follow the T3 Code issue schema (MIT, `9168ca73d`, names only) in snake_case. The web side's
@@ -470,8 +470,8 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
 ## Create, comment, react, templates and project binding (contract)
 
 R15 rows `create`, `comment`, `react`, `templates` and `bindProject`. `create`, `comment` and `react` are built
-for GitHub in R15 PR1 and the other four trackers answer `422 unsupported` until R15 PR1b; `templates` and
-`bindProject` are not built yet (PR2 and PR3), and the web keeps each unbuilt control as Planned. They follow the rules of "Issue writes and list
+for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b) and `templates` is built in R15 PR2; `bindProject`
+is not built yet (PR3), and the web keeps each unbuilt control as Planned. They follow the rules of "Issue writes and list
 controls": every write is Person-class and goes in `ENFORCED` and `PERSON_ROUTES`, answers the stored issue, and a
 tracker refusal answers the usual error (`forbidden`, `not_found`, `rate_limited`, `tracker_unavailable`) and changes
 nothing here. Issue text going in is sent as a field value, never in an argument position, and never rendered as markup
@@ -487,10 +487,10 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
 | `POST /api/projects/{id}/issue-tracker` | **yes** | `200 { tracker, scope }`, or `204` to unbind. Body `{ tracker, scope }` or `{ tracker: null }` |
 
 - `create` (**built, GitHub**): `title` is one line, 1 to 256 characters; `body` at most 64 KiB; `labels` (at most 50) are names, `assignees`
-  (at most 25) are candidate `id`s from `GET /api/issues/candidates`, as in `update`. `template` is the `id` of a template
-  from `templates`; when present, a missing `body` is filled from the template's body and an unknown id is `400 invalid`.
-  The templates read is not built yet (PR2), so no template id can be known and any present one is `400 invalid`
-  ("Unknown issue template."); the fill lands with that read.
+  (at most 25) are candidate `id`s from `GET /api/issues/candidates`, as in `update`. `template` is the `id` of a
+  template from `templates`: when present, a missing `body` is filled from the template's body, a body the person sent
+  wins, and an id the tracker does not report is `400 invalid` ("Unknown issue template."). The template's labels are
+  not merged into the create's: labels are the create body's own.
   One call creates one issue: no retry loop, and a timeout answers `tracker_unavailable` with the issue possibly created
   (the answer says so, and the page re-reads the list rather than sending again). A `scope` outside the connection is
   refused as everywhere else.
@@ -501,9 +501,16 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   A tracker with a smaller set refuses a value it lacks with `400 invalid` and names the ones it has; none is mapped to a
   near one. The answer is the issue with its reaction counts as the tracker reports them, in the tracker's own words
   (`IssueDetail.reactions`).
-- `templates` (not built, PR2): the tracker's own issue templates for the scope, read-only: `{ id, name, description?, body, labels[] }`,
-  at most 50, bodies cut at 16 KiB. A tracker with none answers `[]`, never `404`. Template text is the tracker's text and as
-  untrusted as any other (see "Issue text is untrusted"); it only ever fills the person's own create form.
+- `templates` (**built, PR2**): the tracker's own issue templates for the scope, read-only:
+  `{ id, name, description?, body, labels[] }`, at most 50, bodies cut at 16 KiB. A tracker with none answers `[]`,
+  never `404`: GitHub, Forgejo and Azure DevOps answer none. GitHub and Forgejo have no issue-template endpoint,
+  only repository files (`.github/ISSUE_TEMPLATE` on GitHub, `.gitea`/`.forgejo` `ISSUE_TEMPLATE` on Forgejo) that a
+  later row reads through the contents API (a `.yml` form needs a YAML reader; a `.md` template does not):
+  [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548). Azure DevOps has no issue template source at
+  all (its work item types are not templates).
+  GitLab and Linear answer their own.
+  Template text is the tracker's text and as untrusted as any other (see "Issue text is untrusted"); it only ever
+  fills the person's own create form.
 - `bindProject` (not built, PR3): stores which connected tracker and scope this project's issues come from, so the page and the engine
   tools default to it. `scope` must be one of the connection's scopes; a tracker that is not connected is
   `400 invalid`. It stores two names and no secret, writes one audit row (`issues.project.bind`, ids only), and never
@@ -514,12 +521,13 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   the exact field sent, no token in the answer or the audit row; `403 desktop_required` without the person key and
   nothing sent; a refusal changes nothing here; the route table and class tests pass without special cases.
 
-### As built (R15 PR1)
+### As built (R15 PR1 and R15 PR1b)
 
 `POST /api/issues/item/create`, `/comment` and `/react` exist behind the Issues flag, are Person-class
 (`ENFORCED` + `PERSON_ROUTES` + `tests/routes.json`), and write only through a tracker whose own write is built:
 
-- **GitHub is the only tracker that writes in this PR.** Create, comment and react run through the person's own `gh`
+- **GitHub is the first tracker that writes (R15 PR1); the other four follow in the PR1b bullets below.** Create,
+  comment and react run through the person's own `gh`
   (never a token Orbyn holds): create is one REST call whose JSON body carries the title, body, labels and assignees,
   and its answer is built from that call's own reply, so a successful create is never reported as a failure; comment
   is one REST call and answers the comment GitHub stored, with its node id as `IssueComment.id` (the id a reaction
@@ -536,30 +544,100 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   nothing retries.
 - **The routes' own caps, checked before anything is sent**: a title is one line of 1 to 256 characters; an issue body
   or a comment is at most 64 KiB and a comment is not blank; at most 50 labels, each a name of 1 to 200 characters; at
-  most 25 assignee ids, each 1 to 200 characters; a comment id is 1 to 200 characters; no control characters in a
-  title, a label name, an assignee id or a comment id.
-- **The other four trackers answer `422 unsupported`** with one sentence naming the tracker ("GitLab issue writes
-  arrive in a later update.") and send nothing. R15 PR1b adds them: GitLab, Forgejo, Azure DevOps and Linear each need
-  their own label/assignee id resolution, reaction removal by id, and (Azure DevOps) its comments-only six of the
-  eight reactions.
+  most 25 assignee ids, each 1 to 200 characters; a comment id is 1 to 200 characters and, where the tracker's
+  reaction path takes a number, numeric and up to 19 digits (its 64-bit id); no control characters in a title, a label
+  name, an assignee id or a comment id.
+- **GitLab, Forgejo, Azure DevOps and Linear write too (R15 PR1b).** Each uses its own REST or GraphQL write path and
+  its own rules:
+  - **GitLab**: create is one `POST` of the project's issues with the labels as comma-joined names and the assignees as
+    numeric candidate ids; a label name containing a comma is `400 invalid` before anything is sent, because GitLab
+    takes the names as one comma-separated value and would silently read it as two. Comment is a `POST` to the
+    issue's notes and answers that note's numeric id. React is an `award_emoji` write whose `name=` is GitLab's own
+    word (all eight map); both directions first read the reader's own award, so a repeated add or a removal with
+    nothing left writes nothing, and a removal deletes by the award's id. The answer carries each award name and
+    count from the award list's first page of 100, and carries no counts (`null`) when that page is full, because
+    more may be behind it; a removal whose own-award lookup runs out of those pages answers `tracker_unavailable`
+    rather than pretending the award is gone.
+  - **Forgejo**: create resolves each label name to the repository's label id first (a name the repository lacks is
+    `400 invalid` before anything is sent) and writes the assignees as logins; comment answers the stored comment.
+    React writes or deletes the `content` word on the issue's or a comment's reactions path (all eight map); both
+    directions first read the reader's own reaction, so a repeated add writes one reaction and a removal with nothing
+    left writes nothing. The answer carries each content word and count from at most two pages of 50, and carries
+    no counts when the last page is full, because more may be behind it. Label names are resolved against the
+    repository's labels read up to five pages of 50, so a label beyond the first 250 is `400 invalid` even though it
+    exists.
+  - **Azure DevOps**: create picks the project's first of `Issue`, `Task` and `Bug` and sends the fields as a JSON
+    Patch document (title, description HTML-escaped, labels as the semicolon-joined `System.Tags`, one assignee; more
+    than one is `400 invalid`, as is a label with a semicolon in it); comment writes markdown and answers the stored
+    comment. Reaction writes target `{base}/_apis/wit/workItems/{id}/comments/{commentId}/reactions/{type}` with
+    `7.1-preview.1`. It reacts **on comments only** and has **six of the eight** reactions (`thumbs_up`, `thumbs_down`,
+    `laugh`, `hooray`, `confused`, `heart`): `rocket` and `eyes` are `400 invalid` naming the six it has, never
+    mapped to a near one, and a reaction with no `comment_id` is `400 invalid` too. The answer is the work item with
+    no reactions: Azure DevOps reports them on comments, not on the work item.
+  - **Linear**: create resolves the team's id and the label ids (a workspace or team label; a name the workspace lacks
+    is `400 invalid`), takes one assignee at most, and sends a fixed `issueCreate` mutation whose values are
+    variables. The labels are read once with `issueLabels(first: 250)` and no paging, so a label beyond the first
+    250 is `400 invalid` even though it exists. Comment resolves the issue's internal id inside the team first, then
+    `commentCreate`. React resolves the issue, proves a named comment belongs to it (`not_found`, before any
+    mutation), and sends `reactionCreate` with the emoji (Linear answers success for a duplicate); a removal finds
+    the reader's own reaction and deletes it by id, and writes nothing when it finds none. The answer carries each
+    emoji and count (all eight map).
 - **A write the tracker refuses** answers the usual `forbidden`, `not_found`, `rate_limited` or
   `tracker_unavailable` and changes nothing here. Issue text goes in as a JSON field value, never as an argument
   position.
 - **The web client does not call the three writes yet**: its create, comment and react controls stay Planned until a
   web slice builds them against these routes; `web/src/api/personKey.ts` lists the routes now, so the key already
   goes with them.
-- **Not verified.** No real GitHub issue was created, commented on or reacted to; the writer is tested against a
-  scripted `gh` and the REST/GraphQL shapes, including that adding a reaction that is already there and removing one
-  that is not answer without an error, are from GitHub's documentation as understood. The older-`gh` shape (a
-  `reactionGroups` read that fails while the detail read answers) is scripted too, not observed on a real old `gh`. No
-  real `orbynd` service run exercises these routes.
+- **Not verified.** No real GitHub, GitLab, Forgejo, Azure DevOps or Linear issue was created, commented on or
+  reacted to; every writer is tested against its own local fake server, and the REST/GraphQL shapes (field names,
+  GitLab's award names and its delete-by-id, Forgejo's reaction `content` words and delete body, Azure DevOps' JSON
+  Patch create (a create path is `/workitems/$<type>`), work item types, the comment reaction path and six reaction
+  names, Linear's mutations, label/team
+  reads and reaction ids) come from each API as understood. Both reaction directions are made idempotent as each
+  tracker allows: GitHub's mutations are, GitLab and Forgejo look the reader's own reaction up first, Azure DevOps'
+  PUT/DELETE are and an absent removal is treated as done, and Linear's add is sent as-is (its documented behaviour is
+  a success for a duplicate) with a removal that writes only when it finds the reader's own reaction. The older-`gh`
+  shape is scripted too, not observed on a real old `gh`. No real `orbynd` service run exercises these routes.
+
+### As built (R15 PR2)
+
+`GET /api/issues/templates` exists behind the Issues flag and is a `Local` read (no Person key): query `tracker` and
+`scope`, answers `IssueTemplate[]`. The route, the Core read and each writer's lookup share one rule: a missing body
+is filled from the named template, a body the person sent wins, an id the tracker does not report is `400 invalid`,
+and the template's labels are never merged into the create's. Untrusted template text only ever fills the person's
+create form; nothing feeds it to an engine.
+
+- **GitLab**: project issue templates. One `GET /projects/{path}/templates/issues` lists the entries (`key`, `name`),
+  then one `GET .../templates/issues/{key}` per template for its markdown body. The list asks for 100 per page in
+  one page, which covers the 50 kept. At most 50 templates and 16 KiB of body are kept; a project template carries no
+  labels or description of its own, so those come back empty. Group-level templates are not read (a later row,
+  [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548)), so a project that inherits them answers only
+  its own. The read is one list call plus one body per template (at most 51 GETs), a templated create re-runs it, and
+  one failed body read fails the whole read; [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548) also
+  tracks that read cost.
+- **Linear**: the team's own templates, read from the team query (`templates { id name description content type
+  hasFormFields templateData }`). Only body-shaped `issue` templates travel: a form-shaped one renders on Linear's
+  site and this shape carries no form, so it is skipped; a template's `labelIds` become the label names the create
+  form shows. At most 50 and 16 KiB of body. A failed label read is swallowed: the templates answer with empty labels
+  rather than failing the read. [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548) tracks making that
+  visible.
+- **GitHub, Forgejo, Azure DevOps**: answer `[]`. GitHub and Forgejo have **no issue-template endpoint**: their
+  templates are repository files under `.github/ISSUE_TEMPLATE` and `.gitea`/`.forgejo` `ISSUE_TEMPLATE`, which their
+  contents APIs can list cheaply (GitHub through the person's own `gh`); a later row reads them, with a YAML reader
+  for GitHub's `.yml` forms: [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548). Azure DevOps has
+  no issue template source at all (work item types are not templates). None of the three invents a template.
+- **The web client does not call this read yet**: its template picker stays Planned until a web slice builds it;
+  [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548) tracks that picker too.
+- **Not verified.** No real GitLab or Linear template list was read; both are tested against their local fake server,
+  and the shapes (`templates/issues` entries and content, Linear's `templates` connection, `templateData` and
+  `hasFormFields`) are from the APIs as understood. No real `orbynd` service run exercises the route.
 
 ## What T3 has that this does not (Planned)
 
 The event timeline, "involved/mentioned"
 filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting and
-reactions are built for GitHub in R15 PR1 and come to the other four trackers in R15 PR1b; templates and project
-binding are specified above and not built (PR2 and PR3). The engine-facing
+reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b) and templates in R15 PR2;
+project binding is specified above and not built (PR3). The engine-facing
 issue tools (N24) list, read, link, unlink and list a thread's linked issues; they do not create, comment or
 change state.
 

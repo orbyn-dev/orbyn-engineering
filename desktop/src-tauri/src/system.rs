@@ -87,17 +87,24 @@ fn locations(app: &AppHandle) -> Option<PathBuf> {
 
 #[cfg(target_os = "macos")]
 mod permissions {
+    /// The C `Boolean` type is an `unsigned char`, not Rust's `bool`.
+    type Boolean = u8;
+
     #[link(name = "ApplicationServices", kind = "framework")]
     unsafe extern "C" {
-        fn AXIsProcessTrusted() -> bool;
-        fn CGPreflightScreenCaptureAccess() -> bool;
+        fn AXIsProcessTrusted() -> Boolean;
+        fn CGPreflightScreenCaptureAccess() -> Boolean;
     }
 
     /// Reads without prompting.
     pub fn read() -> serde_json::Value {
         // SAFETY: both take nothing and return a flag.
-        let (accessibility, screen) =
-            unsafe { (AXIsProcessTrusted(), CGPreflightScreenCaptureAccess()) };
+        let (accessibility, screen) = unsafe {
+            (
+                AXIsProcessTrusted() != 0,
+                CGPreflightScreenCaptureAccess() != 0,
+            )
+        };
         serde_json::json!([
             { "id": "accessibility", "granted": accessibility },
             { "id": "screen_recording", "granted": screen },
