@@ -26,7 +26,7 @@ import { ModelPickerTrigger } from "../../thread";
 import { DraftProjectPicker } from "../DraftProjectPicker";
 import { DRAFT_KEY, SCRATCH, useDraftStore, worktreePurpose } from "../../../product/state/draftStore";
 import { DraftModelControls } from "./DraftModelControls";
-import { SnapshotCapturingChip, SnapshotDraftChip, isSnapShotSource, sourceBodyOf, useSnapshot, useSnapshotDraftFlow, withoutAccessibleText, type SnapShotSource } from "../../snapshot";
+import { SnapshotCapturingChip, SnapshotDraftChip, isSnapShotSource, sourceBodyToSend, useSnapshot, useSnapshotDraftFlow, withoutAccessibleText, type SnapShotSource } from "../../snapshot";
 import { RepoStart } from "./RepoStart";
 import { MAX_PREVIOUS_WORKTREES, uniquePurpose, useThreadList, type ModelChoice, type OpenMenu } from "./draftHelpers";
 import { SUGGESTIONS } from "./suggestions";
@@ -173,7 +173,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
     const shots = await Promise.all(snapShots.map(async (shot) => {
       try {
         const kept = await api.uploadAttachment(thread.id, shot.file);
-        if (isSnapShotSource(shot.source)) await api.attachmentSource(kept.id, sourceBodyOf(shot.source));
+        if (isSnapShotSource(shot.source)) await api.attachmentSource(kept.id, sourceBodyToSend(shot.source, useUi.getState().snapshotIncludeAccessibility));
         return kept;
       } catch (failure) {
         await useSnapshot.getState().discard(shot.captureId);
