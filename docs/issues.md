@@ -3,7 +3,7 @@
 Issue trackers beside the code: a list of issues from GitHub, GitLab, Azure DevOps, Forgejo and Linear, a
 thread started from an issue, and a link between a thread and the issues it works on. Beta: read-only
 against the tracker, with Orbyn's own writes only (connect, disconnect, link, start a thread, and — through
-the person's own account, GitHub only so far — create, comment and react).
+the person's own account — create, comment and react).
 Behind a flag until it ships; with the flag off every route here answers `404` and the web app hides Issues.
 
 Field names follow the T3 Code issue schema (MIT, `9168ca73d`, names only) in snake_case. The web side's
@@ -470,8 +470,8 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
 ## Create, comment, react, templates and project binding (contract)
 
 R15 rows `create`, `comment`, `react`, `templates` and `bindProject`. `create`, `comment` and `react` are built
-for GitHub in R15 PR1 and the other four trackers answer `422 unsupported` until R15 PR1b; `templates` and
-`bindProject` are not built yet (PR2 and PR3), and the web keeps each unbuilt control as Planned. They follow the rules of "Issue writes and list
+for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b); `templates` and `bindProject` are not built yet
+(PR2 and PR3), and the web keeps each unbuilt control as Planned. They follow the rules of "Issue writes and list
 controls": every write is Person-class and goes in `ENFORCED` and `PERSON_ROUTES`, answers the stored issue, and a
 tracker refusal answers the usual error (`forbidden`, `not_found`, `rate_limited`, `tracker_unavailable`) and changes
 nothing here. Issue text going in is sent as a field value, never in an argument position, and never rendered as markup
@@ -538,27 +538,49 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   or a comment is at most 64 KiB and a comment is not blank; at most 50 labels, each a name of 1 to 200 characters; at
   most 25 assignee ids, each 1 to 200 characters; a comment id is 1 to 200 characters; no control characters in a
   title, a label name, an assignee id or a comment id.
-- **The other four trackers answer `422 unsupported`** with one sentence naming the tracker ("GitLab issue writes
-  arrive in a later update.") and send nothing. R15 PR1b adds them: GitLab, Forgejo, Azure DevOps and Linear each need
-  their own label/assignee id resolution, reaction removal by id, and (Azure DevOps) its comments-only six of the
-  eight reactions.
+- **GitLab, Forgejo, Azure DevOps and Linear write too (R15 PR1b).** Each uses its own REST or GraphQL write path and
+  its own rules:
+  - **GitLab**: create is one `POST` of the project's issues with the labels as comma-joined names and the assignees as
+    numeric candidate ids; comment is a `POST` to the issue's notes and answers that note's numeric id; react is an
+    `award_emoji` write whose `name=` is GitLab's own word (all eight map), a removal first reads the reader's own
+    award and deletes it by its id (nothing to delete is success), and the answer carries each award name and count.
+  - **Forgejo**: create resolves each label name to the repository's label id first (a name the repository lacks is
+    `400 invalid` before anything is sent) and writes the assignees as logins; comment answers the stored comment;
+    react writes or deletes the `content` word on the issue's or a comment's reactions path (all eight map, and a
+    removal that finds nothing is success), and the answer carries each content word and count.
+  - **Azure DevOps**: create picks the project's first of `Issue`, `Task` and `Bug` and sends the fields as a JSON
+    Patch document (title, description HTML-escaped, labels as the semicolon-joined `System.Tags`, one assignee; more
+    than one is `400 invalid`, as is a label with a semicolon in it); comment writes markdown and answers the stored
+    comment. It reacts **on comments only** and has **six of the eight** reactions (`thumbs_up`, `thumbs_down`,
+    `laugh`, `hooray`, `confused`, `heart`): `rocket` and `eyes` are `400 invalid` naming the six it has, never
+    mapped to a near one, and a reaction with no `comment_id` is `400 invalid` too. The answer is the work item with
+    no reactions: Azure DevOps reports them on comments, not on the work item.
+  - **Linear**: create resolves the team's id and the label ids (a workspace or team label; a name the workspace lacks
+    is `400 invalid`), takes one assignee at most, and sends a fixed `issueCreate` mutation whose values are
+    variables; comment resolves the issue's internal id inside the team first, then `commentCreate`. React resolves
+    the issue, proves a named comment belongs to it (`not_found`, before any mutation), and uses `reactionCreate`
+    with the emoji; a removal finds the reader's own reaction and deletes it by id (nothing found is success). The
+    answer carries each emoji and count (all eight map).
 - **A write the tracker refuses** answers the usual `forbidden`, `not_found`, `rate_limited` or
   `tracker_unavailable` and changes nothing here. Issue text goes in as a JSON field value, never as an argument
   position.
 - **The web client does not call the three writes yet**: its create, comment and react controls stay Planned until a
   web slice builds them against these routes; `web/src/api/personKey.ts` lists the routes now, so the key already
   goes with them.
-- **Not verified.** No real GitHub issue was created, commented on or reacted to; the writer is tested against a
-  scripted `gh` and the REST/GraphQL shapes, including that adding a reaction that is already there and removing one
-  that is not answer without an error, are from GitHub's documentation as understood. The older-`gh` shape (a
-  `reactionGroups` read that fails while the detail read answers) is scripted too, not observed on a real old `gh`. No
-  real `orbynd` service run exercises these routes.
+- **Not verified.** No real GitHub, GitLab, Forgejo, Azure DevOps or Linear issue was created, commented on or
+  reacted to; every writer is tested against its own local fake server, and the REST/GraphQL shapes (field names,
+  GitLab's award names and its delete-by-id, Forgejo's reaction `content` words and delete body, Azure DevOps' JSON
+  Patch create, work item types, `commentsReactions` path and six reaction names, Linear's mutations, label/team
+  reads and reaction ids) come from each API as understood. That adding a reaction that is already there and removing
+  one that is not answer without an error is GitHub's and Linear's documented behaviour; on GitLab and Forgejo the
+  reader makes the write idempotent itself (a lookup, or a removal that ignores a not-found). The older-`gh` shape is
+  scripted too, not observed on a real old `gh`. No real `orbynd` service run exercises these routes.
 
 ## What T3 has that this does not (Planned)
 
 The event timeline, "involved/mentioned"
 filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting and
-reactions are built for GitHub in R15 PR1 and come to the other four trackers in R15 PR1b; templates and project
+reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b); templates and project
 binding are specified above and not built (PR2 and PR3). The engine-facing
 issue tools (N24) list, read, link, unlink and list a thread's linked issues; they do not create, comment or
 change state.
