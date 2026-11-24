@@ -103,6 +103,48 @@ async fn the_lead_decides_an_ordinary_action_with_a_reason_and_sees_only_a_summa
 }
 
 #[tokio::test]
+async fn a_ledger_row_says_the_task_title_and_the_engine_and_model_that_asked() {
+    let (w, id) = running().await;
+    // The always-denied list refuses before any approver, and the row it leaves still says who asked.
+    request(&w, &id, ActionKind::Command, "rm -rf ~/projects").await;
+    let denied = &events(&w, &id, "denied")[0];
+    let run = w.core.store.crew_run(&id).unwrap().unwrap();
+    let lead = w.core.store.thread(&run.lead_thread_id).unwrap();
+    assert_eq!(
+        denied.body["title"], lead.title,
+        "the row did not name the task it was for"
+    );
+    assert_eq!(denied.body["action"]["asker_engine"], "alpha");
+    let worker = w.core.store.thread(&w.worker(&id)).unwrap();
+    match &worker.model {
+        Some(model) => assert_eq!(
+            denied.body["action"]["asker_model"],
+            serde_json::json!(model)
+        ),
+        None => assert!(
+            denied.body["action"].get("asker_model").is_none(),
+            "a thread with no model recorded still named one"
+        ),
+    }
+    // What the person reads says the same three things; the mapping, not only the stored row, carries them.
+    let log = w
+        .core
+        .autopilot_log(
+            Some(&id),
+            None,
+            crate::crew::Page {
+                limit: 50,
+                offset: 0,
+            },
+        )
+        .unwrap();
+    let row = log.rows.iter().find(|r| r.kind == "denied").unwrap();
+    assert_eq!(row.title.as_deref(), Some(lead.title.as_str()));
+    assert_eq!(row.asker_engine.as_deref(), Some("alpha"));
+    assert_eq!(row.asker_model.as_deref(), worker.model.as_deref());
+}
+
+#[tokio::test]
 async fn two_keys_that_disagree_give_denied_and_the_disagreement_is_logged() {
     let (w, id) = running().await;
     let lead = Scripted::yes("alpha", "alpha");

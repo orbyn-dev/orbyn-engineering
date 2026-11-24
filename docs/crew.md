@@ -891,9 +891,10 @@ be approved). The person answers from the app's window, local only: `POST /api/c
   binding: the key lives only in the service process, and the holds it binds never outlive a restart.
 
 Known limits: an unauthenticated caller gets 401, not 404, on a Crew route even with the flag off, like every protected route. The
-ledger rows hold the lead's and second key's reasons but not the asker's model, a risk tier or a title; an injected text is kept as its
-class only. The risk, review and queue views read the whole table and then page, which is fine for one person's repositories. A
-comment is kept and is not yet a fix brief.
+ledger rows hold the lead's and second key's reasons, the tier the action needed, the task's title as it stood at the write, and the
+asking run's engine and model; an injected text is kept as its class only. A row no run asked for (a merge the queue took) carries no
+asker, and an asking thread with no model recorded carries none either. The risk, review and queue views read the whole table and then
+page, which is fine for one person's repositories. A comment is kept and is not yet a fix brief.
 
 Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g), and
 background crews' triggers and runs (4h; their stored state is below).

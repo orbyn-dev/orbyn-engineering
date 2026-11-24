@@ -75,8 +75,24 @@ impl Core {
         body: &Value,
         needles: &[String],
     ) -> Result<i64> {
+        // Every row names the work it was for, so a reader is not left with a task id: the lead thread's title as
+        // it stood at the write. It goes in before `safe` like any other value, so it is redacted and cut with the
+        // rest, and a title that cannot be read leaves the row without one: it decides nothing.
+        let mut body = body.clone();
+        if let Some(title) = self.autopilot_task_title(task) {
+            body["title"] = Value::String(title);
+        }
         self.store
-            .add_crew_autopilot_event(&task.id, &task.crew_id, kind, &safe(body, needles))
+            .add_crew_autopilot_event(&task.id, &task.crew_id, kind, &safe(&body, needles))
+    }
+
+    /// The task's title as the person sees it: the lead thread's title for the run the task belongs to. A failed
+    /// read is `None`, never an error: the ledger row matters more than its title.
+    fn autopilot_task_title(&self, task: &CrewTask) -> Option<String> {
+        let run = self.store.crew_run(&task.id).ok().flatten()?;
+        let title = self.store.thread(&run.lead_thread_id).ok()?.title;
+        let title = title.trim().to_owned();
+        (!title.is_empty()).then_some(title)
     }
 }
 
