@@ -719,3 +719,11 @@ fn every_contract_reaction_has_one_tracker_word() {
         assert_eq!(reaction_content(reaction), word);
     }
 }
+
+#[tokio::test]
+async fn the_templates_read_answers_none_for_github() {
+    // GitHub has no issue-template API: its templates are repository files under .github/ISSUE_TEMPLATE, which a
+    // later row reads through the person's own gh. This shape answers none rather than inventing one.
+    let templates = github().templates("acme/app").await.unwrap();
+    assert!(templates.is_empty());
+}

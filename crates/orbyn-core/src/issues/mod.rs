@@ -33,7 +33,8 @@ use async_trait::async_trait;
 use orbyn_contracts::{
     CommentIssue, ConnectTracker, CreateIssue, CreateThread, IssueComment, IssueCounts,
     IssueDetail, IssueDraft, IssueKey, IssueList, IssueListFailure, IssueReaction, IssueRef,
-    IssueSummary, Project, ReactIssue, StartIssueThread, Thread, TrackerKind, TrackerRow,
+    IssueSummary, IssueTemplate, Project, ReactIssue, StartIssueThread, Thread, TrackerKind,
+    TrackerRow,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -57,6 +58,10 @@ const MAX_LABEL_CHARS: usize = 200;
 const MAX_ASSIGNEES: usize = 25;
 /// The most a candidate id or a comment id may hold, in characters (a reader's own id cap).
 const MAX_ID_CHARS: usize = 200;
+/// The issue templates one scope answers, and the most of a template's body that is kept (docs/issues.md,
+/// "Create, comment, react, templates and project binding").
+const MAX_TEMPLATES: usize = 50;
+const MAX_TEMPLATE_BODY_BYTES: usize = 16 * 1024;
 const GITLAB_DEFAULT_HOST: &str = "https://gitlab.com";
 /// The one Linear connection's teams fallback, cached for [`CACHE_FOR`] like a listing.
 const LINEAR_TEAMS: &str = "linear teams";
@@ -177,6 +182,12 @@ pub(crate) trait IssueSource: Send + Sync {
         Err(CoreError::Unsupported(
             "This tracker cannot react from Orbyn yet.".into(),
         ))
+    }
+    /// The tracker's own issue templates for one scope (docs/issues.md, "Create, comment, react, templates and
+    /// project binding"). The default answers none: a tracker whose API has no template source answers `[]`, never
+    /// 404. `Core::issue_templates` keeps at most 50 and cuts a body to 16 KiB.
+    async fn templates(&self, _scope: &str) -> Result<Vec<IssueTemplate>> {
+        Ok(Vec::new())
     }
 }
 
@@ -977,20 +988,31 @@ impl Core {
 
     /// Creates one issue (docs/issues.md, "Create, comment, react") and answers it as the tracker stored it. One
     /// call creates one issue: a call whose outcome is unknown answers `tracker_unavailable` saying the issue was
-    /// possibly created, and nothing here retries. A template id is refused until the templates read is built (R15
-    /// PR2), because an unknown id is `400 invalid` and no template can be known yet.
+    /// possibly created, and nothing here retries. A template id is looked up in the tracker's templates: a missing
+    /// body is filled from the named template and an unknown id is `400 invalid`.
     pub async fn create_issue(&self, input: CreateIssue) -> Result<IssueDetail> {
         self.require_connected(input.tracker).await?;
         self.check_issue_scope(input.tracker, &input.scope).await?;
         let source = self.writing_source(input.tracker)?;
         let title = checked_title(&input.title)?;
-        let body = input.body.unwrap_or_default();
+        let provided_body = input.body.is_some();
+        let mut body = input.body.unwrap_or_default();
+        // A template fills a body the person did not send; a body they did send wins. The template's text is the
+        // tracker's and as untrusted as any issue text (docs/issues.md, "Issue text is untrusted").
+        if let Some(id) = &input.template {
+            let template = self
+                .issue_templates(input.tracker, &input.scope)
+                .await?
+                .into_iter()
+                .find(|template| template.id == *id)
+                .ok_or_else(|| CoreError::Invalid("Unknown issue template.".into()))?;
+            if !provided_body {
+                body = template.body;
+            }
+        }
         checked_body(&body, "The issue body")?;
         checked_labels(&input.labels)?;
         checked_assignees(&input.assignees)?;
-        if input.template.is_some() {
-            return Err(CoreError::Invalid("Unknown issue template.".into()));
-        }
         source
             .create(
                 &input.scope,
@@ -1039,6 +1061,23 @@ impl Core {
             key: input.key,
         })?;
         Ok(detail)
+    }
+
+    /// The tracker's own issue templates for one scope: a read, at most 50, each body cut to 16 KiB. A tracker
+    /// whose API has no template source answers an empty list, never `404`.
+    pub async fn issue_templates(
+        &self,
+        tracker: TrackerKind,
+        scope: &str,
+    ) -> Result<Vec<IssueTemplate>> {
+        self.require_connected(tracker).await?;
+        self.check_issue_scope(tracker, scope).await?;
+        let mut templates = self.issue_source(tracker)?.templates(scope).await?;
+        templates.truncate(MAX_TEMPLATES);
+        for template in &mut templates {
+            template.body = frame::cut(&template.body, MAX_TEMPLATE_BODY_BYTES).to_owned();
+        }
+        Ok(templates)
     }
 
     /// The source that may write for this tracker. A tracker whose own write is not built yet answers the API's
