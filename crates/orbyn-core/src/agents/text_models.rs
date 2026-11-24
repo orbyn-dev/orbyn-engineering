@@ -311,6 +311,14 @@ mod tests {
     use crate::store::NewProject;
     use crate::testing::TempDir;
 
+    /// The exact `Invalid` sentence a stored map rule refuses with.
+    fn refused_invalid(error: CoreError) -> String {
+        match error {
+            CoreError::Invalid(message) => message,
+            other => panic!("expected an Invalid refusal, got {other:?}"),
+        }
+    }
+
     fn model(id: &str) -> ModelInfo {
         ModelInfo {
             id: id.to_owned(),
@@ -478,21 +486,43 @@ mod tests {
     fn the_map_is_an_object_of_at_most_64_plain_ids() {
         assert!(validate_syntax(&json!({"one": "big"})).is_ok());
         assert!(validate_syntax(&json!({})).is_ok());
-        assert!(validate_syntax(&json!(["one", "big"])).is_err());
-        assert!(validate_syntax(&json!({"one": 1})).is_err());
-        assert!(validate_syntax(&json!({"a/b": "big"})).is_err());
-        assert!(validate_syntax(&json!({"": "big"})).is_err());
-        assert!(validate_syntax(&json!({"one": ""})).is_err());
-        assert!(validate_syntax(&json!({"one": "has space"})).is_err());
-        assert!(validate_syntax(&json!({"one": "-flag"})).is_err());
-        assert!(validate_syntax(&json!({"one": "x".repeat(MAX_MODEL_ID + 1)})).is_err());
+        assert_eq!(
+            refused_invalid(validate_syntax(&json!(["one", "big"])).unwrap_err()),
+            "Text generator models are an object of engine ids to model ids."
+        );
+        assert_eq!(
+            refused_invalid(validate_syntax(&json!({"one": 1})).unwrap_err()),
+            "A text generator model is a model id string."
+        );
+        for engine in ["a/b", ""] {
+            assert_eq!(
+                refused_invalid(validate_syntax(&json!({engine: "big"})).unwrap_err()),
+                "An engine id is up to 64 letters, digits, - and _, starting with a letter or digit.",
+                "{engine:?}"
+            );
+        }
+        for model_id in [
+            "".to_owned(),
+            "has space".to_owned(),
+            "-flag".to_owned(),
+            "x".repeat(MAX_MODEL_ID + 1),
+        ] {
+            assert_eq!(
+                refused_invalid(validate_syntax(&json!({"one": model_id})).unwrap_err()),
+                "A model id is up to 256 plain characters and does not start with -.",
+                "{model_id:?}"
+            );
+        }
         let many: serde_json::Map<String, Value> = (0..MAX_ENGINES)
             .map(|index| (format!("engine{index}"), json!("model")))
             .collect();
         assert!(validate_syntax(&Value::Object(many.clone())).is_ok());
         let mut too_many = many;
         too_many.insert("one-more".into(), json!("model"));
-        assert!(validate_syntax(&Value::Object(too_many)).is_err());
+        assert_eq!(
+            refused_invalid(validate_syntax(&Value::Object(too_many)).unwrap_err()),
+            format!("At most {MAX_ENGINES} text generator models.")
+        );
     }
 
     #[tokio::test]
