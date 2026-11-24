@@ -362,20 +362,53 @@ impl CrewPathPattern {
 mod tests {
     use super::*;
 
+    /// The exact sentence a rule refuses with: a shape rule that changes it must fail its test.
+    fn refused<T: std::fmt::Debug>(result: Result<T, String>) -> String {
+        match result {
+            Ok(value) => panic!("expected a refusal, got {value:?}"),
+            Err(message) => message,
+        }
+    }
+
     #[test]
     fn patterns_follow_the_schema() {
         assert!(CrewHash::new(format!("sha256:{}", "a".repeat(64))).is_ok());
-        assert!(CrewHash::new("sha256:ABC").is_err());
+        assert_eq!(
+            refused(CrewHash::new("sha256:ABC")),
+            r#"hash "sha256:ABC" is not sha256: and 64 lowercase hex digits"#
+        );
         assert!(CrewPath::new("crates/x/src/lib.rs").is_ok());
         for bad in ["/etc/passwd", "C:/x", "a/../b", "a//b", "a/", "..", "a/**"] {
-            assert!(CrewPath::new(bad).is_err(), "{bad}");
+            assert_eq!(
+                refused(CrewPath::new(bad)),
+                format!("path {bad:?} must be relative, use / and have no empty or .. segment"),
+                "{bad}"
+            );
         }
         assert!(CrewPathPattern::new("docs/**").is_ok());
-        assert!(CrewPathPattern::new("**").is_err());
-        assert!(CrewMember::new("lead").is_err() && CrewMember::new("worker-01").is_ok());
-        assert!(CrewAddressee::new("all").is_ok() && CrewAddressee::new("core").is_err());
-        assert!(CrewCommit::new("0123456789abcdef0123456789abcdef0123456").is_err());
-        assert!(CrewToken::new("Claude").is_err() && CrewToken::new("claude").is_ok());
+        assert_eq!(
+            refused(CrewPathPattern::new("**")),
+            r#"path "**" must be relative, use / and have no empty or .. segment"#
+        );
+        assert_eq!(
+            refused(CrewMember::new("lead")),
+            r#""lead" is a reserved word, not a member id"#
+        );
+        assert!(CrewMember::new("worker-01").is_ok());
+        assert!(CrewAddressee::new("all").is_ok());
+        assert_eq!(
+            refused(CrewAddressee::new("core")),
+            r#""core" is a reserved word, not a member id"#
+        );
+        assert_eq!(
+            refused(CrewCommit::new("0123456789abcdef0123456789abcdef0123456")),
+            r#"commit "0123456789abcdef0123456789abcdef0123456" is not a full lowercase hex object id"#
+        );
+        assert_eq!(
+            refused(CrewToken::new("Claude")),
+            r#"token "Claude" does not match its pattern"#
+        );
+        assert!(CrewToken::new("claude").is_ok());
     }
 
     #[test]
@@ -394,7 +427,11 @@ mod tests {
             "http://localhost:/x",
             "http://127.0.0.1:123456",
         ] {
-            assert!(CrewLoopbackUrl::new(bad).is_err(), "{bad}");
+            assert_eq!(
+                refused(CrewLoopbackUrl::new(bad)),
+                format!("{bad:?} is not an http URL on 127.0.0.1, localhost or [::1]"),
+                "{bad}"
+            );
         }
     }
 
@@ -402,11 +439,23 @@ mod tests {
     fn timestamps_are_real_dates() {
         assert!(CrewTimestamp::new("2026-11-12T09:00:00Z").is_ok());
         assert!(CrewTimestamp::new("2026-11-12T09:00:00.5+01:00").is_ok());
-        assert!(CrewTimestamp::new("2026-02-30T09:00:00Z").is_err());
-        assert!(CrewTimestamp::new("2026-11-12 09:00:00Z").is_err());
+        assert_eq!(
+            refused(CrewTimestamp::new("2026-02-30T09:00:00Z")),
+            r#""2026-02-30T09:00:00Z" is not an RFC 3339 timestamp"#
+        );
+        assert_eq!(
+            refused(CrewTimestamp::new("2026-11-12 09:00:00Z")),
+            r#""2026-11-12 09:00:00Z" is not an RFC 3339 timestamp"#
+        );
         assert!(CrewUtcSeconds::new("2026-11-12T09:00:00Z").is_ok());
-        assert!(CrewUtcSeconds::new("2026-11-12T09:00:00.5Z").is_err());
-        assert!(CrewUtcSeconds::new("2026-11-12T09:00:00+00:00").is_err());
+        assert_eq!(
+            refused(CrewUtcSeconds::new("2026-11-12T09:00:00.5Z")),
+            r#""2026-11-12T09:00:00.5Z" is not a UTC timestamp in whole seconds"#
+        );
+        assert_eq!(
+            refused(CrewUtcSeconds::new("2026-11-12T09:00:00+00:00")),
+            r#""2026-11-12T09:00:00+00:00" is not a UTC timestamp in whole seconds"#
+        );
     }
 
     #[test]
