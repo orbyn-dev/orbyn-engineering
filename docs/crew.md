@@ -2036,8 +2036,10 @@ The person's stop button for a Crew task (Preview). Backend only: the card actio
   message queued, after the cancel read the task. Once the task is `cancelled` the worker is read again and stopped once more (with
   its queue emptied); a later start or retry meets its own final-state guard. If that second stop fails, **the task stays
   `cancelled` with a worker that may still run**: a `crew.task.cancel_failed` row flags it and the caller gets `502
-  engine_unavailable` ("The task is cancelled, but its worker could not be stopped"). Repeating the cancel answers `already: true`,
-  so the person stops that worker from its thread.
+  engine_unavailable` ("The task is cancelled, but its worker could not be stopped"). Repeating the cancel tries the worker's stop again: it
+  writes `crew.task.stop_retry`, stops the worker and, if that holds, writes `crew.task.stop_retried` (which clears the flag) and
+  answers `already: true`; a stop that fails again writes another `cancel_failed` row and the same 502. A cancelled task with no
+  failed stop writes nothing.
 - **Wording.** When the worker's run end moves the task first, its final result still says the person cancelled it if the cancel's
   intent row exists.
 - **Races with a start or a retry.** A task cannot get a worker once it ended (`set_crew_worker` refuses in its transaction, the thread
@@ -2084,9 +2086,10 @@ the person key were merged first (#1342).
   "The lead thread was closed."; a cancel with another reason still tells it. Without this the note would start the thread the
   person is closing and the patch would answer `409 thread_busy`.
 - **Could not stop.** A task whose last cancel attempt failed is an item of the person's *needs you* inbox with kind
-  `could_not_stop` (not dismissible): the read joins non-final tasks to their latest `crew.task.cancel_failed` row with no
-  `crew.task.cancelled` row after it, and shows that row's time as `since`. It adds no storage and moves nothing. The item clears when
-  the person stops the task again and it ends `cancelled`.
+  `could_not_stop` (not dismissible): the read joins tasks that have not passed or stopped (a `cancelled` one whose second stop failed
+  included) to their latest `crew.task.cancel_failed` row with no `crew.task.cancelled` or `crew.task.stop_retried` row after it,
+  and shows that row's time as `since`. It adds no storage and moves nothing. The item clears when the person stops the task again
+  and the stop holds.
 - **Not run against a real service.** The routes, the agreement between the live read and the close, the failed-task path, the inbox
   item and the thread's own close are covered by fake-engine and route tests; the web half hides until the Preview flag is on.
 

@@ -107,10 +107,10 @@ impl Store {
     }
 
     /// The tasks whose last cancel attempt could not stop the worker, newest first, with the project of their lead thread and
-    /// when that attempt failed. The try is the last `crew.task.cancel_failed` row of the task, with no `crew.task.cancelled` row
-    /// after it. A task in a final state is not one: a failed first stop leaves the state alone, but a failed second stop leaves a
-    /// task already `cancelled` with a live worker, which this read does not show (#1400). Reads the audit rows the cancel
-    /// already writes and adds no storage.
+    /// when that attempt failed. The try is the last `crew.task.cancel_failed` row of the task, with no `crew.task.cancelled` or
+    /// `crew.task.stop_retried` row after it. A task that passed or stopped is not one. A `cancelled` task is: its second stop
+    /// failed after the state moved, and a cancel of it tries the stop again (#1400). Reads the audit rows the cancel already
+    /// writes and adds no storage.
     pub fn crew_could_not_stop(&self) -> Result<Vec<CouldNotStopTask>> {
         let conn = self.reader();
         let mut statement = conn.prepare(
@@ -122,10 +122,11 @@ impl Store {
              )
              LEFT JOIN crew_runs r ON r.task_id = t.id
              LEFT JOIN threads th ON th.id = r.lead_thread_id
-             WHERE t.state NOT IN ('passed', 'stopped', 'cancelled')
+             WHERE t.state NOT IN ('passed', 'stopped')
                AND NOT EXISTS (
                    SELECT 1 FROM audit_events c
-                   WHERE c.target = t.id AND c.action = 'crew.task.cancelled' AND c.id > a.id
+                   WHERE c.target = t.id AND c.id > a.id
+                     AND c.action IN ('crew.task.cancelled', 'crew.task.stop_retried')
                )
              ORDER BY t.updated_at DESC, t.id",
         )?;

@@ -15,8 +15,11 @@ use crate::error::{CoreError, Result};
 
 /// What the start of a cancel found.
 pub enum CancelStart {
-    /// The task is already `cancelled`: no row, no effect.
+    /// The task is already `cancelled` and its worker is not known to run: no row, no effect.
     Already,
+    /// The task is `cancelled` but its last attempt to stop the worker failed (`crew.task.cancel_failed` after the cancel): the
+    /// stop is tried again, with its own intent row and no second cancel.
+    Retry(Option<Box<CrewRun>>),
     /// The cancel is recorded and may go on, with the task's worker side if it has one.
     Begun(Option<Box<CrewRun>>),
 }
@@ -42,6 +45,24 @@ fn audit(
         },
     )?;
     Ok(())
+}
+
+/// True when the task's latest `crew.task.cancel_failed` row is newer than every `crew.task.cancelled` and
+/// `crew.task.stop_retried` row: its worker may still run.
+fn stop_failed(tx: &rusqlite::Transaction<'_>, task_id: &str) -> Result<bool> {
+    Ok(tx.query_row(
+        "SELECT EXISTS (
+             SELECT 1 FROM audit_events f
+             WHERE f.target = ?1 AND f.action = 'crew.task.cancel_failed'
+               AND NOT EXISTS (
+                   SELECT 1 FROM audit_events c
+                   WHERE c.target = ?1 AND c.id > f.id
+                     AND c.action IN ('crew.task.cancelled', 'crew.task.stop_retried')
+               )
+         )",
+        [task_id],
+        |row| row.get(0),
+    )?)
 }
 
 impl Store {
@@ -100,7 +121,18 @@ impl Store {
         self.commit(|tx, _| {
             let task = find_task(tx, task_id)?;
             if task.state == "cancelled" {
-                return Ok(CancelStart::Already);
+                if !stop_failed(tx, task_id)? {
+                    return Ok(CancelStart::Already);
+                }
+                let run = find_run(tx, task_id).ok().map(Box::new);
+                audit(
+                    tx,
+                    actor,
+                    "crew.task.stop_retry",
+                    task_id,
+                    json!({ "worker_thread": run.as_ref().and_then(|r| r.worker_thread_id.clone()) }),
+                )?;
+                return Ok(CancelStart::Retry(run));
             }
             if crate::crew::lifecycle::is_final(&task.state) {
                 return Err(CoreError::TaskEnded);
@@ -157,6 +189,12 @@ impl Store {
             )?;
             Ok((step(tx, &task, "cancelled", None, &[])?, true))
         })
+    }
+
+    /// The retried stop of a cancelled task's worker held: the failure no longer shows. The row is written after the stop and
+    /// clears what `crew.task.cancel_failed` flagged.
+    pub fn finish_crew_stop_retry(&self, task_id: &str, actor: &str) -> Result<()> {
+        self.commit(|tx, _| audit(tx, actor, "crew.task.stop_retried", task_id, json!({})))
     }
 
     /// Records that the attempt failed; the task keeps its state.
