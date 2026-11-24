@@ -504,7 +504,9 @@ impl Core {
                         // A check only a person can make: their stored answer, or the wait for one.
                         manual_check(self, task, check, &mut verdict)?
                     } else {
-                        run_check(check, &site).await
+                        // Boxed: this future is the biggest one in the verify chain, and the chain is awaited from the
+                        // forge watch, so it sits on a small stack (a 2 MiB thread overflowed there).
+                        Box::pin(run_check(check, &site)).await
                     }
                 }
             };
