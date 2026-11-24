@@ -84,6 +84,38 @@ const seeds = (): Lesson[] => [
   }),
 ];
 
+/** The design's three repeated-failure lessons (same source, check kind and path class), for the KC9 proposal frames. */
+const proposalSeeds = (): Lesson[] => [
+  lesson({
+    id: "les-returnto",
+    source: "fingerprint",
+    text: "Checks like a unit test failed on web/nav before: a redirect followed a target outside the app.",
+    names_path: true,
+    uses: 2,
+    last_used_at: "2026-11-07T16:05:00Z",
+    created_at: "2026-11-07T14:20:00Z",
+  }),
+  lesson({
+    id: "les-navcleanup",
+    source: "fingerprint",
+    text: "Checks like a unit test failed on web/nav before: old returnTo links stopped redirecting after a helper was renamed.",
+    names_path: true,
+    uses: 1,
+    last_used_at: "2026-11-07T16:05:00Z",
+    created_at: "2026-11-07T15:40:00Z",
+  }),
+  lesson({
+    id: "les-loginlink",
+    source: "fingerprint",
+    text: "Checks like a unit test failed on web/nav before: a login link kept a returnTo from another host.",
+    names_path: true,
+    created_at: "2026-11-07T16:30:00Z",
+  }),
+];
+
+/** The lessons the sample proposal is based on. */
+export const PROPOSAL_LESSONS = ["les-returnto", "les-navcleanup", "les-loginlink"] as const;
+
 export function createLessonsMock() {
   let rows: Lesson[] = [];
   let useLessons = true;
@@ -92,7 +124,19 @@ export function createLessonsMock() {
   const deleted = new Map<string, { lesson: Lesson; until: string }>();
 
   function reset(scenario: Scenario) {
-    rows = scenario === "crew-lessons-empty" ? [] : scenario.startsWith("crew-lessons") ? seeds() : [];
+    rows =
+      scenario === "crew-lessons-empty"
+        ? []
+        : scenario.startsWith("crew-lessons")
+          ? seeds()
+          : scenario.startsWith("crew-proposals")
+            ? proposalSeeds()
+            : [];
+    // The proposal frames draw one of the three lessons turned off (the stale card), or all three marked as a skill.
+    if (scenario === "crew-proposals-stale")
+      rows = rows.map((one) => (one.id === "les-loginlink" ? { ...one, state: "disabled", in_next_brief: false } : one));
+    if (scenario === "crew-proposals-approved")
+      rows = rows.map((one) => ({ ...one, skill: { name: "redirect-checks" }, in_next_brief: false }));
     useLessons = scenario !== "crew-lessons-off";
     // With the repository switch off, in_next_brief is false for every lesson of it, as the service says.
     if (!useLessons) rows = rows.map((one) => ({ ...one, in_next_brief: false }));
@@ -256,5 +300,12 @@ export function createLessonsMock() {
     return { status: 200, body: one };
   }
 
-  return { reset, handle };
+  /** The lessons a proposal was approved from carry its skill and stop going into briefs (KC9). */
+  function approveSkill(name: string, lessonIds: readonly string[]) {
+    rows = rows.map((one) => (lessonIds.includes(one.id) ? { ...one, skill: { name }, in_next_brief: false } : one));
+  }
+
+  const lessonNow = (id: string): Lesson | undefined => rows.find((one) => one.id === id);
+
+  return { reset, handle, approveSkill, lessonNow };
 }

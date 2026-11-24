@@ -827,9 +827,8 @@ impl Store {
         })
     }
 
-    /// The background crews of one trigger kind, by name. The listeners' observation set: `schedule`, `ci_failure` and
-    /// `watch` each have their own tick; a kind nothing can start yet (`issue_label`, `dependency_update`) has no listener and
-    /// is never listed by one.
+    /// The background crews of one trigger kind, by name. The listeners' observation set: the schedule timer, the CI
+    /// watch, the watch timer and the two issue-reader ticks read the enabled crews of their kind.
     pub fn background_crews_of_kind(&self, kind: &str) -> Result<Vec<BackgroundRow>> {
         let conn = self.reader();
         let mut statement =
@@ -838,6 +837,19 @@ impl Store {
             .query_map([kind], row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// Whether one exact background event has already been claimed. The issue-label listener uses it to tell its
+    /// first sight of a crew (when it must baseline the labels already there) from a later pass, without reading the
+    /// whole claim table.
+    pub fn background_event_claimed(&self, identity: &str) -> Result<bool> {
+        let conn = self.reader();
+        let claimed: i64 = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM crew_background_events WHERE identity = ?1)",
+            [identity],
+            |row| row.get(0),
+        )?;
+        Ok(claimed == 1)
     }
 
     /// First-write-wins claim of one background event: true when this firing is new, false when the same event has
@@ -879,8 +891,8 @@ impl Store {
     }
 
     /// A listener firing the start refused, as one audit row beside the refusal: which listener fired and a fixed category of the
-    /// refusal, never the refusal's text and never any event text. `kind` is `schedule` or `ci`, and `reason` is one of the
-    /// listener's own words.
+    /// refusal, never the refusal's text and never any event text. `kind` is the listener's own name (`schedule`, `ci`,
+    /// `issue_label` or `dependency_update`), and `reason` is one of the listener's own words.
     pub fn audit_background_listener_refusal(
         &self,
         crew: &str,

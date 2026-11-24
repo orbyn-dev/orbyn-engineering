@@ -1,5 +1,5 @@
 import { Book, Search, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import type { SkillSummary } from "../../generated/SkillSummary";
 import { useWaited } from "../../lib/motion";
 import { useLayoutWidth } from "../../lib/useLayout";
@@ -9,6 +9,8 @@ import { useUi } from "../../product/state/ui";
 import { Button } from "../../ui/controls";
 import { ErrorState, NarrowBack } from "../../product/ui/states";
 import { useSkills } from "./skillsStore";
+import { useCrewSkills, type AddedSkill, type ProposedSkill } from "./crewSkills";
+import { ADDED_EMPTY_LINE, ADDED_GROUP_NOTE, AVAILABLE, PROPOSED_GROUP_NOTE, lessonsWord, skillText } from "../crew";
 import "./skills.css";
 
 /** The categories the library itself defines, in the order its catalog lists them. A skill with none shows only under All. */
@@ -26,6 +28,9 @@ function startThreadWithSkill(skill: SkillSummary) {
 
 export function SkillsPage({ skill }: { skill?: string }) {
   const result = useSkills();
+  // Crew's skill proposals and the skills approved from them (KC9): nothing is read while Crew Preview is off, and a
+  // service without the routes answers 404, so the page then draws exactly what it drew before.
+  const crew = useCrewSkills();
   const phone = useLayoutWidth() === "phone";
   const slow = useWaited(result.loading && !result.data);
   const [category, setCategory] = useState<string>("All");
@@ -37,13 +42,17 @@ export function SkillsPage({ skill }: { skill?: string }) {
   const content = useRef<HTMLDivElement>(null);
   const listScrollTop = useRef(0);
   const entries = result.data?.skills;
-  const known = entries?.some((entry) => entry.name === skill);
+  const personal = crew.status === "ready" ? crew.added.find((entry) => entry.name === skill) : undefined;
+  const known = entries?.some((entry) => entry.name === skill) || personal !== undefined;
+  // A skill added from lessons is known only once its read has answered with the list: while it runs, and when it failed,
+  // the address is not known to be stale, so a bookmark to a personal skill is never rewritten on a failed read.
+  const crewSettled = crew.status === "ready" || crew.status === "off";
   // A stale bookmark must not remain behind the catalog in the Back trail.
   useEffect(() => {
-    if (!entries || skill === undefined || known) return;
+    if (!entries || skill === undefined || known || !crewSettled) return;
     window.history.replaceState(window.history.state, "", routeHref({ name: "skills" }));
     window.dispatchEvent(new HashChangeEvent("hashchange"));
-  }, [entries, skill, known]);
+  }, [entries, skill, known, crewSettled]);
   // The shell moves focus into every new page after its own effects run, and prefers an element marked
   // data-autofocus: the card that was opened is marked, so the shell and this page agree on where focus lands.
   // Focus follows the route, once the library is there: into a skill's heading, or back to the card that was opened.
@@ -103,9 +112,37 @@ export function SkillsPage({ skill }: { skill?: string }) {
     (entry) => (category === "All" || entry.category.trim() === category) && (!query || `${entry.name} ${entry.description}`.toLowerCase().includes(query)),
   );
   const categories = categoriesOf(entries);
+  // The Crew groups are drawn on the page a person lands on, as the design draws them: no filter and no search.
+  const crewReady = crew.status === "ready";
+  const showCrew = crewReady && category === "All" && query === "";
+  const crewParts =
+    crewReady && showCrew
+      ? [
+          crew.proposed.length > 0 ? `${crew.proposed.length} proposed` : "",
+          crew.added.length > 0 ? `${crew.added.length} added from lessons` : "",
+        ].filter(Boolean)
+      : [];
 
   if (skill !== undefined) {
-    if (!selected) return null;
+    if (!selected) {
+      if (personal) return <PersonalSkill skill={personal} heading={heading} />;
+      // The address may name a skill added from lessons whose read has not answered yet: wait, do not draw a blank page.
+      if (!crewSettled)
+        return (
+          <section className="skills-page" aria-label="Skill">
+            <header className="skills-heading">
+              <NarrowBack to={{ name: "skills" }} />
+              <h1 ref={heading} tabIndex={-1} data-page-title>
+                {skill}
+              </h1>
+            </header>
+            <div className="skills-loading" role="status" aria-label="Loading skills">
+              <div className="skills-placeholder" />
+            </div>
+          </section>
+        );
+      return null;
+    }
     const label = selected.category.trim();
     return (
       <section className="skills-page" aria-label="Skill">
@@ -135,7 +172,8 @@ export function SkillsPage({ skill }: { skill?: string }) {
     );
   }
 
-  // No workspace, or a library with nothing in it: the header stays, with no count, no filters and no grid.
+  // No workspace, or a library with nothing in it: the header stays, with no count, no filters and no grid. The Crew groups
+  // are not built-in skills, so they are still drawn above the line.
   if (entries.length === 0) {
     return (
       <section className="skills-page" aria-label="Skills">
@@ -144,8 +182,11 @@ export function SkillsPage({ skill }: { skill?: string }) {
           <h1 ref={heading} tabIndex={-1} data-page-title>
             Skills
           </h1>
+          {crewParts.length > 0 ? <span className="skills-subtitle">{crewParts.join(" · ")}</span> : null}
         </header>
         <div className="skills-content">
+          {crewReady && crew.proposed.length > 0 ? <ProposedGroup items={crew.proposed} /> : null}
+          {crewReady && crew.added.length > 0 ? <AddedGroup items={crew.added} /> : null}
           <div className="skills-empty">
             <Book size={16} aria-hidden />
             <p role="status">No skills in this workspace yet.</p>
@@ -162,7 +203,9 @@ export function SkillsPage({ skill }: { skill?: string }) {
         <h1 ref={heading} tabIndex={-1} data-page-title>
           Skills
         </h1>
-        <span className="skills-subtitle">{shown.length === 0 ? `0 of ${entries.length}` : `${entries.length} built in`}</span>
+        <span className="skills-subtitle">
+          {shown.length === 0 ? `0 of ${entries.length}` : [`${entries.length} built in`, ...crewParts].join(" · ")}
+        </span>
       </header>
       <div className="skills-filters" role="group" aria-label="Filter skills">
         {categories.length > 0
@@ -181,6 +224,17 @@ export function SkillsPage({ skill }: { skill?: string }) {
         </label>
       </div>
       <div className="skills-content" ref={content}>
+        {showCrew && crew.proposed.length > 0 ? <ProposedGroup items={crew.proposed} /> : null}
+        {showCrew && crew.added.length > 0 ? <AddedGroup items={crew.added} /> : null}
+        {showCrew && crew.added.length === 0 && crew.proposed.length === 0 ? (
+          <p className="skills-group-note">{ADDED_EMPTY_LINE}</p>
+        ) : null}
+        {showCrew ? (
+          <h5 className="skills-group-head">
+            Built in
+            <span className="skills-group-count">{entries.length}</span>
+          </h5>
+        ) : null}
         <div role="status">
           {shown.length === 0 ? (
             <div className="skills-empty">
@@ -216,6 +270,122 @@ export function SkillsPage({ skill }: { skill?: string }) {
             </button>
           ))}
         </div>
+      </div>
+    </section>
+  );
+}
+
+/** The proposals that wait for a decision, above the skills themselves (KC9, the design's Proposed group). */
+function ProposedGroup({ items }: { items: ProposedSkill[] }) {
+  return (
+    <div className="skills-group">
+      <h5 className="skills-group-head">
+        Proposed
+        <span className="skills-group-count">{items.length}</span>
+      </h5>
+      <div className="skills-grid">
+        {items.map(({ proposal, repo }) => {
+          const text = skillText(proposal.text);
+          const name = text.name ?? "Proposed skill";
+          return (
+            <div
+              className="skills-card skills-card-static skills-card-proposed"
+              key={proposal.id}
+              role="region"
+              aria-label={`Proposed skill ${name}`}
+            >
+              <strong>{name}</strong>
+              {text.description ? <span className="skills-description">{text.description}</span> : null}
+              <span className="skills-foot skills-foot-col">
+                <span className="skills-status skills-status-proposed">Proposed</span>
+                <span className="skills-source">{`From ${lessonsWord(proposal.lessons.length)} · Personal`}</span>
+              </span>
+              <div>
+                <Button
+                  small
+                  tone="primary"
+                  className="skills-review"
+                  onClick={() => navigate({ name: "settings", section: "crew", crewPage: "skill-proposal", repo: repo.id, id: proposal.id })}
+                >
+                  Review
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="skills-group-note">{PROPOSED_GROUP_NOTE}</p>
+    </div>
+  );
+}
+
+/** The skills a person approved from Crew proposals: Personal, and above Built in (KC9, Added from lessons). */
+function AddedGroup({ items }: { items: AddedSkill[] }) {
+  return (
+    <div className="skills-group">
+      <h5 className="skills-group-head">
+        Added from lessons
+        <span className="skills-group-count">{items.length}</span>
+      </h5>
+      <p className="skills-group-note">{ADDED_GROUP_NOTE}</p>
+      <div className="skills-grid">
+        {items.map((skill) => (
+          <div className="skills-card skills-card-static" key={`${skill.repo.id}:${skill.name}`}>
+            <strong>{skill.name}</strong>
+            {skill.description ? <span className="skills-description">{skill.description}</span> : null}
+            <span className="skills-foot skills-foot-col">
+              <span className="skills-status">Personal</span>
+              <span className="skills-source">
+                {`From ${lessonsWord(skill.lessons)} in `}
+                <button
+                  type="button"
+                  onClick={() => navigate({ name: "settings", section: "crew", crewPage: "lessons", repo: skill.repo.id })}
+                >
+                  {skill.repo.name}
+                </button>
+              </span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One skill approved from Crew proposals, on its own page (KC9): what it does, where it came from, and how a worker gets it.
+ * The read behind it carries the skill's name, its one line, the repository and how many lessons it came from; the approval
+ * time, the lessons' own evidence and the files of skills-local are not in the contract, so those rows are left out.
+ */
+function PersonalSkill({ skill, heading }: { skill: AddedSkill; heading: RefObject<HTMLHeadingElement | null> }) {
+  const summary: SkillSummary = { name: skill.name, category: "", description: skill.description, enabled: true };
+  return (
+    <section className="skills-page" aria-label="Skill">
+      <header className="skills-heading">
+        <NarrowBack to={{ name: "skills" }} />
+        <h1 ref={heading} tabIndex={-1} data-page-title>
+          {skill.name}
+        </h1>
+        <span className="skills-subtitle">{`Personal · Added from ${lessonsWord(skill.lessons)} · All your projects`}</span>
+        <div className="skills-actions">
+          <Button tone="primary" onClick={() => startThreadWithSkill(summary)}>
+            Use in a new thread
+          </Button>
+        </div>
+      </header>
+      <div className="skills-detail skills-detail-one">
+        <section>
+          <h2>What it does</h2>
+          <p>{skill.description}</p>
+        </section>
+        <section>
+          <h2>Where it came from</h2>
+          <p>Added by you.</p>
+          <p>
+            The lessons stay on the Lessons page, marked Now a skill. While the skill exists they do not go into briefs.{" "}
+            {AVAILABLE}
+          </p>
+        </section>
       </div>
     </section>
   );

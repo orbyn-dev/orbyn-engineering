@@ -11,6 +11,7 @@ use orbyn_contracts::{FlowDeliveryMode, FlowEngineStatus, FlowQuiet, FlowRole, F
 use super::scrub::Scrub;
 use crate::agents::provider_facts::{ProviderFacts, Unavailable};
 use crate::app::Core;
+use crate::crew::working::{flow_working, working};
 use crate::crew::{valid_id, wire_name};
 use crate::error::{CoreError, Result};
 
@@ -165,6 +166,7 @@ impl Core {
                 effort: None,
                 state: None,
                 quiet: FlowQuiet::Active,
+                working: None,
                 engine_status: engine_status(&engine),
                 subagents: if statuses.get(&engine).is_some_and(|(_, native)| *native) {
                     FlowSubagents::Reported
@@ -191,6 +193,11 @@ impl Core {
                 .and_then(|ts| crate::util::parse_time(ts))
                 .map(|at| now.saturating_sub(at).max(0));
             let grants = brief.as_ref().map(|b| &b.files);
+            // KC3: the one working function, with the latest fix as the only work that outlives the task's state.
+            let latest_fix = match self.store.crew_fixes_of(&task.id)?.last() {
+                Some(fix) => self.store.crew_task(&fix.fix_task_id)?.map(|t| t.state),
+                None => None,
+            };
             nodes.push(wire::FlowNode {
                 member: scrub.text(&run.member, 60),
                 role: FlowRole::Worker,
@@ -199,6 +206,7 @@ impl Core {
                 effort: route.as_ref().map(|r| wire_name(&r.effort)),
                 state: Some(task.state.clone()),
                 quiet: quiet_of(&task.state, idle),
+                working: flow_working(working(&task.state, latest_fix.as_deref())),
                 engine_status: engine_status(&engine),
                 subagents: if statuses.get(&engine).is_some_and(|(_, native)| *native) {
                     FlowSubagents::Reported
@@ -284,6 +292,25 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Quiet and Working answer different questions, and the Map shows both. This pins the disagreement the
+    /// one working function exists to avoid: a finished worker reads Active and does not work, and a silent
+    /// one reads Quiet or MayBeStuck and still owns its work.
+    #[test]
+    fn quiet_is_not_working() {
+        use crate::crew::working::{Working, working};
+        assert_eq!(quiet_of("passed", Some(0)), FlowQuiet::Active);
+        assert_eq!(working("passed", None), None);
+        assert_eq!(quiet_of("idle", Some(0)), FlowQuiet::Active);
+        assert_eq!(working("idle", None), None);
+        assert_eq!(quiet_of("running", Some(6 * 60)), FlowQuiet::Quiet);
+        assert_eq!(
+            quiet_of("changed_approach", Some(16 * 60)),
+            FlowQuiet::MayBeStuck
+        );
+        assert_eq!(working("running", None), Some(Working::Running));
+        assert_eq!(working("changed_approach", None), Some(Working::Retry));
+    }
 
     #[test]
     fn only_a_running_worker_can_be_quiet_and_the_thresholds_are_five_and_fifteen_minutes() {

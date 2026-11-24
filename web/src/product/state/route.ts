@@ -36,7 +36,7 @@ const ROW_KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const CREW_TABS = ["approvals", "trust", "background", "inbox", "flow", "board", "map", "lanes"] as const;
 export type CrewTab = (typeof CREW_TABS)[number];
 
-export const CREW_SETTINGS_PAGES = ["areas", "thresholds", "capacity", "coverage", "dashboard", "escapes", "possible", "escape-settings", "escape", "backtest", "estimate", "report", "lessons", "lesson", "lesson-add"] as const;
+export const CREW_SETTINGS_PAGES = ["areas", "thresholds", "capacity", "coverage", "dashboard", "escapes", "possible", "escape-settings", "escape", "backtest", "estimate", "report", "lessons", "lesson", "lesson-add", "skill-proposal"] as const;
 export type CrewSettingsPage = (typeof CREW_SETTINGS_PAGES)[number];
 
 /** Where the coverage map was opened from. It comes from the address the link carried, never from history: no origin, no way back drawn. */
@@ -108,10 +108,11 @@ const CREW_PAGE_PATH: Record<CrewSettingsPage, string> = {
   lessons: "lessons",
   lesson: "lessons/lesson",
   "lesson-add": "lessons/add",
+  "skill-proposal": "lessons/proposal",
 };
-const CREW_PAGES_WITH_REPO: readonly CrewSettingsPage[] = ["areas", "thresholds", "capacity", "coverage", "dashboard", "escapes", "possible", "lessons", "lesson", "lesson-add"];
+const CREW_PAGES_WITH_REPO: readonly CrewSettingsPage[] = ["areas", "thresholds", "capacity", "coverage", "dashboard", "escapes", "possible", "lessons", "lesson", "lesson-add", "skill-proposal"];
 const CREW_PAGES_WITH_ORIGIN: readonly CrewSettingsPage[] = ["coverage"];
-const CREW_PAGES_WITH_ID: readonly CrewSettingsPage[] = ["escape", "report", "lesson"];
+const CREW_PAGES_WITH_ID: readonly CrewSettingsPage[] = ["escape", "report", "lesson", "skill-proposal"];
 
 // Same grammar as Core Flow valid_id. A locator identifies a read, never an action.
 export const isCrewTaskId = (id: string): boolean => /^[A-Za-z0-9_:-][A-Za-z0-9_.:-]{0,95}$/.test(id);

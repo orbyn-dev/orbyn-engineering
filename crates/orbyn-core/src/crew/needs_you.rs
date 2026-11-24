@@ -5,10 +5,17 @@
 //! behind the item.
 //!
 //! A task appears once. The first rule that matches wins, in this order: a task whose last cancel attempt could not stop its
-//! worker (its worker may still run, so it comes before the same task waiting on a person), then a task waiting on a person, then a merge waiting on the person, then a background run waiting for review, then
-//! a stopped task with a trip wire, then a stopped task whose worker stopped twice. Other stopped and cancelled tasks are not
-//! items. Every text is one line, redacted and capped at 160 characters; only a task that waits on a person carries its own
-//! scrubbed reason, every other kind carries fixed core words.
+//! worker (its worker may still run, so it comes before the same task waiting on a person), then a task waiting on a person,
+//! then a merge waiting on
+//! the person, then a background run waiting for review, then a stopped task with a trip wire, then a stopped task whose worker
+//! stopped twice. Other stopped and cancelled tasks are not items. Every text is one line, redacted and capped at 160
+//! characters; a task carries its own scrubbed reason when its latest `needs_person` result has one (the question, the refusal
+//! that kept it from starting, a manual check), and every other kind carries fixed core words.
+//!
+//! Since KC3 PR2 this list is the one field: the Taskboard's Needs you column, the Review queue's `waiting_elsewhere` and the
+//! dashboard's `live` row read `needs_you_list` (the same items `crew_needs_you` answers with) instead of deriving their own
+//! rule, so a dismissal hides the wait wherever the field is read. They read the same list, not necessarily equal counts: the
+//! board cards only work tasks and the dashboard narrows to one repository.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,7 +38,7 @@ const CAP: usize = 200;
 /// The longest reason, in characters.
 const REASON_MAX: usize = 160;
 
-/// The fixed reason of a kind. A task waiting on a person has its own scrubbed reason instead.
+/// The fixed reason of a kind, used when the task behind it has no scrubbed reason of its own.
 fn fixed_reason(kind: wire::NeedsYouKind) -> Option<&'static str> {
     match kind {
         wire::NeedsYouKind::TaskNeedsPerson => None,
@@ -74,7 +81,9 @@ fn line(text: String) -> Option<String> {
 }
 
 impl Core {
-    /// The scrubbed reason of a task that waits on a person: the latest `needs_person` result, as the Taskboard reads it.
+    /// A task's own scrubbed reason: its latest `needs_person` result. A task that could not start has the refusal there, a
+    /// manual check has its own words, and a question has the briefer's sentence; the kind's fixed words stand in when this is
+    /// empty, so the CouldNotStart item carries the task's refusal rather than "The worker never ran." alone.
     fn needs_you_reason(&self, facts: &Facts, scrub: &Scrub) -> Result<Option<String>> {
         Ok(self
             .store
@@ -85,8 +94,13 @@ impl Core {
             .and_then(|result| line(scrub.text(&result.summary, REASON_MAX))))
     }
 
-    /// Every item, dismissed or not, before the cap and the order. The first rule for an id wins.
-    fn needs_you_items(&self) -> Result<Vec<wire::NeedsYouItem>> {
+    /// Every item, dismissed or not, before the cap and the order. The first rule for an id wins. `keep` says, from an item's
+    /// project and crew, whether the caller wants it, and is asked before any facts, results or scrubs are loaded for it, so a
+    /// read scoped to one crew or one repository does not pay for the others.
+    fn needs_you_items(
+        &self,
+        keep: &dyn Fn(Option<&str>, &str) -> bool,
+    ) -> Result<Vec<wire::NeedsYouItem>> {
         let person = self.display_redactor()?;
         let mut scrubs: BTreeMap<String, Scrub> = BTreeMap::new();
         let mut seen = BTreeSet::new();
@@ -113,6 +127,9 @@ impl Core {
             .store
             .crew_tasks_in_states(&["needs_person", "stopped"])?
         {
+            if !keep(place.project_id.as_deref(), &place.task.crew_id) {
+                continue;
+            }
             if place.task.state == "stopped" {
                 stopped.push(place);
                 continue;
@@ -129,16 +146,19 @@ impl Core {
             } else {
                 wire::NeedsYouKind::TaskNeedsPerson
             };
-            let reason = if kind == wire::NeedsYouKind::TaskNeedsPerson {
+            // The task's own scrubbed result first: for a task that could not start, that result is the refusal the person
+            // acts on, and taking a kind's fixed words instead was hiding it from the Board card and the Inbox row.
+            let reason = {
                 let scrub = match scrubs.entry(place.task.crew_id.clone()) {
                     Entry::Occupied(entry) => entry.into_mut(),
                     Entry::Vacant(entry) => {
                         entry.insert(Scrub::of_crew(self, &person, &place.task.crew_id)?)
                     }
                 };
-                self.needs_you_reason(&facts, scrub)?
-            } else {
-                fixed_reason(kind).map(str::to_owned)
+                match self.needs_you_reason(&facts, scrub)? {
+                    Some(reason) => Some(reason),
+                    None => fixed_reason(kind).map(str::to_owned),
+                }
             };
             if seen.insert(place.task.id.clone()) {
                 items.push(wire::NeedsYouItem {
@@ -153,16 +173,15 @@ impl Core {
             }
         }
 
-        let merges: Vec<_> = self
-            .store
-            .crew_all_merges()?
-            .into_iter()
-            .filter(|merge| merge.review_state == "waiting" && merge.needs_person.is_some())
-            .collect();
+        let merges = self.store.crew_waiting_merges()?;
         let task_ids: Vec<String> = merges.iter().map(|merge| merge.task_id.clone()).collect();
         let projects = self.store.crew_projects_of_tasks(&task_ids)?;
         for merge in merges {
-            if !seen.insert(merge.task_id.clone()) {
+            if !keep(
+                projects.get(&merge.task_id).map(String::as_str),
+                &merge.crew_id,
+            ) || !seen.insert(merge.task_id.clone())
+            {
                 continue;
             }
             items.push(wire::NeedsYouItem {
@@ -177,7 +196,10 @@ impl Core {
         }
 
         for review in self.store.background_reviews()? {
-            if !review.run.review_waiting || !seen.insert(review.run.id.clone()) {
+            if !review.run.review_waiting
+                || !keep(Some(&review.project_id), &review.run.background_id)
+                || !seen.insert(review.run.id.clone())
+            {
                 continue;
             }
             let since = review
@@ -276,9 +298,14 @@ impl Core {
         Ok(items)
     }
 
-    /// The items a person sees: dismissed waits removed, newest first, ties by id, at most 200.
-    fn needs_you_list(&self) -> Result<Vec<wire::NeedsYouItem>> {
-        let mut items = self.needs_you_items()?;
+    /// Every wait a person has not dismissed, newest first, ties by id, with no cap. The reads that scope the field to one
+    /// crew or one repository (the Taskboard, the dashboard, the Review queue digest) take this, so another crew's newer waits
+    /// can never push this one's out of its own count; a presentation cap belongs after that scoping.
+    pub(super) fn needs_you_all(
+        &self,
+        keep: &dyn Fn(Option<&str>, &str) -> bool,
+    ) -> Result<Vec<wire::NeedsYouItem>> {
+        let mut items = self.needs_you_items(keep)?;
         let mut dismissed: BTreeMap<(String, String), String> = BTreeMap::new();
         for row in self.store.crew_needs_you_dismissals()? {
             dismissed.insert((row.kind, row.id), row.since);
@@ -295,6 +322,12 @@ impl Core {
                 .cmp(&parse_time(&a.since).unwrap_or(i64::MIN));
             at.then_with(|| a.id.cmp(&b.id))
         });
+        Ok(items)
+    }
+
+    /// The items the Inbox shows: `needs_you_all`, at most 200.
+    fn needs_you_list(&self) -> Result<Vec<wire::NeedsYouItem>> {
+        let mut items = self.needs_you_all(&|_, _| true)?;
         items.truncate(CAP);
         Ok(items)
     }
@@ -326,7 +359,7 @@ impl Core {
         }
         valid_id(id)?;
         let item = self
-            .needs_you_items()?
+            .needs_you_items(&|_, _| true)?
             .into_iter()
             .find(|item| item.kind == kind && item.id == id)
             .ok_or_else(|| CoreError::NotFound(format!("needs you item {id}")))?;

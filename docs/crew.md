@@ -743,7 +743,8 @@ read, never set, over HTTP. **The Preview flag stays while Crew is unfinished, n
 person key only the desktop shell holds (`docs/worker-token-isolation.md`, step 3), so a worker that read the service token
 gets `403 person_required`. What [#441](https://github.com/orbyn-dev/orbyn-engineering/issues/441) still holds is the Windows
 sandbox and the store read.
-Reads: `GET /api/crew/preview`, `/autopilot` (modes, `confirmed`), `/autopilot/guards`, `/autopilot/risk/{task}`, `/autopilot/review`,
+Reads: `GET /api/crew/preview`, `/autopilot` (modes, `confirmed`), `/autopilot/guards`, `/autopilot/risk/{task}`, `/autopilot/review` (with KC3's
+`waiting_elsewhere`: the one needs-you field's items this queue does not answer, by kind, never a second rule),
 `/autopilot/review/{task}/revert-check` (later merges), `/autopilot/merge-queue` (with what goes next), `/autopilot/watch`,
 `/autopilot/digest?hours=`, `/autopilot/digest/schedule` (from issue #806: the stored send time), `/approvals` (the ledger, newest first), `/stops` (trip wires), `/trust` (revert rates by area and engine; `?project=` limits it to one repository) and, from slice 4j, `/autopilot/areas`, `/autopilot/areas/history` and `/autopilot/thresholds`.
 Lists take `limit` (1 to 200) and `offset`. Changes, each through the core function that holds the rule and local only:
@@ -1163,27 +1164,45 @@ watch and one that could not run three times in a row, beside the Review queue's
 77's two tables hold the state and the history. No screen is built in these slices, and the "Not built yet" chip stays until the web
 slice.
 
-**As built (slice 4h, listeners, migration 59):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
+**As built (slice 4h, listeners, migration 59; KC7 adds the issue-reader listeners):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
 service starts behind the Preview flag **only when it sets an interval** (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60 s to 24 h; unset means no pass, not even at
-startup) and awaits on shutdown. Each pass fires what is due for the crews that are on (a crew that is off is not read from the forge and spends no event):
-a `schedule` crew once per `every_hours` bucket, a `watch` crew's command once per `every_hours` bucket (see "Watches" above), and a
-`ci_failure` crew on a failed check run at its branch head (its branch setting, else the project default),
-narrowed by its optional workflow filter. Every firing first claims a row in `crew_background_events` (first write wins) and then starts a run through the same seam as Run now:
+startup) and awaits on shutdown. Each pass fires what is due for the crews that are on (a crew that is off is not read and spends no event):
+a `schedule` crew once per `every_hours` bucket, a `watch` crew's command once per `every_hours` window (see "Watches" above), a `ci_failure` crew on a failed check run at its branch head (its branch setting, else the project default),
+narrowed by its optional workflow filter, and an `issue_label` crew on an open issue in its project's tracker scope that carries the crew's stored `label`.
+Only the one connected tracker reader the project's `origin` remote names answers for a project (GitHub, GitLab, Azure DevOps or Forgejo; Linear reads team keys
+that no remote names): a project with no reader is not read, and a crew that is off, a project with no reader and a tracker that cannot answer all spend no event
+and start nothing. Every claim — each issue a baseline sees and every firing — writes one row in `crew_background_events` (first write wins); a firing then starts a run through the same seam as Run now:
 
 | Event | Claim | Held-start key |
 | --- | --- | --- |
 | schedule | `schedule:<crew>:<bucket>` | `<crew>:schedule:<bucket>` |
 | watch | `watch:<crew>:<start>` (the window's start, in unix seconds) | `<crew>:watch:<start>` |
 | CI failure | `ci:<crew>:<head>:<hash>` | `<crew>:ci:<head>:<hash>` |
+| issue label baseline | `issue_label:<crew>:baseline:<hash of label>` | (none: the baseline starts nothing) |
+| issue label | `issue_label:<crew>:<tracker>:<scope>:<key>:<hash of label>:<hash of the issue's sorted label set>` | `<crew>:issue_label:<hash of scope>:<hash of key>:<hash of label>` |
+| dependency update | `dependency_update:<crew>:<hash of update>` (the path a reader feed takes) | `<crew>:dependency_update:<hash of update>` |
 
-`<hash>` is the first 16 hex characters of the SHA-256 of the failing check's name. A repeat of an event starts nothing new, and a bucket at or before the newest claimed one
-never fires again (a clock that moves back starts nothing). **One firing per crew per pass**: a head with several failing checks fires the first and leaves the others for a later pass.
-A firing refused for review capacity, the daily budget, an untrusted folder, no engine or a run already in progress is **dropped, not retried**: its claim stays, capacity also leaves its held row,
-and every refusal writes one `crew.background.listener.refused` audit row (the crew, the listener, a fixed reason word; the actor is the constant `crew`). **Text from outside never reaches the prompt**:
-a check's name, a head sha and a `.orbyn/crew.json` trigger's name only decide whether a run starts; the brief, the worker's prompt, the lead thread and the audit stay code-owned. The ticks of one pass run one after another: a slow watch command can hold them (each check is bounded by its five-minute cap,
-but a pass has no overall cap yet; a per-pass cap is a follow-up, #1354). A stop is
-looked at between firings, never inside a start, and a run a crash leaves is settled when the core opens. A trigger in the file with no stored crew is ignored. At most 64 CI crews are watched per pass, from a rotating start.
-`crew_background_events` is not pruned yet.
+`<hash>` is the first 16 hex characters of the SHA-256 of the value, so a long check name, tracker scope or issue key still fits the held row's 128-character key;
+the label is the crew's own stored setting. A repeat of an event starts nothing new, and a bucket at or before the newest claimed one never fires again (a clock that
+moves back starts nothing). **One firing per crew per pass**: a head with several failing checks fires the first and leaves the others for a later pass, and the
+newest unclaimed labelled issue fires and leaves the rest unclaimed. **An issue-label crew starts with a baseline:** on its first sight of a stored
+label (no `issue_label:<crew>:baseline:<hash of label>` claim yet) it claims every matching issue on every page it reads (up to ten pages of 100) and starts nothing, then keeps
+the baseline claim, but only when every page was read (a listing cut short baselines again on the next pass); changing a crew's stored label baselines the issues that already carry the new label the same way. A later pass fires only on an issue whose
+claim it does not have. The claim keeps a hash of the issue's whole label set, because the readers expose no per-label event time: an edit that leaves the labels
+alone is inert, adding the label or changing the label set while it is present is a new event once, and a label removed and added again that returns the issue to a set
+already claimed **does not fire** - a limitation, not a decision, until a reader reports label events (a follow-up). **The baseline has limits.** It reads at most ten pages of 100 issues (more than that keeps the baseline open, so such a crew never fires), and re-enabling a crew does not baseline again: labels added while it was off fire once per pass unless the issue's label set was already claimed,
+bounded by the one start per pass. So a crew made or turned on later does not replay the history the baseline could see, not the whole tracker. A firing refused for review capacity, the daily budget, an untrusted folder, no engine or a run
+already in progress is **dropped, not retried**: its claim stays, capacity also leaves its held row, and every refusal writes one `crew.background.listener.refused`
+audit row (the crew, the listener, a fixed reason word; the actor is the constant `crew`). A tracker that cannot answer is not a refusal: nothing is claimed and no
+audit row is written. **Text from outside never reaches the prompt**: a check's name, a head sha, a tracker issue's scope and key (kept raw only in the claim
+identity), its label and label set and the event key's hashes, a `.orbyn/crew.json` trigger's name and (once a reader has that feed) a dependency update's key
+only decide whether a run starts; the brief, the worker's prompt, the lead thread and the audit stay code-owned. A
+stop is looked at between firings, never inside a start, and a run a crash leaves is settled when the core opens. A trigger in the file with no stored crew is ignored.
+At most 64 CI crews are watched per pass, and at most 64 issue-label crews and separately 64 dependency-update crews are read per pass, all from the pass's
+rotating start, so a store full of crews cannot turn one pass into unbounded forge or tracker traffic. The ticks of one pass run one after another: a slow watch command can hold them (each check is bounded by its five-minute cap, but a pass has no overall cap yet; a per-pass cap is a follow-up, #1354). `crew_background_events` is not pruned yet.
+**Not built: `dependency_update` detection.** The tick, its claim and its start/refusal path are built, but no issue reader reports a dependency or advisory update
+yet, so every tracker answers "cannot" and the kind starts nothing; the tick writes one trace line per pass only when at least one enabled dependency crew exists
+and none of the crews it read answered with a feed. The feed is follow-up #1360, and no feed or label convention was invented here.
 
 **As built (slice 4h, triggers — parsed only):** a repository can describe the background crews it would like Orbyn to run, in
 `background` of `.orbyn/crew.json`. Orbyn reads the file and never writes it (architecture rule 4).
@@ -1248,7 +1267,9 @@ uses it as a hard filter. Preview only; Orbyn reads the file and never writes it
   machine does not have is kept and shown as "not on this machine". Unknown keys at the top of the file belong to other slices: they are noted
   and ignored. A file holding a secret (the shared detector) is refused.
 - **An invalid file fails closed.** If the file cannot be read, does not parse or breaks a rule above, every engine is blocked by the rule
-  "crew.json invalid" with the problem in plain words, and the task waits in Needs you. It is never read as "no rules". The same file also holds
+  "crew.json invalid" with the problem in plain words, and the task waits in Needs you; a file that cannot be read
+  only on the default branch is refused this way. A write task whose key does not already declare a `repo_required` check also reads the same file at the commit it starts from for the repository's own checks, so a file that cannot be read there
+  refuses the start before routing, with the reader's problem and nothing stored. It is never read as "no rules". The same file also holds
   review `lanes` and `allowed_hosts`, so a file that is not JSON at all blocks every start now, not only the review; a file whose `lanes` are wrong
   but which is valid JSON still starts and fails at the review as before. The dry run (`crew_route`) says nothing about classes for a thread with no
   commit to read, and a start there is refused on its own terms.
@@ -1290,7 +1311,7 @@ until #441's sandbox covers it, and a symlink a worker adds during the task is n
 (ruling pending). Known limits: **the rules are read at two places and the stricter applies: the checkout's HEAD at task start, and the project's default
 branch as of the last fetch** (`refs/remotes/origin/HEAD`, else `origin/main`, `origin/master` or `origin/trunk`, else a local `init.defaultBranch`, `main`,
 `master` or `trunk`; with none of them the rules are read at HEAD alone, as before). An engine must be allowed by both, a file that cannot be read on either
-side blocks every engine, and the route card says in words when the two files differ. So an agent that moves HEAD to a commit without the file, or commits a
+side blocks every engine (a write start that inherits the repository's checks, and whose starting commit cannot be read, is refused at start instead, as above), and the route card says in words when the two files differ. So an agent that moves HEAD to a commit without the file, or commits a
 looser one, does not loosen the next task. A remote-tracking ref is moved by `git fetch` and `git pull`, not by `checkout`, `switch`, `reset` or a commit in any
 worktree; a local branch is moved by a commit or `git branch -f` on it, so it is the weaker fallback. **Neither is out of an agent's reach:** a worker runs as the person, the
 macOS confinement of #441 closes the data folder and not the repository's `.git`, and Windows and Linux workers are refused, so an agent that runs git plumbing
@@ -1776,7 +1797,7 @@ worker, the secret scan on the way in and out) and builds no screen before its f
 | KC4 | Disk guard | A worker start is refused when the volume holding the lead's folder is under a floor (5 GB, person-settable), with the free space in the reason. No prune: tasks run in the lead's folder and correction checkouts are already retired | E3 | M24 |
 | KC5 | Lessons | Repository or global lessons from a repeated failure fingerprint (2 tasks in 60 days), a confirmed escape or revert, and a person's typed correction. The person sees, edits, disables, deletes and promotes them; a "use lessons" switch per repository. At most 5 reach a brief as data; the key, route, lease and checks are proven unchanged. Recorded in `EvalHistory`, which the router does not read yet. Design: Eng 2's note, ruled 2026-11-23 | E2 | M25 |
 | KC6 | Watches | A background crew kind `watch`: a fixed command on a schedule with no model call; it acts once when the result turns failing | E4 | M26 |
-| KC7 | The missing listeners | `issue_label` and `dependency_update` background crews get listeners (refused today) | E4 | M27 |
+| KC7 | The missing listeners | `issue_label` and `dependency_update` background crews get listeners. Built: the listeners' shared tick, claim, start and refusal plumbing, and `issue_label` detection through a project's one tracker reader, with a per-label baseline on first sight (every page, up to ten) so the labels already there do not start a run, and a label-set claim so an edit is inert. Not built: `dependency_update` detection, which waits on a reader feed (follow-up #1360) and starts nothing today | E4 | M27 |
 | KC8 | Resume after restart | A task whose worker died in a restart resumes once from its last verified round with the same key and budget, then stops as today | E2 | M28 |
 | KC9 | Skill proposals | Three lessons with the same pattern propose a skill in the device's own skills area, `skills-local`; nothing installs without the person | E2, E4 | M29 |
 | KC10 | Device notifications | A desktop notification the first time something needs the person, once per item | E3, E1 | M30 |
@@ -1790,6 +1811,14 @@ task's last recorded event, and `downtime_secs` keeps that off time out of later
 writes `crew.task.resumed` in the same transaction as the state, attempt and resume counters; a stop writes
 `crew.task.restart_stopped` with `why` (`reviewer`, `already_resumed`, `not_resumable` or `send_failed`) in
 the same transaction as its `stopped`/`engine_error` move.
+
+**One needs you (KC3), as built (service).** The one field is `Core::crew_needs_you` (`GET /api/crew/needs-you`, dismissal in `POST …/dismiss`, migration 78): every wait across every crew — a task waiting on a person, a task that could not start, a manual check, a merge waiting on a person, a background run waiting for review, a trip-wire stop and a worker-stopped-twice stop — first rule wins, newest first, at most 200, device-local dismissals, never touching what it reads. The service half of KC3 reads it everywhere a "needs you" count is drawn:
+- **Taskboard:** the Needs you column reads that field, not the task's run state. A passed task whose merge waits and a stopped task whose trip wire stopped it are cards there (the first was in Passed, the second in Stopped · Cancelled), each with the field's kind and its scrubbed reason — the task's own latest `needs_person` result where it has one, so a could-not-start card carries the refusal that kept it from starting and a manual check carries its own words, and the kind's fixed words stand in only when there is none; a dismissed trip-wire or stopped-twice wait leaves the column on the next read. `FlowCard.needs_you` carries the kind. The cards come from the same field the Inbox and the dashboard read, not necessarily the same count: a background run's wait has no card, and the board only reads work tasks. **The one dismissal that keeps its card:** a could-not-start task whose dismissible wait was dismissed on this device still reads `needs_person`, so its card stays in Needs you with no field kind and no sentence — the board never hides a task that still cannot run — while the Inbox and the dashboard, which read only the field, drop it; the product decision is recorded in [#1367](https://github.com/orbyn-dev/orbyn-engineering/issues/1367). No merged frame draws an urgent mark (Crew Designs v121, the `needs-one-source-*` group), so the column keeps its one existing order: a High-risk merge or an overdue review first, then newest.
+- **Working:** one pure function, `crate::crew::working::working` (`crew/working.rs`), with a truth table as its test. A worker owns live work while a turn runs, while the checks run, while a retry is queued (`failed`, `changed_approach`), and on a finished task while its latest fix has not finished; a queued or routed task that never started, one waiting on the person and a finished one own nothing, and a background run in flight is working while an idle or waiting crew is not. It is deliberately not `quiet_of(...) == FlowQuiet::Active`, which answers silence rather than ownership and disagrees both ways (a passed worker is Active; a worker quiet for five minutes is Quiet and still owns its work). The Taskboard card (`FlowCard.working`), the Map node (`FlowNode.working`) and the dashboard's live count all ask it.
+- **Review queue digest:** `crew_review_queue` reads the field for what waits elsewhere — the Inbox's items this queue does not answer, by kind, `waiting_elsewhere` on `GET /api/crew/autopilot/review` — so a page can say "N more wait for you in the Inbox" from the same field the Inbox and Taskboard read, not from a second rule; the waits the queue itself answers are not counted as elsewhere, and the counts need not be equal (the board cards only work tasks).
+- **Dashboard live count:** the `live` field on `GET /api/crew/dashboard` is a "Right now" row that ignores the 30/60/90 day window while the figures beside it are windowed: what waits for this repository now, from the same field, by kind (dismissals included; the same field's items, not a count that must equal the Inbox's), and the workers that own live work now, from the same `working` function, by why. Idle is not served: the store keeps no crew member that holds no task, so a genuinely idle worker cannot be told from one that never joined, and the tile stays Planned.
+- **Dashboard needed-kind:** `tripwire` joins `DASHBOARD_KINDS`, so a task a trip wire stopped and a person then merged by hand is no longer counted as a merge that needed nothing from the person.
+The web side (board column, Inbox rows, Map words, dashboard tiles) is not built. Tests: the truth table in `working.rs`, the board field tests in `crew::tests::flow_board` (the field's column, a dismissed could-not-start card, the refusal it carries, a fix in flight), the dashboard live-row tests in `crew::tests::dashboard` (the same field, dismissals, the window, another project's workers filtered out), and the Review queue digest test in `crew::tests::background_review`. One needs-you read, not necessarily one count: the board cards only work tasks, a background run's wait has no card, and the dashboard narrows to one repository.
 
 **As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342) and its service side is built (not run against a real service). KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
 

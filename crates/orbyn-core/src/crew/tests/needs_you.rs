@@ -81,8 +81,25 @@ async fn a_task_whose_worker_never_ran_is_could_not_start_and_dismissible() {
     assert!(item.project_id.is_some(), "the lead thread names a project");
     assert!(item.crew_id.is_some());
     assert!(!item.since.is_empty());
-    let reason = item.reason.expect("a fixed reason");
+    // The item carries the task's own scrubbed refusal, not only the kind's fixed words: the person acts on those words.
+    let stored = w.core.store.crew_results(&id).unwrap();
+    let refusal = stored
+        .iter()
+        .rev()
+        .find(|result| result.state == orbyn_contracts::ResultState::NeedsPerson)
+        .expect("the start refusal is a needs_person result")
+        .summary
+        .clone();
+    let reason = item.reason.expect("the refusal");
     assert!(!reason.is_empty() && reason.chars().count() <= 160);
+    assert!(
+        reason.contains(refusal.split_whitespace().next().unwrap()),
+        "{reason} does not hold {refusal}"
+    );
+    assert_ne!(
+        reason, "The worker never ran.",
+        "the fixed words replaced it"
+    );
 }
 
 #[tokio::test]

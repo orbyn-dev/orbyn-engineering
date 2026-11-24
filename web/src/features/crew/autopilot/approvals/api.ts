@@ -6,6 +6,8 @@ import type { BackgroundCrewCreate } from "../../../../generated/BackgroundCrewC
 import type { BackgroundCrewList } from "../../../../generated/BackgroundCrewList";
 import type { BackgroundCrewUpdate } from "../../../../generated/BackgroundCrewUpdate";
 import type { BackgroundRunList } from "../../../../generated/BackgroundRunList";
+import type { BackgroundWatchChanges } from "../../../../generated/BackgroundWatchChanges";
+import type { BackgroundWatchStatus } from "../../../../generated/BackgroundWatchStatus";
 import type { AutopilotDigestSchedule } from "../../../../generated/AutopilotDigestSchedule";
 import type { AutopilotDigestScheduleInput } from "../../../../generated/AutopilotDigestScheduleInput";
 import type { AutopilotHeld } from "../../../../generated/AutopilotHeld";
@@ -118,6 +120,16 @@ export const crewApi = {
   /** One crew's runs with what each spent against its budget, newest first. */
   backgroundRuns: (id: string, query: { offset: number; limit: number }, signal?: AbortSignal) =>
     request<BackgroundRunList>("GET", `/api/crew/background/${encodeURIComponent(id)}/runs?${new URLSearchParams({ offset: String(query.offset), limit: String(query.limit) })}`, undefined, signal),
+  /**
+   * A watch's last check (KC6): its state, when it last checked, the exit code and reason, and the redacted tail it
+   * kept. The route is Local and answers 404 while Crew Preview is off or on a service that has no watch read yet; a
+   * 404 is not an error, it is "draw nothing of the watch", so callers read it that way.
+   */
+  backgroundWatch: (id: string, signal?: AbortSignal) =>
+    request<BackgroundWatchStatus>("GET", `/api/crew/background/${encodeURIComponent(id)}/watch`, undefined, signal),
+  /** One page of a watch's change history, newest first. */
+  backgroundWatchChanges: (id: string, query: { offset: number; limit: number }, signal?: AbortSignal) =>
+    request<BackgroundWatchChanges>("GET", `/api/crew/background/${encodeURIComponent(id)}/watch/changes?${new URLSearchParams({ offset: String(query.offset), limit: String(query.limit) })}`, undefined, signal),
   /** Creates a crew, off: turning it on is its own step. A name already used in the project answers 409. */
   backgroundCreate: (body: BackgroundCrewCreate) => request<BackgroundCrew>("POST", "/api/crew/background/create", body),
   /** The name and the trigger only: the repository, template and budget are fixed at creation. No screen draws editing yet. */

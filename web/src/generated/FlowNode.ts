@@ -3,6 +3,7 @@ import type { FlowEngineStatus } from "./FlowEngineStatus";
 import type { FlowQuiet } from "./FlowQuiet";
 import type { FlowRole } from "./FlowRole";
 import type { FlowSubagents } from "./FlowSubagents";
+import type { FlowWorking } from "./FlowWorking";
 
 export type FlowNode = { member: string, role: FlowRole, 
 /**
@@ -12,7 +13,12 @@ task?: string | null, engine: string, model?: string | null, effort?: string | n
 /**
  * The task's state; absent for the lead.
  */
-state?: string | null, quiet: FlowQuiet, engine_status: FlowEngineStatus, subagents: FlowSubagents, 
+state?: string | null, quiet: FlowQuiet, 
+/**
+ * Why the worker owns live work now (KC3), from the one `working` function; `null` when it owns none or is the lead.
+ * Quiet and Working are separate words: a silent worker is still working.
+ */
+working?: FlowWorking | null, engine_status: FlowEngineStatus, subagents: FlowSubagents, 
 /**
  * The brief's outcome, in place of a live step.
  */
