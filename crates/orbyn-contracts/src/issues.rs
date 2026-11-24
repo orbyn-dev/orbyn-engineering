@@ -299,6 +299,22 @@ pub struct ReactIssue {
 }
 }
 
+wire! {
+/// One starting point the tracker offers for a new issue (docs/issues.md, "Create, comment, react, templates and
+/// project binding"). The text is the tracker's own and as untrusted as any issue text: it only ever fills the
+/// person's own create form.
+pub struct IssueTemplate {
+    pub id: String,
+    pub name: String,
+    /// The one-line description the tracker gives the template, when it gives one.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub description: Option<String>,
+    pub body: String,
+    pub labels: Vec<String>,
+}
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,6 +342,21 @@ mod tests {
         .unwrap();
         assert_eq!(removed.comment_id.as_deref(), Some("IC_1"));
         assert!(!removed.on);
+    }
+
+    #[test]
+    fn a_template_may_leave_its_description_out_and_round_trips() {
+        let template: IssueTemplate = serde_json::from_str(
+            r#"{"id":"bug","name":"Bug report","body":"Steps:","labels":["bug"]}"#,
+        )
+        .unwrap();
+        assert_eq!(template.description, None);
+        assert_eq!(template.id, "bug");
+        let described: IssueTemplate = serde_json::from_str(
+            r#"{"id":"bug","name":"Bug report","description":"A crash","body":"Steps:","labels":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(described.description.as_deref(), Some("A crash"));
     }
 
     #[test]
