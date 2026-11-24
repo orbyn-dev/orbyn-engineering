@@ -382,12 +382,15 @@ impl Store {
         crew: Option<&str>,
         project: Option<&str>,
     ) -> Result<Vec<MergeRecord>> {
-        let mut sql = String::from(
-            "SELECT m.* FROM crew_merges m
-             LEFT JOIN crew_runs r ON r.task_id = m.task_id
-             LEFT JOIN threads t ON t.id = r.lead_thread_id
-             WHERE m.review_state = 'waiting' AND m.needs_person IS NOT NULL",
-        );
+        // The joins only answer the repository filter; a device-wide or one-crew read pays for neither.
+        let mut sql = String::from("SELECT m.* FROM crew_merges m");
+        if project.is_some() {
+            sql.push_str(
+                " LEFT JOIN crew_runs r ON r.task_id = m.task_id
+                  LEFT JOIN threads t ON t.id = r.lead_thread_id",
+            );
+        }
+        sql.push_str(" WHERE m.review_state = 'waiting' AND m.needs_person IS NOT NULL");
         let mut args: Vec<rusqlite::types::Value> = Vec::new();
         if let Some(crew) = crew {
             sql.push_str(" AND m.crew_id = ?");
