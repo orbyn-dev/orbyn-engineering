@@ -806,8 +806,8 @@ async fn an_update_writes_only_the_fields_it_was_given_and_answers_the_issue_rea
 
 #[tokio::test]
 async fn an_update_sends_labels_and_assignees_as_the_whole_new_set() {
-    let calls = calls();
-    let fixture = patch_fixture(calls.clone());
+    let first = calls();
+    let fixture = patch_fixture(first.clone());
     let labels = vec!["bug".to_owned(), "ui".to_owned()];
     let assignees = vec!["octocat".to_owned()];
     let edit = IssueEdit {
@@ -822,7 +822,7 @@ async fn an_update_sends_labels_and_assignees_as_the_whole_new_set() {
     .await
     .unwrap();
     assert_eq!(
-        patched_body(&calls),
+        patched_body(&first),
         json!({ "body": "Steps: 1.", "labels": ["bug", "ui"], "assignees": ["octocat"] }),
         "labels and assignees are the whole new set, as GitHub writes them"
     );
