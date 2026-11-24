@@ -19,6 +19,7 @@ mod autopilot_watch;
 mod audit_edges;
 mod background;
 mod background_daily;
+mod background_issue_listeners;
 mod background_listeners;
 mod background_review;
 mod background_start;

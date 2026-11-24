@@ -51,6 +51,7 @@ mod verify;
 mod view;
 mod watch;
 mod workers;
+mod working;
 
 #[cfg(test)]
 mod tests;

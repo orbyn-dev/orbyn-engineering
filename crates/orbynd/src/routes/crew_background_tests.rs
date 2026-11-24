@@ -512,7 +512,7 @@ async fn run_now_refuses_what_the_core_refuses_with_the_cores_reason() {
         "This background crew is off. Turn it on, then start a run."
     );
 
-    // On, but a dependency update has no listener, so nothing can start it yet.
+    // On, but a dependency update starts only when its listener fires: Run now has no update to start.
     assert_eq!(
         app.call("POST", &format!("/api/crew/background/{id}/enable"), None)
             .await
@@ -529,7 +529,7 @@ async fn run_now_refuses_what_the_core_refuses_with_the_cores_reason() {
     );
     assert_eq!(
         body["message"],
-        "A dependency update crew cannot run yet: Orbyn has nothing that can start it."
+        "A dependency update crew starts when an update appears; Run now has no update to start."
     );
 
     // A crew that is not there is refused before anything is read.

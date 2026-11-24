@@ -108,6 +108,11 @@ async fn an_empty_repository_answers_zeros_and_no_figures_it_cannot_measure() {
     );
     assert_eq!(answer["weeks"], json!([]));
     assert_eq!(answer["truncated"], json!(false));
+    // KC3: the live row is served even when nothing waits and nothing works, and it is not a windowed figure.
+    assert_eq!(
+        answer["live"],
+        json!({ "needs_you": [], "working": [], "truncated": false })
+    );
     assert_eq!(answer["project"], json!(project));
     // The week's local Monday: a person an hour ahead of UTC gets a start that is a whole hour off UTC midnight.
     let (status, shifted) = app

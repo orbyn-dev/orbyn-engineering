@@ -8,7 +8,7 @@ use std::sync::Arc;
 use orbyn_contracts as wire;
 use serde_json::json;
 
-use super::harness::{Script, Turn, World, report, world};
+use super::harness::{Script, Turn, World, brief, key, report, world};
 use crate::crew::Page;
 use crate::error::CoreError;
 
@@ -419,4 +419,40 @@ async fn the_wire_queue_pages_the_background_runs_and_counts_them_all() {
     assert_eq!(last.background_runs[0].run_id, runs[2]);
     assert_eq!(last.next_offset, None);
     assert_eq!(last.background_total, 3);
+}
+
+/// KC3: the queue's "what waits elsewhere" is the one needs-you field (the Inbox's items), and a wait this queue answers
+/// (a background run's review, a merge's review) is never counted as elsewhere.
+#[tokio::test]
+async fn what_waits_elsewhere_is_the_one_needs_you_field() {
+    let w = world(true, good()).await;
+    // A run whose review waits: the queue owns it, so the digest does not call it elsewhere.
+    let id = crew_with(&w, "Fix CI", 10, 30, true).await;
+    w.core.crew_background_run_now(&id, "user").await.unwrap();
+    until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+    assert!(
+        queue(&w).waiting_elsewhere.is_empty(),
+        "the queue's own background review is not elsewhere"
+    );
+
+    // A task whose worker never ran waits in the Inbox: the field names it, so the digest counts it there.
+    let (answer, error) = w
+        .start(
+            brief(json!({ "engine": { "id": "ghost", "assigned_by": "lead" } })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let ghost = answer["task"].as_str().unwrap().to_owned();
+    assert_eq!(
+        queue(&w).waiting_elsewhere,
+        vec![(wire::NeedsYouKind::CouldNotStart, 1)],
+        "the field's item, by kind"
+    );
+
+    // A dismissal hides it here too: the digest reads the field, not its own list.
+    w.core
+        .crew_needs_you_dismiss(wire::NeedsYouKind::CouldNotStart, &ghost, "user")
+        .unwrap();
+    assert!(queue(&w).waiting_elsewhere.is_empty());
 }

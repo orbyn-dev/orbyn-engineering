@@ -375,6 +375,18 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Every merge that waits for the person, oldest first, chosen in SQL so the history of settled merges is never read.
+    pub fn crew_waiting_merges(&self) -> Result<Vec<MergeRecord>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT * FROM crew_merges
+             WHERE review_state = 'waiting' AND needs_person IS NOT NULL ORDER BY id",
+        )?;
+        Ok(statement
+            .query_map([], merge_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Every merge made for tasks led from `project_id`, oldest first: the project's own record, whatever the repository path.
     pub fn crew_merges_of_project(&self, project_id: &str) -> Result<Vec<MergeRecord>> {
         let conn = self.reader();

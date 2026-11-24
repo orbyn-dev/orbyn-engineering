@@ -155,8 +155,9 @@ impl Core {
     /// text a model reads, which stays code-owned exactly as the manual start's is. `actor` is written on the run's audit rows and is
     /// always a code-owned constant or the person's own actor, never event text. The run is Low priority and Crew-started, so
     /// review capacity may refuse it (nothing is stored then, and the refusal is a held `background` start); a crew that is off, a
-    /// trigger kind nothing can start yet, a crew that already has a run in progress and a project that is not trusted are refused
-    /// with a plain reason. Behind the Crew Preview flag.
+    /// trigger kind only its listener starts (issue label and dependency update), a watch crew (it has no listener yet), a crew
+    /// that already has a run in progress and a project that is not trusted are refused with a plain reason. Behind the Crew
+    /// Preview flag.
     pub(crate) async fn crew_background_start(
         self: &Arc<Self>,
         id: &str,
@@ -305,9 +306,10 @@ impl Core {
         }
     }
 
-    /// The refusals that need only the stored crew. `event` says who fired the start: a watch's own check fires
-    /// `watch:<bucket>`, which a watch accepts; Run now's `manual` is still refused for it, because a watch runs its command on
-    /// its schedule and not on demand.
+    /// The refusals that need only the stored crew. `event` is the start's event key: Run now passes `manual`, a listener
+    /// passes its own. The issue-label and dependency-update kinds are refused by hand but started by their listener through this
+    /// same seam, so only a `manual` start is turned away. A watch's own check fires `watch:<start>`, which a watch accepts;
+    /// Run now's `manual` is refused for it, because a watch runs its command on its schedule and not on demand.
     fn refuse_background_start(&self, crew: &BackgroundRow, event: &str) -> Result<()> {
         if !crew.enabled {
             return Err(CoreError::PolicyDenied(
@@ -321,11 +323,16 @@ impl Core {
         }
         match crew.trigger_kind.as_str() {
             "ci_failure" | "schedule" => {}
-            "issue_label" => {
-                return Err(CoreError::PolicyDenied(
-                    "An issue label crew cannot run yet: Orbyn cannot see new issue labels.".into(),
-                ));
+            "issue_label" | "dependency_update" if event == "manual" => {
+                let why = if crew.trigger_kind == "issue_label" {
+                    "An issue label crew starts when its label appears on an issue; Run now has no issue to start."
+                } else {
+                    "A dependency update crew starts when an update appears; Run now has no update to start."
+                };
+                return Err(CoreError::PolicyDenied(why.into()));
             }
+            // Its own listener fires these kinds through this seam; only Run now is turned away above.
+            "issue_label" | "dependency_update" => {}
             "watch" if !event.starts_with("watch:") => {
                 return Err(CoreError::PolicyDenied(
                     "A watch crew's command runs on its schedule; Run now does not start a run for it.".into(),

@@ -208,7 +208,7 @@ async fn a_crew_that_is_off_is_refused_and_nothing_is_made() {
 }
 
 #[tokio::test]
-async fn a_kind_nothing_can_start_is_refused_with_a_plain_reason() {
+async fn a_kind_only_its_listener_starts_is_refused_by_run_now_with_a_plain_reason() {
     let w = world(true, good()).await;
     let label = crew_with(
         &w,
@@ -238,16 +238,25 @@ async fn a_kind_nothing_can_start_is_refused_with_a_plain_reason() {
     )
     .await;
     let before = threads(&w);
-    for id in [label, bump] {
+    for (id, why) in [
+        (
+            label,
+            "An issue label crew starts when its label appears on an issue; Run now has no issue to start.",
+        ),
+        (
+            bump,
+            "A dependency update crew starts when an update appears; Run now has no update to start.",
+        ),
+    ] {
         let error = w
             .core
             .crew_background_run_now(&id, "user")
             .await
             .unwrap_err();
-        let CoreError::PolicyDenied(why) = &error else {
-            panic!("{error}")
-        };
-        assert!(why.contains("cannot run yet"), "{why}");
+        assert!(
+            matches!(&error, CoreError::PolicyDenied(message) if message == why),
+            "{error}"
+        );
     }
     // A watch runs its command on its own schedule; Run now does not start a run for it.
     let error = w
