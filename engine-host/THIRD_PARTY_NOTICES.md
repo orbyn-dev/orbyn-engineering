@@ -29,4 +29,4 @@ Its dependencies are `@bufbuild/protobuf` 1.10.0 (Apache-2.0 AND BSD-3-Clause), 
 ## Other npm dependencies
 
 The remaining packages in `package-lock.json` are MIT, ISC, Apache-2.0, BSD-2-Clause, BSD-3-Clause or Unlicense, and keep their
-own licence files in their packages. The bundle step does not generate an aggregate notice today: it copies this file and the staged packages, whose own licence files ship with them (security-review-notes.md, batch 1 F31.1).
+own licence files in their packages. The bundle step does not generate an aggregate notice today: it copies this file and the staged packages, whose own licence files ship with them.
