@@ -31,6 +31,34 @@ export function stateWord(node: Pick<FlowNode, "role" | "state">): { text: strin
   }
 }
 
+/**
+ * The state word a worker row shows: "Working" for a worker that owns live work now (it replaces Running and Verifying, KC3), else the
+ * task's own. An older service sends no `working`, and the task's word stands then.
+ */
+export function workerState(node: Pick<FlowNode, "role" | "state" | "working">): { text: string; tone: Tone } {
+  if (node.role !== "lead" && node.working) return { text: "Working", tone: "info" };
+  return stateWord(node);
+}
+
+/** The muted line under a working worker's task: why it owns live work. Plain running has none; an unknown value is left out. */
+export function whyLine(working: FlowNode["working"] | undefined): string | null {
+  switch (working) {
+    case "verifying": return "Checks running";
+    case "retry": return "Retrying after a failed check";
+    case "fix": return "Fixing a review finding";
+    default: return null;
+  }
+}
+
+/** "4 workers · 3 working · 1 needs you" above the engines. No idle count: the service sends none. `null` when the crew has no worker. */
+export function crewSummary(nodes: readonly Pick<FlowNode, "role" | "state" | "working">[]): string | null {
+  const workers = nodes.filter((node) => node.role !== "lead");
+  if (workers.length === 0) return null;
+  const working = workers.filter((node) => node.working).length;
+  const needs = workers.filter((node) => node.state === "needs_person").length;
+  return `${workers.length} ${workers.length === 1 ? "worker" : "workers"} · ${working} working · ${needs} ${needs === 1 ? "needs" : "need"} you`;
+}
+
 /** How long a running worker has been silent. Active says nothing; quiet is quiet ink, not amber; may be stuck is the one that asks. */
 export function quietWord(quiet: FlowQuiet): { text: string; tone: Tone } | null {
   if (quiet === "quiet") return { text: "Quiet · 5 min", tone: "neutral" };

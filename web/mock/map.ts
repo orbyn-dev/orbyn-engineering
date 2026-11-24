@@ -6,7 +6,7 @@
  * Scenarios: `crew` (the lead and three workers), `crew-map-engine-states` (one worker on each of four more engines, so all five registry states show), `crew-map-empty` (the lead alone), `crew-map-one`, `crew-map-many` (twelve
  * workers), `crew-map-deep` (a Claude worker, which reports its subagents), `crew-map-problems` (a failed worker, a quiet one and one
  * that may be stuck), `crew-map-offline` (Codex not installed), `crew-map-signedout` (Codex signed out), `crew-map-acp` (OpenCode,
- * which is not steered mid-turn), `crew-map-truncated`, `crew-map-no-messages`, `crew-map-many-messages` (more than one page), `crew-map-scrubbed` (members whose names the service scrubbed), `crew-map-hostile` (extra fields a service must never
+ * which is not steered mid-turn), `crew-map-working` (the KC3 words: Working with a why line under the task, and the summary above the engines), `crew-map-truncated`, `crew-map-no-messages`, `crew-map-many-messages` (more than one page), `crew-map-scrubbed` (members whose names the service scrubbed), `crew-map-hostile` (extra fields a service must never
  * send: a message body and a fact value, which the screens must never draw).
  */
 import type { FlowEdge } from "../src/generated/FlowEdge.ts";
@@ -69,6 +69,11 @@ function nodes(scenario: string): FlowNode[] {
     case "crew-map-acp": return [lead(), base[3]!];
     case "crew-map-problems":
       return [lead(), worker("implement", "claude", "Sonnet 5.5", "failed", "Typecheck failed twice, same error"), worker("tests", "codex", "GPT-5.5", "running", "Add tests for the redirect", { quiet: "quiet", lease: ["auth/*.test.ts"] }), worker("docs", "opencode", "DeepSeek V4", "running", "Update the docs", { quiet: "may_be_stuck", read_only: true, lease: [] })];
+    case "crew-map-working": {
+      // The KC3 working frame: a retry, checks and a plain run each own live work; one worker waits for the person. No idle worker.
+      const why: Record<string, FlowNode["working"]> = { implement: "retry", tests: "verifying", review: "running" };
+      return [...base.map((node) => (why[node.member] ? { ...node, working: why[node.member] } : node)), worker("docs", "claude", "Sonnet 5.5", "needs_person", "Which tone should the guide take?", { lease: [] })];
+    }
     default: return base;
   }
 }

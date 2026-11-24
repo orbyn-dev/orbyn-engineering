@@ -1043,6 +1043,8 @@ export const FRAMES = {
   "needs-one-source-board": { route: "#/crew/board", scenario: "crew-board-needs-kinds" },
   /** KC3: the dashboard's Right now row (needs-one-source-dashboard), on the dashboard's sample frame. */
   "needs-one-source-dashboard": { route: "#/preview/crew/dash-default", scenario: "crew" },
+  /** KC3: the Map's Working word, the why line under the task and the summary line (needs-one-source-working-not-idle). */
+  "needs-one-source-working-not-idle": { route: "#/crew/map", scenario: "crew-map-working" },
   "kc8-resumed-inbox": { route: "#/crew/inbox", scenario: "crew-worker-stopped-twice" },
 
   /** Crew, the escape log (Crew Designs v79), on the real escape routes over the mock's crew-escapes scenarios. A detail
