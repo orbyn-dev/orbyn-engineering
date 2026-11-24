@@ -1,6 +1,17 @@
 /* The Windows integrated toolbar (Engineer Designs: windows-integrated-toolbar-menu-window,
    windows-controls-states, windows-drag-regions and windows-high-contrast-dpi). The design's
    --t1..--t3, --sel and --line2 names map to the app tokens here, as in the other window styles. */
+:root[data-window-frame="windows"] {
+  --titlebar-h: 32px;
+  --topbar-h: 32px;
+}
+/* The 28 px buttons leave 2 px above and below in the 32 px bar, so the focus ring is drawn inside them. */
+.titlebar[data-frame="windows"] .tbi:focus-visible,
+.titlebar[data-frame="windows"] .window-menu-trigger:focus-visible,
+.titlebar[data-frame="windows"] .window-control:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
 .titlebar[data-frame="windows"] {
   --t1: var(--color-text);
   --t2: var(--color-textSoft);
@@ -36,7 +47,7 @@
 }
 .window-menu-trigger:focus-visible {
   outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 /* Flush against one another and the top-right corner. The box is the whole bar height so the drag
    layer treats the area under the controls as no-drag. */
@@ -92,7 +103,7 @@
 }
 .window-control:focus-visible {
   outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 /* Maximized, the window has no corner to round: the page draws no corner in any state, and
    data-maximized is carried for the shell and the tests. */
@@ -126,7 +137,7 @@
   }
   .window-control:focus-visible {
     outline: 2px solid Highlight;
-    outline-offset: 2px;
+    outline-offset: -2px;
   }
 }
 @media (forced-colors: active) {
