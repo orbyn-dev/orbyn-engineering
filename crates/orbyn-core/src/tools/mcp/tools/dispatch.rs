@@ -7,8 +7,9 @@ use super::render::{render_height, render_title};
 use super::{
     ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, issue_query,
     issue_ref_value, issue_summary_value, matches_words, number, pull_checks_value,
-    pull_comment_body, pull_detail_value, pull_filter, pull_limit, pull_list_value, pull_number,
-    pull_reply_to, pull_update_args, text, wait_seconds,
+    pull_comment_body, pull_detail_value, pull_filter, pull_limit, pull_list_value,
+    pull_merge_args, pull_merge_refusal, pull_number, pull_reply_to, pull_review, pull_update_args,
+    text, wait_seconds,
 };
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -17,8 +18,8 @@ use crate::issues::ProjectReader;
 use crate::store::AuditRecord;
 use crate::tools::mcp::McpBinding;
 use orbyn_contracts::{
-    ActionKind, AddPullComment, CreateThread, DelegateTask, IssueKey, PermissionMode, TaskSchedule,
-    Thread, UpdateThread, UpsertTask,
+    ActionKind, AddPullComment, CreateThread, DelegateTask, IssueKey, MergePull, PermissionMode,
+    TaskSchedule, Thread, UpdateThread, UpsertTask,
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -83,6 +84,25 @@ impl Core {
                         number(args, "number")?,
                         named.join(", ")
                     )
+                }
+                "orbyn_pull_request_review" => {
+                    let review = pull_review(args)?;
+                    format!(
+                        "Submit a {} review on pull request #{} of this project",
+                        review.event.replace('_', " "),
+                        number(args, "number")?
+                    )
+                }
+                "orbyn_pull_request_merge" => {
+                    let (method, _, delete_branch) = pull_merge_args(args)?;
+                    let mut summary = format!(
+                        "Merge pull request #{} of this project ({method})",
+                        number(args, "number")?
+                    );
+                    if delete_branch {
+                        summary.push_str(" and delete its branch");
+                    }
+                    summary
                 }
                 _ => format!("Use {name}"),
             };
@@ -312,6 +332,34 @@ impl Core {
                     .update_pull(&own.project_id, number, &update, &actor)
                     .await?;
                 pull_detail_value(&detail, self.issue_body_for_tool(&detail.body))
+            }
+            "orbyn_pull_request_review" => {
+                let number = pull_number(args)?;
+                let review = pull_review(args)?;
+                self.submit_pull_review(&own.project_id, number, &review, &actor)
+                    .await?;
+                json!({ "reviewed": true, "number": number, "event": review.event })
+            }
+            "orbyn_pull_request_merge" => {
+                let number = pull_number(args)?;
+                let (method, head_sha, delete_branch) = pull_merge_args(args)?;
+                let detail = self.project_pull(&own.project_id, number, true).await?;
+                if let Some(refusal) = pull_merge_refusal(&detail, &head_sha) {
+                    return Err(CoreError::Invalid(refusal.into()));
+                }
+                let options = MergePull {
+                    method: method.clone(),
+                    auto: false,
+                    delete_branch,
+                    subject: None,
+                    body: None,
+                    strip_credits: false,
+                    remove_agent_credits: None,
+                    expected_head: detail.head_sha.clone(),
+                };
+                self.merge_project_pull(&own.project_id, number, &options, &actor)
+                    .await?;
+                json!({ "merged": true, "number": number, "method": method })
             }
             "orbyn_schedule_list" => {
                 let tasks = self.store.tasks()?;
