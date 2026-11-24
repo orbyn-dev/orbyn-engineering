@@ -91,17 +91,18 @@ describe("the Taskboard on the board route", () => {
     expect(refused).toHaveTextContent("Could not start · Crew workers on Codex are not available yet.");
     expect(refused.querySelector(".bd-amber")).toBeNull();
     // The task that really waits keeps its amber reason.
-    const waiting = needs.getByText("Which target wins when both next and returnTo are set?").closest("li")!;
+    const waiting = needs.getByText("Which target wins when both next and returnTo are set?", { selector: ".bd-t" }).closest("li")!;
     expect(waiting).toHaveAttribute("data-needs");
     expect(waiting.querySelector(".bd-amber")).toHaveTextContent("a person decides");
     expect(waiting).not.toHaveTextContent("Could not start");
   });
 
-  it("shows a needs_person card's reason read-only, as plain text, with no Answer button", async () => {
+  it("shows a needs_person card's question read-only, in one amber line, with no Answer button", async () => {
     await open("crew");
     const needs = within(column(/^Needs you/));
-    expect(needs.getByText("Asked you a question: <b>which target wins</b>?")).toBeVisible();
-    expect(column(/^Needs you/).querySelector(".bd-amber b")).toBeNull();
+    const amber = column(/^Needs you/).querySelector(".bd-amber")!;
+    expect(amber.querySelector("b")).toHaveTextContent("Asked you a question");
+    expect(amber).toHaveTextContent("Asked you a question · Which target wins when both next and returnTo are set?");
     expect(needs.queryByRole("button", { name: /Answer/ })).toBeNull();
   });
 
@@ -236,8 +237,8 @@ describe("a card whose worker could not be stopped (kc2-close-lead-could-not-sto
 
   it("still draws a needs_person card's own amber line, and no Stop again", async () => {
     await open("crew-could-not-stop");
-    const waiting = within(column(/^Needs you/)).getByText("Which target wins when both next and returnTo are set?").closest("li")!;
-    expect(waiting.querySelector(".bd-amber")).toHaveTextContent("Asked you a question: <b>which target wins</b>?");
+    const waiting = within(column(/^Needs you/)).getByText("Which target wins when both next and returnTo are set?", { selector: ".bd-t" }).closest("li")!;
+    expect(waiting.querySelector(".bd-amber")).toHaveTextContent("Asked you a question · Which target wins when both next and returnTo are set?");
     expect(within(waiting).queryByRole("button", { name: /^Stop again/ })).toBeNull();
   });
 

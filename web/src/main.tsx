@@ -10,6 +10,7 @@ import { applyTheme, useUi } from "./product/state/ui";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/shell.css";
+import "./styles/windowFrame.css";
 import "./styles/thread.css";
 import "./styles/thread-ask.css";
 import "./styles/composer.css";

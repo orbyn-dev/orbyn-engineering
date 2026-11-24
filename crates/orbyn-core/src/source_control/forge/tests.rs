@@ -417,6 +417,29 @@ fn pull_numbers_come_from_the_url() {
 }
 
 #[test]
+fn a_check_url_names_at_most_a_fifteen_digit_run() {
+    for (url, run) in [
+        ("https://github.com/o/r/actions/runs/123/job/456", Some(123)),
+        ("https://github.com/o/r/actions/runs/123", Some(123)),
+        ("https://github.com/o/r/actions/runs/123/", Some(123)),
+        ("https://github.com/o/r/actions/runs/123?check=1", Some(123)),
+        (
+            "https://github.com/o/r/actions/runs/123456789012345",
+            Some(123_456_789_012_345),
+        ),
+        ("https://github.com/o/r/actions/runs/", None),
+        ("https://github.com/o/r/actions/runs/abc", None),
+        ("https://github.com/o/r/actions/runs/12a/job/3", None),
+        ("https://github.com/o/r/actions/runs/1234567890123456", None),
+        ("https://github.com/o/r/actions/runs", None),
+        ("https://github.com/o/r/pull/1", None),
+        ("", None),
+    ] {
+        assert_eq!(run_id_of(url), run, "{url}");
+    }
+}
+
+#[test]
 fn credit_lines_leave_the_message_and_other_lines_stay() {
     let message = "Fix the thing\n\nCo-Authored-By: Claude Opus <noreply@anthropic.com>\n\
                    Co-authored-by: Sam <sam@example.com>\n\n🤖 Generated with [Claude Code](x)\n";

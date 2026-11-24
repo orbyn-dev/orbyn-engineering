@@ -316,6 +316,37 @@ pub async fn approve_workflow(forge: Forge, cwd: &Path, run_id: u64) -> Result<(
         .map(|_| ())
 }
 
+/// The run a GitHub check's link names: the digits after `/actions/runs/`, at most
+/// fifteen of them. A link without one names no run.
+pub fn run_id_of(url: &str) -> Option<u64> {
+    let rest = url.split_once("/actions/runs/")?.1;
+    let digits = rest.split(['/', '?', '#']).next()?;
+    if digits.is_empty() || digits.len() > 15 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+/// The failed jobs' log of one run.
+pub async fn check_log(forge: Forge, cwd: &Path, run_id: u64) -> Result<String> {
+    if forge != Forge::GitHub {
+        return Err(forge.unsupported("read a check log"));
+    }
+    let id = run_id.to_string();
+    call(forge, cwd, &["run", "view", &id, "--log-failed"]).await
+}
+
+/// Re-runs the failed jobs of one run.
+pub async fn rerun_failed(forge: Forge, cwd: &Path, run_id: u64) -> Result<()> {
+    if forge != Forge::GitHub {
+        return Err(forge.unsupported("re-run a check"));
+    }
+    let id = run_id.to_string();
+    call(forge, cwd, &["run", "rerun", &id, "--failed"])
+        .await
+        .map(|_| ())
+}
+
 pub async fn conversation(forge: Forge, cwd: &Path, number: u64) -> Result<PullConversation> {
     let id = number.to_string();
     match forge {

@@ -187,6 +187,10 @@
   --color-dangerFillHover: #b91c1c;
   --color-dangerFillPress: #991b1b;
   --color-onDangerFill: #ffffff;
+  /* Windows window controls (Engineer Designs, windows-controls-states): Close keeps the system's
+     own red in every theme, because a solid white glyph holds 5.7:1 on both fills. */
+  --color-windowCloseHover: #c42b1c;
+  --color-windowClosePress: #a82417;
 }
 
 @media (max-width: 640px), (pointer: coarse) {

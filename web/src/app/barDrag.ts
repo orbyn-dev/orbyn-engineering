@@ -27,15 +27,15 @@ export function doubleClickTracker(now: () => number = () => performance.now()) 
 }
 
 /**
- * The title bar's empty space drags the window, and a real double click on it zooms the window, on the second
- * press's release and only if the pointer has not moved, as macOS does. This is ours rather than Tauri's
- * `data-tauri-drag-region` script, which takes the browser's click count: that count can reach 2 across a button
- * and the empty space, so two quick clicks at different spots zoomed the window. Buttons and menus never reach the
- * layer, and a click anywhere else forgets the first click.
+ * The title bar's empty space drags the window, and a real double click on it toggles the window's maximized state
+ * on the second press's release and only if the pointer has not moved, as the system title bar does. This is ours
+ * rather than Tauri's `data-tauri-drag-region` script, which takes the browser's click count: that count can reach 2
+ * across a button and the empty space, so two quick clicks at different spots zoomed the window. Buttons and menus
+ * never reach the layer, and a click anywhere else forgets the first click.
  *
- * Two things the web view cannot read: the system's double-click interval (500 ms is the macOS default) and the
- * "double-click a window's title bar" preference (AppleActionOnDoubleClick: Zoom, Minimize or None). A double click
- * always zooms, the default; someone who set Minimize or None gets Zoom here.
+ * Two things the web view cannot read: the system's double-click interval (500 ms approximates it) and the
+ * "double-click a window's title bar" preference (the macOS default is Zoom). A double click always toggles
+ * maximize, the default; someone who set Minimize or None gets a toggle here.
  * Returns a stop function.
  */
 export function attachBarDrag(

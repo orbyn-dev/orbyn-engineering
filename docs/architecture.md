@@ -3173,18 +3173,22 @@ request, and `head_sha` is the agent's own claim.
 caller's own project's pull requests without an effect, showing only the agent-facing
 fields, cutting the read's body at 16 KiB with the issue framing markers removed, keeping
 no raw comment or check blobs and dropping the forge's check `description`, so forge text
-is only ever a JSON string value. `orbyn_pull_request_comment`,
-`orbyn_pull_request_update`, `orbyn_pull_request_review` and
-`orbyn_pull_request_merge` are the write tools: each carries an effect, so the gate
-asks as for every effect tool, and every approval prompt names the action and the pull
-request number. The update tool takes only title, body and draft (never a base change).
-The review tool submits an approve, request changes or comment review with a body of at
-most 64 KiB, required and non-blank for request changes and comment. The merge tool takes
-merge, squash or rebase and the head commit the agent read with
-`orbyn_pull_request_read`, never auto-merges, and re-reads the pull request first: it
-refuses a closed, draft, conflicting, failing, pending or changes-requested pull request,
-or one whose head moved. A crew worker cannot call any of them. Creating a pull request,
-reading CI logs and re-running CI are still missing.
+is only ever a JSON string value. `orbyn_pull_request_ci_logs` reads one named check's
+failed-jobs log without an effect, redacted with Crew's fixed set and only then cut to the
+last 32 KiB, because a failure ends a log; GitHub only. `orbyn_pull_request_comment`,
+`orbyn_pull_request_update`, `orbyn_pull_request_review`,
+`orbyn_pull_request_merge` and `orbyn_pull_request_ci_rerun` are the write tools: each
+carries an effect, so the gate asks as for every effect tool, and every approval prompt
+names the action and the pull request number. The update tool takes only title, body and
+draft (never a base change). The review tool submits an approve, request changes or
+comment review with a body of at most 64 KiB, required and non-blank for request changes
+and comment. The merge tool takes merge, squash or rebase and the head commit the agent
+read with `orbyn_pull_request_read`, never auto-merges, and re-reads the pull request
+first: it refuses a closed, draft, conflicting, failing, pending or changes-requested
+pull request, or one whose head moved. The re-run tool re-runs only the failed jobs of
+the named check, and it too is GitHub only; on every other forge both CI tools answer that
+the forge cannot do it. A crew worker cannot call any of them. Creating a pull request
+and resolving review threads are still missing.
 
 ## Computer gateway
 

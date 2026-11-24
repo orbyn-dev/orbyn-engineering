@@ -1,12 +1,17 @@
 //! How the main window's frame is drawn. On macOS the web title bar is the window's only title bar:
-//! the native one is merged into it and the traffic lights sit over its left end. Other systems keep
-//! their native frame until the designs draw window controls for them.
+//! the native one is merged into it and the traffic lights sit over its left end. On Windows the native
+//! title bar and menu bar are gone and the web bar draws Minimize, Maximize and Close too. Other
+//! systems keep their native frame until the designs draw window controls for them.
 
-// Only macOS reads these outside the tests; the other systems keep their native frame.
+// Only macOS reads `Unified`'s fields outside the tests; Windows matches `Drawn` and the other systems
+// keep their native frame.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 /// The web title bar's height, in points (`--titlebar-h` in web/src/styles/tokens.css).
 const BAR_HEIGHT: f64 = 44.0;
+/// The bar's height on Windows, in CSS pixels (`--titlebar-h` under `data-window-frame="windows"` in web/src/styles/windowFrame.css).
+#[cfg(test)]
+const WINDOWS_BAR_HEIGHT: u32 = 32;
 /// A traffic light's drawn diameter and the bar's left padding the first one starts at (the design's `.lights`).
 const LIGHT_DIAMETER: f64 = 12.0;
 const LIGHTS_LEFT: f64 = 16.0;
@@ -19,6 +24,9 @@ pub enum Frame {
     /// distance from the window's top to the buttons' vertical centre: the windowing layer (tao) treats it so,
     /// which is why it equals half the bar and not the top of a button.
     Unified { x: f64, y: f64 },
+    /// The web bar is the title bar and draws Minimize, Maximize and Close. The window has no
+    /// native frame or menu bar.
+    Drawn,
     /// The system's own title bar and window controls.
     Native,
 }
@@ -30,6 +38,7 @@ pub fn frame_for(os: &str) -> Frame {
             // On the bar's centre line, with the sidebar toggle, back and forward and the page title.
             y: BAR_HEIGHT / 2.0,
         },
+        "windows" => Frame::Drawn,
         _ => Frame::Native,
     }
 }
@@ -44,10 +53,17 @@ mod tests {
     }
 
     #[test]
-    fn windows_and_linux_keep_their_native_frame() {
-        assert_eq!(frame_for("windows"), Frame::Native);
+    fn windows_draws_the_web_controls_and_other_systems_keep_their_native_frame() {
+        assert_eq!(frame_for("windows"), Frame::Drawn);
         assert_eq!(frame_for("linux"), Frame::Native);
         assert_eq!(frame_for("freebsd"), Frame::Native);
+    }
+
+    #[test]
+    fn the_windows_bar_height_matches_the_web_style() {
+        let css = include_str!("../../../web/src/styles/windowFrame.css");
+        assert!(css.contains(&format!("--titlebar-h: {WINDOWS_BAR_HEIGHT}px;")));
+        assert!(css.contains(&format!("--topbar-h: {WINDOWS_BAR_HEIGHT}px;")));
     }
 
     #[test]

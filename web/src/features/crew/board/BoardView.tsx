@@ -12,7 +12,7 @@ import { useTaskWrite, WriteStatus } from "../writes/TaskWrite";
 import { runWrite } from "../writes/store";
 import { CardMenu } from "./CardMenu";
 import { useBoardFocus } from "./focus";
-import { ago, checksLine, COLUMNS, modelLine, moreOf, type ColumnSpec } from "./model";
+import { ago, checksLine, COLUMNS, modelLine, moreOf, waitingLine, workingLine, type ColumnSpec } from "./model";
 import { useBoard } from "./useBoard";
 import { useNarrow } from "./useWidth";
 import "./board.css";
@@ -162,6 +162,9 @@ function CrewBoard({ crew }: { crew: string }) {
                         <Card key={card.id} card={card} onChanged={() => void first.reload()} />
                       ))}
                     </ul>
+                    {spec.id === "needs_you" && count === 0 ? (
+                      <div className="bd-empty">Nothing waits for you. The Inbox, the Review queue and the sidebar say the same.</div>
+                    ) : null}
                     {nextOf(spec.id) !== null ? (
                       <Button small busy={busy[spec.id]} onClick={() => void showMore(spec.id)}>
                         +{moreOf(count, cards.length)} more
@@ -186,7 +189,11 @@ function Card({ card, onChanged }: { card: FlowCard; onChanged(): void }) {
   // A task whose worker could not be stopped is cancelled and final: it says so instead of carrying a question's amber line, and
   // keeps the Needs you card's amber ground.
   const stuck = card.needs_you === "could_not_stop";
-  const needs = !stuck && card.state === "needs_person" && !card.could_not_start;
+  // The one needs-you field names a waiting card wherever its run state sits (a merge that waits belongs to a passed task); a
+  // dismissed field leaves the task reading needs_person. A stop kind (trip wire, worker stopped twice) is not a wait.
+  const needs = !stuck && !card.could_not_start && (card.state === "needs_person" || card.needs_you === "task_needs_person" || card.needs_you === "merge_waiting" || card.needs_you === "manual_check");
+  const waiting = needs ? waitingLine(card) : null;
+  const working = needs || stuck || card.could_not_start ? null : workingLine(card.working);
   const checks = checksLine(card);
   const model = modelLine(card);
   const stopOff = remote ? "Not available from another computer" : write.op?.phase === "busy" ? "Waiting for the answer" : null;
@@ -223,7 +230,14 @@ function Card({ card, onChanged }: { card: FlowCard; onChanged(): void }) {
           </div>
         </>
       ) : null}
-      {needs && card.reason ? <div className="bd-ln bd-amber">{card.reason}</div> : null}
+      {working ? <div className="bd-ln bd-working">{working}</div> : null}
+      {waiting ? (
+        <div className="bd-ln bd-amber">
+          {waiting.lead ? <b>{waiting.lead}</b> : null}
+          {waiting.lead && waiting.text ? " · " : null}
+          {waiting.text}
+        </div>
+      ) : null}
       <WriteStatus id={card.id} op={write.op} />
       {write.dialog}
     </li>

@@ -36,6 +36,7 @@
 .bd-ln { color: var(--color-muted); font-size: 11.5px; }
 .bd-resumed { overflow-wrap: anywhere; }
 .bd-amber { color: var(--color-warnText); }
+.bd-empty { padding: 14px 4px; color: var(--color-muted); font-size: 12px; text-align: center; }
 .bd-more { margin-left: auto; display: inline-grid; place-items: center; width: 24px; height: 24px; border: 0; background: none; color: var(--color-muted); border-radius: 7px; cursor: pointer; }
 .bd-more:hover { background: var(--color-sunken); }
 .bd-note { margin-left: 6px; color: var(--color-muted); font-size: 11px; }

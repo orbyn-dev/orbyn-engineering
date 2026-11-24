@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { boardPath, columnPath } from "./api";
-import { ago, checksLine, COLUMNS, effortLabel, modelLine, moreOf } from "./model";
+import { ago, checksLine, COLUMNS, effortLabel, modelLine, moreOf, waitingLine, workingLine } from "./model";
 import { cardItems } from "./CardMenu";
 
 describe("the board's words", () => {
@@ -39,6 +39,31 @@ describe("the board's words", () => {
     for (const [passed, of] of [[0, 0], [3, 2], [-1, 2], [1.5, 2], [Number.NaN, 2]]) {
       expect(checksLine({ checks: { passed: passed!, of: of! } })).toBeNull();
     }
+  });
+
+  it("says why a worker owns live work, and nothing for a value it does not know", () => {
+    expect(workingLine("running")).toBe("Working");
+    expect(workingLine("verifying")).toBe("Working · checks running");
+    expect(workingLine("retry")).toBe("Working · retrying after a failed check");
+    expect(workingLine("fix")).toBe("Working · fixing a review finding");
+    expect(workingLine(null)).toBeNull();
+    expect(workingLine(undefined)).toBeNull();
+    expect(workingLine("future")).toBeNull();
+  });
+
+  it("says the one needs-you sentence by kind, and keeps the reason for a kind it does not know", () => {
+    const question = "Which target wins when both next and returnTo are set?";
+    expect(waitingLine({ needs_you: "task_needs_person", reason: question })).toEqual({ lead: "Asked you a question", text: question });
+    expect(waitingLine({ needs_you: "task_needs_person", reason: null })).toEqual({ lead: "Asked you a question" });
+    expect(waitingLine({ needs_you: "merge_waiting", reason: "A merge needs your decision." })).toEqual({ text: "The merge waits for you" });
+    expect(waitingLine({ needs_you: "manual_check", reason: "A check only a person can make is waiting." })).toEqual({ text: "A check only a person can make is waiting." });
+    expect(waitingLine({ needs_you: "background_review", reason: "The review waits for you." })).toEqual({ text: "The review waits for you." });
+    expect(waitingLine({ needs_you: "future_kind", reason: "The reason still shows." })).toEqual({ text: "The reason still shows." });
+    expect(waitingLine({ needs_you: null, reason: "The field does not name it." })).toEqual({ text: "The field does not name it." });
+    expect(waitingLine({ needs_you: "merge_waiting" })).toEqual({ text: "The merge waits for you" });
+    expect(waitingLine({ needs_you: "manual_check", reason: null })).toBeNull();
+    expect(waitingLine({ needs_you: "future_kind", reason: null })).toBeNull();
+    expect(waitingLine({})).toBeNull();
   });
 
   it("counts what a column still has to read from its real total", () => {
