@@ -65,13 +65,13 @@ export function secondText(row: ApprovalRow): string {
   }
 }
 
-export function Facts({ rows }: { rows: { label: string; text: string }[] }) {
+export function Facts({ rows }: { rows: { label: string; text: string; mono?: boolean }[] }) {
   return (
     <dl className="ap-facts">
       {rows.map((row) => (
         <div key={row.label}>
           <dt>{row.label}</dt>
-          <dd>{row.text}</dd>
+          <dd className={row.mono ? "ap-mono" : undefined}>{row.text}</dd>
         </div>
       ))}
     </dl>
