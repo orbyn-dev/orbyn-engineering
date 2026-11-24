@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import { projectSettingsUrl, startProject, threadIdOf, type Service } from "./service";
 
 // The settings test must see the project's one-repository start; the thread test registers its own repositories, so each
-// runs alone (a title filter or a retry does not replay the other test).
+// of those two runs alone (a title filter or a retry does not replay the other test). The scan test at the end scans the
+// repositories the two earlier tests created, so it runs in this file's serial order and is not independently runnable.
 test.describe.configure({ mode: "serial" });
 
 /**
@@ -201,4 +202,60 @@ test("a thread in two repositories gets one task folder and one branch in each, 
   for (const name of ["my-repo", "second-repo", "third-repo"]) {
     await expect(row(page, name).locator(".repos-branch")).toHaveText("main");
   }
+});
+
+interface ScanFolder {
+  name: string;
+  path: string;
+  is_git: boolean;
+  source: string;
+  in_project: boolean;
+  refused: string | null;
+}
+interface Scan {
+  path: string;
+  is_git: boolean;
+  code_workspace_file: string | null;
+  folders: ScanFolder[];
+  truncated: boolean;
+}
+
+/** By name, so the assertion does not depend on the order the service found the folders in. */
+const byName = (folders: ScanFolder[]) => [...folders].sort((a, b) => a.name.localeCompare(b.name));
+
+test("a folder scan lists the Git folders beside it and imports a .code-workspace", async () => {
+  // A folder holding two Git repositories; one repository of the project is not inside it.
+  const workspace = join(dirname(service.dataDir), "scan-workspace");
+  mkdirSync(workspace);
+  const one = makeRepo(workspace, "scan-one");
+  const two = makeRepo(workspace, "scan-two");
+  const outside = makeRepo(dirname(service.dataDir), "scan-outside");
+
+  // POST /api/projects/{id}/repos/scan of a plain folder: its Git children, nothing added.
+  const scan = await service.api<Scan>("POST", `/api/projects/${projectId}/repos/scan`, { path: workspace });
+  expect(scan.path).toBe(workspace);
+  expect(scan.is_git).toBe(false);
+  expect(scan.code_workspace_file).toBeNull();
+  expect(scan.truncated).toBe(false);
+  expect(byName(scan.folders).map((folder) => [folder.name, folder.path, folder.is_git, folder.source, folder.refused])).toEqual([
+    ["scan-one", one, true, "child", null],
+    ["scan-two", two, true, "child", null],
+  ]);
+  expect(byName(scan.folders).some((folder) => folder.in_project)).toBe(false);
+
+  // A .code-workspace file imports the folders it lists; a folder outside the file's own folder is refused, never added.
+  const file = join(workspace, "evidence.code-workspace");
+  writeFileSync(file, JSON.stringify({ folders: [{ path: "scan-one" }, { path: two }, { path: outside }] }));
+  const imported = await service.api<Scan>("POST", `/api/projects/${projectId}/repos/scan`, { path: file });
+  expect(imported.code_workspace_file).toBe("evidence.code-workspace");
+  expect(imported.is_git).toBe(false);
+  expect(byName(imported.folders).map((folder) => [folder.name, folder.path, folder.source, folder.refused])).toEqual([
+    ["scan-one", one, "code_workspace", null],
+    ["scan-outside", outside, "code_workspace", "outside"],
+    ["scan-two", two, "code_workspace", null],
+  ]);
+
+  // A scan writes nothing: the project still holds the three repositories the earlier steps added.
+  const after = await service.api<{ repositories: RepoRow[] }>("GET", `/api/projects/${projectId}/repos`);
+  expect(after.repositories.map((entry) => entry.name)).toEqual(["my-repo", "second-repo", "third-repo"]);
 });
