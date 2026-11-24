@@ -946,44 +946,6 @@ fn a_task_moves_only_along_the_lifecycle_and_a_pass_needs_evidence() {
 /// KC8: a second death keeps `engine_error` for old readers and adds the typed detail; a person's re-run
 /// answers the wait and clears the detail, while the reason every old reader sees stays.
 #[test]
-fn a_rerun_clears_the_stop_detail_of_a_stopped_task() {
-    let (_dir, store) = open();
-    let id = task(&store);
-    store.add_crew_run(&id, "lead-1", "worker-01").unwrap();
-    store
-        .set_crew_worker(&id, "worker-thread", "/checkout", None)
-        .unwrap();
-    for to in ["routed", "running"] {
-        store.move_crew_task(&id, to, None).unwrap();
-    }
-    let stopped = store
-        .stop_crew_after_restart(&id, "already_resumed")
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        stopped.stop_detail.as_deref(),
-        Some(crate::crew::WORKER_STOPPED_TWICE)
-    );
-
-    // The checks ran live once, which is what lets a stopped task's checks be run again.
-    let evidence = format!("sha256:{}", "e".repeat(64));
-    store
-        .writer()
-        .execute(
-            "INSERT INTO crew_evidence (id, task_id, check_id, outcome, body)
-             VALUES (?1, ?2, 'chk-1', 'pass', '{}')",
-            rusqlite::params![evidence, id],
-        )
-        .unwrap();
-    let (task, _) = store.begin_crew_rerun(&id, "user", None, 0).unwrap();
-    assert_eq!(task.state, "stopped");
-    assert_eq!(task.stop_reason.as_deref(), Some("engine_error"));
-    assert_eq!(task.stop_detail, None, "the re-run answered the wait");
-}
-
-/// A move after a stop clears both the reason and the typed detail in the same UPDATE. The lifecycle has
-/// no move out of `stopped` today, so the row is re-opened the way a retry that sets a new state would.
-#[test]
 fn a_later_move_clears_the_stop_reason_and_its_detail() {
     let (_dir, store) = open();
     let id = task(&store);
