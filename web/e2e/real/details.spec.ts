@@ -63,11 +63,13 @@ test("Linked threads shows the family, and the fork says what it is a fork of", 
   const fork = await service.api<Listed>("POST", `/api/threads/${id}/fork`, { title: "The fork" });
   await page.reload();
   await page.getByRole("button", { name: "Linked threads" }).click();
-  await page.getByRole("link", { name: /The fork/ }).click();
+  const family = page.getByRole("dialog", { name: "Linked threads" });
+  await expect(family).toBeVisible();
+  await family.getByRole("link", { name: /The fork/ }).click();
   await expect(page).toHaveURL(new RegExp(fork.id));
   await expect(page.locator(".fam-line")).toContainText("Fork of");
   await page.getByRole("button", { name: "Linked threads" }).click();
-  await expect(page.getByRole("link", { name: /Root/ })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Linked threads" }).getByRole("link", { name: /Root/ })).toBeVisible();
 });
 
 test("a thread you left shows where the new messages start", async ({ page }) => {
