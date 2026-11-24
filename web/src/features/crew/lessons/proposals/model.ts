@@ -5,7 +5,7 @@ import type { SkillProposal } from "./types";
 /** The device-local area an approved skill is written to (Eng 4's ruling); the web never writes it itself. */
 export const SKILLS_LOCAL = "skills-local";
 export const ALL_PROJECTS = "All your projects";
-export const DEFAULT_SELECTION_NOTE = "joins the Default selection";
+export const DEFAULT_SELECTION_NOTE = "Default profile";
 
 /** The sentence every approved place repeats, as Engineering 4 ruled it. */
 export const AVAILABLE =
@@ -13,7 +13,7 @@ export const AVAILABLE =
 
 /** The group note on the Skills page. */
 export const ADDED_GROUP_NOTE =
-  "Available to threads on the Default profile through Orbyn's skills tools. Applies to all your projects on this device. Saved in skills-local on this device, not in your repository.";
+  "Available to threads on the Default profile through Orbyn's skills tools. Saved in skills-local on this device, not in your repository.";
 
 /** The one line the Skills page draws above Built in while nothing has been added from lessons. */
 export const ADDED_EMPTY_LINE =
