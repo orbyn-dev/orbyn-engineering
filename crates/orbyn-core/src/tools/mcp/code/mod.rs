@@ -98,14 +98,14 @@ impl Core {
     /// allow list. For a worker every string in a spec is redacted of names it may not use, so search
     /// and describe never name one; for anything else the specs come back unmodified.
     fn code_callable(&self, binding: &McpBinding) -> Vec<Value> {
-        let specs = crate::tools::mcp_tools::tool_specs()
+        let specs = crate::tools::mcp_tools::tool_specs(self.devices.tools_available())
             .filter(|spec| spec["name"].as_str().is_some_and(is_inner_tool));
         if !self.is_crew_worker(binding).unwrap_or(true) {
             return specs.collect();
         }
         let own = binding.scope.thread_id.as_str();
         let args = json!({ "thread_id": own });
-        let hidden = hidden_names(own);
+        let hidden = hidden_names(own, self.devices.tools_available());
         specs
             .filter(|spec| {
                 let name = spec["name"].as_str().unwrap_or_default();
@@ -515,9 +515,9 @@ impl Core {
 }
 
 /// Every name a worker may not use in a script, from the whole tool universe, longest first.
-fn hidden_names(own: &str) -> Vec<String> {
+fn hidden_names(own: &str, devices_available: bool) -> Vec<String> {
     let args = json!({ "thread_id": own });
-    let mut names: Vec<String> = super::tool_list(false)
+    let mut names: Vec<String> = super::tool_list(false, devices_available)
         .into_iter()
         .chain(crate::tools::mcp::code::specs())
         .chain(crate::crew::tool_specs())

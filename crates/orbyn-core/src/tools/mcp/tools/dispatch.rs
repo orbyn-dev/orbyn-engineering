@@ -5,8 +5,8 @@ use super::guide::{guide_head, guide_stops};
 use super::preview::{page_act, wait_target};
 use super::render::{render_height, render_title};
 use super::{
-    ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, PULL_NOTE, issue_query,
-    issue_ref_value, issue_summary_value, matches_words, number, pull_check_name,
+    ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, PULL_NOTE, is_device_tool,
+    issue_query, issue_ref_value, issue_summary_value, matches_words, number, pull_check_name,
     pull_checks_value, pull_comment_body, pull_detail_value, pull_filter, pull_limit,
     pull_list_value, pull_merge_args, pull_merge_refusal, pull_number, pull_reply_to, pull_review,
     pull_update_args, text, wait_seconds,
@@ -18,8 +18,8 @@ use crate::issues::ProjectReader;
 use crate::store::AuditRecord;
 use crate::tools::mcp::McpBinding;
 use orbyn_contracts::{
-    ActionKind, AddPullComment, CreateThread, DelegateTask, IssueKey, MergePull, PermissionMode,
-    TaskSchedule, Thread, UpdateThread, UpsertTask,
+    ActionKind, AddPullComment, CreateThread, DelegateTask, DeviceActionInput, DeviceActionOutput,
+    IssueKey, MergePull, PermissionMode, TaskSchedule, Thread, UpdateThread, UpsertTask,
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -33,6 +33,51 @@ fn issue_key(args: &Value, reader: &ProjectReader) -> Result<IssueKey> {
         scope: reader.scope.clone(),
         key: text(args, "key")?.to_owned(),
     })
+}
+
+/// The most base64 image one tool reply can carry under its 256 KiB limit, with room for the
+/// device row and the rest of the answer. A cut reply would not parse.
+const MAX_TOOL_IMAGE_BASE64_BYTES: usize = 192 * 1024;
+
+/// The screenshot tool's answer: the device route's own output. A screenshot over the reply
+/// limit was still taken and read back, so the answer keeps the device and says the image's
+/// size instead of carrying bytes that a cut reply would lose.
+fn screenshot_value(output: DeviceActionOutput) -> Result<Value> {
+    let mut answer = serde_json::to_value(&output)?;
+    let Some(image) = output.image else {
+        return Ok(answer);
+    };
+    if image.len() <= MAX_TOOL_IMAGE_BASE64_BYTES {
+        return Ok(answer);
+    }
+    let map = answer
+        .as_object_mut()
+        .expect("a device action output is an object");
+    let _ = map.remove("image");
+    map.insert("image_base64_bytes".into(), json!(image.len()));
+    map.insert(
+        "note".into(),
+        json!(format!(
+            "The screenshot is {} bytes as base64. It is over the tool's 192 KiB image cap, so the image is left out.",
+            image.len()
+        )),
+    );
+    Ok(answer)
+}
+
+/// The device id an audit row may hold. The target is the caller's own text, so only a short
+/// id with no path separator or control character is kept; anything else is recorded as "-" so a
+/// path can never reach the audit row. The call itself still gets the id as given.
+fn audit_device_target(id: &str) -> &str {
+    if (1..=128).contains(&id.chars().count())
+        && !id
+            .chars()
+            .any(|character| matches!(character, '/' | '\\') || character.is_control())
+    {
+        id
+    } else {
+        "-"
+    }
 }
 
 impl Core {
@@ -56,6 +101,11 @@ impl Core {
             .iter()
             .find(|tool| tool.name == name)
             .ok_or_else(|| CoreError::NotFound(format!("tool {name}")))?;
+        // The device tools are listed only where this machine has platform tools, so
+        // elsewhere the name is unknown, as if the table never held it.
+        if is_device_tool(name) && !self.devices.tools_available() {
+            return Err(CoreError::NotFound(format!("tool {name}")));
+        }
         self.refuse_for_crew_worker(binding, name, args)?;
         let preview = self.project_tool_preview(binding, name, args).await?;
         let args = preview.as_ref().unwrap_or(args);
@@ -109,6 +159,10 @@ impl Core {
                     pull_check_name(args)?,
                     number(args, "number")?
                 ),
+                "orbyn_device_list" => "List the devices on this machine".to_owned(),
+                "orbyn_device_screenshot" => {
+                    format!("Take a screenshot of device {}", text(args, "device_id")?)
+                }
                 _ => format!("Use {name}"),
             };
             let ask = ActionAsk {
@@ -869,8 +923,54 @@ impl Core {
                 self.project_task(binding, id)?;
                 json!({ "thread_id": self.run_task(id).await? })
             }
+            "orbyn_device_list" => {
+                // Rule 6: the row goes before the effect it describes, so it carries fixed
+                // values only; the list's counts are the answer's, not the audit row's.
+                self.audit_device_tool(binding, "device.tool.list", "", json!({}))?;
+                let list = self.devices.list().await;
+                serde_json::to_value(&list)?
+            }
+            "orbyn_device_screenshot" => {
+                let id = text(args, "device_id")?;
+                // Rule 6: the row goes before the device call. The target is the caller's
+                // text, so the sanitiser keeps a path or control character out of it.
+                self.audit_device_tool(
+                    binding,
+                    "device.tool.screenshot",
+                    audit_device_target(id),
+                    json!({}),
+                )?;
+                let output = self
+                    .devices
+                    .act(id, DeviceActionInput::Screenshot {})
+                    .await?;
+                screenshot_value(output)?
+            }
             other => return Err(CoreError::NotFound(format!("tool {other}"))),
         })
+    }
+
+    /// One audit row for a device tool call, written before the call it describes (rule 6): its
+    /// own action, the caller's actor and thread, an already-checked device id, and a fixed
+    /// detail. Never the answer, an image or a path.
+    fn audit_device_tool(
+        &self,
+        binding: &McpBinding,
+        action: &str,
+        target: &str,
+        detail: Value,
+    ) -> Result<()> {
+        self.store.append_audit(&AuditRecord {
+            actor: format!("engine:{}", binding.scope.engine),
+            action: action.to_owned(),
+            target: target.to_owned(),
+            decision: None,
+            source: "engine".into(),
+            thread_id: Some(binding.scope.thread_id.clone()),
+            run_id: Some(binding.scope.run_id.clone()),
+            detail,
+        })?;
+        Ok(())
     }
 
     /// Records a call before it happens, whichever way the gate then goes.
