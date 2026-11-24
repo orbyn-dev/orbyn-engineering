@@ -7,11 +7,11 @@ import { navigate } from "../../../product/state/route";
 import { useUi } from "../../../product/state/ui";
 
 const OFF =
-  "Off. Nothing is raised on this computer. Items still show in Needs you, on the board and as toasts in the app. The digest notification has its own switch below.";
+  "Off. Nothing is raised on this computer. Items still show in Needs you and on the board.";
 const THREADS_OFF =
   "Thread notifications in Settings › General is Off, so no system notification is raised. Choose Notifications or Both there.";
 const DENIED =
-  "Your computer is blocking notifications from Orbyn. Allow them in System Settings › Notifications (on Windows: Settings › System › Notifications), then come back. Until then Crew items show in Needs you and as toasts in the app.";
+  "Your computer is blocking notifications from Orbyn. Allow them in System Settings › Notifications (on Windows: Settings › System › Notifications), then come back. Until then Crew items show in Needs you and on the board.";
 const NOT_ASKED = "Not asked yet. Choose Notifications or Both in Settings › General to allow it.";
 const ALLOWED = "Allowed by your computer. Thread notifications in Settings › General is on.";
 
@@ -49,7 +49,7 @@ export function DeviceNotifications() {
       <div>
         <b>Device notifications</b>
         <small>
-          A notification on this computer the first time something needs you: a question, a command to approve, a merge or a review that waits, a watch that turned failing, a start that was refused, a task that stopped. One per item, never repeated; items that arrive together are one. Items still appear in Needs you whatever this says. It uses Thread notifications in Settings › General.
+          A notification on this computer the first time something needs you: a question, a merge or a review that waits, a watch that turned failing, a start that was refused, a task that stopped. One per item, never repeated; items that arrive together are one. Items still appear in Needs you whatever this says. It uses Thread notifications in Settings › General.
         </small>
       </div>
       <button
