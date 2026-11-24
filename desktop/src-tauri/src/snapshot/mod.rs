@@ -18,6 +18,11 @@ mod shortcut;
 mod state;
 #[cfg(not(target_os = "macos"))]
 mod stub;
+#[cfg(windows)]
+mod windows;
+// Shared plain code used by the Windows capturer; compiled and tested on every OS.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod windows_png;
 
 #[cfg(target_os = "macos")]
 use macos as platform;
