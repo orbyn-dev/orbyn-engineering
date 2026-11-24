@@ -1,4 +1,5 @@
 import { lazy } from "react";
+import { WATCH_FRAMES } from "./autopilot/approvals/watchNames";
 import { REVIEW_FRAMES } from "./autopilot/review/names";
 import { BACKTEST_FRAMES } from "./backtest/names";
 import { CAPACITY_LIVE_FRAMES } from "./capacity/live/names";
@@ -23,7 +24,7 @@ export function crewPreviewRoute(hash: string): string | null {
   const match = /^#\/preview\/crew\/([a-z0-9-]+)(?:\?[A-Za-z0-9_.=&-]+)?$/.exec(hash);
   // Built here, not at module level, so a production build drops every frame id with this branch.
   const frames: readonly string[] = [...REVIEW_FRAMES, ...ESCAPE_FRAMES, ...CAPACITY_FRAMES, ...CAPACITY_LIVE_FRAMES, ...ORACLE_FRAMES, ...BACKTEST_FRAMES, ...SETTINGS_FRAMES, ...FLOW_FRAMES, ...DASHBOARD_FRAMES];
-  return [...frames, ...NEEDSYOU_FRAMES].find((name) => name === match?.[1]) ?? null;
+  return [...frames, ...WATCH_FRAMES, ...NEEDSYOU_FRAMES].find((name) => name === match?.[1]) ?? null;
 }
 
 export const CrewPreview = __ORBYN_PREVIEWS__ ? lazy(() => import("./PreviewScreens")) : null;

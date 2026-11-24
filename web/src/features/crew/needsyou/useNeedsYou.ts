@@ -6,7 +6,7 @@ import { crewApi } from "../autopilot/approvals/api";
 import { useHeldCommands, type HoldControl } from "../autopilot/approvals/held";
 import type { AutopilotAreaRow } from "../../../generated/AutopilotAreaRow";
 import type { AutopilotAreas } from "../../../generated/AutopilotAreas";
-import { autonomyItems, backgroundItems, couldNotStartItems, heldItems, mainItems, rank, secondEngineItems, stopItems } from "./assemble";
+import { autonomyItems, backgroundItems, couldNotStartItems, heldItems, mainItems, rank, secondEngineItems, stopItems, watchItems } from "./assemble";
 import { useSecondEngineNotices } from "./secondEngines";
 import { needsApi } from "./api";
 import type { NeedsItem } from "./model";
@@ -73,6 +73,7 @@ export function useNeedsYou(project: string | null): NeedsState {
   const stops = useAsync("needs-stops", (signal) => crewApi.stops(signal));
   const review = useAsync("needs-review", (signal) => needsApi.reviewQueue(signal));
   const background = useAsync("needs-background", (signal) => needsApi.backgroundWaiting(signal));
+  const watch = useAsync("needs-watch", (signal) => needsApi.watchWaiting(signal));
   const refused = useAsync("needs-could-not-start", (signal) => needsApi.couldNotStart(signal));
   const areas = useAsync(`needs-areas:${project ?? "none"}`, (signal) => (project ? crewApi.areas(project, signal) : Promise.resolve(NO_AREAS)), { keep: true });
   const notices = useSecondEngineNotices();
@@ -81,11 +82,13 @@ export function useNeedsYou(project: string | null): NeedsState {
   const quietStops = stops.refreshQuietly;
   const quietReview = review.refreshQuietly;
   const quietBackground = background.refreshQuietly;
+  const quietWatch = watch.refreshQuietly;
   const quietRefused = refused.refreshQuietly;
   const quietAreas = areas.refreshQuietly;
   const reloadStops = stops.reload;
   const reloadReview = review.reload;
   const reloadBackground = background.reload;
+  const reloadWatch = watch.reload;
   const reloadRefused = refused.reload;
   const reloadAreas = areas.reload;
   const reloadHeld = held.reload;
@@ -97,22 +100,24 @@ export function useNeedsYou(project: string | null): NeedsState {
       void quietStops();
       void quietReview();
       void quietBackground();
+      void quietWatch();
       void quietNotices();
       void quietRefused();
       void quietAreas();
     }, NEEDS_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [quietStops, quietReview, quietBackground, quietNotices, quietRefused, quietAreas]);
+  }, [quietStops, quietReview, quietBackground, quietWatch, quietNotices, quietRefused, quietAreas]);
 
   const retry = useCallback(() => {
     void reloadHeld();
     void reloadStops();
     void reloadReview();
     void reloadBackground();
+    void reloadWatch();
     void reloadNotices();
     void reloadRefused();
     void reloadAreas();
-  }, [reloadHeld, reloadStops, reloadReview, reloadBackground, reloadNotices, reloadRefused, reloadAreas]);
+  }, [reloadHeld, reloadStops, reloadReview, reloadBackground, reloadWatch, reloadNotices, reloadRefused, reloadAreas]);
 
   const heldRows = held.rows;
   const areaRows = areas.data?.rows;
@@ -124,10 +129,11 @@ export function useNeedsYou(project: string | null): NeedsState {
       ...(refused.data ? couldNotStartItems(refused.data) : []),
       ...(review.data ? mainItems(review.data) : []),
       ...(background.data ? backgroundItems(background.data) : []),
+      ...(watch.data ? watchItems(watch.data) : []),
       ...(areaRows && project ? autonomyItems(areaRows, project).filter((one) => !dismissedAutonomy.has(dismissKey(one.id))) : []),
       ...(notices.data ? secondEngineItems(notices.data) : []),
     ]);
-  }, [heldRows, stops.data, review.data, background.data, refused.data, notices.data, areaRows, project, dismissed, dismissedAutonomy]);
+  }, [heldRows, stops.data, review.data, background.data, watch.data, refused.data, notices.data, areaRows, project, dismissed, dismissedAutonomy]);
   // Keep only the dismissals whose row is still in the service's list, so the stored lists cannot grow without end.
   const recent = stops.data?.recent;
   useEffect(() => {
@@ -183,6 +189,7 @@ export function useNeedsYou(project: string | null): NeedsState {
     { name: "stops", failed: stops.status === "error", error: stops.error },
     { name: "the Review queue", failed: review.status === "error", error: review.error },
     { name: "background crews", failed: background.status === "error", error: background.error },
+    { name: "watch readings", failed: watch.status === "error", error: watch.error },
     { name: "tasks that could not start", failed: refused.status === "error", error: refused.error },
     // Without a repository there is no areas read: it is not a source that can fail, so it never keeps a failing service looking readable.
     ...(project ? [{ name: "Autopilot areas", failed: areas.status === "error", error: areas.error }] : []),
@@ -191,7 +198,7 @@ export function useNeedsYou(project: string | null): NeedsState {
   const failed = reads.filter((one) => one.failed);
   // The held read has no loading flag of its own: the inbox waits for the other sources, and held commands join when they arrive.
   // Without a repository there is no areas read to wait for.
-  const loading = stops.status === "loading" && review.status === "loading" && background.status === "loading" && refused.status === "loading" && notices.status === "loading" && (project === null || areas.status === "loading");
+  const loading = stops.status === "loading" && review.status === "loading" && background.status === "loading" && watch.status === "loading" && refused.status === "loading" && notices.status === "loading" && (project === null || areas.status === "loading");
   if (failed.length === reads.length) return { status: "error", failure: failed[0]!.error as ApiFailure, retry };
   if (loading) return { status: "loading" };
   return { status: "ready", items, hold, partial: failed.map((one) => one.name), noticeFailure: notices.failure, retry, reloadAreas: quietAreas, dismiss, areas: areaRows ?? [] };

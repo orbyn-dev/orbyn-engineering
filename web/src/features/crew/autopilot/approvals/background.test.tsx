@@ -44,7 +44,7 @@ describe("Background crews on the Crew routes", () => {
     await screen.findByRole("table", { name: "Background crews" });
     expect(screen.getByText("orbyn-engineering")).toBeVisible();
     expect(screen.queryByText(/^Repo:/)).toBeNull();
-    expect(within(crewsTable()).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Crew", "Starts when", "Last run", "State", "Switch"]);
+    expect(within(crewsTable()).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Crew", "Starts when", "Last run or check", "State", "Switch"]);
     expect(within(crewsTable()).getAllByRole("row").slice(1).map((row) => within(row).getByText(/^Template:/).previousSibling?.textContent)).toEqual(["Dependency bump", "Fix failing CI", "Flaky test finder", "Security advisories"]);
     expect(rowOf("Fix failing CI")).toHaveTextContent(/Template: fix failing CIWhen CI fails on main\w{3} \d{1,2} Nov, \d\d:\d\d · 12 turns, 9 minNeeds reviewOn/);
     expect(rowOf("Dependency bump")).toHaveTextContent(/\w{3} \d{1,2} Nov, \d\d:\d\d · running, 6 minRunningOn/);
@@ -455,6 +455,145 @@ describe("Background crews on the Crew routes", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Can’t read background crews");
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("table", { name: "Background crews" })).toBeVisible();
+  });
+});
+
+describe("The watch kind in the create dialog (KC6)", () => {
+  /** The form opened from the header's button, with the default template and name it fills in. */
+  async function openBlank(scenario: "crew-background" | "crew-background-empty" = "crew-background") {
+    mock.reset(scenario);
+    const user = userEvent.setup();
+    render(<BackgroundTab />);
+    await user.click(await screen.findByRole("button", { name: "New background crew" }));
+    const dialog = await screen.findByRole("dialog", { name: /New background crew/ });
+    await user.click(within(dialog).getByRole("radio", { name: "Watch" }));
+    return { user, dialog };
+  }
+  const createButton = (dialog: HTMLElement) => within(dialog).getByRole("button", { name: "Create background crew" });
+
+  it("offers Watch with its command, schedule and failing action, and asks for no model budget when it only raises Needs you", async () => {
+    const { dialog } = await openBlank();
+    expect(within(dialog).getByLabelText("Command")).toHaveValue("");
+    // An empty command is out of range, so the field carries the range sentence rather than its hint.
+    expect(within(dialog).getByLabelText("Command")).toHaveAccessibleDescription("Use 1 to 500 characters");
+    expect(within(dialog).getByLabelText("Every N hours")).toHaveValue(24);
+    expect(within(dialog).getByLabelText("Every N hours")).toHaveAccessibleDescription("1 to 720. The shortest is every 1 hour, so at most 24 checks a day.");
+    expect(within(dialog).getByRole("radio", { name: "Raise Needs you" })).toBeChecked();
+    expect(within(dialog).getByText("One row in Needs you each time the result turns failing. Nothing starts.")).toBeVisible();
+    // A watch that only raises a Needs you row starts no run: no template and no budget are asked.
+    expect(within(dialog).queryByRole("radio", { name: "Fix failing CI" })).toBeNull();
+    expect(within(dialog).queryByLabelText("Turns")).toBeNull();
+    expect(within(dialog).queryByLabelText("Runs a day")).toBeNull();
+    expect(within(dialog).getByRole("region", { name: "No model call, no model budget" })).toHaveTextContent("A check is a command, not a model call, so it spends no turns and none of an engine’s daily budget.");
+    expect(dialog).toHaveTextContent("It is created off. Turn it on when you want it to start checking. It is kept on this device. A project can have at most 10 watches.");
+    expect(createButton(dialog)).toBeDisabled();
+    // The designer's ruling: the label no longer carries the Not built yet chip.
+    expect(within(dialog).queryByText("Not built yet")).toBeNull();
+  });
+
+  it("shows the command and schedule ranges, and keeps Create off until both are in range", async () => {
+    const { user, dialog } = await openBlank();
+    const command = within(dialog).getByLabelText("Command");
+    const hours = within(dialog).getByLabelText("Every N hours");
+    await user.type(within(dialog).getByLabelText("Name"), "!");
+    fireEvent.change(command, { target: { value: "" } });
+    expect(within(dialog).getByText("Use 1 to 500 characters")).toBeVisible();
+    expect(command).toHaveAttribute("aria-invalid", "true");
+    expect(createButton(dialog)).toBeDisabled();
+    fireEvent.change(command, { target: { value: "a".repeat(501) } });
+    expect(within(dialog).getByText("Use 1 to 500 characters")).toBeVisible();
+    fireEvent.change(command, { target: { value: "a".repeat(500) } });
+    expect(within(dialog).queryByText("Use 1 to 500 characters")).toBeNull();
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("Fix failing CI!");
+    // The name is still the template's, and the command is in range: the hours are what is left.
+    fireEvent.change(hours, { target: { value: "0" } });
+    expect(within(dialog).getByText("Use 1 to 720 hours")).toBeVisible();
+    expect(hours).toHaveAttribute("aria-invalid", "true");
+    expect(createButton(dialog)).toBeDisabled();
+    fireEvent.change(hours, { target: { value: "1" } });
+    expect(within(dialog).queryByText("Use 1 to 720 hours")).toBeNull();
+    // An empty name is still off, as for every kind.
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "" } });
+    expect(within(dialog).getByText("Use 1 to 80 characters")).toBeVisible();
+    expect(createButton(dialog)).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Redirect tests" } });
+    expect(createButton(dialog)).toBeEnabled();
+  });
+
+  it("asks for the template and its budgets when a failing result should start the crew's run", async () => {
+    const { user, dialog } = await openBlank();
+    await user.click(within(dialog).getByRole("radio", { name: "Start the crew template" }));
+    expect(within(dialog).getByRole("radio", { name: "Fix failing CI" })).toBeChecked();
+    expect(within(dialog).getByLabelText("Turns")).toHaveValue(40);
+    expect(within(dialog).getByLabelText("Minutes")).toHaveValue(60);
+    expect(within(dialog).getByLabelText("Runs a day")).toHaveValue(2);
+    expect(within(dialog).getByLabelText("Turns a day")).toHaveValue(80);
+    expect(within(dialog).getByText("Starts one run of the template each time the result turns failing, not while it stays failing.")).toBeVisible();
+    // The watch's template and budgets come after the failing choice, as watch-setup-template draws them.
+    const order = [...dialog.querySelectorAll("label")].map((one) => one.textContent);
+    expect(order.indexOf("Every N hours")).toBeLessThan(order.indexOf("When it turns failing"));
+    expect(order.indexOf("When it turns failing")).toBeLessThan(order.indexOf("Template"));
+    expect(order.indexOf("Template")).toBeLessThan(order.indexOf("Turns"));
+    expect(within(dialog).getByText(/^Budget for each run the watch starts\./)).toBeVisible();
+    // Choosing the template a failing result starts must not turn the watch into that template's own trigger kind.
+    await user.click(within(dialog).getByRole("radio", { name: "Dependency bump" }));
+    expect(within(dialog).getByRole("radio", { name: "Watch" })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: "Dependency bump" })).toBeChecked();
+    expect(within(dialog).getByRole("region", { name: "The check has no model budget" })).toHaveTextContent("Only a run it starts spends the budget above.");
+  });
+
+  it("creates a watch that raises Needs you, with the defaults its body has to carry, and lists it not checked yet", async () => {
+    mock.reset("crew-background");
+    const user = userEvent.setup();
+    render(<BackgroundTab />);
+    await user.click(await screen.findByRole("button", { name: "New background crew" }));
+    const dialog = await screen.findByRole("dialog", { name: /New background crew/ });
+    await user.click(within(dialog).getByRole("radio", { name: "Watch" }));
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Redirect tests" } });
+    fireEvent.change(within(dialog).getByLabelText("Command"), { target: { value: "npm test web/nav/redirect" } });
+    fireEvent.change(within(dialog).getByLabelText("Every N hours"), { target: { value: "1" } });
+    await user.click(createButton(dialog));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const row = rowOf("Redirect tests");
+    expect(row).toHaveTextContent("Watch · no model · npm test web/nav/redirect");
+    expect(row).toHaveTextContent("Every 1 hour · raises Needs you");
+    expect(row).toHaveTextContent("Not checked yet");
+    expect(within(row).getByRole("switch", { name: "Redirect tests on" })).toHaveTextContent("Off");
+    const create = vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => url === "/api/crew/background/create").at(-1);
+    const sent = JSON.parse(String(create?.[1]?.body)) as { template: string; trigger: unknown; budget: unknown; daily: unknown };
+    expect(sent.template).toBe("fix_failing_ci");
+    expect(sent.trigger).toEqual({ kind: "watch", command: "npm test web/nav/redirect", every_hours: 1, on_failing: "needs_you" });
+    expect(sent.budget).toEqual({ turns: 40, minutes: 60 });
+    expect(sent.daily).toEqual({ runs: 2, turns: 80 });
+  });
+
+  it("shows the service's refusal of a denied command under Command, and drops it when the command is edited", async () => {
+    const { user, dialog } = await openBlank();
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Redirect tests" } });
+    fireEvent.change(within(dialog).getByLabelText("Command"), { target: { value: "git push --force origin main" } });
+    fireEvent.change(within(dialog).getByLabelText("Every N hours"), { target: { value: "1" } });
+    await user.click(createButton(dialog));
+    const sentence = "That command is not allowed: force-push, history rewrite or any push to main.";
+    expect(await within(dialog).findByText(sentence)).toBeVisible();
+    expect(within(dialog).getByLabelText("Command")).toHaveAttribute("aria-invalid", "true");
+    expect(within(dialog).getByLabelText("Command")).toHaveAccessibleDescription(sentence);
+    fireEvent.change(within(dialog).getByLabelText("Command"), { target: { value: "npm test web/nav/redirect" } });
+    expect(within(dialog).queryByText(sentence)).toBeNull();
+    expect(createButton(dialog)).toBeEnabled();
+  });
+
+  it("sends the template and the budgets a watch that starts a run was given", async () => {
+    const { user, dialog } = await openBlank();
+    await user.click(within(dialog).getByRole("radio", { name: "Start the crew template" }));
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Main build" } });
+    fireEvent.change(within(dialog).getByLabelText("Command"), { target: { value: "npm run build" } });
+    fireEvent.change(within(dialog).getByLabelText("Every N hours"), { target: { value: "6" } });
+    await user.click(createButton(dialog));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const create = vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => url === "/api/crew/background/create").at(-1);
+    const sent = JSON.parse(String(create?.[1]?.body)) as { trigger: unknown; budget: unknown };
+    expect(sent.trigger).toEqual({ kind: "watch", command: "npm run build", every_hours: 6, on_failing: "template" });
+    expect(sent.budget).toEqual({ turns: 40, minutes: 60 });
   });
 });
 

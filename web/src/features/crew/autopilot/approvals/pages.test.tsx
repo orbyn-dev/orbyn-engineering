@@ -222,11 +222,13 @@ describe("Background crews", () => {
   it("lists each crew with its trigger, last run, state and Autopilot setting", () => {
     render(<BackgroundPageView view={view} />);
     const table = screen.getByRole("table", { name: "Background crews" });
-    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Crew", "Starts when", "Last run", "State", "Switch", "Autopilot"]);
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Crew", "Starts when", "Last run or check", "State", "Switch", "Autopilot"]);
     expect(table).toHaveTextContent("Fix failing CITemplate: fix failing CIWhen CI fails on mainSat 7 Nov, 15:11 · 12 turns, 9 minNeeds reviewOnFull");
     expect(table).toHaveTextContent("Security advisoriesTemplate: security advisoryWhen a dependency update opensNever runIdleOffOff");
     expect(screen.getByText("This device")).toBeVisible();
-    expect(screen.getAllByText("Triggers not built yet").length).toBeGreaterThan(0);
+    // The "Not built yet" chip and its lines went when the watch kind landed (the Designer's ruling): the screens no longer claim triggers are planned.
+    expect(screen.queryByText("Triggers not built yet")).toBeNull();
+    expect(screen.queryByText("Not built yet")).toBeNull();
   });
 
   it("lists recent runs, a budget stop as Stopped and not Failed", () => {
@@ -273,7 +275,7 @@ describe("Background crews", () => {
   it("says what a background crew is, and offers the templates, when there are none", () => {
     render(<BackgroundPageView view={{ crews: [], runs: [] }} />);
     expect(screen.getByText("No background crews yet")).toBeVisible();
-    expect(screen.getByText(/A background crew starts when something happens in the repo/)).toHaveTextContent("A background crew starts when something happens in the repo, like CI failing or a dependency update, runs the whole flow, and waits for your review. Triggers are not built yet.");
+    expect(screen.getByText(/A background crew starts when something happens in the repo/)).toHaveTextContent("A background crew starts when something happens in the repo, like CI failing or a dependency update, runs the whole flow, and waits for your review.");
     expect(screen.getByRole("button", { name: "See the templates" })).toBeVisible();
     expect(screen.queryByRole("table", { name: "Background crews" })).toBeNull();
     expect(screen.queryByRole("button", { name: "New background crew" })).toBeNull();
@@ -282,7 +284,7 @@ describe("Background crews", () => {
   it("draws the Autopilot column only when the route reports it", () => {
     render(<BackgroundPageView view={{ crews: crews.map((crew) => ({ ...crew, mode: null })), runs: [] }} />);
     const table = screen.getByRole("table", { name: "Background crews" });
-    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Crew", "Starts when", "Last run", "State", "Switch"]);
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Crew", "Starts when", "Last run or check", "State", "Switch"]);
   });
 
   it("is a small card per crew in the 320 px panel", () => {
