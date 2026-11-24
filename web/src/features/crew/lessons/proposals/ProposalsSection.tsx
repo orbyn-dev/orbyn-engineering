@@ -108,7 +108,13 @@ function OwnLessons({
 }) {
   const lessons = useLessons(project, "all");
   if (proposals.status === "missing" || lessons.status === "missing") return null;
-  if (proposals.status === "error") return <ReadError failure={proposals.failure} onRetry={() => void proposals.reload()} title={PROPOSALS_READ_ERROR} />;
+  // Either read failing says so, and Try again reads again whichever failed, so one recovering cannot leave the other silent.
+  const retry = () => {
+    if (proposals.status === "error") void proposals.reload();
+    if (lessons.status === "error") void lessons.reload();
+  };
+  if (proposals.status === "error") return <ReadError failure={proposals.failure} onRetry={retry} title={PROPOSALS_READ_ERROR} />;
+  if (lessons.status === "error") return <ReadError failure={lessons.failure} onRetry={retry} />;
   if (proposals.status !== "ready" || lessons.status !== "ready") return null;
   return (
     <SectionBody
