@@ -10,7 +10,7 @@ import { Dialog } from "../../../ui/Dialog";
 import { FolderBrowser } from "../../../product/ui/FolderBrowser";
 import { dropTrailingSlash, expandHome, homePrefix, pathName, replaceHomePrefix, shortenHome, splitPath, withSlash } from "./pathInput";
 import { trackClone } from "../app-chrome/CloneJobs";
-import { canPickFolder, pickFolder } from "../../repos";
+import { canPickFolder, checkCloneSource, pickFolder } from "../../repos";
 import "../addProject.css";
 
 export type AddProjectView = "folders" | "new" | "clone";
@@ -19,6 +19,24 @@ export type AddProjectView = "folders" | "new" | "clone";
 export function cloneAddress(text: string): string {
   const typed = text.trim();
   return /^[\w.-]+\/[\w.-]+$/.test(typed) && !/^\.{1,2}\//.test(typed) ? `https://github.com/${typed}.git` : typed;
+}
+
+/**
+ * Why the typed clone source cannot be sent, or null when it can. The Add project flow hands Git any
+ * source it reads: an http(s), ssh or file URL, an scp-like address, an owner/name on GitHub or a local
+ * path (the clone jobs take all of them), so only what cannot be a source at all is refused. The
+ * Repositories dialog's check supplies the two rules every source shares, an empty address and one
+ * with a space or control character in it; its https-or-ssh-only rule is that page's route, not this
+ * flow's.
+ */
+export function cloneProblem(text: string): string | null {
+  const address = cloneAddress(text);
+  const checked = checkCloneSource(address);
+  // eslint-disable-next-line no-control-regex
+  if (!checked.ok && (address === "" || /[\u0000-\u001f\u007f\s]/.test(address))) return checked.reason;
+  // A scheme with nothing after it names no host and no path, so there is nothing to clone.
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\/*$/.test(address)) return "Enter the address to clone from.";
+  return null;
 }
 
 /** The base directory setting, when the person has chosen one. */
@@ -267,6 +285,7 @@ function AddDialog({
   confirm,
   mono,
   hint,
+  check,
   submit,
   onCancel,
 }: {
@@ -275,12 +294,15 @@ function AddDialog({
   confirm: string;
   mono?: boolean;
   hint: ReactNode;
+  /** What is wrong with the typed value, or null when it may be sent: an answer keeps the dialog open and sends nothing. */
+  check?(value: string): string | null;
   submit(value: string): Promise<void>;
   onCancel(): void;
 }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const field = useRef<HTMLInputElement>(null);
   const live = useRef(true);
   useEffect(
     () => () => {
@@ -291,6 +313,14 @@ function AddDialog({
   const send = async () => {
     const text = value.trim();
     if (!text || busy) return;
+    const problem = check?.(text) ?? null;
+    if (problem !== null) {
+      // The dialog answers with the reason and stays open; nothing is sent and the field takes
+      // the focus back, so the address can be fixed where the message points.
+      setError(problem);
+      field.current?.focus();
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -328,6 +358,7 @@ function AddDialog({
         <label htmlFor="add-project-field">{label}</label>
         <input
           id="add-project-field"
+          ref={field}
           className={mono ? "dialog-field dialog-field-mono" : "dialog-field"}
           data-dialog-focus
           value={value}
@@ -335,7 +366,10 @@ function AddDialog({
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
-          onChange={(event) => setValue(event.target.value)}
+          onChange={(event) => {
+            setValue(event.target.value);
+            if (error !== null) setError(null);
+          }}
         />
         {error ? (
           <p className="field-error" role="alert">
@@ -434,6 +468,7 @@ export function AddProjectPalette({
               progress shows in the sidebar until it finishes.
             </>
           }
+          check={cloneProblem}
           submit={async (url) => {
             const job = await api.startClone(cloneAddress(url));
             if (onAdded) setView("folders");
