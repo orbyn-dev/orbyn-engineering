@@ -1527,3 +1527,23 @@ mod limits {
         );
     }
 }
+
+mod templates {
+    //! Forgejo keeps its issue templates in repository files (.gitea or .forgejo ISSUE_TEMPLATE), which its REST
+    //! API does not list: this shape answers an empty list rather than inventing templates.
+
+    use super::*;
+
+    #[tokio::test]
+    async fn the_templates_read_answers_none_without_a_request() {
+        let server = Server::start(|_| Reply::json(&json!({}))).await;
+        assert!(
+            reader(&server)
+                .templates("grp/proj")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(server.seen().is_empty());
+    }
+}

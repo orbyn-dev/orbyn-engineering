@@ -1554,3 +1554,107 @@ mod limits {
         );
     }
 }
+
+mod templates {
+    //! GitLab's project issue templates: the entry list and one content read per template, at most 50, each body cut
+    //! to 16 KiB; a project with none answers an empty list.
+
+    use super::*;
+
+    fn entries(count: usize) -> Value {
+        Value::Array(
+            (0..count)
+                .map(|n| json!({ "key": format!("t{n}"), "name": format!("Template {n}") }))
+                .collect(),
+        )
+    }
+
+    #[tokio::test]
+    async fn templates_list_entries_and_read_their_bodies() {
+        let server = Server::start(|req| {
+            let path = req.path();
+            assert_eq!(req.header("private-token"), Some(TOKEN));
+            if path.ends_with("/templates/issues") {
+                return Reply::json(&entries(2));
+            }
+            match path {
+                "/api/v4/projects/grp%2Fproj/templates/issues/t0" => {
+                    Reply::json(&json!({ "name": "Template 0", "content": "Steps: one." }))
+                }
+                "/api/v4/projects/grp%2Fproj/templates/issues/t1" => {
+                    Reply::json(&json!({ "name": "Template 1", "content": "Steps: two." }))
+                }
+                other => panic!("unexpected path {other}"),
+            }
+        })
+        .await;
+        let templates = reader(&server).templates("grp/proj").await.unwrap();
+        assert_eq!(templates.len(), 2);
+        assert_eq!(
+            (
+                templates[0].id.as_str(),
+                templates[0].name.as_str(),
+                templates[0].body.as_str(),
+            ),
+            ("t0", "Template 0", "Steps: one.")
+        );
+        assert_eq!(templates[1].id, "t1");
+        assert_eq!(templates[0].description, None);
+        assert!(templates[0].labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn at_most_fifty_templates_are_read() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/templates/issues") {
+                return Reply::json(&entries(60));
+            }
+            Reply::json(&json!({ "content": "Body" }))
+        })
+        .await;
+        let templates = reader(&server).templates("grp/proj").await.unwrap();
+        assert_eq!(templates.len(), 50, "at most fifty templates");
+        assert_eq!(templates[49].id, "t49");
+        let content_reads = server
+            .seen()
+            .iter()
+            .filter(|req| req.path().contains("/templates/issues/"))
+            .count();
+        assert_eq!(content_reads, 50, "no body is read past the fifty kept");
+    }
+
+    #[tokio::test]
+    async fn a_long_template_body_is_cut_to_sixteen_kib() {
+        let long = "x".repeat(20_000);
+        let server = Server::start(move |req| {
+            if req.path().ends_with("/templates/issues") {
+                return Reply::json(&entries(1));
+            }
+            Reply::json(&json!({ "content": long }))
+        })
+        .await;
+        let templates = reader(&server).templates("grp/proj").await.unwrap();
+        assert_eq!(templates[0].body.len(), 16 * 1024);
+    }
+
+    #[tokio::test]
+    async fn a_project_with_no_templates_answers_an_empty_list() {
+        let server = Server::start(|req| {
+            assert!(
+                req.path().ends_with("/templates/issues"),
+                "{:?}",
+                req.path()
+            );
+            Reply::json(&json!([]))
+        })
+        .await;
+        assert!(
+            reader(&server)
+                .templates("grp/proj")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(server.seen().len(), 1, "only the list is read");
+    }
+}
