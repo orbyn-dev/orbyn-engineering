@@ -244,14 +244,28 @@ async fn the_route_table_agrees_with_the_core_marker_and_every_change_names_its_
         found, listed,
         "every Crew route is a read or a change the core marks, and every marked route exists"
     );
-    // The marker the core refuses by path agrees with the methods: nothing but a GET is a read.
+    // The marker the core refuses by path agrees with the methods: nothing but a GET is a read. A path that carries both
+    // a read and a person write is refused whole, because the marker is by path; its GET is listed in READS and answers a
+    // person, but an agent's request to the same path is refused with the write's.
+    let shared: BTreeSet<&str> = reads
+        .iter()
+        .filter(|(_, path)| changes.iter().any(|(_, change)| change == path))
+        .map(|(_, path)| path.as_str())
+        .collect();
     for (method, path) in &found {
         let marked = changes_crew_state(&path.replace("{id}", "task-1"));
-        assert_eq!(
-            marked,
-            method != "GET",
-            "{method} is marked as the core marks it"
-        );
+        if method == "GET" && shared.contains(path.as_str()) {
+            assert!(
+                marked,
+                "{path} shares a person write's path, so it is refused whole"
+            );
+        } else {
+            assert_eq!(
+                marked,
+                method != "GET",
+                "{method} is marked as the core marks it"
+            );
+        }
     }
     // Every change names a guard, and every guard is for a marked change.
     let guarded: BTreeSet<(String, String)> = GUARDS
