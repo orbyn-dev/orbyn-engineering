@@ -367,9 +367,7 @@ fn dispatch(shared: &Shared, frame: Incoming, pings: &mut HashSet<u64>) -> bool 
                 let _ = route.tx.send(RunFrame::Done(done));
             }
         }
-        Incoming::Log { level } => {
-            tracing::debug!(level, "engine host log");
-        }
+        Incoming::Log { level, event } => record_log(&level, event.as_ref()),
         Incoming::Background { session_id, event } => {
             let mut book = lock(&shared.book);
             let id = event.get("id").and_then(Value::as_str).map(str::to_owned);
@@ -392,6 +390,22 @@ fn dispatch(shared: &Shared, frame: Incoming, pings: &mut HashSet<u64>) -> bool 
         }
     }
     false
+}
+
+/// One `log` frame from the host. A frame that carries an `envAdded` event names the keys the Claude family
+/// added to a confined child's environment: keys only, never a value, and worth an info line because they are
+/// the one part of that child environment the host chose. Every other frame stays at debug, as before.
+fn record_log(level: &str, event: Option<&Value>) {
+    let added = event
+        .filter(|event| event.get("type").and_then(Value::as_str) == Some("envAdded"))
+        .and_then(|event| event.get("keys"))
+        .and_then(Value::as_array)
+        .map(|keys| keys.iter().filter_map(Value::as_str).collect::<Vec<_>>());
+    if let Some(keys) = added {
+        tracing::info!(keys = ?keys, "engine host added environment keys");
+    } else {
+        tracing::debug!(level, "engine host log");
+    }
 }
 
 async fn sleep_until_opt(due: Option<tokio::time::Instant>) {
@@ -551,4 +565,97 @@ async fn watch_host(
         let _ = tokio::time::timeout(timings.exit_grace, transport.child.wait()).await;
     }
     // Dropping the transport kills whatever is left of the tree.
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use tracing::field::{Field, Visit};
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::{Event, Metadata};
+
+    use super::*;
+
+    thread_local! {
+        /// The lines `Capture` recorded on this thread. Thread-local, so the module's two tests never share them.
+        static LINES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    #[derive(Default)]
+    struct Fields(String);
+
+    impl Visit for Fields {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            use std::fmt::Write as _;
+            let _ = write!(self.0, " {}={value:?}", field.name());
+        }
+    }
+
+    /// Keeps the text of every event recorded on this thread, so a test reads what the connection logged.
+    struct Capture;
+
+    impl tracing::Subscriber for Capture {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, _: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+
+        fn record(&self, _: &Id, _: &Record<'_>) {}
+
+        fn record_follows_from(&self, _: &Id, _: &Id) {}
+
+        fn event(&self, event: &Event<'_>) {
+            let mut fields = Fields::default();
+            event.record(&mut fields);
+            let meta = event.metadata();
+            let line = format!("{} {}{}", meta.level(), meta.target(), fields.0);
+            LINES.with(|lines| lines.borrow_mut().push(line));
+        }
+
+        fn enter(&self, _: &Id) {}
+
+        fn exit(&self, _: &Id) {}
+    }
+
+    fn capture(frame: &str) -> String {
+        LINES.with(|lines| lines.borrow_mut().clear());
+        let shared = Shared {
+            next_id: AtomicU64::new(2),
+            pending: Mutex::default(),
+            book: Mutex::default(),
+            malformed: AtomicU64::new(0),
+        };
+        let frame = decode(frame).unwrap();
+        assert!(matches!(frame, Incoming::Log { .. }), "a log frame");
+        tracing::subscriber::with_default(Capture, || {
+            dispatch(&shared, frame, &mut HashSet::new());
+        });
+        LINES.with(|lines| lines.borrow().join("\n"))
+    }
+
+    #[test]
+    fn a_host_log_frame_records_the_environment_keys_it_added() {
+        let logged = capture(
+            r#"{"type":"log","level":"info","event":{"type":"envAdded","keys":["CLAUDE_CODE_ADDED","CLAUDE_AGENT_SDK_ADDED"]}}"#,
+        );
+        assert!(logged.contains("INFO"), "{logged}");
+        assert!(
+            logged.contains("engine host added environment keys"),
+            "{logged}"
+        );
+        assert!(logged.contains("CLAUDE_CODE_ADDED"), "{logged}");
+        assert!(logged.contains("CLAUDE_AGENT_SDK_ADDED"), "{logged}");
+    }
+
+    #[test]
+    fn a_host_log_frame_without_added_keys_stays_a_debug_line() {
+        let logged =
+            capture(r#"{"type":"log","level":"warn","event":{"type":"holdingResult","sendId":3}}"#);
+        assert!(logged.contains("DEBUG"), "{logged}");
+        assert!(!logged.contains("added environment keys"), "{logged}");
+    }
 }
