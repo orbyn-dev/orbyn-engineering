@@ -30,7 +30,7 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `merge/correction` | Core-owned deterministic rollback tasks, retained candidate checkouts and normal reviewed forge publication |
 | `merge/forge_watch` | Remote-tip checks, an optional owned watch future, and durable digest/overdue/break messages; the digest is due once a local day at the time `merge/digest` reads |
 | `merge/digest` | The daily digest's send time (issue #806): the stored `{time, utc_offset_minutes}`, the one local day it may fire on, and the person's save |
-| `merge/review_queue` | The after-merge Review queue and the person's answers, plus the background runs that stopped without a merge and wait for the person. It only reads them; the person settles one by acknowledging it through `crew::background::background_acknowledge_review`, and a settled review leaves the queue |
+| `merge/review_queue` | The after-merge Review queue and the person's answers, plus the background runs that stopped without a merge and wait for the person. It only reads them; the person settles one by acknowledging it through `crew::background::background_acknowledge_review`, and a settled review leaves the queue. Since KC3 it also reads the one needs-you field for the waits it does not answer (`waiting_elsewhere`: the Inbox's items this queue does not answer, by kind), so the Queue's page and the Inbox read the same field, not a second rule |
 | `merge/watch` | Watch on main: the repository's checks, the bisect, the revert |
 | `merge/api` | The views the HTTP routes read, the shape checks of the person's answers, and the Preview gate. Decides nothing |
 | `merge/gitops` | The git behind them: scratch checkouts, merge, revert, compare-and-swap of the branch |

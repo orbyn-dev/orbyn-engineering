@@ -1,4 +1,4 @@
-﻿//! The Crew dashboard read (`GET /api/crew/dashboard`, W12 in `docs/crew.md`, row G18 in
+//! The Crew dashboard read (`GET /api/crew/dashboard`, W12 in `docs/crew.md`, row G18 in
 //! `docs/parity.md`): what the device's own Crew records say about one repository over a window.
 //! The contract is [docs/crew-dashboard.md](../../../docs/crew-dashboard.md); this file is the
 //! answer it names. Every type is a view the core builds from records it already stores and
@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+use crate::crew::{FlowWorking, NeedsYouKind};
 
 wire! {
 /// One repository's figures for one window, from this device's Crew records.
@@ -48,8 +50,48 @@ pub struct CrewDashboard {
     /// At most 20, newest first. The page lists these for a repository under `min_rate_sample`
     /// merges, where a rate would say too little.
     pub recent: Vec<CrewDashboardRecent>,
+    /// What waits and what works right now, on this device (KC3): a live count of now, not a figure
+    /// over the window. It ignores `days`, and every count in it comes from the one needs-you field or
+    /// the one working function, so it agrees with the Taskboard, the Inbox and the Review queue.
+    pub live: CrewDashboardLive,
     /// A list above had more rows than it holds.
     pub truncated: bool,
+}
+}
+
+wire! {
+/// The dashboard's "Right now" row (KC3): what waits for the person now and which workers own live work.
+/// The page draws one tile for `needs_you` (split by kind) and one for `working` (split by why).
+/// Nothing here is windowed and nothing is stored: it is read from the records on every request.
+pub struct CrewDashboardLive {
+    /// What waits for the person now in this repository, by kind: the one needs-you list narrowed to this
+    /// project, most items first then by kind, only kinds with at least one item. The same field the Inbox
+    /// and the Taskboard read, not necessarily the same count: a background run's item has no card on the
+    /// board and another repository's items are not here. A dismissed item is not here.
+    pub needs_you: Vec<CrewDashboardWaiting>,
+    /// The workers of this repository that own live work now (KC3), by why, most first then by why;
+    /// their sum is the page's Working count. Not served: Idle. The store keeps no crew member that
+    /// holds no task, so a genuine idle worker cannot be told from one that never joined.
+    pub working: Vec<CrewDashboardWorking>,
+    /// The live read cut older workers at its bound ([LIVE_WORKERS_MAX] in the store), so `working` covers the
+    /// newest ones only. Never a figure the page should draw as complete.
+    pub truncated: bool,
+}
+}
+
+wire! {
+/// One kind of wait that is in the inbox now, and how many of it: the page draws the kind's own words.
+pub struct CrewDashboardWaiting {
+    pub kind: NeedsYouKind,
+    pub count: u32,
+}
+}
+
+wire! {
+/// One reason workers own live work now, and how many: the page draws the reason's own line.
+pub struct CrewDashboardWorking {
+    pub why: FlowWorking,
+    pub count: u32,
 }
 }
 
