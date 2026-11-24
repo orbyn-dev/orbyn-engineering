@@ -5,9 +5,10 @@ import { followThread, type StreamStatus } from "../../api/sse";
 import type { WireThreadEvent } from "../../api/types";
 import { applyEvents, emptyLog } from "../timeline/projection";
 import type { ThreadLog } from "../timeline/types";
-import { useWorkspace } from "./workspace";
+import { engineById, useWorkspace } from "./workspace";
 import { useUi } from "./ui";
 import { permissionToasts } from "./healthToasts";
+import { applySteerEvents } from "./steerMarks";
 
 export interface LocalPrompt {
   runId: string;
@@ -54,7 +55,10 @@ export const useThreadLogs = create<ThreadLogState>((set, get) => ({
   queueVersion: {},
   ingest(threadId, events) {
     const log = get().logs[threadId] ?? emptyLog;
-    const next = applyEvents(threadId, log, events);
+    const workspace = useWorkspace.getState();
+    const thread = workspace.threads[threadId];
+    const engineName = thread ? engineById(workspace.engines.data, thread.engine)?.name ?? null : null;
+    const next = applyEvents(threadId, log, events, engineName);
     if (next === log) return;
     const previousSeq = log.lastSeq;
     const fresh = events.filter((event) => event.seq > previousSeq);
@@ -69,6 +73,7 @@ export const useThreadLogs = create<ThreadLogState>((set, get) => ({
           ? { ...state.queueVersion, [threadId]: (state.queueVersion[threadId] ?? 0) + 1 }
           : state.queueVersion,
     }));
+    applySteerEvents(threadId, fresh);
     // Only news that arrives while the thread is open is announced, not a first replay.
     if (previousSeq > 0) for (const text of permissionToasts(fresh)) useUi.getState().pushToast(text);
     if (fresh.some(refreshesThread)) {

@@ -5,7 +5,12 @@
 mod account_sync;
 mod agent_projects;
 mod approvals;
+#[cfg(test)]
+mod attachment_sources_tests;
 mod automations;
+mod billed_events;
+#[cfg(test)]
+mod billed_events_tests;
 mod catalog;
 mod changes;
 mod checkpoints;
@@ -44,11 +49,23 @@ mod crew_escapes;
 #[cfg(test)]
 mod crew_escapes_tests;
 mod crew_flow;
+#[cfg(test)]
+mod crew_formats_tests;
 mod crew_guard;
+mod crew_lessons;
+#[cfg(test)]
+mod crew_lessons_tests;
 mod crew_merge_corrections;
 mod crew_merge_forge;
 pub(crate) use crew_merge_corrections::ForgeCorrection;
+#[cfg(test)]
+mod code_run_waits_tests;
+pub(crate) mod code_runs;
+mod crew_manual_checks;
+#[cfg(test)]
+mod crew_manual_checks_tests;
 mod crew_merges;
+mod crew_needs_you;
 mod crew_paused_starts;
 #[cfg(test)]
 mod crew_paused_starts_tests;
@@ -59,6 +76,7 @@ mod crew_provenance;
 #[cfg(test)]
 mod crew_provenance_tests;
 mod crew_rerun;
+mod crew_resume;
 mod crew_review;
 mod crew_review_controls;
 #[cfg(test)]
@@ -72,8 +90,27 @@ mod crew_tier_settings;
 mod crew_worker_provider;
 mod hub;
 mod installs;
+mod issues;
+pub(crate) mod project_repos;
+mod thread_import;
+pub(crate) mod thread_repos;
+pub use issues::TrackerConnection;
+pub(crate) use issues::{tracker_of, tracker_text as tracker_name};
 mod migrations;
 mod native_sessions;
+#[cfg(test)]
+mod plan_mode_reset_tests;
+mod profiles;
+#[cfg(test)]
+mod pull_repos_tests;
+pub use profiles::{
+    CrewApply, EngineSwitch, PROFILE_LIMIT, ProfileRow, ProfileSettings, ThreadApply,
+};
+mod library;
+pub use library::{
+    EnvSetFields, EnvSetRow, MAX_ENV_SETS, MAX_PROMPTS, MAX_WORKFLOWS, PromptFields, PromptRow,
+    WorkflowFields, WorkflowRow, name_key as library_name_key,
+};
 mod project_changes;
 mod project_names;
 mod questions;
@@ -89,18 +126,20 @@ mod setup;
 mod tests;
 mod threads;
 
+pub use billed_events::{BilledEvent, BilledTotal, Recorded, parse_billed_events};
 pub use changes::{KeptChange, Snapshot};
 pub use crew::{CrewPinnedRef, CrewTask};
 pub use crew_autonomy::{AreaChange, AreaEvent, AreaMode, AreaWrite};
 pub use crew_autonomy_person::{PersonWrite, Seen};
 pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};
 pub use crew_background::{
-    BackgroundRow, BackgroundRunRow, NewBackground, PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX,
-    RunEnd, Unwound,
+    BackgroundReviewRow, BackgroundRow, BackgroundRunRow, NewBackground, NewWatchChange,
+    PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX, RunEnd, Unwound, WATCHES_PER_PROJECT_MAX,
+    WatchChangeRow, WatchRaisedRow, WatchStateRow,
 };
 pub use crew_backtest::{
     BacktestLaneRow, BacktestResultRow, BacktestRunRow, BacktestState, LaneState,
-    MOST_BUDGET_TOKENS, ResultOutcome,
+    MOST_BUDGET_TOKENS, NewLane, ResultOutcome,
 };
 pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
 pub use crew_cancel::CancelStart;
@@ -113,12 +152,16 @@ pub use crew_escapes::{
 };
 #[cfg(test)]
 pub(crate) use crew_flow::last_events_sql;
-pub use crew_flow::{DELIVERY_WINDOW, MESSAGE_WINDOW, MemberTimes};
+pub use crew_flow::{DELIVERY_WINDOW, LIVE_WORKERS_MAX, LiveWorker, MESSAGE_WINDOW, MemberTimes};
 pub use crew_guard::ENTRIES_MAX as GUARD_ENTRIES_MAX;
+pub use crew_lessons::{CrewLesson, EVIDENCE_MAX, LessonEvidence, NewCrewLesson};
+pub use crew_manual_checks::{ManualCheck, ManualCheckState, NOTE_MAX as MANUAL_CHECK_NOTE_MAX};
 pub use crew_merge_forge::{ForgeMerge, ForgePhase, ForgeResolution};
 pub use crew_merges::{MergeEntry, MergeRecord, MergeStateMove, OPEN_MERGE_STATES};
+pub use crew_needs_you::{NeedsYouDismissal, NeedsYouTask};
 pub use crew_paused_starts::{PAUSED_STARTS_PER_PROJECT, PausedStartRow};
 pub use crew_provenance::StoredHunk;
+pub use crew_resume::ResumeOutcome;
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
 pub(crate) use crew_review_controls::{ReviewConsent, ReviewControl};
 pub(crate) use crew_review_publications::{Publication, PublicationState};
@@ -650,14 +693,15 @@ impl Store {
     }
 
     /// Threads of one project that linked a pull request number, most recently changed
-    /// first. A link keeps the number but not the project, so the thread's own project
-    /// is what scopes that number to one repository.
+    /// first. A link names its repository, and the project's own repository is the
+    /// project, so another repository's number never matches.
     pub fn threads_linked_to_pull(&self, project_id: &str, number: u64) -> Result<Vec<Thread>> {
         let conn = self.reader();
         let mut statement = conn.prepare(
             "SELECT threads.* FROM threads
              JOIN thread_pull_requests ON thread_pull_requests.thread_id = threads.id
-             WHERE threads.project_id = ?1 AND thread_pull_requests.number = ?2
+             WHERE threads.project_id = ?1 AND thread_pull_requests.repo_id = ?1
+               AND thread_pull_requests.number = ?2
              ORDER BY threads.updated_at DESC, threads.created_at DESC",
         )?;
         let threads = statement
@@ -865,6 +909,7 @@ pub(crate) fn delete_thread_in(tx: &Transaction<'_>, id: &str, actor: &str) -> R
     if deleted == 0 {
         return Err(CoreError::NotFound("thread".into()));
     }
+    profiles::forget_applications(tx, &family)?;
     prune_scratch(tx)?;
     Ok(family)
 }
@@ -1119,6 +1164,8 @@ fn thread_row(row: &Row<'_>) -> rusqlite::Result<Thread> {
             .get::<_, Option<String>>("removed_project_name")?
             .is_some(),
         removed_project_name: row.get("removed_project_name")?,
+        source: row.get("source")?,
+        imported_at: row.get("imported_at")?,
         cwd: row.get("cwd")?,
         worktree,
         skill_profile: row.get("skill_profile")?,

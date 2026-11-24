@@ -1,9 +1,11 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure, api } from "../../../api/client";
 import { pullsApi } from "../../../api/pulls";
 import type {
+  EngineModels,
+  EngineStatus,
   PullRequest,
   QueuedMessage,
   Run,
@@ -14,6 +16,7 @@ import type {
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { useThreadLogs } from "../../../product/state/threadLogs";
 import { emptyLog } from "../../../product/timeline/projection";
+import { useModelStore } from "../../../product/state/modelStore";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Composer } from "./Composer";
@@ -189,6 +192,7 @@ describe("Composer", () => {
           state: "pending",
           decided_by: null,
           decided_at: null,
+          via: null,
           created_at: "",
         }],
       },
@@ -216,6 +220,7 @@ describe("Composer", () => {
     setup();
     await userEvent.type(box(), "hello{Enter}");
     expect(start).toHaveBeenCalledExactlyOnceWith("t1", "hello", []);
+    expect(start.mock.calls[0]).toHaveLength(3);
     await waitFor(() => expect(box()).toHaveValue(""));
     expect(useThreadLogs.getState().prompts.t1).toEqual([{ runId: "r1", text: "hello" }]);
     start.mockRestore();
@@ -272,7 +277,7 @@ describe("Composer", () => {
     const remove = vi.spyOn(api, "removeQueued").mockResolvedValue();
     setup({ active_run: { ...run, state: "running" } as Run });
     await userEvent.click(await screen.findByRole("button", { name: /^Add to the running turn/ }));
-    await waitFor(() => expect(steer).toHaveBeenCalledWith("t1", "also check tests"));
+    await waitFor(() => expect(steer).toHaveBeenCalledWith("t1", "also check tests", expect.any(String)));
     await waitFor(() => expect(remove).toHaveBeenCalledWith("q1"));
     queue.mockRestore();
     steer.mockRestore();
@@ -453,5 +458,32 @@ describe("Composer", () => {
   it("shows engine and model", () => {
     render(<Composer thread={thread} engine={null} showContext />);
     expect(screen.getByText("opus")).toBeInTheDocument();
+  });
+
+  it("shows the visible Unmanaged word on the composer chip and in its context row for an engine Orbyn cannot ask", async () => {
+    const kiro = {
+      id: "kiro", name: "Kiro", installed: true,
+      capabilities: { managed: false, permission_modes: ["supervised"], approvals: false, skill_delivery: [] },
+    } as unknown as EngineStatus;
+    const kiroThread = { ...thread, engine: "kiro", model: "auto" } as Thread;
+    const catalog: EngineModels = {
+      engine: "kiro", source: "engine", checked_at: "fixture", error: null, fallback: false,
+      models: [{ id: "auto", label: "Auto", description: null, is_default: true, custom: false, options: [] }],
+      options: [], agents: [], output_styles: [],
+    };
+    useWorkspace.setState({
+      approvals: { data: [], error: null, loading: false },
+      engines: { data: [kiro], error: null, loading: false },
+    });
+    useModelStore.setState({ byEngine: { kiro: catalog }, loading: {}, errors: {} });
+    vi.spyOn(api, "thread").mockResolvedValue(kiroThread);
+    vi.spyOn(api, "queue").mockResolvedValue([]);
+    vi.spyOn(api, "models").mockResolvedValue(catalog);
+    render(<Composer thread={kiroThread} engine={kiro} showContext />);
+    const chip = await screen.findByRole("button", { name: "Auto" });
+    expect(within(chip).getByText("Unmanaged")).toBeVisible();
+    expect(screen.getAllByText("Unmanaged").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Orbyn cannot ask before Kiro acts.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Permissions:/ })).toBeNull();
   });
 });

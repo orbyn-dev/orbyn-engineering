@@ -12,6 +12,7 @@ import { PreferenceGroups } from "../rows/PreferenceRows";
 import { Toggle } from "../sections/parts";
 import { HistoryImport } from "../maintenance/HistoryImport";
 import { useSettingsScope } from "../rows/SettingsScopeContext";
+import { TextGenerators } from "./TextGenerators";
 
 const AFTER_DAYS: { value: number | null; label: string }[] = [
   { value: null, label: "Never" },
@@ -87,9 +88,6 @@ export function ThreadsSection() {
   const data = settings.data;
   return (
     <>
-      <h1 className="sr-only" tabIndex={-1} data-page-title>
-        Threads
-      </h1>
       <SettingGroup>
         <Toggle
           title={settingsLabel("threads-group-by-project")}
@@ -117,6 +115,9 @@ export function ThreadsSection() {
           description: "Resume threads the update interrupted" },
         { key: "project_title_instructions", title: settingsLabel("threads-title-instructions"),
           description: "How a thread’s name is written", multiline: true },
+      ] }]} />
+      <TextGenerators />
+      <PreferenceGroups groups={[{ title: "", rows: [
         { key: "text_generation_model", title: settingsLabel("threads-title-model") },
       ] }]} />
       <fieldset className="preference-control" disabled={Boolean(projectScoped)}>

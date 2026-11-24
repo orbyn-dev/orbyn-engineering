@@ -11,10 +11,16 @@ license-file.workspace = true
 test-support = []
 # The Engine adapter and its dependency. Off in every normal build, release included, because
 # nothing calls it while sign-in is off; the tests switch it on through the dev-dependency below.
+# The macOS keychain behind the engine API-key setting (src/credentials). On in the service's normal
+# build; on other platforms the dependency does not exist and the store says unavailable.
+engine-credentials = ["dep:security-framework"]
+# Code Mode scripts run in QuickJS (swc parses TypeScript), which only the service binary needs.
+code-mode = ["orbyn-code-sandbox/quickjs"]
 engine-client = ["dep:orbyn-device-client", "dep:chacha20poly1305", "dep:security-framework"]
 
 [dependencies]
 orbyn-contracts = { path = "../orbyn-contracts" }
+orbyn-code-sandbox = { path = "../orbyn-code-sandbox", default-features = false }
 # The Engine's device client, by tag: the one Engine crate the app names (docs/account.md, "Engine pin").
 orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.2.4", optional = true }
 async-trait.workspace = true
@@ -29,7 +35,7 @@ getrandom.workspace = true
 icu_properties = "=2.4.0"
 ignore = "=0.4.34"
 notify = "=8.2.2"
-image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png"] }
+image.workspace = true
 portable-pty.workspace = true
 regex.workspace = true
 regex-syntax.workspace = true
@@ -54,7 +60,7 @@ tar = { version = "0.4", default-features = false }
 
 # The macOS keychain behind the Engine adapter (docs/account.md, "The device and its keys"): the
 # maintained, MIT or Apache-2.0 binding the rustls platform verifier already pulls into the desktop
-# lock. Only built with `engine-client`, which no normal build enables.
+# lock. Built with `engine-client` (no normal build) or `engine-credentials` (the service).
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = { version = "=3.7.0", optional = true }
 
@@ -62,7 +68,8 @@ security-framework = { version = "=3.7.0", optional = true }
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
+# `Win32_UI_Shell` and `Win32_System_Com` resolve the account's own profile folder (util::account_home).
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_System_Com"] }
 
 [dev-dependencies]
 orbyn-core = { path = ".", features = ["engine-client"] }

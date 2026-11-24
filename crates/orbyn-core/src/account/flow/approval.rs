@@ -106,7 +106,15 @@ impl AccountCenter {
                 .end_request(&backend, &id, serial, AccountApprovalState::TimedOut)
                 .await);
         }
-        match backend.account.approval_status(&id).await {
+        let status = backend.account.approval_status(&id).await;
+        // The server ended the request on its own clock: it closes here as expired too, rather than
+        // as one a trusted device refused.
+        if let Err(DeviceError::ApprovalExpired) = &status {
+            return Ok(self
+                .end_request(&backend, &id, serial, AccountApprovalState::TimedOut)
+                .await);
+        }
+        match status {
             Ok(ApprovalStatus::Waiting) => {}
             Ok(ApprovalStatus::Allowed) => {
                 let mut inner = self.inner.lock().await;
@@ -119,13 +127,19 @@ impl AccountCenter {
                 }
             }
             Ok(ApprovalStatus::Denied) => {
-                return Ok(self.close_approval(&id, AccountApprovalState::Denied).await);
+                return Ok(self
+                    .close_approval(&id, serial, AccountApprovalState::Denied)
+                    .await);
             }
             Ok(ApprovalStatus::Locked) => {
-                return Ok(self.close_approval(&id, AccountApprovalState::Locked).await);
+                return Ok(self
+                    .close_approval(&id, serial, AccountApprovalState::Locked)
+                    .await);
             }
             Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {
-                return Ok(self.close_approval(&id, AccountApprovalState::Denied).await);
+                return Ok(self
+                    .close_approval(&id, serial, AccountApprovalState::Denied)
+                    .await);
             }
             Err(error) => return Err(refusal(&error)),
         }
@@ -193,7 +207,7 @@ impl AccountCenter {
             (id, serial)
         };
         match backend.account.finish_approval(&id, &typed).await {
-            Ok(session) => self.finish_approval(&id, session).await,
+            Ok(session) => self.finish_approval(&id, serial, session).await,
             Err(DeviceError::WrongDigits { tries_left }) => {
                 let mut inner = self.inner.lock().await;
                 let Some(approval) = inner
@@ -214,51 +228,70 @@ impl AccountCenter {
                 approval.tries_left = Some(left);
                 Ok(Some(self.approval_view(approval)))
             }
-            Err(DeviceError::DigitsLocked) => {
-                Ok(self.close_approval(&id, AccountApprovalState::Locked).await)
-            }
-            Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {
-                Ok(self.close_approval(&id, AccountApprovalState::Denied).await)
-            }
+            Err(DeviceError::DigitsLocked) => Ok(self
+                .close_approval(&id, serial, AccountApprovalState::Locked)
+                .await),
+            Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => Ok(self
+                .close_approval(&id, serial, AccountApprovalState::Denied)
+                .await),
+            // The request's own ten minutes ran out on the server's clock: it ends as expired, not
+            // as one a person or a trusted device ended, so the screen does not say "Denied or
+            // cancelled".
+            Err(DeviceError::ApprovalExpired) => Ok(self
+                .end_request(&backend, &id, serial, AccountApprovalState::TimedOut)
+                .await),
             Err(error) => {
-                // Nothing reached the server, so the try was not used.
-                let mut inner = self.inner.lock().await;
-                if let Some(approval) = inner.approval.as_mut().filter(|a| a.request_id == id) {
-                    approval.spent_tries = approval.spent_tries.saturating_sub(1);
+                // A try is reserved under the lock that enforces the limit, and given back at most
+                // once, by the request that reserved it and only while that request is still open.
+                // An error the server answered keeps the try: a 5xx, a rate limit and a timeout it
+                // may have taken all reached it, and its `tries_left` is the count that applies. Only
+                // an error that never left this computer gives the try back, and a reservation that
+                // was refused took nothing, so a failed reserve leaves no try to give back.
+                if !error.reached_the_server() {
+                    let mut inner = self.inner.lock().await;
+                    if let Some(approval) = inner.approval.as_mut().filter(|approval| {
+                        approval.request_id == id
+                            && approval.serial == serial
+                            && approval.answer.is_none()
+                    }) {
+                        approval.spent_tries = approval.spent_tries.saturating_sub(1);
+                    }
                 }
                 Err(refusal(&error))
             }
         }
     }
 
+    /// The tries this computer has sent to the server for its own request, so a test can check the
+    /// count the app keeps itself.
+    #[cfg(test)]
+    pub(crate) async fn spent_digit_tries(&self) -> Option<u8> {
+        self.inner
+            .lock()
+            .await
+            .approval
+            .as_ref()
+            .map(|approval| approval.spent_tries)
+    }
+
     /// Signs in on an allowed request, under one lock: if the person gave the request up
-    /// meanwhile, nobody is signed in here and the Engine is told to forget the session.
+    /// meanwhile, nobody is signed in here and the Engine is told to forget the session. Only
+    /// the request `serial` named is signed in or ended: a later sign-in that reuses the id is
+    /// left alone, and its session is not ended either.
     pub(crate) async fn finish_approval(
         &self,
         id: &str,
+        serial: u64,
         session: SessionInfo,
     ) -> Result<Option<AccountApprovalView>> {
         let backend = self.backend()?.clone();
         let mut inner = self.inner.lock().await;
-        let pending = inner
-            .approval
-            .as_ref()
-            .is_some_and(|approval| approval.request_id == id && approval.answer.is_none());
-        if !pending {
-            // Another look at the same allowed request may have signed in first: that session
-            // is this one, and must stay. Only a session this request did not make is ended.
-            let same = inner.session.as_ref().is_some_and(|current| {
-                current.device_id == session.device_id
-                    && current
-                        .email
-                        .trim()
-                        .eq_ignore_ascii_case(session.email.trim())
-            });
+        let current = inner.approval.as_ref().is_some_and(|approval| {
+            approval.request_id == id && approval.serial == serial && approval.answer.is_none()
+        });
+        if !current {
             drop(inner);
-            if !same {
-                let _ = backend.account.sign_out().await;
-            }
-            return Ok(None);
+            return self.discard_answer(&backend, serial, session).await;
         }
         let mut shown = match inner.approval.as_mut() {
             Some(approval) => {
@@ -270,6 +303,67 @@ impl AccountCenter {
         self.established_in(&mut inner, session, true).await?;
         shown.state = AccountApprovalState::Approved;
         Ok(Some(shown))
+    }
+
+    /// The answer to a request that is no longer the live one: a session this computer already
+    /// holds is kept, one it did not make is ended. The one-at-a-time gate keeps this away from a
+    /// sign-in on its way, and a later request that reuses the id is not touched at all.
+    async fn discard_answer(
+        &self,
+        backend: &super::Backend,
+        serial: u64,
+        session: SessionInfo,
+    ) -> Result<Option<AccountApprovalView>> {
+        let _one_at_a_time = self.cancelling.lock().await;
+        let mut inner = self.inner.lock().await;
+        if inner
+            .approval
+            .as_ref()
+            .is_some_and(|approval| approval.serial != serial && approval.answer.is_none())
+        {
+            // A later sign-in reused the id and is still open: its answer is its own, and
+            // ending this session now would wipe the Engine's state for it. The Engine may
+            // already hold this session, so it is ended when that sign-in ends without one.
+            inner.owed_sign_out = true;
+            return Ok(None);
+        }
+        // Another look at the same allowed request may have signed in first: that session
+        // is this one, and must stay. Only a session this request did not make is ended.
+        let same = inner.session.as_ref().is_some_and(|current| {
+            current.device_id == session.device_id
+                && current
+                    .email
+                    .trim()
+                    .eq_ignore_ascii_case(session.email.trim())
+        });
+        drop(inner);
+        if !same {
+            let _ = backend.account.sign_out().await;
+        }
+        Ok(None)
+    }
+
+    /// The serial of this computer's own request, so a test can answer the one before it.
+    #[cfg(test)]
+    pub(crate) async fn approval_serial(&self) -> Option<u64> {
+        self.inner
+            .lock()
+            .await
+            .approval
+            .as_ref()
+            .map(|approval| approval.serial)
+    }
+
+    /// Whether a sign-out for a late answer is still owed, so a test can see it settled.
+    #[cfg(test)]
+    pub(crate) async fn owed_sign_out(&self) -> bool {
+        self.inner.lock().await.owed_sign_out
+    }
+
+    /// Marks a sign-out as owed, so a test can see the person's own sign-out settle it.
+    #[cfg(test)]
+    pub(crate) async fn owe_sign_out(&self) {
+        self.inner.lock().await.owed_sign_out = true;
     }
 
     /// Ends this computer's own request on the service and closes it with `state`, one cancel
@@ -300,22 +394,46 @@ impl AccountCenter {
                 .map(|a| self.approval_view(a));
         }
         let _ = backend.account.cancel_approval(id).await;
-        self.close_approval(id, state).await
+        self.close_approval_held(backend, id, serial, state).await
     }
 
     /// The request ended without signing in: this computer is signed out, and the screen
-    /// keeps saying why until the person leaves it.
+    /// keeps saying why until the person leaves it. Only the request `serial` named is closed,
+    /// so an older end never closes a sign-in that reused the id.
     async fn close_approval(
         &self,
         id: &str,
+        serial: u64,
         state: AccountApprovalState,
     ) -> Option<AccountApprovalView> {
-        let shown = {
+        let backend = self.backend().ok()?.clone();
+        let _one_at_a_time = self.cancelling.lock().await;
+        self.close_approval_held(&backend, id, serial, state).await
+    }
+
+    /// [`Self::close_approval`] for a caller that already holds the one-at-a-time gate. When a
+    /// late answer left a session in the Engine meanwhile, it is ended now: nothing needs the
+    /// Engine's state any more.
+    async fn close_approval_held(
+        &self,
+        backend: &super::Backend,
+        id: &str,
+        serial: u64,
+        state: AccountApprovalState,
+    ) -> Option<AccountApprovalView> {
+        let (shown, owed) = {
             let mut inner = self.inner.lock().await;
-            let approval = inner.approval.as_mut().filter(|a| a.request_id == id)?;
+            let approval = inner
+                .approval
+                .as_mut()
+                .filter(|approval| approval.request_id == id && approval.serial == serial)?;
             approval.answer = Some(state);
-            self.approval_view(approval)
+            let shown = self.approval_view(approval);
+            (shown, std::mem::take(&mut inner.owed_sign_out))
         };
+        if owed {
+            let _ = backend.account.sign_out().await;
+        }
         self.status
             .update(|s| s.state = SyncState::SignedOut { reason: None });
         Some(shown)

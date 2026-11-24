@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { codeRun } from "../../../mock/codemode";
 import {
   boundedLines,
+  callsOf,
   codeToolOf,
   normalizeCall,
   readReply,
@@ -12,15 +14,15 @@ import {
 } from "./model";
 import type { CodeRunRecord } from "./types";
 
-const record = (extra: Partial<CodeRunRecord> = {}): CodeRunRecord => ({
-  run_id: "run_7c41e2",
-  status: "completed",
-  script: "const a = 1;\nreturn a;\n",
-  started_at: "2026-11-21T10:00:00.000Z",
-  ended_at: "2026-11-21T10:00:03.100Z",
-  calls: [],
-  ...extra,
-});
+const record = (extra: Partial<CodeRunRecord> = {}): CodeRunRecord =>
+  codeRun({
+    run_id: "run_7c41e2",
+    status: "completed",
+    script: "const a = 1;\nreturn a;\n",
+    started_at: "2026-11-21T10:00:00.000Z",
+    ended_at: "2026-11-21T10:00:03.100Z",
+    ...extra,
+  });
 
 describe("which Code Mode tool a call is", () => {
   it("reads the tool out of the engine's MCP name and ignores everything else", () => {
@@ -78,14 +80,33 @@ describe("the approval's via field", () => {
 });
 
 describe("a call's status", () => {
-  it("maps the words the service may use, and never reads an unknown word as a success", () => {
+  it("maps the four words the service writes, and never reads an unknown word as a success", () => {
+    expect(normalizeCall({ index: 1, tool: "t", status: "running" }).status).toBe("running");
     expect(normalizeCall({ index: 1, tool: "t", status: "ok" }).status).toBe("done");
+    expect(normalizeCall({ index: 1, tool: "t", status: "failed" }).status).toBe("failed");
     expect(normalizeCall({ index: 1, tool: "t", status: "denied" }).status).toBe("declined");
-    expect(normalizeCall({ index: 1, tool: "t", status: "timed_out" }).status).toBe("expired");
-    expect(normalizeCall({ index: 1, tool: "t", status: "invalid" }).status).toBe("refused");
-    expect(normalizeCall({ index: 1, tool: "t", status: "held" }).status).toBe("waiting");
-    expect(normalizeCall({ index: 1, tool: "t", status: "in_flight" }).status).toBe("interrupted");
-    expect(normalizeCall({ index: 1, tool: "t", status: "teleported" }).status).toBe("unknown");
+    // Words a first guess used are not on the wire.
+    for (const word of ["waiting", "held", "timed_out", "in_flight", "success", "teleported"]) expect(normalizeCall({ index: 1, tool: "t", status: word }).status).toBe("unknown");
+  });
+
+  it("reads the optional fields as the contract has them, null or absent", () => {
+    expect(normalizeCall({ index: 1, tool: "t", status: "ok", preview: null, result_bytes: null, duration_ms: null })).toMatchObject({ preview: null, resultBytes: null, durationMs: null });
+    expect(normalizeCall({ index: 1, tool: "t", status: "ok", preview: "x", result_bytes: 184_320, duration_ms: 12 })).toMatchObject({ preview: "x", resultBytes: 184_320, durationMs: 12 });
+  });
+});
+
+describe("a running call, read with its run", () => {
+  const running = { index: 5, tool: "orbyn_thread_send", status: "running" };
+  it("is waiting for a person when the run is paused and names it in pending", () => {
+    const calls = callsOf(record({ status: "paused", ended_at: null, calls: [{ index: 1, tool: "t", status: "ok" }, running], pending: [{ tool: "orbyn_thread_send", call: 5 }] }));
+    expect(calls.map((call) => call.status)).toEqual(["done", "waiting"]);
+  });
+  it("stays running in a run that is going, and is a call a restart cut off in a run that ended as error", () => {
+    expect(callsOf(record({ status: "running", ended_at: null, calls: [running], pending: [{ tool: "orbyn_thread_send", call: 5 }] }))[0]?.status).toBe("running");
+    expect(callsOf(record({ status: "error", error: { kind: "lost", message: "x" }, calls: [{ index: 1, tool: "t", status: "ok" }, running] })).map((call) => call.status)).toEqual(["done", "interrupted"]);
+  });
+  it("never turns a finished call into anything else", () => {
+    expect(callsOf(record({ status: "error", error: { kind: "lost", message: "x" }, calls: [{ index: 1, tool: "t", status: "ok" }, { index: 2, tool: "t", status: "denied" }] })).map((call) => call.status)).toEqual(["done", "declined"]);
   });
 });
 
@@ -100,6 +121,7 @@ describe("the reply the engine read", () => {
     expect(readReply(null)).toBeNull();
     expect(readReply('{"status":"sideways"}')).toBeNull();
     expect(readReply('{"status":"error","error":{"kind":"mystery","message":"x"}}')?.error?.kind).toBe("runtime");
+    expect(readReply('{"status":"error","error":{"kind":"cancelled","message":"The run was cancelled."}}')?.error?.kind).toBe("cancelled");
   });
 });
 
@@ -109,6 +131,23 @@ describe("the run the block shows", () => {
     expect(fromRecord).toMatchObject({ status: "completed", calls: [{ tool: "orbyn_thread_list", status: "done" }], hasRecord: true });
     const fromReply = runView(null, { status: "error", runId: "run_9", error: { kind: "limit", message: "A script may make 200 calls." }, logs: ["x"] });
     expect(fromReply).toMatchObject({ status: "error", runId: "run_9", hasRecord: false, calls: [], error: { kind: "limit" } });
+  });
+
+  it("reads a record with the generated optionality: no script, no end, no error, waited_ms null", () => {
+    const v = runView(codeRun({ run_id: "run_1", status: "running", started_at: "2026-11-21T10:00:00.000Z", waited_ms: null, logs_total: null, script: null, ended_at: null }), null)!;
+    expect(v).toMatchObject({ script: null, endedAt: null, waitedMs: null, logsTotal: null, error: null, hasResult: false, resumes: 0, crewWorker: false });
+    const bare = runView({ ...codeRun({ run_id: "run_2", status: "completed", started_at: "2026-11-21T10:00:00.000Z" }) }, null)!;
+    expect(bare).toMatchObject({ script: null, scriptSha256: null, endedAt: null, calls: [], logs: [] });
+  });
+
+  it("keeps a cut result as the service sends it: { truncated, bytes, preview }, with truncated on the record", () => {
+    const cut = { truncated: true, bytes: 70_000, preview: "[1,2,3" };
+    const v = runView(record({ result: cut, truncated: true }), null)!;
+    expect(v).toMatchObject({ result: cut, hasResult: true, truncated: true });
+  });
+
+  it("keeps the run's own number of lines printed when the record kept fewer", () => {
+    expect(runView(record({ logs: ["a"], logs_total: 1204 }), null)).toMatchObject({ logs: ["a"], logsTotal: 1204 });
   });
 
   it("is null when there is neither", () => {
@@ -132,13 +171,14 @@ describe("the row", () => {
     expect(rowSummary(runView(record({ status: "error", error: { kind: "limit", message: "x" } }), null)!, now).note).toBe("· limit");
     expect(rowSummary(runView(record({ status: "error", error: { kind: "denied", message: "x" } }), null)!, now).note).toBe("· denied");
     expect(rowSummary(runView(record({ status: "error", error: { kind: "lost", message: "x" } }), null)!, now)).toEqual({ note: "· lost", due: "Lost", tone: "fail" });
+    expect(rowSummary(runView(record({ status: "error", error: { kind: "cancelled", message: "x" } }), null)!, now)).toEqual({ note: "· cancelled", due: "Cancelled", tone: "fail" });
     const resumed = runView(record({ status: "running", ended_at: null, resumes: 1, calls: calls(6) }), null)!;
     expect(rowSummary(resumed, now).note).toBe("· resumed");
     expect(rowSummary(runView(record({ resumes: 1, calls: calls(6), ended_at: "2026-11-21T10:01:04.000Z" }), null)!, now).due).toBe("1m 04s");
   });
 
   it("counts only finished calls as done on a paused run", () => {
-    const v = runView(record({ status: "paused", ended_at: null, calls: [{ index: 1, tool: "t", status: "ok" }, { index: 2, tool: "t", status: "waiting" }] }), null)!;
+    const v = runView(record({ status: "paused", ended_at: null, calls: [{ index: 1, tool: "t", status: "ok" }, { index: 2, tool: "t", status: "running" }], pending: [{ tool: "t", call: 2 }] }), null)!;
     expect(rowSummary(v, now).note).toBe("· 1 call done");
   });
 

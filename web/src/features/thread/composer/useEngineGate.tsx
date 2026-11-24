@@ -6,7 +6,8 @@ import { cursorThreadApi, displayText, ModeRefusedCard, NoticeCard, runRefusal }
 
 /**
  * What a thread on an engine that never asks before acting adds to the composer, all read from the service's answers:
- * the first-run notice card (409 `engine_notice_required`) and the refused-mode card (409 `engine_mode_refused`). Nothing here names an engine.
+ * the first-run notice card (409 `engine_notice_required`, once per project) and the refused-mode card (409 `engine_mode_refused`).
+ * When both apply the notice card is drawn first and the refusal card returns once the notice is answered. Nothing here names an engine.
  */
 export function useEngineGate(thread: Thread, engine: EngineStatus | null, setError: (message: string | null) => void) {
   const [noticeOpen, setNoticeOpen] = useState(false);
@@ -15,6 +16,7 @@ export function useEngineGate(thread: Thread, engine: EngineStatus | null, setEr
   const [refused, setRefused] = useState(false);
   const [overriding, setOverriding] = useState(false);
   const writing = useRef(false);
+  const engineId = engine?.id ?? thread.engine;
   const engineName = engine?.name ?? thread.engine;
   const savedMode = thread.lifecycle?.permission_mode ?? "supervised";
 
@@ -40,7 +42,7 @@ export function useEngineGate(thread: Thread, engine: EngineStatus | null, setEr
     writing.current = true;
     setAcknowledging(true);
     try {
-      await cursorThreadApi().acknowledge(thread.engine);
+      await cursorThreadApi().acknowledge(thread.project_id, thread.engine);
       setNoticeOpen(false);
       resend();
     } catch (failure) {
@@ -89,10 +91,10 @@ export function useEngineGate(thread: Thread, engine: EngineStatus | null, setEr
   const cards = (resend: () => void, runWithout: () => Promise<boolean>) => (
     <>
       {refused && !choosing && !noticeOpen ? (
-        <ModeRefusedCard engineName={engineName} modeName={refusalModeName(savedMode)} busy={overriding} onRun={() => void override(runWithout)} onChoose={choose} />
+        <ModeRefusedCard engineId={engineId} engineName={engineName} modeName={refusalModeName(savedMode)} busy={overriding} onRun={() => void override(runWithout)} onChoose={choose} />
       ) : null}
       {noticeOpen && !choosing ? (
-        <NoticeCard engineName={engineName} busy={acknowledging} onContinue={() => void acknowledge(resend)} onChoose={choose} />
+        <NoticeCard engineId={engineId} engineName={engineName} busy={acknowledging} onContinue={() => void acknowledge(resend)} onChoose={choose} />
       ) : null}
     </>
   );

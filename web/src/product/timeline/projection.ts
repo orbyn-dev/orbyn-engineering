@@ -27,6 +27,15 @@ function record(value: JsonValue | undefined): { [key in string]?: JsonValue } |
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : null;
 }
 
+/** The optional Snap Shot source on a sent attachment (docs/snapshots.md), read defensively. */
+function isWireSource(value: JsonValue | undefined): boolean {
+  const source = record(value);
+  return source?.kind === "snap_shot"
+    && typeof source.captured_at === "string"
+    && typeof source.app_name === "string"
+    && typeof source.window_title === "string";
+}
+
 const ACTION_KINDS: readonly string[] = [
   "command",
   "file_change",
@@ -70,7 +79,17 @@ export function approvalFromContent(
     decided_by: str("decided_by"),
     decided_at: str("decided_at"),
     created_at: str("created_at") ?? ts,
+    via: viaFrom(body.via),
   };
+}
+
+/** The Code Mode origin of an approval, read loosely: it is only drawn, never decided on. */
+function viaFrom(value: unknown): Approval["via"] {
+  if (typeof value !== "object" || value === null) return null;
+  const { code_run: run, call, script_sha256: sha } = value as Record<string, unknown>;
+  return typeof run === "string" && typeof call === "number" && typeof sha === "string"
+    ? { code_run: run, call, script_sha256: sha }
+    : null;
 }
 
 function planSteps(content: JsonValue): PlanStep[] {
@@ -129,16 +148,34 @@ interface Fold {
   sent: Record<string, readonly SentAttachment[]>;
 }
 
+/** A note that is the same every time, or one worded from the event and the thread's engine. */
+type LifecycleNote = string | ((value: JsonValue, engineName: string | null) => string);
+
+/** The engine's display name, or the neutral stand-in when the catalogue has not named it. */
+const engineLabel = (engineName: string | null): string => engineName?.trim() || "The engine";
+
 /** Things that happened to the conversation rather than in it. */
-const LIFECYCLE_NOTES: Record<string, string> = {
+const LIFECYCLE_NOTES: Record<string, LifecycleNote> = {
   "engine.session_restarted": "Agent session restarted.",
   "engine.session_lost": "The engine lost this conversation, so it continues in a new session.",
   "engine.switched": "Continued on another engine.",
   "context.compacted": "Context compacted.",
-  "thread.rewound": "Rewound to an earlier point.",
+  "thread.rewound": (value, engineName) => {
+    const engine = engineLabel(engineName);
+    // Only a native rollback may say the engine went back: every other rewind hands over text.
+    return record(value)?.native === true
+      ? `Went back to before this message. ${engine} continues in its own session from there.`
+      : `Continued from before this message in a new session. ${engine} was given the earlier conversation as text, not its own history.`;
+  },
   "steer.failed": "The engine refused a message mid-turn, so it moved to the queue.",
   "permission.updated": "Permission mode changed; it applies from the next turn.",
 };
+
+function lifecycleNote(name: string, value: JsonValue, engineName: string | null): string | null {
+  const note = LIFECYCLE_NOTES[name];
+  if (note === undefined) return null;
+  return typeof note === "string" ? note : note(value, engineName);
+}
 
 function put(fold: Fold, item: ThreadItem): void {
   const at = fold.index.get(item.key);
@@ -164,7 +201,7 @@ function patch<K extends ThreadItem["kind"]>(
   }
 }
 
-function applyEvent(fold: Fold, wire: WireThreadEvent): void {
+function applyEvent(fold: Fold, wire: WireThreadEvent, engineName: string | null): void {
   const event: AgUiEvent = wire.event;
   const base = { seq: wire.seq, ts: wire.ts, runId: wire.run_id };
   // Engines reuse ids between runs; each run keeps its own rows.
@@ -326,11 +363,11 @@ function applyEvent(fold: Fold, wire: WireThreadEvent): void {
       log(event.activityType, null);
       break;
     }
-    case "CUSTOM":
-      if (LIFECYCLE_NOTES[event.name]) {
-        const text = LIFECYCLE_NOTES[event.name] ?? "";
-        put(fold, { ...base, key: `notice:${wire.seq}`, kind: "notice", tone: "neutral", text, code: null });
-        log(text, null);
+    case "CUSTOM": {
+      const note = lifecycleNote(event.name, event.value, engineName);
+      if (note !== null) {
+        put(fold, { ...base, key: `notice:${wire.seq}`, kind: "notice", tone: "neutral", text: note, code: null });
+        log(note, null);
       } else if (event.name === "user.attachments") {
         const body = record(event.value);
         const entries = Array.isArray(body?.attachments) ? body.attachments : [];
@@ -340,7 +377,13 @@ function applyEvent(fold: Fold, wire: WireThreadEvent): void {
             typeof file.name === "string" &&
             typeof file.mime === "string" &&
             typeof file.size === "number"
-            ? [{ id: file.id, name: file.name, mime: file.mime, size: file.size }]
+            ? [{
+              id: file.id,
+              name: file.name,
+              mime: file.mime,
+              size: file.size,
+              ...(isWireSource(file.source) ? { source: file.source as SentAttachment["source"] } : {}),
+            }]
             : [];
         });
         if (wire.run_id) fold.sent[wire.run_id] = sent;
@@ -440,6 +483,7 @@ function applyEvent(fold: Fold, wire: WireThreadEvent): void {
         }
       }
       break;
+    }
     case "RAW":
       break;
     default: {
@@ -450,11 +494,34 @@ function applyEvent(fold: Fold, wire: WireThreadEvent): void {
   }
 }
 
+/** The finite `through` a rewind names, or null when the payload names none. */
+function rewoundThrough(wire: WireThreadEvent): number | null {
+  if (wire.event.type !== "CUSTOM" || wire.event.name !== "thread.rewound") return null;
+  const through = record(wire.event.value)?.through;
+  return typeof through === "number" && Number.isFinite(through) ? through : null;
+}
+
+/**
+ * The events a rewind removed: after its `through` and before the rewind itself.
+ * The log keeps every event; only the projection leaves these out, so the result
+ * is the same however the batches were split or ordered.
+ */
+function withoutRewound(events: readonly WireThreadEvent[]): readonly WireThreadEvent[] {
+  const ranges: { after: number; before: number }[] = [];
+  for (const wire of events) {
+    const through = rewoundThrough(wire);
+    if (through !== null && through < wire.seq) ranges.push({ after: through, before: wire.seq });
+  }
+  if (ranges.length === 0) return events;
+  return events.filter((wire) => !ranges.some(({ after, before }) => wire.seq > after && wire.seq < before));
+}
+
 function fold(
   threadId: string,
   log: ThreadLog,
   events: readonly WireThreadEvent[],
   incremental: boolean,
+  engineName: string | null,
 ): Pick<ThreadLog, "items" | "timeline" | "runs" | "subagents" | "usage" | "sent"> {
   const working: Fold = incremental
     ? {
@@ -477,19 +544,22 @@ function fold(
         usage: null,
         sent: {},
       };
-  for (const event of events) applyEvent(working, event);
+  for (const event of withoutRewound(events)) applyEvent(working, event, engineName);
   const { items, timeline, runs, subagents, usage, sent } = working;
   return { items, timeline, runs, subagents, usage, sent };
 }
 
 /**
  * Folds a batch into the log. Replayed seqs are dropped; a seq that arrives
- * behind the log's head is inserted in order and the view is rebuilt.
+ * behind the log's head is inserted in order and the view is rebuilt. A rewind
+ * rebuilds too, since it hides items an earlier batch already folded.
+ * `engineName` is the thread's engine display name, for a note that names it.
  */
 export function applyEvents(
   threadId: string,
   log: ThreadLog,
   incoming: readonly WireThreadEvent[],
+  engineName: string | null = null,
 ): ThreadLog {
   const seen = new Set(log.seen);
   const fresh: WireThreadEvent[] = [];
@@ -503,12 +573,13 @@ export function applyEvents(
 
   const first = fresh[0];
   const inOrder = first !== undefined && first.seq > log.lastSeq;
+  const rewound = fresh.some((event) => rewoundThrough(event) !== null);
   const events = inOrder
     ? [...log.events, ...fresh]
     : [...log.events, ...fresh].sort((a, b) => a.seq - b.seq);
-  const projected = inOrder
-    ? fold(threadId, log, fresh, true)
-    : fold(threadId, emptyLog, events, false);
+  const projected = inOrder && !rewound
+    ? fold(threadId, log, fresh, true, engineName)
+    : fold(threadId, emptyLog, events, false, engineName);
   return {
     events,
     seen,

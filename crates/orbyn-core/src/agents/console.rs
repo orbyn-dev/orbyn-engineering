@@ -7,6 +7,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use orbyn_contracts::TerminalInfo;
 use serde_json::json;
@@ -58,13 +59,14 @@ fn plain(value: &str, what: &str) -> Result<()> {
 impl Core {
     /// Opens, or returns the live, console of the thread's engine on its session.
     pub async fn open_engine_console(
-        &self,
+        self: &Arc<Self>,
         thread_id: &str,
         (cols, rows): (u16, u16),
         actor: &str,
     ) -> Result<TerminalInfo> {
         let thread = self.store.thread(thread_id)?;
         if let Some(info) = self.live_console(thread_id) {
+            self.watch_engine_console(thread_id, &info);
             return Ok(info);
         }
         let driver = self.engines.driver(&thread.engine)?;
@@ -88,7 +90,7 @@ impl Core {
             .console(&ConsoleSpec {
                 session: &session,
                 model: thread.model.as_deref(),
-                plan: thread.lifecycle.as_ref().is_some_and(|l| l.plan_mode),
+                plan: false, // a saved plan_mode never restricts a run
                 root: &root,
                 checkout: &checkout,
             })
@@ -105,7 +107,7 @@ impl Core {
         args.extend(console.args);
         // The admission lock: a run admitted now sees this console, and a run
         // admitted first is seen here.
-        self.workspace.admit_with(|| {
+        let info = self.workspace.admit_with(|| {
             if self.store.thread(thread_id)?.active_run.is_some() {
                 return Err(CoreError::ThreadBusy);
             }
@@ -138,7 +140,11 @@ impl Core {
                     engine: true,
                 },
             )
-        })
+        })?;
+        // The hook for W10: this exact terminal runs an engine (`PtySpec.engine`),
+        // so its quiet prompts may become attention events.
+        self.watch_engine_console(thread_id, &info);
+        Ok(info)
     }
 
     fn live_console(&self, thread_id: &str) -> Option<TerminalInfo> {

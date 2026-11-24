@@ -1,31 +1,14 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { installMockFetch } from "../../test-support";
+import { wire, wireWrites } from "../../wire.test-support";
 import type { EngineStatus } from "../../api/types";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
 import { engineReadiness, WelcomeWizard } from "./WelcomeWizard";
 
-const saved: unknown[] = [];
-vi.mock("../../api/client", async (original) => {
-  const actual = await original<typeof import("../../api/client")>();
-  return {
-    ...actual,
-    request: vi.fn(async (method: string, path: string, body?: unknown) => {
-      if (path === "/api/settings/preferences/query")
-        return { catalog: { version: "v1" }, rows: [{ key: "default_permission_mode", value: "supervised", revision: "r1" }] };
-      if (path === "/api/settings/preferences" && method === "PUT") {
-        saved.push(body);
-        return { catalog: { version: "v2" }, rows: [] };
-      }
-      if (path === "/api/skills") return { skills: [] };
-      return [];
-    }),
-    api: { ...actual.api, browse: vi.fn(async () => ({ path: "/home/dev", parent: null, entries: [] })), skills: vi.fn(async () => ({ skills: [] })),
-      addProject: vi.fn(async (path: string) => ({ id: "p1", name: "site", path, trusted: true, is_git: true, created_at: "", managed: false, scratch: false })),
-    },
-  };
-});
+const wizardWrites = () => wireWrites().filter((call) => call.path === "/api/settings/preferences");
 
 const engine = (patch: Partial<EngineStatus>) => ({
   id: "claude", name: "Claude", tier: "managed", installed: true, auth: "logged_in", version: "2.1.0",
@@ -34,9 +17,11 @@ const engine = (patch: Partial<EngineStatus>) => ({
 }) as EngineStatus;
 
 beforeEach(() => {
+  installMockFetch();
   useUi.getState().setPrefs({ welcomeDone: false });
   useUi.getState().setWelcomeStep(0);
 });
+afterEach(() => vi.unstubAllGlobals());
 
 it("names what each engine still needs", () => {
   expect(engineReadiness(engine({})).label).toBe("Ready");
@@ -76,7 +61,8 @@ it("walks the overview, agents, projects and access, saving the chosen access mo
   await user.click(screen.getByRole("radio", { name: /Full access/ }));
   await user.click(screen.getByRole("button", { name: "Continue" }));
   await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
-  expect(saved[0]).toMatchObject({ edits: { default_permission_mode: { op: "set", value: "full_access" } } });
+  expect(wizardWrites()).toHaveLength(1);
+  expect(wizardWrites()[0]).toMatchObject({ method: "PUT", body: { edits: { default_permission_mode: { op: "set", value: "full_access" } } } });
   expect(useUi.getState().welcomeDone).toBe(true);
   expect(useUi.getState().welcomeStep).toBeNull();
 });
@@ -90,6 +76,7 @@ it("keeps Continue off until a project is added, then lists it under Added and d
   expect(screen.getByText("You can import past agent sessions later in Settings › Providers.")).toBeInTheDocument();
   await user.type(screen.getByLabelText("Folder path"), "{Enter}");
   expect(await screen.findByText("Added")).toBeInTheDocument();
+  expect(wire().filter((call) => call.path === "/api/projects/add")).toEqual([{ method: "POST", path: "/api/projects/add", body: { path: "/Users/dev" } }]);
   expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   expect(screen.queryByRole("button", { name: "Skip for now" })).toBeNull();
   // Adding does not leave the step: the wizard stays until Continue.

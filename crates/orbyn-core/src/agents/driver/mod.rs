@@ -7,6 +7,8 @@ pub mod agui;
 pub mod claude;
 pub mod codex;
 pub mod diagnostics;
+pub mod failure;
+pub mod host;
 pub(crate) mod pipes;
 pub mod rpc;
 pub mod terminal;
@@ -24,6 +26,8 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+pub use failure::{Failure, RetryInfo, RetryWhy, ThreadDisposition};
 
 use crate::conversation::questions::Answers;
 use crate::error::Result;
@@ -200,6 +204,8 @@ pub enum EngineOutcome {
     Completed,
     Cancelled,
     Failed(String),
+    /// A failure the engine described beyond its message (the engine host does).
+    FailedWith(Failure),
     /// The engine does not have the session this run tried to resume.
     SessionLost,
 }
@@ -239,6 +245,10 @@ pub enum EngineEvent {
     Goal(Option<orbyn_contracts::ThreadGoal>),
     /// An MCP App page for a finished tool call, read while the engine was alive.
     McpApp(crate::tools::mcp_apps::McpAppSnapshot),
+    /// An event from a turn the engine ran for its own leftovers (a background agent that finished while
+    /// the process was down) ahead of the prompt's. The run shows it as it shows any event, but it never
+    /// counts as the engine answering the prompt (docs/engine-run-contract.md, rule 3).
+    Leftover(Box<EngineEvent>),
     Finished(EngineOutcome),
 }
 
@@ -533,8 +543,10 @@ pub trait EngineDriver: Send + Sync {
     }
 
     /// Drops `before_turn` and every later turn from `session`'s own history, for a
-    /// rewind that keeps the session. Files are not touched. The default says this
-    /// engine has no native rollback, and the rewind leaves a handoff instead.
+    /// rewind that keeps the session. Files are not touched. For the Claude host,
+    /// `before_turn` is the run's prompt message id: the host's own turn id is a counter
+    /// and never appears in the session file. The default says this engine has no native
+    /// rollback, and the rewind leaves a handoff instead.
     async fn revert_session(
         &self,
         _cwd: &std::path::Path,
@@ -545,6 +557,10 @@ pub trait EngineDriver: Send + Sync {
             "This engine has no native rollback.".into(),
         ))
     }
+
+    /// Drops a rewind point this driver noted for `session`, when the rewind that noted
+    /// it could not finish. Files are not touched. The default has nothing to drop.
+    async fn forget_revert(&self, _cwd: &std::path::Path, _session: &str) {}
 
     /// What a cached list depends on. An engine with a key keeps its list until the
     /// key changes; without one the list simply ages out.

@@ -1,10 +1,14 @@
 //! The after-merge Review queue: the person's stage. Every merge to main is one item, ranked by risk, with the diff, the
 //! proof, what was not verified and the cost. The person answers "Looks good", "Comment" or "Revert". A revert is
 //! opened and verified by the crew: it is made in a scratch checkout, the checks run on the result, and only then does the
-//! branch move.
+//! branch move. Beside the merges the queue lists the background runs that stopped without a merge and wait for the person
+//! (docs/crew/background-engine-start.md, section 4). The person settles one by acknowledging it through the background module
+//! (`Core::background_acknowledge_review`): the queue itself only reads.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use orbyn_contracts as wire;
 use serde_json::{Value, json};
 
 use super::queue::MergeTarget;
@@ -12,8 +16,46 @@ use super::risk::Risk;
 use super::watch::revert_merge;
 use crate::app::Core;
 use crate::crew::capacity::{FIX_WAITING, paused_by_capacity};
+use crate::crew::wire_name;
 use crate::error::{CoreError, Result};
 use crate::store::MergeRecord;
+
+/// One background run that stopped without a merge and waits for the person, with the crew it belongs to. The run has no
+/// commit, diff or risk: its own state, why it stopped and what it spent are what a person reads.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BackgroundReview {
+    pub run_id: String,
+    pub crew_id: String,
+    pub project_id: String,
+    pub crew_name: String,
+    /// The stored template name; the wire item carries the enum.
+    pub template: String,
+    /// The stored state: `needs_review` or `stopped`.
+    pub state: String,
+    pub stop_reason: Option<String>,
+    pub review_reason: Option<String>,
+    pub turns_spent: u32,
+    pub minutes_spent: u32,
+    pub budget_turns: u32,
+    pub budget_minutes: u32,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+}
+
+/// What waits for the person: the merges to answer and, beside them, the background runs that stopped without a merge.
+/// They are separate lists because a background run has no risk, commit or diff to rank it with a merge.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReviewQueue {
+    /// The merges waiting for the person, most urgent first.
+    pub merges: Vec<ReviewItem>,
+    /// The background runs waiting for the person, oldest first.
+    pub background: Vec<BackgroundReview>,
+    /// The waits the one needs-you field (KC3) names that this queue does not answer: the Inbox's items this queue does not
+    /// answer, by kind, most first then by kind. The page says "N more wait for you in the Inbox" from this, and it is the
+    /// same field the Inbox and the Taskboard read, not a second rule (the counts need not be equal: the board cards only
+    /// work tasks and this read is not scoped to one repository). A review wait this queue owns is not here.
+    pub waiting_elsewhere: Vec<(wire::NeedsYouKind, u32)>,
+}
 
 /// One merge waiting for the person.
 #[derive(Clone, Debug, PartialEq)]
@@ -82,16 +124,18 @@ fn item(record: &MergeRecord, now: i64) -> ReviewItem {
 }
 
 impl Core {
-    /// What waits for the person, most urgent first: a break that needs a decision, then by risk, then oldest.
-    pub fn crew_review_queue(&self, now: i64) -> Result<Vec<ReviewItem>> {
-        let mut items: Vec<ReviewItem> = self
+    /// What waits for the person: the merges, most urgent first (a break that needs a decision, then by risk, then oldest),
+    /// and the background runs that stopped without a merge, oldest first. A background run stopped by the person's own
+    /// switch, one still running, and one whose review the person already acknowledged is not waiting.
+    pub fn crew_review_queue(&self, now: i64) -> Result<ReviewQueue> {
+        let mut merges: Vec<ReviewItem> = self
             .store
             .crew_all_merges()?
             .iter()
             .filter(|m| m.review_state == "waiting")
             .map(|m| item(m, now))
             .collect();
-        items.sort_by(|a, b| {
+        merges.sort_by(|a, b| {
             (
                 b.needs_person.is_some(),
                 b.risk,
@@ -103,7 +147,50 @@ impl Core {
                     std::cmp::Reverse(b.merged_unix),
                 ))
         });
-        Ok(items)
+        // KC3: what waits elsewhere is read from the one needs-you field, never assembled here. The review waits this
+        // queue answers (`MergeWaiting` and `BackgroundReview`) are left out: they are its own lists above.
+        let mut elsewhere: BTreeMap<String, (wire::NeedsYouKind, u32)> = BTreeMap::new();
+        for item in self.needs_you_all(&|_, _| true)? {
+            match item.kind {
+                wire::NeedsYouKind::MergeWaiting | wire::NeedsYouKind::BackgroundReview => {}
+                kind => {
+                    let row = elsewhere.entry(wire_name(&kind)).or_insert((kind, 0));
+                    row.1 = row.1.saturating_add(1);
+                }
+            }
+        }
+        let mut waiting_elsewhere: Vec<(wire::NeedsYouKind, u32)> =
+            elsewhere.into_values().collect();
+        waiting_elsewhere.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| wire_name(&a.0).cmp(&wire_name(&b.0)))
+        });
+        let background = self
+            .store
+            .background_reviews()?
+            .into_iter()
+            .map(|row| BackgroundReview {
+                run_id: row.run.id,
+                crew_id: row.run.background_id,
+                project_id: row.project_id,
+                crew_name: row.crew_name,
+                template: row.template,
+                state: row.run.state,
+                stop_reason: row.run.stop_reason,
+                review_reason: row.run.review_reason,
+                turns_spent: row.run.turns_spent,
+                minutes_spent: row.run.minutes_spent,
+                budget_turns: row.run.budget_turns,
+                budget_minutes: row.run.budget_minutes,
+                started_at: row.run.started_at,
+                ended_at: row.run.ended_at,
+            })
+            .collect();
+        Ok(ReviewQueue {
+            merges,
+            background,
+            waiting_elsewhere,
+        })
     }
 
     /// The person's answer to a merge. A revert returns the revert commit; refused with the reason when it cannot be done safely.

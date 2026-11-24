@@ -46,6 +46,9 @@ pub(super) struct StreamMapper {
     pub(super) awaiting: Option<String>,
     /// A turn the CLI started for its own leftovers is running, before the prompt's turn.
     pub(super) leftover: bool,
+    /// A task notification came before the prompt's echo: the turn it starts is not the prompt's, so
+    /// what it says is not the engine answering.
+    pub(super) notified: bool,
 }
 
 /// Task types whose work dies with the CLI and finishes with a notification turn, so the run
@@ -150,6 +153,7 @@ impl StreamMapper {
             .get("parent_tool_use_id")
             .is_some_and(|parent| !parent.is_null());
         let kind = frame.get("type").and_then(Value::as_str);
+        let before_prompt = self.awaiting.is_some();
         if self.held.is_some()
             && !nested
             && (matches!(kind, Some("assistant" | "stream_event"))
@@ -174,9 +178,12 @@ impl StreamMapper {
                 // A notification ahead of the prompt starts a turn of its own, which may fail before
                 // it streams anything.
                 self.leftover = true;
+                if kind == Some("system") {
+                    self.notified = true;
+                }
             }
         }
-        match kind {
+        let events = match kind {
             Some("control_response") => Workflows::control_response(frame),
             Some("system")
                 if matches!(
@@ -269,7 +276,19 @@ impl StreamMapper {
                 events
             }
             _ => Vec::new(),
+        };
+        if before_prompt
+            && self.notified
+            && !nested
+            && matches!(kind, Some("assistant" | "stream_event"))
+        {
+            // The turn a notification started: shown, but not the prompt's reply (rule 3).
+            return events
+                .into_iter()
+                .map(|event| EngineEvent::Leftover(Box::new(event)))
+                .collect();
         }
+        events
     }
 
     fn on_stream_event(&mut self, event: &Value) -> Vec<EngineEvent> {

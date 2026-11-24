@@ -1,0 +1,508 @@
+use std::time::Duration;
+
+use serde_json::json;
+
+use super::*;
+use crate::agents::driver::host::connection::{ClosedReason, RunFrame};
+use crate::agents::driver::host::frames::PROTOCOL;
+use crate::error::CoreError;
+
+#[tokio::test]
+async fn a_host_that_says_hello_and_ready_is_running() {
+    let Some(rig) = standin(&[], fast()) else {
+        return;
+    };
+    assert_eq!(rig.pool.state(), HostState::Idle);
+    let connection = rig.pool.acquire().await.unwrap();
+    assert_eq!(rig.pool.state(), HostState::Ready);
+    let status = rig.pool.status().await;
+    assert_eq!(status.host_version.as_deref(), Some("9.9.9"));
+    assert!(connection.has_capability("steer"));
+    assert!(!connection.has_capability("fork"));
+    assert_eq!(status.restart_count, 0);
+    assert!(status.since.is_some());
+    assert_eq!(
+        status.sdk,
+        Some(crate::agents::driver::host::HostSdk {
+            name: "standin".into(),
+            version: "0".into(),
+        })
+    );
+    assert_eq!(
+        status.capabilities,
+        Some(vec!["steer".into(), "stopTask".into(), "background".into()])
+    );
+    assert!(status.pooled);
+    assert!(!status.sdk_missing);
+    assert!(!status.has_driver);
+}
+
+#[tokio::test]
+async fn the_real_fake_family_completes_the_handshake() {
+    let Some(pool) = real_fake(fast()) else {
+        return;
+    };
+    let connection = pool.acquire().await.unwrap();
+    assert!(connection.has_capability("steer"));
+    assert_eq!(pool.state(), HostState::Ready);
+    pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_protocol_mismatch_is_final_and_names_both_numbers() {
+    let Some(rig) = standin(&[("STANDIN_PROTOCOL", "2")], fast()) else {
+        return;
+    };
+    let error = rig.pool.acquire().await.unwrap_err();
+    assert!(
+        error.0.contains("app protocol 1") && error.0.contains("host protocol 2"),
+        "{}",
+        error.0
+    );
+    assert!(error.0.contains("Update Orbyn"));
+    assert_eq!(
+        rig.pool.state(),
+        HostState::Mismatch {
+            app: PROTOCOL,
+            host: 2
+        }
+    );
+    // nothing restarts it
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(rig.pool.status().await.restart_count, 0);
+    assert!(rig.pool.acquire().await.is_err());
+}
+
+#[tokio::test]
+async fn a_hello_timeout_counts_as_a_crash() {
+    let timings = Timings {
+        hello: Duration::from_millis(300),
+        first_hello: Duration::from_millis(300),
+        ..fast()
+    };
+    let Some(rig) = standin(&[("STANDIN_HELLO_DELAY_MS", "6000")], timings) else {
+        return;
+    };
+    assert!(rig.pool.acquire().await.is_err());
+    let status = rig.pool.status().await;
+    let (crash, _) = status.last_crash.expect("a crash was recorded");
+    assert_eq!(crash.kind, CrashKind::HelloTimeout);
+    assert_eq!(status.restart_count, 1);
+    assert!(matches!(rig.pool.state(), HostState::Restarting { .. }));
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_restarting_host_reports_the_try_the_limit_and_the_wait() {
+    let timings = Timings {
+        backoff_base: Duration::from_secs(30),
+        backoff_cap: Duration::from_secs(30),
+        ..fast()
+    };
+    let Some(rig) = standin(&[("STANDIN_EXIT_BEFORE_HELLO", "1")], timings) else {
+        return;
+    };
+    assert!(rig.pool.acquire().await.is_err());
+    let restart = rig.pool.status().await.restart.expect("a restart waits");
+    assert_eq!((restart.attempt, restart.limit), (1, 5));
+    assert!(
+        matches!(restart.next_try_seconds, Some(1..=30)),
+        "{:?}",
+        restart.next_try_seconds
+    );
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn five_restarts_in_five_minutes_make_the_family_unavailable_until_asked() {
+    let Some(rig) = standin(&[("STANDIN_EXIT_BEFORE_HELLO", "1")], fast()) else {
+        return;
+    };
+    assert!(rig.pool.acquire().await.is_err());
+    wait_for(
+        &rig.pool,
+        |s| matches!(s, HostState::Unavailable { .. }),
+        "unavailable",
+    )
+    .await;
+    let status = rig.pool.status().await;
+    assert_eq!(status.restart_count, 5);
+    assert_eq!(status.stops_in_window, Some(5));
+    let (crash, _) = status.last_crash.unwrap();
+    assert_eq!(crash.exit.unwrap().code, Some(1));
+    // the host's last words are kept, with the credential-looking line gone
+    assert!(crash.stderr_tail.contains("exiting before hello"));
+    assert!(!crash.stderr_tail.contains("sk-ant"));
+    let refusal = rig.pool.acquire().await.unwrap_err();
+    assert!(refusal.0.contains("unavailable"));
+    // no restarts until the person asks
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(rig.pool.status().await.restart_count, 5);
+    rig.pool.retry().await;
+    assert_eq!(rig.pool.state(), HostState::Crashed);
+}
+
+#[tokio::test]
+async fn a_malformed_frame_is_counted_and_dropped_and_ten_in_a_minute_crash_the_host() {
+    let Some(rig) = standin(&[], fast()) else {
+        return;
+    };
+    let driver = rig.driver();
+    let (_, outcome) = start(&driver, spec("[malformed:3]"))
+        .await
+        .unwrap()
+        .outcome()
+        .await;
+    assert_eq!(outcome, EngineOutcome::Completed);
+    let connection = rig.pool.acquire().await.unwrap();
+    assert_eq!(
+        connection.malformed_count(),
+        3,
+        "{:?}",
+        rig.pool.status().await
+    );
+    assert_eq!(rig.pool.state(), HostState::Ready);
+
+    let (_, outcome) = start(&driver, spec("[malformed:10]"))
+        .await
+        .unwrap()
+        .outcome()
+        .await;
+    assert!(
+        matches!(outcome, EngineOutcome::FailedWith(_)),
+        "{outcome:?}"
+    );
+    let (crash, _) = rig.pool.status().await.last_crash.unwrap();
+    assert_eq!(crash.kind, CrashKind::Malformed);
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_late_respond_is_ignored_and_the_host_stays_up() {
+    let Some(pool) = real_fake(fast()) else {
+        return;
+    };
+    let connection = pool.acquire().await.unwrap();
+    let answer = connection
+        .request(
+            "respond",
+            json!({"requestId": "p-unknown", "decision": {"behavior": "deny"}}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(answer, serde_json::Value::Null);
+    assert!(!connection.is_closed());
+    pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_failure_keeps_the_hosts_cause_chain() {
+    let Some(pool) = real_fake(fast()) else {
+        return;
+    };
+    let connection = pool.acquire().await.unwrap();
+    connection
+        .request(
+            "open",
+            json!({"operation": "create", "sessionId": "s", "cwd": "/"}),
+        )
+        .await
+        .unwrap();
+    let send_id = connection.next_id();
+    let mut route = connection.register(send_id, "s", "thread-s").unwrap();
+    connection
+        .request_as(
+            send_id,
+            "send",
+            json!({"sessionId": "s", "message": "[fail]"}),
+        )
+        .await
+        .unwrap();
+    let done = loop {
+        match tokio::time::timeout(Duration::from_secs(10), route.frames.recv())
+            .await
+            .unwrap()
+        {
+            Some(RunFrame::Done(done)) => break done,
+            Some(_) => {}
+            None => panic!("route closed"),
+        }
+    };
+    assert!(!done.ok);
+    // the wrapper, then ten nested errors
+    assert!(done.error.unwrap().depth() >= 10);
+    pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_host_that_stops_answering_pings_is_a_crash() {
+    let Some(rig) = standin(&[], fast()) else {
+        return;
+    };
+    let (_, outcome) = start(&rig.driver(), spec("[stall]"))
+        .await
+        .unwrap()
+        .outcome()
+        .await;
+    assert!(matches!(outcome, EngineOutcome::FailedWith(_)));
+    let (crash, _) = rig.pool.status().await.last_crash.unwrap();
+    assert_eq!(crash.kind, CrashKind::Stalled);
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_frame_over_eight_mib_is_a_protocol_error_and_one_at_the_cap_is_not() {
+    // Parsing 8 MiB in a debug build outlasts the fast ping interval; slow it so only the cap is under test.
+    let timings = Timings {
+        ping_every: Duration::from_secs(5),
+        ..fast()
+    };
+    let Some(rig) = standin(&[], timings) else {
+        return;
+    };
+    let driver = rig.driver();
+    let (_, outcome) = start(&driver, spec("[exactly]"))
+        .await
+        .unwrap()
+        .outcome()
+        .await;
+    assert_eq!(
+        outcome,
+        EngineOutcome::Completed,
+        "a frame at the cap is allowed"
+    );
+    let (_, outcome) = start(&driver, spec("[big]")).await.unwrap().outcome().await;
+    assert!(
+        matches!(outcome, EngineOutcome::FailedWith(_)),
+        "{outcome:?}"
+    );
+    let (crash, _) = rig.pool.status().await.last_crash.unwrap();
+    assert_eq!(crash.kind, CrashKind::Oversize);
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_idle_host_stops_but_never_one_with_an_open_background_task() {
+    let timings = Timings {
+        idle_stop: Some(Duration::from_millis(200)),
+        ..fast()
+    };
+    // with background work open
+    let Some(busy) = standin(&[], timings.clone()) else {
+        return;
+    };
+    let (_, outcome) = start(&busy.driver(), spec("[bg]"))
+        .await
+        .unwrap()
+        .outcome()
+        .await;
+    assert_eq!(outcome, EngineOutcome::Completed);
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(
+        busy.pool.state(),
+        HostState::Ready,
+        "stopped with a task open"
+    );
+    assert_eq!(busy.pool.acquire().await.unwrap().open_background(), 1);
+    busy.pool.shutdown().await;
+
+    // with nothing open
+    let Some(idle) = standin(&[], timings) else {
+        return;
+    };
+    let (_, outcome) = start(&idle.driver(), spec("hi"))
+        .await
+        .unwrap()
+        .outcome()
+        .await;
+    assert_eq!(outcome, EngineOutcome::Completed);
+    wait_for(&idle.pool, |s| *s == HostState::Stopped, "stopped").await;
+    // and the next run starts it again
+    let (_, outcome) = start(&idle.driver(), spec("again"))
+        .await
+        .unwrap()
+        .outcome()
+        .await;
+    assert_eq!(outcome, EngineOutcome::Completed);
+    idle.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn shutting_down_closes_the_host() {
+    let Some(rig) = standin(&[], fast()) else {
+        return;
+    };
+    let connection = rig.pool.acquire().await.unwrap();
+    rig.pool.shutdown().await;
+    assert_eq!(connection.closed().await, ClosedReason::Shutdown);
+    assert_eq!(rig.pool.state(), HostState::Idle);
+}
+
+#[test]
+fn claude_uses_the_host_by_default_and_only_a_zero_flag_or_a_missing_host_keeps_the_rust_driver() {
+    assert!(HostConfig::from_env(None, Some("1")).is_none());
+    assert!(HostConfig::from_env(Some("".into()), Some("1")).is_none());
+    for on in [None, Some(""), Some("1"), Some("true")] {
+        let config = HostConfig::from_env(Some("/x/orbyn-engine-host".into()), on).unwrap();
+        assert!(config.claude, "flag {on:?} is on");
+    }
+    let config = HostConfig::from_env(Some("/x/orbyn-engine-host".into()), Some("0")).unwrap();
+    assert!(!config.claude);
+    let hub = HostHub::new(&config);
+    let inner: Arc<dyn crate::agents::driver::EngineDriver> =
+        Arc::new(ClaudeDriver::new("claude".into(), Duration::from_secs(1)));
+    let wrapped = hub.wrap("claude", inner.clone(), "claude".into());
+    assert!(
+        Arc::ptr_eq(&wrapped, &inner),
+        "a flag-off family is not wrapped"
+    );
+}
+
+fn test_pool() -> Arc<Pool> {
+    Pool::new(
+        "claude",
+        HostSpec {
+            program: "/nonexistent/orbyn-engine-host".into(),
+            args: Vec::new(),
+            env: Vec::new(),
+            instance: "test".into(),
+        },
+        Timings::default(),
+        None,
+    )
+}
+
+const HEAD: &str = "b2b2b2b2-1111-4222-8333-444455556666";
+
+#[test]
+fn a_rewind_point_is_remembered_once_for_the_engine_session_it_was_noted_for() {
+    let pool = test_pool();
+    pool.note_resume_at("claude", "session-1", HEAD).unwrap();
+    // Nothing ages a point while the thread stays idle: no clock or TTL exists.
+    assert_eq!(
+        pool.take_resume_at("claude", "session-1"),
+        Some(HEAD.to_owned())
+    );
+    assert_eq!(
+        pool.take_resume_at("claude", "session-1"),
+        None,
+        "an open consumes it"
+    );
+
+    pool.note_resume_at("claude", "session-1", HEAD).unwrap();
+    assert_eq!(
+        pool.take_resume_at("claude", "session-2"),
+        None,
+        "another session never takes it"
+    );
+    assert_eq!(
+        pool.take_resume_at("another-engine", "session-1"),
+        None,
+        "another engine never takes it"
+    );
+    assert_eq!(
+        pool.take_resume_at("claude", "session-1"),
+        Some(HEAD.to_owned())
+    );
+
+    // An empty id is not a rewind point.
+    assert!(matches!(
+        pool.note_resume_at("claude", "", HEAD),
+        Err(CoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        pool.note_resume_at("claude", "session-1", ""),
+        Err(CoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        pool.note_resume_at("claude", "session-1", "not-a-uuid"),
+        Err(CoreError::Invalid(_))
+    ));
+    assert_eq!(pool.take_resume_at("claude", ""), None);
+    assert_eq!(pool.take_resume_at("claude", "session-1"), None);
+}
+
+#[test]
+fn a_rewind_point_refuses_a_poisoned_store() {
+    let pool = test_pool();
+    pool.poison_resume_at();
+    assert!(matches!(
+        pool.note_resume_at("claude", "session-1", HEAD),
+        Err(CoreError::Internal(_))
+    ));
+}
+
+#[test]
+fn a_changed_thread_session_drops_its_waiting_rewind_point() {
+    let pool = test_pool();
+    pool.note_session("claude", "thread-1", "old-session");
+    pool.note_resume_at("claude", "old-session", HEAD).unwrap();
+    pool.note_session("claude", "thread-1", "old-session");
+    assert_eq!(
+        pool.take_resume_at("claude", "old-session"),
+        Some(HEAD.to_owned()),
+        "the session did not change"
+    );
+
+    pool.note_session("claude", "thread-1", "old-session");
+    pool.note_resume_at("claude", "old-session", HEAD).unwrap();
+    pool.note_session("claude", "thread-1", "new-session");
+    assert_eq!(
+        pool.take_resume_at("claude", "old-session"),
+        None,
+        "the thread's session changed"
+    );
+}
+
+#[test]
+fn cursor_runs_on_the_host_only_behind_its_own_flag_and_offers_one_mode() {
+    use crate::agents::driver::acp::AcpDriver;
+    use crate::agents::engines::known::known_engine;
+    use orbyn_contracts::PermissionMode;
+
+    let known = known_engine("cursor").unwrap();
+    let rust: Arc<dyn crate::agents::driver::EngineDriver> =
+        Arc::new(AcpDriver::known(known.as_custom(), known));
+    // The Claude flag alone (on by default) leaves Cursor exactly as it was.
+    let claude_only = HostConfig::from_env(Some("/x/h".into()), Some("1")).unwrap();
+    assert!(!claude_only.cursor);
+    let hub = HostHub::new(&claude_only);
+    assert!(!hub.knows("cursor"));
+    assert!(Arc::ptr_eq(
+        &hub.wrap("cursor", rust.clone(), "cursor-agent".into()),
+        &rust
+    ));
+    // The host wants exactly `1`, as the Claude flag does.
+    assert!(
+        !HostConfig::from_env(Some("/x/h".into()), None)
+            .unwrap()
+            .with_cursor(Some("true"))
+            .cursor
+    );
+    let on = HostConfig::from_env(Some("/x/h".into()), Some("0"))
+        .unwrap()
+        .with_cursor(Some("1"));
+    assert!(on.cursor && !on.claude);
+    let hub = HostHub::new(&on);
+    assert!(hub.knows("cursor"));
+    if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        return;
+    }
+    let hosted = hub.wrap("cursor", rust.clone(), "cursor-agent".into());
+    assert!(!Arc::ptr_eq(&hosted, &rust), "the flag wraps Cursor");
+    assert_eq!(
+        hosted.descriptor().capabilities.permission_modes,
+        [PermissionMode::NoApprovals]
+    );
+    // The Rust driver is untouched, and so is every other family.
+    assert_eq!(
+        rust.descriptor().capabilities.permission_modes,
+        PermissionMode::ALL
+    );
+    let claude: Arc<dyn crate::agents::driver::EngineDriver> =
+        Arc::new(ClaudeDriver::new("claude".into(), Duration::from_secs(1)));
+    assert!(Arc::ptr_eq(
+        &hub.wrap("claude", claude.clone(), "claude".into()),
+        &claude
+    ));
+}

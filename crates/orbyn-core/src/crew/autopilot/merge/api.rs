@@ -23,6 +23,7 @@ use super::risk::{
 use crate::app::Core;
 use crate::crew::autopilot::ledger;
 use crate::crew::autopilot::{IN_A_ROW, IN_A_RUN, Mode, ModeScope, RULES, review_window};
+use crate::crew::background::parse_wire;
 use crate::crew::{key_needles, redact, withhold};
 use crate::error::{CoreError, Result};
 use crate::store::{AutopilotEvent, EVENT_KINDS, MergeEntry, MergeRecord};
@@ -164,25 +165,6 @@ fn strings(value: &Value) -> Vec<String> {
         .collect()
 }
 
-/// What a display mask touches. A row's read fields keep their keys; what is shown masks both,
-/// because a value can sit in an object's key.
-#[derive(Clone, Copy)]
-enum Masked {
-    Keys,
-    Values,
-    KeysAndValues,
-}
-
-impl Masked {
-    fn keys(self) -> bool {
-        matches!(self, Self::Keys | Self::KeysAndValues)
-    }
-
-    fn values(self) -> bool {
-        matches!(self, Self::Values | Self::KeysAndValues)
-    }
-}
-
 /// Cleans text and stored JSON for one task: redacted, the task's key withheld, and scanned.
 ///
 /// The person's own patterns (Settings › Secrets) mask what is shown, here and nowhere else: the stored rows are never
@@ -194,7 +176,7 @@ struct Scrub {
 
 impl Scrub {
     fn text(&self, text: &str) -> String {
-        self.person.labelled(&ledger::shown(text, &self.needles))
+        ledger::shown_masked(text, &self.needles, &self.person)
     }
 
     fn texts(&self, items: &[String]) -> Vec<String> {
@@ -203,39 +185,23 @@ impl Scrub {
 
     /// The row as shown: its JSON keys are masked too, because a value can sit in a key.
     fn json(&self, value: &Value) -> Value {
-        self.mask(ledger::safe(value, &self.needles), Masked::KeysAndValues)
+        self.mask_keys(ledger::safe_masked(value, &self.needles, &self.person))
     }
 
     /// The row's fields: values masked, keys readable, so the row can read its own fields.
     fn fields(&self, value: &Value) -> Value {
-        self.mask(ledger::safe(value, &self.needles), Masked::Values)
+        ledger::safe_masked(value, &self.needles, &self.person)
     }
 
-    /// The row's keys as shown, its values as they are (already masked by fields).
+    /// The row's keys as shown, its values as they are (already masked by `fields`).
     fn mask_keys(&self, value: Value) -> Value {
-        self.mask(value, Masked::Keys)
-    }
-
-    fn mask(&self, value: Value, masked: Masked) -> Value {
         match value {
-            Value::String(text) => Value::String(if masked.values() {
-                self.person.labelled(&text)
-            } else {
-                text
-            }),
             Value::Array(items) => {
-                Value::Array(items.into_iter().map(|v| self.mask(v, masked)).collect())
+                Value::Array(items.into_iter().map(|v| self.mask_keys(v)).collect())
             }
             Value::Object(map) => Value::Object(
                 map.into_iter()
-                    .map(|(k, v)| {
-                        let k = if masked.keys() {
-                            self.person.labelled(&k)
-                        } else {
-                            k
-                        };
-                        (k, self.mask(v, masked))
-                    })
+                    .map(|(k, v)| (self.person.labelled(&k), self.mask_keys(v)))
                     .collect(),
             ),
             other => other,
@@ -409,6 +375,23 @@ impl Core {
         })
     }
 
+    /// A crew whose Autopilot mode a person may set: it is a crew with a task, and not a background one. Execution profiles apply to a
+    /// crew through the same check.
+    pub(crate) fn crew_mode_target(&self, id: &str) -> Result<()> {
+        self.crew_preview_only()?;
+        valid_id(id)?;
+        if self.store.crew_tasks_in_crew(id)?.is_empty() {
+            return Err(CoreError::NotFound("crew".into()));
+        }
+        if self.crew_background_lead(id) {
+            return Err(CoreError::PolicyDenied(
+                "A background crew's merges always wait for a person; its mode cannot be changed."
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Saves the person's mode for a scope, through the one setter the core has. A repository must be a project and a crew must
     /// have a task, so a mode cannot be saved for a name that is nothing.
     pub fn autopilot_set_mode(&self, change: &wire::AutopilotModeChange) -> Result<()> {
@@ -424,15 +407,7 @@ impl Core {
                 ModeScope::Repo(id.to_owned())
             }
             (wire::AutopilotScopeKind::Crew, Some(id)) => {
-                valid_id(id)?;
-                if self.store.crew_tasks_in_crew(id)?.is_empty() {
-                    return Err(CoreError::NotFound("crew".into()));
-                }
-                if self.crew_background_lead(id) {
-                    return Err(CoreError::PolicyDenied(
-                        "A background crew's merges always wait for a person; its mode cannot be changed.".into(),
-                    ));
-                }
+                self.crew_mode_target(id)?;
                 ModeScope::Crew(id.to_owned())
             }
             _ => return Err(CoreError::Invalid("name the repository or crew".into())),
@@ -570,7 +545,8 @@ impl Core {
         })
     }
 
-    /// The after-merge Review queue, most urgent first, one page.
+    /// The after-merge Review queue and the background runs waiting with it: the merges most urgent first, one page, and
+    /// every background run that stopped without a merge, oldest first.
     pub fn autopilot_review_queue(
         &self,
         now: i64,
@@ -580,7 +556,40 @@ impl Core {
         let all = self.crew_review_queue(now)?;
         let mut scrubs = Scrubs::new(self)?;
         let mut areas = crate::crew::autopilot::AreaCache::new();
-        let items = slice(&all, page)
+        let total = all.merges.len();
+        let background_total = all.background.len();
+        // One window for both lists: the page continues while either one has more.
+        let next_offset = page.next(total.max(background_total));
+        // The person's own patterns mask the crew's name and the run's reason, as they mask every other field here.
+        let background_runs = slice(&all.background, page)
+            .into_iter()
+            .map(|item| {
+                let scrub = scrubs.of(&item.run_id);
+                Ok(wire::AutopilotBackgroundReviewItem {
+                    run_id: item.run_id,
+                    crew_id: item.crew_id,
+                    project_id: item.project_id,
+                    crew_name: scrub.text(&item.crew_name),
+                    template: parse_wire(&item.template)?,
+                    state: parse_wire(&item.state)?,
+                    stop_reason: item
+                        .stop_reason
+                        .as_deref()
+                        .map(parse_wire::<wire::BackgroundStopReason>)
+                        .transpose()?,
+                    review_reason: item.review_reason.as_deref().map(|why| scrub.text(why)),
+                    turns_spent: item.turns_spent,
+                    minutes_spent: item.minutes_spent,
+                    budget: wire::BackgroundBudget {
+                        turns: item.budget_turns,
+                        minutes: item.budget_minutes,
+                    },
+                    started_at: item.started_at,
+                    ended_at: item.ended_at,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let items = slice(&all.merges, page)
             .into_iter()
             .map(|item| {
                 let scrub = scrubs.of(&item.task_id);
@@ -627,8 +636,16 @@ impl Core {
             .collect();
         Ok(wire::AutopilotReviewQueue {
             items,
-            total: to_u32(all.len()),
-            next_offset: page.next(all.len()),
+            total: to_u32(total),
+            next_offset,
+            background_runs,
+            background_total: to_u32(background_total),
+            // KC3: the Inbox's waits, from the one needs-you field the queue already read.
+            waiting_elsewhere: all
+                .waiting_elsewhere
+                .into_iter()
+                .map(|(kind, count)| wire::AutopilotWaitingElsewhere { kind, count })
+                .collect(),
             now_unix: now,
         })
     }
@@ -707,6 +724,11 @@ impl Core {
         let commit = self
             .crew_answer_review(task_id, answer, &target, now)
             .await?;
+        // A person's local revert is a lesson of its own (source 2), written after the branch moved; a forge revert
+        // only queues the corrective PR, so nothing is reverted yet and nothing is learned. Neither can fail the act.
+        if matches!(answering, Answering::Revert) && commit.is_some() {
+            self.learn_person_merge_revert(task_id);
+        }
         // A forge revert queues a corrective PR: show exactly which commit will be pushed onto which base.
         let correction = if matches!(answering, Answering::Revert) {
             self.store.crew_forge_correction(task_id)?

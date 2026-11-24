@@ -110,7 +110,7 @@ async fn explicit_blank_uses_strict_selected_provider_and_real_diff() {
         .collect();
     let after = |flag| args[args.iter().position(|arg| *arg == flag).unwrap() + 1];
     assert_eq!(after("--tools"), "");
-    assert_eq!(after("--model"), "chosen-model");
+    assert_eq!(after("--model"), "haiku");
     assert_eq!(after("--permission-mode"), "dontAsk");
     for flag in [
         "--strict-mcp-config",
@@ -125,6 +125,35 @@ async fn explicit_blank_uses_strict_selected_provider_and_real_diff() {
     assert_eq!(boundary["ide"], "0");
     let private = boundary["cwd"].as_str().unwrap();
     assert!(!Path::new(private).exists(), "request directory retired");
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn the_per_engine_text_model_is_used_for_writing() {
+    let (dir, service, thread, record) = fixture("claude").await;
+    let cwd = dir.path().join("project");
+    let response = service
+        .client
+        .put(format!("{}/api/preferences", service.url))
+        .bearer_auth(&service.token)
+        .json(&json!({"values": {"text_generation_models": {
+            "codex": "fake-big", "claude": "fable"
+        }}}))
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    std::fs::write(cwd.join("tracked.txt"), "changed\n").unwrap();
+    let (status, result) = service
+        .send(
+            &format!("/api/threads/{thread}/git/action"),
+            json!({"commit_message":""}),
+        )
+        .await;
+    assert_eq!(status, 200, "{result}");
+    let args = std::fs::read_to_string(record.with_extension("args")).unwrap();
+    assert!(args.contains("fable"), "{args}");
+    assert!(!args.contains("fake-big"), "{args}");
     service.stop().await;
 }
 
@@ -222,7 +251,7 @@ async fn project_style_overrides_global_and_reset_restores_inheritance() {
             .json(&body)
             .send()
     };
-    assert!(put("/api/preferences".into(), json!({"values":{"source_control_writing_style":{"mode":"custom","custom_instructions":"Global sentence"},"text_generation_model":"explicit-writer"}})).await.unwrap().status().is_success());
+    assert!(put("/api/preferences".into(), json!({"values":{"source_control_writing_style":{"mode":"custom","custom_instructions":"Global sentence"},"text_generation_model":"fable"}})).await.unwrap().status().is_success());
     let path = format!("/api/projects/{project}/preferences");
     assert!(put(path.clone(), json!({"values":{"source_control_writing_style":{"mode":"custom","custom_instructions":"Project sentence"}}})).await.unwrap().status().is_success());
     std::fs::write(cwd.join("tracked.txt"), "[bad-scm-text]\n").unwrap();
@@ -238,7 +267,7 @@ async fn project_style_overrides_global_and_reset_restores_inheritance() {
     assert!(
         std::fs::read_to_string(record.with_extension("args"))
             .unwrap()
-            .contains("explicit-writer")
+            .contains("fable")
     );
     assert!(
         put(

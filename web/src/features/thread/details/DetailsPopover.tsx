@@ -9,6 +9,7 @@ import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { Button } from "../../../ui/controls";
 import { usePopover } from "../../../ui/usePopover";
+import { IssuesRow } from "../../issues";
 import { EngineNote } from "../../cursorthread";
 import { ToolsRow } from "../../tools";
 import { BranchRow } from "../GitControl";
@@ -118,6 +119,7 @@ export function DetailsPopover({ thread, onClose }: { thread: Thread; onClose():
           {branch && shows("branch") ? <BranchRow thread={thread} branch={branch} /> : null}
           {read("changes", <ChangesRow diff={loads.diff} />)}
           {shows("pulls") ? <PullsRow thread={thread} /> : null}
+          {shows("issues") ? <IssuesRow thread={thread} onOpened={() => dismiss("select")} /> : null}
           {shows("automations") ? <ThreadAutomations threadId={thread.id} /> : null}
           {shows("tools") ? <ToolsRow thread={thread} onOpen={() => dismiss("select")} /> : null}
           {read("servers", <ServersRow threadId={thread.id} servers={loads.servers} />)}
@@ -125,7 +127,7 @@ export function DetailsPopover({ thread, onClose }: { thread: Thread; onClose():
           {shows("usage") ? <UsageRow threadId={thread.id} /> : null}
           {read("scripts", <ScriptsRow threadId={thread.id} scripts={loads.scripts} />)}
           {/* Every engine has this row; one the service has a notice for adds it once answered. A note, not a row to turn off. */}
-          <EngineNote engine={thread.engine} engineName={engineName} modelName={modelName} />
+          <EngineNote projectId={thread.project_id} engine={thread.engine} engineName={engineName} modelName={modelName} />
           {shows("editor") ? <OpenInEditor threadId={thread.id} /> : null}
         </div>
       </DetailsDismiss.Provider>

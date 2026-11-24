@@ -1,4 +1,4 @@
-import { Check, Download, Folder, GitPullRequest, RefreshCw, TriangleAlert } from "lucide-react";
+import { Check, Download, Folder, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import type { EngineStatus } from "../../api/types";
 import { relativeTime } from "../../lib/format";
@@ -8,49 +8,11 @@ import { useUi } from "../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../product/state/workspace";
 import { ProjectBadge } from "../../product/ui/badges";
 import { Button } from "../../ui/controls";
-import { Menu, type MenuItem } from "../../ui/Menu";
-import { Presence } from "../../ui/Presence";
-import { TRACKER_NAMES, useTrackers, type TrackerRow } from "../issues";
+import { useTrackers, WelcomeTrackers } from "../issues";
+import { SkillsNotice } from "./SkillsNotice";
 import { useDefaultEngine } from "./useDefaultEngine";
 import { agentRow, listedAgents, noEngineReady, recentProjects, type AgentRow } from "./welcomeModel";
 import "./onboarding.css";
-
-const MARK: Record<string, string> = { github: "GH", gitlab: "GL", azure_devops: "AZ", forgejo: "FJ", linear: "LN" };
-
-/** Trackers: a token lives in the keychain behind the service and the page never sees one, so Connect goes to Settings. */
-function TrackerAction({ rows }: { rows: readonly TrackerRow[] }) {
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const items: MenuItem[] = rows.map((row) => ({
-    label: TRACKER_NAMES[row.tracker],
-    content: (
-      <span className="welcome-tracker">
-        <span className="welcome-mark" aria-hidden>{MARK[row.tracker]}</span>
-        <span>{TRACKER_NAMES[row.tracker]}{row.connected && row.scope ? <small> {"·"} {row.scope}</small> : null}</span>
-        <small className="welcome-tracker-act">{row.connected ? "Connected" : "Connect"}</small>
-      </span>
-    ),
-    onSelect: () => navigate({ name: "settings", section: "source-control" }),
-  }));
-  return (
-    <>
-      <button
-        type="button"
-        className="welcome-card"
-        aria-haspopup="menu"
-        aria-expanded={menu !== null}
-        onClick={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect();
-          setMenu(menu ? null : { x: rect.left, y: rect.bottom + 4 });
-        }}
-      >
-        <GitPullRequest size={18} aria-hidden />
-        <b>Connect a tracker</b>
-        <span>GitHub, GitLab, Azure DevOps, Forgejo, Linear</span>
-      </button>
-      <Presence>{menu ? <Menu x={menu.x} y={menu.y} label="Connect a tracker" items={items} onClose={() => setMenu(null)} /> : null}</Presence>
-    </>
-  );
-}
 
 function AgentRowView({ row, chosen, canChoose, onUse }: { row: AgentRow; chosen: boolean; canChoose: boolean; onUse(engine: EngineStatus): Promise<void> }) {
   const [busy, setBusy] = useState(false);
@@ -111,7 +73,8 @@ export function WelcomePage() {
       await defaults.choose(engine.id);
       pushToast(`New threads start on ${engine.name}.`);
     } catch (failure) {
-      pushToast(`Couldn't change the engine. ${toFailure(failure).message}`);
+      // The hook rethrows the service's words as a plain Error, so its message is the reason.
+      pushToast(`Couldn't change the engine. ${failure instanceof Error ? failure.message : toFailure(failure).message}`);
     }
   };
   const open = (id: string, trusted: boolean) => navigate(trusted ? { name: "new", projectId: id } : { name: "trust", projectId: id, threadId: null });
@@ -121,6 +84,7 @@ export function WelcomePage() {
         <h1 tabIndex={-1} data-page-title>Welcome to Orbyn Engineering</h1>
         <p>Open a project{trackers.rows !== null ? ", connect a tracker" : ""} and pick the engine your threads start with.</p>
       </header>
+      <SkillsNotice />
       {noEngineReady(engines) ? (
         <div className="welcome-banner" role="status">
           <TriangleAlert size={15} aria-hidden />
@@ -128,21 +92,8 @@ export function WelcomePage() {
           <Button small icon={<RefreshCw size={13} aria-hidden />} onClick={() => void refresh()}>Check again</Button>
         </div>
       ) : null}
-      <div className="welcome-cards">
-        <button type="button" className="welcome-card" onClick={() => setPalette("add-project")}>
-          <Folder size={18} aria-hidden />
-          <b>Open a project</b>
-          <span>A folder on this computer</span>
-        </button>
-        <button type="button" className="welcome-card" onClick={() => setPalette("add-project-url")}>
-          <Download size={18} aria-hidden />
-          <b>Clone a repository</b>
-          <span>Git URL, or owner/name on GitHub</span>
-        </button>
-        {trackers.rows !== null ? <TrackerAction rows={trackers.rows} /> : null}
-      </div>
       <section aria-labelledby="welcome-agents">
-        <h2 id="welcome-agents">Engine for new threads</h2>
+        <h2 id="welcome-agents">Agents</h2>
         {engines === null ? (
           <p className="welcome-quiet" role="status">Looking for agents…</p>
         ) : (
@@ -153,8 +104,15 @@ export function WelcomePage() {
           </ul>
         )}
       </section>
+      <WelcomeTrackers />
       <section aria-labelledby="welcome-projects">
-        <h2 id="welcome-projects">Recent projects</h2>
+        <h2 id="welcome-projects">Projects</h2>
+        <div className="welcome-project-actions">
+          <Button small icon={<Plus size={13} aria-hidden />} onClick={() => setPalette("add-project-new")}>New project</Button>
+          <Button small icon={<Download size={13} aria-hidden />} onClick={() => setPalette("add-project-url")}>Clone a repository</Button>
+          <Button tone="primary" small icon={<Folder size={13} aria-hidden />} onClick={() => setPalette("add-project")}>Add a folder</Button>
+        </div>
+        <h3 className="welcome-subhead">Recent projects</h3>
         {recent.length === 0 ? (
           <p className="welcome-quiet">Projects you open or clone show up here.</p>
         ) : (

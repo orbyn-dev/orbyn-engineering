@@ -233,3 +233,106 @@
   margin-left: auto;
   color: var(--color-muted);
 }
+.term-input-when {
+  margin-left: auto;
+  white-space: nowrap;
+}
+/* A row's result, from the design's `input-history` frame: a muted check when the command succeeded, a red cross when it failed. */
+.term-input-ok,
+.term-input-bad {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 14px;
+}
+.term-input-ok {
+  color: var(--color-muted);
+}
+.term-input-bad {
+  color: var(--color-danger);
+}
+.term-input-scope .text-action {
+  padding: 1px 8px;
+  border-radius: var(--radius-md);
+  background: var(--color-chip);
+  color: var(--color-chipText);
+}
+.term-input-wait {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px;
+  color: var(--color-muted);
+}
+.term-input-wait p {
+  margin: 0;
+}
+.term-input-wait span {
+  margin-left: auto;
+}
+/* The engine's proposed command: plain text in a box, with nothing run until Run is pressed. */
+.term-proposal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-raised);
+  font-size: var(--text-meta);
+  color: var(--color-textSoft);
+}
+.term-proposal header,
+.term-proposal footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.term-proposal header b {
+  color: var(--color-text);
+}
+.term-proposal-state {
+  padding: 1px 8px;
+  border-radius: var(--radius-md);
+  background: var(--color-chip);
+  color: var(--color-chipText);
+}
+.term-proposal-code {
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  max-height: 96px;
+  border-radius: var(--radius-sm);
+  background: var(--color-chip);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.term-proposal p {
+  margin: 0;
+}
+.term-proposal footer span {
+  margin-left: auto;
+  color: var(--color-muted);
+}
+.term-proposal footer button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.term-proposal-run {
+  padding: 2px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-selected);
+  color: var(--color-selectedText);
+  font: inherit;
+  cursor: pointer;
+}
+.term-proposal-run:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

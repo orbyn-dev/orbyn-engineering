@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import { canSendPersonKey } from "../../api/personKey";
 import { toFailure } from "../../lib/useAsync";
 import { navigate, routeHref, type Route } from "../../product/state/route";
 import { useWorkspace } from "../../product/state/workspace";
 import { Button, LinkButton } from "../../ui/controls";
 import { Empty, Loading } from "../../product/ui/states";
+import { TRUST_CONFIRM, TRUST_DECLINE, TRUST_DESKTOP_ONLY, TRUST_TITLE, TrustBody } from "../../product/ui/TrustPrompt";
 import "./onboarding.css";
 
 export function TrustFolder({ projectId, threadId }: { projectId: string; threadId: string | null }) {
@@ -18,6 +20,9 @@ export function TrustFolder({ projectId, threadId }: { projectId: string; thread
     ? { name: "thread", id: threadId }
     : { name: "new", projectId };
   const leave: Route = threadId ? { name: "thread", id: threadId } : { name: "home" };
+  // Trusting is a `Person` route: only a page that holds the person key may ask. A browser tab says why instead of
+  // offering a button the service would refuse.
+  const canTrust = canSendPersonKey();
 
   useEffect(() => {
     if (project?.trusted) navigate(next);
@@ -47,34 +52,24 @@ export function TrustFolder({ projectId, threadId }: { projectId: string; thread
     <div className="trust">
       <div className="trust-card" role="group" aria-labelledby="trust-title">
         <h1 id="trust-title" tabIndex={-1} data-page-title>
-          Trust {project.name}?
+          {TRUST_TITLE(project.name)}
         </h1>
-        <p>Agents can read files, run commands and edit code in this folder. Only trust folders you know.</p>
-        <dl className="trust-facts">
-          <div>
-            <dt>Path</dt>
-            <dd>
-              <code className="trust-path">{homeRelative(project.path)}</code>
-            </dd>
-          </div>
-        </dl>
+        <TrustBody path={project.path} />
+        {canTrust ? null : <p>{TRUST_DESKTOP_ONLY}</p>}
         {error ? (
           <p className="field-error" role="alert">
             {error}
           </p>
         ) : null}
         <div className="trust-actions">
-          <LinkButton href={routeHref(leave)}>Don’t trust</LinkButton>
-          <Button tone="primary" busy={busy} onClick={() => void trust()}>
-            Trust folder
-          </Button>
+          <LinkButton href={routeHref(leave)}>{TRUST_DECLINE}</LinkButton>
+          {canTrust ? (
+            <Button tone="primary" busy={busy} onClick={() => void trust()}>
+              {TRUST_CONFIRM}
+            </Button>
+          ) : null}
         </div>
       </div>
     </div>
   );
-}
-
-/** The folder as the person writes it: the home directory shortened to ~. */
-export function homeRelative(path: string): string {
-  return path.replace(/^(?:\/Users|\/home)\/[^/]+(?=\/|$)/, "~").replace(/^[A-Za-z]:\\Users\\[^\\]+/, "~");
 }

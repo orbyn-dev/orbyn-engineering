@@ -5,11 +5,12 @@ import type { MockApi } from "../../../mock/api";
 import { arrangeTimeline, groupWork } from "../../product/timeline/timeline";
 import type { ToolItem } from "../../product/timeline/types";
 import { forgetOpenState, OpenStateScope } from "../../ui/openState";
+import { codeRun } from "../../../mock/codemode";
 import { installMockFetch } from "../../test-support";
 import { TimelineRow } from "../thread/items";
 import { TimelineThread } from "../thread/timelineThread";
 import { resetCodeRuns } from "./useCodeRun";
-import type { CodeRunRecord } from "./types";
+import type { CodeRunCall, CodeRunRecord } from "./types";
 
 void arrangeTimeline;
 
@@ -29,20 +30,21 @@ const SCRIPT = [
   "// 12",
 ].join("\n");
 
-const call = (index: number, extra: Record<string, unknown> = {}) => ({ index, tool: "orbyn_thread_read", status: "ok", preview: '{"id":"t_41","status":"done"}', duration_ms: 200, ...extra });
+const call = (index: number, extra: Record<string, unknown> = {}): CodeRunCall => ({ index, tool: "orbyn_thread_read", status: "ok", preview: '{"id":"t_41","status":"done"}', duration_ms: 200, ...extra });
 
-const record = (extra: Partial<CodeRunRecord> = {}): CodeRunRecord => ({
-  run_id: "run_7c41e2",
-  status: "completed",
-  script: SCRIPT,
-  script_sha256: "3f9a1c0000000000000000000000000000000000000000000000000000000e07",
-  started_at: "2026-11-21T10:00:00.000Z",
-  ended_at: "2026-11-21T10:00:03.100Z",
-  calls: [call(1, { tool: "orbyn_thread_list", preview: "3 threads", duration_ms: 100 }), call(2), call(3)],
-  logs: ["1 of 3 failed"],
-  result: ["t_52"],
-  ...extra,
-});
+const record = (extra: Partial<CodeRunRecord> = {}): CodeRunRecord =>
+  codeRun({
+    run_id: "run_7c41e2",
+    status: "completed",
+    script: SCRIPT,
+    script_sha256: "3f9a1c0000000000000000000000000000000000000000000000000000000e07",
+    started_at: "2026-11-21T10:00:00.000Z",
+    ended_at: "2026-11-21T10:00:03.100Z",
+    calls: [call(1, { tool: "orbyn_thread_list", preview: "3 threads", duration_ms: 100 }), call(2), call(3)],
+    logs: ["1 of 3 failed"],
+    result: ["t_52"],
+    ...extra,
+  });
 
 const item = (reply: unknown | null, extra: Partial<ToolItem> = {}, args: unknown = { code: SCRIPT }): ToolItem => ({
   kind: "tool",
@@ -201,6 +203,17 @@ describe("the run card, failed", () => {
     expect(screen.getByText(message)).toBeInTheDocument();
   });
 
+  it("says a cancelled run was cancelled, never failed", async () => {
+    mock.codeMode.putRun(fail("cancelled", "The run was cancelled.", undefined, { calls: recorded }));
+    render(<Trail items={[item(reply("error", { error: { kind: "cancelled", message: "The run was cancelled." } }))]} />);
+    const row = await open();
+    await waitFor(() => expect(row).toHaveTextContent("· cancelled"));
+    expect(row).toHaveTextContent("Cancelled");
+    expect(row).not.toHaveTextContent("Failed");
+    expect(await screen.findByText("The run was cancelled.")).toBeInTheDocument();
+    expect(screen.getByText(/Error ·/)).toHaveTextContent("Error · cancelled");
+  });
+
   it("shows a declined call as Declined with the gate's reason", async () => {
     mock.codeMode.putRun(fail("denied", "orbyn_thread_send was declined.", undefined, { calls: [call(1), call(5, { tool: "orbyn_thread_send", status: "denied", preview: null })] }));
     render(<Trail items={[item(reply("error", { error: { kind: "denied", message: "orbyn_thread_send was declined." } }))]} />);
@@ -237,7 +250,7 @@ describe("the run card, failed", () => {
 
   it("marks a call that was running at the restart, counts it as unknown and never as done", async () => {
     const inflight = "A call that may have changed something was running when Orbyn restarted, so the run can't continue.";
-    mock.codeMode.putRun(fail("lost", inflight, undefined, { calls: [...recorded, call(5, { tool: "orbyn_thread_send", status: "in_flight", preview: null })] }));
+    mock.codeMode.putRun(fail("lost", inflight, undefined, { calls: [...recorded, call(5, { tool: "orbyn_thread_send", status: "running", preview: null })] }));
     render(<Trail items={[item(reply("error", { error: { kind: "lost", message: "x" } }))]} />);
     await open();
     expect(await screen.findByText(inflight)).toBeInTheDocument();
@@ -250,7 +263,7 @@ describe("the run card, failed", () => {
 
 describe("the run card, paused", () => {
   it("is amber, says what the run waits on and offers no script or raw result", async () => {
-    mock.codeMode.putRun(record({ status: "paused", ended_at: null, started_at: new Date(Date.now() - 42_000).toISOString(), calls: [call(1), call(5, { tool: "orbyn_thread_send", status: "waiting", preview: null })], pending: [{ tool: "orbyn_thread_send", call: 5 }], logs: [], result: undefined }));
+    mock.codeMode.putRun(record({ status: "paused", ended_at: null, started_at: new Date(Date.now() - 42_000).toISOString(), calls: [call(1), call(5, { tool: "orbyn_thread_send", status: "running", preview: null })], pending: [{ tool: "orbyn_thread_send", call: 5 }], logs: [], result: undefined }));
     render(<Trail items={[item(reply("paused", { pending: [{ tool: "orbyn_thread_send", call: 5 }] }))]} />);
     const row = await open();
     await waitFor(() => expect(row).toHaveClass("s-wait"));
@@ -360,6 +373,7 @@ describe("a run id the model chose", () => {
     const row = await open();
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/api/code-runs/"))).toBe(true));
     expect(row).toHaveClass("s-run");
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(document.querySelector("button.tcr")).not.toBeNull();
   });
@@ -380,5 +394,36 @@ describe("text the model controls is capped", () => {
     expect(err.textContent!.length).toBeLessThanOrEqual(4_100);
     expect(document.querySelectorAll(".cm-line").length).toBeLessThanOrEqual(5);
     expect(screen.getByLabelText("Script").textContent!.length).toBeLessThan(2_000);
+  });
+});
+
+describe("the run record from the real routes", () => {
+  it("draws a result the record cut as { truncated, bytes, preview } even when the reply carried none", async () => {
+    const cut = { truncated: true, bytes: 70_000, preview: '[{"id":"t_41"' };
+    mock.codeMode.putRun(record({ result: cut, truncated: true }));
+    render(<Trail items={[item(reply("completed"))]} />);
+    await open();
+    expect(await screen.findByText("The result was over 256 KiB. This is the first 64 KiB, as text.")).toBeInTheDocument();
+    expect(screen.getAllByText(/\{"id":"t_41"/).length).toBeGreaterThan(0);
+  });
+
+  it("reads an error kind the service sent as a plain string, and one it does not know as a runtime error", async () => {
+    mock.codeMode.putRun(record({ status: "error", result: undefined, error: { kind: "mystery", message: "Something odd." } }));
+    render(<Trail items={[item(reply("error", { error: { kind: "mystery", message: "Something odd." } }))]} />);
+    const row = await open();
+    await waitFor(() => expect(row).toHaveTextContent("· runtime error"));
+    expect(await screen.findByText(/^Error ·/)).toHaveTextContent("Error · runtime");
+  });
+
+  it("draws from the engine's reply, with no call list and no error, when the service does not offer Code Mode (404)", async () => {
+    mock.codeMode.setOffered(false);
+    render(<Trail items={[item(reply("completed", { result: ["t_52"], logs: ["1 of 3 failed"] }))]} />);
+    await open();
+    expect(await screen.findByText('["t_52"]')).toBeInTheDocument();
+    expect(screen.getByText("1 of 3 failed")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Calls" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    const reads = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).startsWith("/api/code-runs/"));
+    expect(reads).toHaveLength(1);
   });
 });

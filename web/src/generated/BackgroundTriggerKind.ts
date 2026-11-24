@@ -3,4 +3,4 @@
 /**
  * What would start a background crew. Nothing fires in this slice.
  */
-export type BackgroundTriggerKind = "ci_failure" | "issue_label" | "schedule" | "dependency_update";
+export type BackgroundTriggerKind = "ci_failure" | "issue_label" | "schedule" | "dependency_update" | "watch";

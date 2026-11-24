@@ -91,6 +91,8 @@ pub struct UpdateCenter {
     engines: Arc<EngineManager>,
     http: reqwest::Client,
     manifest_url: Option<String>,
+    /// ORBYN_OFFLINE: no automatic request at all.
+    offline: bool,
     known: Mutex<Known>,
     /// Lines for the desktop shell. Present exactly when one is attached.
     shell: Mutex<Option<mpsc::UnboundedSender<Value>>>,
@@ -115,6 +117,7 @@ impl UpdateCenter {
         engines: Arc<EngineManager>,
         http: reqwest::Client,
         manifest_url: Option<String>,
+        offline: bool,
     ) -> Self {
         Self {
             store,
@@ -122,6 +125,7 @@ impl UpdateCenter {
             engines,
             http,
             manifest_url,
+            offline,
             known: Mutex::new(Known::default()),
             shell: Mutex::new(None),
             changes: watch::channel(0).0,
@@ -402,28 +406,71 @@ impl UpdateCenter {
 
     /// Looks at the world without changing it. Each source fails on its own.
     pub async fn check(&self) -> UpdateStatus {
-        let mut errors = Vec::new();
-        if self.workspace.root().is_ok()
-            && let Err(error) = self.workspace.fetch().await
-        {
-            errors.push(format!("Library: {}", error.public_message()));
+        self.check_parts(true, true).await
+    }
+
+    /// `check` for the schedule: the library and the app follow `background_update_checks`,
+    /// the engine CLIs follow `enable_provider_update_checks`, each on its own.
+    async fn check_scheduled(&self) {
+        let app = self.store.settings().map_or(true, |settings| {
+            settings.background_update_checks != Some(false)
+        });
+        let providers = self.engines.provider_checks_on();
+        if app || providers {
+            self.check_parts(app, providers).await;
         }
-        match self.engines.statuses(true).await {
-            Ok(statuses) => {
-                let mut known = lock(&self.known);
-                for status in statuses {
-                    if let Some(latest) = status.latest {
-                        known.engine_latest.insert(status.id, latest);
-                    }
-                }
+    }
+
+    async fn check_parts(&self, app: bool, providers: bool) -> UpdateStatus {
+        // Three independent reads. A slow or stuck one (a library fetch waiting on the library lock, an engine
+        // lookup) must not hold back the others, so the app's release manifest is asked for at once.
+        let library = async {
+            if app && self.workspace.root().is_ok() {
+                self.workspace
+                    .fetch()
+                    .await
+                    .err()
+                    .map(|error| format!("Library: {}", error.public_message()))
+            } else {
+                None
             }
-            Err(error) => errors.push(format!("Engines: {}", error.public_message())),
-        }
-        if self.mode() == AppMode::Desktop {
-            self.to_shell(json!({ "type": "check_app_update" }));
-        } else if let Err(message) = self.check_manifest().await {
-            errors.push(format!("App: {message}"));
-        }
+        };
+        let engines = async {
+            if !providers {
+                return None;
+            }
+            match self.engines.statuses(true).await {
+                Ok(statuses) => {
+                    let mut known = lock(&self.known);
+                    for status in statuses {
+                        if let Some(latest) = status.latest {
+                            known.engine_latest.insert(status.id, latest);
+                        }
+                    }
+                    None
+                }
+                Err(error) => Some(format!("Engines: {}", error.public_message())),
+            }
+        };
+        let app_release = async {
+            if !app {
+                return None;
+            }
+            if self.mode() == AppMode::Desktop {
+                self.to_shell(json!({ "type": "check_app_update" }));
+                None
+            } else {
+                self.check_manifest()
+                    .await
+                    .err()
+                    .map(|message| format!("App: {message}"))
+            }
+        };
+        let (library, engines, app_release) = tokio::join!(library, engines, app_release);
+        let errors: Vec<String> = [library, engines, app_release]
+            .into_iter()
+            .flatten()
+            .collect();
         {
             let mut known = lock(&self.known);
             if errors.is_empty() {
@@ -841,19 +888,16 @@ impl UpdateCenter {
         Ok(())
     }
 
-    /// Checks at startup, then every six hours, unless the setting turns it off.
+    /// Checks at startup, then every six hours, unless ORBYN_OFFLINE or the settings turn
+    /// it off (`background_update_checks` for the library and app, `enable_provider_update_checks` for engine CLIs). This is the only schedule: the desktop shell checks when core asks.
     pub async fn run_checks(&self, stop: CancellationToken) {
         let mut ticks = tokio::time::interval(CHECK_INTERVAL);
         loop {
             tokio::select! {
                 () = stop.cancelled() => return,
                 _ = ticks.tick() => {
-                    let enabled = self
-                        .store
-                        .settings()
-                        .map_or(true, |settings| settings.background_update_checks != Some(false));
-                    if enabled {
-                        self.check().await;
+                    if !self.offline {
+                        self.check_scheduled().await;
                     }
                 }
             }

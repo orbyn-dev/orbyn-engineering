@@ -215,22 +215,51 @@ fn merged(own: &[KeybindingRule]) -> Vec<KeybindingRule> {
     rules
 }
 
-/// One key in one exact context with more than one command. Different contexts are
-/// how one key does two jobs, so they are not conflicts.
+/// Report exact-context collisions and unconditional bindings that overlap a context.
+/// Distinct nonempty contexts are left separate because they may be disjoint.
 fn conflicts(rules: &[KeybindingRule]) -> Vec<KeybindingConflict> {
     let mut found: Vec<KeybindingConflict> = Vec::new();
     for rule in rules {
+        let key = crate::account::settings_record::normalize_key(&rule.key);
+        let when = rule.when.as_ref().filter(|when| !when.trim().is_empty());
         match found
             .iter_mut()
-            .find(|known| known.key == rule.key && known.when == rule.when)
+            .find(|known| known.key == key && known.when.as_ref() == when)
         {
             Some(known) => known.commands.push(rule.command.clone()),
             None => found.push(KeybindingConflict {
-                key: rule.key.clone(),
-                when: rule.when.clone(),
+                key,
+                when: when.cloned(),
                 commands: vec![rule.command.clone()],
             }),
         }
+    }
+    for conflict in &mut found {
+        if conflict
+            .when
+            .as_deref()
+            .is_some_and(|when| !when.trim().is_empty())
+        {
+            let mut unconditional: Vec<String> = rules
+                .iter()
+                .filter(|rule| {
+                    crate::account::settings_record::normalize_key(&rule.key) == conflict.key
+                        && rule
+                            .when
+                            .as_deref()
+                            .is_none_or(|when| when.trim().is_empty())
+                })
+                .map(|rule| rule.command.clone())
+                .collect();
+            unconditional.append(&mut conflict.commands);
+            conflict.commands = unconditional;
+        }
+    }
+    for conflict in &mut found {
+        let mut seen = std::collections::HashSet::new();
+        conflict
+            .commands
+            .retain(|command| seen.insert(command.clone()));
     }
     found.retain(|conflict| conflict.commands.len() > 1);
     found
@@ -481,6 +510,75 @@ mod tests {
     }
 
     #[test]
+    fn repeated_command_in_overlapping_contexts_is_not_a_conflict() {
+        let rules = [
+            rule("mod+q", "same", None),
+            rule("mod+q", "same", Some("")),
+            rule("mod+q", "same", Some("!terminalFocus")),
+        ];
+        assert!(conflicts(&rules).is_empty());
+        let mut with_other = rules.to_vec();
+        with_other.push(rule("mod+q", "other", Some("!terminalFocus")));
+        let clashes = conflicts(&with_other);
+        assert_eq!(clashes.len(), 1);
+        assert_eq!(clashes[0].commands, ["same", "other"]);
+    }
+
+    #[test]
+    fn unconditional_context_variants_collide() {
+        let rules = [
+            rule("mod+q", "one", None),
+            rule("mod+q", "two", Some("")),
+            rule("mod+q", "three", Some("  ")),
+        ];
+        let clashes = conflicts(&merged(&rules));
+        let clash = clashes
+            .iter()
+            .find(|clash| clash.key == "mod+q")
+            .expect("unconditional rules overlap");
+        assert_eq!(clash.when, None);
+        assert_eq!(clash.commands, ["one", "two", "three"]);
+    }
+
+    #[test]
+    fn differently_spelled_keys_conflict_under_the_normalised_key() {
+        let rules = [rule("Mod+K", "a.one", None), rule("mod+k ", "a.two", None)];
+        let clashes = conflicts(&rules);
+        assert_eq!(clashes.len(), 1);
+        assert_eq!(clashes[0].key, "mod+k");
+        assert_eq!(clashes[0].commands, ["a.one", "a.two"]);
+        let mixed = [
+            rule("mod+k", "a.one", None),
+            rule("MOD+K", "a.two", Some("!terminalFocus")),
+        ];
+        let clashes = conflicts(&mixed);
+        assert_eq!(clashes.len(), 1);
+        assert_eq!(clashes[0].key, "mod+k");
+        assert_eq!(clashes[0].when.as_deref(), Some("!terminalFocus"));
+        assert_eq!(clashes[0].commands, ["a.one", "a.two"]);
+    }
+
+    #[test]
+    fn rebinding_sidebar_to_palette_key_reports_overlap() {
+        let rules = merged(&[rule("mod+k", "sidebar.toggle", None)]);
+        let clashes = conflicts(&rules);
+        let clash = clashes.iter().find(|clash| clash.key == "mod+k").unwrap();
+        assert_eq!(clash.when.as_deref(), Some("!terminalFocus"));
+        assert!(
+            clash
+                .commands
+                .iter()
+                .any(|command| command == "sidebar.toggle")
+        );
+        assert!(
+            clash
+                .commands
+                .iter()
+                .any(|command| command == "commandPalette.toggle")
+        );
+    }
+
+    #[test]
     fn the_file_rebinds_removes_and_reports_conflicts() {
         let rules = merged(&[rule("mod+y", "sidebar.toggle", None)]);
         assert!(
@@ -499,7 +597,17 @@ mod tests {
                 .any(|r| r.command == "terminal.toggle")
         );
         let clash = [rule("mod+q", "one", None), rule("mod+q", "two", Some("x"))];
-        assert!(conflicts(&merged(&clash)).is_empty(), "contexts differ");
+        assert_eq!(conflicts(&merged(&clash))[0].commands, ["one", "two"]);
+        let disjoint = [
+            rule("mod+q", "one", Some("terminalFocus")),
+            rule("mod+q", "two", Some("!terminalFocus")),
+        ];
+        assert!(conflicts(&merged(&disjoint)).is_empty());
+        let blank = [
+            rule("mod+q", "one", Some("  ")),
+            rule("mod+q", "two", Some("!terminalFocus")),
+        ];
+        assert_eq!(conflicts(&merged(&blank))[0].commands, ["one", "two"]);
         let same = [rule("a", "one", None), rule("a", "two", None)];
         assert_eq!(conflicts(&same)[0].commands, ["one", "two"]);
     }

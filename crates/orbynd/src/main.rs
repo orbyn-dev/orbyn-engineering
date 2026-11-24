@@ -183,6 +183,14 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
         known_engine_ids: known_engine_ids(std::env::var_os("ORBYN_KNOWN_ENGINE_IDS").as_deref())?,
         cache_dir: None,
         approval_timeout: defaults.approval_timeout,
+        engine_host: orbyn_core::agents::driver::host::HostConfig::from_env(
+            std::env::var_os("ORBYN_ENGINE_HOST"),
+            std::env::var("ORBYN_ENGINE_HOST_CLAUDE").ok().as_deref(),
+        )
+        .map(|host| {
+            host.with_acp(std::env::var("ORBYN_ENGINE_HOST_ACP").ok().as_deref())
+                .with_cursor(std::env::var("ORBYN_ENGINE_HOST_CURSOR").ok().as_deref())
+        }),
     };
     if let Ok(seconds) = std::env::var("ORBYN_APPROVAL_TIMEOUT_SECS") {
         let seconds: u64 = seconds
@@ -200,6 +208,9 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
     development_account(&mut config);
     // Crew is Preview and has no screen yet: a developer turns its tools on here.
     config.crew_preview = env_flag("ORBYN_CREW_PREVIEW");
+    config.code_mode = env_flag("ORBYN_CODE_MODE");
+    config.issues = env_flag("ORBYN_ISSUES");
+    config.multi_repo = env_flag("ORBYN_MULTI_REPO");
     (
         config.crew_merge_required_checks,
         config.crew_merge_watch_interval,
@@ -331,10 +342,12 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
         .map_err(|error| error.to_string())?
         .port();
     let base_url = format!("http://127.0.0.1:{port}");
-    let core = Arc::new(
-        Core::open(core_config(&args, base_url.clone())?).map_err(|error| error.to_string())?,
-    );
+    let config = core_config(&args, base_url.clone())?;
+    // The login shell can take its time; ask it once without holding up start-up.
+    std::thread::spawn(orbyn_core::host::child_env::warm_login_path);
+    let core = Arc::new(Core::open(config).map_err(|error| error.to_string())?);
     core.mcp.bind_host(&core);
+    core.engines.bind_host_core(&core);
     core.set_crew_engine_approvers();
     orbyn_core::operations::diagnostics::start_sampling();
     core.start_telemetry_export(telemetry_interval()?)
@@ -400,6 +413,20 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     let access = Arc::new(
         access
             .with_desktop(args.parent_stdin)
+            .with_refusal_audit({
+                let core = core.clone();
+                Arc::new(move |refusal: &http::access::PersonRefusal| {
+                    core.record_person_route_refusal(
+                        &refusal.method,
+                        &refusal.route,
+                        refusal.field,
+                        refusal.caller.as_str(),
+                        refusal.code,
+                    )
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+                })
+            })
             // A frame URL carries a capability for one published page instead of the
             // service token, and only core knows which render a token belongs to.
             .with_frames({
@@ -605,8 +632,9 @@ mod known_engine_config_tests {
             Some(vec!["opencode".into()])
         );
         for value in ["", "broken", "null", "{}", "[1]", r#""opencode""#] {
-            assert!(
-                known_engine_ids(Some(std::ffi::OsStr::new(value))).is_err(),
+            assert_eq!(
+                known_engine_ids(Some(std::ffi::OsStr::new(value))).unwrap_err(),
+                "ORBYN_KNOWN_ENGINE_IDS must be a JSON array of strings.",
                 "{value}"
             );
         }
@@ -636,11 +664,26 @@ mod crew_merge_config_tests {
         .unwrap();
         assert_eq!(checks, ["Rust (windows-2022)", "Web"]);
         assert_eq!(interval, Some(std::time::Duration::from_secs(60)));
-        for bad in ["null", "{}", r#"[""]"#, r#"["ci","ci"]"#, r#"[" ci"]"#] {
-            assert!(crew_merge_config(true, Some(OsStr::new(bad)), None).is_err());
+        for bad in ["null", "{}"] {
+            assert_eq!(
+                crew_merge_config(true, Some(OsStr::new(bad)), None).unwrap_err(),
+                "ORBYN_CREW_REQUIRED_CHECKS must be a JSON array of check names.",
+                "{bad}"
+            );
+        }
+        for bad in [r#"[""]"#, r#"["ci","ci"]"#, r#"[" ci"]"#] {
+            assert_eq!(
+                crew_merge_config(true, Some(OsStr::new(bad)), None).unwrap_err(),
+                "ORBYN_CREW_REQUIRED_CHECKS accepts at most 128 unique nonempty check names of at most 200 bytes.",
+                "{bad}"
+            );
         }
         for bad in ["0", "59", "86401", "invalid", "-1"] {
-            assert!(crew_merge_config(true, None, Some(OsStr::new(bad))).is_err());
+            assert_eq!(
+                crew_merge_config(true, None, Some(OsStr::new(bad))).unwrap_err(),
+                "ORBYN_CREW_WATCH_INTERVAL_SECS must be 60 to 86400, or unset to disable.",
+                "{bad}"
+            );
         }
     }
 }
@@ -662,7 +705,11 @@ mod background_watch_interval_tests {
             Some(std::time::Duration::from_secs(86400))
         );
         for bad in ["0", "59", "86401", "invalid", "-1"] {
-            assert!(background_watch_interval(Some(OsStr::new(bad))).is_err());
+            assert_eq!(
+                background_watch_interval(Some(OsStr::new(bad))).unwrap_err(),
+                "ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS must be 60 to 86400, or unset for off.",
+                "{bad}"
+            );
         }
     }
 }

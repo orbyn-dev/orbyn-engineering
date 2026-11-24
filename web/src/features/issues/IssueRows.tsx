@@ -1,7 +1,7 @@
 import type { IssueSummary } from "./contract";
 import { compactAge } from "../../lib/format";
 import { IssueGlyph } from "./IssueGlyph";
-import { stateWord, trackerName } from "./model";
+import { closedWords, stateWord, trackerName } from "./model";
 
 export function IssuesHead() {
   return (
@@ -25,7 +25,7 @@ export function IssueRows({ issues, onOpen }: { issues: IssueSummary[]; onOpen(i
         <li key={`${issue.tracker}:${issue.scope}:${issue.key}`} onClick={() => onOpen(issue)}>
           <span className="iss-cell-title">
             <button type="button" className="iss-open">{issue.title}</button>
-            <span className="iss-sub">{issue.display_key} · {trackerName(issue.tracker)}{issue.author ? ` · opened by ${issue.author.login}` : ""}</span>
+            <span className="iss-sub">{issue.display_key} · {trackerName(issue.tracker)}{issue.author ? ` · opened by ${issue.author.login}` : ""}{closedWords(issue) ? ` · ${closedWords(issue)}` : ""}</span>
           </span>
           <span className="iss-labels">{issue.labels.slice(0, 3).map((label, at) => <span key={`${at}:${label.name}`} className="iss-label">{label.name}</span>)}</span>
           <span className="iss-state"><IssueGlyph state={issue.state} />{stateWord(issue.state)}</span>
@@ -52,5 +52,20 @@ export function IssuesSkeleton() {
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * The one row after the last issue of the whole list while any tracker has more: one click asks for the next page, and a second click
+ * while it loads does nothing. When a page failed, a line next to the button says what failed in the service's words; the button is the retry.
+ */
+export function LoadMoreRow({ busy, failure, onLoad }: { busy: boolean; failure?: string | null; onLoad(): void }) {
+  return (
+    <div className="iss-more">
+      <button type="button" className="iss-state-btn" aria-busy={busy || undefined} onClick={() => { if (!busy) onLoad(); }}>
+        {busy ? <i className="iss-spin spin" aria-hidden /> : null}Load more
+      </button>
+      {failure ? <span className="iss-more-fail" role="alert">{failure}</span> : null}
+    </div>
   );
 }

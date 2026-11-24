@@ -10,6 +10,9 @@ import type { FlowCard } from "../../../generated/FlowCard";
 import { modeName, plural } from "../autopilot/approvals/areas";
 import { stopOf } from "../autopilot/approvals/ledger";
 import type { ApprovalRow, Risk } from "../autopilot/approvals/model";
+import type { NeedsYouItem } from "../../../generated/NeedsYouItem";
+import { whenLong } from "../autopilot/approvals/when";
+import { diskLowOf, diskSentence, NO_WORKER_RAN } from "../tool";
 import { KIND_FILTER, NEEDS_KINDS, type NeedsItem, type NeedsKind, type NeedsView } from "./model";
 
 const time = (text: string | null | undefined) => {
@@ -58,27 +61,77 @@ export function heldItems(rows: ApprovalRow[], now: number): NeedsItem[] {
 export const NEVER_RAN = "The worker never ran.";
 
 /**
+ * A could-not-start card with the refusal's structured fields, when the service sends them: the
+ * `CrewError`'s code and the two numbers (never a path). A card without them is an older answer and
+ * keeps the reason it carries.
+ */
+export type CouldNotStartCard = FlowCard & {
+  code?: string | null;
+  free_bytes?: number | null;
+  floor_gb?: number | null;
+};
+
+/**
  * Tasks refused at their start, from the Needs you column of each crew's board. Not an approval: nothing is asked of the person but
  * to retry the task on another engine or dismiss it, so the item has no Approve or Deny. The reason is the service's own redacted
- * text, drawn as text.
+ * text, drawn as text. A `disk_low` refusal is read from its code and numbers, never from that sentence: it writes the disk
+ * sentence, says what did not happen, and offers Dismiss only (another engine writes to the same disk).
  */
-export function couldNotStartItems(cards: FlowCard[]): NeedsItem[] {
+export function couldNotStartItems(cards: CouldNotStartCard[]): NeedsItem[] {
   return cards
     .filter((card) => card.could_not_start)
-    .map((card) => ({
-      id: `task:${card.id}`,
-      kind: "could_not_start" as const,
-      // The task's name: the narrow card's title (its kind label says "Could not start"). The wide row keeps the drawn frame's "Could not start" in bold (NeedsRow).
-      title: card.name?.trim() || card.id,
-      risk: null,
-      undo: null,
-      from: `Task ${card.name?.trim() || card.id}${card.engine ? ` · ${card.engine}` : ""}`,
-      cost: card.reason?.trim() || NEVER_RAN,
-      since: time(card.updated_at),
-      engine: card.engine ?? undefined,
-      actions: [{ key: "retry" as const, label: "Retry on another engine", primary: true }, { key: "dismiss" as const, label: "Dismiss" }],
-      ref: card.id,
-    }));
+    .map((card) => {
+      const lowDisk = diskLowOf(card);
+      return {
+        id: `task:${card.id}`,
+        kind: "could_not_start" as const,
+        // The task's name: the narrow card's title (its kind label says "Could not start"). The wide row keeps the drawn frame's "Could not start" in bold (NeedsRow).
+        title: card.name?.trim() || card.id,
+        risk: null,
+        undo: null,
+        from: `Task ${card.name?.trim() || card.id}${card.engine ? ` · ${card.engine}` : ""}`,
+        cost: lowDisk ? diskSentence(lowDisk.free_bytes, lowDisk.floor_gb) : (card.reason?.trim() || NEVER_RAN),
+        hint: lowDisk ? NO_WORKER_RAN : undefined,
+        since: time(card.updated_at),
+        engine: card.engine ?? undefined,
+        actions: lowDisk
+          ? [{ key: "dismiss" as const, label: "Dismiss" }]
+          : [{ key: "retry" as const, label: "Retry on another engine", primary: true }, { key: "dismiss" as const, label: "Dismiss" }],
+        ref: card.id,
+      };
+    });
+}
+
+/** The sentence of the design when the service's item carries no line of its own. */
+export const WORKER_MAY_RUN = "Its worker may still be running. Stop it again.";
+
+/**
+ * Tasks whose last cancel attempt could not stop their worker (kc2-close-lead-could-not-stop). The task's name and engine come
+ * from the board card when there is one; the item alone names only the task's id. The line is the service's own (the card and the
+ * row carry the same sentence). Not dismissible: only stopping the task again clears it, and that never restarts the task.
+ */
+export function couldNotStopItems(read: { items: NeedsYouItem[]; cards: Record<string, FlowCard> }): NeedsItem[] {
+  return read.items
+    .filter((item) => item.kind === "could_not_stop")
+    .map((item) => {
+      const card = read.cards[item.id];
+      const name = card?.name?.trim() || `Task ${item.id}`;
+      const engine = [card?.engine, card?.model].filter(Boolean).join(" · ");
+      return {
+        id: `stuck:${item.id}`,
+        kind: "could_not_stop" as const,
+        title: name,
+        risk: null,
+        undo: null,
+        from: engine || `Task ${item.id}`,
+        cost: item.reason?.trim() || WORKER_MAY_RUN,
+        since: time(item.since),
+        ...(card?.engine ? { engine: card.engine } : {}),
+        actions: [{ key: "stop-again" as const, label: "Stop again", primary: true }, { key: "open" as const, label: "Open task" }],
+        ref: item.id,
+        ...(item.project_id ? { project: item.project_id } : {}),
+      };
+    });
 }
 
 /** Dismissing a stop is local to this device: nothing is sent to the service. */
@@ -173,6 +226,42 @@ export function backgroundItems(runs: { crew: BackgroundCrew; runs: BackgroundRu
         };
       }),
   );
+}
+
+/** The streak a could-not-run reason opens with ("3 checks in a row could not run: timed out."), as read; null when it has none. */
+const STREAK = /^(\d+) checks? in a row/;
+
+/**
+ * The two watch rows of the Needs you read (KC6, watch-needsyou): a watch whose command turned failing and asked for the
+ * person, and one whose last three checks in a row could not run. Both settle themselves on a check that runs again, so
+ * neither is dismissible; each action opens the watch itself. The core's one redacted line is the reason, and the design's
+ * sentence says how it settles. A watch whose crew is not in the list keeps its id's row without a name it cannot learn.
+ */
+export function watchItems(read: { items: NeedsYouItem[]; names: Record<string, string> }): NeedsItem[] {
+  return read.items.map((item) => {
+    const name = read.names[item.crew_id ?? item.id] ?? item.id;
+    const reason = item.reason?.trim() || (item.kind === "watch_failing" ? "The watch’s command is failing." : "Checks in a row could not run.");
+    const streak = item.kind === "watch_could_not_run" ? STREAK.exec(reason)?.[1] : undefined;
+    const failing = item.kind === "watch_failing";
+    return {
+      id: `watch:${item.id}`,
+      kind: "background" as const,
+      title: failing ? `Watch failing: ${name}` : `Watch could not run: ${name}`,
+      risk: null,
+      undo: null,
+      // `since` is the latest check (the service's row time), not the streak's first error: only a "one row since" claim is true.
+      from: failing
+        ? `Watch · ${name} · turned failing ${whenLong(item.since)}`
+        : `Watch · ${name} · ${streak ? `${streak} checks in a row · one row since` : "one row since"} ${whenLong(item.since)}`,
+      cost: failing
+        ? `${reason} This is raised once for this change and is meant not to repeat while the check keeps failing. It resolves itself when a check passes.`
+        : `${reason} One row for the whole stretch: it is updated at each later check, not repeated, and it resolves itself when a check passes.`,
+      since: time(item.since),
+      actions: [{ key: "open" as const, label: "Open", primary: true }],
+      ref: item.crew_id ?? item.id,
+      ...(item.project_id ? { project: item.project_id } : {}),
+    };
+  });
 }
 
 const RISK_RANK: Record<Risk, number> = { high: 0, medium: 1, low: 2 };

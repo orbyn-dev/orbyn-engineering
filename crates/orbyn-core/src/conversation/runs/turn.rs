@@ -87,7 +87,7 @@ impl RunManager {
             let binding = McpBinding {
                 scope: scope.clone(),
                 permission_prompt: driver.family() == "claude",
-                skills: route.selection.clone(),
+                skills: self.skills.tool_selection(&route)?,
             };
             // A warm process already holds its token, which now answers for this run.
             let reused = warm
@@ -151,6 +151,9 @@ impl RunManager {
         } else {
             warm
         };
+        // The engine reads an attached text file itself, so it is given a masked copy in the run's
+        // own folder; the person's file stays as uploaded (docs/attachments-transcripts.md).
+        let files = self.masked_attachment_copies(&thread.project_id, &files, run_dir)?;
         let mut context = run_context(&RunContext {
             library: &root,
             revision: &revision,
@@ -168,6 +171,14 @@ impl RunManager {
             handoff: handoff.as_deref(),
         });
         let kind = RunKind::parse(&prompt);
+        // What the engine reads is masked once, here, for every engine; the person's own
+        // message, the queue and the timeline keep the text as typed. A `/goal` is kept as typed.
+        let sent_prompt = self.mask_for_engine(&thread.project_id, &prompt)?;
+        let sent_kind = if sent_prompt == prompt {
+            kind.clone()
+        } else {
+            RunKind::parse(&sent_prompt)
+        };
         // An app's note rides with the next ordinary turn only, and the timeline
         // records exactly what was sent before the engine sees it.
         if kind == RunKind::Turn
@@ -221,12 +232,12 @@ impl RunManager {
             cwd: start,
             library: root,
             checkout,
-            prompt: format!("{context}\n\n{prompt}"),
+            prompt: format!("{context}\n\n{sent_prompt}"),
             context,
-            kind,
+            kind: sent_kind,
             mode: scope.mode,
             plan: scope.plan,
-            user_prompt: prompt,
+            user_prompt: sent_prompt,
             model: chosen.model.clone(),
             effort: chosen.effort.clone(),
             options: chosen.options.clone(),
@@ -377,6 +388,14 @@ impl RunManager {
         )
         .is_ok_and(|mode| mode == "turn");
         let mut shaper = EventShaper::new(whole);
+        // What this run was asked to return (M20), and the assistant's words as they go by.
+        let request = self
+            .results
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&scope.run_id)
+            .cloned();
+        let mut answer = result::AnswerText::default();
         // A note taken for this turn is on the timeline before anything the engine says.
         let sent = self
             .notes_sent
@@ -447,15 +466,20 @@ impl RunManager {
                             EngineOutcome::Failed("The engine stopped without finishing.".into())
                         };
                     };
+                    // A leftover turn's events are shown like any other, but are not the engine answering.
+                    let (event, own_turn) = split_leftover(event);
                     // Anything else keeps its place after the text before it.
                     if !matches!(event, EngineEvent::Agui(_))
                         && let Some(outcome) = self.write_events(scope, shaper.flush())
                     {
                         break outcome;
                     }
-                    replied |= shows_work(&event, &mut user_messages);
+                    replied |= shows_work(&event, &mut user_messages) && own_turn;
                     match event {
                         EngineEvent::Agui(event) => {
+                            if own_turn && request.is_some() {
+                                answer.observe(&event);
+                            }
                             if let Some(outcome) = self.write_events(scope, shaper.push(event)) {
                                 break outcome;
                             }
@@ -522,6 +546,7 @@ impl RunManager {
                                 break outcome;
                             }
                         }
+                        EngineEvent::Leftover(_) => {}
                         EngineEvent::Finished(EngineOutcome::Completed)
                             if expects_reply && !replied =>
                         {
@@ -533,6 +558,18 @@ impl RunManager {
             }
         };
         let _ = self.write_events(scope, shaper.flush());
+        if let Some(request) = &request
+            && matches!(outcome, EngineOutcome::Completed)
+            && !cancelling
+        {
+            let text = answer.finish().unwrap_or_default();
+            let events = request.events(&text);
+            if self.write_events(scope, events).is_none() {
+                tracing::debug!(run = %scope.run_id, bytes = text.len(), "recorded a typed turn result");
+            } else {
+                tracing::warn!(run = %scope.run_id, "could not record a typed turn result");
+            }
+        }
         // Blocked engines hear a denial even when the engine ended on its own.
         if let Err(error) = self
             .gate
@@ -604,6 +641,14 @@ impl RunManager {
     }
 }
 
+/// A leftover turn's event as itself, and whether it is the prompt's own: only the prompt's own counts as the engine answering.
+fn split_leftover(event: EngineEvent) -> (EngineEvent, bool) {
+    match event {
+        EngineEvent::Leftover(inner) => (*inner, false),
+        event => (event, true),
+    }
+}
+
 /// How a run reads when the engine ended an ordinary turn without saying or doing anything.
 pub(super) const NO_REPLY: &str =
     "No reply: the engine finished without answering. Send your message again.";
@@ -649,6 +694,24 @@ mod reply_tests {
 
     fn agui(event: AgUiEvent) -> EngineEvent {
         EngineEvent::Agui(event)
+    }
+
+    #[test]
+    fn a_leftover_turns_words_are_shown_but_are_not_the_engine_answering() {
+        let said = || {
+            agui(AgUiEvent::TextMessageContent {
+                message_id: "a".into(),
+                delta: "the old agent finished".into(),
+            })
+        };
+        let (shown, own) = split_leftover(EngineEvent::Leftover(Box::new(said())));
+        assert!(!own, "a leftover turn is not the prompt's");
+        assert!(
+            matches!(shown, EngineEvent::Agui(_)),
+            "it is still shown as itself"
+        );
+        let (_, own) = split_leftover(said());
+        assert!(own, "an ordinary event is the prompt's");
     }
 
     #[test]

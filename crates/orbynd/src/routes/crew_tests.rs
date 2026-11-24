@@ -103,6 +103,7 @@ impl Drop for Served {
 
 fn concrete(path: &str) -> String {
     path.replace("{task_id}", "task-1")
+        .replace("{thread_id}", "thread-1")
         .replace("{id}", "task-1")
 }
 
@@ -821,6 +822,10 @@ async fn the_review_queue_and_the_log_page() {
     assert_eq!(queue["items"].as_array().unwrap().len(), 1);
     assert_eq!(queue["total"], 1);
     assert!(queue["next_offset"].is_null());
+    // No background run waits, and the field is still served: the join is read-only and additive.
+    assert_eq!(queue["background_runs"], json!([]));
+    // KC3: what waits elsewhere is the one needs-you field; nothing waits for this person here, and the field is served.
+    assert_eq!(queue["waiting_elsewhere"], json!([]));
     let (_, first) = app.call("GET", "/api/crew/approvals?limit=2", None).await;
     assert_eq!(first["rows"].as_array().unwrap().len(), 2);
     assert_eq!(first["total"], 5);
@@ -869,10 +874,11 @@ fn the_wire_types_round_trip_and_carry_no_key_or_secret_field() {
     let change: wire::AutopilotModeChange =
         serde_json::from_value(json!({ "scope": "default", "mode": "on" })).unwrap();
     assert_eq!(change.id, None);
-    assert!(
+    let unknown =
         serde_json::from_value::<wire::AutopilotModeChange>(json!({ "scope": "x", "mode": "on" }))
-            .is_err()
-    );
+            .unwrap_err()
+            .to_string();
+    assert!(unknown.contains("unknown variant `x`"), "{unknown}");
     let body: wire::AutopilotAnswerBody =
         serde_json::from_value(json!({ "merge_commit": "abc1234" })).unwrap();
     assert_eq!(body.text, None);

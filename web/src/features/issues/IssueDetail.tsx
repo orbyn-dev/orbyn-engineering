@@ -1,5 +1,5 @@
-import { ArrowLeft, ExternalLink as ExternalIcon, Plus } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, ExternalLink as ExternalIcon, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Plus } from "lucide-react";
+import { useRef, useState } from "react";
 import { relativeTime, compactAge } from "../../lib/format";
 import { safeHref } from "../../lib/links";
 import { useWaited } from "../../lib/motion";
@@ -11,25 +11,33 @@ import { PageBar } from "../../product/ui/PageBar";
 import { Button } from "../../ui/controls";
 import { ApiFailure } from "../../api/client";
 import { Markdown } from "../content";
-import { issuesApi, useApiVersion } from "./api";
-import { isTracker, stateWord, trackerName } from "./model";
-import type { IssueDetail as Detail, IssueSummary } from "./contract";
+import { issuesApi, useApiVersion, useEditOffered } from "./api";
+import { capText, closedWords, isIssueKey, isTracker, pullWord, stateWord, trackerName } from "./model";
+import type { IssueDetail as Detail, LinkedPullRequest } from "./contract";
+import { PickerEditor, useDescriptionEditor, type EditProps, type IssueWriter } from "./IssueEdit";
 import { IssueGlyph } from "./IssueGlyph";
-import { useIssueThreads } from "./links";
+import { IssueStateButton } from "./IssueStateMenu";
+import { reloadIssueLinks, useIssueThreads } from "./links";
 import { StartThreadDialog } from "./StartThreadDialog";
 
-function Person({ login }: { login: string }) {
+export function Person({ login }: { login: string }) {
   return <span className="iss-person"><span className="iss-avatar" aria-hidden>{login.slice(0, 2).toUpperCase()}</span>{login}</span>;
 }
 
 function LinkedThreads({ issue, onStart }: { issue: Detail; onStart(): void }) {
-  const { threadIds, loaded } = useIssueThreads(issue);
+  const { threadIds, loaded, failed, retry } = useIssueThreads(issue);
   const threads = useWorkspace((state) => state.threads);
   const known = threadIds.flatMap((id) => (threads[id] ? [threads[id]] : []));
   return (
     <section className="iss-card" role="group" aria-label="Linked threads">
       <h2>Linked threads</h2>
-      {known.length === 0 ? <p className="iss-quiet">{loaded ? "No thread is linked to this issue yet." : ""}</p> : (
+      {known.length === 0 && failed ? (
+        // The thread links are their own read: only this card says it failed, and the facts and the pull requests stay.
+        <div className="iss-start-fail" role="alert">
+          <span className="iss-quiet">Couldn’t read the linked threads. Nothing changed.</span>
+          <Button onClick={() => void retry()}>Retry</Button>
+        </div>
+      ) : known.length === 0 ? <p className="iss-quiet">{loaded ? "No thread is linked to this issue yet." : ""}</p> : (
         <ul className="iss-threads">
           {known.map((thread) => (
             <li key={thread.id}>
@@ -47,14 +55,69 @@ function LinkedThreads({ issue, onStart }: { issue: Detail; onStart(): void }) {
   );
 }
 
-function Body({ issue }: { issue: Detail }) {
+const PULL_ICON = { merged: GitMerge, closed: GitPullRequestClosed, draft: GitPullRequestDraft, open: GitPullRequest } as const;
+
+/** One pull request the tracker reports against the issue. Its words are the tracker's text, capped; only a plain https address is opened. */
+function PullRow({ pull }: { pull: LinkedPullRequest }) {
+  const href = safeHref(pull.url);
+  const word = pullWord(pull);
+  const Icon = PULL_ICON[pull.state === "open" && pull.is_draft ? "draft" : pull.state];
+  const body = (
+    <>
+      <span className="iss-pr-line">
+        <Icon size={14} aria-hidden />
+        <b>{capText(pull.title, 200)}</b>
+        {word ? <span className="iss-pr-state">{word}</span> : null}
+      </span>
+      <span className="iss-pr-sub">
+        <span>#{pull.number}</span>
+        <span>{capText(pull.repository, 80)}</span>
+        {pull.closes_issue ? <span>Closes this issue</span> : null}
+      </span>
+    </>
+  );
+  return <li>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{body}</a> : <span className="iss-pr-plain">{body}</span>}</li>;
+}
+
+/** What the tracker reports of its own accord, in its order. No CI or checks status: the contract carries none. */
+function LinkedPullRequests({ pulls }: { pulls: LinkedPullRequest[] }) {
+  // Shown only when the tracker reports a pull request: an empty card on every issue says nothing.
+  if (pulls.length === 0) return null;
+  return (
+    <section className="iss-card" role="group" aria-label="Linked pull requests">
+      <h2>{`Linked pull requests · ${pulls.length}`}</h2>
+      <ul className="iss-prs">{pulls.map((pull, at) => <PullRow key={`${at}:${pull.repository}#${pull.number}`} pull={pull} />)}</ul>
+    </section>
+  );
+}
+
+function Entry({ issue }: { issue: Detail }) {
+  return (
+    <article className="iss-entry">
+      <header>{issue.author ? <Person login={issue.author.login} /> : <span className="iss-quiet">Unknown author</span>}<span className="iss-quiet">opened {relativeTime(issue.created_at).toLowerCase()}</span></header>
+      {/* Escaped Markdown through the app's safe renderer: no HTML, and remote images stay links. */}
+      <div className="iss-body"><Markdown text={issue.body} remoteImages="link" /></div>
+    </article>
+  );
+}
+
+/** The post with the description editor: the header's pencil, and the editor in place of the text while it is open. */
+function EditableEntry({ issue, edit }: { issue: Detail; edit: EditProps }) {
+  const { pencil, editor, editing } = useDescriptionEditor(edit);
+  return (
+    <article className="iss-entry">
+      <header>{issue.author ? <Person login={issue.author.login} /> : <span className="iss-quiet">Unknown author</span>}<span className="iss-quiet">opened {relativeTime(issue.created_at).toLowerCase()}</span>{pencil}</header>
+      {editing ? editor : <div className="iss-body"><Markdown text={issue.body} remoteImages="link" /></div>}
+    </article>
+  );
+}
+
+/** `page` is the issue as a page: it adds the description pencil (Planned until the service offers editing) and the linked pull requests after the description; the panel tab does not. */
+export function Body({ issue, page = false, edit }: { issue: Detail; page?: boolean; edit?: EditProps }) {
   return (
     <div className="iss-main">
-      <article className="iss-entry">
-        <header>{issue.author ? <Person login={issue.author.login} /> : <span className="iss-quiet">Unknown author</span>}<span className="iss-quiet">opened {relativeTime(issue.created_at).toLowerCase()}</span></header>
-        {/* Escaped Markdown through the app's safe renderer: no HTML, and remote images stay links. */}
-        <div className="iss-body"><Markdown text={issue.body} remoteImages="link" /></div>
-      </article>
+      {page && edit ? <EditableEntry issue={issue} edit={edit} /> : <Entry issue={issue} />}
+      {page ? <LinkedPullRequests pulls={issue.linked_pull_requests} /> : null}
       {issue.comments.map((comment) => (
         <article key={comment.id} className="iss-entry">
           <header>{comment.author ? <Person login={comment.author.login} /> : <span className="iss-quiet">Unknown author</span>}<span className="iss-quiet">{relativeTime(comment.created_at).toLowerCase()}</span></header>
@@ -65,31 +128,54 @@ function Body({ issue }: { issue: Detail }) {
   );
 }
 
-function Facts({ issue }: { issue: IssueSummary }) {
+function Facts({ issue, edit }: { issue: Detail; edit: EditProps }) {
   return (
     <section className="iss-card" role="group" aria-label="Facts">
       <dl>
-        <dt>State</dt><dd className="iss-state"><IssueGlyph state={issue.state} />{stateWord(issue.state)}</dd>
+        <dt>State</dt><dd><IssueStateButton issue={issue} write={edit.write} writing={edit.writing} /></dd>
         <dt>Tracker</dt><dd>{trackerName(issue.tracker)}</dd>
         <dt>Author</dt><dd>{issue.author?.login ?? "Unknown"}</dd>
-        <dt>Assignees</dt><dd>{issue.assignees.length === 0 ? <span className="iss-quiet">None</span> : issue.assignees.map((who) => <Person key={who.login} login={who.login} />)}</dd>
-        <dt>Labels</dt><dd>{issue.labels.length === 0 ? <span className="iss-quiet">None</span> : issue.labels.map((label, at) => <span key={`${at}:${label.name}`} className="iss-label">{label.name}</span>)}</dd>
+        <dt>Assignees</dt><dd>{issue.assignees.length === 0 ? <span className="iss-quiet">None</span> : issue.assignees.map((who) => <Person key={who.login} login={who.login} />)}<PickerEditor kind="assignees" {...edit} /></dd>
+        <dt>Labels</dt><dd>{issue.labels.length === 0 ? <span className="iss-quiet">None</span> : issue.labels.map((label, at) => <span key={`${at}:${label.name}`} className="iss-label">{label.name}</span>)}<PickerEditor kind="labels" {...edit} /></dd>
+        <dt>Opened</dt><dd>{relativeTime(issue.created_at).toLowerCase()}</dd>
+        {closedWords(issue) ? <><dt>Closed</dt><dd>{relativeTime(issue.closed_at!).toLowerCase()}</dd></> : null}
         <dt>Updated</dt><dd>{relativeTime(issue.updated_at).toLowerCase()}</dd>
       </dl>
     </section>
   );
 }
 
-/** One issue as a page, read only: the tracker is where it is written. The one write is Start a thread, from a click. */
-export function IssueDetail({ tracker, issueKey }: { tracker: string; issueKey: string }) {
+/** One issue as a page. Start a thread is a click; the state, description, labels and assignees are written only when the service offers them, one write at a time. */
+export function IssueDetail({ tracker, scope, issueKey }: { tracker: string; scope: string; issueKey: string }) {
   const version = useApiVersion();
   const phone = useLayoutWidth() === "phone";
   const [starting, setStarting] = useState(false);
-  const read = useAsync(`issues:detail:${version}:${tracker}:${issueKey}`, async (signal) => {
-    if (!isTracker(tracker)) throw new ApiFailure("not_found", "No such tracker.", 404);
-    return issuesApi().get(tracker, issueKey, signal);
+  const offered = useEditOffered();
+  const read = useAsync(`issues:detail:${version}:${tracker}:${scope}:${issueKey}`, async (signal) => {
+    if (!isTracker(tracker) || !isIssueKey(issueKey)) throw new ApiFailure("not_found", "No such tracker.", 404);
+    return issuesApi().get({ tracker, scope, key: issueKey }, signal);
   });
   const waited = useWaited(read.status === "loading");
+  // One write at a time on this page, whichever control makes it: a second click, or another control, while one is in flight is
+  // refused and calls nothing. The answer is the updated issue and replaces what is shown; the state a write leaves out is kept.
+  const [writing, setWriting] = useState(false);
+  const locked = useRef(false);
+  const shown = useRef(read.data);
+  shown.current = read.data;
+  const write: IssueWriter = async (call) => {
+    if (locked.current) return null;
+    locked.current = true;
+    setWriting(true);
+    try {
+      const next = await call();
+      read.setData({ ...next, states: next.states ?? shown.current?.states });
+      void reloadIssueLinks(version);
+      return next;
+    } finally {
+      locked.current = false;
+      setWriting(false);
+    }
+  };
   const back = <a className="iss-back" href={routeHref({ name: "issues" })}><ArrowLeft size={14} aria-hidden />Back to Issues</a>;
   const issue = read.data;
   const href = issue ? safeHref(issue.url) : null;
@@ -116,10 +202,10 @@ export function IssueDetail({ tracker, issueKey }: { tracker: string; issueKey: 
                 {href ? <a className="btn btn-secondary" href={href} target="_blank" rel="noopener noreferrer"><ExternalIcon size={14} aria-hidden />Open on {trackerName(read.data.tracker)}</a> : null}
                 <Button tone="primary" onClick={() => setStarting(true)}>Start a thread</Button>
               </div>
-              <Body issue={read.data} />
+              <Body issue={read.data} page edit={{ issue: read.data, offered, write, writing }} />
             </div>
             <aside className="iss-right">
-              <Facts issue={read.data} />
+              <Facts issue={read.data} edit={{ issue: read.data, offered, write, writing }} />
               <LinkedThreads issue={read.data} onStart={() => setStarting(true)} />
             </aside>
           </div>

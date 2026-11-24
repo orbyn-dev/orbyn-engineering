@@ -16,6 +16,7 @@ afterEach(() => {
   useThreadPulls.setState({ byThread: {} });
 });
 
+// Real wait: one macrotask turn lets already-resolved promises settle; no clock is involved.
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("pull requests linked to a thread", () => {

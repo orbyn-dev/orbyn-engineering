@@ -1,13 +1,13 @@
 import { useEffect } from "react";
 import { create } from "zustand";
-import { codeModeLive, getCodeRun } from "./api";
+import { getCodeRun } from "./api";
 import type { CodeRunRecord } from "./types";
 
 const POLL_MS = 2_000;
 
 interface RunStore {
   records: ReadonlyMap<string, CodeRunRecord>;
-  /** Runs whose record could not be read (gone after seven days, or not this project's). They are not asked again. */
+  /** Runs whose record could not be read (gone after seven days, not this project's, or Code Mode not offered). They are not asked again. */
   missing: ReadonlySet<string>;
 }
 
@@ -21,7 +21,11 @@ function refresh(runId: string): Promise<void> {
   const open = inflight.get(runId);
   if (open) return open;
   const read = getCodeRun(runId)
-    .then((record) => useRuns.setState((state) => ({ records: new Map(state.records).set(runId, record) })))
+    .then((record) =>
+      useRuns.setState((state) =>
+        record ? { records: new Map(state.records).set(runId, record) } : { missing: new Set(state.missing).add(runId) },
+      ),
+    )
     .catch(() => useRuns.setState((state) => ({ missing: new Set(state.missing).add(runId) })))
     .finally(() => inflight.delete(runId));
   inflight.set(runId, read);
@@ -34,15 +38,31 @@ export function resetCodeRuns() {
   useRuns.setState({ records: new Map(), missing: new Set() });
 }
 
+/** Puts the record a write answered into the store, so every block showing the run draws it at once. */
+export function applyCodeRun(record: CodeRunRecord): void {
+  useRuns.setState((state) => {
+    const records = new Map(state.records).set(record.run_id, record);
+    if (!state.missing.has(record.run_id)) return { records };
+    const missing = new Set(state.missing);
+    missing.delete(record.run_id);
+    return { records, missing };
+  });
+}
+
+/** Reads a run again now, as the two-second poll does. A failed read marks it missing and never throws. */
+export function refreshCodeRun(runId: string): Promise<void> {
+  return refresh(runId);
+}
+
 /**
  * The run record for a run id, read again every two seconds while the run is not over (or while `keepWatching`, for an
  * approval that waits on it). Null until it is read, and null for good when it cannot be: the caller draws from the engine's
- * reply then. In a production build nothing is read.
+ * reply then (also when the service does not offer Code Mode: every route answers 404).
  */
 export function useCodeRun(runId: string | null, keepWatching = false): CodeRunRecord | null {
   const record = useRuns((state) => (runId ? state.records.get(runId) : undefined));
   useEffect(() => {
-    if (!runId || !codeModeLive) return;
+    if (!runId) return;
     let stopped = false;
     const tick = () => {
       const now = useRuns.getState();

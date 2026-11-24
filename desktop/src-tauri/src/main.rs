@@ -6,6 +6,7 @@ mod chrome;
 mod core_process;
 mod desktop_origin;
 mod engine_host;
+mod folder_picker;
 mod image_picker;
 mod links;
 mod menu;
@@ -13,6 +14,7 @@ mod person_key;
 mod presence;
 mod restart_policy;
 mod shell_state;
+mod snapshot;
 mod system;
 mod window_actions;
 
@@ -21,14 +23,11 @@ use links::ServicePort;
 use menu::Zoom;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::webview::{NewWindowResponse, WebviewWindowBuilder};
 use tauri::{AppHandle, Manager, RunEvent, WebviewWindow, WindowEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
-
-const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 struct Core(Mutex<Option<CoreProcess>>);
 /// Fences window requests queued by an earlier service process.
@@ -482,6 +481,7 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -489,6 +489,7 @@ fn main() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(Core(Mutex::new(None)))
         .manage(presence::Presence::default())
+        .manage(snapshot::SnapShot::default())
         .manage(Restarts::default())
         .manage(ServiceGeneration::default())
         .manage(app_update::Updates::default())
@@ -499,7 +500,7 @@ fn main() {
         .manage(menu::QuitItem::default())
         .menu(menu::build)
         .on_menu_event(menu::on_event)
-        .invoke_handler(tauri::generate_handler![restart_core, show_core_log, quit_core, presence::crew_presence, person_key::person_key])
+        .invoke_handler(tauri::generate_handler![restart_core, show_core_log, quit_core, presence::crew_presence, person_key::person_key, folder_picker::pick_folder, snapshot::snapshot_state, snapshot::snapshot_configure, snapshot::snapshot_capture, snapshot::snapshot_take, snapshot::snapshot_discard, snapshot::snapshot_setup])
         .setup(|app| {
             core_process::startup_phase("setup-started");
             let handle = app.handle().clone();
@@ -521,13 +522,9 @@ fn main() {
                     open_link(&handle, url.to_string());
                 }
             }
-            std::thread::spawn(move || {
-                launch_core(&handle);
-                loop {
-                    app_update::check(&handle, handle.state::<ServiceGeneration>().0.load(Ordering::SeqCst));
-                    std::thread::sleep(UPDATE_CHECK_INTERVAL);
-                }
-            });
+            // Core schedules the app update check (startup, every six hours) and asks the
+            // shell for it, so the setting and ORBYN_OFFLINE are honoured in one place.
+            std::thread::spawn(move || launch_core(&handle));
             Ok(())
         })
         .on_window_event(|window, event| match event {

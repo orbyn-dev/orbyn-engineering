@@ -1,6 +1,8 @@
 import { callDuration } from "../../lib/format";
 import type { Approval } from "../../api/types";
-import type { ApprovalVia, CallStatus, CodeCall, CodeErrorKind, CodeRunError, CodeReply, CodeRunCallWire, CodeRunRecord, CodeRunStatus, RunView } from "./types";
+import { parsed } from "../../product/timeline/toolTrace";
+import type { ToolItem } from "../../product/timeline/types";
+import type { ApprovalVia, CallStatus, CodeCall, CodeErrorKind, CodeReply, CodeRunCall, CodeRunRecord, CodeRunStatus, RunError, RunView } from "./types";
 
 export const CODE_TOOLS = ["orbyn_code_search", "orbyn_code_describe", "orbyn_code_run"] as const;
 export type CodeTool = "search" | "describe" | "run";
@@ -59,43 +61,40 @@ const MAX_MESSAGE_CHARS = 4_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** A run id as the service makes it: letters, digits, `_` and `-`, at most 64. The id is untrusted text; anything else gets no anchor and no link. */
+export const isRunId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value);
+
+/** The `id` of a run's block in the transcript, or null for an id that is not a run id. */
+export const runAnchorId = (runId: unknown): string | null => (isRunId(runId) ? `cm-run-${runId}` : null);
+
+/** The run id a code-run call's block carries, from its reply or its resume argument; null for another tool or an unusable id. */
+export function runIdOf(item: ToolItem): string | null {
+  if (codeToolOf(item.name) !== "run") return null;
+  const reply = readReply(item.result);
+  const args = parsed(item.args);
+  const runId = reply?.runId ?? (typeof args.run_id === "string" ? args.run_id : null);
+  return isRunId(runId) ? runId : null;
+}
+
 /** The approval's `via`, or null. Display only: nothing that decides an approval reads it. */
 export function viaOf(approval: Approval): ApprovalVia | null {
-  const via = (approval as Approval & { via?: unknown }).via;
+  const via = approval.via;
   if (!isRecord(via)) return null;
   const { code_run: run, call, script_sha256: sha } = via;
   if (typeof run !== "string" || run === "" || typeof call !== "number" || !Number.isInteger(call)) return null;
   return { codeRun: run, call, scriptSha256: typeof sha === "string" ? sha : null };
 }
 
+/** The four words a call's `status` can be on the wire (docs/code-mode.md). Any other word is "unknown", never a success. */
 const CALL_WORDS = new Map<string, CallStatus>(Object.entries({
   running: "running",
-  started: "running",
-  waiting: "waiting",
-  held: "waiting",
-  pending: "waiting",
-  waiting_approval: "waiting",
-  waiting_for_approval: "waiting",
   ok: "done",
-  done: "done",
-  completed: "done",
-  success: "done",
-  error: "failed",
   failed: "failed",
-  failure: "failed",
   denied: "declined",
-  declined: "declined",
-  expired: "expired",
-  timed_out: "expired",
-  invalid: "refused",
-  refused: "refused",
-  in_flight: "interrupted",
-  interrupted: "interrupted",
-  lost: "interrupted",
 }));
 
-/** A call from the record. A status this file does not know is "unknown", never a success. */
-export function normalizeCall(call: CodeRunCallWire): CodeCall {
+/** A call from the record, by its own word. Whether a running call is really held or cut off is `callsOf`'s to say. */
+export function normalizeCall(call: CodeRunCall): CodeCall {
   return {
     index: call.index,
     tool: call.tool,
@@ -106,7 +105,23 @@ export function normalizeCall(call: CodeRunCallWire): CodeCall {
   };
 }
 
-const KINDS: readonly CodeErrorKind[] = ["syntax", "runtime", "limit", "denied", "lost"];
+/**
+ * The calls of a record, read with the run they belong to. The service stores a call that was started and not finished as
+ * `running`, so: in a `paused` run, a running call that `pending` names is waiting for a person; in a run that ended as `error`
+ * (a restart cut it off), a running call is "interrupted", never counted as done.
+ */
+export function callsOf(record: CodeRunRecord): CodeCall[] {
+  const held = new Set((Array.isArray(record.pending) ? record.pending : []).map((entry) => entry.call));
+  return (Array.isArray(record.calls) ? record.calls : []).slice(0, LIMITS.calls).map((wire) => {
+    const call = normalizeCall(wire);
+    if (call.status !== "running") return call;
+    if (record.status === "paused" && held.has(call.index)) return { ...call, status: "waiting" };
+    if (record.status === "error") return { ...call, status: "interrupted" };
+    return call;
+  });
+}
+
+const KINDS: readonly CodeErrorKind[] = ["syntax", "runtime", "limit", "denied", "lost", "cancelled"];
 const STATUSES: readonly CodeRunStatus[] = ["running", "paused", "completed", "error"];
 
 /** The reply an engine read from `orbyn_code_run`, or null when the text is not one. Never throws. */
@@ -141,7 +156,7 @@ export function readReply(text: string | null): CodeReply | null {
 /** What the block draws: the run record when it was read, otherwise only what the engine's reply carried. */
 export function runView(record: CodeRunRecord | null, reply: CodeReply | null, script: string | null = null): RunView | null {
   const cap = (value: string | null) => (value === null ? null : value.slice(0, MAX_SCRIPT_CHARS));
-  const fit = (error: CodeRunError | null | undefined): CodeRunError | null =>
+  const fit = (error: { kind: string; message: string; line?: number | null } | null | undefined): RunError | null =>
     error ? { ...error, kind: KINDS.find((known) => known === error.kind) ?? "runtime", message: capText(String(error.message), MAX_MESSAGE_CHARS) } : null;
   if (record) {
     return {
@@ -150,14 +165,14 @@ export function runView(record: CodeRunRecord | null, reply: CodeReply | null, s
       script: cap(record.script ?? script),
       scriptSha256: record.script_sha256 ?? null,
       startedAt: record.started_at,
-      endedAt: record.ended_at,
-      calls: (Array.isArray(record.calls) ? record.calls : []).slice(0, LIMITS.calls).map(normalizeCall),
-      logs: record.logs ?? reply?.logs ?? [],
+      endedAt: record.ended_at ?? null,
+      calls: callsOf(record),
+      logs: Array.isArray(record.logs) ? record.logs : (reply?.logs ?? []),
       logsTotal: record.logs_total ?? null,
       result: record.result !== undefined ? record.result : reply?.result,
       hasResult: record.result !== undefined || (reply !== null && "result" in reply),
       error: fit(record.error ?? reply?.error),
-      pending: record.pending ?? reply?.pending ?? [],
+      pending: Array.isArray(record.pending) ? record.pending : (reply?.pending ?? []),
       truncated: record.truncated === true || reply?.truncated === true,
       resumes: record.resumes ?? 0,
       waitedMs: record.waited_ms ?? null,
@@ -196,6 +211,7 @@ const ERROR_NOTES = new Map<string, string>(Object.entries({
   limit: "· limit",
   denied: "· denied",
   lost: "· lost",
+  cancelled: "· cancelled",
 }));
 
 export const callWord = (count: number): string => `${count} ${count === 1 ? "call" : "calls"}`;
@@ -216,7 +232,8 @@ export function rowSummary(view: RunView, now: number): { note: string; due: str
   const calls = view.calls.length;
   if (view.status === "error") {
     const kind = view.error?.kind ?? "runtime";
-    return { note: ERROR_NOTES.get(kind) ?? "· runtime error", due: kind === "lost" ? "Lost" : "Failed", tone: "fail" };
+    const due = kind === "lost" ? "Lost" : kind === "cancelled" ? "Cancelled" : "Failed";
+    return { note: ERROR_NOTES.get(kind) ?? "· runtime error", due, tone: "fail" };
   }
   if (view.status === "paused") {
     const finished = view.calls.filter((call) => call.status !== "waiting" && call.status !== "running").length;

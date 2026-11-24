@@ -3,7 +3,8 @@ import { useUi } from "../../../product/state/ui";
 import { Segmented } from "../../../ui/Segmented";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { PreferenceGroups } from "../rows/PreferenceRows";
-import { heading, Toggle } from "./parts";
+import { Toggle } from "./parts";
+import { SearchEngineRows } from "./SearchEngineRows";
 
 const MOD = typeof navigator !== "undefined" && /mac/i.test(navigator.platform) ? "⌘" : "Ctrl";
 
@@ -16,14 +17,12 @@ export function ChatSection() {
   const followUpBehavior = useUi((state) => state.followUpBehavior);
   const persistent = useUi((state) => state.persistentComposerContext);
   const proactive = useUi((state) => state.proactivePanels);
-  const searchEngine = useUi((state) => state.previewSearchEngine);
   const linkTarget = useUi((state) => state.linkTarget);
   const autoFloat = useUi((state) => state.autoFloatPreview);
   const skillsInSlash = useUi((state) => state.skillsInSlashMenu);
   const setPrefs = useUi((state) => state.setPrefs);
   return (
     <>
-      {heading("Chat")}
       <SettingGroup>
         <SettingRow title={settingsLabel("chat-chat-width")}>
           <Segmented
@@ -86,16 +85,7 @@ export function ChatSection() {
         <Toggle title={settingsLabel("chat-open-changes-after-large-turns")} description="Opens the Changes panel by itself" on={proactive} set={(on) => setPrefs({ proactivePanels: on })} />
       </SettingGroup>
       <SettingGroup>
-        <SettingRow title={settingsLabel("chat-search-engine")} description="For the Browser panel’s address bar">
-          <select aria-label="Search engine" value={searchEngine} onChange={(event) => setPrefs({ previewSearchEngine: event.target.value })}>
-            <option value="duckduckgo">DuckDuckGo</option>
-            <option value="google">Google</option>
-            <option value="bing">Bing</option>
-            <option value="brave">Brave</option>
-            <option value="kagi">Kagi</option>
-            <option value="startpage">Startpage</option>
-          </select>
-        </SettingRow>
+        <SearchEngineRows />
         <SettingRow title={settingsLabel("chat-open-links-in")}>
           <Segmented
             label="Open links in"

@@ -1,6 +1,7 @@
 import { CornerDownRight, Pencil, Send, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import { steerWithMark } from "../../product/state/steerMarks";
 import type { QueuedMessage } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
 import { Button, IconButton } from "../../ui/controls";
@@ -41,7 +42,7 @@ export function QueuedMessages({
             <IconButton
               label={`Add to the running turn: ${item.prompt}`}
               onClick={() =>
-                act(api.steer(threadId, item.prompt).then(() => api.removeQueued(item.id)))
+                act(steerWithMark(threadId, item.prompt).then(() => api.removeQueued(item.id)))
               }
             >
               <CornerDownRight size={14} aria-hidden />

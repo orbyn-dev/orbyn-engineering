@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{MatchedPath, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use orbyn_contracts::{
@@ -467,6 +467,7 @@ pub async fn stack_action(
 
 pub async fn checkout(
     State(state): State<AppState>,
+    matched: MatchedPath,
     Path((id, number)): Path<(String, u64)>,
     headers: HeaderMap,
     ApiJson(body): ApiJson<CheckoutPull>,
@@ -475,7 +476,9 @@ pub async fn checkout(
     // the branch routes), so it needs the person key, and it is refused before the fetch. `worktree: true` adds a worktree
     // and leaves that checkout alone, so it stays `Local`.
     if !body.worktree {
-        state.access.person_check(&headers)?;
+        state
+            .access
+            .person_check_field(&headers, "POST", matched.as_str(), "worktree")?;
     }
     Ok(Json(
         state
@@ -572,67 +575,97 @@ pub async fn forges(
     Json(state.core.forges(rescan).await)
 }
 
+/// A multi-repository thread's repository for a pull request call, as `?repo_id=`; absent is the primary one.
+#[derive(serde::Deserialize)]
+struct RepoQuery {
+    #[serde(default)]
+    repo_id: Option<String>,
+}
+
 async fn linked_pulls(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<RepoQuery>,
 ) -> ApiResult<impl IntoResponse> {
     state.core.store.thread(&id)?;
-    Ok(Json(state.core.store.linked_pulls(&id)?))
+    let reply = orbyn_core::in_repo(query.repo_id, async {
+        let repo = state.core.pull_repo(&id)?;
+        state.core.store.linked_pulls(&id, &repo)
+    })
+    .await?;
+    Ok(Json(reply))
 }
 
 async fn link_pull(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<RepoQuery>,
     ApiJson(body): ApiJson<LinkPull>,
 ) -> ApiResult<impl IntoResponse> {
     Ok((
         StatusCode::CREATED,
-        Json(state.core.link_pull(&id, body.number).await?),
+        Json(orbyn_core::in_repo(query.repo_id, state.core.link_pull(&id, body.number)).await?),
     ))
 }
 
 async fn unlink_pull(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<RepoQuery>,
 ) -> ApiResult<StatusCode> {
-    state.core.store.unlink_pull(&id, number)?;
+    orbyn_core::in_repo(query.repo_id, async {
+        state.core.scoped_thread(&id)?;
+        let repo = state.core.pull_repo(&id)?;
+        state.core.store.unlink_pull(&id, &repo, number)
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn refresh_pulls(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<RepoQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.refresh_pulls(&id).await?))
+    Ok(Json(
+        orbyn_core::in_repo(query.repo_id, state.core.refresh_pulls(&id)).await?,
+    ))
 }
 
 async fn pull_detail(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<RepoQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.pull_detail(&id, number).await?))
+    Ok(Json(
+        orbyn_core::in_repo(query.repo_id, state.core.pull_detail(&id, number)).await?,
+    ))
 }
 
 async fn review_pull(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<RepoQuery>,
     ApiJson(body): ApiJson<SubmitReview>,
 ) -> ApiResult<StatusCode> {
-    state
-        .core
-        .review_pull(&id, number, &body, LOCAL_USER)
-        .await?;
+    orbyn_core::in_repo(
+        query.repo_id,
+        state.core.review_pull(&id, number, &body, LOCAL_USER),
+    )
+    .await?;
     Ok(StatusCode::ACCEPTED)
 }
 
 async fn merge_pull(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<RepoQuery>,
     ApiJson(body): ApiJson<MergePull>,
 ) -> ApiResult<StatusCode> {
-    state
-        .core
-        .merge_pull(&id, number, &body, LOCAL_USER)
-        .await?;
+    orbyn_core::in_repo(
+        query.repo_id,
+        state.core.merge_pull(&id, number, &body, LOCAL_USER),
+    )
+    .await?;
     Ok(StatusCode::ACCEPTED)
 }

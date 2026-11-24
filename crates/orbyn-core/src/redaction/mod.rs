@@ -2,9 +2,12 @@
 //! settings that decide where each applies. See [README](README.md).
 
 mod api;
+pub(crate) use api::redactor_from;
 mod builtin;
 pub mod changes;
 mod custom;
+mod literal;
+mod prefilter;
 mod redactor;
 mod settings;
 
@@ -13,7 +16,8 @@ pub use custom::{
     MAX_CONTEXT_LINES, MAX_LINE_CHARS, MAX_NAME_CHARS, MAX_PATTERN_CHARS, MAX_PATTERNS,
     MAX_SAMPLE_CHARS, Problem, compile,
 };
-pub use redactor::{Custom, Redactor, Span};
+pub use literal::LiteralMasker;
+pub use redactor::{Custom, Redactor, Span, cut_safely};
 pub use settings::{Stored, StoredPattern, Surface};
 
 #[cfg(test)]

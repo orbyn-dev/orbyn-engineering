@@ -1,12 +1,17 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it, vi } from "vitest";
-import { request } from "../../../api/client";
+import { beforeEach, expect, it, vi } from "vitest";
+import type { MockApi } from "../../../../mock/api";
 import type { EngineStatus } from "../../../api/types";
 import type { ProviderEntry } from "../../../generated/ProviderEntry";
+import { installMockFetch } from "../../../test-support";
+import { seedPreference } from "../rows/seedPreference.test-support";
 import { ProviderTable } from "./ProviderTable";
 
-vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+let mock: MockApi;
+beforeEach(() => {
+  mock = installMockFetch();
+});
 
 const store = { raw: [], instances: [], disabled: false, error: null, conflict: false, save: vi.fn(), reload: vi.fn() };
 const engine = (patch: Partial<EngineStatus>): EngineStatus => ({
@@ -16,9 +21,9 @@ const engine = (patch: Partial<EngineStatus>): EngineStatus => ({
 const entry = (patch: Partial<ProviderEntry>): ProviderEntry => ({ id: "claude", name: "Claude Code", group: "in_use", labels: [], registered: true, openable: true, ...patch });
 
 /** What the per-project switch holds: the engines turned off here. */
-function show(engines: EngineStatus[], providers: ProviderEntry[], off: string[] = []) {
-  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [{ key: "disabled_engines", revision: "r", value: off, mixed: false, default: [], project_scoped: true,
-    environment: { source: "default", value: off, default: [] }, members: [], overrides: [] }] } as never);
+/** `off` null leaves the setting unsaved, so the popover reads the service's default. */
+function show(engines: EngineStatus[], providers: ProviderEntry[], off: string[] | null = []) {
+  if (off !== null) seedPreference(mock, "disabled_engines", off);
   const open = vi.fn();
   render(<ProviderTable store={store} onOpen={open} onEdit={() => undefined} engines={engines} catalog={{ providers }} />);
   return open;
@@ -79,7 +84,7 @@ it("lists the other unverified engines under More engines with their note and pr
 it("says Limited support beside Ready on an older version", async () => {
   show([engine({})], [entry({ labels: ["limited_support"], note: "Update to the supported version." })]);
   await switches();
-  const row = rowOf("Claude Code");
+  const row = rowOf("Claude (SDK)");
   expect(within(row).getByText("Ready")).toBeVisible();
   expect(within(row).getByText("Limited support")).toBeVisible();
 });
@@ -88,13 +93,43 @@ it("puts a known-broken engine under Found, can’t start and still opens it", a
   const open = show([engine({})], [entry({ group: "cant_start", labels: ["cant_start"], note: "0.1.2 corrupts sessions." })]);
   await switches();
   expect(tables()).toEqual(["Found, can’t start"]);
-  await userEvent.click(screen.getByRole("button", { name: "Claude Code" }));
+  await userEvent.click(screen.getByRole("button", { name: "Claude (SDK)" }));
   expect(open).toHaveBeenCalledWith("claude");
+});
+
+it("shows Can’t start once for an installed Codex that cannot start, with no Ready", async () => {
+  show([engine({ id: "codex", name: "Codex" })], [
+    entry({ id: "codex", name: "Codex", group: "cant_start", labels: ["cant_start"], note: "Codex is installed, but it cannot start." }),
+  ]);
+  await switches();
+  const row = rowOf("Codex");
+  expect(within(row).getAllByText("Can’t start")).toHaveLength(1);
+  expect(within(row).queryByText("Ready")).toBeNull();
+});
+
+it("keeps the Version column in the DOM on a narrow table, where CSS alone hides it", async () => {
+  show([engine({})], [entry({})]);
+  await switches();
+  expect(screen.getByRole("table", { name: "Providers" })).toHaveClass("set-tbl", "prov");
+  expect(screen.getByRole("columnheader", { name: "Version" })).toBeInTheDocument();
+  const row = rowOf("Claude (SDK)");
+  const cells = within(row).getAllByRole("cell");
+  expect(cells).toHaveLength(6);
+  expect(cells[2]).toHaveTextContent("2.1.318");
+  expect(cells[2]).not.toHaveStyle({ display: "none" });
+});
+
+it("keeps the In use inheritance popover out of the table's width container", async () => {
+  show([engine({})], [entry({})], null);
+  await switches();
+  await userEvent.click(screen.getByRole("button", { name: "Default" }));
+  const popup = screen.getByRole("dialog", { name: "Providers in use" });
+  expect(popup.closest(".set-tbl.prov")).toBeNull();
+  expect(document.body.contains(popup)).toBe(true);
 });
 
 it("keeps an engine whose program was not found, with its switch and Edit", async () => {
   const instance = engine({ id: "mine", name: "Claude Code · Mine", instance_of: "claude", installed: false, path: null, version: null });
-  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
   render(<ProviderTable store={{ ...store, instances: [{ id: "mine", driver: "claude", enabled: true }] }} onOpen={() => undefined} onEdit={() => undefined} engines={[instance]}
     catalog={{ providers: [entry({ id: "mine", name: "Claude Code · Mine", group: "not_found", labels: ["not_found"] })] }} />);
   const row = rowOf("Claude Code");
@@ -128,8 +163,8 @@ it("keeps a non-beta detail closed even when older catalog data says it opens", 
 it("shows Signed out for a signed-out engine even with no sign-in command", async () => {
   show([engine({ auth: "logged_out", sign_in_command: null })], [entry({})]);
   await switches();
-  expect(within(rowOf("Claude Code")).getByText("Signed out")).toBeVisible();
-  expect(within(rowOf("Claude Code")).queryByText("Ready")).toBeNull();
+  expect(within(rowOf("Claude (SDK)")).getByText("Signed out")).toBeVisible();
+  expect(within(rowOf("Claude (SDK)")).queryByText("Ready")).toBeNull();
 });
 
 it("lists a refused program as a card that says so, with no action", async () => {
@@ -162,14 +197,12 @@ it("lists an engine that is not built as Planned, with no action", async () => {
 });
 
 it("falls back to one flat table of the engines until the service answers", () => {
-  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
   render(<ProviderTable store={store} onOpen={() => undefined} onEdit={() => undefined} engines={[engine({})]} />);
   expect(screen.getByRole("table", { name: "Providers" })).toBeVisible();
   expect(screen.queryAllByRole("rowgroup")).toHaveLength(0);
 });
 
 it("opens beta instances but keeps other families closed before catalog loading", async () => {
-  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
   const open = vi.fn();
   render(<ProviderTable store={store} onOpen={open} onEdit={() => undefined} engines={[
     engine({ id: "work", name: "OpenCode · Work", instance_of: "opencode", tier: "acp" }),
@@ -178,4 +211,63 @@ it("opens beta instances but keeps other families closed before catalog loading"
   await userEvent.click(screen.getByRole("button", { name: "OpenCode · Work" }));
   expect(open).toHaveBeenCalledExactlyOnceWith("work");
   expect(screen.queryByRole("button", { name: "Cline" })).toBeNull();
+});
+
+it("writes the program alone as an ACP row's line, with Unmanaged for the ones Orbyn cannot ask", async () => {
+  const acp = (id: string, name: string): EngineStatus => engine({ id, name, tier: "acp", installed: true, auth: "not_applicable", path: `/usr/local/bin/${id}`, version: null });
+  show([acp("kiro", "Kiro"), acp("kimi", "Kimi Code")], [
+    entry({ id: "kiro", name: "Kiro", group: "more", labels: ["unmanaged", "not_verified"], note: "kiro-cli", openable: false }),
+    entry({ id: "kimi", name: "Kimi Code", group: "more", labels: ["not_verified"], note: "kimi", openable: false }),
+  ], ["kiro", "kimi"]);
+
+  await waitFor(() => expect(tables()).toEqual(["More engines"]));
+  const kiro = rowOf("Kiro");
+  expect(within(kiro).getByText("kiro-cli")).toBeVisible();
+  expect(within(kiro).queryByText("via ACP")).toBeNull();
+  expect(within(kiro).getByText("Unmanaged")).toBeVisible();
+  expect(within(kiro).getByText("Not verified")).toBeVisible();
+  const kimi = rowOf("Kimi Code");
+  expect(within(kimi).getByText("kimi")).toBeVisible();
+  expect(within(kimi).queryByText("Unmanaged")).toBeNull();
+});
+
+it("lists the six ACP engines not installed as via ACP and Not found alone, with nothing to open (frame acp-status-list-not-installed-narrow)", async () => {
+  const acp = (id: string, name: string): EngineStatus => engine({ id, name, tier: "acp", installed: false, auth: "not_applicable", path: null, version: null });
+  const rows = [["kiro", "Kiro"], ["droid", "Factory Droid"], ["omp", "Oh My Pi"], ["mistral-vibe", "Mistral Vibe"], ["glm", "GLM"], ["kimi", "Kimi Code"]] as const;
+  show(rows.map(([id, name]) => acp(id, name)), rows.map(([id, name]) => entry({ id, name, group: "not_found", labels: ["not_found"], registered: true, openable: false })));
+
+  await waitFor(() => expect(tables()).toEqual(["Not found"]));
+  for (const [, name] of rows) {
+    const row = rowOf(name);
+    expect(within(row).getByText("via ACP")).toBeVisible();
+    expect(within(row).getAllByText("Not found")).toHaveLength(1);
+    expect(within(row).queryByText("Unmanaged")).toBeNull();
+    expect(within(row).queryByText("Not verified")).toBeNull();
+    expect(within(row).queryByText("kiro-cli")).toBeNull();
+    expect(within(row).queryByRole("button", { name })).toBeNull();
+    expect(within(row).getByRole("switch", { name: `Use ${name}` })).toBeVisible();
+    expect(row.querySelector(`[aria-label="Use ${name}"]`)).not.toBeNull();
+  }
+});
+
+it("shows a failed start in the Status cell instead of Ready, once, with the service's straight apostrophe kept", async () => {
+  show([engine({ id: "kiro", name: "Kiro", tier: "acp", auth: "not_applicable", start_issue: { kind: "failed", message: "Couldn't run Kiro. It exited.", at: "2026-11-22T10:00:00Z" } })], [
+    entry({ id: "kiro", name: "Kiro", group: "found", labels: ["start_failed"], note: "Couldn't run Kiro. It exited.", openable: false }),
+  ]);
+  await switches();
+  const row = rowOf("Kiro");
+  expect(within(row).getAllByText("Start failed")).toHaveLength(1);
+  expect(within(row).queryByText("Ready")).toBeNull();
+  expect(within(row).getByText("Couldn't run Kiro. It exited.")).toBeVisible();
+});
+
+it("says Signed out once for a signed-out ACP engine, with its sign-in command", async () => {
+  show([engine({ id: "droid", name: "Factory Droid", tier: "acp", auth: "logged_out", sign_in_command: "droid login", start_issue: { kind: "signed_out", message: "Factory Droid isn't signed in. Run droid login, then try again.", at: "2026-11-22T10:00:00Z" } })], [
+    entry({ id: "droid", name: "Factory Droid", group: "found", labels: ["signed_out"], openable: false }),
+  ]);
+  await switches();
+  const row = rowOf("Factory Droid");
+  expect(within(row).getAllByText("Signed out")).toHaveLength(1);
+  expect(within(row).getByText("droid login")).toBeVisible();
+  expect(within(row).queryByText("Ready")).toBeNull();
 });

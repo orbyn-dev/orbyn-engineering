@@ -1,4 +1,5 @@
 // Every string the Autopilot screens show, as the Crew designs (v19) write it.
+import type { BackgroundTemplate } from "../../../../generated/BackgroundTemplate";
 import type { HardKind, Mode, ResultKind, TemplateId, TriggerId } from "./model";
 
 export const MODE_COPY: Record<Mode, { name: string; text: string }> = {
@@ -73,6 +74,17 @@ export const TEMPLATES: { id: TemplateId; name: string; short: string; starts: s
   { id: "dependency_bump", name: "Dependency bump", short: "dependency bump", starts: "a dependency update opens", does: "Updates it, runs the repo’s checks and reads the changelog for breaking changes.", trigger: "dependency_update" },
   { id: "security_advisory", name: "Security advisory", short: "security advisory", starts: "a dependency update opens, or an issue gets a label", does: "Checks whether the repo is affected, and bumps or patches it. It is High risk by default.", trigger: "dependency_update" },
 ];
+
+/** The design's template ids, as the wire names them. */
+export const TEMPLATE_ID_OF: Record<BackgroundTemplate, TemplateId> = {
+  fix_failing_ci: "fix_ci",
+  flaky_test: "flaky_test",
+  dependency_bump: "dependency_bump",
+  security_advisory: "security_advisory",
+};
+
+/** A template's name as the designs write it ("Fix failing CI"), for a wire template. */
+export const templateNameOf = (template: BackgroundTemplate): string => TEMPLATES.find((one) => one.id === TEMPLATE_ID_OF[template])?.name ?? template;
 
 export const TRIGGERS: { id: TriggerId; name: string; repeats: string }[] = [
   { id: "ci_fails", name: "CI fails on main", repeats: "One run per failing commit; a new failure during a run is added to it." },

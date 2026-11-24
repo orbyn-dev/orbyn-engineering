@@ -17,6 +17,7 @@ import type {
   PullRequestDetail,
   PullStack,
   PullTimelineEvent,
+  PreferenceView,
   PullWatch,
   ReviewLineComment,
   UpdatePull,
@@ -26,6 +27,8 @@ import type { PullRevision } from "../generated/PullRevision";
 import type { PullChangeBreakdown } from "../generated/PullChangeBreakdown";
 
 const q = encodeURIComponent;
+/** `?repo_id=` for a repository other than the primary; nothing when there is none, so single-repository calls are unchanged. */
+const repoQuery = (repoId?: string) => (repoId ? `?repo_id=${q(repoId)}` : "");
 const base = (projectId: string, number: number) => `/api/projects/${q(projectId)}/pulls/${number}`;
 
 export const pullsApi = {
@@ -72,6 +75,12 @@ export const pullsApi = {
     request<void>("POST", `${base(projectId, number)}/review`, { event, body, comments }),
   update: (projectId: string, number: number, change: UpdatePull) =>
     request<void>("PATCH", base(projectId, number), change),
+  /** The account setting Remove agent credits on merge as it applies to the project; null where the service does not say. */
+  creditsSetting: async (projectId: string, signal?: AbortSignal): Promise<boolean | null> => {
+    const rows = await request<PreferenceView[]>("GET", `/api/preferences?project_id=${q(projectId)}`, undefined, signal);
+    const row = rows.find((one) => one.key === "remove_agent_credits_on_merge");
+    return typeof row?.value === "boolean" ? row.value : null;
+  },
   merge: (projectId: string, number: number, options: MergePull) =>
     request<void>("POST", `${base(projectId, number)}/merge`, options),
   action: (projectId: string, number: number, action: string) =>
@@ -106,13 +115,20 @@ export const pullsApi = {
     request<PullBulkResult[]>("POST", `${base(projectId, number)}/stack`, { action, ...(method ? { method } : {}) }),
   projectPulls: (projectId: string, query: string, signal?: AbortSignal) =>
     request<PullRequest[]>("GET", `/api/projects/${q(projectId)}/pulls?state=open&q=${q(query)}`, undefined, signal),
-  linked: (threadId: string, signal?: AbortSignal) =>
-    request<PullRequest[]>("GET", `/api/threads/${q(threadId)}/pulls`, undefined, signal),
-  refreshLinked: (threadId: string) =>
-    request<PullRequest[]>("POST", `/api/threads/${q(threadId)}/pulls/refresh`),
-  link: (threadId: string, number: number) =>
-    request<void>("POST", `/api/threads/${q(threadId)}/pulls`, { number }),
-  unlink: (threadId: string, number: number) => request<void>("DELETE", `/api/threads/${q(threadId)}/pulls/${number}`),
+  /** The thread's pull requests. `repoId` picks one repository of a multi-repository thread; absent is the primary and sends no parameter. */
+  linked: (threadId: string, signal?: AbortSignal, repoId?: string) =>
+    request<PullRequest[]>("GET", `/api/threads/${q(threadId)}/pulls${repoQuery(repoId)}`, undefined, signal),
+  refreshLinked: (threadId: string, repoId?: string) =>
+    request<PullRequest[]>("POST", `/api/threads/${q(threadId)}/pulls/refresh${repoQuery(repoId)}`),
+  link: (threadId: string, number: number, repoId?: string) =>
+    request<void>("POST", `/api/threads/${q(threadId)}/pulls${repoQuery(repoId)}`, { number }),
+  unlink: (threadId: string, number: number, repoId?: string) =>
+    request<void>("DELETE", `/api/threads/${q(threadId)}/pulls/${number}${repoQuery(repoId)}`),
+  /** A review of one of the thread's pull requests, in the repository `repoId` names (absent: the primary). */
+  threadReview: (threadId: string, number: number, event: string, body: string, repoId?: string) =>
+    request<void>("POST", `/api/threads/${q(threadId)}/pulls/${number}/review${repoQuery(repoId)}`, { event, body, comments: [] }),
+  threadMerge: (threadId: string, number: number, options: MergePull, repoId?: string) =>
+    request<void>("POST", `/api/threads/${q(threadId)}/pulls/${number}/merge${repoQuery(repoId)}`, options),
   watches: (threadId: string, signal?: AbortSignal) =>
     request<PullWatch[]>("GET", `/api/threads/${q(threadId)}/watches`, undefined, signal),
   watch: (threadId: string, number: number) => request<void>("POST", `/api/threads/${q(threadId)}/pulls/${number}/watch`),

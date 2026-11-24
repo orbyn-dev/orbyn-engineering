@@ -168,9 +168,10 @@ Only floating layers (menus, popovers, tooltips) cast a shadow.
   <name>, then check again"; a signed-out one shows its command to copy), Add a project
   (with the history import) and how agents ask. The last step explains the modes and links to
   Settings › Threads, which owns the default. "Back" and "Continue" move between steps.
-- The empty home is a centred 20px "Add your first project", one muted line and the
-  buttons: Clone from GitHub (opens the palette on its Git URL view), Add project, Start
-  without a project, Welcome steps.
+- With no project, once the welcome steps are finished or skipped, home is the Welcome page:
+  Agents, trackers when the service has them, then Projects with New project, Clone a
+  repository and Add a folder, and Recent projects. With projects home stays the draft flow;
+  Welcome is in the command palette.
 - Trust is a 480px card (16px radius, ring and shadow) titled "Trust <folder>?" with
   the full path below it, "Not now" and "Trust folder".
 - A draft with a project docks its composer at the bottom (draft-scoped CSS); the heading

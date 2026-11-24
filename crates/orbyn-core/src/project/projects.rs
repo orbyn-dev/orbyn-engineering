@@ -15,9 +15,47 @@ use crate::error::{CoreError, Result};
 use crate::project::workspace::{ProjectRoot, guard_library, resolve_project};
 use crate::source_control::git::{git, is_git_repo, linked_worktrees, text};
 use crate::store::{AuditRecord, NewProject};
-use crate::util::{canonicalize, new_id, now};
+use crate::util::{canonicalize, new_id, now, unix_now};
 
 const WORKTREE_SUFFIX: &str = "-wt";
+
+/// A name is one folder component, even when an explicit destination is supplied.
+fn validate_new_project_name(name: &str, windows: bool) -> Result<()> {
+    let trimmed = name.trim();
+    let invalid = trimmed.is_empty()
+        || matches!(trimmed, "." | "..")
+        || name
+            .chars()
+            .any(|ch| ch.is_control() || matches!(ch, '/' | '\\'));
+    let invalid_windows = windows && {
+        let stem = name
+            .split('.')
+            .next()
+            .unwrap_or(name)
+            .trim_end_matches(' ')
+            .to_ascii_uppercase();
+        let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || ["COM", "LPT"].iter().any(|prefix| {
+                stem.strip_prefix(prefix).is_some_and(|n| {
+                    matches!(
+                        n,
+                        "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                    )
+                })
+            });
+        reserved
+            || name.eq_ignore_ascii_case("CONIN$")
+            || name.eq_ignore_ascii_case("CONOUT$")
+            || name.ends_with(['.', ' '])
+            || name.contains(['<', '>', ':', '"', '|', '?', '*'])
+    };
+    if invalid || invalid_windows {
+        return Err(CoreError::Invalid(
+            "Enter a valid project name without path separators or invalid characters.".into(),
+        ));
+    }
+    Ok(())
+}
 
 fn slug_of(name: &str) -> Result<String> {
     let lowered: String = name
@@ -39,6 +77,21 @@ fn slug_of(name: &str) -> Result<String> {
     Ok(slug)
 }
 
+/// Check the component that will actually be created on Windows.
+fn validate_new_project_destination(name: &str, chosen: Option<&str>, windows: bool) -> Result<()> {
+    validate_new_project_name(name, windows)?;
+    if windows {
+        if let Some(chosen) = chosen {
+            if let Some(leaf) = Path::new(chosen).file_name() {
+                validate_new_project_name(&leaf.to_string_lossy(), true)?;
+            }
+        } else {
+            validate_new_project_name(&slug_of(name)?, true)?;
+        }
+    }
+    Ok(())
+}
+
 /// The last segment of a clone URL or local path, without `.git`. A local path on
 /// Windows uses backslashes and a drive letter.
 fn name_from_url(url: &str) -> Option<&str> {
@@ -54,6 +107,22 @@ async fn strings(cwd: &Path, args: &[&str]) -> Result<Vec<String>> {
         .lines()
         .map(str::to_owned)
         .collect())
+}
+
+/// The full id of the "Initial commit" `new_project` makes for its README, or `None` when Git has no identity to
+/// make it: then the file still stands and the person commits it themselves, so no commit is recorded.
+async fn initial_commit(path: &Path) -> Option<String> {
+    if let Err(error) = git(path, &["commit", "-q", "-m", "Initial commit"]).await {
+        tracing::debug!(%error, "could not make the first commit");
+        return None;
+    }
+    match git(path, &["rev-parse", "HEAD"]).await {
+        Ok(id) => Some(text(&id)),
+        Err(error) => {
+            tracing::debug!(%error, "could not read the first commit's id");
+            None
+        }
+    }
 }
 
 /// Local branches with commits no remote has. `current` is left out when asked.
@@ -396,6 +465,7 @@ impl Core {
         readme: bool,
         chosen: Option<&str>,
     ) -> Result<Project> {
+        validate_new_project_destination(name, chosen, cfg!(windows))?;
         let (slug, path) = self.slot(name, chosen).await?;
         self.audit_project("project.create", &slug, serde_json::Value::Null)?;
         let parent = path
@@ -405,15 +475,30 @@ impl Core {
         init_repository(&path).await?;
         let root = self.workspace.root()?;
         let resolved = resolve_project(&root, &path).await?;
-        if readme {
+        let first_commit = if readme {
             std::fs::write(path.join("README.md"), format!("# {name}\n"))?;
             git(&path, &["add", "README.md"]).await?;
             // With no Git identity the file still stands, and the person commits it.
-            if let Err(error) = git(&path, &["commit", "-q", "-m", "Initial commit"]).await {
-                tracing::debug!(%error, "could not make the first commit");
-            }
+            initial_commit(&path).await
+        } else {
+            None
+        };
+        let project = self.register_project(&resolved, &slug, true)?;
+        // This first commit is the one commit the app makes on a person's action, so it is the one positive
+        // person signal merge provenance accepts (`docs/crew/provenance-person-signal.md`). It is recorded only
+        // after the project row exists, because the row references it, and a record that does not land never
+        // fails project creation: the commit stands, and an unrecorded commit reads `unknown`, which coverage
+        // counts as agent rather than crediting a person. The commit holds nothing but the README this call
+        // wrote: no worker can have touched a folder that is not a project yet, which is the check a future
+        // path that stages other work has to make for itself.
+        if let Some(commit) = first_commit
+            && let Err(error) =
+                self.store
+                    .record_person_commit(&project.id, &commit, "project.readme", unix_now())
+        {
+            tracing::warn!(%error, "the first commit was not recorded as a person's");
         }
-        self.register_project(&resolved, &slug, true)
+        Ok(project)
     }
 
     /// Forgets a project and archives its threads, which stay. The folder stays, always, unless Orbyn

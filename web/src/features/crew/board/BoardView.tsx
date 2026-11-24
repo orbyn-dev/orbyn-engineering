@@ -3,6 +3,7 @@ import type { FlowCard } from "../../../generated/FlowCard";
 import type { FlowColumnId } from "../../../generated/FlowColumnId";
 import { ErrorState, Empty, Loading } from "../../../product/ui/states";
 import { Button } from "../../../ui/controls";
+import { RESUMED_CARD, wasResumed } from "../flow/live/model";
 import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { useFlowCrews } from "../flow/live/useFlow";
 import { useTaskWrite, WriteStatus } from "../writes/TaskWrite";
@@ -194,6 +195,7 @@ function Card({ card, onChanged }: { card: FlowCard; onChanged(): void }) {
       </div>
       {card.owner ? <div className="bd-ln">owner {card.owner}</div> : null}
       {checks ? <div className="bd-ln">{checks}</div> : null}
+      {wasResumed(card) ? <div className="bd-ln bd-resumed">↻ {RESUMED_CARD}</div> : null}
       {card.could_not_start ? <div className="bd-ln"><b>Could not start</b> · {card.reason ?? "The worker never ran."}</div> : null}
       {needs && card.reason ? <div className="bd-ln bd-amber">{card.reason}</div> : null}
       <WriteStatus id={card.id} op={write.op} />

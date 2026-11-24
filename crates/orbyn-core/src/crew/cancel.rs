@@ -3,7 +3,7 @@
 //!
 //! Order, with every step failing closed:
 //! 1. one transaction checks the task and writes the intent row `crew.task.cancel` (architecture rule 6: the row comes before any
-//!    effect). Cancelled already: nothing is written or done. `passed` and `stopped` are over: `TaskEnded`.
+//!    effect). Cancelled already: nothing is written or done, unless its last stop of the worker failed (see the end of this note). `passed` and `stopped` are over: `TaskEnded`.
 //! 2. the worker's engine is stopped (`RunManager::force_stop`, which kills the engine's process tree and closes a run that will not
 //!    stop) with its queue emptied so no new turn starts, and the core checks the worker has no run left. If it cannot confirm that,
 //!    the task keeps its state, a `crew.task.cancel_failed` row records the attempt and the caller gets an error.
@@ -14,6 +14,10 @@
 //!    between steps 1 and 3; the state is final now, so a later one meets its own guard and an earlier one is seen here. If this
 //!    pass fails the task stays `cancelled` (the state change stands), a `crew.task.cancel_failed` row flags the live worker and the
 //!    caller gets the 502.
+//!
+//! A cancel of a task that is `cancelled` already does nothing, unless its last stop failed (a `crew.task.cancel_failed` row newer
+//! than the `crew.task.cancelled` row): then it writes `crew.task.stop_retry`, stops the worker again and, if that holds, writes
+//! `crew.task.stop_retried`, which clears the flag. A failed retry writes a new `cancel_failed` row and the 502 again.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -87,6 +91,19 @@ impl Core {
             .begin_crew_cancel(task_id, actor, reason.as_deref())?
         {
             CancelStart::Already => return Ok(done(true)),
+            // Cancelled, but the last stop of its worker failed: try the stop again, the state stands.
+            CancelStart::Retry(run) => {
+                if let Err(error) = self.stop_crew_worker_by(run.as_deref(), force).await {
+                    return Err(self.cancel_failed(
+                        task_id,
+                        actor,
+                        &error,
+                        "The task is cancelled, but its worker could not be stopped",
+                    ));
+                }
+                self.store.finish_crew_stop_retry(task_id, actor)?;
+                return Ok(done(true));
+            }
             CancelStart::Begun(run) => run,
         };
         if let Err(error) = self.stop_crew_worker_by(run.as_deref(), force).await {

@@ -1,14 +1,14 @@
 import { Frame } from "../shared/Frame";
-import { Btn, Ic, PageHead, Seg } from "../shared/parts";
+import { Ic, PageHead, Seg } from "../shared/parts";
 
-/** Crew Designs v23, frame `backtest-running`. */
+/** Crew Designs v95, frame `backtest-running`: progress only, and no control stops a run. */
 export function BacktestRunning() {
   return (
     <Frame>
       <div className="cx-cwpg">
         <PageHead sub="Login redirect crew · Lead: Fix login redirect on Claude Code · 3 workers" acts />
         <div className="cx-cwtabs">
-          <Seg kind="segx" on={1} items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox · 4", "Report"]} />
+          <Seg kind="segx" on={1} items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox", "Report"]} />
           <span className="cx-end">Claude Code 412k of 1M tokens · Codex 62% of its weekly limit · 2h 14m</span>
         </div>
         <div className="cx-cwtool">
@@ -24,7 +24,6 @@ export function BacktestRunning() {
             <span className="cx-st cx-info"><i className="cx-spin" aria-label="Working" role="img" />Running</span>
             <span className="cx-t10sp">
               <span className="cx-t10sel"><Ic n="folder" sm />orbyn-engineering<Ic n="down" sm /></span>
-              <Btn className="cx-ghost">Stop the backtest</Btn>
             </span>
           </div>
           <div className="cx-t14two">
@@ -58,7 +57,7 @@ export function BacktestRunning() {
                 <span>
                   <b>Replay started</b>
                   <small>
-                    64 merged pull requests in orbyn-engineering, #392 to #455, starting with the oldest. Each review sees the diff and the checks as they were at merge time, never the later revert or fix.
+                    64 merged pull requests in orbyn-engineering, #392 to #455, starting with the oldest. Each review sees the diff and the checks as they were at merge time, not the later revert or fix.
                   </small>
                 </span>
               </div>
@@ -80,7 +79,7 @@ export function BacktestRunning() {
           <div className="cx-fbx">
             <h6>No result is shown until it has finished</h6>
             <p>
-              The counts above are progress. A result on part of the history can look better or worse than the whole. Crew shows the report when every lane is done, or the part that was replayed, labelled Partial, if you stop it.
+              The counts above are progress. A result on part of the history can look better or worse than the whole. Crew shows the report when every lane is done.
             </p>
           </div>
         </div>

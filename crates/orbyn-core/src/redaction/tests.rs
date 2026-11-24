@@ -92,8 +92,9 @@ fn every_recognised_format_is_found_and_masked() {
         let hidden = all.labelled(&format!("before {value} after"));
         assert!(!hidden.contains(&value), "{} survives", builtin.id);
         assert!(hidden.starts_with("before [hidden: "), "{}", builtin.id);
+        // A bare key header has no END line, so it hides everything after it.
         assert!(
-            hidden.ends_with(" after") || hidden.contains("] after"),
+            builtin.id == "private_key" || hidden.ends_with(" after") || hidden.contains("] after"),
             "{}",
             builtin.id
         );
@@ -295,7 +296,7 @@ fn text_over_the_window_is_read_whole_and_a_value_on_the_edge_is_still_hidden() 
     let filler = "x ".repeat(custom::MAX_APPLY_BYTES / 2);
     // The value straddles the first window's end.
     let cut = custom::MAX_APPLY_BYTES - token.len() / 2;
-    let mut text = filler.clone() + &filler;
+    let mut text = filler.clone() + filler.as_str();
     text.replace_range(cut..cut + token.len(), &token);
     assert!(text.len() > custom::MAX_APPLY_BYTES);
     let hidden = Redactor::locked().labelled(&text);
@@ -362,9 +363,71 @@ fn a_private_key_block_is_hidden_through_its_end_line_even_across_a_window_edge(
         );
         assert_eq!(hidden.matches("[hidden:").count(), 1, "at {at}");
     }
-    // A header with no END line still hides the header.
-    let header_only = Redactor::locked().labelled(&format!("{begin}\nMIIEvQ"));
-    assert_eq!(header_only, "[hidden: Private key block]\nMIIEvQ");
+    // A header with no END line hides everything after it: the cut body is not a different format.
+    let header_only = Redactor::locked().labelled(&format!("a\n{begin}\nMIIEvQ\nmore"));
+    assert_eq!(header_only, "a\n[hidden: Private key block]");
+}
+
+#[test]
+fn a_pgp_private_key_block_is_hidden_with_or_without_its_end_line() {
+    let begin = format!("-----BEGIN {} PRIVATE KEY BLOCK-----", "PGP");
+    let end = format!("-----END {} PRIVATE KEY BLOCK-----", "PGP");
+    let whole = Redactor::locked().labelled(&format!("a\n{begin}\nlQdGBF\n{end}\nb"));
+    assert_eq!(whole, "a\n[hidden: Private key block]\nb");
+    let cut = Redactor::locked().labelled(&format!("a\n{begin}\nlQdGBF\nxyz"));
+    assert_eq!(cut, "a\n[hidden: Private key block]");
+}
+
+#[test]
+fn a_name_with_a_prefix_or_suffix_still_marks_its_value_as_a_secret() {
+    let value = "zq".repeat(6);
+    let names = [
+        "DB_PASSWORD",
+        "POSTGRES_PASSWORD",
+        "AWS_SESSION_TOKEN",
+        "STRIPE_SECRET_KEY",
+        "db_password",
+        "GITHUB_API_KEY",
+        "app-token",
+    ];
+    for name in names {
+        for text in [
+            format!("{name}={value}"),
+            format!("export {name}=\"{value}\""),
+            format!("{{\"{name}\": \"{value}\"}}"),
+        ] {
+            let hidden = redact(&text);
+            assert!(!hidden.contains(&value), "{text} -> {hidden}");
+            assert!(refuse_secret(&json!(text)).is_err(), "{text}");
+        }
+    }
+    // Ordinary words that only contain a keyword are left alone.
+    let plain = format!("tokenizer={value} and secretary={value}");
+    assert_eq!(redact(&plain), plain);
+}
+
+#[test]
+fn more_provider_formats_are_recognised() {
+    let run = |part: &str, n: usize| part.repeat(n);
+    let values = [
+        format!("{}_{}_{}", "sk", "live", run("a1", 12)),
+        format!("{}_{}_{}", "sk", "test", run("b2", 12)),
+        format!("{}_{}_{}", "rk", "live", run("c3", 12)),
+        format!("{}-{}", "glpat", run("d4", 10)),
+        format!("{}_{}", "npm", run("e5", 18)),
+        format!(
+            "{}{}",
+            "AIza",
+            run("f6", 18).chars().take(35).collect::<String>()
+        ),
+        format!("{}{}", "ASIA", run("Q", 16)),
+    ];
+    for value in values {
+        let text = format!("see {value} here");
+        let hidden = redact(&text);
+        assert!(!hidden.contains(&value), "{hidden}");
+        assert!(refuse_secret(&json!(text)).is_err(), "{text}");
+    }
 }
 
 #[test]
@@ -503,6 +566,35 @@ fn the_person_patterns_alone_mask_display_text() {
         shown.labelled(&format!("see corp_abcdef and {github}")),
         format!("see [hidden: Corp id] and {github}")
     );
+}
+
+#[test]
+fn a_json_document_is_masked_in_its_values_and_in_its_keys() {
+    let redactor = Redactor::only(vec![Custom {
+        name: "Corp id",
+        regex: regex::Regex::new("corp_[a-z]{6}").unwrap(),
+        applies_to: PatternScope::Anywhere,
+    }]);
+    let value = json!({
+        "note": "see corp_abcdef and corp_ghijkl",
+        "corp_abcdef": ["corp_ghijkl", 7, true, null],
+    });
+    let shown = redactor.mask_json(&value);
+    assert_eq!(shown["note"], "see [hidden: Corp id] and [hidden: Corp id]");
+    assert!(
+        shown.get("[hidden: Corp id]").is_some(),
+        "a JSON key was not masked: {shown}"
+    );
+    assert!(
+        !shown.to_string().contains("corp_"),
+        "a value inside the array was not masked: {shown}"
+    );
+    // Other scalars are shown as they are, and the keys around them are not over-masked.
+    let array = shown["[hidden: Corp id]"].as_array().unwrap();
+    assert_eq!(array.len(), 4);
+    assert_eq!(array[1], json!(7));
+    assert_eq!(array[2], json!(true));
+    assert_eq!(array[3], json!(null));
 }
 
 #[test]

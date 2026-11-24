@@ -1,8 +1,8 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { expect, it, vi } from "vitest";
-import { api } from "../../../api/client";
+import { afterEach, expect, it, vi } from "vitest";
+import { installMockFetch } from "../../../test-support";
 import type { EngineModels, EngineStatus } from "../../../api/types";
 import type { ModelInfo } from "../../../generated/ModelInfo";
 import type { ModelOption } from "../../../generated/ModelOption";
@@ -10,10 +10,6 @@ import { resolveModel, useEngineModels, useModelStore } from "../../../product/s
 import { EffortTrigger, useTraitsMenu } from "./ComposerTraits";
 import { ModelPickerTrigger } from "./ModelPicker";
 
-vi.mock("../../../api/client", async (original) => {
-  const actual = await original<typeof import("../../../api/client")>();
-  return { ...actual, api: { ...actual.api, models: vi.fn() } };
-});
 
 const effort: ModelOption = {
   id: "effort", label: "Effort", values: [{ id: "medium", label: "Medium", default: true }],
@@ -53,8 +49,10 @@ function ComposerMenus({ onOption }: { onOption(option: string, value: string): 
   </>;
 }
 
+afterEach(() => vi.unstubAllGlobals());
+
 it("offers Fast only for the selected model that lists it in its service tier", async () => {
-  vi.mocked(api.models).mockResolvedValue(catalog);
+  installMockFetch().setEngineModels("codex", catalog);
   useModelStore.setState({ byEngine: { codex: catalog }, loading: {}, errors: {} });
   const onOption = vi.fn();
   const user = userEvent.setup();

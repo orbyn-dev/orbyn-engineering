@@ -3,9 +3,10 @@
 //! model, and it never decides pass or fail for the whole key: `verify` does that.
 //!
 //! This version runs the command kinds (`command`, `test`, `lint`, `typecheck`,
-//! `custom_script`), `file_scope`, `diff_size`, `schema`, `secret_scan` and `repo_required`.
-//! Any other kind reports `skipped`, so the result lists it as not verified rather than passing
-//! or failing on a guess; `manual` is one of those until a person's Gate exists to wait for.
+//! `custom_script`), `file_scope`, `diff_size`, `schema`, `secret_scan`, `repo_required` and
+//! `http_probe`. Any other kind reports `skipped`, so the result lists it as not verified rather
+//! than passing or failing on a guess; `manual` is one of those until a person's Gate exists to
+//! wait for.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -21,6 +22,12 @@ use crate::redaction::Redactor;
 
 /// No check runs longer than this.
 const TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// The reason a command that hit its deadline carries; a watch reads it to say `timed out`.
+pub const RAN_OUT_OF_TIME: &str = "The check ran out of time and was stopped.";
+/// The reason a command that printed more than a check may buffer carries; a watch reads it to say `printed too much`.
+pub const TOO_MUCH_OUTPUT: &str = "The check printed too much output and was stopped.";
+/// The first words of the reason a command that could not start carries; a watch reads them to say `could not start`.
+pub const COULD_NOT_START: &str = "The check could not start:";
 /// The most a diff-size count reads of an untracked file.
 const COUNTED_BYTES: u64 = 2 * 1024 * 1024;
 /// The most a secret scan reads of one changed file: a larger one fails as an error, never as a
@@ -57,7 +64,7 @@ pub struct Site<'a> {
     pub base: Option<&'a str>,
 }
 
-fn ran(outcome: CheckOutcome, command: String, log: String, started: Instant) -> Ran {
+pub(super) fn ran(outcome: CheckOutcome, command: String, log: String, started: Instant) -> Ran {
     Ran {
         outcome,
         exit_code: None,
@@ -139,7 +146,7 @@ pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
     let description = format!("{}: {}", kind_name(check), check.id);
     match check.typed_params() {
         Ok(CheckParams::Run(params)) => {
-            run_command(&params.run, params.expect_exit.unwrap_or(0), site, started).await
+            run_command(&params.run, params.expect_exit.unwrap_or(0), site, started, None).await
         }
         Ok(CheckParams::FileScope(params)) => {
             file_scope(&params.only, site, description, started).await
@@ -155,6 +162,10 @@ pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
             .await
         }
         Ok(CheckParams::Schema(params)) => schema(&params, site, description, started),
+        Ok(CheckParams::HttpProbe(params)) => {
+            let allowed = TIMEOUT.min(site.deadline.saturating_duration_since(Instant::now()));
+            super::http_probe::probe(&params, allowed, description, started).await
+        }
         Ok(CheckParams::Named(params)) => {
             if check.kind == CheckKind::RepoRequired {
                 repo_required(&params, site, description, started).await
@@ -191,10 +202,32 @@ pub(crate) async fn run_line(run: &str, worktree: &Path, deadline: Instant) -> R
         deadline,
         base: None,
     };
-    run_command(run, 0, &site, Instant::now()).await
+    run_command(run, 0, &site, Instant::now(), None).await
 }
 
-async fn run_command(run: &str, expect: u32, site: &Site<'_>, started: Instant) -> Ran {
+/// [`run_line`] with a bound on what the command may print on each stream: a command over it is stopped with its whole process
+/// tree and answers an error whose reason is [`TOO_MUCH_OUTPUT`], so a periodic check cannot make the service buffer without limit.
+pub(crate) async fn run_line_capped(
+    run: &str,
+    worktree: &Path,
+    deadline: Instant,
+    cap: usize,
+) -> Ran {
+    let site = Site {
+        worktree,
+        deadline,
+        base: None,
+    };
+    run_command(run, 0, &site, Instant::now(), Some(cap)).await
+}
+
+async fn run_command(
+    run: &str,
+    expect: u32,
+    site: &Site<'_>,
+    started: Instant,
+    cap: Option<usize>,
+) -> Ran {
     let cwd = site.worktree;
     let allowed = TIMEOUT.min(site.deadline.saturating_duration_since(Instant::now()));
     if allowed.is_zero() {
@@ -215,25 +248,35 @@ async fn run_command(run: &str, expect: u32, site: &Site<'_>, started: Instant) 
         .kill_on_drop(true);
     crate::host::child_env::for_tool(command.as_std_mut());
     let output = async {
-        crate::host::process::ManagedChild::spawn(command)?
-            .output()
-            .await
+        let child = crate::host::process::ManagedChild::spawn(command)
+            .map_err(|why| format!("{COULD_NOT_START} {}", why.public_message()))?;
+        match cap {
+            None => child
+                .output()
+                .await
+                .map_err(|why| format!("{COULD_NOT_START} {}", why.public_message())),
+            Some(cap) => match child.output_capped(cap, cap).await {
+                Ok(done) => Ok(std::process::Output {
+                    status: done.status,
+                    stdout: done.stdout,
+                    stderr: done.stderr,
+                }),
+                Err(crate::host::process::CappedOutputError::TooLarge) => {
+                    Err(TOO_MUCH_OUTPUT.to_owned())
+                }
+                Err(crate::host::process::CappedOutputError::Io(why)) => {
+                    Err(format!("{COULD_NOT_START} {why}"))
+                }
+            },
+        }
     };
     let output = match tokio::time::timeout(allowed, output).await {
         Ok(Ok(output)) => output,
-        Ok(Err(why)) => {
-            return error(
-                run.to_owned(),
-                &format!("The check could not start: {}", why.public_message()),
-                started,
-            );
+        Ok(Err(reason)) => {
+            return error(run.to_owned(), &reason, started);
         }
         Err(_) => {
-            return error(
-                run.to_owned(),
-                "The check ran out of time and was stopped.",
-                started,
-            );
+            return error(run.to_owned(), RAN_OUT_OF_TIME, started);
         }
     };
     let mut log = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -291,6 +334,27 @@ pub fn failing_names(log: &str) -> Vec<String> {
     names.sort();
     names.dedup();
     names
+}
+
+/// The last `max_lines` lines of `text`, then at most `max_bytes` of UTF-8, never splitting a character: the watch's kept
+/// output. A cut inside a line drops that line; the last line is kept whole when it is longer than the byte cap. The result is
+/// trimmed at its end.
+pub fn tail_lines_bytes(text: &str, max_lines: usize, max_bytes: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(max_lines);
+    let mut kept = lines[start..].join("\n");
+    if kept.len() > max_bytes {
+        let mut cut = kept.len() - max_bytes;
+        while cut < kept.len() && !kept.is_char_boundary(cut) {
+            cut += 1;
+        }
+        let cut = kept.split_off(cut);
+        kept = match cut.split_once('\n') {
+            Some((_, rest)) => rest.to_owned(),
+            None => cut,
+        };
+    }
+    kept.trim_end().to_owned()
 }
 
 /// The last `max` characters of `text`, cut at a line.

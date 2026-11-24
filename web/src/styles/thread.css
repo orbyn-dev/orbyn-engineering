@@ -29,10 +29,12 @@
 .topbar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 0 12px;
   min-height: var(--topbar-h);
   padding: 7px 28px;
   flex: none;
+  /* When the actions leave the title under about 10 characters (a 640 px window with Git, Repos, PRs and Details), the title takes its own row. */
+  flex-wrap: wrap;
 }
 .crumbs {
   display: flex;
@@ -40,7 +42,7 @@
   flex-wrap: nowrap;
   align-items: baseline;
   gap: 0 12px;
-  flex: 1;
+  flex: 1 1 160px;
   min-width: 0;
 }
 .crumbs h1,
@@ -84,6 +86,7 @@
   color: var(--color-faint);
 }
 .layout-toggles {
+  margin-left: auto;
   display: flex;
   align-items: center;
   flex: none;
@@ -611,4 +614,176 @@
   font-size: var(--text-small);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Where a message sent into a running turn went, under its bubble at the right edge. */
+.steer-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  max-width: 80%;
+  margin-top: 4px;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.steer-mark svg {
+  flex: none;
+}
+.steer-mark .steer-ok {
+  color: var(--color-green);
+}
+.steer-mark.failed {
+  color: var(--color-danger);
+}
+
+/* Images sent with a message, under it as thumbnails that wrap. */
+.sent-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 80%;
+  margin-top: 8px;
+  padding: 0;
+  list-style: none;
+}
+.sent-gallery li {
+  display: block;
+}
+.sent-snapshot-source {
+  display: block;
+  max-width: 132px;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sent-gallery button,
+.sent-gallery-wait {
+  display: block;
+  width: 132px;
+  height: 96px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 10px;
+  background: var(--color-chip);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+.sent-gallery button {
+  cursor: zoom-in;
+}
+.sent-gallery button:hover {
+  background: var(--color-hover);
+}
+.sent-gallery img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sent-gallery-wait {
+  padding: 8px;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  overflow-wrap: anywhere;
+}
+.sent-gallery[data-many] button,
+.sent-gallery[data-many] .sent-gallery-wait {
+  width: 96px;
+  height: 72px;
+}
+@media (max-width: 640px) {
+  .sent-gallery button,
+  .sent-gallery-wait {
+    width: 120px;
+    height: 88px;
+  }
+  .sent-gallery[data-many] button,
+  .sent-gallery[data-many] .sent-gallery-wait {
+    width: 96px;
+    height: 72px;
+  }
+}
+
+/* An imported thread's earlier messages (K36, hidden until core reads the provider's history): read only, above a line saying where they came from. */
+.earlier {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.earlier-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.earlier-line::before,
+.earlier-line::after {
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+  content: "";
+}
+.earlier-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-textSoft);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.earlier-message svg {
+  flex: none;
+  margin-top: 4px;
+  color: var(--color-muted);
+}
+.earlier-user {
+  align-self: flex-end;
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: var(--radius-xl) var(--radius-xl) var(--radius-xs) var(--radius-xl);
+  background: var(--color-message);
+  color: var(--color-text);
+}
+.earlier-tool {
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.earlier-banner {
+  margin-bottom: 14px;
+  background: var(--color-sunken);
+  color: var(--color-textSoft);
+}
+.earlier-banner > span {
+  flex: 1;
+  min-width: 240px;
+}
+
+/* A thread made from a transcript file: the header pill and the line after its imported history. */
+.transcript-imported-pill {
+  min-height: 20px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--color-infoSoft);
+  color: var(--color-info);
+  font-weight: 600;
+}
+
+.imported-marker {
+  width: min(var(--reading-w), calc(100% - 32px));
+  margin: 8px auto 0;
+  flex: none;
+  transform: translateX(calc(var(--details-reserve, 0px) / -2));
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  text-align: center;
 }

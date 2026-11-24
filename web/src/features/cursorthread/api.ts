@@ -1,20 +1,30 @@
 import { useEffect, useState } from "react";
+import { ApiFailure, request } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
 import type { CursorThreadApi, NoticeState } from "./contract";
 
 /**
- * The real client for the notice and override routes. Those routes are not merged, so this one makes no request at all: the
- * notice reads as "none", and a write says the service does not offer it. Swap it for `request(...)` calls the day the
- * generated types and routes land (the override and acknowledge are person routes: their paths are already in
- * `PENDING_PERSON_ROUTES` in `api/personKey.ts`); the screens do not change.
+ * The real client for the notice and override routes (docs/cursor-thread-contract.md). The notice read is Local and answers 404 for an
+ * engine with no notice, which reads as `null`; the acknowledgement and the one-turn override are Person-class, so `request` sends
+ * the person key with them (their paths are in `PERSON_ROUTES` in `api/personKey.ts`). The override body is the normal run body
+ * with no permission mode: the service refuses one, since this runs a single turn and saves nothing.
  */
-const unreported: CursorThreadApi = {
-  notice: async () => null,
-  acknowledge: async () => { throw new Error("This service does not offer that yet."); },
-  sendWithoutApprovals: async () => { throw new Error("This service does not offer that yet."); },
+const real: CursorThreadApi = {
+  notice: async (projectId, engine, signal) => {
+    try {
+      return await request<NoticeState>("GET", `/api/projects/${encodeURIComponent(projectId)}/engines/${encodeURIComponent(engine)}/notice`, undefined, signal);
+    } catch (failure) {
+      if (failure instanceof ApiFailure && failure.status === 404) return null;
+      throw failure;
+    }
+  },
+  acknowledge: (projectId, engine) =>
+    request<NoticeState>("POST", `/api/projects/${encodeURIComponent(projectId)}/engines/${encodeURIComponent(engine)}/notice/acknowledge`, {}),
+  sendWithoutApprovals: (threadId, body) =>
+    request<unknown>("POST", `/api/threads/${encodeURIComponent(threadId)}/send-without-approvals`, { prompt: body.prompt, attachment_ids: body.attachment_ids ?? [] }),
 };
 
-let current: CursorThreadApi = unreported;
+let current: CursorThreadApi = real;
 let version = 0;
 const listeners = new Set<() => void>();
 
@@ -26,9 +36,9 @@ if (__ORBYN_PREVIEWS__ && typeof location !== "undefined" && location.hash.start
 
 export const cursorThreadApi = (): CursorThreadApi => current;
 
-/** Tests and the dev-only preview install the mock here; `null` puts the unreported client back. */
+/** Tests and the dev-only preview install the mock here; `null` puts the real client back. */
 export function setCursorThreadApi(next: CursorThreadApi | null): void {
-  current = next ?? unreported;
+  current = next ?? real;
   version += 1;
   for (const listener of listeners) listener();
 }
@@ -44,9 +54,10 @@ function useApiVersion(): number {
   return seen;
 }
 
-/** Whether the engine's notice has been answered; `null` while unread or when the service has no notice for this engine. */
-export function useEngineNotice(engine: string, enabled = true): NoticeState | null {
+/** Whether the project has answered the engine's notice; `null` while unread or when the service has no notice for this engine. */
+export function useEngineNotice(projectId: string, engine: string, enabled = true): NoticeState | null {
   const seen = useApiVersion();
-  const read = useAsync(`engine-notice:${engine}:${enabled}:${seen}`, (signal) => (enabled ? cursorThreadApi().notice(engine, signal) : Promise.resolve(null)));
+  const on = enabled && projectId !== "";
+  const read = useAsync(`engine-notice:${projectId}:${engine}:${on}:${seen}`, (signal) => (on ? cursorThreadApi().notice(projectId, engine, signal) : Promise.resolve(null)));
   return read.status === "ready" ? read.data : null;
 }

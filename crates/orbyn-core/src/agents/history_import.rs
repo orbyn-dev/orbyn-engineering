@@ -37,6 +37,8 @@ fn engine_name(engine: Engine) -> &'static str {
     match engine {
         Engine::Claude => "claude",
         Engine::Codex => "codex",
+        // No Muse provider exists yet, so no Muse session is offered for import.
+        Engine::Muse => "muse",
     }
 }
 
@@ -180,6 +182,8 @@ fn read_head(engine: Engine, path: &Path) -> Option<Head> {
                     _ => {}
                 }
             }
+            // A Muse session log records different entries and no import reads it yet.
+            Engine::Muse => return None,
         }
         if session_id.is_some() && cwd.is_some() && title.is_some() {
             break;
@@ -190,6 +194,16 @@ fn read_head(engine: Engine, path: &Path) -> Option<Head> {
         session_id,
         cwd: cwd.filter(|cwd| Path::new(cwd).is_absolute())?,
         title,
+    })
+}
+
+/// The newest history file that names `session_id`, by the same scan, file order and head
+/// parser the import uses. A caller names a session by id, never by path.
+pub(crate) fn find_session_file(engine: Engine, root: &Path, session_id: &str) -> Option<PathBuf> {
+    let (files, _) = history_files(engine, root);
+    files.into_iter().find_map(|found| {
+        let head = read_head(engine, &found.path)?;
+        (head.session_id.as_str() == session_id).then_some(found.path)
     })
 }
 

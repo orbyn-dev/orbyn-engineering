@@ -9,6 +9,9 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(unix)]
+use std::time::Duration;
+
 /// Set by Claude Code in everything it starts. A CLI that sees it treats itself as a
 /// nested session.
 const NESTED_MARKER: &str = "CLAUDECODE";
@@ -253,9 +256,143 @@ pub fn url_origin(url: &str) -> Option<String> {
     Some(format!("{}://{host}{port}", parsed.scheme()))
 }
 
-/// PATH with the usual install folders added after what is already there. An app
-/// started from Finder, the Dock or the Start menu gets a minimal PATH, and nothing
-/// here runs a shell to find a better one.
+/// The sentinel the login shell prints around its `PATH`, so rc-file noise can be
+/// told apart from the answer.
+#[cfg(unix)]
+const LOGIN_PATH_SENTINEL: &str = "__ORBYN_PATH__";
+
+/// The child runs with only what a login shell needs to start; the service's own
+/// variables (tokens, `ORBYN_*` settings, keys) must not reach a person's rc files.
+#[cfg(unix)]
+const LOGIN_SHELL_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+
+/// A login shell that takes longer than this is killed and the answer is refused.
+#[cfg(all(unix, not(test)))]
+const LOGIN_PATH_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The person's login-shell `PATH`, read once per process and kept for every spawn.
+#[cfg(all(unix, not(test)))]
+static LOGIN_PATH: OnceLock<Option<Vec<PathBuf>>> = OnceLock::new();
+
+/// Asks the person's login shell for its `PATH` now, in the calling thread. The
+/// answer is cached for every later spawn; the service calls this in the background.
+pub fn warm_login_path() {
+    let _ = login_path();
+}
+
+/// The cached login-shell `PATH`. Tests never run a shell.
+fn login_path() -> Option<&'static [PathBuf]> {
+    #[cfg(all(unix, not(test)))]
+    {
+        LOGIN_PATH
+            .get_or_init(|| {
+                login_shell().and_then(|shell| login_shell_path(&shell, LOGIN_PATH_TIMEOUT))
+            })
+            .as_deref()
+    }
+    #[cfg(not(all(unix, not(test))))]
+    {
+        None
+    }
+}
+
+/// The shell to ask: `SHELL` when it names an existing absolute file, otherwise the
+/// platform's login shell. `ORBYN_NO_LOGIN_SHELL=1` skips the question entirely.
+#[cfg(all(unix, not(test)))]
+fn login_shell() -> Option<PathBuf> {
+    if std::env::var_os("ORBYN_NO_LOGIN_SHELL").as_deref() == Some(OsStr::new("1")) {
+        return None;
+    }
+    let chosen = std::env::var_os("SHELL")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_file());
+    chosen.or_else(|| {
+        let fallback = PathBuf::from(if cfg!(target_os = "macos") {
+            "/bin/zsh"
+        } else {
+            "/bin/sh"
+        });
+        fallback.is_file().then_some(fallback)
+    })
+}
+
+/// Runs one interactive login shell with a cleared environment and reads its `PATH`
+/// between the sentinels. The child is killed if it outlives `timeout`.
+#[cfg(unix)]
+fn login_shell_path(shell: &Path, timeout: Duration) -> Option<Vec<PathBuf>> {
+    use std::io::Read;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    let script = format!("printf '{LOGIN_PATH_SENTINEL}%s{LOGIN_PATH_SENTINEL}' \"$PATH\"");
+    let mut command = Command::new(shell);
+    command
+        .arg("-i")
+        .arg("-l")
+        .arg("-c")
+        .arg(&script)
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .process_group(0);
+    for name in ["HOME", "USER", "LOGNAME"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    command.env("SHELL", shell).env("PATH", LOGIN_SHELL_PATH);
+    let mut child = command.spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes);
+        let _ = sender.send(bytes);
+    });
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    if !status.success() {
+        return None;
+    }
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    let bytes = receiver.recv_timeout(remaining).ok()?;
+    parse_login_path(&String::from_utf8_lossy(&bytes))
+}
+
+/// The entries between the sentinel pair, without the relative ones a broken profile
+/// can leave in `PATH`. No pair, or no absolute entry, means no answer.
+#[cfg(unix)]
+fn parse_login_path(output: &str) -> Option<Vec<PathBuf>> {
+    let start = output.find(LOGIN_PATH_SENTINEL)? + LOGIN_PATH_SENTINEL.len();
+    let end = output[start..].find(LOGIN_PATH_SENTINEL)? + start;
+    let entries: Vec<PathBuf> = std::env::split_paths(OsStr::new(&output[start..end]))
+        .filter(|entry| entry.is_absolute())
+        .collect();
+    (!entries.is_empty()).then_some(entries)
+}
+
+/// PATH with the person's login-shell entries and the usual install folders added
+/// after what is already there. On Unix the service runs the person's login shell
+/// once, interactive login (`$SHELL -ilc`), with one fixed command that contains no
+/// user input; it reads back only `PATH`, runs with a cleared environment and a
+/// 3 second limit, falls back silently on any failure, and can be switched off with
+/// `ORBYN_NO_LOGIN_SHELL=1`. An app started from Finder, the Dock or the Start menu
+/// gets a minimal PATH; the person's shell knows which of their installs comes first.
 pub fn widened(path: Option<&OsStr>) -> OsString {
     static DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
     let dirs = DIRS.get_or_init(|| {
@@ -264,10 +401,15 @@ pub fn widened(path: Option<&OsStr>) -> OsString {
             .filter(|dir| dir.is_dir())
             .collect()
     });
+    widened_with(path, login_path(), dirs)
+}
+
+/// The ordering rule on its own, so a test can inject the login and install folders.
+fn widened_with(path: Option<&OsStr>, login: Option<&[PathBuf]>, dirs: &[PathBuf]) -> OsString {
     let mut entries: Vec<PathBuf> = path.map_or_else(Vec::new, |path| {
         std::env::split_paths(path).collect::<Vec<_>>()
     });
-    for dir in dirs {
+    for dir in login.unwrap_or_default().iter().chain(dirs) {
         if !entries.contains(dir) {
             entries.push(dir.clone());
         }
@@ -832,5 +974,237 @@ mod tests {
                 assert!(!is_account_name(name), "{kind}: {name}");
             }
         }
+    }
+
+    // ---- the person's login shell knows which install folder comes first ----
+
+    fn widened_entries(path: &[&str], login: &[&str], dirs: &[&str]) -> Vec<PathBuf> {
+        let path = (!path.is_empty()).then(|| std::env::join_paths(path.iter().copied()).unwrap());
+        let login: Vec<PathBuf> = login.iter().map(|entry| PathBuf::from(*entry)).collect();
+        let dirs: Vec<PathBuf> = dirs.iter().map(|entry| PathBuf::from(*entry)).collect();
+        std::env::split_paths(&widened_with(path.as_deref(), Some(&login), &dirs)).collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn login_path_output_is_read_only_between_the_sentinels() {
+        let output =
+            "rc noise before\n__ORBYN_PATH__/n/bin:/usr/local/bin__ORBYN_PATH__\nrc noise after\n";
+        assert_eq!(
+            parse_login_path(output),
+            Some(vec![
+                PathBuf::from("/n/bin"),
+                PathBuf::from("/usr/local/bin")
+            ])
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn login_path_output_without_a_sentinel_pair_is_refused() {
+        assert_eq!(parse_login_path("/n/bin:/usr/local/bin\n"), None);
+        assert_eq!(parse_login_path("__ORBYN_PATH__/n/bin\n"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn login_path_output_drops_relative_entries_and_keeps_the_absolute_ones() {
+        let output = "__ORBYN_PATH__relative:/n/bin:.:/usr/bin__ORBYN_PATH__";
+        assert_eq!(
+            parse_login_path(output),
+            Some(vec![PathBuf::from("/n/bin"), PathBuf::from("/usr/bin")])
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn login_path_output_that_leaves_no_absolute_entry_is_refused() {
+        assert_eq!(parse_login_path("__ORBYN_PATH____ORBYN_PATH__"), None);
+        assert_eq!(parse_login_path("__ORBYN_PATH__:__ORBYN_PATH__"), None);
+        assert_eq!(
+            parse_login_path("__ORBYN_PATH__relative:.__ORBYN_PATH__"),
+            None
+        );
+    }
+
+    #[test]
+    fn login_entries_follow_the_existing_path_and_precede_tool_dirs() {
+        let entries = widened_entries(
+            &["/first"],
+            &["/n/bin", "/usr/bin"],
+            &["/opt/homebrew/bin", "/usr/local/bin"],
+        );
+        assert_eq!(
+            entries,
+            [
+                PathBuf::from("/first"),
+                PathBuf::from("/n/bin"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+                PathBuf::from("/usr/local/bin"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_login_entry_equal_to_a_tool_dir_appears_once_at_the_login_position() {
+        let entries = widened_entries(
+            &["/first", "/n/bin"],
+            &["/n/bin", "/usr/bin"],
+            &["/usr/bin", "/opt/homebrew/bin", "/opt/homebrew/bin"],
+        );
+        assert_eq!(
+            entries,
+            [
+                PathBuf::from("/first"),
+                PathBuf::from("/n/bin"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_n_node_folder_comes_before_homebrew() {
+        let entries = widened_entries(
+            &[],
+            &["/usr/local/n/versions/node/22.16.0/bin"],
+            &["/opt/homebrew/bin"],
+        );
+        assert_eq!(
+            entries,
+            [
+                PathBuf::from("/usr/local/n/versions/node/22.16.0/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+            ]
+        );
+    }
+
+    #[test]
+    fn homebrew_that_follows_n_in_the_login_shell_stays_after_n() {
+        let entries = widened_entries(
+            &[],
+            &[
+                "/usr/local/n/versions/node/22.16.0/bin",
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+            ],
+            &["/opt/homebrew/bin", "/usr/local/bin"],
+        );
+        assert_eq!(
+            entries,
+            [
+                PathBuf::from("/usr/local/n/versions/node/22.16.0/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+                PathBuf::from("/usr/local/bin"),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    fn executable_script(dir: &crate::testing::TempDir, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.path().join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_login_shell_that_does_not_finish_within_the_timeout_is_killed() {
+        let dir = crate::testing::TempDir::new();
+        let shell = executable_script(&dir, "slow-shell", "#!/bin/sh\nsleep 10\n");
+        let started = std::time::Instant::now();
+        assert_eq!(
+            login_shell_path(&shell, std::time::Duration::from_millis(300)),
+            None
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_login_shell_path_is_read_from_between_the_sentinels() {
+        let dir = crate::testing::TempDir::new();
+        let shell = executable_script(
+            &dir,
+            "path-shell",
+            "#!/bin/sh\nprintf 'noise before\\n'\nprintf '__ORBYN_PATH__%s__ORBYN_PATH__' '/n/bin:/usr/local/bin'\nprintf 'noise after\\n'\n",
+        );
+        assert_eq!(
+            login_shell_path(&shell, std::time::Duration::from_secs(3)),
+            Some(vec![
+                PathBuf::from("/n/bin"),
+                PathBuf::from("/usr/local/bin")
+            ])
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_login_shell_is_interactive_and_finds_the_n_node_folder() {
+        let dir = crate::testing::TempDir::new();
+        let shell = executable_script(
+            &dir,
+            "interactive-shell",
+            "#!/bin/sh\ninteractive=0\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"-i\" ]; then\n    interactive=1\n  fi\ndone\nif [ \"$interactive\" = \"1\" ]; then\n  . \"$(dirname \"$0\")/rc\"\nfi\nprintf '__ORBYN_PATH__%s__ORBYN_PATH__' \"$PATH\"\n",
+        );
+        std::fs::write(
+            dir.path().join("rc"),
+            "PATH=/usr/local/n/versions/node/22.16.0/bin:/opt/homebrew/bin:/usr/local/bin\n",
+        )
+        .unwrap();
+        assert_eq!(
+            login_shell_path(&shell, std::time::Duration::from_secs(3)),
+            Some(vec![
+                PathBuf::from("/usr/local/n/versions/node/22.16.0/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+                PathBuf::from("/usr/local/bin"),
+            ])
+        );
+        // Without -i the fixture is never read, so the n folder is absent: the
+        // interactive flag is what finds it, not the script or the environment.
+        let without_interactive = Command::new(&shell)
+            .args([
+                "-l",
+                "-c",
+                "printf '__ORBYN_PATH__%s__ORBYN_PATH__' \"$PATH\"",
+            ])
+            .env_clear()
+            .env("PATH", LOGIN_SHELL_PATH)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&without_interactive.stdout);
+        assert!(text.contains("__ORBYN_PATH__"), "{text}");
+        assert!(
+            !text.contains("/usr/local/n/versions/node/22.16.0/bin"),
+            "{text}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_login_shell_child_gets_a_cleared_environment() {
+        let dir = crate::testing::TempDir::new();
+        let secret = format!("/orbyn-login-shell-secret-{}", ulid::Ulid::generate());
+        let shell = executable_script(
+            &dir,
+            "env-shell",
+            "#!/bin/sh\nprintf '__ORBYN_PATH__%s__ORBYN_PATH__' \"${ORBYN_SECRET:-unset}:/usr/bin\"\n",
+        );
+        let previous = std::env::var_os("ORBYN_SECRET");
+        // SAFETY: this is the only test that sets or reads ORBYN_SECRET.
+        unsafe { std::env::set_var("ORBYN_SECRET", &secret) };
+        let path = login_shell_path(&shell, std::time::Duration::from_secs(3));
+        match previous {
+            Some(value) => unsafe { std::env::set_var("ORBYN_SECRET", value) },
+            None => unsafe { std::env::remove_var("ORBYN_SECRET") },
+        }
+        assert_eq!(path, Some(vec![PathBuf::from("/usr/bin")]), "{path:?}");
     }
 }

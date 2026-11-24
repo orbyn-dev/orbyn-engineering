@@ -31,7 +31,7 @@ import { useUi } from "../../product/state/ui";
 import { engineById, useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton, LinkButton } from "../../ui/controls";
 import { Empty, ErrorState, Loading, NarrowBack } from "../../product/ui/states";
-import { PanelHost, TerminalBar, TerminalDrawerBody } from "../panels";
+import { openAttentionTerminal, PanelHost, TerminalAttention, TerminalBar, TerminalDrawerBody } from "../panels";
 import { threadRunState } from "../workspace";
 import { Composer } from "./composer/Composer";
 import { DetailsPopover } from "./details/DetailsPopover";
@@ -46,11 +46,12 @@ import { runningTools } from "../../product/timeline/timeline";
 import { SideChatPanel } from "./SideChatPanel";
 import { openSideChat } from "./sideChat";
 import { SubagentBar } from "./SubagentBar";
-import { LimitBanner, ThreadErrorBanner } from "./ThreadBanners";
+import { ImportedThreadMarker, ImportedThreadPill, LimitBanner, ThreadErrorBanner } from "./ThreadBanners";
 import { ConnectionStatus, ServiceDownBanner } from "./ConnectionStatus";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { ThreadFind } from "./ThreadFind";
 import { Transcript } from "./Transcript";
+import { EarlierMessages } from "./earlier/EarlierMessages";
 import { FavoriteEditorShortcut } from "./OpenInEditor";
 import { ProjectActionShortcuts } from "./ProjectActionShortcuts";
 
@@ -100,6 +101,7 @@ export function TopBar({
               {project.name}
             </span>
           ) : null}
+          <ImportedThreadPill thread={thread} />
           <FamilyLine thread={thread} />
           {connection ? <ConnectionStatus /> : chip ?? (thread.active_run && state ? <span className="page-sub-item">{runStateLabels[state]}</span> : null)}
         </span>
@@ -454,7 +456,12 @@ export function ThreadView({ id }: { id: string }) {
               threadId={id}
               active={thread.active_run !== null}
               readUpTo={lastVisit}
-              header={<LedgerPin threadId={id} />}
+              header={
+                <>
+                  <EarlierMessages threadId={id} imported={thread.imported_at !== undefined} />
+                  <LedgerPin threadId={id} />
+                </>
+              }
                 footer={
                   <>
                     <GoalLine thread={thread} canPause={engine?.capabilities.goal_control === true} />
@@ -463,6 +470,7 @@ export function ThreadView({ id }: { id: string }) {
                 }
             />
           )}
+          <ImportedThreadMarker thread={thread} />
           <WorktreeSetupCard thread={thread} />
           <ThreadErrorBanner thread={thread} />
           <LimitBanner thread={thread} />
@@ -472,6 +480,7 @@ export function ThreadView({ id }: { id: string }) {
             <div ref={mover} className="composer-group">
               <div className="composer-stack">
                 {hero ? <DraftHero project={project} /> : null}
+                <TerminalAttention threadId={id} onOpen={(target) => void openAttentionTerminal(target)} />
                 <div ref={anchor}>
                   {thread.lifecycle?.relation === "subagent" ? (
                     <SubagentBar thread={thread} />

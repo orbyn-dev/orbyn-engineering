@@ -5,7 +5,7 @@ import { mergeQueue } from "./sampleMerge";
 import { highKey, mediumRedirect } from "./sampleQueue";
 import type { QueueEntry } from "./model";
 
-const VIEWS = ["Flow", "Review", "Map", "Board", "Lanes", "Inbox 4"] as const;
+const VIEWS = ["Flow", "Review", "Map", "Board", "Lanes", "Inbox"] as const;
 type PanelView = "review" | "merge";
 
 const brief = (entry: QueueEntry) => {

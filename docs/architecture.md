@@ -27,10 +27,23 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    takes one (today only Cursor). It lives in the OS keychain alone (`orbyn-core`
    `credentials`), only while that engine's setting is on, is never shown again, and
    leaves the keychain only as the engine host's spawn environment, never in a frame, a
-   log or an answer. The person can remove it at any time.
+   log or an answer. The person can remove it at any time. The routes are
+   `/api/settings/engine-credentials/{engine}` (status, `Local`, booleans only; opt-in `PUT`) and
+   `.../{engine}/key` (`PUT` save, `DELETE` remove): all writes are `Person` routes and the key travels
+   in the request body only. A second owner-approved keychain use is the **values of personal-library environment
+   sets** (`docs/execution-profiles-and-library.md`, Part 2): `orbyn-core` `credentials::env_sets`, its own service
+   name (`app.orbyn.engineering.env-sets`, `.dev` in an unsigned build), one item per key, written through
+   `PUT /api/library/env-sets/{id}/keys/{key}` (`Person`) and read back only as the environment of one workflow run the
+   person starts, never an engine spawn. They are in no SQLite row, log, audit row, answer or export, and a run's terminal
+   output is masked for them by exact match.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
-3. Claude uses the CLI, never the Agent SDK. `--bare` is forbidden on subscription
-   sessions because it ignores OAuth login.
+3. Claude runs through the person's own installed `claude`. The default path is the engine host with the Claude Agent SDK
+   (a dependency used as shipped, never copied or modified); the CLI driver stays a path the person can choose. Both
+   run the unmodified `claude` binary, never collect, read or store Claude.ai credentials (the engine keeps its own
+   login), and never use `--bare`, which ignores subscription login. The person's `claude_engine_path` setting (`sdk`,
+   the default, or `cli`, a device-local preference) is read at the start of each run; `ORBYN_ENGINE_HOST_CLAUDE` is opt-out
+   (only `0` turns the host off). The core default is on; the Settings › Providers › Claude Code page sets `claude_engine_path` (the engine picker rows are built), and a packaged turn on the SDK path is not yet observed
+   (docs/sdk-default-plan.md). A person's choice is never switched silently: when the host is down the person sees why and may pick the CLI.
 4. Orbyn writes nothing into target repositories or engine user config: no skills,
    instructions, excludes or context maps. The project file is read-only to Orbyn.
 5. A folder must be trusted before an engine, project script or terminal runs in
@@ -124,7 +137,10 @@ this transaction keeps failing, startup fails rather than run on.
 
 A refused background start removes its run and lead thread
 only while no Crew task exists, and does so in one transaction with the refusal
-audit, so a crash leaves none of them behind. After task creation, refusal holds the
+audit, so a crash leaves none of them behind. A start refused for low disk is the
+one exception: its run stays as the crew's history, stopped with `reason_code`
+`disk_low` and the disk sentence, waiting for nobody, and only its lead thread is
+removed, in the same transaction. After task creation, refusal holds the
 task for a person and ends the background run `needs_review`, retaining its lead;
 the run is returned, not an error. The refusal audit, task hold and run end
 share one transaction; a failed unwind transaction is returned to the caller. After the commit each held task gives up its leases and gets one `NeedsPerson` result, best effort and only logged; a task with no run row gets none and the run's `review_reason` carries the reason.
@@ -165,6 +181,12 @@ archive clears it. With a reset in the future, `auto_resume_limited_threads` sch
 continuation and `snooze_limited_threads` snoozes until then; each can also be chosen on
 the thread. Due continuations start from the lifecycle pass, so an overdue one starts on
 the first pass after a restart, and a held queue stays held until that run ends.
+Automatic continuations are bounded at three per thread, the budget restart recovery
+shares: once they are spent, the schedule is dropped, the limit and its reset stay on
+the thread, and a `limit.retry_exhausted` note records that the automatic continuation
+stopped, so the thread waits for you until your own message or choosing the continuation
+on the thread gives the budget back. A continuation that fails on anything but a limit
+schedules nothing, so a failed run never retries itself.
 
 ## Composer
 
@@ -220,7 +242,17 @@ file. A record exists only once its bytes are in place, and a message naming an
 attachment that is not ready is refused before anything is admitted. Before its engine
 starts, a run logs `CUSTOM user.attachments` with each record's id, name, media type
 and size, so a transcript shows what the message carried without asking the engine.
-`GET /api/attachments/:id/content` returns those bytes while the record lives.
+`GET /api/attachments/:id/content` returns those bytes while the record lives. `PUT /api/attachments/:id/source` keeps a Snap Shot's app name, title, app id and accessible text beside an image before it is sent; it answers `404` for an unknown or already sent attachment, `422 unsupported_type` for a non-image and `413 source_too_large` past a character limit.
+
+A photo can be converted before it is stored: `POST /api/threads/:id/attachments/convert?name=`
+takes the photo as its body and answers `ConvertedPhoto`, the stored attachment the run
+sends instead. A PNG or JPEG over 10 MiB is written smaller until it fits, and one within
+the limit is written again at its own size, so the stored bytes never carry the original's
+EXIF location. The input is capped at 50 MiB, refused from the declared length before the
+body is read, and at 100 megapixels with a 512 MiB decoder allocation, checked from the
+header before a decoder allocates. A HEIC, HEIF or WebP is refused as `415 unsupported_type`
+until a decoder this build can carry is chosen, and the route reads no path from the request.
+At most two photo conversions decode and encode at once across the service; others wait.
 
 The composer edits a fenced code block as plain text: Tab and Shift+Tab move the
 selected block's lines by two spaces, Enter from the block's empty last line closes
@@ -406,8 +438,11 @@ Failure text is cleaned before anyone sees it: terminal codes go, and a line tha
 like a credential, by key name, vendor prefix or shape, is dropped whole. A run that
 failed for want of a login says so and names the vendor's command, such as `claude auth
 login`, and logs `CUSTOM engine.sign_in_required`. Orbyn only names the command, under
-rule 1. Status commands are bounded by time and to 256 KiB, and `claude auth status` is
-read for its logged-in flag alone.
+rule 1. A run that failed because its engine host stopped carries the stable `RUN_ERROR`
+code `engine_host_stopped` beside its unchanged message, so a client can show the
+host-stopped banner from the code rather than matching the words. Status commands are
+bounded by time and to 256 KiB, and `claude auth status` is read for its logged-in flag
+alone.
 
 Mode is stated on every launch: Claude's `--permission-mode`, and Codex's approval policy
 and sandbox on `thread/start`, `thread/resume` and `turn/start`, because a saved session
@@ -457,10 +492,20 @@ fresh once, logging `CUSTOM engine.session_lost`. A second loss fails the run.
 ## Usage
 
 `UsageCenter` reads local session history and nothing else: `projects/**/*.jsonl`
-under `~/.claude` (or `CLAUDE_CONFIG_DIR`) and `sessions/**/*.jsonl` under `~/.codex`
-(or `CODEX_HOME`). It keeps only timestamps, models and token counts, and never opens a
-credential file. Claude rewrites an entry as it streams, so each message counts once.
-Codex repeats its running total, so an unchanged total counts once. Costs come from
+under `~/.claude` (or `CLAUDE_CONFIG_DIR`), `sessions/**/*.jsonl` under `~/.codex`
+(or `CODEX_HOME`), and `sessions/**/session.jsonl` under Muse's home
+(`$XDG_DATA_HOME/muse`, else `~/.local/share/muse`). Each launch reads its own profile
+and not one it inherited: a relocated path is this launch's only when it lies outside a
+sandbox the environment declares, or when the launch declares that profile itself
+(`ORBYN_LAUNCH_PROFILE=smoke` with the harness's `ORBYN_SMOKE_SANDBOX` root). Any other
+launch that inherits those variables reads the person's own home, the account's own home
+from the user database when the inherited one is the sandbox's, so a personal build never
+reports the harness's empty sandbox. It keeps only timestamps, models
+and token counts, and never opens a credential file. Claude rewrites an entry as it
+streams, so each message counts once. Codex repeats its running total, so an
+unchanged total counts once. Muse writes one log per session, counts its cached
+input inside its input count and its reasoning inside its output count, and can copy
+an inference into another session's log, so each inference counts once. Costs come from
 configured `model_prices`, after `model_aliases`; a model with no price has an unknown
 cost and is never guessed. History is kept by day, model and service tier (Claude's
 `speed`/`service_tier`, Codex's turn `service_tier`; unknown names are `other`). A
@@ -469,7 +514,26 @@ standard rate, so its tokens stay unpriced. Each estimate is also split by token
 the same period's figures and chart during an explicit local refresh, dimming them
 after 150 ms while the scan is pending. A failed refresh keeps those figures and
 offers Retry. Changing the period clears them, and an earlier response cannot
-replace the new period or clear its pending state. Subscription
+replace the new period or clear its pending state. Cursor keeps no local history of its own: its spend is billed to the account, so the core keeps
+the account's billed events in `billed_events`, one row per event, keyed by a digest of the
+conversation, timestamp, model and counters because Cursor sends no event id. Nothing produces
+those events yet: the engine host answers `usage` with limits only and lists Cursor's
+`accountUsage.ts` as not added, so the table stays empty and no `cursor` row appears in
+`/api/usage` — the row is drawn only when the store holds events, never as an always-empty engine.
+Three states stay apart: no store and no rows are no row at all, and a period that holds none of
+the stored events is a scanned engine of nothing. When the host read lands it must hand over one
+complete window, as T3 reconciles against `totalUsageEventsCount`: a report replaces the rows of
+the days it names, so reading a window twice writes the same rows and a window of two events is
+stored as two, while an amount that settles later updates its row instead of adding one. A record
+that cannot be read as a billed event — no usage block, no timestamp or model that names a day,
+a negative counter — is dropped rather than counted as zero. The account's counters are separate,
+not inclusive: `inputTokens` is the uncached input, and cached input and cache writes are their own
+counters; reasoning stays inside `outputTokens`, which is where Cursor bills it, so no separate
+reasoning counter is kept or added. Cost has one source for every engine, the configured
+`model_prices`; the account's own billed cents are stored but not yet shown, because a day row
+costed from them would disagree with the model rows that are priced from the table.
+
+Subscription
 limits appear only where an engine reports them itself, as Codex does through
 `account/rateLimits/read`. Subscription reports are read fresh on every request:
 the supported drivers do not expose an authoritative current account/workspace binding
@@ -480,8 +544,10 @@ cannot answer after a newer read, a forget or an engine configuration change. No
 report is exposed through the no-I/O `cached_limits` path: Crew treats it as not reported,
 and scheduled near-limit checks still ask the engine afresh. Only Codex's `rateLimits`,
 `rateLimitsByLimitId` and plan leave the driver; its account ID, upsell copy and
-reset-credit offers are dropped; `?force=true` reads again and
-spends no model usage. `/api/limits` also gives one number per window length across
+reset-credit offers are dropped; `?force=true` reads again, spends no model usage and
+skips no window or fence, because no report is kept: a forced read takes the same
+fences and the same bounded provider read.
+`/api/limits` also gives one number per window length across
 engines, the highest used percentage, since that engine stops first. The overview excludes
 the Claude family, including named instances, before any status or usage probe; an explicit
 engine/thread limits read can still ask Claude.
@@ -512,17 +578,29 @@ next run. A rewind does the same unless the engine rolls its own session back. D
 stays until a run that carried it completes, so a failed start, a stop or a restart
 leaves it pending, and until then `/compact` and `/goal`, which reach an engine bare, are
 `422 unsupported`. The log stays whole; a rewind is logged as `CUSTOM
-thread.rewound` for clients to hide what follows.
+thread.rewound` for clients to hide what follows. The event carries the `through` position
+and `native: true` only when the engine point was noted. The web hides events between `through` and
+the rewound event, and says "went back" only on `native: true`. That point waits in memory until
+the thread's next send, however late: a service restart before that send loses it, and the
+run then resumes with the engine's full history while the view and the event still say the
+rewind was native.
 
-Each run keeps the engine session and the first turn id it spoke in. No run is admitted
-while a rewind is under way. Rewinding a Codex thread before a run whose session is
-still the thread's, with no handoff waiting and an earlier run in that same session (a
-session's first run may have carried a handoff), loads
-that thread in a short-lived app-server and sends `thread/revert` with that run's turn,
-which keeps only the earlier turns. The session then goes on, nothing is handed off,
-and the event and audit carry `native: true`. Files are restored only by the rewind's
-own checkpoint step. Any refusal, a missing turn id or another engine falls back to the
-handoff above.
+Each run keeps the engine session and the first turn id it spoke in; for the Claude host
+the turn it keeps is the prompt's message id, because the host's own turn id is a counter
+that never appears in the session file. No run is admitted while a rewind is under way.
+Rewinding a Codex thread before a run whose session is still the thread's, with no handoff
+waiting and an earlier run in that same session (a session's first run may have carried a
+handoff), loads that thread in a short-lived app-server and sends `thread/revert` with
+that run's turn, which keeps only the earlier turns. Rewinding a Claude thread whose run
+went through the engine host reads the session file by the stored session id and names the
+nearest top-level assistant ancestor of the run's prompt, falling back to the last one
+before it in file order when the file has no parent links; the next run's `open` carries it
+as `resumeAt` once, on the thread's next send however late, and a create, a different
+session or a changed thread session drops it. The session then goes on, nothing is handed
+off, and the event, audit and `RewindResult` carry `native: true`. Files are restored only
+by the rewind's own checkpoint step.
+Any refusal, a missing turn id or point, a missing or changed session file, or another
+engine falls back to the handoff above.
 
 ## What a run changed
 
@@ -564,9 +642,11 @@ refuse the action. A reply may be bare JSON or one Markdown fence around it. Gen
 needs Git 2.40 or later, which honours `GIT_ATTR_SOURCE`; older Git could apply
 the working tree's clean filters while the diff is read, so it falls back instead.
 
-Writing uses the selected thread engine and the configured text-generation model,
-or the thread's explicit model when that setting is empty. It never chooses another
-provider or guesses a smaller model. Only the guarded Claude one-shot path supports
+Writing uses the selected thread engine and the one-shot model resolved for that
+engine ([Text generators](#text-generators)): the per-engine choice, then the legacy
+setting, then the engine's small model, then the thread's model. A name the engine
+does not list is passed over, never sent, and it never chooses another provider.
+Only the guarded Claude one-shot path supports
 repository-derived text: an owned temporary folder, empty tools, strict empty MCP
 configuration, disabled hooks/cloud MCP/IDE connections and slash commands,
 `dontAsk`, and no session persistence. Rejected flags fail without a retry.
@@ -580,8 +660,7 @@ remote's tracking ref (the branch's configured remote, else `origin`) when it
 exists, else the local base branch; the staleness check uses the same ref. The
 checked snapshot includes the symbolic branch name (a fixed marker on a detached
 HEAD), so switching branches at the same commit during generation is refused.
-Existing title calls retain their separate model policy and
-Codex path; this change does not qualify that path as tool-free. No credential
+Existing title calls share that model policy; the Codex path is still not qualified as tool-free writing. No credential
 configuration or MCP server list is read to implement writing. Prompts and patches
 are not saved by the generation audit, which records purpose, engine and model.
 
@@ -1359,6 +1438,7 @@ One operation runs per instance: it excludes that instance's run admission, upda
 edits to `provider_instances`. A later run resumes with `session/resume` when offered,
 else `session/load` with its replay discarded; an unknown session ends the run as a lost
 session. The session link is the thread's engine session, so no table or migration exists.
+A cancelled request stops that process and releases the instance for the next request.
 
 A new worktree uses `branch_name_prefix`, `base_branch` or the origin's head when
 `new_worktrees_start_from_origin` is on, falling back to HEAD, and
@@ -1492,13 +1572,24 @@ project at exactly its folder and whether that project is trusted.
 
 `POST /api/history/import` takes only an engine and a session id; the service rescans
 and finds the file itself. It needs the session's project registered and trusted and
-the engine enabled there, then creates a thread whose engine session is that id, with
-no copied messages, so the next run resumes the engine's own conversation. A second
-import returns the same thread. Claude's `subagents` folders and `isSidechain`
+the engine enabled there, then creates a thread whose engine session is that id,
+marked with `imported_at`, with no copied messages, so the next run resumes the
+engine's own conversation. A second import returns the same thread. Claude's `subagents` folders and `isSidechain`
 transcripts are skipped, and a session listed by several files appears once, from its
 newest file. A session whose folder is not a project offers Add folder, which registers
 it untrusted through the ordinary add path; trusting it is the ordinary trust page. Pi is not an engine Orbyn runs, so its history is not
 scanned.
+
+`GET /api/threads/{id}/earlier?before=<cursor>` reads an imported thread's earlier
+messages from that same session file: the service resolves the recorded session id
+through the import's scan and head parser, then reads the whole file within a bounded
+size and line count and maps user, assistant and tool entries (never arguments,
+tool output, reasoning or meta entries) through the export redactor. It writes no row
+and nothing in the provider's folder. A page is 50 messages, oldest first; the cursor
+is bound to the file's size and mtime. A thread with no engine session is
+`404 not_imported`; a missing, changed, oversized, malformed or newer session file is
+`422 history_unreadable`, and a malformed cursor is `422 bad_cursor`. The production
+web client is still pending.
 
 ## Message search
 
@@ -1522,6 +1613,43 @@ client may stop reading early. Both routes share one scanner, so the stream neve
 a different set or order, and a message written while a streamed search runs may not be
 in it.
 
+## Text generators
+
+Two one-shot calls spend engine usage for text a person did not ask a model for: a
+thread's first-message title and a confirmed Git action's commit or pull request text.
+Both go through one resolver: the model `text_generation_models` names for the thread's
+engine when that engine lists it, then the legacy `text_generation_model` when that
+engine lists it, then the engine's small model (a `haiku`, `luna`, `mini`, `flash` or
+`small` family name), then the thread's model. The reason travels with the choice
+(`chosen`, `legacy`, `small` or `thread`), and a name an engine does not list is passed
+over, never sent. A failed model-list read is an empty list, so the next fallback applies
+instead of failing the call.
+
+`text_generation_models` is a JSON object of engine id to model id, global or per
+project, at most 64 entries. An engine id is at most 64 letters, digits, `-` and `_`,
+starting with a letter or digit; a model id is at most 256 plain characters and cannot
+start with `-`. A write always checks that shape, and when the engine has already listed
+its models, it refuses a model that list does not offer. An engine that has not answered
+yet cannot say, so the write is accepted and the run's own start check still applies. The
+key never syncs ([account](account.md#never-synced)), and the old `text_generation_model`
+stays as the fallback with no data migration.
+
+`GET /api/text-generators` is a read. It lists every known engine that is not turned
+off for the scope, with its display name, up to 200 of the models its catalog returned (a
+failed listing is an empty list, not an error), the global chosen model or null, and the
+resolved model with its reason or null. `?project=<id>` adds the project's effective
+chosen and resolved choice, and `own`: true when the project's own map names that engine,
+false when the choice is inherited from all projects. A project's map is layered over the
+global one engine by engine, so an engine the project does not name keeps the global
+choice. Clearing a choice (back to Automatic) is a write of the map without that engine,
+at either scope; at project scope the engine then inherits the global choice. A write goes through the ordinary preferences routes
+(`PUT /api/preferences`, `PUT /api/projects/{id}/preferences` or the scoped settings
+route); there is no text-generator write route.
+
+Branch names and cleanup have no generator in the service yet: branch names come from
+`branch_name_prefix`, and the stored `branch_naming_mode` semantic and custom modes are
+not called, so no branch or cleanup call reaches the resolver.
+
 ## Automatic requests
 
 `GET /api/network` and `crates/orbyn-core/src/governance/network.rs` list every outbound request
@@ -1531,9 +1659,10 @@ The two-minute pull request poll has its own, `poll_pull_requests`. Engines make
 
 A thread's first message also spends one short engine call on its title, in the
 background, unless `auto_thread_titles` is off. It sees only that message and goes through
-the thread's own engine with no tools and no session. The model is
-`text_generation_model` when that engine lists it, otherwise the engine's small model,
-otherwise the thread's. A thread with a chosen title, a delegated thread, and a goal
+the thread's own engine with no tools and no session. The model is the one
+[Text generators](#text-generators) resolves for that engine: its per-engine choice,
+then `text_generation_model`, then its small model, then the thread's. A thread with a
+chosen title, a delegated thread, and a goal
 command are left alone. A failure keeps the default title, and a rename that lands first
 wins.
 
@@ -1969,9 +2098,12 @@ in a later `host-context-changed`; a read the service refuses leaves the context
 it rather than guessing. An unknown render, a render that is not an app, or a tool its
 server no longer advertises is a plain `404`; a server that cannot be asked, or whose reply
 names no `tools` object, is `502 engine_unavailable`, never empty metadata. The read
-starts no model turn and reaches no other server. It is evaluated read-only against the
-policy rules as a `tool` action on `mcp_app:<server>:tool_info` before any server starts:
-only an explicit deny refuses it (`403`, with an `action.deny` audit row); the default
+starts no model turn and reaches no other server. Codex 0.166.0 starts only the server it
+is asked about, so with two configured a read started that one alone; a build that ignored
+the name would list the others, and the read ignores the other servers' entries and
+never answers with another server's tool. It is evaluated read-only against the policy rules as a `tool`
+action on `mcp_app:<server>:tool_info` before any server starts: only an explicit deny
+refuses it (`403`, with an `action.deny` audit row); the default
 `ask` and an allow rule pass, and a read that goes through writes no audit row. Each read
 starts a short engine session, so the service holds at most two at once and identical
 concurrent reads of one render share one (single-flight: the answer goes to the callers
@@ -2148,13 +2280,13 @@ and its `EngineDriver` impl and keeps the public paths: `claude/` (`args`, `sett
 `terminal`, `diagnostics`) stay beside them.
 
 `engines/known.rs` lists CLIs that speak ACP from their own binary, with what each needs
-to start: Antigravity, Cline, Command Code, GitHub Copilot, Cursor, DeepSeek, Devin, fx, Grok
-Build, Hermes, Kilo, Kimi and OpenCode. One is listed only when its program is found, and
+to start: Antigravity, Cline, Command Code, GitHub Copilot, Cursor, DeepSeek, Devin, Factory Droid, fx, GLM,
+Grok Build, Hermes, Kilo, Kimi, Kiro, Mistral Vibe, Oh My Pi and OpenCode. One is listed only when its program is found, and
 a custom engine of the same id wins. A program that resolves into a package known to put a
 different CLI under the same name is not that engine: `@vibe-kit/grok-cli` installs a `grok`
 with no ACP mode. Grok is started with `--permission-mode default` and
 OpenCode with `{"permission":{"*":"ask"}}`, since either can otherwise act without asking.
-DeepSeek cannot ask before an edit, so it is labelled unmanaged under rule 8, and so is fx
+Kiro's arguments are T3 Code's. The commands for Droid (`droid exec --output-format acp`), GLM (`glm-acp-agent`), Mistral Vibe (`vibe-acp`) and Oh My Pi (`omp acp`) come from the vendors' and Zed's guides, are unverified, and a program that rejects them is a failed start. Droid, GLM, Kiro (which starts in autopilot), Mistral Vibe and Oh My Pi are unobserved, so they are labelled unmanaged under rule 8 until a run shows they ask. DeepSeek cannot ask before an edit, so it is labelled unmanaged under rule 8, and so is fx
 until a run shows the mode it starts in, since its automatic mode writes without asking. The
 `fx` JSON viewer from npm or Homebrew is not fx. Each keeps its
 own login, and only the launch has been tested, with the fake agent under those names, except
@@ -2164,8 +2296,8 @@ OpenCode 2.2.5, which ran real turns through `orbynd` on macOS.
 instance can still be edited or removed), an installed app such as Antigravity that holds no ACP server, a
 program refused for being another CLI (Grok), and the engines not built. Each row has a group (In use, Found,
 More engines, Can't start, Not found, Planned; the page puts a startable engine under In use when its per-project
-switch is on) and labels: Not verified (a known ACP engine that has not run on a real install; today only
-OpenCode 2.2.5 has), Unmanaged (the engine cannot be gated or cannot ask), Limited support (the signed manifest's
+switch is on) and labels: Not verified (a known ACP engine that has not run on a real install; today
+OpenCode 2.2.5 is the only one that has), Unmanaged (the engine cannot be gated or cannot ask), Limited support (the signed manifest's
 `Unsupported` or `Graceful` version), Can't start (a `Broken` version, or an app with no ACP server), Not found
 and Planned (Pi, Muse Code, ZCode, and Cline's effort flag). Not found, Unmanaged and a `Broken` Can't start come
 from the same `ProviderFacts` the crew router's hard filters read. The Windows and Linux places an app is looked
@@ -2191,7 +2323,14 @@ login names it. Orbyn never runs it, never calls `authenticate` or `logout`, and
 `env_var` method, since that means collecting a key. A method that sets variables, or a word
 a Windows or Unix shell would read differently, gives no command.
 
-Skills come from the workspace, in place. Nothing is copied, packed or signed.
+The provider status also keeps the last start's issue: the ACP driver records `signed_out` when
+a handshake or session open is refused with ACP's auth-required code, and `failed` when it
+fails any other way. A successful open or model handshake clears it, so a signed-out engine
+reports the login again only until it next starts cleanly.
+
+Skills come from the workspace, in place. Nothing is copied, packed or signed. The one
+exception is a skill approved from a Crew proposal, written into the device's own skills
+area under [Workspace](#workspace), never into the workspace.
 
 - Claude starts in the selected checkout, so the project's own instructions are the
   primary ones, and gets the library with `--add-dir <library>`, which loads its
@@ -2378,11 +2517,32 @@ the MCP server and the bootstrap list. On Windows `.claude/skills` and
 `.agents/skills` are Git symlinks; if they did not materialize, status says so and
 that session uses the MCP route. The tree is never rewritten.
 
+Approval does not write this file yet: the proposal store and its Approve route are not built, and
+`SkillService::write_local_skill` has no caller. It is the writer that approval will call once the route exists.
+
+A skill approved from a Crew proposal is the one skill that is not in the workspace: it is
+stored on the device at `<data>/skills-local/<slug>/SKILL.md`, one folder per skill, its
+front matter carrying a `local_revision`. A local skill is personal and applies to every
+project; the repository a proposal came from is in its text only and cannot narrow where it
+applies. The write is staged beside the file and renamed into place; only slug names and
+paths inside the skill's own folder are accepted; the stored file, its revision line
+included, is capped at 64 KiB and that cap holds when it is read back; a body the locked
+secret scan finds a secret in is refused (`400 secret_refused`); a name the shared library
+or `skills-local` already holds is refused unless it edits the local skill at the revision
+(and under the name) it read; and one audit row carries the name, the revision and the
+proposal and lesson ids, never the text. That row is written before the rename, as rule 6
+requires, so a publish that fails after it can leave the attempt's row while the file
+itself is unchanged. The shared library wins a name it holds: a local skill cannot be
+created over one, and if the library later gains the name, `skill_load` reads the library
+copy and `skill_search` lists it once. The library's revision and dirty flag never include
+these skills, and no target repository is written. Engines reach them through the MCP
+`skill_search` and `skill_load` tools; native discovery is not built yet.
+
 ## Updates
 
 `UpdateCenter` is one view of the skills library, the app and the engines. It checks
 at startup, every six hours and on demand, unless the `background_update_checks`
-setting is `false`. A check only reads: `git fetch` of the library, engine latest
+setting is `false`; the engine CLI versions and automatic model-list reads follow the `enable_provider_update_checks` preference instead, and a manual check or Refresh ignores both. A check only reads: `git fetch` of the library, engine latest
 versions and the app's release. A network failure never blocks startup; it keeps
 the earlier results and sets `error`, and `checked_at` stays at the last full
 success. Engines and the library never apply on their own. The app does only with the
@@ -2413,7 +2573,10 @@ The shell rechecks availability before each attempt, including retries; a differ
 for renewed consent and is never substituted into the transfer. Progress reports carry the operation
 and release id, so callbacks from another transfer are ignored. The download-finish callback means
 preparing, not ready: only a successful awaited `Update::download` (after its signature verification)
-permits `app_update_ready`. Byte completion and an unknown total do not establish readiness.
+permits `app_update_ready`, and only when the verified signature names the announced version. The
+endpoint response is not itself signed, so an unsigned release, or one signed for a different
+version, fails visibly instead of staging bytes: `app_update_failed` carries the reason and nothing
+becomes installable. Byte completion and an unknown total do not establish readiness.
 An explicit download releases admission at ready and never installs or restarts.
 
 `POST /api/updates/app/apply` installs only that ready generation. It rechecks active runs and holds
@@ -2511,8 +2674,9 @@ characters, without words that look like a path, an address (`host:port`), an `@
 value or a 20-character token, and cut at 160 characters. It is not log text.
 It follows the system light or dark appearance; the app's own theme choice lives in the
 product origin and does not reach this page, and Dim is not offered here.
-There are no default core/plugin command permissions. Of the five app-owned commands,
-the product document may call only `crew_presence` and `person_key`; the main window
+There are no default core/plugin command permissions. Of the six app-owned commands,
+the product document may call only `crew_presence`, `person_key` and `pick_folder` (the native folder dialog for the add-repository field;
+it returns the chosen path or null and reads nothing); the main window
 capability and each command's runtime origin check enforce that split. The explicit
 macOS title-bar capability grants only dragging and toggle-maximize. The startup document is embedded,
 has no frames or external resources, and displays errors as text. Product actions ask
@@ -2711,7 +2875,9 @@ longer in the user-role prompt.
 A crew worker is refused every `orbyn_*` tool that makes a thread or schedule or reads another thread (H3, H1).
 The protected `.orbyn/crew.json` may lower H4/H5 through `bus: { exchanges, posts }`.
 Start validates this section before admission. Existing whole-document, class and pin failures keep
-the router's `needs_person` refusal and audit without launching a worker. Each post (including an ask) and board write reads
+the router's `needs_person` refusal and audit without launching a worker; the one exception is a start that would write
+and inherits the repository's checks, which reads `.orbyn/crew.json` at the commit it starts from, so a file that cannot
+be read there refuses the start before routing, with the reader's problem and no task stored. Each post (including an ask) and board write reads
 the lead checkout's committed HEAD and accepted default-branch rules through the bounded plain-blob
 reader and remembered ancestry check. The stricter repository values are combined with the current
 host ceilings, never written into the process-wide bus. Caller/lead/worker project bindings come from
@@ -2737,7 +2903,7 @@ and the text is proven free of the key and of secrets before it is queued (H1). 
 needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`). A task whose
 brief's minutes or turns are spent stops on its next failed attempt with the reason `budget`: the turns are the worker's runs and
 the approvals reserved against the same budget, and a result counts them. A crew's turns are the same tally summed over its tasks:
-a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; no Settings control yet, so it is set only through the settings API) refuses a new task once its crew
+a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; set in Settings › General) refuses a new task once its crew
 has spent them, before anything is stored or sent, and never stops a task already running. A worker's file change is checked
 against its lease at the gate, before the write, and refused with the lease's own refusal; a command it runs is not read.
 After a run ends, member tools refuse (H7), but the core can verify again and add Evidence and Gates; no state reopens.
@@ -3119,13 +3285,17 @@ A tab's zoom, appearance and phone layout are set with `/view`. Zoom keeps the f
 same size and lays the page out smaller, 0.25 to 3 times. New tabs start from the
 `preview_zoom` and `preview_appearance` settings. A tab with no named profile ends with its
 profile. A named profile lives in `<data>/browser-profiles`, survives restarts, and holds
-one tab at a time because a browser locks its profile folder. A private tab only stays
+one tab at a time because a browser locks its profile folder. A profile can be renamed
+while a tab has it open: only the stored name changes, never the folder, so its cookies
+and history stay. A private tab only stays
 out of the UI's history. `/previews/file` opens a file inside the checkout as `file:`,
 which agents and the address bar cannot reach. Picking an element reads it and changes
 nothing, and what it returns comes from the page, so the UI quotes it into the draft for a
 person to read before sending. A browser that dies is started again on the same profile and
 page, up to three times in 30 seconds after 1, 2 and 4 seconds, and then the tab reports
-`crashed`. This only runs while someone watches. `enable_agent_browser_access`, off
+`crashed`. This only runs while someone watches. A browser that dies by a fault before the
+tab exists is started once more, and a second death fails that open with the browser's
+stderr and startup flags. `enable_agent_browser_access`, off
 globally or for a project, refuses every `orbyn_preview_*` tool.
 
 A previewed page is untrusted, so what crosses between it and the person waits for
@@ -3170,6 +3340,8 @@ approval, so a late answer does nothing. Claude's `approve` is a run's permissio
 and stays on `ORBYN_APPROVAL_TIMEOUT_SECS`. `orbyn_thread_wait` waits at most 40 seconds
 and reports `ended: false`. `crew_review` paces itself by that timer's own deadline: it stops starting lanes in time and its
 error lists the lanes that started, waited on a person, were refused and were not reached. A request can be 512 KiB and a reply is cut at 256 KiB.
+A test build gives the MCP tool call and gated wait budgets ten minutes instead: a test calls the service directly and shares the machine with other work,
+so no engine is waiting on the other side and a loaded box must not decide a test with the production cut.
 
 ## Service access
 
@@ -3281,12 +3453,16 @@ engines; a plain shell terminal does not. `EngineStatus` reports inherited crede
 variable name and an endpoint by origin, never a value. No value is read for any other
 purpose, which keeps this inside rule 1.
 
-`PATH` for lookups and for children is the inherited one, then usual install folders
-that exist: Homebrew, `~/.local/bin`, cargo, bun, Volta, asdf, mise, pnpm, fnm's default,
-the newest nvm or `n` Node, and the npm prefix from `NPM_CONFIG_PREFIX` or `~/.npmrc`.
-Nothing runs a shell or npm to learn these. On Windows a `.cmd` is followed to the script
-it wraps, including pnpm's store and a same-named sibling, a `node.exe` beside the shim
-wins, and a shim that points at a shell is refused.
+`PATH` for lookups and for children is the inherited one, then the person's login-shell
+`PATH`, then usual install folders that exist: Homebrew, `~/.local/bin`, cargo, bun,
+Volta, asdf, mise, pnpm, fnm's default, the newest nvm or `n` Node, and the npm prefix
+from `NPM_CONFIG_PREFIX` or `~/.npmrc`. The service runs the person's login shell once,
+interactive login (`$SHELL -ilc`), with one fixed command that contains no user input; it
+reads back only `PATH`, runs with a cleared environment and a 3 second limit, falls back
+silently on any failure, and can be switched off with `ORBYN_NO_LOGIN_SHELL=1`. On Windows
+the login shell is not asked. npm is never run to learn these. A `.cmd` is followed to the
+script it wraps, including pnpm's store and a same-named sibling, a `node.exe` beside the
+shim wins, and a shim that points at a shell is refused.
 
 ## Escape log capacity
 
@@ -3339,12 +3515,38 @@ make. A configuration folder that goes through a link (itself or a folder above 
 that is itself a link is not followed: the worker is refused, because a rule by path cannot follow a link that is swapped
 later. A Claude folder that does not resolve, is relative, overlaps the data folder, or a session id
 outside letters, digits, `-` and `_` also refuses the worker with a plain line. Auto memory (`projects/<folder>/memory`) is
-closed with the rest, so a worker starts without it. A worker on any other engine (an ACP agent; Codex is refused) gets
+closed with the rest, so a worker starts without it. A worker on any other engine (an ACP agent) gets
 `projects` and `history.jsonl` closed with no allowance, so an ACP adapter that wraps Claude Code and writes its sessions
 there cannot run as a worker until it can take a `--session-id`; a Claude folder that does not exist yet is named as given.
 The child's `ORBYN_DATA_DIR` is removed. `RunSpec.confine` carries the rules from the run manager
-to the claude and acp drivers; a driver that cannot apply them does not start the run. A process
+to the claude, acp and codex drivers; a driver that cannot apply them does not start the run. A process
 started ahead of a turn (warm) is not used for a worker.
+
+A Codex worker is confined by Orbyn's profile, so Codex's own sandbox is turned off rather than
+nested: `thread/start` carries `sandbox: "danger-full-access"` and each `turn/start` carries
+`sandboxPolicy {type:"dangerFullAccess"}`. Codex starts a Seatbelt per command, and a profile
+cannot start inside another. The saved approval policy is kept (a Supervised or Auto worker still
+asks), so Codex's command and file approvals reach Orbyn's ApprovalGate and the crew write-scope
+rule. Each crew task gets a private Codex home at
+`<data>/crew/codex-homes/<task id>`, made before launch with mode 0700 (parent folders too, no
+link followed, and a path that is a link or not a directory owned by the person is refused). It
+contains only `auth.json` at launch, copied with mode 0600 from the real Codex home; no
+`config.toml`, history, sessions or SQLite file is copied. The engine gets `CODEX_HOME` pointing at it and the
+profile opens it for writing inside the denied data folder; another task's home lies under
+the same data folder and stays denied. Later turns of the same task reuse the
+home, so its own Codex session continues. The home is removed when the task ends (passed, stopped
+or cancelled) and at core start every home whose task is no longer live is swept. The real Codex
+home (`CODEX_HOME` if the core has it, else `~/.codex`, plus the account's home from the user
+database when that differs) is resolved and denied as a closed folder; a worker's `CODEX_HOME`
+that equals or sits inside it, or that resolves outside the private folder, refuses the worker
+instead of running.
+
+The beta allows Codex workers only when the real login is an API key. The core reads only
+`auth_mode` and the presence of the API-key field from the real `auth.json`, never logging a
+value. A ChatGPT sign-in (or an unknown or malformed document) refuses the worker with the exact
+line "Codex workers need an API key; your ChatGPT sign-in would be shared with the worker.", and
+no private home is made. A missing or unreadable auth file, or a linked one, refuses with a plain
+line and is never followed. A separate worker login is post-beta.
 
 Hard rule 7 applies: where the restriction cannot be applied, the worker is refused before it exists,
 with a plain line in the task's "refused by the app" item. That item is "Could not start", not an approval: a task in
@@ -3353,9 +3555,9 @@ data, so tasks stored before this derive the same way. It offers Retry on anothe
 person only; another engine must be allowed, then the person's cancel and a message to the lead to start it again) and Dismiss (the
 person's cancel). That covers Windows and Linux ("Crew runs on
 macOS in the beta; Windows later."), a missing `sandbox-exec`, a core that itself runs under a macOS
-restriction (`sandbox-exec` cannot nest), Codex (it starts its own profile per command, so the core
-refuses it until that is checked; one constant, `CODEX_WORKERS_ALLOWED`) and terminal engines (not
-managed, so not restrictable). Tests on macOS run the real tool: the store, the service handle and another
+restriction (`sandbox-exec` cannot nest), Codex while the beta gate is off (one constant,
+`CODEX_WORKERS_ALLOWED`; it stays false until the real-Mac probe passes, so flipping it is one
+line) and terminal engines (not managed, so not restrictable). Tests on macOS run the real tool: the store, the service handle and another
 run's `mcp.json` cannot be read through a symlinked data path, the worker's own run folder and its
 checkout can, a program the worker wrote cannot be started through `open`, a signal to another process fails,
 the spawn path drops `ORBYN_DATA_DIR`, a confined `orbyn status` cannot find a service that an unrestricted one
@@ -3368,7 +3570,13 @@ by a link or linked to reach a transcript, a tree prepared outside with a link i
 project name, over or under the prepared folder, from inside the worker's own folder, or into a missing `projects` (which the
 core makes), nothing but the worker's own session can be created there, a linked configuration folder, `projects` or
 `history.jsonl` refuses the worker, an uncertain start folder name refuses it, and a worker of another engine reads none of it.
-Each of those tests fails if the create allowance is put back. By hand, with the real Claude 2.1.318 and an empty configuration folder (not signed in, so no model turn):
+Each of those tests fails if the create allowance is put back. For Codex, a table test covers the auth
+documents (API key, ChatGPT, missing, empty, malformed), the private home is checked for 0700/0600,
+only `auth.json`, no link followed, reuse across turns and the sweep, and the profile is checked to
+deny the real home and open the private one by parameter. Sandbox-exec tests read the real home and
+another task's home (both denied), read and write the worker's own home (allowed), and write outside
+the proof's run folder (denied). The thread and turn parameters for a confined worker are checked to
+carry `danger-full-access` with the saved approval policy. None of this flips the beta gate. By hand, with the real Claude 2.1.318 and an empty configuration folder (not signed in, so no model turn):
 `--session-id` writes its own session, `--resume` of its own session works, and `--resume` of another session in the same
 folder answers "No conversation found", with the folders made beforehand and no create allowed. What that proves: a worker's own file access to
 Orbyn's data folder (store, `service.json`, other runs' files) is denied, and the Claude lead's transcript is denied to
@@ -3388,10 +3596,12 @@ real-service test shows a warm-started Claude process's token file under `runs/`
 That covers the endpoint token of ACP stdio and Claude launches; it does not show that no other value in any
 process is secret. Also not covered: the network, the loopback service (its token is the guard),
 the OS keychain, the engine's own login files (`~/.claude.json`, which Claude must read), other files of the same user,
-and a process a worker leaves running after its turn. The saved conversations of other engines are not covered. Codex's own session files (`~/.codex/sessions` and the state and logs SQLite files under `~/.codex`) are not covered, which is acceptable only because Codex workers stay refused on macOS (`CODEX_WORKERS_ALLOWED` is false) and stay refused until a separate probe is done. Codex keeps
-them in rollout files and in SQLite files under its home, and an ACP agent keeps its own history wherever it chooses, so
-an ACP agent's conversation, including an ACP adapter that writes Claude's folder, is open, and a Claude lead's transcript
-stays closed only for a Claude worker. Claude's other per-session files, which Orbyn does not name and did not observe
+and a process a worker leaves running after its turn. The saved conversations of other engines are not covered. Codex's
+real home (`~/.codex` or `CODEX_HOME`, including its sessions and SQLite files) is closed to a Codex worker, and the
+worker's own home is private to its task and removed when the task ends; another task's home sits under the data folder
+and is denied. A Codex worker can read and write its own home, so its own session is its own, not the lead's. An ACP agent
+keeps its own history wherever it chooses, so an ACP agent's conversation, including an ACP adapter that writes Claude's
+folder, is open, and a Claude lead's transcript stays closed only for a Claude worker. Claude's other per-session files, which Orbyn does not name and did not observe
 in this change (`plans/`, which can hold the lead's plan text, `paste-cache/`, `session-env/`, to-do lists, file history,
 debug logs, shell snapshots, the live-session registry `sessions/`), are open to a worker. A worker can learn which project
 folder names exist under `projects` (their metadata may be read), not what is in them. A confined Claude worker can create its own `<own id>.jsonl` and `<own id>/` in any existing project folder, not only its own project's, so a session the worker wrote can appear in another project's resume list. A worker that makes Claude create a session under another id (for example `/clear` inside a turn)
@@ -3560,7 +3770,9 @@ for older shells. Environment: `ORBYN_DATA_DIR`, `ORBYN_ACP_REGISTRY_URL`, `ORBY
 
 All bodies are JSON and errors are `ApiError` with a stable `code`. A body that cannot be
 read as the route's JSON is `400 invalid_input`; its message names the field that refused and never
-the value that was sent (an account body can carry a password or a sign-in code). Auth is
+the value that was sent (an account body can carry a password or a sign-in code). A wrong-typed
+value under a key in a map field names that field and never repeats the caller's key, which the
+path library renders like a field. Auth is
 `Authorization: Bearer <token>`, or the session cookie. SSE, WebSocket and
 `files/raw` and the exact GET/HEAD `/api/media/image` route also accept `?token=`
 because browsers cannot set headers on them.
@@ -3596,10 +3808,10 @@ every method, path and which routes need a credential.
 | `POST /api/settings/projects/icon` | `ChangeProjectIcon` → `Project[]`; selected structured icon/reset with membership and metadata revision compare-and-set |
 | `POST /api/settings/projects/rename` | `RenameSelectedProjects` → `Project[]`; selected names with membership and raw-name compare-and-set |
 | `POST /api/settings/project-scopes` | `ProjectScopesQuery` → `ProjectScopeCatalog`; full-app read, stale selections remain unavailable |
-| `POST /api/projects/clone`, `/create` | Make a folder, by default under `repo/`, or at `path`; `create` takes `readme` for a first commit |
+| `POST /api/projects/clone`, `/create` | Make a folder, by default under `repo/`, or at `path`; `create` takes `readme` for a first commit. Before filesystem or audit changes, `create` rejects names with path separators or control characters, empty names and dot components; Windows additionally rejects reserved characters and device names and names ending in a dot or space, checking the actual default slug or chosen folder leaf |
 | `PATCH /api/projects/:id` | `RenameProject`: the name shown; the folder stays |
 | `DELETE /api/projects/:id?delete_files=&confirm=` | `ProjectRemoval`: unregisters; `delete_files` is `400` unless Orbyn made the folder, and can be `409 project_has_work` |
-| `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home |
+| `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home. Folders only, never a `.`-named one, and on Windows never one marked hidden or system and never a junction or link, which a person does not pick as a project and some of which loop when opened. A filesystem root, a Windows drive or a share, also lists the mounted drives that can be read, first, because nothing is above a root |
 | `GET /api/threads?project_id=&archived=`, `POST /api/threads`, `GET, DELETE /api/threads/:id` | Threads; no `project_id` on create makes a scratch folder |
 | `GET /api/threads/:id/family` | `ThreadFamily`: the topmost thread and every thread below it, so any member answers the same tree; the stored edge is `parent_thread_id` with its `fork`, `side` or `subagent` relation, and archived members stay |
 | `POST /api/threads/batch` | `BatchThreads` to `BatchThreadResult[]`; at most 100 entries, oversized batches return `400 invalid_input` before creating any thread; one item failure does not stop an accepted batch |
@@ -3650,8 +3862,10 @@ every method, path and which routes need a credential.
 | `POST /api/queue/:id/send-now` | Send next, stopping a running turn for it |
 | `POST /api/threads/:id/steer` | `SteerRun` with an optional `message_id`: add text to the running turn (`422` if unsupported); `SteerResult` echoes the id and says `delivered` or `queued`, the latter with its queue row; a selection applies from the next turn |
 | `GET, POST /api/threads/:id/attachments?name=` | Raw upload body; `Content-Type` is the kind |
+| `POST /api/threads/:id/attachments/convert?name=` | Raw photo body; `ConvertedPhoto`: the stored attachment, its size and what was done (`converted`, `shrunk` or `none`); `415 unsupported_type`, `422 unreadable_image` or `still_too_large`, `413 file_too_large` |
 | `DELETE /api/attachments/:id` | Remove an attachment |
 | `GET /api/attachments/:id/content` | The stored bytes with their recorded `Content-Type`; `404` once gone |
+| `PUT /api/attachments/:id/source` | `AttachmentSource`: keeps a Snap Shot's app name, title, app id and accessible text beside an image attachment; `404` unknown or already sent, `422 unsupported_type` when it is not an image, `413 source_too_large` over a character limit |
 | `GET /api/threads/:id/mentions?q=` | `Mentions`: profile skills, ranked unignored files, this project's threads |
 | `GET /api/search/messages?q=&project_id=&thread_id=&archived=&limit=` | `MessageSearch`: `MessageHit[]`, newest first, each with `seq` and `message_id` to open at |
 | `GET /api/search/messages/events?q=&project_id=&thread_id=&archived=&limit=` | `MessageSearchEvent[]`: `hit` frames in the read's order, then `done` (`words`, `too_short`, `truncated`) or `failed` |
@@ -3719,7 +3933,7 @@ every method, path and which routes need a credential.
 | `GET /api/threads/:id/commits` | `CommitInfo[]`, newest 100 |
 | `GET /api/threads/:id/checkpoints` | `Checkpoint[]` |
 | `POST /api/threads/:id/restore` | `RestoreWorkspace`; `409 shared_directory`, `409 thread_busy` |
-| `POST /api/threads/:id/rewind` | `RewindThread`: continue from before a run |
+| `POST /api/threads/:id/rewind` | `RewindThread` to `RewindResult` (`200`): continue from before a run, `native` or `handoff` |
 | `POST /api/threads/:id/fork` | `ForkThread`: a child thread with the log up to a run |
 | `POST /api/threads/:id/switch-engine` | `SwitchEngine`: hand the conversation to another engine, with an optional selection |
 | `GET, POST /api/threads/:id/previews` | `PreviewTab[]`; `OpenPreview` |
@@ -3731,6 +3945,7 @@ every method, path and which routes need a credential.
 | `POST .../previews/:tab/view`, `/reload`, `/clear`, `/pick` | `PreviewView`; `ReloadPreview`; `ClearPreview`; `PickPreview` to `PickedElement` |
 | `GET, POST /api/browser-profiles` | `BrowserProfile[]`; `CreateBrowserProfile` |
 | `DELETE /api/browser-profiles/:id`, `POST .../clear` | Remove, or empty, a profile no tab has open |
+| `POST /api/browser-profiles/:id/rename` | `RenameBrowserProfile` to `BrowserProfile`: only the stored name changes, never the folder, so a profile open in a tab can be renamed |
 | `GET /ws/preview/:thread_id/:tab` | Base64 JPEG text frames |
 | `GET /api/threads/:id/servers`, `POST .../servers/:pid/stop` | `LocalServer[]`; stop one in this checkout, otherwise `404` |
 | `POST /api/threads/:id/console` | Opens the engine's own console on the thread's session |
@@ -3759,7 +3974,7 @@ every method, path and which routes need a credential.
 | `GET /api/engines/:id/limits?force=`, `GET /api/threads/:id/limits?force=` | `EngineLimits`; `422 unsupported` if the engine reports none |
 | `GET /api/engines/:id/models?refresh=` | `EngineModels`: models with their options, engine-wide options, agents, output styles, `remembered` |
 | `GET, POST /api/policy/rules`, `DELETE /api/policy/rules/:id` | Internal: diagnostics only, no client uses these |
-| `GET /api/audit?thread_id=&limit=` | Internal: diagnostics only, no client uses this |
+| `GET /api/audit?thread_id=&limit=` | Internal: diagnostics only, no client uses this. Each row's stored `detail` and `target` are masked with the person's redaction patterns on the read, values and keys alike; the actor, action, target, decision, source, thread and run fields are as stored |
 | `GET /api/computer`, `POST /api/threads/:id/computer` | Status, and a governed action |
 | `GET /api/account` | `AccountView`: `available` (the sign-in gate is on and a backend answers; false means the window shows nothing of the account), the session's email and device name, the sync line, `confirmed` and `deletion_scheduled`. The only account route that answers under the `Off` gate |
 | `POST /api/account/sign-up/{invite,start,resend,code}` | Sign-up in five steps (invite, email, password, emailed code, done); only the invite check, the password step, the resend and the code send anything. The email step sends nothing. `start` is the password step: it carries the invite, the email and the password once, creates the account and emails the code (the device check and the retry limit are here; a password under twelve characters is `422 weak_password`). `code` signs in; five wrong codes in a row refuse every code (`422 invalid_code`, the same answer) until `resend`. The invite and emailed code normalise case, hyphens and spaces. There is no `register` route |
@@ -3774,3 +3989,16 @@ every method, path and which routes need a credential.
 | `POST /auth/session` | Exchange a remote access key for a cookie (`204`) |
 | `POST /agui/threads/:id` | External AG-UI endpoint (`RunAgentInput` in, SSE out) |
 | `POST /mcp/:thread_token` | Per-run MCP server |
+
+## Typed turn result
+
+A send (`POST /api/threads/{id}/runs`) may carry `result_schema`, a JSON Schema object (draft 2020-12, at most 16 KiB, nesting at
+most 32, local `#/` references only, no `$dynamicRef`; otherwise `400 invalid`, "The result schema is not valid."), or
+`purpose: "terminal_proposal"` where Orbyn supplies the schema; the two are exclusive, and a send without approvals takes neither.
+The core adds one fixed instruction after the person's text asking the engine to end its final message with a fenced `json` block. When
+the run completes it takes the last such block of the final assistant message (or the whole message if it is JSON), checks it against
+the schema with no network loader (so nothing is ever fetched) and records one run event `orbyn.turn_result` (`CUSTOM`):
+`{ok: true, value}` (value at most 256 KiB) or `{ok: false, reason}` with `reason` one of `no_json`, `not_valid_json`,
+`schema_mismatch`, `too_large`. No retry or repair turn; a cancelled or failed run records none. The event is stored with the run like
+any other and reads back from the thread history. Log lines carry the run id and sizes only. **Planned**: each engine's own structured
+output; today every engine gets the instruction. Not verified on a real engine.

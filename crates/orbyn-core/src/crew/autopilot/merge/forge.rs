@@ -492,6 +492,7 @@ impl Core {
             subject: None,
             body: None,
             strip_credits: false,
+            remove_agent_credits: None,
             expected_head: Some(intent.candidate.clone()),
         };
         // Even an error may mean the server merged. Keep MergeRequested until a receipt settles it.

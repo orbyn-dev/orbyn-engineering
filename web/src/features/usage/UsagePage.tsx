@@ -19,6 +19,9 @@ import { USAGE_PERIODS, type UsageDays, type UsageMetric } from "./usageModel";
 import { UsageView } from "./UsageView";
 import { ScanStatus, Segment } from "./UsageParts";
 import { LIMITS_WAIT_MS, LimitsAsking, LimitsView } from "./UsageLimits";
+import { engineLimitsKey, forgetLimits, limitsRefreshOn, readLimits } from "../../lib/limitsStore";
+import { useLimitsChecked } from "../../lib/limitsChecked";
+import { LimitsAge, LimitsFailure, LimitsRefresh } from "../../product/ui/LimitsChecked";
 
 const PREFS_KEY = "orbyn.usage.v1";
 
@@ -59,9 +62,10 @@ export function UsagePage() {
   // A refresh dims the figures only if it outlasts the same wait.
   const dimmed = useWaited(usage.pending && usage.data !== null);
   const limits = useAsync(`limits:${metric === "limits"}`, (signal, context) =>
-    metric === "limits" ? api.limits(context.force, signal) : Promise.resolve(null),
-  { fresh: true, refreshOn: metric === "limits" ? under("limits") : undefined },
+    metric === "limits" ? readLimits("overview", (force) => api.limits(force, signal), { force: context.force }) : Promise.resolve(null),
+  { fresh: true, keepOnManual: true, refreshOn: metric === "limits" ? limitsRefreshOn(under("limits"), () => "overview") : undefined },
 );
+  const checked = useLimitsChecked("overview", limits);
 
   // An engine that never answers must not leave the tab loading for good.
   const limitsChecking = useWaited(metric === "limits" && limits.status === "loading");
@@ -101,13 +105,16 @@ export function UsagePage() {
     }
   };
 
-  // Asks one engine and shows what the page now holds; the other engines are not asked.
+  // Asks one engine and shows what the page now holds; the other engines are not asked. The read goes through the
+  // shared store, so the composer panel and the details row showing the same engine answer from it too.
   const retry = async (engine: string) => {
     try {
-      await api.engineLimits(engine, true);
+      await readLimits(engineLimitsKey(engine), (force) => api.engineLimits(engine, force), { force: true });
     } catch {
       /* the page reads the failure again below */
     }
+    // The one engine now has a newer answer than the page's memory of the overview.
+    forgetLimits("overview");
     void limits.reload();
   };
   const check = async () => {
@@ -121,13 +128,16 @@ export function UsagePage() {
     <section className="usage-page" aria-label="Usage">
       <PageBar
         actions={
-          <IconButton
-            label={metric === "limits" ? "Refresh limits" : "Refresh usage"}
-            disabled={pending}
-            onClick={() => void refresh()}
-          >
-            <RefreshCw size={14} className={pending ? "spin" : undefined} aria-hidden />
-          </IconButton>
+          metric === "limits" ? (
+            <>
+              <LimitsAge checked={checked} />
+              <LimitsRefresh checked={checked} busy={refreshing} onRefresh={() => void refresh()} />
+            </>
+          ) : (
+            <IconButton label="Refresh usage" disabled={pending} onClick={() => void refresh()}>
+              <RefreshCw size={14} className={pending ? "spin" : undefined} aria-hidden />
+            </IconButton>
+          )
         }
       >
         <h1 tabIndex={-1} data-page-title>
@@ -185,10 +195,13 @@ export function UsagePage() {
       )}
       <div className="usage-scroll" role="tabpanel" id={`${tabsId}-panel`} aria-labelledby={`${tabsId}-${metric === "limits" ? "limits" : "usage"}`}>
         {metric === "limits" ? (
-          limits.status === "error" ? (
+          limits.status === "error" && !limits.data ? (
             <ErrorState title="Couldn't load limits" failure={limits.error} onRetry={limits.reload} />
-          ) : limits.status === "ready" && limits.data ? (
-            <LimitsView data={limits.data} nameOf={nameOf} engines={engines} onCheck={() => void check()} onRetry={(engine) => void retry(engine)} />
+          ) : limits.status !== "loading" && limits.data ? (
+            <>
+              <LimitsFailure checked={checked} onRetry={() => void refresh()} />
+              <LimitsView data={limits.data} nameOf={nameOf} engines={engines} onCheck={() => void check()} onRetry={(engine) => void retry(engine)} />
+            </>
           ) : limitsSlow ? (
             <div className="usage-body">
               <p className="usage-note" role="status">

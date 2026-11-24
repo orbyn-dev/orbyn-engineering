@@ -1,6 +1,7 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
+import type { MockApi } from "../../../mock/api";
 import type { EngineStatus, EngineTools } from "../../api/types";
 import { installMockFetch } from "../../test-support";
 import { ProviderDetail } from "../settings/providers/ProviderDetail";
@@ -10,20 +11,34 @@ const engine = (patch: Partial<EngineStatus> = {}): EngineStatus =>
   ({ id: "claude", name: "Claude Code", tier: "native", installed: true, path: "/bin/claude", version: "2.1.318", auth: "logged_in", latest: null, support: "tested", update_command: null, sign_in_command: null, updating: false, problem: null, ...patch }) as EngineStatus;
 const store = { raw: [], instances: [], disabled: false, error: null, conflict: false, save: async () => null, reload: async () => undefined };
 
+let mock: MockApi;
 beforeEach(() => {
-  installMockFetch();
+  mock = installMockFetch();
 });
 
 describe("Settings › Providers › an engine", () => {
-  it("has a Code Mode group between the engine's facts and its models, with the Planned pill", async () => {
+  it("has a Code Mode group between the engine's facts and its models, without the Planned pill once the service answers", async () => {
     render(<ProviderDetail engine={engine()} store={store as never} onBack={() => undefined} onEdit={() => undefined} />);
-    expect(await screen.findByRole("switch", { name: "Use Code Mode" })).toBeInTheDocument();
+    const toggle = await screen.findByRole("switch", { name: "Use Code Mode" });
+    await waitFor(() => expect(toggle).toBeEnabled());
     const heads = [...document.querySelectorAll(".set-grp")].map((node) => node.textContent ?? "");
     const code = heads.findIndex((text) => text.startsWith("Code Mode"));
     expect(code).toBeGreaterThanOrEqual(0);
-    expect(heads[code]).toContain("Planned");
+    expect(heads[code]).not.toContain("Planned");
     const models = heads.indexOf("Models");
     if (models >= 0) expect(code).toBeLessThan(models);
+  });
+
+  it("keeps the Planned pill and a frozen switch when the service does not offer Code Mode (every route 404)", async () => {
+    mock.codeMode.setOffered(false);
+    render(<ProviderDetail engine={engine()} store={store as never} onBack={() => undefined} onEdit={() => undefined} />);
+    const toggle = await screen.findByRole("switch", { name: "Use Code Mode" });
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const heads = [...document.querySelectorAll(".set-grp")].map((node) => node.textContent ?? "");
+    expect(heads.find((text) => text.startsWith("Code Mode"))).toContain("Planned");
+    expect(toggle).toBeDisabled();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("has no Code Mode group for an engine that is not installed", () => {

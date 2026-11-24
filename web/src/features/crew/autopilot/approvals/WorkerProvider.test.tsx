@@ -90,6 +90,7 @@ describe("Settings › Crew › Worker provider", () => {
     mock.reset("crew");
     useWorkspace.setState({ projects: { data: [], error: null, loading: false } });
     render(<WorkerProvider />);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(screen.queryByRole("radiogroup", { name: "Worker provider" })).toBeNull();
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes("worker-provider"))).toHaveLength(0);

@@ -221,6 +221,59 @@ async fn an_unreachable_service_does_not_count_as_a_wrong_code() {
 }
 
 #[tokio::test]
+async fn codes_entered_at_once_share_the_last_try() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "tries-race");
+    let a = &core.account;
+    a.start_sign_up(INVITE, "new@example.com", new_password())
+        .await
+        .unwrap();
+    // One code more than there are tries, every one of them entered before any answer came back.
+    // The try is reserved under the lock that counts them, so the server is asked exactly as many
+    // times as there were tries and the code over the limit never leaves this computer.
+    let tried = tokio::join!(
+        a.verify_email_code("ZZZZ-ZZZZ"),
+        a.verify_email_code("ZZZZ-ZZZZ"),
+        a.verify_email_code("ZZZZ-ZZZZ"),
+        a.verify_email_code("ZZZZ-ZZZZ"),
+        a.verify_email_code("ZZZZ-ZZZZ"),
+        a.verify_email_code("ZZZZ-ZZZZ"),
+    );
+    for result in [tried.0, tried.1, tried.2, tried.3, tried.4, tried.5] {
+        assert_eq!(code(result.unwrap_err()), "invalid_code");
+    }
+    assert_eq!(
+        core.account.stand_in().code_calls(),
+        u32::from(crate::account::flow::EMAIL_CODE_TRIES)
+    );
+}
+
+#[tokio::test]
+async fn signing_up_for_an_address_that_has_an_account_is_refused_and_leaves_it_alone() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "replace");
+    let a = &core.account;
+    // The stand-in already has this address, as the Engine would: a sign-up for it ends like a wrong
+    // code, and the account that is there must not be replaced by the one the sign-up offered.
+    a.start_sign_up(INVITE, "dev@example.com", new_password())
+        .await
+        .unwrap();
+    assert_eq!(
+        code(a.verify_email_code(EMAIL_CODE).await.unwrap_err()),
+        "invalid_code"
+    );
+    // Nobody is signed in, and the address kept the password it had: the sign-up's does not sign in.
+    assert!(a.view("macos").await.session.is_none());
+    assert!(
+        a.sign_in("dev@example.com", pw("a-different-password"))
+            .await
+            .is_err()
+    );
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    assert!(a.view("macos").await.session.is_some());
+}
+
+#[tokio::test]
 async fn sign_in_answers_one_message_for_wrong_password_and_unknown_email() {
     let dir = TempDir::new();
     let core = dev(&dir, "in");
@@ -593,6 +646,24 @@ async fn sign_out_keeps_unsynced_changes_unless_asked_to_discard_them() {
     a.pause_sync().await.unwrap();
     a.sign_out(true).await.unwrap();
     assert_eq!(super::waiting(&core), 0);
+}
+
+#[tokio::test]
+async fn a_sign_out_with_nothing_to_end_does_not_wait_behind_a_cancel() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "out-early");
+    // A cancel is on its way and holds the one-at-a-time gate.
+    let _cancel = core.account.cancelling.lock().await;
+    let done = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        core.account.sign_out(false),
+    )
+    .await;
+    assert!(
+        done.is_ok(),
+        "a sign-out with no session waited for a cancel to finish"
+    );
+    done.unwrap().unwrap();
 }
 
 #[tokio::test]

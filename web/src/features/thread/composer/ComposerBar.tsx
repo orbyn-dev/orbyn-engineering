@@ -1,8 +1,10 @@
 import { ArrowUp, Archive, Paperclip, SlidersHorizontal, Square } from "lucide-react";
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import type { EngineStatus, ModelInfo, PermissionMode, Thread } from "../../../api/types";
+import { isUnmanaged } from "../../../product/engines/unmanaged";
 import type { StashedPrompt } from "../../../product/state/ui";
 import { IconButton } from "../../../ui/controls";
+import { ProfilePicker } from "../../profiles";
 import { ContextMeter } from "./ComposerExtras";
 import { ACCESS, EffortTrigger, type AccessView, type useTraitsMenu } from "./ComposerTraits";
 import { ModelPickerTrigger } from "./ModelPicker";
@@ -22,7 +24,6 @@ export function ComposerBar({
   narrowBar,
   contextMeter,
   showContext,
-  unmanaged,
   access,
   accessView,
   busy,
@@ -36,6 +37,8 @@ export function ComposerBar({
   openOverflow,
   pickModel,
   stop,
+  setError,
+  snapshotButton,
 }: {
   bar: RefObject<HTMLDivElement | null>;
   filePicker: RefObject<HTMLInputElement | null>;
@@ -50,7 +53,6 @@ export function ComposerBar({
   narrowBar: boolean;
   contextMeter: boolean;
   showContext: boolean;
-  unmanaged: boolean;
   access: PermissionMode;
   accessView: AccessView;
   busy: boolean;
@@ -64,8 +66,12 @@ export function ComposerBar({
   openOverflow(element: HTMLElement): void;
   pickModel(next: { engine: string; model: string | null }): Promise<void>;
   stop(): Promise<void>;
+  setError(message: string | null): void;
+  /** The Snap Shot button, present only when the shell supports the feature and the setting is on. */
+  snapshotButton?: ReactNode;
 }) {
   const AccessIcon = ACCESS[access].icon;
+  const unmanaged = isUnmanaged(engine);
   return (
     <div ref={bar} className="composer-bar">
       <input
@@ -82,6 +88,7 @@ export function ComposerBar({
       >
         <Paperclip size={16} aria-hidden />
       </IconButton>
+      {snapshotButton}
       {stashes.length > 0 ? (
         <button
           type="button"
@@ -101,6 +108,7 @@ export function ComposerBar({
         </IconButton>
       ) : null}
       <span className="composer-controls" data-folded={narrowBar || undefined}>
+      {unmanaged ? null : <ProfilePicker thread={thread} disabled={busy} onError={setError} />}
       {engine ? (
         <ModelPickerTrigger
           engines={installed}

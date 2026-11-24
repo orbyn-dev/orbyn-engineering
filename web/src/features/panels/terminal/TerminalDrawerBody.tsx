@@ -11,6 +11,8 @@ import { useUi } from "../../../product/state/ui";
 import { Button, IconButton } from "../../../ui/controls";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
+import { CommandBlocks } from "./blocks/CommandBlocks";
+import { useWaitingTerminals } from "./attention/store";
 import { EndDialog } from "./EndDialog";
 import { TerminalPanel } from "./TerminalPanel";
 import { controlsOf, terminalKey, watchTerminal } from "./terminalControls";
@@ -190,6 +192,7 @@ export function TerminalDrawerBody({
   const pushToast = useUi((state) => state.pushToast);
   const { reload } = terminals;
   const reveal = useUi((state) => state.terminalReveal);
+  const waiting = useWaitingTerminals(threadId);
   useEffect(() => {
     if (reveal?.threadId !== threadId) return;
     setActive(reveal.group); reload();
@@ -432,11 +435,13 @@ export function TerminalDrawerBody({
           if (!first) return null;
           const selected = first.group === current;
           const title = `${first.title}${group.length > 1 ? ` (${group.length})` : ""}`;
+          const asking = group.some((terminal) => waiting.has(terminal.id));
           return (
             <div key={first.group} className="ptab" data-group={first.group} data-selected={selected || undefined} onContextMenu={(event) => onTabMenu(event, group)} onKeyDown={(event) => onTabKey(event, group)}>
-              <button type="button" role="tab" aria-label={title} aria-selected={selected} onClick={() => setActive(first.group)}>
+              <button type="button" role="tab" aria-label={asking ? `${title}, waiting for you` : title} aria-selected={selected} onClick={() => setActive(first.group)}>
                 <SquareTerminal size={14} aria-hidden />
                 <span className="ptl">
+                  {asking ? <span className="status-dot tone-warn ptab-attn" aria-hidden /> : null}
                   <Marker terminal={first} />
                   {title}
                 </span>
@@ -507,6 +512,13 @@ export function TerminalDrawerBody({
                     )}
                   </div>
                 ) : null}
+                {/* Reads the service's blocks (docs/command-blocks.md); a shell that emits no marks leaves the terminal alone. A click writes a line into the shell, never a newline. */}
+                <CommandBlocks
+                  threadId={threadId}
+                  terminalId={terminal.id}
+                  write={watching ? undefined : (text) => controlsOf(keyOf(terminal))?.write(text)}
+                  interrupt={watching ? undefined : () => controlsOf(keyOf(terminal))?.interrupt()}
+                />
                 <TerminalPanel
                   threadId={threadId}
                   observe={watching}

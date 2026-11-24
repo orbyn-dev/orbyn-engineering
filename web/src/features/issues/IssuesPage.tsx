@@ -9,13 +9,13 @@ import { navigate, useRoute } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
 import { PageBar } from "../../product/ui/PageBar";
 import { IconButton } from "../../ui/controls";
-import { issuesApi, useApiVersion, useTrackers } from "./api";
-import type { IssueQuery, IssueSummary, TrackerKind, TrackerRow } from "./contract";
+import { issuesApi, markNotOffered, useApiVersion, useTrackers } from "./api";
+import type { IssueList, IssueQuery, IssueSummary, TrackerKind, TrackerRow } from "./contract";
 import { IssueDetail } from "./IssueDetail";
-import { IssueRows, IssuesHead, IssuesSkeleton } from "./IssueRows";
+import { IssueRows, IssuesHead, IssuesSkeleton, LoadMoreRow } from "./IssueRows";
 import { NoIssues, NoMatch, NotConnected, NotReported, Unreachable } from "./IssueStates";
 import { IssuesToolbar } from "./IssuesToolbar";
-import { isTracker, labelCounts, noQuery, trackerName } from "./model";
+import { isTracker, labelCounts, noQuery, reasonOf, trackerName } from "./model";
 
 const KEY = "orbyn.issues.tracker";
 /** The page remembers the last tracker. Storage can be blocked or empty; the page then starts on every tracker. */
@@ -55,9 +55,38 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
   const pushToast = useUi((state) => state.pushToast);
   const phone = useLayoutWidth() === "phone";
   const read = useAsync(`issues:list:${version}:${JSON.stringify(query)}`, (signal) => issuesApi().list(query, signal));
+  // A sorted list that the service turns down (a 400, or "no such route") means it does not take `sort`: the control goes back to
+  // Planned and the list is asked again in the service's own order. No sorted list is ever shown that was not sorted.
+  useEffect(() => {
+    if (read.status === "error" && query.sort !== undefined && [400, 404, 405].includes(read.error.status)) {
+      markNotOffered("sort");
+      setQuery((now) => ({ ...now, sort: undefined }));
+    }
+  }, [read.status, read.error, query.sort]);
   const loading = read.status === "loading";
   const waited = useWaited(loading);
-  const issues = useMemo(() => read.data?.issues ?? [], [read.data]);
+  // The pages after the first, kept with the answer they follow: a new first answer (a filter, a refresh) drops them.
+  const [later, setLater] = useState<{ of: IssueList; issues: IssueSummary[]; next: Record<string, string> } | null>(null);
+  const [paging, setPaging] = useState(false);
+  // What the last page said when it failed, kept next to Load more; a new first answer, a retry or a page that lands drops it.
+  const [pageFailure, setPageFailure] = useState<string | null>(null);
+  const pagingNow = useRef(false);
+  const pageRequest = useRef<AbortController | null>(null);
+  const more = later && later.of === read.data ? later : null;
+  const issues = useMemo(() => {
+    const first = read.data?.issues ?? [];
+    return more ? [...first, ...more.issues] : first;
+  }, [read.data, more]);
+  const nextCursors = more ? more.next : read.data?.next_cursors ?? {};
+  // A page still on its way when the first answer changes is dropped: the latest request wins.
+  useEffect(() => {
+    pageRequest.current?.abort();
+    pageRequest.current = null;
+    pagingNow.current = false;
+    setPaging(false);
+    setPageFailure(null);
+  }, [read.data]);
+  useEffect(() => () => pageRequest.current?.abort(), []);
   const counts = read.data?.counts ?? null;
   // The labels offered are those of the last list that answered, so the panel stays usable while a filter reads again.
   const seen = useRef<{ name: string; count: number }[]>([]);
@@ -86,6 +115,36 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
+
+  const loadMore = async () => {
+    const first = read.data;
+    if (pagingNow.current || !first || Object.keys(nextCursors).length === 0) return;
+    pagingNow.current = true;
+    setPaging(true);
+    setPageFailure(null);
+    pageRequest.current?.abort();
+    const request = new AbortController();
+    pageRequest.current = request;
+    try {
+      // The cursors go back exactly as the service gave them, with the same filters.
+      const page = await issuesApi().list(query, request.signal, nextCursors);
+      if (request.signal.aborted) return;
+      const have = new Set([...first.issues, ...(more?.issues ?? [])].map((issue) => `${issue.tracker}:${issue.scope}:${issue.key}`));
+      const fresh = page.issues.filter((issue) => !have.has(`${issue.tracker}:${issue.scope}:${issue.key}`));
+      setLater({ of: first, issues: [...(more?.issues ?? []), ...fresh], next: page.next_cursors });
+    } catch (failure) {
+      if (!request.signal.aborted) {
+        pushToast(`Couldn't load more. ${reasonOf(failure)}`);
+        setPageFailure(`Couldn’t load more. ${reasonOf(failure)}`);
+      }
+    } finally {
+      if (pageRequest.current === request) {
+        pageRequest.current = null;
+        pagingNow.current = false;
+        setPaging(false);
+      }
+    }
+  };
 
   const refresh = (
     <IconButton label="Refresh" aria-busy={loading || read.refreshing || undefined} onClick={() => void read.reload()}>
@@ -126,13 +185,14 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
             }}
           />
         ) : issues.length === 0 && filtered ? (
-          <NoMatch words={noMatchWords(query)} onClear={() => change({ ...noQuery, tracker: query.tracker, state: query.state })} />
+          <NoMatch words={noMatchWords(query)} onClear={() => change({ ...noQuery, tracker: query.tracker, state: query.state, sort: query.sort })} />
         ) : issues.length === 0 ? (
           <NoIssues where={where} state={query.state} />
         ) : (
           <>
             <IssuesHead />
-            <IssueRows issues={issues} onOpen={(issue: IssueSummary) => navigate({ name: "issues", tracker: issue.tracker, key: issue.key })} />
+            <IssueRows issues={issues} onOpen={(issue: IssueSummary) => navigate({ name: "issues", tracker: issue.tracker, scope: issue.scope, key: issue.key })} />
+            {Object.keys(nextCursors).length > 0 ? <LoadMoreRow busy={paging} failure={pageFailure} onLoad={() => void loadMore()} /> : null}
           </>
         )}
       </div>
@@ -143,7 +203,7 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
 export function IssuesPage() {
   const route = useRoute();
   const { rows, settled } = useTrackers();
-  const detail = route.name === "issues" && route.tracker !== undefined && route.key !== undefined ? { tracker: route.tracker, key: route.key } : null;
+  const detail = route.name === "issues" && route.tracker !== undefined && route.scope !== undefined && route.key !== undefined ? { tracker: route.tracker, scope: route.scope, key: route.key } : null;
   const body = !settled ? null : rows === null ? (
     <>
       <PageBar><h1 tabIndex={-1} data-page-title>Issues</h1></PageBar>
@@ -155,7 +215,7 @@ export function IssuesPage() {
       <NotConnected rows={rows} />
     </>
   ) : detail ? (
-    <IssueDetail key={`${detail.tracker}:${detail.key}`} tracker={detail.tracker} issueKey={detail.key} />
+    <IssueDetail key={`${detail.tracker}:${detail.scope}:${detail.key}`} tracker={detail.tracker} scope={detail.scope} issueKey={detail.key} />
   ) : (
     <IssuesList trackers={rows} />
   );

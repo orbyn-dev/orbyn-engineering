@@ -19,6 +19,8 @@ export interface MenuItem {
   shortcut?: string;
   /** A checkable item: choosing it toggles at once and the menu stays open. */
   keepOpen?: boolean;
+  /** A checkable option that closes the menu once chosen: announced as a checkbox, with a plain check on the right when on. */
+  checkbox?: boolean;
   /** With `keepOpen`: one of several exclusive choices, announced as a radio item rather than a checkbox. */
   radio?: boolean;
   /** The check sits before the label, in a slot kept for it, so labels line up. Drawn on the selected item. */
@@ -132,17 +134,19 @@ function MenuList({
           <FragmentRow key={item.label} separator={item.separatorBefore === true && index > 0} heading={item.heading}>
             <button
               type="button"
-              role={item.keepOpen ? (item.radio ? "menuitemradio" : "menuitemcheckbox") : "menuitem"}
-              aria-checked={item.keepOpen ? item.selected === true : undefined}
+              role={item.keepOpen ? (item.radio ? "menuitemradio" : "menuitemcheckbox") : item.checkbox ? "menuitemcheckbox" : "menuitem"}
+              aria-checked={item.keepOpen || item.checkbox ? item.selected === true : undefined}
               data-label={item.label}
               aria-label={item.content ? item.label : undefined}
               data-destructive={item.destructive || undefined}
               aria-haspopup={item.children ? "menu" : undefined}
               aria-expanded={item.children ? open?.item === item : undefined}
               disabled={item.disabled}
+              aria-disabled={item.disabled || undefined}
               title={item.title}
-              aria-current={item.keepOpen ? undefined : item.selected || undefined}
+              aria-current={item.keepOpen || item.checkbox ? undefined : item.selected || undefined}
               data-checked={item.keepOpen && item.selected ? "" : undefined}
+              data-option-on={item.checkbox && item.selected ? "" : undefined}
               onPointerEnter={(event) => {
                 clearTimeout(hoverTimer.current);
                 const button = event.currentTarget;
@@ -167,7 +171,7 @@ function MenuList({
               {item.icon}
               {item.content ?? <span>{item.label}</span>}
               {item.shortcut ? <span className="menu-shortcut">{item.shortcut}</span> : null}
-              {item.keepOpen && item.selected && !item.leadCheck ? <Check size={14} className="menu-check" aria-hidden /> : null}
+              {(item.keepOpen || item.checkbox) && item.selected && !item.leadCheck ? <Check size={14} className="menu-check" aria-hidden /> : null}
               {item.children ? <ChevronRight size={14} className="menu-chev" aria-hidden /> : null}
             </button>
           </FragmentRow>

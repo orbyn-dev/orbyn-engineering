@@ -59,12 +59,15 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/autopilot/review/{task_id}/looks-good"],
   ["POST", "/api/crew/autopilot/review/{task_id}/revert"],
   ["POST", "/api/crew/background/create"],
+  ["POST", "/api/crew/background/runs/{id}/acknowledge"],
   ["POST", "/api/crew/background/{id}/delete"],
   ["POST", "/api/crew/background/{id}/disable"],
   ["POST", "/api/crew/background/{id}/enable"],
+  ["POST", "/api/crew/background/{id}/run-now"],
   ["POST", "/api/crew/background/{id}/update"],
   ["POST", "/api/crew/guard/targets/add"],
   ["POST", "/api/crew/guard/targets/{id}/remove"],
+  ["POST", "/api/crew/lead/{thread_id}/close"],
   ["POST", "/api/crew/escapes/mark"],
   ["POST", "/api/crew/escapes/{id}/confirm"],
   ["POST", "/api/crew/escapes/{id}/dismiss"],
@@ -81,11 +84,15 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/review/{task_id}/remove-lane"],
   ["POST", "/api/crew/settings/engine-tiers/save"],
   ["POST", "/api/crew/tasks/{id}/cancel"],
+  ["POST", "/api/crew/tasks/{id}/checks/{check}/decide"],
   ["POST", "/api/crew/tasks/{id}/merge"],
   ["POST", "/api/crew/tasks/{id}/rerun-checks"],
   ["POST", "/api/crew/tasks/{id}/retry-elsewhere"],
   // Engines, updates, workspace and the shell.
   ["POST", "/api/acp/registry/{id}"],
+  ["POST", "/api/devices/{id}/actions"],
+  ["POST", "/api/engine-host/{family}/restart"],
+  ["POST", "/api/engine-host/{family}/stop"],
   ["POST", "/api/engines/custom"],
   ["POST", "/api/engines/probe-binary"],
   ["POST", "/api/engines/update-all"],
@@ -103,6 +110,10 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["DELETE", "/api/policy/rules/{id}"],
   ["PUT", "/api/preferences"],
   ["PUT", "/api/projects/{id}/preferences"],
+  ["PUT", "/api/settings/engine-credentials/{engine}"],
+  ["PUT", "/api/settings/engine-credentials/{engine}/key"],
+  ["DELETE", "/api/settings/engine-credentials/{engine}/key"],
+  ["POST", "/api/settings/engine-credentials/{engine}/retry"],
   ["PUT", "/api/settings/preferences"],
   ["PUT", "/api/settings/secrets/formats/{id}"],
   ["POST", "/api/settings/secrets/patterns"],
@@ -161,17 +172,75 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   // Runs and AG-UI resume: only when the body raises `permission_mode` (or has a non-empty `resume`).
   ["POST", "/api/threads/{id}/runs"],
   ["POST", "/agui/threads/{id}"],
+  // Issue trackers (beta; behind the issues flag).
+  ["POST", "/api/issues/trackers/{tracker}/connect"],
+  ["POST", "/api/issues/trackers/{tracker}/disconnect"],
+  ["POST", "/api/issues/start-thread"],
+  ["POST", "/api/threads/{id}/issue-links"],
+  ["POST", "/api/threads/{id}/issue-links/remove"],
+  // Browser profiles: a rename is the person's own action; the other profile routes stay Local.
+  ["POST", "/api/browser-profiles/{id}/rename"],
+  // Execution profiles (docs/execution-profiles-and-library.md, Part 1): every write is Person-class. The reads and `POST /api/profiles/check` are Local.
+  ["POST", "/api/profiles"],
+  ["PATCH", "/api/profiles/{id}"],
+  ["DELETE", "/api/profiles/{id}"],
+  ["PUT", "/api/threads/{id}/profile"],
+  ["POST", "/api/crew/profile/apply"],
+  // Multi-repository projects (docs/multi-repo.md): the project repository writes. The thread ones are still pending below.
+  ["POST", "/api/projects/{id}/repos/add-folder"],
+  ["POST", "/api/projects/{id}/repos/create"],
+  ["POST", "/api/projects/{id}/repos/clone"],
+  ["POST", "/api/projects/{id}/repos/scan"],
+  ["POST", "/api/projects/{id}/repos/{repo_id}/publish"],
+  ["POST", "/api/projects/{id}/repos/{repo_id}/trust"],
+  ["POST", "/api/projects/{id}/repos/{repo_id}/setup-git"],
+  ["POST", "/api/projects/{id}/repos/{repo_id}/remove"],
+  ["POST", "/api/projects/{id}/repos/{repo_id}/clone/cancel"],
+  ["POST", "/api/projects/{id}/repo-threads"],
+  ["POST", "/api/threads/{id}/repos"],
+  ["DELETE", "/api/threads/{id}/repos/{repo_id}"],
+  // Code Mode (docs/code-mode.md): switching an engine's Code Mode changes what the engine may call; cancelling a run is the person's stop.
+  ["PUT", "/api/engines/{id}/code-mode"],
+  ["POST", "/api/code-runs/{id}/cancel"],
+  // The personal library (docs/execution-profiles-and-library.md, Part 2): every write is Person-class, a workflow run included. The reads, the two renders and the export are Local.
+  ["POST", "/api/library/workflows"],
+  ["PATCH", "/api/library/workflows/{id}"],
+  ["DELETE", "/api/library/workflows/{id}"],
+  ["POST", "/api/library/workflows/{id}/run"],
+  ["POST", "/api/library/prompts"],
+  ["PATCH", "/api/library/prompts/{id}"],
+  ["DELETE", "/api/library/prompts/{id}"],
+  ["POST", "/api/library/env-sets"],
+  ["PATCH", "/api/library/env-sets/{id}"],
+  ["DELETE", "/api/library/env-sets/{id}"],
+  ["PUT", "/api/library/env-sets/{id}/keys/{key}"],
+  ["DELETE", "/api/library/env-sets/{id}/keys/{key}"],
+  ["POST", "/api/library/import"],
+  ["POST", "/api/projects/{id}/library/suggestions/copy"],
+  // Cursor thread contract (docs/cursor-thread-contract.md): the one-turn override and the engine notice's acknowledgement.
+  ["POST", "/api/threads/{id}/send-without-approvals"],
+  ["POST", "/api/projects/{project_id}/engines/{engine}/notice/acknowledge"],
+  // Transcript import (docs/attachments-transcripts.md): a thread made from an untrusted file. The export (`GET /api/threads/{id}/export`) is Local.
+  ["POST", "/api/threads/import"],
+  // Transcript attach (docs/attachments-transcripts.md): an untrusted file becomes context for the thread's next message.
+  ["POST", "/api/threads/{id}/transcripts"],
+  // Snap Shot source (docs/snapshots.md): the window text that reaches the next prompt as untrusted text.
+  ["PUT", "/api/attachments/{id}/source"],
 ];
 
 /**
- * Person routes of a service slice that is not merged (HostDriver slice 3, the Cursor thread contract): the one-turn override and
- * the engine notice's acknowledgement. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
+ * Person routes of service slices that are not merged: the multi-repository writes of docs/multi-repo.md. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
  * holds to that table exactly. They send the key all the same, so the day the service enforces them the page already does.
  * `personKey.test.ts` fails once `routes.json` lists one: move that line into `PERSON_ROUTES` then.
  */
 export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern: string])[] = [
-  ["POST", "/api/threads/{id}/send-without-approvals"],
-  ["POST", "/api/engines/{engine}/notice/acknowledge"],
+  // Issues (docs/issues.md, "Issue writes and list controls"): the two writes of the tracker's own data. The five Issues writes of the
+  // first slice (connect, disconnect, link, unlink, start-thread) are in `routes.json` and so in `PERSON_ROUTES`. These two are not
+  // built in the service yet: when they land in `routes.json` the test below fails and each line moves into `PERSON_ROUTES`.
+  ["POST", "/api/issues/item/update"],
+  ["POST", "/api/issues/item/state"],
+  // Multi-repository projects (docs/multi-repo.md, PR #923): every write is Person-class. The reads (`GET .../repos`) are not.
+  // Folder scan and `.code-workspace` import (docs/multi-repo.md, "Folder scan"): Person-class although it writes nothing, because it reads a folder the person picked.
 ];
 
 /** The service's route pattern as a matcher: each `{name}` is one non-empty path segment. */
@@ -205,11 +274,19 @@ export function forgetPersonKey(): void {
 }
 
 /**
+ * Whether this page can send the person key at all: it has the desktop shell's bridge to ask, or it is a dev preview,
+ * which sends the fixed key below to the mock. A plain browser tab has neither, so the service answers every enforced
+ * `Person` route with `403 desktop_required`. A route that needs a person must not be offered where this is false.
+ */
+export const canSendPersonKey = (): boolean => typeof bridge()?.invoke === "function" || __ORBYN_PREVIEWS__;
+
+/**
  * The key, from the shell's `person_key` command, or null when this page has no shell (a browser tab) or the shell has no
  * key. Without one the request goes out without the header, and the service answers 403 `desktop_required`.
  */
 export async function readPersonKey(): Promise<string | null> {
   if (cached) return cached;
+  if (!canSendPersonKey()) return null;
   const invoke = bridge()?.invoke;
   if (typeof invoke !== "function") return __ORBYN_PREVIEWS__ ? MOCK_KEY : null;
   let answer: unknown;

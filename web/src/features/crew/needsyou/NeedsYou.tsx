@@ -37,7 +37,7 @@ export function NeedsRow({ item, rank, handlers }: { item: NeedsItem; rank: numb
     <li className="ny-item" data-kind={item.kind}>
       <span className="ny-rk" aria-hidden>{rank}</span>
       <div className="ny-tt">
-        <b>{item.kind === "could_not_start" ? KIND_ONE[item.kind] : item.title}</b>
+        <b>{item.kind === "could_not_start" ? KIND_ONE[item.kind] : item.kind === "could_not_stop" ? `${KIND_ONE[item.kind]}: ${item.title}` : item.title}</b>
         <div className="ny-m">
           {item.kind === "review" && item.risk ? <span className="ny-tag" data-tone={item.risk === "high" || item.overdue ? "amber" : item.risk === "low" ? "lo" : undefined}>Risk · {RISK_WORD[item.risk]}</span> : null}
           {item.kind === "review" && item.undo ? <span className="ny-tag" data-tone="lo">{UNDO_WORD[item.undo]}</span> : null}

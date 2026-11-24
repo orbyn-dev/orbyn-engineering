@@ -10,14 +10,14 @@ export function FlowYouRule() {
       <div className="cx-cwpg">
             <FlowHead sub="Login redirect crew · Task: Update the login docs · 5 runs" acts />
             <div className="cx-cwtabs">
-              <Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox · 4", "Report"]} on={0} />
+              <Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox", "Report"]} on={0} />
               <span className="cx-end">Claude Code 412k of 1M tokens · Codex 62% of its weekly limit · 2h 14m<span className="cx-cwpv" title="Planned: no Flow route reports usage yet">Planned</span></span>
             </div>
             <div className="cx-flcr">
               <span style={{ color: "var(--color-muted)" }}>All tasks</span>
               <Ic n="right" sm />
               <b>Update the login docs</b>
-              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer<span className="cx-cwpv">After the beta</span></span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
+              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer<span className="cx-cwpv">Planned</span></span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
             </div>
             <div className="cx-fl" style={{ height: "236px", width: "1110px" }}>
               <span className="cx-cwpv" style={{ position: "absolute", left: "0", top: "0", margin: "0", zIndex: 1 }} title="The wide graph is Planned; the app’s zoom is the stage list">Planned</span>
@@ -32,7 +32,7 @@ export function FlowYouRule() {
               <span className="cx-fh" style={{ left: "904px", top: "22px", width: "93px" }}><Ic n="git" sm />Main</span>
               <span className="cx-fh" style={{ left: "1017px", top: "22px", width: "93px" }}><Ic n="user" sm />You</span>
               <span className="cx-fg" style={{ left: "113px", top: "0", width: "206px" }}>Build</span>
-              <span className="cx-fg" style={{ left: "339px", top: "0", width: "432px" }}>Prove: separate runs, no limit</span>
+              <span className="cx-fg" style={{ left: "339px", top: "0", width: "432px" }}>Prove: separate runs</span>
               <span className="cx-fg" style={{ left: "791px", top: "0", width: "206px" }}>Land: no human wait</span>
               <span className="cx-fg" style={{ left: "1017px", top: "0", width: "93px" }}>You</span>
               <svg className="cx-fe" width="1110" height="236" aria-hidden="true">
@@ -154,7 +154,7 @@ export function FlowYouRule() {
                 </div>
                 <div className="cx-fbx">
                   <h6>Where this does not apply</h6>
-                  <p>Bots and agents never merge in the skills library; no rule can change that, so there it always waits for a person.</p>
+                  <p>In the skills library, merging is left to a person, whatever the rules say.</p>
                 </div>
               </div>
               <div className="cx-acts3"><Btn className="cx-btn">Open the PR</Btn><span className="cx-cwpv">Planned</span><Btn className="cx-ghost">Edit the rule</Btn><Btn className="cx-ghost">Turn the rule off</Btn></div>

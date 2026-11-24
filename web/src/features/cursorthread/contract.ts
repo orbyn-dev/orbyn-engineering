@@ -1,9 +1,9 @@
 /**
  * What a thread on an engine that never asks before acting (Cursor) needs from the service, as the thread screens read it.
  *
- * PLANNED CONTRACT. The Rust side is HostDriver slice 3 (output/harness-crew/cursor-thread-contract-eng2.md) and is not merged:
- * no type here is generated. Every shape below is a guess from that note until the routes land; the PR lists each one. When they
- * land, replace these hand-written types with the generated ones in the same commit that swaps the client in `api.ts`.
+ * Mirrors docs/cursor-thread-contract.md. The Rust side is HostDriver slice 3 and is not on main: no type here is generated and the
+ * routes are not in `routes.json`. When they land, replace these hand-written types with the generated ones in the same commit that
+ * swaps the client in `api.ts` and moves the two person routes into `PERSON_ROUTES`.
  *
  * Nothing here can carry a secret: a notice is a flag and a date, and a refusal is a sentence and a code.
  */
@@ -14,14 +14,18 @@ export const MODE_REFUSED = "engine_mode_refused";
 export const NOTICE_REQUIRED = "engine_notice_required";
 
 /**
- * The one mode an engine that never asks offers. GUESS: the wire spelling is confirmed only in the service's own PR; the generated
+ * The one mode an engine that never asks offers: `EngineCapabilities.permission_modes` is `["no_approvals"]` for it. The generated
  * `PermissionMode` does not name it yet, so the engine's list is read as strings.
  */
 export const NO_APPROVALS = "no_approvals";
 
-/** `GET /api/engines/{engine}/notice`, and what `POST .../notice/acknowledge` answers. One local setting per engine. */
+/**
+ * `GET /api/projects/{project_id}/engines/{engine}/notice`, and what `POST .../notice/acknowledge` answers. One local setting per
+ * project and engine, not per person.
+ */
 export interface NoticeState {
   engine: string;
+  project_id: string;
   acknowledged: boolean;
   acknowledged_at: string | null;
 }
@@ -34,6 +38,12 @@ export interface ModeRefusal {
   allowed: string[];
 }
 
+/** The extra fields of an `engine_notice_required` answer (the web client keeps only `code` and `message`). */
+export interface NoticeRefusal {
+  engine: string;
+  project_id: string;
+}
+
 /** `EngineStatus.crew_role` and `crew_role_reason`, added by the service slice; absent on a service without it. */
 export interface CrewRoleFields {
   crew_role?: "any" | "reviewer_only";
@@ -42,13 +52,13 @@ export interface CrewRoleFields {
 
 /** The routes the web does not yet have generated clients for. */
 export interface CursorThreadApi {
-  /** `null` when this service has no notice for the engine (every engine but one, or a service without the route). */
-  notice(engine: string, signal?: AbortSignal): Promise<NoticeState | null>;
-  /** One click, one write. Person-class: the key goes with it. */
-  acknowledge(engine: string): Promise<NoticeState>;
+  /** `null` when this service has no notice for the engine (404: every engine but one, or a service without the route). */
+  notice(projectId: string, engine: string, signal?: AbortSignal): Promise<NoticeState | null>;
+  /** One click, one write for the project. Person-class: the key goes with it. Acknowledging twice changes nothing. */
+  acknowledge(projectId: string, engine: string): Promise<NoticeState>;
   /**
    * Runs ONE turn with No approvals and stores nothing: the thread's saved mode stays. Person-class, never remembered. The body is
-   * the same as a send. Nothing in the screens calls it until a frame draws the control that does.
+   * the same as a send. It does not skip the notice: an unacknowledged project still answers `engine_notice_required`.
    */
   sendWithoutApprovals(threadId: string, body: { prompt: string; attachment_ids?: string[] }): Promise<unknown>;
 }

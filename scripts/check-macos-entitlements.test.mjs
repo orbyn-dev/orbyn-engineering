@@ -1,0 +1,160 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+
+// Real ad hoc signed copies of a system binary stand in for the app's binaries; macOS only.
+const script = join(dirname(fileURLToPath(import.meta.url)), "check-macos-entitlements.sh");
+const macos = process.platform === "darwin";
+const JIT = "com.apple.security.cs.allow-jit";
+const MEMORY = "com.apple.security.cs.allow-unsigned-executable-memory";
+const LIBRARY = "com.apple.security.cs.disable-library-validation";
+const DEBUG = "com.apple.security.get-task-allow";
+
+function plist(keys) {
+  const body = keys.map((key) => `<key>${key}</key><true/>`).join("");
+  return `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>${body}</dict></plist>`;
+}
+
+/**
+ * An app with these binaries, each signed ad hoc with its own entitlements (and the hardened runtime when asked).
+ * A name starting with "Resources/" goes under Contents/Resources (the engine SDKs' native files), any other under Contents/MacOS.
+ */
+function app(binaries, { runtime = false } = {}) {
+  const directory = mkdtempSync(join(tmpdir(), "orbyn-entitlements-"));
+  const contents = join(directory, "Orbyn Engineering.app", "Contents");
+  mkdirSync(join(contents, "MacOS"), { recursive: true });
+  binaries = { "orbyn-engineering": [], ...binaries };
+  for (const [name, keys] of Object.entries(binaries)) {
+    const file = name.startsWith("Resources/") ? join(contents, name) : join(contents, "MacOS", name);
+    mkdirSync(dirname(file), { recursive: true });
+    copyFileSync("/usr/bin/true", file);
+    const args = ["--force", "--sign", "-"];
+    if (runtime) args.push("--options", "runtime");
+    if (keys.length > 0) {
+      const entitlements = join(directory, `${name.replaceAll("/", "_")}.plist`);
+      writeFileSync(entitlements, plist(keys));
+      args.push("--entitlements", entitlements);
+    }
+    const signed = spawnSync("codesign", [...args, file], { encoding: "utf8" });
+    assert.equal(signed.status, 0, signed.stderr);
+  }
+  // A real bundle: an Info.plist, then the bundle's own seal over the binaries signed above (no --deep, so each
+  // binary keeps its own entitlements). The main executable is the bundle's, so it takes the bundle's signature.
+  const path = join(directory, "Orbyn Engineering.app");
+  writeFileSync(
+    join(path, "Contents", "Info.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>orbyn-engineering</string><key>CFBundleIdentifier</key><string>test.orbyn.entitlements</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`,
+  );
+  const seal = ["--force", "--sign", "-", ...(runtime ? ["--options", "runtime"] : []), path];
+  assert.equal(spawnSync("codesign", seal, { encoding: "utf8" }).status, 0);
+  return { directory, path };
+}
+
+function check(path, ...flags) {
+  return spawnSync("bash", [script, ...flags, path], { encoding: "utf8" });
+}
+
+function run(binaries, options, ...flags) {
+  const built = app(binaries, options);
+  try {
+    return check(built.path, ...flags);
+  } finally {
+    rmSync(built.directory, { recursive: true, force: true });
+  }
+}
+
+test("the host may carry its three entitlements and nothing else carries any", { skip: !macos }, () => {
+  const result = run({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], orbynd: [], orbyn: [], "orbyn-engineering": [] });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Entitlements ok: 4 binaries/);
+});
+
+const NATIVE = "Resources/sdk/node_modules/@cursor/sdk-darwin-arm64/bin/rg";
+
+test("native files of the engine SDKs under Resources/sdk are walked and need no entitlement", { skip: !macos }, () => {
+  const result = run({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], orbynd: [], [NATIVE]: [], "Resources/sdk/node_modules/@cursor/sdk/vendor/binding.node": [] });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Entitlements ok: 5 binaries/);
+});
+
+test("an SDK native file with an entitlement fails, even one the host may carry", { skip: !macos }, () => {
+  const result = run({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], [NATIVE]: [LIBRARY] });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /rg carries com\.apple\.security\.cs\.disable-library-validation, which is not allowed/);
+});
+
+test("an SDK native file with get-task-allow fails", { skip: !macos }, () => {
+  const result = run({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], [NATIVE]: [DEBUG] });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /rg carries com\.apple\.security\.get-task-allow/);
+});
+
+test("--release fails on an SDK native file without the hardened runtime", { skip: !macos }, () => {
+  const built = app({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], [NATIVE]: [] }, { runtime: true });
+  try {
+    // Re-sign the native file the way an ad hoc pass would, without the runtime flag, then seal the bundle again.
+    const file = join(built.path, "Contents", NATIVE);
+    assert.equal(spawnSync("codesign", ["--force", "--sign", "-", file], { encoding: "utf8" }).status, 0);
+    assert.equal(spawnSync("codesign", ["--force", "--sign", "-", "--options", "runtime", built.path], { encoding: "utf8" }).status, 0);
+    const result = check(built.path, "--release");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /rg has no hardened runtime flag/);
+  } finally {
+    rmSync(built.directory, { recursive: true, force: true });
+  }
+});
+
+test("orbynd with disable-library-validation fails", { skip: !macos }, () => {
+  const result = run({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], orbynd: [LIBRARY] });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /orbynd carries com\.apple\.security\.cs\.disable-library-validation/);
+});
+
+test("get-task-allow fails on any binary, the host included", { skip: !macos }, () => {
+  const result = run({ "orbyn-engine-host": [JIT, DEBUG], orbynd: [] });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /orbyn-engine-host carries com\.apple\.security\.get-task-allow/);
+});
+
+test("the host carrying an entitlement outside its three fails", { skip: !macos }, () => {
+  const result = run({ "orbyn-engine-host": [JIT, "com.apple.security.cs.allow-dyld-environment-variables"], orbynd: [] });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /allow-dyld-environment-variables, which is not allowed/);
+});
+
+test("an ad hoc build without the hardened runtime passes by default and fails --release", { skip: !macos }, () => {
+  const binaries = { "orbyn-engine-host": [JIT, MEMORY, LIBRARY], orbynd: [] };
+  const plain = run(binaries, {});
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.match(plain.stdout, /Hardened runtime: not checked/);
+  const strict = run(binaries, {}, "--release");
+  assert.equal(strict.status, 1);
+  assert.match(strict.stderr, /orbynd has no hardened runtime flag/);
+});
+
+test("--release passes when every binary has the hardened runtime and only its allowed entitlements", { skip: !macos }, () => {
+  const result = run({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], orbynd: [] }, { runtime: true }, "--release");
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("a binary changed after signing fails the signature check", { skip: !macos }, () => {
+  const built = app({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], orbynd: [] });
+  try {
+    const file = join(built.path, "Contents", "MacOS", "orbynd");
+    const signedBytes = readFileSync(file);
+    writeFileSync(file, Buffer.concat([signedBytes, Buffer.from("tampered")]));
+    const result = check(built.path);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /signature does not verify/);
+  } finally {
+    rmSync(built.directory, { recursive: true, force: true });
+  }
+});
+
+test("a path that is not an app bundle is a usage error", { skip: !macos }, () => {
+  assert.equal(check("/nonexistent/app.app").status, 2);
+});

@@ -160,13 +160,17 @@ async fn claude_console_resumes_the_thread_session_and_holds_runs() {
     service.admit(&thread, "again").await;
     service.finished(&thread).await;
 
-    // Plan mode reaches the console as Claude's own plan permission mode.
+    // A saved plan mode no longer reaches the console.
     service.patch(&thread, json!({ "plan_mode": true })).await;
     let (code, body) = service.send(&path, json!({})).await;
     assert_eq!(code, 201, "{body}");
     assert!(until_seen(&service, &thread, "fake console on claude-session-1").await);
     let launched = consoles(&file);
-    assert_eq!(launched.last().unwrap()["args"][3], "plan", "{launched:?}");
+    assert_eq!(
+        launched.last().unwrap()["args"][3],
+        "default",
+        "{launched:?}"
+    );
     assert!(
         service
             .audit(&thread)

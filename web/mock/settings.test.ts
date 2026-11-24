@@ -48,3 +48,60 @@ it("returns typed model defaults and the same scoped override sources to the dra
   expect(read().find((row) => row.key === "default_model")).toMatchObject({ value: "environment", source: "global" });
   api.reset();
 });
+
+it("reads and saves a checkout's preferences through the legacy routes when checkouts of one repository are grouped", () => {
+  const api = createMockApi();
+  api.reset("settings-checkouts");
+  for (const project of ["p-app", "p-app-fix"]) {
+    const read = api.handle("GET", `/api/preferences?project_id=${project}`);
+    expect(read.status, `GET for ${project}`).toBe(200);
+    const saved = api.handle("PUT", `/api/projects/${project}/preferences`, { values: { branch_name_prefix: `hot-${project}` } });
+    expect(saved.status, `PUT for ${project}`).toBe(200);
+    expect((saved.body as PreferenceView[]).find((view) => view.key === "branch_name_prefix")).toMatchObject({ value: `hot-${project}`, source: "project" });
+  }
+  // A project that is its own group keeps working the same way, and an unknown one is still not found.
+  expect(api.handle("GET", "/api/preferences?project_id=p-site").status).toBe(200);
+  expect(api.handle("GET", "/api/preferences?project_id=nope").status).toBe(404);
+  api.reset();
+});
+
+it("keeps the remaining project of a grouped pair in the catalog once the other is deleted", () => {
+  const api = createMockApi();
+  api.reset("settings-checkouts");
+  // A project with a run going cannot be deleted, so the pair is two that are idle.
+  const running = new Set((api.handle("GET", "/api/threads").body as { project_id: string; active_run: unknown }[]).filter((thread) => thread.active_run).map((thread) => thread.project_id));
+  const [gone, kept] = (api.handle("GET", "/api/projects").body as { id: string }[]).map((project) => project.id).filter((id) => !running.has(id));
+  expect(gone && kept).toBeTruthy();
+  api.groupProjects([gone!, kept!]);
+  const members = () => (api.handle("POST", "/api/settings/project-scopes", {}).body as ScopedPreferencesResult["catalog"]).groups
+    .flatMap((group) => group.members.map((member) => member.project_id));
+  expect(members()).toContain(kept);
+  expect(api.handle("DELETE", `/api/projects/${gone}`).status).toBeLessThan(300);
+  expect(members()).toContain(kept);
+  api.reset();
+});
+
+it("opens the thread a native-session import names, and leaves an engine already updating out of update-all", () => {
+  const api = createMockApi();
+  api.reset();
+  const imported = api.handle("POST", "/api/engines/claude/native-sessions/import", { session_id: "native-1" });
+  expect(imported.status).toBe(200);
+  const id = (imported.body as { thread_id: string }).thread_id;
+  expect(api.handle("GET", `/api/threads/${id}`).status).toBe(200);
+  api.setEngines([{ ...(api.handle("GET", "/api/engines").body as { id: string }[])[0]!, installed: true, updating: true, update_command: "npm i", version: "1.0.0", latest: "2.0.0", instance_of: null } as never]);
+  expect(api.handle("POST", "/api/engines/update-all", {}).body).toEqual([]);
+  api.reset();
+});
+
+it("keeps a failure queued for GET on an engine's update route out of update-all, which sends POST", () => {
+  const api = createMockApi();
+  api.reset();
+  // An engine no thread is running on, so the update itself is allowed.
+  const engine = { ...(api.handle("GET", "/api/engines").body as { id: string }[])[0]!, id: "idle-engine" };
+  api.setEngines([{ ...engine, installed: true, updating: false, update_command: "npm i", version: "1.0.0", latest: "2.0.0", instance_of: null } as never]);
+  api.fail(`/api/engines/${engine.id}/update`, 1, 500, "boom", "Broke.", "GET");
+  const outcome = (api.handle("POST", "/api/engines/update-all", {}).body as { id: string; error?: string }[])[0];
+  expect(outcome?.error).toBeUndefined();
+  expect(api.handle("GET", `/api/engines/${engine.id}/update`).status).toBe(500);
+  api.reset();
+});

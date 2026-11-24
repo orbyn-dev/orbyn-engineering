@@ -18,13 +18,13 @@ const cursor = { id: "cursor", name: "Cursor", installed: true, capabilities: { 
 const draw = (engine = claude, onModel = vi.fn(), onAccess = vi.fn(), access: "supervised" | "full_access" = "supervised") =>
   render(<RepoStart project={{ id: "p1", name: "orbyn" }} engines={[claude, cursor]} engine={engine} model="opus" access={access} onModel={onModel} onAccess={onAccess} />);
 
-it("draws nothing and makes no request while the service reports no repositories", async () => {
-  const fetching = vi.fn();
+it("draws nothing, and no error, when the service answers the repository list with 404", async () => {
+  const fetching = vi.fn(async () => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404 }));
   vi.stubGlobal("fetch", fetching);
   const { container } = draw();
+  await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
   await act(async () => { await Promise.resolve(); });
   expect(container).toBeEmptyDOMElement();
-  expect(fetching).not.toHaveBeenCalled();
   vi.unstubAllGlobals();
 });
 
@@ -78,4 +78,32 @@ it("dims the permission modes an engine that never asks does not offer, with the
   await user.click(within(dialog).getByRole("button", { name: "Permissions: Full access" }));
   await user.click(within(await screen.findByRole("menu", { name: "Composer options" })).getByRole("menuitemradio", { name: "Auto" }));
   expect(onAccess).toHaveBeenCalledWith("auto");
+});
+
+it("shows the visible Unmanaged word in the repository dialog's permission slot for an engine Orbyn cannot ask", async () => {
+  const kiro = {
+    id: "kiro", name: "Kiro", installed: true,
+    capabilities: { managed: false, permission_modes: ["supervised"], approvals: false, skill_delivery: [] },
+  } as unknown as EngineStatus;
+  setReposApi(createReposMock());
+  draw(kiro);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Repositories: 4" }));
+  const dialog = await screen.findByRole("dialog", { name: /New thread in orbyn/ });
+  expect(within(dialog).getByText("Unmanaged", { selector: ".unmanaged-label" })).toBeVisible();
+  expect(within(dialog).queryByRole("button", { name: /^Permissions:/ })).toBeNull();
+});
+
+it("says Orbyn cannot ask for a non-Cursor engine in the repository dialog", async () => {
+  const kiro = {
+    id: "kiro", name: "Kiro", installed: true,
+    capabilities: { managed: false, permission_modes: ["no_approvals", "auto", "full_access"], approvals: false, skill_delivery: [] },
+  } as unknown as EngineStatus;
+  setReposApi(createReposMock());
+  draw(kiro);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Repositories: 4" }));
+  const dialog = await screen.findByRole("dialog", { name: /New thread in orbyn/ });
+  expect(within(dialog).getByText("Orbyn cannot ask before Kiro acts. Supervised and Auto-accept edits are not available here.")).toBeVisible();
+  expect(within(dialog).queryByText(/sandbox/i)).toBeNull();
 });

@@ -141,6 +141,46 @@ fn a_turn_the_engine_started_for_its_own_work_does_not_end_the_run() {
 }
 
 #[test]
+fn what_a_notifications_turn_says_is_shown_but_is_not_the_prompts_reply() {
+    let is_leftover = |events: &[EngineEvent]| {
+        !events.is_empty()
+            && events
+                .iter()
+                .all(|event| matches!(event, EngineEvent::Leftover(_)))
+    };
+    let mut mapper = StreamMapper::answering("mine");
+    // The CLI ran a turn for a finished background agent, and said so, before reaching the prompt.
+    mapper.on_frame(&json!({ "type": "system", "subtype": "task_notification",
+        "task_id": "old", "status": "completed" }));
+    let events = mapper.on_frame(&said("the old agent finished"));
+    assert!(is_leftover(&events), "{events:?}");
+    mapper.on_frame(&done());
+    mapper.on_frame(&echo("mine"));
+    // After the echo the words are the prompt's own.
+    let events = mapper.on_frame(&said("here is your answer"));
+    assert!(!events.is_empty());
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, EngineEvent::Leftover(_))),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn a_cli_that_gave_no_notice_of_a_leftover_turn_has_nothing_wrapped() {
+    // No notification came, so nothing says these words are not the prompt's: they count.
+    let mut mapper = StreamMapper::answering("mine");
+    let events = mapper.on_frame(&said("hello"));
+    assert!(
+        !events.is_empty()
+            && !events
+                .iter()
+                .any(|event| matches!(event, EngineEvent::Leftover(_)))
+    );
+}
+
+#[test]
 fn a_leftover_turn_that_fails_before_streaming_does_not_fail_the_prompt() {
     let mut mapper = StreamMapper::answering("mine");
     mapper.on_frame(&json!({ "type": "system", "subtype": "task_notification",

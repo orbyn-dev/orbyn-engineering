@@ -6,6 +6,7 @@ import type { Project } from "../../../generated/Project";
 import { useConnection } from "../../../product/state/connection";
 import { useWorkspace } from "../../../product/state/workspace";
 import { installMockFetch } from "../../../test-support";
+import { BackgroundTab } from "../autopilot/approvals/Background";
 import { NeedsYouInbox } from "./NeedsYouInbox";
 import { NEEDS_REFRESH_MS } from "./useNeedsYou";
 
@@ -15,7 +16,8 @@ let mock: MockApi;
 beforeAll(async () => {
   installMockFetch();
   await import("../../../app/App");
-});
+  // App's first import is the cold module graph of the whole app; under a full-suite run it passes the 10 s default hook timeout.
+}, 60_000);
 beforeEach(() => {
   mock = installMockFetch();
   useConnection.setState({ remote: false });
@@ -49,6 +51,7 @@ describe("the Needs you inbox on live data", () => {
     mock.reset("default");
     const { container } = render(<NeedsYouInbox />);
     await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
     expect(calls("/api/crew/approvals/held")).toHaveLength(0);
@@ -310,7 +313,7 @@ describe("the Needs you inbox on live data", () => {
 
   it("is an error when nothing could be read, and retrying reads again", async () => {
     mock.reset("crew");
-    for (const path of ["/api/crew/stops", "/api/crew/autopilot/review", "/api/crew/background", "/api/crew/approvals/held", "/api/crew/approvals/second-engine", "/api/crew/flow/crews"]) mock.fail(path, 1, 503, "unavailable");
+    for (const path of ["/api/crew/stops", "/api/crew/autopilot/review", "/api/crew/background", "/api/crew/approvals/held", "/api/crew/approvals/second-engine", "/api/crew/flow/crews", "/api/crew/needs-you"]) mock.fail(path, 1, 503, "unavailable");
     const user = userEvent.setup();
     render(<NeedsYouInbox />);
     expect(await screen.findByText("Can’t read what needs you")).toBeVisible();
@@ -386,6 +389,60 @@ describe("answering from the inbox", () => {
   });
 });
 
+describe("the watch rows (KC6)", () => {
+  it("lists a failing watch and one whose checks could not run beside a background run, and Open asks the Background tab for that watch", async () => {
+    oneGitProject();
+    const { user } = await open("crew-background-watch-needsyou");
+    const items = within(await list()).getAllByRole("listitem");
+    expect(items.map((one) => one.textContent)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Watch could not run: Lockfile check"),
+        expect.stringContaining("Watch failing: Redirect tests"),
+        expect.stringContaining("Needs approval"),
+      ]),
+    );
+    const failing = items.find((one) => one.textContent?.includes("Watch failing: Redirect tests"))!;
+    expect(failing).toHaveTextContent("Watch · Redirect tests · turned failing");
+    expect(failing).toHaveTextContent("This is raised once for this change and is meant not to repeat while the check keeps failing.");
+    const couldNotRun = items.find((one) => one.textContent?.includes("Watch could not run: Lockfile check"))!;
+    expect(couldNotRun).toHaveTextContent("3 checks in a row could not run: timed out.");
+    // The service's row time is the latest check, not the streak's first error: it is a "one row since" claim, not "3 since".
+    expect(couldNotRun).toHaveTextContent("3 checks in a row · one row since ");
+    expect(couldNotRun).toHaveTextContent("One row for the whole stretch");
+    const bar = screen.getByRole("group", { name: "Filter the inbox" });
+    expect(within(bar).getAllByRole("button").map((one) => one.textContent)).toEqual(["Needs you 3", "Background 3"]);
+    const { useWatchFocus } = await import("../autopilot/approvals/watchFocus");
+    useWatchFocus.setState({ id: null });
+    await user.click(within(failing).getByRole("button", { name: "Open: Watch failing: Redirect tests" }));
+    expect(useWatchFocus.getState().id).toBe("bg-watch-redirect");
+  });
+
+  it("Open on a watch of the second project opens the Background tab on that project, not the first git project", async () => {
+    twoGitProjects();
+    const { user, view } = await open("crew-background-watch-needsyou-p-two");
+    const failing = within(await list()).getAllByRole("listitem").find((one) => one.textContent?.includes("Watch failing: Redirect tests"))!;
+    await user.click(within(failing).getByRole("button", { name: "Open: Watch failing: Redirect tests" }));
+    view.unmount();
+    vi.mocked(fetch).mockClear();
+    render(<BackgroundTab />);
+    expect(await screen.findByRole("region", { name: "Redirect tests watch" })).toBeVisible();
+    const reads = calls("/api/crew/background?").map(([url]) => String(url));
+    expect(reads.length).toBeGreaterThan(0);
+    for (const url of reads) expect(url).toContain("project=p-two");
+  });
+
+  it("draws no watch row when the shared Needs you read is not served: a 404 is a service without watches, not an error", async () => {
+    oneGitProject();
+    mock.reset("crew-held-account");
+    mock.fail("/api/crew/needs-you", 1, 404, "not_found", "Not found.");
+    render(<NeedsYouInbox />);
+    const items = within(await list()).getAllByRole("listitem");
+    expect(items.some((one) => one.textContent?.includes("Watch failing:"))).toBe(false);
+    expect(items.some((one) => one.textContent?.includes("Watch could not run:"))).toBe(false);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
 describe("the live frame", () => {
   it("draws the inbox inside the Crew page on the app's own routes (needsyou-live)", async () => {
     const { renderPreviewFrame } = await import("../shared/test-support");
@@ -414,6 +471,7 @@ describe("the Inbox tab of the Crew page", () => {
     mock.reset("default");
     const { container } = render(<CrewSurface tab="inbox" />);
     await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
   });
@@ -433,6 +491,7 @@ describe("the Inbox tab of the Crew page", () => {
       const reads = calls("/api/crew/").length;
       await act(async () => { vi.advanceTimersByTime(NEEDS_REFRESH_MS); });
       await waitFor(() => expect(calls("/api/crew/").length).toBeGreaterThan(reads));
+      // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
       expect(within(await list()).getAllByRole("listitem")).toHaveLength(before);
       expect(screen.queryByText("The service is busy.")).toBeNull();

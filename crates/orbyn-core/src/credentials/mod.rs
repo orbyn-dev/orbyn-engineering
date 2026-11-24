@@ -14,8 +14,17 @@
 //!
 //! No value is ever formatted: [`SpawnSecret`] prints nothing in `Debug`, zeroizes on drop, and the
 //! errors carry no key text. The web page and the routes get [`Status`] only.
+//!
+//! A second keychain use, approved by the owner, sits beside it: [`EnvSets`] keeps the **values of personal-library environment
+//! sets** (docs/execution-profiles-and-library.md, Part 2) under its own service name (`app.orbyn.engineering.env-sets`, with a
+//! `.dev` twin), one item per key, account `<set id>/<KEY>`. It follows the same rules (keychain only, write-only, no value in any
+//! format or answer) and is a separate namespace: the [`ENGINES`] allowlist is untouched, no engine-key call can read a set and no
+//! set call can read an engine key. A set's values reach one place only, the environment of a workflow run the person starts, and
+//! never an engine spawn.
 
+mod app;
 mod backend;
+mod env_sets;
 
 #[cfg(test)]
 mod tests;
@@ -24,13 +33,36 @@ use std::sync::Arc;
 
 use zeroize::Zeroizing;
 
-#[cfg(all(target_os = "macos", feature = "engine-client"))]
+#[cfg(any(test, feature = "test-support"))]
+pub use backend::MemoryBackend;
+#[cfg(all(
+    target_os = "macos",
+    any(feature = "engine-client", feature = "engine-credentials")
+))]
 pub use backend::SystemKeychain;
 pub use backend::{Failure, SecretBackend};
+pub use env_sets::{
+    ENV_DEV_SERVICE, ENV_RELEASE_SERVICE, EnvError, EnvSecret, EnvSets, KeyProblem, MAX_KEY_NAME,
+    MAX_VALUE_BYTES, check_key_name, default_env_service,
+};
 
 /// The keychain service name of a development or unsigned build; a signed release uses its own, so
 /// neither reads the other's items (the same rule as the account device, docs/account.md).
 pub const DEV_SERVICE: &str = "app.orbyn.engineering.engine-keys.dev";
+
+/// The keychain service name of a release build (`debug_assertions` off).
+pub const RELEASE_SERVICE: &str = "app.orbyn.engineering.engine-keys";
+
+/// The service this build uses: [`DEV_SERVICE`] with debug assertions, [`RELEASE_SERVICE`] without.
+/// The build has no signed-or-not flag, so this follows the account device's dev/release split
+/// (`debug_assertions`); an unsigned optimized build therefore uses the release name.
+pub const fn default_service() -> &'static str {
+    if cfg!(debug_assertions) {
+        DEV_SERVICE
+    } else {
+        RELEASE_SERVICE
+    }
+}
 
 /// The longest key we accept. Real keys are far shorter; the bound keeps a paste of a file out.
 pub const MAX_KEY_LEN: usize = 512;
@@ -47,6 +79,18 @@ pub const ENGINES: &[EngineKey] = &[EngineKey {
     engine: "cursor",
     env: "CURSOR_API_KEY",
 }];
+
+/// The issue trackers that read with a keychain token (docs/issues.md). GitHub reads through the person's own
+/// `gh` and keeps nothing. Adding one is a code change and a security-review item, never a setting.
+pub const TRACKERS: &[&str] = &["gitlab", "azure_devops", "forgejo", "linear"];
+
+fn tracker_account(tracker: &str) -> Result<String, CredentialError> {
+    if TRACKERS.contains(&tracker) {
+        Ok(format!("tracker:{tracker}"))
+    } else {
+        Err(CredentialError::UnknownEngine)
+    }
+}
 
 /// What the person may be told. Never the key, not even its length or last characters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -201,6 +245,59 @@ impl Credentials {
                     value: Zeroizing::new(value),
                 }))
             }
+            _ => Ok(None),
+        }
+    }
+}
+
+impl Credentials {
+    /// Whether a tracker token is saved. Never the token.
+    pub fn tracker_saved(&self, tracker: &str) -> Result<bool, CredentialError> {
+        let account = tracker_account(tracker)?;
+        match self.backend.get(&self.service, &account) {
+            Ok(Some(bytes)) => Ok(!bytes.is_empty()),
+            Ok(None) => Ok(false),
+            Err(failure) => Err(Self::map(failure)),
+        }
+    }
+
+    /// Saves or replaces a tracker token. The caller drops its copy right after.
+    pub fn tracker_save(&self, tracker: &str, token: &str) -> Result<(), CredentialError> {
+        let account = tracker_account(tracker)?;
+        let token = token.trim();
+        if token.is_empty()
+            || token.len() > MAX_KEY_LEN
+            || token.chars().any(|c| c.is_whitespace() || c.is_control())
+        {
+            return Err(CredentialError::InvalidKey);
+        }
+        self.backend
+            .set(&self.service, &account, token.as_bytes())
+            .map_err(Self::map)
+    }
+
+    /// Deletes the token. Fine when there is none.
+    pub fn tracker_remove(&self, tracker: &str) -> Result<(), CredentialError> {
+        let account = tracker_account(tracker)?;
+        self.backend
+            .delete(&self.service, &account)
+            .map_err(Self::map)
+    }
+
+    /// The token for a request to the tracker's own host, and nowhere else.
+    pub fn tracker_token(
+        &self,
+        tracker: &str,
+    ) -> Result<Option<Zeroizing<String>>, CredentialError> {
+        let account = tracker_account(tracker)?;
+        match self
+            .backend
+            .get(&self.service, &account)
+            .map_err(Self::map)?
+        {
+            Some(bytes) if !bytes.is_empty() => String::from_utf8(bytes.to_vec())
+                .map(|value| Some(Zeroizing::new(value)))
+                .map_err(|_| CredentialError::Failed),
             _ => Ok(None),
         }
     }

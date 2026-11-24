@@ -1,12 +1,12 @@
 import { FileCode, FileText } from "lucide-react";
-import { use, useEffect, useRef, useState } from "react";
+import { use, useEffect, useState } from "react";
 import { attachmentBlob } from "./api";
 import { toFailure } from "../../lib/useAsync";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
 import { Dialog } from "../../ui/Dialog";
 import { TimelineThread } from "./timelineThread";
-import { Lightbox } from "../content";
+import { MediaDialog, type MediaItem } from "../content";
 import { fileLinkTarget } from "../../lib/links";
 import type { SentAttachment } from "../../product/timeline/types";
 
@@ -43,7 +43,6 @@ const textual = (mime: string) =>
 interface Shown {
   name: string;
   body: string;
-  kind: "image" | "text";
 }
 
 function download(blob: Blob, name: string): void {
@@ -53,6 +52,37 @@ function download(blob: Blob, name: string): void {
   anchor.download = name;
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+const isImage = (file: SentAttachment) => file.mime.startsWith("image/");
+
+/** The bytes of each sent image as a blob URL, loaded once, until the message goes. */
+function useImageUrls(images: readonly SentAttachment[]): Record<string, string | null> {
+  const [urls, setUrls] = useState<Record<string, string | null>>({});
+  const key = images.map((file) => file.id).join(",");
+  useEffect(() => {
+    let live = true;
+    const made: string[] = [];
+    setUrls({});
+    for (const file of images) {
+      attachmentBlob(file.id).then(
+        (blob) => {
+          if (!live) return;
+          const url = URL.createObjectURL(blob);
+          made.push(url);
+          setUrls((current) => ({ ...current, [file.id]: url }));
+        },
+        () => live && setUrls((current) => ({ ...current, [file.id]: null })),
+      );
+    }
+    return () => {
+      live = false;
+      for (const url of made) URL.revokeObjectURL(url);
+    };
+    // The ids are the dependency: a new array of the same files must not reload them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return urls;
 }
 
 /** What a sent user message carried: files by name and paths by mention. */
@@ -67,27 +97,23 @@ export function SentFiles({
   const [shown, setShown] = useState<Shown | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const objectUrl = useRef<string | null>(null);
-
-  useEffect(
-    () => () => {
-      if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
-    },
-    [],
-  );
+  const [expanded, setExpanded] = useState<{ index: number; opener: HTMLElement } | null>(null);
+  const files = attachments ?? [];
+  const images = files.filter(isImage);
+  const chips = files.filter((file) => !isImage(file));
+  const urls = useImageUrls(images);
+  const loaded: MediaItem[] = images.flatMap((file) => {
+    const src = urls[file.id];
+    return src ? [{ kind: "image" as const, src, alt: file.name }] : [];
+  });
 
   const open = async (file: SentAttachment) => {
     setError(null);
     setBusy(file.id);
     try {
       const blob = await attachmentBlob(file.id);
-      if (file.mime.startsWith("image/")) {
-        const url = URL.createObjectURL(blob);
-        if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
-        objectUrl.current = url;
-        setShown({ name: file.name, body: url, kind: "image" });
-      } else if (textual(file.mime) && blob.size <= PREVIEW_BYTES) {
-        setShown({ name: file.name, body: await blob.text(), kind: "text" });
+      if (textual(file.mime) && blob.size <= PREVIEW_BYTES) {
+        setShown({ name: file.name, body: await blob.text() });
       } else {
         download(blob, file.name);
       }
@@ -105,14 +131,43 @@ export function SentFiles({
     if (thread) useUi.getState().revealFile(target.path, target.line, { threadId: thread.id, cwd: thread.cwd });
   };
 
-  const files = attachments ?? [];
   const paths = sentPaths(text);
   if (files.length === 0 && paths.length === 0) return null;
 
   return (
     <>
-      <ul className="sent-files" aria-label="Sent with this message">
-        {files.map((file) => (
+      {images.length > 0 ? (
+        <ul className="sent-gallery" aria-label="Sent with this message" data-many={images.length > 6 || undefined}>
+          {images.map((file) => {
+            const src = urls[file.id];
+            const at = loaded.findIndex((item) => item.src === src);
+            return (
+              <li key={`image:${file.id}`}>
+                {src ? (
+                  <button
+                    type="button"
+                    aria-label={`Expand ${file.name}`}
+                    title={`${file.name} · ${sizeLabel(file.size)}`}
+                    onClick={(event) => setExpanded({ index: at, opener: event.currentTarget })}
+                  >
+                    <img src={src} alt={file.name} />
+                  </button>
+                ) : (
+                  <span className="sent-gallery-wait" title={file.name}>
+                    {src === null ? `Image unavailable · ${file.name}` : ""}
+                  </span>
+                )}
+                {file.source ? (
+                  <small className="sent-snapshot-source">Snap Shot · {file.source.app_name} · {file.source.window_title}</small>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {chips.length > 0 || paths.length > 0 ? (
+      <ul className="sent-files" aria-label={images.length > 0 ? "Files sent with this message" : "Sent with this message"}>
+        {chips.map((file) => (
           <li key={`file:${file.id}`}>
             <button
               type="button"
@@ -141,15 +196,16 @@ export function SentFiles({
           </li>
         ))}
       </ul>
+      ) : null}
       {error ? (
         <p className="sent-files-error" role="alert">
           {error}
         </p>
       ) : null}
-      {shown?.kind === "image" ? (
-        <Lightbox src={shown.body} alt={shown.name} onClose={() => setShown(null)} />
+      {expanded ? (
+        <MediaDialog items={loaded} index={expanded.index} opener={expanded.opener} onClose={() => setExpanded(null)} />
       ) : null}
-      {shown?.kind === "text" ? (
+      {shown ? (
         <Dialog title={shown.name} onClose={() => setShown(null)}>
           <pre className="sent-preview-text">{shown.body}</pre>
         </Dialog>

@@ -731,4 +731,7 @@
 .fl-repo-head .nm { overflow-wrap: anywhere; }
 .fl-repo-head code { color: var(--color-muted); overflow-wrap: anywhere; min-width: 0; }
 .fl-repo-head .num { margin-left: auto; color: var(--color-muted); font-variant-numeric: tabular-nums; }
+.fl-repo-head .fl-cap { color: var(--color-muted); font-weight: 400; white-space: nowrap; }
 .fl-repo + .fl-repo { border-top: 1px solid var(--color-border); }
+/* The repository named before the path in the file header of a multi-repository thread. */
+.fh2 .repo-pill { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 7px; border: 1px solid var(--color-borderStrong); border-radius: 999px; color: var(--color-muted); font-size: var(--text-meta); }

@@ -400,6 +400,17 @@ fn commit_rules(w: &super::harness::World, text: &str) {
     commit_all(&w.repo, "rules");
 }
 
+/// The rule file the two `repo_rules_add_lanes` branches share: one lane a change under `src/` asks for, one only a
+/// change under `docs/` does (so it must not run), and one every change asks for.
+fn rule_lanes() -> String {
+    json!({ "required": ["checks"], "lanes": [
+        { "lane": "security", "when": { "paths": ["src/**"] }, "locked": true },
+        { "lane": "docs", "when": { "paths": ["docs/**"] } },
+        { "lane": "licence" },
+    ] })
+    .to_string()
+}
+
 /// Repo rules add lanes, and only add: a lane the change's paths ask for runs without being named. The rules are the
 /// ones at the commit the work started from.
 #[tokio::test]
@@ -409,23 +420,19 @@ async fn repo_rules_add_lanes() {
         _ => reviewed(vec![]),
     }))
     .await;
-    commit_rules(
-        &w,
-        &json!({ "required": ["checks"], "lanes": [
-            { "lane": "security", "when": { "paths": ["src/**"] }, "locked": true },
-            { "lane": "docs", "when": { "paths": ["docs/**"] } },
-            { "lane": "licence" },
-        ] })
-        .to_string(),
-    );
+    commit_rules(&w, &rule_lanes());
     let subject = w.built_work().await;
-    let (answer, error) = w
-        .lead(
-            "crew_review",
+    // The call is paced by the real 45-second MCP budget: four lane starts, each a few git calls, can run past it on a
+    // loaded machine, and the answer is then the cut error instead of the lanes (#1159). This test is about the rules,
+    // so it sets the clock out of reach; the cut branch is `a_cut_rule_lane_call_names_the_lanes_it_did_not_reach`.
+    let answer = w
+        .review_at(
             json!({ "task": subject, "lanes": ["correctness"] }),
+            std::time::Instant::now() + std::time::Duration::from_secs(3600),
+            std::time::Duration::ZERO,
         )
-        .await;
-    assert!(!error, "{answer}");
+        .await
+        .unwrap_or_else(|error| panic!("the review call was cut or refused: {error}"));
     let named: Vec<(&str, bool, bool)> = answer["lanes"]
         .as_array()
         .unwrap()
@@ -462,6 +469,37 @@ async fn repo_rules_add_lanes() {
             ("security", true),
             ("licence", false)
         ]
+    );
+}
+
+/// The other branch of the same call: when the clock runs out, the answer names the lanes the repo's rules added and did
+/// not reach, so a lead knows to ask again. The deadline is already reached, so this is the state a loaded machine hit in
+/// #1159, asserted on purpose instead of waited for.
+#[tokio::test]
+async fn a_cut_rule_lane_call_names_the_lanes_it_did_not_reach() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    commit_rules(&w, &rule_lanes());
+    let subject = w.built_work().await;
+    let cut = w
+        .review_at(
+            json!({ "task": subject, "lanes": ["correctness"] }),
+            std::time::Instant::now(),
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        cut.message
+            .starts_with("lanes: the tool budget ran out. Started: correctness ("),
+        "{cut}"
+    );
+    assert!(
+        cut.message.contains("Not reached: security, licence."),
+        "{cut}"
     );
 }
 

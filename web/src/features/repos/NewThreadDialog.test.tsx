@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import { createReposMock, repoFixtures } from "../../../mock/repos";
+import { ApiFailure } from "../../api/client";
 import { NewThreadDialog } from "./NewThreadDialog";
 import { setReposApi } from "./api";
 
@@ -28,16 +29,27 @@ it("ticks the trusted repositories, dims an untrusted one, and counts the button
   expect(within(dialog).getByRole("button", { name: "Start in 2 repositories" })).toBeEnabled();
 });
 
+const three = () => ["a", "b", "c"].map((id) => ({ ...repoFixtures()[0]!, id, name: id, primary: id === "a" }));
+
 it("starts only in the ticked repositories, each from its chosen branch, with one write", async () => {
-  const { mock, dialog } = await open();
+  const { mock, dialog } = await open(createReposMock({ repositories: three() }));
   const user = userEvent.setup();
-  await user.click(within(dialog).getByRole("checkbox", { name: /orbyn-planner/ }));
-  expect(within(dialog).getByRole("button", { name: "Start in 1 repository" })).toBeVisible();
-  await user.selectOptions(within(dialog).getByRole("combobox", { name: "Branch in orbyn-engineering" }), "develop");
+  await user.click(within(dialog).getByRole("checkbox", { name: /^c/ }));
+  expect(within(dialog).getByRole("button", { name: "Start in 2 repositories" })).toBeEnabled();
+  await user.selectOptions(within(dialog).getByRole("combobox", { name: "Branch in a" }), "develop");
   expect(mock.writes).toEqual([]);
-  await user.dblClick(within(dialog).getByRole("button", { name: "Start in 1 repository" }));
-  await waitFor(() => expect(mock.writes).toEqual(["start:orbyn-engineering@develop"]));
+  await user.dblClick(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  await waitFor(() => expect(mock.writes).toEqual(["start:a@develop,b@main"]));
   expect(window.location.hash).toMatch(/^#\/threads\//);
+});
+
+it("does not start in one repository: the service wants two or more, so the button is off and says why", async () => {
+  const { mock, dialog } = await open();
+  await userEvent.click(within(dialog).getByRole("checkbox", { name: /orbyn-planner/ }));
+  expect(within(dialog).getByRole("button", { name: "Start in 1 repository" })).toBeDisabled();
+  expect(within(dialog).getByText(/Choose two or more repositories/)).toBeVisible();
+  await userEvent.click(within(dialog).getByRole("button", { name: "Start in 1 repository" }));
+  expect(mock.writes).toEqual([]);
 });
 
 it("draws the Engine and Permission rows the host hands in, and starts with that engine and permission, in one write", async () => {
@@ -74,4 +86,87 @@ it("keeps the dialog open when the service refuses", async () => {
   mock.failNext("start");
   await userEvent.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent("The service could not do that.");
+});
+
+it("shows why a permission mode the engine does not offer was refused, and keeps the dialog open to try again", async () => {
+  const mock = createReposMock({ permissionModes: { claude: ["supervised"] } });
+  const { dialog } = await open(mock);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  const alert = await within(dialog).findByRole("alert");
+  expect(alert).toHaveTextContent("This engine does not offer that permission.");
+  expect(alert).toHaveTextContent("claude does not offer the auto_edits permission mode.");
+  expect(screen.getByRole("dialog", { name: /New thread in orbyn/ })).toBeVisible();
+  expect(window.location.hash).not.toMatch(/^#\/threads\//);
+  expect(within(dialog).getByRole("button", { name: "Start in 2 repositories" })).toBeEnabled();
+});
+
+it("never offers an untrusted repository: it cannot be ticked and is not sent", async () => {
+  const { mock, dialog } = await open();
+  await userEvent.click(within(dialog).getByRole("checkbox", { name: /orbyn-engine\b/ }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  await waitFor(() => expect(mock.writes).toEqual(["start:orbyn-engineering@main,orbyn-planner@feat/calendar"]));
+});
+
+it("shows the branch name only when two or more repositories are ticked", async () => {
+  const { dialog } = await open();
+  const user = userEvent.setup();
+  expect(within(dialog).getByRole("textbox", { name: "Branch name" })).toBeVisible();
+  await user.click(within(dialog).getByRole("checkbox", { name: /orbyn-planner/ }));
+  expect(within(dialog).queryByRole("textbox", { name: "Branch name" })).toBeNull();
+});
+
+it("sends one validated branch name for every repository, and none when it is left empty", async () => {
+  const first = await open();
+  await userEvent.type(within(first.dialog).getByRole("textbox", { name: "Branch name" }), " feat/login-fix ");
+  await userEvent.click(within(first.dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  await waitFor(() => expect(first.mock.branchNames).toEqual(["feat/login-fix"]));
+});
+
+it("starts without a branch name when the field is empty", async () => {
+  const { mock, dialog } = await open();
+  await userEvent.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  await waitFor(() => expect(mock.branchNames).toEqual([undefined]));
+});
+
+it("refuses a branch name Git would refuse, in words, and does not start", async () => {
+  const { mock, dialog } = await open();
+  await userEvent.type(within(dialog).getByRole("textbox", { name: "Branch name" }), "bad name");
+  expect(within(dialog).getByText(/cannot hold spaces/)).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Start in 2 repositories" })).toBeDisabled();
+  expect(mock.writes).toEqual([]);
+});
+
+it.each([
+  ["repo_limit", 409, "A thread works in at most 8 repositories."],
+  ["not_git", 409, "orbyn-planner is not a Git repository."],
+  ["invalid", 400, "orbyn-planner already has a branch named feat/login-fix."],
+  ["invalid", 400, "main is not a branch of orbyn-planner."],
+  ["not_found", 404, "No such repository in this project."],
+] as const)("shows the service's own message for %s (%i) and keeps the dialog open", async (code, status, message) => {
+  const mock = createReposMock();
+  const { dialog } = await open(mock);
+  mock.rejectNext("start", new ApiFailure(code, message, status));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
+  expect(within(dialog).getByRole("button", { name: "Start in 2 repositories" })).toBeEnabled();
+  expect(window.location.hash).not.toMatch(/^#\/threads\//);
+  expect(within(dialog).queryByRole("button", { name: /^Trust/ })).toBeNull();
+});
+
+it("offers the trust dialog for a repository the service says is not trusted, and starts nothing on its own", async () => {
+  const mock = createReposMock();
+  const { dialog } = await open(mock);
+  mock.distrust("orbyn-planner");
+  const user = userEvent.setup();
+  await user.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("Trust orbyn-planner before starting a thread in it.");
+  await user.click(await within(dialog).findByRole("button", { name: "Trust orbyn-planner…" }));
+  const trust = await screen.findByRole("dialog", { name: /Trust orbyn-planner/ });
+  expect(mock.writes).toEqual(["start:orbyn-engineering@main,orbyn-planner@feat/calendar"]);
+  await user.click(within(trust).getByRole("button", { name: /^Trust/ }));
+  await waitFor(() => expect(mock.writes).toEqual(["start:orbyn-engineering@main,orbyn-planner@feat/calendar", "trust:orbyn-planner"]));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: /Trust orbyn-planner/ })).toBeNull());
+  // Trusting is not starting: the person starts again.
+  expect(window.location.hash).not.toMatch(/^#\/threads\//);
+  expect(within(dialog).queryByRole("button", { name: "Trust orbyn-planner…" })).toBeNull();
 });

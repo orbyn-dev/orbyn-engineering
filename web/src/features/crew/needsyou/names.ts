@@ -10,6 +10,9 @@ export const NEEDSYOU_FRAMES = [
   "needsyou-demoted",
   "needsyou-stop",
   "needsyou-background",
+  "needsyou-daily-budget-stop",
+  "needsyou-daily-budget-stop-narrow",
+  "needsyou-daily-budget-stop-no-reset",
   "needsyou-source-error",
   "needsyou-live",
 ] as const;

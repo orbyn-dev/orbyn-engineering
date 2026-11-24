@@ -13,7 +13,8 @@ import { tabOf } from "./strip/tabs";
 /** The title line of the open file: its name and the worktree it is in. */
 function Title({ tab }: { tab: FileTabId }) {
   const target = parseFileTab(tab);
-  const names = useFileTabNames(target && target.kind !== "thread" ? target.projectId : "", target && target.kind !== "thread" ? target.worktreeId : "", null);
+  const placed = target && target.kind !== "thread" && target.kind !== "issue" ? target : null;
+  const names = useFileTabNames(placed ? placed.projectId : "", placed ? placed.worktreeId : "", null);
   const subtitle = !names.worktree ? null : names.project ? `${names.project} · ${names.worktree}` : names.worktree;
   return (
     <div className="ctx-title">

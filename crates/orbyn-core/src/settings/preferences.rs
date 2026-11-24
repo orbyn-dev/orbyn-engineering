@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
-use crate::store::Store;
+use crate::store::{AuditRecord, Store};
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -95,6 +95,8 @@ const DEFINITIONS: &[Definition] = defs![
     "warm_next_turn" Kind::Bool, false, false;
     "app_update_mode" Kind::OneOf(&["automatic", "notify", "off"]), "notify", false;
     "keep_awake_during_runs" Kind::Bool, true, false;
+    "terminal_attention_enabled" Kind::Bool, true, false;
+    "terminal_attention_quiet_seconds" Kind::Number, 20, false;
     "quit_confirmation" Kind::OneOf(QUIT), "direct", false;
     "default_engine" Kind::Text, "", true;
     "default_effort" Kind::Text, "", true;
@@ -106,6 +108,7 @@ const DEFINITIONS: &[Definition] = defs![
     "worktree_submodules" Kind::OneOf(SUBMODULES), "recursive", true;
     "add_project_base_directory" Kind::Text, "", false;
     "text_generation_model" Kind::Text, "", true;
+    "text_generation_models" Kind::Object, {}, true;
     "auto_thread_titles" Kind::Bool, true, true;
     "project_title_instructions" Kind::Text, "", true;
     "branch_naming_mode" Kind::OneOf(NAMING), "static", true;
@@ -138,7 +141,12 @@ const DEFINITIONS: &[Definition] = defs![
     "provider_instances" Kind::List, [], false;
     "crew_digest" Kind::Object, {"time": "17:00"}, false;
     "crew_turn_budget" Kind::Number, 0, false;
+    "crew_min_free_gb" Kind::Number, 5, false;
+    "claude_engine_path" Kind::OneOf(&["sdk", "cli"]), "sdk", false;
 ];
+
+/// Which path Claude runs take: `sdk` (the engine host, the default) or `cli`. Read at each run's start.
+pub(crate) const CLAUDE_ENGINE_PATH: &str = "claude_engine_path";
 
 /// The daily digest's send time (issue #806): a Person route stores it, and the Crew watch reads it.
 pub(crate) const CREW_DIGEST: &str = "crew_digest";
@@ -146,8 +154,20 @@ pub(crate) const CREW_DIGEST: &str = "crew_digest";
 /// The crew-wide turn budget's catalog key. Its value is whole turns; 0 is no crew budget.
 pub(crate) const CREW_TURN_BUDGET: &str = "crew_turn_budget";
 
+/// The whole free gigabytes (1 to 500) a Crew worker needs on the lead thread's volume.
+pub(crate) const CREW_MIN_FREE_GB: &str = "crew_min_free_gb";
+
 /// Keys the service writes itself; a client edit names them only through their owner.
 const SERVICE_OWNED: &[&str] = &["default_theme_set_at"];
+
+/// The minutes-apart settings whose field in Settings › General shows a minimum of 1.
+const BACKGROUND_INTERVALS: [&str; 2] = [
+    "automatic_git_fetch_minutes",
+    "provider_health_refresh_minutes",
+];
+
+/// The fewest minutes those fields accept, matching the `min` each row draws.
+const INTERVAL_MIN_MINUTES: f64 = 1.0;
 
 /// A catalog key a client may write.
 fn writable(key: &str) -> Result<&'static Definition> {
@@ -227,11 +247,45 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
                 .into(),
         ));
     }
+    if fits && definition.key == crate::agents::text_models::SETTING {
+        crate::agents::text_models::validate_syntax(value)?;
+    }
     if fits && definition.key == CREW_TURN_BUDGET && value.as_u64().is_none() {
         // Whole turns only: a fraction could never be spent, and 0 is no crew-wide budget.
         return Err(CoreError::Invalid(
             "A crew turn budget is a whole number of turns, or 0 for no budget.".into(),
         ));
+    }
+    if definition.key == CREW_MIN_FREE_GB
+        && value
+            .as_u64()
+            .is_none_or(|gigabytes| !(1..=500).contains(&gigabytes))
+    {
+        // Whole gigabytes from 1 to 500; an old install's 0 no longer switches the floor off.
+        return Err(CoreError::Invalid("Enter a number from 1 to 500.".into()));
+    }
+    if fits && definition.key == crate::agents::attention::QUIET_PREFERENCE {
+        let allowed = value.as_u64().is_some_and(|seconds| {
+            (crate::agents::attention::QUIET_MIN_SECS..=crate::agents::attention::QUIET_MAX_SECS)
+                .contains(&seconds)
+        });
+        if !allowed {
+            return Err(CoreError::Invalid(
+                "Quiet time is a whole number of seconds from 10 to 120.".into(),
+            ));
+        }
+    }
+    if fits
+        && BACKGROUND_INTERVALS.contains(&definition.key)
+        && value
+            .as_f64()
+            .is_some_and(|minutes| minutes < INTERVAL_MIN_MINUTES)
+    {
+        // The rows in Settings show `min: 1` on their fields; a client that sends 0
+        // would be stored and read back as a pause the field cannot show.
+        return Err(CoreError::Invalid(format!(
+            "The shortest background interval is {INTERVAL_MIN_MINUTES} minute."
+        )));
     }
     if fits {
         Ok(())
@@ -417,14 +471,33 @@ impl Core {
             if project_id.is_some() && !definition.project {
                 return Err(CoreError::Invalid(format!("{key} is not set per project.")));
             }
+            if key == CREW_MIN_FREE_GB && value.is_null() {
+                return Err(CoreError::Invalid("Enter a number from 1 to 500.".into()));
+            }
             if !value.is_null() {
                 check(definition, value)?;
                 refuse_agent_device_access(key, value)?;
+                if key == crate::agents::text_models::SETTING {
+                    crate::agents::text_models::check_offered(&self.engines, value)?;
+                }
             }
             if key == crate::agents::engines::instances::PREFERENCE && !value.is_null() {
                 let list = crate::agents::engines::instances::parse(value)?;
                 self.engines.check_instances(&list)?;
             }
+        }
+        // The whole batch has passed, so a refused batch never leaves a change in the log.
+        if let Some(floor) = values.get(CREW_MIN_FREE_GB) {
+            self.store.append_audit(&AuditRecord {
+                actor: "user".into(),
+                action: "crew.disk_floor.set".into(),
+                target: "crew_min_free_gb".into(),
+                decision: None,
+                source: "user".into(),
+                thread_id: None,
+                run_id: None,
+                detail: json!({"gb": floor}),
+            })?;
         }
         let _cleanup_policy =
             self.cleanup_policy_write(values.keys().map(String::as_str), project_id.is_none())?;
@@ -506,7 +579,8 @@ impl Core {
             .is_some_and(|list| list.iter().any(|item| item.as_str() == Some(engine)));
         if off {
             return Err(CoreError::Invalid(format!(
-                "{engine} is turned off for this project."
+                "{} is turned off for this project.",
+                self.engines.display_name(engine)
             )));
         }
         Ok(())
@@ -565,7 +639,20 @@ impl Core {
 }
 
 #[cfg(test)]
+/// The call refused the value with exactly this message.
+fn invalid<T>(result: Result<T>, message: &str) {
+    match result {
+        Err(CoreError::Invalid(got)) => {
+            assert_eq!(got, message)
+        }
+        Err(other) => panic!("refused with {other:?}, not {message}"),
+        Ok(_) => panic!("accepted what must be refused: {message}"),
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use super::invalid;
     use super::*;
 
     #[test]
@@ -578,7 +665,10 @@ mod tests {
         assert!(serde_json::from_value::<ScopedPreferencesQuery>(json!({})).is_err());
         assert!(serde_json::from_value::<ScopedPreferencesQuery>(json!({"scope":null})).is_err());
         assert!(check(definition("auto_settle_after_days").unwrap(), &Value::Null).is_ok());
-        assert!(check(definition("auto_pull").unwrap(), &Value::Null).is_err());
+        invalid(
+            check(definition("auto_pull").unwrap(), &Value::Null),
+            "That is not a valid value for auto_pull.",
+        );
     }
 
     #[test]
@@ -586,9 +676,64 @@ mod tests {
         let budget = definition(CREW_TURN_BUDGET).unwrap();
         assert!(check(budget, &json!(0)).is_ok(), "0 is no crew budget");
         assert!(check(budget, &json!(30)).is_ok());
-        assert!(check(budget, &json!(1.5)).is_err());
-        assert!(check(budget, &json!("30")).is_err());
-        assert!(check(budget, &json!(-1)).is_err());
+        invalid(
+            check(budget, &json!(1.5)),
+            "A crew turn budget is a whole number of turns, or 0 for no budget.",
+        );
+        invalid(
+            check(budget, &json!("30")),
+            "That is not a valid value for crew_turn_budget.",
+        );
+        invalid(
+            check(budget, &json!(-1)),
+            "That is not a valid value for crew_turn_budget.",
+        );
+    }
+
+    #[test]
+    fn a_crew_disk_floor_defaults_to_five_gigabytes() {
+        assert_eq!((definition(CREW_MIN_FREE_GB).unwrap().default)(), json!(5));
+    }
+
+    #[test]
+    fn a_crew_disk_floor_is_whole_gigabytes_from_one_to_five_hundred() {
+        let floor = definition(CREW_MIN_FREE_GB).unwrap();
+        for good in [1, 5, 500] {
+            assert!(check(floor, &json!(good)).is_ok(), "{good}");
+        }
+        for bad in [json!(0), json!(501), json!(-1), json!(1.5)] {
+            let error = check(floor, &bad).unwrap_err();
+            assert!(
+                matches!(
+                    &error,
+                    CoreError::Invalid(message) if message == "Enter a number from 1 to 500."
+                ),
+                "{bad}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_background_interval_is_at_least_a_minute() {
+        for key in BACKGROUND_INTERVALS {
+            let interval = definition(key).unwrap();
+            invalid(
+                check(interval, &json!(0)),
+                "The shortest background interval is 1 minute.",
+            );
+            invalid(
+                check(interval, &json!(-5)),
+                &format!("That is not a valid value for {key}."),
+            );
+            assert!(
+                check(interval, &json!(1)).is_ok(),
+                "{key} refused its own min"
+            );
+            assert!(
+                check(interval, &json!(5)).is_ok(),
+                "{key} refused a normal value"
+            );
+        }
     }
 
     #[test]
@@ -604,17 +749,39 @@ mod tests {
     }
 
     #[test]
+    fn the_claude_engine_path_defaults_to_sdk_and_takes_only_sdk_or_cli() {
+        let path = definition(CLAUDE_ENGINE_PATH).unwrap();
+        assert_eq!((path.default)(), json!("sdk"));
+        assert!(!path.project, "one choice for the whole computer");
+        assert!(check(path, &json!("cli")).is_ok());
+        assert!(check(path, &json!("sdk")).is_ok());
+        for bad in [json!("auto"), json!(""), json!(true), json!(null)] {
+            invalid(
+                check(path, &bad),
+                "That is not a valid value for claude_engine_path.",
+            );
+        }
+    }
+
+    #[test]
     fn shapes_are_enforced() {
         let submodules = definition("worktree_submodules").unwrap();
         assert!(check(submodules, &json!("skip")).is_ok());
-        assert!(check(submodules, &json!("sometimes")).is_err());
-        assert!(check(definition("auto_pull").unwrap(), &json!("yes")).is_err());
-        assert!(definition("api_token").is_err());
+        invalid(
+            check(submodules, &json!("sometimes")),
+            "That is not a valid value for worktree_submodules.",
+        );
+        invalid(
+            check(definition("auto_pull").unwrap(), &json!("yes")),
+            "That is not a valid value for auto_pull.",
+        );
+        invalid(definition("api_token"), "Unknown setting api_token.");
     }
 }
 
 #[cfg(test)]
 mod scoped_consumer_tests {
+    use super::invalid;
     use super::*;
     use crate::{
         CoreConfig,
@@ -672,12 +839,12 @@ mod scoped_consumer_tests {
             (view.source.as_str(), view.project_scoped),
             ("global", false)
         );
-        assert!(
+        invalid(
             core.set_preferences(
                 Some(&project.id),
                 &BTreeMap::from([("default_permission_mode".into(), json!("auto"))]),
-            )
-            .is_err()
+            ),
+            "default_permission_mode is not set per project.",
         );
     }
 
@@ -898,6 +1065,64 @@ mod scoped_consumer_tests {
             core.preference("enable_agent_device_access", Some(&project.id))
                 .unwrap(),
             json!(false)
+        );
+    }
+
+    #[test]
+    fn a_crew_disk_floor_cannot_be_cleared_and_a_change_is_audited() {
+        let dir = TempDir::new();
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        let error = core
+            .set_preferences(
+                None,
+                &BTreeMap::from([(CREW_MIN_FREE_GB.to_owned(), Value::Null)]),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            &error,
+            CoreError::Invalid(message) if message == "Enter a number from 1 to 500."
+        ));
+        assert_eq!(core.preference(CREW_MIN_FREE_GB, None).unwrap(), json!(5));
+        core.set_preferences(
+            None,
+            &BTreeMap::from([(CREW_MIN_FREE_GB.to_owned(), json!(7))]),
+        )
+        .unwrap();
+        assert_eq!(core.preference(CREW_MIN_FREE_GB, None).unwrap(), json!(7));
+        let audit = core.store.list_audit(None, 20).unwrap();
+        let row = audit
+            .iter()
+            .find(|row| row.action == "crew.disk_floor.set")
+            .expect("the floor change is audited");
+        assert_eq!(
+            (row.actor.as_str(), row.target.as_str(), row.source.as_str()),
+            ("user", "crew_min_free_gb", "user")
+        );
+        assert_eq!(row.detail, json!({"gb": 7}));
+    }
+
+    #[test]
+    fn a_refused_batch_leaves_no_floor_change_in_the_audit_log() {
+        let dir = TempDir::new();
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        // One valid floor and one key the catalog does not know: the batch is refused whole.
+        let error = core.set_preferences(
+            None,
+            &BTreeMap::from([
+                (CREW_MIN_FREE_GB.to_owned(), json!(7)),
+                ("no_such_preference".to_owned(), json!(1)),
+            ]),
+        );
+        invalid(error, "Unknown setting no_such_preference.");
+        assert_eq!(core.preference(CREW_MIN_FREE_GB, None).unwrap(), json!(5));
+        let audit = core.store.list_audit(None, 20).unwrap();
+        assert!(
+            audit.iter().all(|row| row.action != "crew.disk_floor.set"),
+            "a refused batch must not be audited as a change"
         );
     }
 }

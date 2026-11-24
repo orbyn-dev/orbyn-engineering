@@ -2,13 +2,15 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createIssuesMock, trackerFixtures } from "../../../mock/issues";
+import { ApiFailure } from "../../api/client";
+import { useUi } from "../../product/state/ui";
 import { MOTION } from "../../lib/motion";
 import { setViewportWidth } from "../../test-support";
 import { IssuesPage } from "./IssuesPage";
 import { setIssuesApi } from "./api";
 
 beforeEach(() => { window.location.hash = "#/issues"; });
-afterEach(() => { setIssuesApi(null); window.location.hash = ""; vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { setIssuesApi(null); window.location.hash = ""; vi.restoreAllMocks(); vi.stubGlobal("__ORBYN_PREVIEWS__", true); vi.useRealTimers(); });
 
 const rows = () => document.querySelectorAll(".iss-rows > li");
 
@@ -30,7 +32,7 @@ it("opens a row on the detail route", async () => {
   setIssuesApi(createIssuesMock());
   render(<IssuesPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Login sends people back to /home" }));
-  expect(window.location.hash).toBe("#/issues/github/412");
+  expect(window.location.hash).toBe("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
 });
 
 it("shows the closed tab with the closed word and the not planned word", async () => {
@@ -178,4 +180,217 @@ it("keeps one column on a phone and moves the tracker and filters into one Filte
   const sheet = await screen.findByRole("dialog", { name: "Filters" });
   expect(within(sheet).getByRole("group", { name: "Tracker" })).toBeVisible();
   expect(within(sheet).getByRole("group", { name: "Labels" })).toBeVisible();
+});
+
+// ---- paging ----
+
+const loadMore = () => screen.queryByRole("button", { name: "Load more" });
+
+it("shows a Load more row only while the answer has next_cursors, and appends the next page with the same filters", async () => {
+  const mock = createIssuesMock({ pageSize: 4 });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  expect(rows()).toHaveLength(4);
+  await user.click(loadMore()!);
+  await waitFor(() => expect(rows()).toHaveLength(6));
+  expect(loadMore()).toBeNull();
+  expect(mock.listed).toHaveLength(2);
+  expect(mock.listed[0]!.cursors).toBeUndefined();
+  expect(mock.listed[1]!.query).toEqual(mock.listed[0]!.query);
+  // The cursor is the service's own, sent back unchanged.
+  expect(Object.keys(mock.listed[1]!.cursors!)).toHaveLength(1);
+  expect(Object.values(mock.listed[1]!.cursors!)).toEqual(["4"]);
+});
+
+it("has no Load more row when the answer has no next_cursors", async () => {
+  setIssuesApi(createIssuesMock());
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  expect(loadMore()).toBeNull();
+});
+
+it("one click is one request while a page is loading, and the row says it is busy", async () => {
+  const mock = createIssuesMock({ pageSize: 4, delayMs: 30 });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  await user.dblClick(loadMore()!);
+  expect(screen.getByRole("button", { name: "Load more" })).toHaveAttribute("aria-busy", "true");
+  await waitFor(() => expect(rows()).toHaveLength(6));
+  expect(mock.listed).toHaveLength(2);
+});
+
+it("drops a page that lands after the filter changed: the latest request wins", async () => {
+  const mock = createIssuesMock({ pageSize: 4, delayMs: 40 });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  await user.click(loadMore()!);
+  await user.click(screen.getByRole("button", { name: /^Closed/ }));
+  await waitFor(() => expect(screen.getByText("Closed as not planned")).toBeVisible());
+  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  expect(rows()).toHaveLength(2);
+  expect(loadMore()).toBeNull();
+});
+
+it("says so when a page cannot be loaded, keeps what is shown and keeps the row", async () => {
+  const mock = createIssuesMock({ pageSize: 4 });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  mock.failNext("list");
+  await user.click(loadMore()!);
+  await waitFor(() => expect(useUi.getState().toasts.some((toast) => /Couldn.t load more/.test(toast.text))).toBe(true));
+  expect(rows()).toHaveLength(4);
+  expect(loadMore()).toBeEnabled();
+});
+
+// ---- state change: offered by `states`, Planned without it ----
+
+it("the State control is Planned text when the answer carries no states, and nothing is offered or sent", async () => {
+  const mock = createIssuesMock({ noStates: true });
+  setIssuesApi(mock);
+  window.location.hash = "#/issues/github/orbyn-dev%2Forbyn-engineering/412";
+  render(<IssuesPage />);
+  const facts = await screen.findByRole("group", { name: "Facts" });
+  expect(within(facts).getByText("State", { selector: "dt" }).nextElementSibling).toHaveTextContent("Planned");
+  expect(within(facts).getByText("Open")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^State:/ })).toBeNull();
+  expect(mock.writes).toEqual([]);
+});
+
+it("a production build offers the State menu all the same when the answer carries states", async () => {
+  vi.stubGlobal("__ORBYN_PREVIEWS__", false);
+  setIssuesApi(createIssuesMock());
+  window.location.hash = "#/issues/github/orbyn-dev%2Forbyn-engineering/412";
+  render(<IssuesPage />);
+  expect(await screen.findByRole("button", { name: "State: Open" })).toBeEnabled();
+});
+
+// ---- paging: the failure line, the retry and the closed date ----
+
+it("keeps a line in place that says what failed, the rows and the one Load more row, and pressing it again is the retry", async () => {
+  const mock = createIssuesMock({ pageSize: 4 });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  mock.failNext("list");
+  await user.click(loadMore()!);
+  const line = await screen.findByRole("alert");
+  expect(line).toHaveTextContent("Couldn’t load more. GitHub did not answer.");
+  expect(document.querySelectorAll(".iss-more")).toHaveLength(1);
+  expect(rows()).toHaveLength(4);
+  await user.click(loadMore()!);
+  await waitFor(() => expect(rows()).toHaveLength(6));
+  expect(screen.queryByRole("alert")).toBeNull();
+  // The retry asks for the same page: the same cursors, the same filters.
+  expect(mock.listed[1]!.cursors).toEqual(mock.listed[2]!.cursors);
+  expect(mock.listed[1]!.query).toEqual(mock.listed[2]!.query);
+});
+
+it("drops the failure line when the filters change", async () => {
+  const mock = createIssuesMock({ pageSize: 4 });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  mock.failNext("list");
+  await user.click(loadMore()!);
+  await screen.findByRole("alert");
+  await user.click(screen.getByRole("button", { name: /^Closed/ }));
+  await waitFor(() => expect(screen.getByText("Closed as not planned")).toBeVisible());
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("draws no Previous page, no page number and no second Load more", async () => {
+  setIssuesApi(createIssuesMock({ pageSize: 4 }));
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  expect(screen.queryByRole("button", { name: /previous|page \d/i })).toBeNull();
+  await user.click(loadMore()!);
+  await waitFor(() => expect(rows()).toHaveLength(6));
+  expect(screen.queryByRole("button", { name: /previous|load more/i })).toBeNull();
+});
+
+it("adds when a closed issue was closed to the line under its title, from closed_at, and only then", async () => {
+  setIssuesApi(createIssuesMock());
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await user.click(await screen.findByRole("button", { name: "Closed · 2" }));
+  const dated = (await screen.findByRole("button", { name: "Settings rows jump when a scope changes" })).closest("li")!;
+  expect(within(dated).getByText(/opened by riley · closed 2 days ago/)).toBeVisible();
+  const undated = screen.getByRole("button", { name: "Offer a dark favicon" }).closest("li")!;
+  expect(undated.querySelector(".iss-sub")!.textContent).not.toMatch(/closed \d|closed in|ago/);
+  expect(undated.querySelector(".iss-sub")!.textContent).toMatch(/opened by riley$/);
+});
+
+it("never says an open issue was closed, even when a tracker sends a closed_at for it", async () => {
+  const mock = createIssuesMock();
+  const real = mock.list;
+  mock.list = async (...args) => { const answer = await real(...args); return { ...answer, issues: answer.issues.map((issue) => ({ ...issue, closed_at: new Date(Date.now() - 86_400_000).toISOString() })) }; };
+  setIssuesApi(mock);
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  expect(document.querySelector(".iss-sub")!.textContent).not.toMatch(/closed/);
+});
+
+it("shows Sort: Updated as a Planned control that opens nothing while the service does not offer it", async () => {
+  setIssuesApi(createIssuesMock({ edits: false }));
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  const sort = screen.getByRole("button", { name: "Sort: Updated" });
+  expect(sort).toBeDisabled();
+  expect(sort.parentElement).toHaveTextContent("Planned");
+  await user.click(sort);
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("sorts by created date when the service offers it: the query carries `sort`, newest first, and the order changes", async () => {
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  const sort = await screen.findByRole("button", { name: "Sort: Updated" });
+  await waitFor(() => expect(sort).toBeEnabled());
+  expect(sort.parentElement).not.toHaveTextContent("Planned");
+  await user.click(sort);
+  const menu = await screen.findByRole("menu", { name: "Sort issues" });
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Updated", "Created"]);
+  await user.click(within(menu).getByRole("menuitem", { name: "Created" }));
+  expect(await screen.findByRole("button", { name: "Sort: Created" })).toBeVisible();
+  await waitFor(() => expect(mock.listed.at(-1)!.query.sort).toBe("created"));
+  // Sort is not a filter: no chip, and Clear filters keeps it.
+  expect(document.querySelector(".iss-chips")).toBeNull();
+});
+
+
+it("a sorted list that the service turns down puts Sort back to Planned and asks again in the service's own order", async () => {
+  const mock = createIssuesMock();
+  const real = mock.list;
+  mock.list = async (query, ...rest) => {
+    if (query.sort !== undefined) throw new ApiFailure("invalid", "Unknown query parameter sort.", 400);
+    return real(query, ...rest);
+  };
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  const sort = await screen.findByRole("button", { name: "Sort: Updated" });
+  await waitFor(() => expect(sort).toBeEnabled());
+  await user.click(sort);
+  await user.click(within(await screen.findByRole("menu", { name: "Sort issues" })).getByRole("menuitem", { name: "Created" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Sort: Updated" }).parentElement).toHaveTextContent("Planned"));
+  expect(await screen.findByRole("button", { name: "Login sends people back to /home" })).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
 });

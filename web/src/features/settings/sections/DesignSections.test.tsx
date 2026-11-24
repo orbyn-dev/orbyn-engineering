@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it, vi } from "vitest";
-import { request } from "../../../api/client";
+import { beforeEach, expect, it, vi } from "vitest";
+import type { MockApi } from "../../../../mock/api";
 import type { EngineStatus } from "../../../api/types";
 import { useWorkspace } from "../../../product/state/workspace";
 import { KeybindingsSection } from "../pages/Keybindings";
@@ -11,8 +11,13 @@ import { AppearanceSection } from "../pages/Appearance";
 import { useUi } from "../../../product/state/ui";
 import { ProviderTable } from "../providers/ProviderTable";
 import { detailsMenuItems } from "../../../product/ui/details";
+import { installMockFetch } from "../../../test-support";
 
-vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+let mock: MockApi;
+beforeEach(() => {
+  mock = installMockFetch();
+  window.location.hash = "";
+});
 
 const store = { raw: [], instances: [{ id: "codex", driver: "codex", enabled: true }], disabled: false, error: null, conflict: false,
   save: vi.fn(), reload: vi.fn() };
@@ -24,7 +29,6 @@ const engine = (patch: Partial<EngineStatus>): EngineStatus => ({
 it("shows each provider's state in the table and opens its editor from Edit", async () => {
   const user = userEvent.setup();
   const edit = vi.fn();
-  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
   render(<ProviderTable store={store} onOpen={() => undefined} onEdit={edit} engines={[
     engine({}),
     engine({ id: "codex", name: "Codex", version: "0.98", auth: "logged_out", sign_in_command: "codex login" }),
@@ -32,15 +36,16 @@ it("shows each provider's state in the table and opens its editor from Edit", as
   ]} />);
   const rows = screen.getAllByRole("row").slice(1);
   expect(within(rows[0]!).getByText("Ready")).toBeVisible();
-  expect(within(rows[1]!).getByText("codex login")).toBeVisible();
-  expect(within(rows[2]!).getByText("Update 0.33")).toBeVisible();
-  expect(within(rows[2]!).getByText("via ACP")).toBeVisible();
+  expect(within(rows[1]!).getByText("Ready")).toBeVisible();
+  expect(within(rows[2]!).getByText("codex login")).toBeVisible();
+  expect(within(rows[3]!).getByText("Update 0.33")).toBeVisible();
+  expect(within(rows[3]!).getByText("via ACP")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Edit Codex" }));
   expect(edit).toHaveBeenCalledWith("codex");
 });
 
 it("draws shortcuts as key caps and names the command a shortcut clashes with", async () => {
-  vi.mocked(request).mockResolvedValue({
+  mock.setKeybindings({
     path: "keys.json", issues: [],
     rules: [
       { key: "mod+k", command: "commandPalette.toggle", when: null, remove: false },
@@ -56,7 +61,6 @@ it("draws shortcuts as key caps and names the command a shortcut clashes with", 
 });
 
 it("opens the licence lists from About and narrows them by package name", async () => {
-  vi.mocked(request).mockResolvedValue({ version: "1.0.0", platform: "macos", remote: false });
   const user = userEvent.setup();
   render(<AboutSection />);
   await user.click(await screen.findByRole("button", { name: "View" }));
@@ -70,14 +74,12 @@ it("opens the licence lists from About and narrows them by package name", async 
 });
 
 it("lists the installed agent CLIs and their versions on About", async () => {
-  vi.mocked(request).mockResolvedValue({ version: "1.0.0", platform: "macos", remote: false });
   useWorkspace.setState({ engines: { data: [engine({}), engine({ id: "codex", name: "Codex", version: "0.98" }), engine({ id: "x", name: "Work", instance_of: "claude" })], error: null, loading: false } });
   render(<AboutSection />);
   expect(await screen.findByText("Claude Code 2.1.318 · Codex 0.98")).toBeVisible();
 });
 
 it("leads the About card with the 40 px mark tile, not a lettered placeholder", async () => {
-  vi.mocked(request).mockResolvedValue({ version: "1.0.0", platform: "macos", remote: false });
   const { container } = render(<AboutSection />);
   const tile = container.querySelector(".set-card .logo-tile");
   expect(tile).toHaveAttribute("data-size", "40");
@@ -86,7 +88,6 @@ it("leads the About card with the 40 px mark tile, not a lettered placeholder", 
 });
 
 it("lists the five About rows the design draws, and the orbyn.dev link, with no platform line", async () => {
-  vi.mocked(request).mockResolvedValue({ version: "1.2.3", platform: "macos", remote: false });
   useWorkspace.setState({ engines: { data: [engine({})], error: null, loading: false } });
   render(<AboutSection />);
   expect(await screen.findByText(/^Orbyn Engineering/)).toBeVisible();
@@ -99,7 +100,6 @@ it("lists the five About rows the design draws, and the orbyn.dev link, with no 
 });
 
 it("says an app update is downloaded on the About card and offers Later and Restart to update", async () => {
-  vi.mocked(request).mockResolvedValue({ version: "0.42.1", platform: "macos", remote: false });
   const updates = { app: { current: "0.42.1", latest: "0.43.0", notes: null, mode: "desktop", can_apply: true, blocked_reason: null, unconfigured: false, phase: "ready", release_id: "release-1", operation: 1, downloaded: 10n, total: 10n } };
   useWorkspace.setState({ updates: { data: updates as never, error: null, loading: false } });
   const user = userEvent.setup();
@@ -112,7 +112,6 @@ it("says an app update is downloaded on the About card and offers Later and Rest
 });
 
 it("turns whitespace-only changes out of the diff from Settings, the same switch the Changes menu has", async () => {
-  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
   const user = userEvent.setup();
   render(<DiffsSection />);
   const toggle = await screen.findByRole("switch", { name: "Ignore whitespace changes" });
@@ -123,14 +122,13 @@ it("turns whitespace-only changes out of the diff from Settings, the same switch
 });
 
 it("describes the Ledger layout and the two font fields in the design's words", async () => {
-  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
   render(<AppearanceSection />);
   expect(await screen.findByText("What needs you at the top")).toBeVisible();
   expect(screen.getAllByText("Any installed font name")).toHaveLength(2);
 });
 
 it("labels every action and context in words, keeps the ids in a tooltip, copies an id from the row menu, and searches both", async () => {
-  vi.mocked(request).mockResolvedValue({
+  mock.setKeybindings({
     path: "/tmp/keybindings.json", issues: [], conflicts: [],
     rules: [
       { key: "mod+b", command: "sidebar.toggle", when: null, remove: false },
@@ -156,7 +154,7 @@ it("labels every action and context in words, keeps the ids in a tooltip, copies
 });
 
 it("names the two panel toggles Toggle Changes and Toggle Browser and shows where the file is stored", async () => {
-  vi.mocked(request).mockResolvedValue({
+  mock.setKeybindings({
     path: "/tmp/keybindings.json", issues: [], conflicts: [],
     rules: [
       { key: "mod+d", command: "diff.toggle", when: "!terminalFocus", remove: false },

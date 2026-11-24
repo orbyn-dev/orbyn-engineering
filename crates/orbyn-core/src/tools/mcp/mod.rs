@@ -2,6 +2,7 @@
 //! A token is random per run, reaches only that run's engine and dies with the run.
 
 pub mod apps;
+pub(crate) mod code;
 mod flight;
 pub mod tools;
 
@@ -27,12 +28,20 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 const QUESTION_TOOL: &str = "AskUserQuestion";
 /// Tools this server provides. Each governs itself, so `approve` does not ask again.
-const OWN_TOOL_PREFIX: &str = "mcp__orbyn_engineering__";
+pub(crate) const OWN_TOOL_PREFIX: &str = "mcp__orbyn_engineering__";
 
 /// Engines give up on a tool call at about a minute, so a reply has to be sent first. `crew_review` keeps
 /// inside this itself: it reads the call's own deadline (`call_deadline`), stops starting lanes in time and
 /// names the lanes it started.
+#[cfg(not(test))]
 pub(crate) const TOOL_BUDGET: Duration = Duration::from_secs(45);
+
+/// The budget a tool call gets in a test build. A test is not an engine: it calls the service on a machine shared with
+/// other work, and nothing on the other side gives up, so the engine-facing 45 seconds would let a loaded machine decide
+/// the test. Crew tools run real git and real checks and live under this cap, so a shared box could turn their work into
+/// `did not finish in time`. Production keeps 45 seconds; only the test build gets its own clock.
+#[cfg(test)]
+pub(crate) const TOOL_BUDGET: Duration = Duration::from_secs(10 * 60);
 
 tokio::task_local! {
     /// When the `within` timer of the running tool call fires: the same instant, so a tool that paces itself
@@ -47,7 +56,18 @@ pub(crate) fn call_deadline() -> Option<std::time::Instant> {
 /// A tool that can wait on a person gets longer, and a late answer does nothing: the
 /// wait is dropped, which expires the approval. Claude's `approve` is a run's own
 /// permission prompt, on the approval timeout rather than this.
+#[cfg(not(test))]
 const GATED_BUDGET: Duration = Duration::from_secs(240);
+/// The test build gets its own clock here too: a person-based wait in a test has no person on the other side either.
+#[cfg(test)]
+const GATED_BUDGET: Duration = Duration::from_secs(10 * 60);
+/// The production budgets are part of the contract and a test build cannot see them, so this pins them at compile time:
+/// a change to 45 or 240 seconds fails the build instead of slipping through a filtered test run.
+#[cfg(not(test))]
+const _: () = {
+    assert!(TOOL_BUDGET.as_secs() == 45);
+    assert!(GATED_BUDGET.as_secs() == 240);
+};
 /// The largest reply a tool sends back, in bytes.
 const MAX_RESULT_BYTES: usize = 256 * 1024;
 /// The largest request accepted, in bytes. A prompt can be 120,000 characters.
@@ -85,6 +105,15 @@ impl McpService {
             .get()
             .and_then(Weak::upgrade)
             .is_some_and(|core| core.crew_enabled())
+    }
+
+    /// Whether the Code Mode tools exist for `engine`: off until `CoreConfig::code_mode`, then only for an engine whose
+    /// own switch is on.
+    fn code_mode_enabled(&self, engine: &str) -> bool {
+        self.host
+            .get()
+            .and_then(Weak::upgrade)
+            .is_some_and(|core| core.code_mode_on(engine))
     }
 
     pub fn new(
@@ -185,6 +214,9 @@ impl McpService {
                 if self.crew_enabled() {
                     tools.extend(crate::crew::tool_specs());
                 }
+                if self.code_mode_enabled(&binding.scope.engine) {
+                    tools.extend(code::specs());
+                }
                 Ok(json!({ "tools": tools }))
             }
             "tools/call" => {
@@ -242,6 +274,13 @@ impl McpService {
                     return Ok(text_result("This service is not ready.", true));
                 };
                 let (text, failed) = core.crew_tool_text(binding, tool, &args).await;
+                Ok(text_result(&text, failed))
+            }
+            tool if code::is_tool(tool) && self.code_mode_enabled(&binding.scope.engine) => {
+                let Some(core) = self.host.get().and_then(Weak::upgrade) else {
+                    return Ok(text_result("This service is not ready.", true));
+                };
+                let (text, failed) = core.code_tool_text(binding, tool, &args).await;
                 Ok(text_result(&text, failed))
             }
             other if crate::tools::mcp_tools::is_tool(other) => {
@@ -318,7 +357,8 @@ impl McpService {
     }
 }
 
-fn parse_questions(input: &Value) -> Vec<Question> {
+/// The questions of an `AskUserQuestion` input, by question text.
+pub(crate) fn parse_questions(input: &Value) -> Vec<Question> {
     let text = |value: &Value, key: &str| {
         value
             .get(key)
@@ -561,6 +601,20 @@ mod tests {
         let reply = within(Duration::from_millis(5), std::future::pending()).await;
         let reply = reply.unwrap();
         assert_eq!(reply["isError"], true);
+    }
+
+    /// The test build's budgets are its own: a test calls the service directly and shares the machine, so the
+    /// engine-facing 45 seconds must never be what ends its tool call. Production keeps 45 and 240.
+    #[test]
+    fn the_test_build_gives_every_call_its_own_clock() {
+        assert!(
+            TOOL_BUDGET >= Duration::from_secs(10 * 60),
+            "{TOOL_BUDGET:?}"
+        );
+        assert!(
+            GATED_BUDGET >= Duration::from_secs(10 * 60),
+            "{GATED_BUDGET:?}"
+        );
     }
 
     #[test]

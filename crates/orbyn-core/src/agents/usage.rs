@@ -1,14 +1,18 @@
 //! Usage from each engine's own local session history. Only timestamps, models
 //! and token counts leave a file, and only history files are opened: no credential
 //! file is ever read. Files are large, so they are streamed and unchanged ones
-//! are served from memory.
+//! are served from memory. Claude and Codex write one log per conversation; Muse
+//! writes a `session.jsonl` per session, including its subagents.
 
 mod limits;
 #[cfg(test)]
 #[path = "usage/limits_tests.rs"]
 pub(crate) mod limits_tests;
+mod profile;
 
-use std::collections::{BTreeMap, HashMap};
+pub(crate) use profile::history_root;
+
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -49,6 +53,9 @@ type FileTotals = BTreeMap<(String, String, String), Tokens>;
 
 pub const STANDARD_TIER: &str = "standard";
 
+/// The engine whose spend is billed to its account instead of written to a local history.
+pub(crate) const CURSOR: &str = "cursor";
+
 /// The tiers history names. Anything else is counted as `other`, never dropped.
 fn tier_of(name: Option<&str>) -> String {
     match name.map(str::trim).filter(|name| !name.is_empty()) {
@@ -63,6 +70,7 @@ fn tier_of(name: Option<&str>) -> String {
 pub(crate) enum Engine {
     Claude,
     Codex,
+    Muse,
 }
 
 fn number(value: &Value, key: &str) -> u64 {
@@ -184,7 +192,107 @@ pub fn scan_codex(reader: impl BufRead) -> FileTotals {
     totals
 }
 
-fn jsonl_files(root: &Path, found: &mut Vec<PathBuf>) {
+/// One inference from a Muse session log: its identity, day, model and tokens.
+type Inference = (String, String, String, Tokens);
+
+/// Muse records each finished inference as a `runtime.session` event whose
+/// counters are inclusive: the cached part is already inside `input_tokens` and
+/// reasoning is already inside `output_tokens`. A runtime envelope can be copied
+/// into another session's log, so each inference keeps the id that identifies the
+/// inference (`source_run_record_id`, else its own `id`) and is counted once over
+/// the whole history. The record shape is the one T3's
+/// `packages/provider-muse/src/server/usage.ts` reads (MIT, commit 9168ca73d),
+/// including its field precedence and its rejection of unsupported schemas.
+pub fn scan_muse(reader: impl BufRead) -> Vec<Inference> {
+    let mut rows = Vec::new();
+    for line in reader.lines().map_while(Result::ok) {
+        if !line.contains("model_completed") && !line.contains("automated_review_completed") {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if let Some(row) = muse_row(&entry) {
+            rows.push(row);
+        }
+    }
+    rows
+}
+
+/// A non-empty string field, for records whose identifiers cannot be blank.
+fn text(value: Option<&Value>) -> Option<&str> {
+    value
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+}
+
+fn muse_row(entry: &Value) -> Option<Inference> {
+    if number(entry, "schema_version") != 1
+        || entry.get("record_type").and_then(Value::as_str) != Some("event")
+        || entry.get("payload_type").and_then(Value::as_str) != Some("runtime.session")
+        || !matches!(number(entry, "payload_schema_version"), 1 | 3)
+    {
+        return None;
+    }
+    let id = text(entry.get("id"))?;
+    let stream = entry.get("stream")?;
+    if stream.get("kind").and_then(Value::as_str) != Some("session")
+        || text(stream.get("id")).is_none()
+    {
+        return None;
+    }
+    let day = day_of_micros(entry.get("recorded_at").and_then(Value::as_u64)?)?;
+    let event = entry.pointer("/payload/event")?;
+    if !matches!(
+        event.get("kind").and_then(Value::as_str),
+        Some("model_completed" | "automated_review_completed")
+    ) {
+        return None;
+    }
+    let model = match event.get("model")? {
+        Value::String(name) if !name.is_empty() => name.clone(),
+        model => text(model.get("model_id"))?.to_owned(),
+    };
+    let usage = event.get("usage")?;
+    let input = number(usage, "input_tokens");
+    let cache_read = ["cache_read_tokens", "cached_input_tokens", "cached_tokens"]
+        .into_iter()
+        .find_map(|key| usage.get(key).and_then(Value::as_u64))
+        .unwrap_or(0)
+        .min(input);
+    let cache_write = number(usage, "cache_write_tokens").min(input - cache_read);
+    let output = number(usage, "output_tokens");
+    // A record without tokens proves no spend, so it is not counted at all.
+    if input + output == 0 {
+        return None;
+    }
+    let key = entry
+        .pointer("/payload/source_run_record_id")
+        .and_then(Value::as_str)
+        .filter(|key| !key.is_empty())
+        .unwrap_or(id);
+    Some((
+        key.to_owned(),
+        day,
+        model,
+        Tokens {
+            input: input - cache_read - cache_write,
+            output,
+            cache_read,
+            cache_write,
+        },
+    ))
+}
+
+/// Muse's `recorded_at` is microseconds from the Unix epoch. A value that names
+/// no day is dropped rather than counted on a made-up one.
+fn day_of_micros(micros: u64) -> Option<String> {
+    let nanos = i128::from(micros).checked_mul(1_000)?;
+    let at = time::OffsetDateTime::from_unix_timestamp_nanos(nanos).ok()?;
+    Some(at.date().to_string())
+}
+
+fn jsonl_files(root: &Path, name: Option<&str>, found: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
@@ -195,27 +303,13 @@ fn jsonl_files(root: &Path, found: &mut Vec<PathBuf>) {
             continue;
         };
         if kind.is_dir() {
-            jsonl_files(&path, found);
-        } else if kind.is_file() && path.extension().is_some_and(|ext| ext == "jsonl") {
+            jsonl_files(&path, name, found);
+        } else if kind.is_file()
+            && path.extension().is_some_and(|ext| ext == "jsonl")
+            && name.is_none_or(|name| path.file_name().is_some_and(|file| file == name))
+        {
             found.push(path);
         }
-    }
-}
-
-fn home() -> Option<PathBuf> {
-    crate::util::home_dir()
-}
-
-pub(crate) fn history_root(engine: Engine) -> Option<PathBuf> {
-    match engine {
-        Engine::Claude => std::env::var_os("CLAUDE_CONFIG_DIR")
-            .map(PathBuf::from)
-            .or_else(|| home().map(|home| home.join(".claude")))
-            .map(|root| root.join("projects")),
-        Engine::Codex => std::env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .or_else(|| home().map(|home| home.join(".codex")))
-            .map(|root| root.join("sessions")),
     }
 }
 
@@ -224,7 +318,39 @@ pub(crate) fn history_root(engine: Engine) -> Option<PathBuf> {
 struct Cached {
     size: u64,
     modified: Option<SystemTime>,
-    totals: FileTotals,
+    scan: Scan,
+}
+
+/// One file's scan. Muse keeps a row per inference, because the same inference can
+/// appear in another session's log and must still count once over the history.
+#[derive(Clone)]
+enum Scan {
+    Totals(FileTotals),
+    Inferences(Vec<Inference>),
+}
+
+impl Scan {
+    /// Adds this file to the history being combined. `counted` holds the Muse
+    /// inference ids already seen in other files.
+    fn add(self, combined: &mut FileTotals, counted: &mut HashSet<String>) {
+        match self {
+            Scan::Totals(totals) => {
+                for (key, tokens) in totals {
+                    combined.entry(key).or_default().add(tokens);
+                }
+            }
+            Scan::Inferences(rows) => {
+                for (inference, day, model, tokens) in rows {
+                    if counted.insert(inference) {
+                        combined
+                            .entry((day, model, STANDARD_TIER.to_owned()))
+                            .or_default()
+                            .add(tokens);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Default, Clone)]
@@ -241,9 +367,16 @@ fn scan_engine(
         return ("no_history".to_owned(), 0, 0, FileTotals::new());
     };
     let mut files = Vec::new();
-    jsonl_files(&root, &mut files);
+    // Muse names every session log `session.jsonl`, and its folders hold other
+    // `.jsonl` files that are not inference history.
+    jsonl_files(
+        &root,
+        (engine == Engine::Muse).then_some("session.jsonl"),
+        &mut files,
+    );
     let (mut scanned, mut skipped) = (0, 0);
     let mut combined = FileTotals::new();
+    let mut counted = HashSet::new();
     for path in files {
         // A warm-up ends between files when the service is quitting.
         if stop.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
@@ -258,34 +391,33 @@ fn scan_engine(
             .files
             .get(&path)
             .filter(|entry| entry.size == size && entry.modified == modified)
-            .map(|entry| entry.totals.clone());
-        let totals = match cached {
-            Some(totals) => totals,
+            .map(|entry| entry.scan.clone());
+        let scan = match cached {
+            Some(scan) => scan,
             None => {
                 let Ok(file) = std::fs::File::open(&path) else {
                     skipped += 1;
                     continue;
                 };
                 let reader = BufReader::new(file);
-                let totals = match engine {
-                    Engine::Claude => scan_claude(reader),
-                    Engine::Codex => scan_codex(reader),
+                let scan = match engine {
+                    Engine::Claude => Scan::Totals(scan_claude(reader)),
+                    Engine::Codex => Scan::Totals(scan_codex(reader)),
+                    Engine::Muse => Scan::Inferences(scan_muse(reader)),
                 };
                 cache.files.insert(
                     path,
                     Cached {
                         size,
                         modified,
-                        totals: totals.clone(),
+                        scan: scan.clone(),
                     },
                 );
-                totals
+                scan
             }
         };
         scanned += 1;
-        for (key, tokens) in totals {
-            combined.entry(key).or_default().add(tokens);
-        }
+        scan.add(&mut combined, &mut counted);
     }
     ("scanned".to_owned(), scanned, skipped, combined)
 }
@@ -397,9 +529,20 @@ fn period_start(days: u32) -> String {
     (today - time::Duration::days(i64::from(days.max(1)) - 1)).to_string()
 }
 
-fn summarize(
+/// One row of a history, before it is priced and summed.
+struct Entry {
+    day: String,
+    model: String,
+    tier: String,
+    tokens: Tokens,
+}
+
+fn summarize_entries(
     engine: &str,
-    (status, scanned, skipped, totals): (String, u32, u32, FileTotals),
+    status: String,
+    scanned: u32,
+    skipped: u32,
+    entries: impl Iterator<Item = Entry>,
     settings: &ServerSettings,
     since: Option<&str>,
 ) -> EngineUsage {
@@ -413,11 +556,19 @@ fn summarize(
     let mut models: BTreeMap<String, BTreeMap<String, Tokens>> = BTreeMap::new();
     let mut model_days: BTreeMap<String, BTreeMap<String, Day>> = BTreeMap::new();
     let mut days: BTreeMap<String, Day> = BTreeMap::new();
-    for ((day, model, tier), tokens) in totals {
+    for Entry {
+        day,
+        model,
+        tier,
+        tokens,
+    } in entries
+    {
         if since.is_some_and(|since| day.as_str() < since) {
             continue;
         }
         let model = resolve(&model);
+        // One source of cost for every engine: the configured price table. An amount the account
+        // reports is not mixed in here, since a day row and its model row would then disagree.
         let cost =
             price_for(settings, &model, &tier).map(|price| split_total(&cost_split(tokens, price)));
         model_days
@@ -450,6 +601,47 @@ fn summarize(
     }
 }
 
+fn summarize(
+    engine: &str,
+    (status, scanned, skipped, totals): (String, u32, u32, FileTotals),
+    settings: &ServerSettings,
+    since: Option<&str>,
+) -> EngineUsage {
+    let entries = totals
+        .into_iter()
+        .map(|((day, model, tier), tokens)| Entry {
+            day,
+            model,
+            tier,
+            tokens,
+        });
+    summarize_entries(engine, status, scanned, skipped, entries, settings, since)
+}
+
+/// Cursor reports no local history: its spend is billed to the account, and the account's billed
+/// events are what the store holds. Its counters arrive separate, so nothing is folded together.
+/// The report is only asked for when the store holds events at all, so an engine with no history
+/// is absent rather than an empty row, and a period with no events is a scanned engine of nothing.
+fn summarize_billed(
+    engine: &str,
+    totals: Vec<crate::store::BilledTotal>,
+    settings: &ServerSettings,
+    since: Option<&str>,
+) -> EngineUsage {
+    let entries = totals.into_iter().map(|total| Entry {
+        tokens: Tokens {
+            input: total.input,
+            output: total.output,
+            cache_read: total.cache_read,
+            cache_write: total.cache_write,
+        },
+        day: total.day,
+        model: total.model,
+        tier: STANDARD_TIER.to_owned(),
+    });
+    summarize_entries(engine, "scanned".to_owned(), 0, 0, entries, settings, since)
+}
+
 pub struct UsageCenter {
     host_id: String,
     cache: Arc<Mutex<ScanCache>>,
@@ -477,8 +669,11 @@ impl UsageCenter {
 
     /// Scans off the async threads, since history can run to gigabytes. Unchanged
     /// files come from memory, so a scan is cheap and a price change shows at once.
+    /// `store` holds the engines whose spend only their account reports; without one
+    /// their history is simply empty.
     pub async fn report(
         &self,
+        store: Option<&crate::store::Store>,
         settings: &ServerSettings,
         days: Option<u32>,
     ) -> Result<UsageReport> {
@@ -490,18 +685,30 @@ impl UsageCenter {
             [
                 ("claude", scan_engine(Engine::Claude, &mut cache, None)),
                 ("codex", scan_engine(Engine::Codex, &mut cache, None)),
+                ("muse", scan_engine(Engine::Muse, &mut cache, None)),
             ]
         })
         .await
         .map_err(|error| CoreError::Internal(error.to_string()))?;
         let since = days.map(period_start);
+        let mut engines: Vec<EngineUsage> = scans
+            .into_iter()
+            .map(|(name, scan)| summarize(name, scan, settings, since.as_deref()))
+            .collect();
+        // Cursor's account reports its own billed events, which the store keeps. No store, or a
+        // store that never recorded an event, is no history at all and no row: another engine's
+        // empty row would show spend that does not exist. A store with events but none in this
+        // period is a scanned engine of nothing, which is a different state from no history.
+        if let Some(store) = store
+            && store.billed_event_count(CURSOR)? > 0
+        {
+            let billed = store.billed_totals(CURSOR, since.as_deref())?;
+            engines.push(summarize_billed(CURSOR, billed, settings, since.as_deref()));
+        }
         Ok(UsageReport {
             host_id: self.host_id.clone(),
             scanned_at: now(),
-            engines: scans
-                .into_iter()
-                .map(|(name, scan)| summarize(name, scan, settings, since.as_deref()))
-                .collect(),
+            engines,
         })
     }
 
@@ -518,6 +725,7 @@ impl UsageCenter {
                 .clone();
             scan_engine(Engine::Claude, &mut local, Some(&stop));
             scan_engine(Engine::Codex, &mut local, Some(&stop));
+            scan_engine(Engine::Muse, &mut local, Some(&stop));
             let mut shared = cache
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -919,8 +1127,220 @@ mod tests {
         std::fs::write(nested.join("auth.json"), "").unwrap();
         std::fs::write(nested.join(".credentials.json"), "").unwrap();
         let mut found = Vec::new();
-        jsonl_files(dir.path(), &mut found);
+        jsonl_files(dir.path(), None, &mut found);
         assert_eq!(found, [nested.join("s.jsonl")]);
+    }
+
+    /// A Muse transcript entry as Muse writes it: microsecond `recorded_at`, an
+    /// inclusive usage block, and either a model name or a model object.
+    fn muse_entry(id: &str, recorded_at: u64, event: Value) -> Value {
+        json!({
+            "schema_version": 1,
+            "record_type": "event",
+            "payload_type": "runtime.session",
+            "payload_schema_version": 1,
+            "id": id,
+            "recorded_at": recorded_at,
+            "stream": { "kind": "session", "id": "session-1" },
+            "payload": { "source_run_record_id": "inference-1", "event": event },
+        })
+    }
+
+    fn muse_rows(entries: &[Value]) -> Vec<Inference> {
+        let text = entries
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        scan_muse(std::io::Cursor::new(text.into_bytes()))
+    }
+
+    #[test]
+    fn muse_counts_a_finished_inference_once_with_its_inclusive_counters() {
+        // The microsecond stamp is T3's own usage fixture for this record shape.
+        let rows = muse_rows(&[
+            muse_entry(
+                "envelope-1",
+                1_785_578_400_123_456,
+                json!({
+                    "kind": "model_completed",
+                    "model": "muse-wonder-full-1.0",
+                    "usage": {
+                        "input_tokens": 100,
+                        "cached_tokens": 60,
+                        "cache_read_tokens": 60,
+                        "cache_write_tokens": 10,
+                        "output_tokens": 20,
+                        "reasoning_tokens": 8,
+                    },
+                }),
+            ),
+            muse_entry(
+                "envelope-2",
+                1_785_578_400_123_456,
+                json!({
+                    "kind": "automated_review_completed",
+                    "model": { "model_id": "review-model", "provider_id": "meta" },
+                    "usage": { "input_tokens": 100, "cached_input_tokens": 60, "output_tokens": 20 },
+                }),
+            ),
+        ]);
+        assert_eq!(
+            rows[0],
+            (
+                "inference-1".to_owned(),
+                "2026-08-01".to_owned(),
+                "muse-wonder-full-1.0".to_owned(),
+                Tokens {
+                    input: 30,
+                    output: 20,
+                    cache_read: 60,
+                    cache_write: 10,
+                },
+            )
+        );
+        assert_eq!(rows[1].2, "review-model");
+        assert_eq!(
+            rows[1].3,
+            Tokens {
+                input: 40,
+                output: 20,
+                cache_read: 60,
+                cache_write: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn muse_ignores_lines_that_are_not_a_supported_finished_inference() {
+        let event =
+            |kind: &str, usage: Value| json!({ "kind": kind, "model": "m", "usage": usage });
+        let mut entries = vec![
+            muse_entry(
+                "kept",
+                1_785_578_400_000_000,
+                event("model_completed", json!({ "input_tokens": 5 })),
+            ),
+            // Not a record at all, or not the shape a token total comes from.
+            json!({ "record_type": "event" }),
+            json!("a string is not a record"),
+            muse_entry(
+                "x",
+                1_785_578_400_000_000,
+                event("workflow_completed", json!({ "input_tokens": 5 })),
+            ),
+            muse_entry(
+                "x",
+                1_785_578_400_000_000,
+                event("usage_summary", json!({ "input_tokens": 5 })),
+            ),
+            // A record whose counters cannot prove any spend.
+            muse_entry(
+                "x",
+                1_785_578_400_000_000,
+                event("model_completed", json!({})),
+            ),
+            muse_entry(
+                "x",
+                1_785_578_400_000_000,
+                event(
+                    "model_completed",
+                    json!({ "input_tokens": -5, "output_tokens": "20" }),
+                ),
+            ),
+        ];
+        let mut unsupported = muse_entry(
+            "x",
+            1_785_578_400_000_000,
+            event("model_completed", json!({ "input_tokens": 5 })),
+        );
+        unsupported["schema_version"] = json!(2);
+        entries.push(unsupported);
+        let mut wrong_stream = muse_entry(
+            "x",
+            1_785_578_400_000_000,
+            event("model_completed", json!({ "input_tokens": 5 })),
+        );
+        wrong_stream["stream"]["kind"] = json!("run");
+        entries.push(wrong_stream);
+        let mut no_model = muse_entry(
+            "x",
+            1_785_578_400_000_000,
+            event("model_completed", json!({ "input_tokens": 5 })),
+        );
+        no_model["payload"]["event"]
+            .as_object_mut()
+            .unwrap()
+            .remove("model");
+        entries.push(no_model);
+
+        let rows = muse_rows(&entries);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].0, "inference-1");
+        assert_eq!(rows[0].1, "2026-08-01");
+        assert_eq!(rows[0].2, "m");
+        assert_eq!(rows[0].3.input, 5);
+    }
+
+    #[test]
+    fn muse_counts_a_copied_inference_once_across_session_logs() {
+        let row = (
+            "inference-1".to_owned(),
+            "2026-08-01".to_owned(),
+            "m".to_owned(),
+            Tokens {
+                input: 5,
+                ..Tokens::default()
+            },
+        );
+        let mut combined = FileTotals::new();
+        let mut counted = HashSet::new();
+        Scan::Inferences(vec![row.clone()]).add(&mut combined, &mut counted);
+        Scan::Inferences(vec![row]).add(&mut combined, &mut counted);
+        assert_eq!(only(&combined).input, 5);
+        assert!(combined.contains_key(&(
+            "2026-08-01".to_owned(),
+            "m".to_owned(),
+            STANDARD_TIER.to_owned()
+        )));
+    }
+
+    #[test]
+    fn muse_reads_only_session_logs_and_a_missing_home_reports_nothing() {
+        let dir = crate::testing::TempDir::new();
+        let nested = dir.path().join("2026/08/01/session-1");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("session.jsonl"), "{not json\n").unwrap();
+        std::fs::write(nested.join("telemetry.jsonl"), "").unwrap();
+        let mut found = Vec::new();
+        jsonl_files(dir.path(), Some("session.jsonl"), &mut found);
+        assert_eq!(found, [nested.join("session.jsonl")]);
+        assert!(
+            scan_muse(
+                std::fs::File::open(&found[0])
+                    .map(std::io::BufReader::new)
+                    .unwrap()
+            )
+            .is_empty(),
+            "a malformed log is not a panic and not usage"
+        );
+        let mut missing = Vec::new();
+        jsonl_files(
+            &dir.path().join("absent"),
+            Some("session.jsonl"),
+            &mut missing,
+        );
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn a_muse_inference_with_no_day_is_dropped_rather_than_dated() {
+        assert_eq!(
+            day_of_micros(1_785_578_400_123_456).as_deref(),
+            Some("2026-08-01")
+        );
+        assert_eq!(day_of_micros(0).as_deref(), Some("1970-01-01"));
+        assert_eq!(day_of_micros(u64::MAX), None);
     }
 
     #[test]
@@ -928,6 +1348,72 @@ mod tests {
         let dir = crate::testing::TempDir::new();
         let first = UsageCenter::new(dir.path()).unwrap().host_id;
         assert_eq!(UsageCenter::new(dir.path()).unwrap().host_id, first);
+    }
+
+    /// Cursor keeps no local history, so its spend comes from the account's billed events in the
+    /// store. No store, an empty store and a period with nothing in it are three states: the first
+    /// two have no row at all, and the third is a scanned engine of nothing.
+    #[tokio::test]
+    async fn a_billed_store_feeds_the_report_only_when_it_holds_events() {
+        let dir = crate::testing::TempDir::new();
+        let center = UsageCenter::new(dir.path()).unwrap();
+        let settings = crate::store::default_settings();
+        let cursor_row = |report: &UsageReport| {
+            report
+                .engines
+                .iter()
+                .find(|row| row.engine == CURSOR)
+                .cloned()
+        };
+
+        // No store at all, and a store that never recorded an event: no row, so no spend shown.
+        assert!(cursor_row(&center.report(None, &settings, None).await.unwrap()).is_none());
+        let store = crate::store::Store::open(&dir.path().join("orbyn.db"), "epoch-a").unwrap();
+        assert!(cursor_row(&center.report(Some(&store), &settings, None).await.unwrap()).is_none());
+
+        let events = crate::store::parse_billed_events(
+            CURSOR,
+            &json!({ "usageEventsDisplay": [{
+                "timestamp": "1791691200000",
+                "model": "claude-4.5",
+                "conversationId": "conversation-a",
+                "tokenUsage": {
+                    "inputTokens": 100,
+                    "cacheReadTokens": 900,
+                    "cacheWriteTokens": 0,
+                    "outputTokens": 40,
+                    "totalCents": 125,
+                },
+            }]}),
+        );
+        assert_eq!(store.record_billed_events(&events).unwrap().new, 1);
+
+        // The events are on 2026-10-11. A one-day period that ends today holds none of them, which
+        // is a scanned engine of nothing rather than no history.
+        let past = center
+            .report(Some(&store), &settings, Some(1))
+            .await
+            .unwrap();
+        let row = cursor_row(&past).expect("a store with events reports the engine");
+        assert_eq!(row.status, "scanned");
+        assert!(row.models.is_empty(), "nothing in this period");
+
+        let all = center.report(Some(&store), &settings, None).await.unwrap();
+        let row = cursor_row(&all).expect("the engine is reported");
+        assert_eq!(row.status, "scanned");
+        assert_eq!(row.models.len(), 1);
+        assert_eq!(row.models[0].model, "claude-4.5");
+        assert_eq!(row.models[0].input_tokens, 100);
+        assert_eq!(row.models[0].cache_read_tokens, 900);
+        assert_eq!(row.models[0].output_tokens, 40);
+        // One source of cost for every engine: the price table, which prices nothing here, so the
+        // tokens are reported as unpriced rather than costed from the account's own cents. That is
+        // the same answer the day row and the model row give.
+        assert!(row.models[0].estimated_cost.is_none());
+        assert_eq!(row.models[0].unpriced_tokens, 1040);
+        assert_eq!(row.days.len(), 1);
+        assert_eq!(row.days[0].tokens, 1040);
+        assert_eq!(row.days[0].estimated_cost, None);
     }
 
     #[tokio::test]

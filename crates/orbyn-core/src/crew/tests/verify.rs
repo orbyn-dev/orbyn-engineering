@@ -1,7 +1,7 @@
 //! The verifier's pieces on their own: what a worker may read about a failure, the fingerprint
 //! the guard compares, and the checks that run in a checkout.
 
-use orbyn_contracts::CheckOutcome;
+use orbyn_contracts::{CheckKind, CheckOutcome};
 use serde_json::json;
 
 use crate::crew::checks::{Ran, Site, covers, run_check, tail};
@@ -254,7 +254,9 @@ fn the_internal_fix_digest_is_withheld_from_worker_reports() {
         "params": { "name": "crew-fix-touched", "note": digest } }),
     );
     let needles = crate::crew::guard::check_needles(&[c]);
-    assert!(crate::crew::guard::refuse_leak(&json!({ "summary": digest }), &needles).is_err());
+    let leak =
+        crate::crew::guard::refuse_leak(&json!({ "summary": digest }), &needles).unwrap_err();
+    assert_eq!(leak.code, orbyn_contracts::ErrorCode::AnswerKeyForbidden);
     assert!(!withhold(&digest, &needles).contains(&digest));
 }
 
@@ -335,6 +337,7 @@ async fn command_checks_pass_on_the_expected_exit_and_fail_with_the_output() {
 fn failed(reason: &str, names: &[&str]) -> crate::crew::verify::Failed {
     crate::crew::verify::Failed {
         id: "chk-a".into(),
+        kind: crate::crew::verify::FailureKind::Check(CheckKind::Command),
         outcome: CheckOutcome::Fail,
         exit_code: Some(101),
         names: names.iter().map(|n| (*n).to_owned()).collect(),
@@ -349,6 +352,7 @@ fn judged(failures: Vec<crate::crew::verify::Failed>) -> crate::crew::Judgement 
         evidence: Vec::new(),
         failures,
         not_verified: Vec::new(),
+        awaiting: Vec::new(),
         passes: 0,
     }
 }

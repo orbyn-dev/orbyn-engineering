@@ -1,6 +1,8 @@
 import { ChevronDown } from "lucide-react";
 import { settingsLabel } from "../settingsSearch";
 import { useState } from "react";
+import { api } from "../api";
+import { useAsync } from "../../../lib/useAsync";
 import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode";
 import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
@@ -11,8 +13,9 @@ import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { DETAIL_ROWS, detailsMenuItems } from "../../../product/ui/details";
 import { DesktopApp } from "./DesktopApp";
+import { SnapshotSettingsSection } from "../../snapshot";
 import { PreferenceGroups } from "../rows/PreferenceRows";
-import { heading, Toggle } from "./parts";
+import { Toggle } from "./parts";
 
 function DetailRowsButton() {
   const hidden = useUi((state) => state.detailsHidden);
@@ -34,14 +37,23 @@ function DetailRowsButton() {
   );
 }
 
-/** A whole number with its unit beside it, saved when the field loses focus. */
-function NumberWithUnit({ value, unit, label, save, disabled }: { value: unknown; unit: string; label: string; save(next: number): void; disabled: boolean }) {
+/** A whole number with its unit beside it, kept within `min` and `max` and saved when the field loses focus. */
+export function NumberWithUnit({ value, unit, label, save, disabled, min = 1, max }: { value: unknown; unit: string; label: string; save(next: number): void; disabled: boolean; min?: number; max?: number }) {
   return (
     <span className="unit-field">
-      <input type="number" min={1} aria-label={label} disabled={disabled} defaultValue={typeof value === "number" ? value : ""}
+      <input type="number" min={min} max={max} aria-label={label} disabled={disabled} defaultValue={typeof value === "number" ? value : ""}
         onBlur={(event) => {
-          const next = Number(event.target.value);
-          if (Number.isFinite(next) && event.target.value !== "" && next !== value) save(next);
+          const text = event.target.value.trim();
+          const typed = Number(text);
+          // An emptied field goes back to the stored value: saving nothing would leave
+          // the row reading differently from what the service holds.
+          if (text === "" || !Number.isFinite(typed)) {
+            event.target.value = typeof value === "number" ? String(value) : "";
+            return;
+          }
+          const next = Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min, typed));
+          event.target.value = String(next);
+          if (next !== value) save(next);
         }} />
       <span className="t3">{unit}</span>
     </span>
@@ -81,10 +93,12 @@ export function GeneralSection() {
   const confirmDelete = useUi((state) => state.confirmDelete);
   const setPrefs = useUi((state) => state.setPrefs);
   const sound = useUi((state) => state.threadSound);
+  // ⌘Q is the macOS desktop app's key, so its confirmation is the only row drawn there.
+  const info = useAsync("environment-identity", (signal) => api.info(signal));
+  const macos = info.data?.platform === "macos";
   const order = [{ value: "updated_at", label: "Last user message" }, { value: "created_at", label: "Created" }] as const;
   return (
     <>
-      {heading("General")}
       <PreferenceGroups groups={[{ title: "", rows: [{
         key: "default_thread_env_mode",
         title: settingsLabel("general-new-threads-start-in"),
@@ -118,17 +132,27 @@ export function GeneralSection() {
           set={(on) => setPrefs({ inAppNotifications: on })}
         />
       </SettingGroup>
-      <PreferenceGroups groups={[{ title: "", rows: [{
-        key: "quit_confirmation",
-        title: settingsLabel("general-quit-confirmation"),
-        description: "How ⌘Q quits the desktop app on macOS. The Quit menu item always quits.",
-        segmented: true,
-        options: [
-          { value: "direct", label: "Quit at once" },
-          { value: "hold", label: "Hold ⌘Q" },
-          { value: "double_press", label: "Press ⌘Q twice" },
-        ],
-      }] }]} />
+      <PreferenceGroups groups={[{ title: "", rows: [
+        { key: "terminal_attention_enabled", title: settingsLabel("general-terminal-agents-waiting"),
+          description: "Tell you when an agent in a terminal stops and waits for an answer" },
+        { key: "terminal_attention_quiet_seconds", title: settingsLabel("general-terminal-agents-quiet-time"),
+          description: "How long a terminal stays quiet before it counts as waiting",
+          showWhen: (valueOf) => valueOf("terminal_attention_enabled") !== false,
+          render: (value, save, control) => <NumberWithUnit value={value} unit="seconds" min={10} max={120} label={settingsLabel("general-terminal-agents-quiet-time")} save={save} disabled={control.disabled} /> },
+      ] }]} />
+      {macos ? (
+        <PreferenceGroups groups={[{ title: "", rows: [{
+          key: "quit_confirmation",
+          title: settingsLabel("general-quit-confirmation"),
+          description: "How ⌘Q quits the desktop app on macOS. The Quit menu item quits.",
+          segmented: true,
+          options: [
+            { value: "direct", label: "Quit at once" },
+            { value: "hold", label: "Hold ⌘Q" },
+            { value: "double_press", label: "Press ⌘Q twice" },
+          ],
+        }] }]} />
+      ) : null}
       <SettingGroup>
         <SettingRow title={settingsLabel("general-project-grouping")} description="How projects in the same repository are shown">
           <Segmented
@@ -171,12 +195,15 @@ export function GeneralSection() {
       },
       unitRow("automatic_git_fetch_minutes", settingsLabel("general-git-fetch-interval-minutes"), "Background git fetch period"),
       unitRow("provider_health_refresh_minutes", settingsLabel("general-provider-health-interval-minutes"), "How often providers are checked"),
+      { key: "crew_turn_budget", title: settingsLabel("general-crew-turn-budget"), description: "Turns each crew may spend. Once spent, no new Crew task starts; running tasks finish. 0 is no budget.",
+        render: (value, save, control) => <NumberWithUnit value={value} unit="turns" min={0} label={settingsLabel("general-crew-turn-budget")} save={save} disabled={control.disabled} /> },
       { key: "enable_provider_update_checks", title: settingsLabel("general-check-providers-for-updates") },
       { key: "keep_awake_during_runs", title: settingsLabel("general-keep-the-computer-awake-during-runs"), description: "Desktop app. The display can still sleep." },
       { key: "add_project_base_directory", title: settingsLabel("general-base-directory"), description: "Where new projects are created",
         render: (value, save, control) => <BaseDirectory value={value} save={save} disabled={control.disabled} /> },
       ] }]} />
       <DesktopApp />
+      <SnapshotSettingsSection />
       <p className="set-grp">Ask before</p>
       <SettingGroup>
         <Toggle title={settingsLabel("general-unpin-confirmation")} on={confirmUnpin} set={(on) => setPrefs({ confirmUnpin: on })} />

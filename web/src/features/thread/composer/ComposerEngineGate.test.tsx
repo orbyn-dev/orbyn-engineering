@@ -15,6 +15,10 @@ const cursor = {
   id: "cursor", name: "Cursor", installed: true,
   capabilities: { managed: true, permission_modes: ["no_approvals"], approvals: false, skill_delivery: [] },
 } as unknown as EngineStatus;
+const kiro = {
+  id: "kiro", name: "Kiro", installed: true,
+  capabilities: { managed: false, permission_modes: ["no_approvals"], approvals: false, skill_delivery: [] },
+} as unknown as EngineStatus;
 const thread: Thread = {
   id: "t1", project_id: "p", title: "Thread", engine: "cursor", model: "auto", cwd: "/r", worktree: null, skill_profile: null,
   scratch: false, active_run: null, last_run_state: null, created_at: "", updated_at: "",
@@ -22,6 +26,7 @@ const thread: Thread = {
 } as unknown as Thread;
 const catalog: EngineModels = { engine: "cursor", source: "engine", checked_at: "fixture", error: null, fallback: false,
   models: [{ id: "auto", label: "Auto", description: null, is_default: true, custom: false, options: [] }], options: [], agents: [], output_styles: [] };
+const kiroCatalog: EngineModels = { ...catalog, engine: "kiro" };
 
 const refusal = (code: string, message = "No.") => new ApiFailure(code, message, 409);
 const field = () => screen.getByRole("textbox");
@@ -64,18 +69,23 @@ describe("the first-run notice", () => {
     fireEvent.click(go);
     fireEvent.click(go);
     await waitFor(() => expect(start).toHaveBeenCalledTimes(2));
-    expect(mock.writes.acknowledge).toEqual(["cursor"]);
+    // The notice is once per project: the thread's project id goes with it.
+    expect(mock.writes.acknowledge).toEqual([{ project_id: "p", engine: "cursor" }]);
     expect(screen.queryByRole("group", { name: "Before the first Cursor run" })).toBeNull();
     expect(start.mock.calls[1]?.[1]).toBe("Run the tests.");
   });
 
   it("keeps the card and the message when the write fails, and says so", async () => {
     vi.spyOn(api, "startRun").mockRejectedValue(refusal("engine_notice_required"));
-    setCursorThreadApi(null);
+    setCursorThreadApi({
+      notice: async () => ({ engine: "cursor", project_id: "p", acknowledged: false, acknowledged_at: null }),
+      acknowledge: async () => { throw new Error("The service refused the write."); },
+      sendWithoutApprovals: async () => { throw new Error("The service refused the write."); },
+    });
     setup();
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
     await userEvent.click(await screen.findByRole("button", { name: "Continue" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't save that. This service does not offer that yet. Your message is kept.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't save that. The service refused the write. Your message is kept.");
     expect(screen.getByRole("group", { name: "Before the first Cursor run" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
     expect(field()).toHaveValue("Run the tests.");
@@ -172,6 +182,23 @@ describe("a refused mode", () => {
     expect(field()).toHaveValue("Run the tests.");
   });
 
+  it("when the one-turn run also needs the notice, the notice card comes first and the refusal card returns after Continue", async () => {
+    const start = vi.spyOn(api, "startRun").mockRejectedValue(refusal("engine_mode_refused", "x"));
+    const mock = createCursorThreadMock();
+    vi.spyOn(mock, "sendWithoutApprovals").mockRejectedValueOnce(refusal("engine_notice_required"));
+    setCursorThreadApi(mock);
+    render(<Composer thread={supervisedThread} engine={cursor} showContext />);
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Run this thread without approvals" }));
+    expect(await screen.findByRole("group", { name: "Before the first Cursor run" })).toBeVisible();
+    expect(screen.queryByRole("group", { name: "Cursor can’t start in Supervised mode" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("group", { name: "Cursor can’t start in Supervised mode" })).toBeVisible();
+    expect(mock.writes.acknowledge).toEqual([{ project_id: "p", engine: "cursor" }]);
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(field()).toHaveValue("Run the tests.");
+  });
+
   it("another 409 or any other failure keeps the composer's own error line", async () => {
     vi.spyOn(api, "startRun").mockRejectedValue(new ApiFailure("thread_busy", "busy", 409));
     setup();
@@ -192,6 +219,44 @@ describe("the one mode", () => {
   });
 });
 
+const kiroThread = (mode = "auto") => ({ ...thread, engine: "kiro", lifecycle: { permission_mode: mode } }) as unknown as Thread;
+const setupKiro = (mode = "auto") => {
+  useWorkspace.setState({ engines: { data: [kiro], error: null, loading: false } });
+  useModelStore.setState({ byEngine: { kiro: kiroCatalog }, loading: {}, errors: {} });
+  return render(<Composer thread={kiroThread(mode)} engine={kiro} showContext />);
+};
+const contextRow = () => document.querySelector(".composer-context");
+
+describe("another engine Orbyn cannot gate", () => {
+  it("draws the first-run notice with Orbyn's words, and no sandbox sentence", async () => {
+    vi.spyOn(api, "startRun").mockRejectedValue(refusal("engine_notice_required"));
+    setupKiro();
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    const card = await screen.findByRole("group", { name: "Before the first Kiro run" });
+    expect(card).toHaveTextContent("Orbyn cannot ask before Kiro acts.");
+    expect(card).not.toHaveTextContent(/sandbox/i);
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("says the one mode in the composer context row and its hover reason", () => {
+    setupKiro();
+    expect(contextRow()).toHaveTextContent("Unmanaged");
+    expect(contextRow()).toHaveTextContent("Orbyn cannot ask before Kiro acts.");
+    const label = contextRow()?.querySelector(".unmanaged-label");
+    expect(label).toHaveAttribute("title", "Orbyn cannot ask before Kiro acts.");
+    expect(screen.queryByRole("button", { name: /^Permissions:/ })).toBeNull();
+  });
+
+  it("draws a refused mode with Orbyn's words if the service ever sends one", async () => {
+    vi.spyOn(api, "startRun").mockRejectedValue(refusal("engine_mode_refused"));
+    setupKiro("supervised");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    const card = await screen.findByRole("group", { name: "Kiro can’t start in Supervised mode" });
+    expect(card).toHaveTextContent("Orbyn cannot ask before Kiro acts. It can’t run where approvals are required.");
+    expect(card).not.toHaveTextContent(/sandbox/i);
+  });
+});
+
 describe("an engine that falls back instead", () => {
   it("shows no dimmed rows and no notice", async () => {
     const claude = { id: "claude", name: "Claude Code", installed: true, capabilities: { managed: true, permission_modes: ["supervised", "auto"], skill_delivery: [] } } as unknown as EngineStatus;
@@ -201,5 +266,6 @@ describe("an engine that falls back instead", () => {
     expect(screen.queryByRole("menuitemradio", { name: "Auto-accept edits" })).toBeNull();
     await act(async () => undefined);
     expect(document.querySelector(".access-refused")).toBeNull();
+    expect(contextRow()).not.toHaveTextContent(/Orbyn cannot ask|does not ask before acting/);
   });
 });

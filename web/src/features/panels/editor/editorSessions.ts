@@ -16,6 +16,8 @@ export interface EditorSession {
   threadId: string;
   cwd: string;
   path: string;
+  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout, which sends no `repo_id`. */
+  repoId?: string;
   /** The line a link named when the file was opened: the line Add file to message carries. */
   line: number | null;
   /** The tabs showing this file, so the strip can mark them. */
@@ -34,7 +36,7 @@ export interface EditorSession {
   trouble: Trouble | null;
 }
 
-type Trouble = { kind: "error"; reason: string } | { kind: "conflict"; revision: string | null } | { kind: "endings" };
+type Trouble = { kind: "error"; reason: string } | { kind: "conflict"; revision: string | null } | { kind: "endings" } | { kind: "untrusted"; reason: string };
 
 interface Store {
   sessions: Record<string, EditorSession>;
@@ -46,7 +48,8 @@ interface Store {
   drop(key: string): void;
 }
 
-export const fileKey = (threadId: string, cwd: string, path: string) => JSON.stringify([threadId, cwd, path]);
+/** One file of one checkout; another repository's file of the same path is another key, and the key of the thread's own file is what it always was. */
+export const fileKey = (threadId: string, cwd: string, path: string, repoId?: string) => JSON.stringify(repoId === undefined ? [threadId, cwd, path] : [threadId, cwd, path, repoId]);
 const lockKey = (threadId: string, tabId: string) => JSON.stringify([threadId, tabId]);
 
 export const useEditorSessions = create<Store>((set) => ({
@@ -110,11 +113,12 @@ export async function saveSession(key: string, against?: string | null, endingsO
   patch(key, { saving: true, trouble: null });
   const sent = current.text;
   try {
-    const written = await saveThreadFile(current.threadId, { path: current.path, content: withEol(sent, current.eol), base_revision: against === undefined ? current.revision : against });
+    const written = await saveThreadFile(current.threadId, { path: current.path, content: withEol(sent, current.eol), base_revision: against === undefined ? current.revision : against, ...(current.repoId === undefined ? {} : { repo_id: current.repoId }) });
     const before = current.saved;
     patch(key, { saved: sent, revision: written.revision, saving: false, mixed: false });
     // Comments on this file follow their text to the new revision, or are marked out of date when it is gone.
-    if (current.revision && written.revision !== current.revision) {
+    // The chips name a checkout and a path, not a repository: another repository's file never moves the primary's.
+    if (current.revision && written.revision !== current.revision && current.repoId === undefined) {
       const { chips, update } = useComposerChips.getState();
       const where = { cwd: current.cwd, path: current.path, fromRevision: current.revision, toRevision: written.revision, before, after: sent };
       const mine = chips[current.threadId] ?? [];
@@ -124,8 +128,11 @@ export async function saveSession(key: string, against?: string | null, endingsO
   } catch (failure) {
     const known = toFailure(failure);
     const there = known.code === "file_conflict" ? (known.detail as { revision?: string | null } | undefined)?.revision : undefined;
+    // `repo_untrusted` is a 409 too, but the file did not change: the repository is not trusted.
     const trouble: Trouble =
-      known.status === 409 && there === null
+      known.status === 409 && known.code === "repo_untrusted"
+        ? { kind: "untrusted", reason: known.message }
+        : known.status === 409 && there === null
         ? { kind: "error", reason: "The file was deleted." }
         : known.status === 409
           ? { kind: "conflict", revision: there ?? null }

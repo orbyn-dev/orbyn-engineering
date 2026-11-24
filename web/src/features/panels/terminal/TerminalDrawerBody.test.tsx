@@ -1,7 +1,9 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { request } from "../../../api/client";
+import type { MockApi } from "../../../../mock/api";
+import { installMockFetch } from "../../../test-support";
+import { holdFetch, wire } from "../../../wire.test-support";
 import type { TerminalInfo } from "../../../api/types";
 import { useConnection } from "../../../product/state/connection";
 import { useUi } from "../../../product/state/ui";
@@ -9,12 +11,14 @@ import { useComposerChips } from "../../../product/state/composerChipStore";
 import { TerminalBar, TerminalDrawerBody } from "./TerminalDrawerBody";
 import { runHandlers } from "../../../product/shell/shortcuts";
 import { registerTerminal, terminalKey } from "./terminalControls";
+import { useAttention } from "./attention/store";
 
 vi.mock("./TerminalPanel", () => ({ TerminalPanel: ({ terminalId, autoFocus }: { terminalId?: string; autoFocus?: boolean }) => <div data-autofocus={autoFocus ? "yes" : "no"}>Output of {terminalId ?? "main"}<textarea className="xterm-helper-textarea" aria-label="xterm" /></div> }));
-vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
-vi.mock("../../../product/composer/runProjectAction", () => ({ runProjectAction: vi.fn(() => Promise.resolve()) }));
 
-const mock = vi.mocked(request);
+let mock: MockApi;
+const deletes = () => wire().filter((call) => call.method === "DELETE").map((call) => call.path);
+const terminalReads = () => wire().filter((call) => call.method === "GET" && call.path === "/api/threads/th/terminals");
+const opened = () => wire().filter((call) => call.method === "POST" && call.path === "/api/threads/th/terminals").map((call) => call.body);
 
 const terminal = (over: Partial<TerminalInfo>): TerminalInfo => ({
   id: "t2",
@@ -30,21 +34,23 @@ const terminal = (over: Partial<TerminalInfo>): TerminalInfo => ({
   ...over,
 });
 
+/** The terminals the service lists for the thread, and the project's one script. */
 function serve(terminals: TerminalInfo[]) {
-  mock.mockImplementation((method: string, path: string) => {
-    if (method === "GET" && path.endsWith("/terminals")) return Promise.resolve(terminals) as never;
-    if (method === "GET" && path.endsWith("/scripts")) return Promise.resolve({ scripts: [{ name: "test", icon: "test", command: "npm test" }] }) as never;
-    return Promise.resolve(undefined) as never;
-  });
+  mock.terminals.seed("th", terminals);
+  mock.terminals.setScripts("th", [{ name: "test", icon: "test", command: "npm test" }]);
 }
 
 beforeEach(() => {
-  mock.mockReset();
+  mock = installMockFetch();
+  useAttention.getState().reset();
   useComposerChips.setState({ chips: {} });
   useUi.setState({ terminalOpen: true, toasts: [] });
   useConnection.setState({ offline: false, serviceDown: false });
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 const show = async (terminals: TerminalInfo[]) => {
   serve(terminals);
@@ -55,13 +61,29 @@ const show = async (terminals: TerminalInfo[]) => {
 };
 
 describe("terminal drawer", () => {
+  it("puts an amber dot on the tab of a terminal that waits for the person, and takes it away when it is answered or dismissed", async () => {
+    await show([terminal({ id: "t2", group: "g2" }), terminal({ id: "t3", group: "g3", title: "build" })]);
+    const at = (seq: number, value: unknown) => ({ seq, ts: "2026-11-22T14:12:03Z", thread_id: "th", event: { type: "CUSTOM", name: "orbyn.terminal_attention", value } });
+    const waiting = { v: 1, op: "waiting", id: "a1", terminal_id: "t3", terminal_title: "build", engine: "claude", kind: "question", since: "2026-11-22T14:12:00Z", excerpt: ["Continue?"] };
+    expect(document.querySelector(".ptab .ptab-attn")).toBeNull();
+    act(() => { useAttention.getState().receive(at(1, waiting)); });
+    expect(screen.getByRole("tab", { name: "build, waiting for you" }).querySelector(".ptab-attn")).not.toBeNull();
+    expect(screen.getByRole("tab", { name: /npm test/ }).querySelector(".ptab-attn")).toBeNull();
+    act(() => { useAttention.getState().dismiss("a1"); });
+    expect(document.querySelector(".ptab-attn")).toBeNull();
+    act(() => { useAttention.getState().reset(); useAttention.getState().receive(at(2, { ...waiting, id: "a2" })); });
+    expect(document.querySelector(".ptab-attn")).not.toBeNull();
+    act(() => { useAttention.getState().receive(at(3, { v: 1, op: "clear", id: "a2", reason: "input" })); });
+    expect(document.querySelector(".ptab-attn")).toBeNull();
+  });
+
   it("marks a tab by how its process is doing and closes it from its own button", async () => {
     const user = await show([terminal({}), terminal({ id: "t3", group: "g3", title: "build", alive: false, exit_code: 0 }), terminal({ id: "t4", group: "g4", title: "lint", alive: false, exit_code: 2 })]);
     expect(screen.getAllByLabelText("Working")).not.toHaveLength(0);
     expect(screen.getByLabelText("Finished")).toBeInTheDocument();
     expect(screen.getByLabelText("Failed")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close build" }));
-    await waitFor(() => expect(mock).toHaveBeenCalledWith("DELETE", "/api/threads/th/terminals/t3"));
+    await waitFor(() => expect(deletes()).toEqual(["/api/threads/th/terminals/t3"]));
   });
 
   it("shows how long a running process has gone, and clears or interrupts it", async () => {
@@ -84,8 +106,7 @@ describe("terminal drawer", () => {
     await user.click(screen.getByRole("button", { name: "Send to the agent" }));
     expect(useComposerChips.getState().chips["th"]).toEqual([expect.objectContaining({ kind: "terminal", output: "1 failed | 47 passed", exitCode: 1 })]);
     await user.click(screen.getByRole("button", { name: "Run again" }));
-    const { runProjectAction } = await import("../../../product/composer/runProjectAction");
-    expect(runProjectAction).toHaveBeenCalledWith("th", expect.objectContaining({ name: "test" }));
+    await waitFor(() => expect(wire().filter((call) => call.method === "POST" && call.path === "/api/threads/th/scripts")).toEqual([{ method: "POST", path: "/api/threads/th/scripts", body: { name: "test" } }]));
     stop();
   });
 
@@ -93,7 +114,7 @@ describe("terminal drawer", () => {
     const user = await show([terminal({ alive: false, exit_code: 0 })]);
     expect(screen.getByText("Ended")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close tab" }));
-    await waitFor(() => expect(mock).toHaveBeenCalledWith("DELETE", "/api/threads/th/terminals/t2"));
+    await waitFor(() => expect(deletes()).toEqual(["/api/threads/th/terminals/t2"]));
   });
 
   it("offers Clear, Copy and Watch from a tab's right-click menu, and End process only while it runs, after the split choices", async () => {
@@ -137,11 +158,11 @@ describe("terminal drawer", () => {
     await user.click(screen.getByRole("button", { name: "Close npm test" }));
     const dialog = await screen.findByRole("dialog", { name: "End this terminal?" });
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
-    expect(mock).not.toHaveBeenCalledWith("DELETE", expect.anything());
+    expect(deletes()).toEqual([]);
     await user.click(within(dialog).getByRole("button", { name: "End" }));
-    await waitFor(() => expect(mock).toHaveBeenCalledWith("DELETE", "/api/threads/th/terminals/t2"));
+    await waitFor(() => expect(deletes()).toEqual(["/api/threads/th/terminals/t2"]));
     await user.click(screen.getByRole("button", { name: "Close build" }));
-    await waitFor(() => expect(mock).toHaveBeenCalledWith("DELETE", "/api/threads/th/terminals/t3"));
+    await waitFor(() => expect(deletes()).toEqual(["/api/threads/th/terminals/t2", "/api/threads/th/terminals/t3"]));
   });
 
   it("has Maximise and Collapse at the end of the row, a plus that opens a terminal, and no Close terminal or splits", async () => {
@@ -158,7 +179,7 @@ describe("terminal drawer", () => {
     expect(screen.queryByRole("button", { name: "Close terminal" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Split terminal/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "New terminal" }));
-    await waitFor(() => expect(mock).toHaveBeenCalledWith("POST", "/api/threads/th/terminals", {}));
+    await waitFor(() => expect(opened()).toEqual([{}]));
   });
 
   it("says No terminals open once every tab is closed, and offers New terminal", async () => {
@@ -168,7 +189,7 @@ describe("terminal drawer", () => {
     await user.click(await screen.findByRole("button", { name: "Close Terminal" }));
     expect(screen.getByText("No terminals open.")).toBeInTheDocument();
     await user.click(within(screen.getByText("No terminals open.").parentElement!).getByRole("button", { name: "New terminal" }));
-    await waitFor(() => expect(mock).toHaveBeenCalledWith("POST", "/api/threads/th/terminals", {}));
+    await waitFor(() => expect(opened()).toEqual([{}]));
   });
 
   it("searches the output: Ctrl+F opens the field, Enter moves to the next match, and the count says where you are", async () => {
@@ -193,19 +214,9 @@ describe("terminal drawer", () => {
 });
 
 describe("terminal focus, search keys and the hidden main shell", () => {
-  /** A list that forgets a terminal once it has been deleted, as the service does. */
+  /** The service forgets a terminal once it has been deleted, so the next list leaves it out. */
   function serveLive(initial: TerminalInfo[]) {
-    let list = initial;
-    mock.mockImplementation((method: string, path: string) => {
-      if (method === "DELETE") {
-        const id = path.split("/").pop();
-        list = list.filter((entry) => entry.id !== id);
-        return Promise.resolve(undefined) as never;
-      }
-      if (method === "GET" && path.endsWith("/terminals")) return Promise.resolve(list) as never;
-      if (method === "GET" && path.endsWith("/scripts")) return Promise.resolve({ scripts: [] }) as never;
-      return Promise.resolve(undefined) as never;
-    });
+    serve(initial);
   }
   const idle = (id: string, title: string) => terminal({ id, group: `g-${id}`, title, alive: false, exit_code: 0 });
 
@@ -235,26 +246,17 @@ describe("terminal focus, search keys and the hidden main shell", () => {
     await user.click(await screen.findByRole("button", { name: "Close Terminal" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Terminal" })).not.toBeInTheDocument();
-    expect(mock).not.toHaveBeenCalledWith("DELETE", expect.anything());
+    expect(deletes()).toEqual([]);
   });
 
   it("asks a terminal opened here to take focus when it loads, and not one that was already there", async () => {
-    let list = [idle("t2", "build")];
-    mock.mockImplementation((method: string, path: string) => {
-      if (method === "POST") {
-        const made = idle("t9", "zsh 2");
-        list = [...list, made];
-        return Promise.resolve(made) as never;
-      }
-      if (method === "GET" && path.endsWith("/terminals")) return Promise.resolve(list) as never;
-      return Promise.resolve({ scripts: [] }) as never;
-    });
+    serve([idle("t2", "build")]);
     const user = userEvent.setup();
     render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
     await screen.findByRole("tab", { name: "build" });
     expect(screen.getByText("Output of main").closest("[data-autofocus]")).toHaveAttribute("data-autofocus", "no");
     await user.click(screen.getByRole("button", { name: "New terminal" }));
-    await waitFor(() => expect(screen.getByText("Output of t9").closest("[data-autofocus]")).toHaveAttribute("data-autofocus", "yes"));
+    await waitFor(() => expect(screen.getByText("Output of t-new1").closest("[data-autofocus]")).toHaveAttribute("data-autofocus", "yes"));
     await user.click(screen.getByRole("tab", { name: "build" }));
     expect(screen.getByText("Output of t2").closest("[data-autofocus]")).toHaveAttribute("data-autofocus", "no");
   });
@@ -338,12 +340,11 @@ describe("closed terminal bar", () => {
   it("keeps asking slowly when nothing runs, and shows the bar once a script starts later", async () => {
     vi.useFakeTimers();
     try {
-      let list: TerminalInfo[] = [];
-      mock.mockImplementation(() => Promise.resolve(list) as never);
+      serve([]);
       render(<TerminalBar threadId="th" onOpen={() => undefined} />);
       await act(async () => { await vi.advanceTimersByTimeAsync(20_000 + 40_000 + 60_000 + 60_000); });
       expect(screen.queryByRole("group", { name: "Terminal" })).not.toBeInTheDocument();
-      list = [terminal({})];
+      serve([terminal({})]);
       await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
       expect(screen.getByRole("group", { name: "Terminal" })).toHaveTextContent("1 process running");
     } finally {
@@ -354,11 +355,10 @@ describe("closed terminal bar", () => {
   it("asks again at once when a terminal is revealed for the thread", async () => {
     vi.useFakeTimers();
     try {
-      let list: TerminalInfo[] = [];
-      mock.mockImplementation(() => Promise.resolve(list) as never);
+      serve([]);
       render(<TerminalBar threadId="th" onOpen={() => undefined} />);
       await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
-      list = [terminal({})];
+      serve([terminal({})]);
       await act(async () => { useUi.getState().revealTerminal("th", "g2"); });
       await act(async () => { await vi.advanceTimersByTimeAsync(10); });
       expect(screen.getByRole("group", { name: "Terminal" })).toHaveTextContent("1 process running");
@@ -368,48 +368,32 @@ describe("closed terminal bar", () => {
   });
 
   it("does not ask while the device is offline", async () => {
-    serve([terminal({})]);
-    useConnection.setState({ offline: true });
-    render(<TerminalBar threadId="th" onOpen={() => undefined} />);
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(mock).not.toHaveBeenCalled();
-    useConnection.setState({ offline: false });
+    vi.useFakeTimers();
+    try {
+      serve([terminal({})]);
+      useConnection.setState({ offline: true });
+      render(<TerminalBar threadId="th" onOpen={() => undefined} />);
+      // Long enough for the bar's slowest poll to have come due.
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+      expect(wire()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+      useConnection.setState({ offline: false });
+    }
   });
 
   it("is not there when nothing runs", async () => {
     serve([terminal({ alive: false })]);
     render(<TerminalBar threadId="th" onOpen={() => undefined} />);
-    await waitFor(() => expect(mock).toHaveBeenCalled());
+    await waitFor(() => expect(terminalReads()).not.toHaveLength(0));
     expect(screen.queryByRole("group", { name: "Terminal" })).not.toBeInTheDocument();
   });
 });
 
 describe("terminal split and vertical split", () => {
-  let list: TerminalInfo[] = [];
-  let posts: unknown[] = [];
-  let release: (() => void) | null = null;
-  /** A service that adds a pane to the group of `split_of`, as the real one does. */
-  function serveSplits(initial: TerminalInfo[], { hold = false, fail = false } = {}) {
-    list = initial;
-    posts = [];
-    mock.mockImplementation((method: string, path: string, body?: unknown) => {
-      if (method === "POST" && path.endsWith("/terminals")) {
-        posts.push(body);
-        if (fail) return Promise.reject(new Error("no pty")) as never;
-        const { split_of, direction } = body as { split_of: string; direction: string };
-        const made = terminal({ id: `n${posts.length}`, title: `zsh ${posts.length}`, group: list.find((one) => one.id === split_of)!.group, direction, script: null, alive: true });
-        const add = () => { list = [...list, made]; return made; };
-        return (hold ? new Promise((resolve) => { release = () => resolve(add()); }) : Promise.resolve(add())) as never;
-      }
-      if (method === "DELETE") {
-        const id = path.split("/").pop();
-        list = list.filter((one) => one.id !== id);
-        return Promise.resolve(undefined) as never;
-      }
-      if (method === "GET" && path.endsWith("/terminals")) return Promise.resolve(list) as never;
-      return Promise.resolve({ scripts: [] }) as never;
-    });
-  }
+  /** The service adds a pane to the group of `split_of`, as the real one does. */
+  const serveSplits = (initial: TerminalInfo[]) => serve(initial);
+  const posts = opened;
   const shell = (over: Partial<TerminalInfo> = {}) => terminal({ id: "t2", group: "g2", title: "dev", script: null, ...over });
   const mountSplits = async () => {
     const user = userEvent.setup();
@@ -422,11 +406,11 @@ describe("terminal split and vertical split", () => {
     serveSplits([shell()]);
     const user = await mountSplits();
     await user.click(screen.getByRole("button", { name: "Split pane" }));
-    await screen.findByText("Output of n1");
-    expect(posts).toEqual([{ split_of: "t2", direction: "horizontal" }]);
+    await screen.findByText("Output of t-new1");
+    expect(posts()).toEqual([{ split_of: "t2", direction: "horizontal" }]);
     expect(screen.getByText("Output of t2")).toBeInTheDocument();
     expect(document.querySelector(".terminal-splits")).toHaveAttribute("data-direction", "horizontal");
-    expect(screen.getByText("Output of n1").closest("[data-autofocus]")).toHaveAttribute("data-autofocus", "yes");
+    expect(screen.getByText("Output of t-new1").closest("[data-autofocus]")).toHaveAttribute("data-autofocus", "yes");
     expect(screen.getByText("Output of t2").closest("[data-autofocus]")).toHaveAttribute("data-autofocus", "no");
   });
 
@@ -435,8 +419,8 @@ describe("terminal split and vertical split", () => {
     const user = await mountSplits();
     await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("tab", { name: "dev" }) });
     await user.click(screen.getByRole("menuitem", { name: "Split down" }));
-    await screen.findByText("Output of n1");
-    expect(posts).toEqual([{ split_of: "t2", direction: "vertical" }]);
+    await screen.findByText("Output of t-new1");
+    expect(posts()).toEqual([{ split_of: "t2", direction: "vertical" }]);
     expect(document.querySelector(".terminal-splits")).toHaveAttribute("data-direction", "vertical");
   });
 
@@ -444,29 +428,30 @@ describe("terminal split and vertical split", () => {
     serveSplits([shell()]);
     await mountSplits();
     act(() => void runHandlers("terminal.split"));
-    await screen.findByText("Output of n1");
-    expect(posts).toEqual([{ split_of: "t2", direction: "horizontal" }]);
+    await screen.findByText("Output of t-new1");
+    expect(posts()).toEqual([{ split_of: "t2", direction: "horizontal" }]);
   });
 
   it("splits vertically from its shortcut", async () => {
     serveSplits([shell()]);
     await mountSplits();
     act(() => void runHandlers("terminal.splitVertical"));
-    await screen.findByText("Output of n1");
-    expect(posts).toEqual([{ split_of: "t2", direction: "vertical" }]);
+    await screen.findByText("Output of t-new1");
+    expect(posts()).toEqual([{ split_of: "t2", direction: "vertical" }]);
   });
 
   it("opens one terminal for a press that arrives while the first is still opening, and writes nothing by itself", async () => {
-    serveSplits([shell()], { hold: true });
+    serveSplits([shell()]);
     const user = await mountSplits();
-    expect(posts).toEqual([]);
+    const slow = holdFetch("POST", "/api/threads/th/terminals");
+    expect(posts()).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Split pane" }));
     act(() => void runHandlers("terminal.split"));
     await user.click(screen.getByRole("button", { name: "Split pane" }));
-    expect(posts).toHaveLength(1);
+    expect(posts()).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Split pane" })).toBeDisabled();
-    await act(async () => release?.());
-    await screen.findByText("Output of n1");
+    await act(async () => slow.release());
+    await screen.findByText("Output of t-new1");
     expect(screen.getByRole("button", { name: "Split pane" })).toBeEnabled();
   });
 
@@ -478,22 +463,22 @@ describe("terminal split and vertical split", () => {
     expect(screen.getByRole("menuitem", { name: "Split down" })).toBeDisabled();
     await user.keyboard("{Escape}");
     act(() => void runHandlers("terminal.splitVertical"));
-    expect(posts).toEqual([]);
+    expect(posts()).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Split pane" }));
-    await screen.findByText("Output of n1");
+    await screen.findByText("Output of t-new1");
     await user.click(screen.getByRole("button", { name: "Split pane" }));
-    await screen.findByText("Output of n2");
-    expect(posts).toHaveLength(2);
+    await screen.findByText("Output of t-new2");
+    expect(posts()).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Split pane" })).toBeDisabled();
     act(() => void runHandlers("terminal.split"));
-    expect(posts).toHaveLength(2);
+    expect(posts()).toHaveLength(2);
   });
 
   it("closes one pane's terminal from its own button and leaves the others", async () => {
     serveSplits([shell(), shell({ id: "t3", title: "two", direction: "horizontal", alive: false, exit_code: 0 })]);
     const user = await mountSplits();
     await user.click(screen.getByRole("button", { name: "Close pane two" }));
-    await waitFor(() => expect(mock).toHaveBeenCalledWith("DELETE", "/api/threads/th/terminals/t3"));
+    await waitFor(() => expect(deletes()).toEqual(["/api/threads/th/terminals/t3"]));
     await waitFor(() => expect(screen.queryByText("Output of t3")).not.toBeInTheDocument());
     expect(screen.getByText("Output of t2")).toBeInTheDocument();
   });
@@ -502,14 +487,12 @@ describe("terminal split and vertical split", () => {
     serveSplits([shell(), shell({ id: "t3", title: "two", direction: "horizontal" })]);
     const user = await mountSplits();
     await user.click(screen.getByRole("button", { name: "Close pane two" }));
-    expect(mock).not.toHaveBeenCalledWith("DELETE", expect.anything());
+    expect(deletes()).toEqual([]);
     await user.click(within(await screen.findByRole("dialog", { name: "End this terminal?" })).getByRole("button", { name: "End" }));
-    await waitFor(() => expect(mock).toHaveBeenCalledWith("DELETE", "/api/threads/th/terminals/t3"));
+    await waitFor(() => expect(deletes()).toEqual(["/api/threads/th/terminals/t3"]));
   });
 
   describe("a tab's own X ends every pane of the tab (frames x-term-tab-close, x-term-end-confirm)", () => {
-    const deletes = () => mock.mock.calls.filter(([method]) => method === "DELETE").map(([, path]) => path);
-
     it("asks once for the whole tab when any shell runs, names the count and the running one, and ends them all with one click each", async () => {
       serveSplits([shell(), shell({ id: "t3", title: "two", direction: "horizontal", alive: false, exit_code: 0 })]);
       const user = await mountSplits();
@@ -576,15 +559,16 @@ describe("terminal split and vertical split", () => {
     await screen.findByRole("tab", { name: "Terminal" });
     expect(screen.getByRole("button", { name: "Split pane" })).toBeDisabled();
     act(() => void runHandlers("terminal.split"));
-    expect(posts).toEqual([]);
+    expect(posts()).toEqual([]);
   });
 
   it("says when the split could not be made and adds no pane", async () => {
-    serveSplits([shell()], { fail: true });
+    serveSplits([shell()]);
     const user = await mountSplits();
+    mock.fail("/api/threads/th/terminals", 1, 403, "folder_untrusted", "Trust this folder before running an engine in it.");
     await user.click(screen.getByRole("button", { name: "Split pane" }));
-    await waitFor(() => expect(useUi.getState().toasts.map((toast) => toast.text).join()).toContain("Couldn't do that"));
-    expect(screen.queryByText("Output of n1")).not.toBeInTheDocument();
+    await waitFor(() => expect(useUi.getState().toasts.map((toast) => toast.text).join()).toContain("Couldn't do that. Trust this folder before running an engine in it."));
+    expect(screen.queryByText("Output of t-new1")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Split pane" })).toBeEnabled();
   });
 });

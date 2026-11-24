@@ -4,6 +4,7 @@ import { pullsApi } from "../../../api/pulls";
 import type { PullDetailsResponse, PullListEntry } from "../../../api/types";
 import { MOTION } from "../../../lib/motion";
 import { PullsPage } from "./PullsPage";
+import { setViewportWidth } from "../../../test-support";
 
 const entry = (number: number, over: Partial<PullListEntry["pull"]> = {}, state = "open"): PullListEntry => ({
   project_id: "p",
@@ -285,5 +286,109 @@ describe("one details chunk failing", () => {
     render(<PullsPage />);
     await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
     expect(screen.getAllByRole("button", { name: /^Merge #/ }).map((one) => one.getAttribute("aria-label"))).toEqual(["Merge #1"]);
+  });
+
+  it("draws a row's actions as text buttons: Merge only on a Ready to merge row, then Close", async () => {
+    vi.mocked(pullsApi.list).mockResolvedValue({ pulls: [entry(1, { review_state: "approved" })], failed: [] });
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [], paused: [] });
+    render(<PullsPage />);
+    await settle();
+    const actions = within(row()).getByRole("button", { name: "Merge #1" }).parentElement!;
+    expect([...actions.querySelectorAll("button")].map((one) => one.textContent)).toEqual(["Merge", "Close"]);
+    expect(within(row()).getByRole("button", { name: "Close #1" })).toHaveTextContent("Close");
+  });
+
+  it("adds a small bar with Close and Clear once rows are selected", async () => {
+    vi.mocked(pullsApi.list).mockResolvedValue({ pulls: [entry(1), entry(2)], failed: [] });
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [], paused: [] });
+    render(<PullsPage />);
+    await settle();
+    expect(screen.queryByText(/selected$/)).toBeNull();
+    for (const box of screen.getAllByRole("checkbox", { name: /^Select #/ })) fireEvent.click(box);
+    expect(screen.getByText("2 selected")).toBeInTheDocument();
+    // The name a screen reader and the service tests know stays "Close selected"; the bar shows Close.
+    expect(screen.getByRole("button", { name: "Close selected" })).toHaveTextContent(/^Close$/);
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(screen.queryByText("2 selected")).toBeNull();
+  });
+
+  it("keeps what a row already had while the rate limit pauses the fields, and gives it up only when the pause ends with new values", async () => {
+    vi.mocked(pullsApi.list).mockResolvedValue({ pulls: [entry(1)], failed: [] });
+    const full = { requested_reviewers: [{ kind: "user", name: "sam" }], comment_count: 5, viewer_review_state: "none" };
+    vi.mocked(pullsApi.details)
+      .mockResolvedValueOnce({ details: [details(1, full)], paused: [] })
+      .mockResolvedValueOnce({ details: [details(1)], paused: ["requested_reviewers", "comment_count"], resume_at: new Date(Date.now() + 600_000).toISOString() })
+      .mockResolvedValue({ details: [details(1, { ...full, comment_count: 6 })], paused: [] });
+    render(<PullsPage />);
+    await settle();
+    expect(row().querySelector(".pull-count")).toHaveTextContent("5");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await settle();
+    expect(row().querySelector(".pull-count")).toHaveTextContent("5");
+  });
+
+  it("says Conflicts from the row's details instead of Ready to merge, and offers no Merge", async () => {
+    vi.mocked(pullsApi.list).mockResolvedValue({ pulls: [entry(1, { review_state: "approved" }), entry(2, { review_state: "approved" })], failed: [] });
+    vi.mocked(pullsApi.details).mockImplementation(async (body) => ({
+      details: body.pulls.map((one) => details(Number(one.number), { mergeable: Number(one.number) === 1 ? "conflicting" : "mergeable" })),
+      paused: [],
+    }));
+    render(<PullsPage />);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect([...document.querySelectorAll(".pull-state-word")].map((one) => one.textContent)).toEqual(["Conflicts", "Ready to merge"]);
+    expect(screen.getAllByRole("button", { name: /^Merge #/ }).map((one) => one.getAttribute("aria-label"))).toEqual(["Merge #2"]);
+  });
+
+  it("leaves the state word alone when the details do not say whether it merges", async () => {
+    vi.mocked(pullsApi.list).mockResolvedValue({ pulls: [entry(1, { review_state: "approved" })], failed: [] });
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [details(1, {})], paused: [] });
+    render(<PullsPage />);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(document.querySelector(".pull-state-word")).toHaveTextContent("Ready to merge");
+  });
+});
+
+describe("the phone row's checks line", () => {
+  const line = () => document.querySelector(".pull-rows > li .pull-phone-line") as HTMLElement | null;
+  const settleDetails = async (value: Record<string, unknown>) => {
+    render(<PullsPage />);
+    await settle();
+    await act(async () => answer({ details: [details(1, value)], paused: [] }));
+    await settle();
+  };
+
+  it("carries the checks word, the neutral Changes requested label and the amber Review asked marker", async () => {
+    setViewportWidth(390);
+    vi.mocked(pullsApi.list).mockResolvedValue({
+      pulls: [entry(1, { review_state: "changes_requested", checks: { total: 2, passing: 0, failing: 2, running: 0, failing_names: ["e2e", "lint"] } })],
+      failed: [],
+    });
+    await settleDetails({ viewer_review_state: "none", requested_reviewers: [{ kind: "user", name: "me" }] });
+    const text = line()!.textContent ?? "";
+    expect(text).toContain("Failing \u00b7 e2e +1");
+    expect(text).toContain("Changes requested");
+    expect(text).toContain("Review asked");
+    // Neutral for a change on someone else's pull request; amber only when it needs the person.
+    expect(line()!.querySelector(".pull-phone-changes")?.getAttribute("data-tone")).toBeNull();
+  });
+
+  it("marks changes on the person's own pull request amber", async () => {
+    setViewportWidth(390);
+    vi.mocked(pullsApi.list).mockResolvedValue({ pulls: [entry(1, { author: "me", review_state: "changes_requested" })], failed: [] });
+    await settleDetails({ viewer_review_state: "none", requested_reviewers: [] });
+    expect(line()!.querySelector(".pull-phone-changes")?.getAttribute("data-tone")).toBe("act");
+  });
+
+  it("leaves the Review asked marker off when the review is not asked of the person", async () => {
+    setViewportWidth(390);
+    await settleDetails({ viewer_review_state: "none", requested_reviewers: [{ kind: "user", name: "sam" }] });
+    expect(line()!.textContent ?? "").not.toContain("Review asked");
+  });
+
+  it("keeps Review requested in the Your review column at 640, where the row has no marker", async () => {
+    setViewportWidth(640);
+    await settleDetails({ viewer_review_state: "none", requested_reviewers: [{ kind: "user", name: "me" }] });
+    expect(line()).toBeNull();
+    expect(document.querySelector(".pull-yours-cell")).toHaveTextContent("Review requested");
   });
 });

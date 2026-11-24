@@ -1,0 +1,32 @@
+/* The live report below its narrow breakpoint (Crew Designs v95, frames backtest-narrow-panel and backtest-narrow-window):
+   the page is one column and the table's column headers are hidden, so each stacked cell keeps the label the header carried. */
+.cx-t14pg .cx-aptb .cx-bt-narrow {
+  display: none;
+}
+
+@container (max-width: 640px) {
+  .cx-bt-report .cx-t14two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cx-bt-report .cx-t10g,
+  .cx-bt-report .cx-t10g.cx-t10two {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .cx-bt-report .cx-aptb {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .cx-bt-report .cx-aptb > div.cx-h {
+    display: none;
+  }
+
+  .cx-bt-report .cx-aptb .cx-bt-wide {
+    display: none;
+  }
+
+  .cx-bt-report .cx-aptb .cx-bt-narrow {
+    display: block;
+  }
+}

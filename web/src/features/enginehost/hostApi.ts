@@ -1,24 +1,32 @@
 import { useEffect, useRef, useState } from "react";
 import { useAsync } from "../../lib/useAsync";
+import { createCredentialsApi } from "./credentialsApi";
+import { createHostControl } from "./hostControl";
+import { hostCrashes, hostRows } from "./hostStatus";
 import type { EngineHostApi, HostCrash, HostRow, KeyStorage } from "./contract";
 
 /**
- * The real client for the engine host routes. Those routes are not merged, so this one makes no request at all:
- * every read says the service reports nothing, and the screens draw nothing. Swap it for `request(...)` calls the
- * day the generated types and routes land; the screens do not change.
+ * The real client for the engine host and API key storage. `hosts` and `crashes` read `GET /api/engine-host` (Local read) with the generated
+ * types; a 404 is nothing reported. Stop and restart are Person routes (`hostControl.ts`); Try again is the restart. API key storage is real: `credentialsApi.ts` calls
+ * `/api/settings/engine-credentials/{engine}` (not yet run against a real service).
  */
-const unreported: EngineHostApi = {
-  hosts: async () => null,
-  crashes: async () => [],
-  storage: async () => null,
-  retry: async () => { throw new Error("The engine host is not reported by this service."); },
-  stop: async () => { throw new Error("The engine host is not reported by this service."); },
-  decline: async () => { throw new Error("API key storage is not offered by this service."); },
-  saveKey: async () => { throw new Error("API key storage is not offered by this service."); },
-  removeKey: async () => { throw new Error("API key storage is not offered by this service."); },
+const credentials = createCredentialsApi();
+const control = createHostControl();
+const real: EngineHostApi = {
+  writable: true,
+  hosts: (signal) => hostRows(signal),
+  crashes: (signal) => hostCrashes(signal),
+  retry: (id, options) => control.restart(id, options),
+  stop: (id, options) => control.stop(id, options),
+  storage: (signal) => credentials.storage(signal),
+  decline: (id) => credentials.decline(id),
+  saveKey: (id, key) => credentials.saveKey(id, key),
+  removeOptIn: (id) => credentials.removeOptIn(id),
+  removeKey: (id) => credentials.removeKey(id),
+  retryKeychain: (id) => credentials.retryKeychain(id),
 };
 
-let current: EngineHostApi = unreported;
+let current: EngineHostApi = real;
 let version = 0;
 const listeners = new Set<() => void>();
 
@@ -30,9 +38,9 @@ if (__ORBYN_PREVIEWS__ && typeof location !== "undefined" && location.hash.start
 
 export const engineHostApi = (): EngineHostApi => current;
 
-/** Tests and the dev-only preview install the mock here; `null` puts the unreported client back. */
+/** Tests and the dev-only preview install the mock here; `null` puts the real client back. */
 export function setEngineHostApi(next: EngineHostApi | null): void {
-  current = next ?? unreported;
+  current = next ?? real;
   version += 1;
   for (const listener of listeners) listener();
 }
@@ -65,6 +73,9 @@ export function useEngineHosts(): { hosts: HostRow[] | null; reload(): void } {
   }, [moving, refreshQuietly]);
   return { hosts, reload };
 }
+
+/** True unless the service has no stop or restart route. */
+export const hostWritable = (): boolean => engineHostApi().writable !== false;
 
 export function useEngineHostCrashes(): HostCrash[] {
   const seen = useApiVersion();

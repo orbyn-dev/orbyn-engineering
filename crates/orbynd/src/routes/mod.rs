@@ -6,8 +6,10 @@ pub mod account;
 mod agent_mcp;
 mod auth;
 mod automations;
+mod blocks;
 mod checkpoints;
 mod classes;
+mod code_mode;
 mod composer;
 mod crew;
 mod crew_areas;
@@ -17,18 +19,25 @@ mod crew_capacity;
 mod crew_escapes;
 mod crew_map;
 mod crew_tasks;
+mod devices;
+mod engine_credentials;
 mod engines;
 mod explorer;
 mod files;
 mod governance;
 mod interactions;
+mod issues;
+mod library;
 mod mcp_apps;
 mod media;
+mod precompressed;
 mod preview;
+mod profiles;
 mod projects;
 mod pulls;
 mod raw_files;
 mod renders;
+mod repos;
 mod runs;
 mod secrets;
 mod settings;
@@ -37,6 +46,7 @@ mod skills;
 mod source_control;
 mod stream;
 mod terminal;
+mod text_generators;
 mod threads;
 mod ui;
 mod updates;
@@ -66,6 +76,8 @@ mod crew_capacity_tests;
 #[cfg(test)]
 mod crew_classes_tests;
 #[cfg(test)]
+mod crew_dashboard_tests;
+#[cfg(test)]
 mod crew_escapes_tests;
 #[cfg(test)]
 mod crew_forge_resolve_tests;
@@ -74,7 +86,15 @@ mod crew_guard_tests;
 #[cfg(test)]
 mod crew_held_tests;
 #[cfg(test)]
+mod crew_lead_tests;
+#[cfg(test)]
+mod crew_manual_tests;
+#[cfg(test)]
 mod crew_map_tests;
+#[cfg(test)]
+mod crew_needs_you_tests;
+#[cfg(test)]
+mod crew_notify_tests;
 #[cfg(all(test, unix))]
 mod crew_rerun_tests;
 #[cfg(test)]
@@ -86,9 +106,31 @@ mod crew_tests;
 #[cfg(test)]
 mod crew_worker_provider_tests;
 #[cfg(test)]
+mod engine_credentials_tests;
+#[cfg(test)]
+mod engine_host_tests;
+#[cfg(test)]
+mod governance_tests;
+#[cfg(test)]
+mod json_refusal_tests;
+#[cfg(test)]
+mod library_tests;
+#[cfg(test)]
+mod never_asks_tests;
+#[cfg(test)]
+mod photo_conversion_tests;
+#[cfg(test)]
+mod profiles_tests;
+#[cfg(test)]
+mod projects_tests;
+#[cfg(test)]
 mod secrets_tests;
 #[cfg(test)]
+mod snapshot_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod transcripts_tests;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -104,9 +146,11 @@ pub fn router(state: AppState) -> Router {
     let protected = Router::new()
         .merge(account::routes(state.clone()))
         .merge(crew::routes(state.clone()))
+        .merge(devices::routes())
         .merge(media::routes())
         .merge(settings::routes())
         .merge(secrets::routes(state.clone()))
+        .merge(engine_credentials::routes(state.clone()))
         .merge(projects::routes())
         .merge(threads::routes())
         .merge(workspace::routes())
@@ -114,6 +158,11 @@ pub fn router(state: AppState) -> Router {
         .merge(updates::routes())
         .merge(composer::routes())
         .merge(checkpoints::routes())
+        .merge(code_mode::routes())
+        .merge(issues::routes())
+        .merge(profiles::routes())
+        .merge(repos::routes())
+        .merge(library::routes())
         .merge(explorer::routes())
         .merge(files::routes())
         .merge(raw_files::routes())
@@ -122,15 +171,17 @@ pub fn router(state: AppState) -> Router {
         .merge(source_control::routes())
         .merge(pulls::routes())
         .merge(usage::routes())
-        .merge(engines::routes())
+        .merge(engines::routes(state.clone()))
         .merge(automations::routes())
+        .merge(blocks::routes())
         .merge(preview::routes())
-        .merge(runs::routes())
+        .merge(runs::routes(state.clone()))
         .merge(interactions::routes())
         .merge(skills::routes())
         .merge(governance::routes())
         .merge(stream::routes())
         .merge(terminal::routes())
+        .merge(text_generators::routes())
         .route_layer(from_fn_with_state(state.clone(), note_activity))
         .route_layer(from_fn_with_state(access.clone(), classes::require_person))
         .route_layer(from_fn_with_state(access.clone(), access::require_auth));

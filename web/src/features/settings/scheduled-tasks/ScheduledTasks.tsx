@@ -1,7 +1,7 @@
 import { chooseDraftEngine } from "../../../product/engines/draftEngine";
 import { AlertTriangle, Check, CloudOff, Plus, RefreshCw, X } from "lucide-react";
 import "../ScheduledTasks.css";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { NETWORK_ERROR, deleteScheduledTask, listScheduledTasks, saveScheduledTask, setScheduledTaskEnabled } from "../api";
 import type { ScheduledTask, WebhookFilter } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -21,6 +21,15 @@ import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { Empty, Loading } from "../../../product/ui/states";
 
 const listTasks = (signal?: AbortSignal) => listScheduledTasks(signal);
+const MAX_INTERVAL = 2 ** 32 - 1;
+function intervalMinutes(value: string, fallback: number) {
+  if (value === "") return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  if (number < 1) return 1;
+  if (number > MAX_INTERVAL) return fallback;
+  return Number.isInteger(number) ? number : fallback;
+}
 
 type TaskKind = "interval" | "fixed_time" | "webhook" | "after_thread";
 
@@ -49,6 +58,11 @@ const toFilter = ({ path, op, value }: FilterRow): WebhookFilter => ({
   op,
   value: op === "exists" ? null : op === "in" ? value.split(",").map((entry) => entry.trim()) : value,
 });
+
+/** "a", "a and b", "a, b and c": what the save reason names. */
+const spokenList = (items: string[]) =>
+  items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+
 
 function WebhookFields({
   header,
@@ -150,16 +164,19 @@ function WebhookFields({
 /** Adds a task, or edits one. What this form doesn't show goes back as it came. */
 function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; onClose(): void; onSaved(): void }) {
   const [deleting, setDeleting] = useState(false);
-  const projects = useVisibleProjects() ?? [];
+  /** Null while the workspace read is still out, so the form can say so instead of showing nothing. */
+  const projectList = useVisibleProjects();
+  const projects = useMemo(() => projectList ?? [], [projectList]);
   const engines = useWorkspace((state) => state.engines.data) ?? [];
   const [name, setName] = useState(task?.name ?? "");
   const [touched, setTouched] = useState(false);
   const [prompt, setPrompt] = useState(task?.prompt ?? "");
   const [minutes, setMinutes] = useState(String(task?.schedule.every_minutes ?? 60));
+  const lastValidMinutes = useRef(intervalMinutes(String(task?.schedule.every_minutes ?? 60), 60));
   const [kind, setKind] = useState<TaskKind>((task?.schedule.kind as TaskKind | undefined) ?? "interval");
   const [time, setTime] = useState(task?.schedule.time ?? "09:00");
   const [weekdays, setWeekdays] = useState<number[]>(task?.schedule.weekdays ?? []);
-  const [project, setProject] = useState(task?.project_id ?? projects[0]?.id ?? "");
+  const [project, setProject] = useState(task?.project_id ?? "");
   const [hook, setHook] = useState({
     header: task?.signature?.header ?? "",
     encoding: task?.signature?.encoding ?? "hex",
@@ -176,6 +193,34 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
   const [onlySuccess, setOnlySuccess] = useState(task?.schedule.only_on_success ?? false);
   const [error, setError] = useState<string | null>(null);
   const engine = task?.engine ?? chooseDraftEngine(engines.filter((entry) => entry.installed), null, false)?.id ?? "";
+  // The dialog can open before the workspace read answers, so the list arrives after it: adopt its first project.
+  useEffect(() => {
+    if (project || projects.length === 0) return;
+    setProject(projects[0]?.id ?? "");
+  }, [project, projects]);
+  const readingProjects = projectList === null;
+  const noProjects = projectList !== null && projectList.length === 0;
+  /** The chosen project has to be one this form offers, or Save would post a project the person cannot see. A task being edited keeps its own project even when it is not in the list. */
+  const ownProject = task?.project_id && project === task.project_id && !projects.some((entry) => entry.id === project);
+  const projectChosen = project !== "" && (ownProject || projects.some((entry) => entry.id === project));
+  const projectPlaceholder = readingProjects ? "Loading projects…" : noProjects ? "No projects yet" : "Choose a project";
+  /** Why Save is off, in words, so the disabled state is never silent. */
+  const saveReasonId = useId();
+  /**
+   * A whole number these fields draw with `min="1"`, below it or not a number at all. The interval is not
+   * listed: it clamps to one minute on blur and on save.
+   * Left out of the request instead of being sent, because the service refuses it.
+   */
+  const belowOne = (text: string) => text.trim() !== "" && !(Number(text) >= 1);
+  const missing = [
+    !name.trim() ? "a name" : "",
+    !prompt.trim() ? "what the agent should do" : "",
+    !projectChosen ? "a project" : "",
+    kind === "after_thread" && !after ? "a thread to follow" : "",
+    kind === "webhook" && hook.dedupe.trim() && belowOne(hook.window) ? "a window of at least 1 second" : "",
+    kind === "webhook" && belowOne(hook.maxAge) ? "a skip time of at least 1 second" : "",
+  ].filter(Boolean);
+  const saveReason = missing.length > 0 ? `${task ? "Save changes" : "Save task"} needs ${spokenList(missing)}.` : null;
   const save = async () => {
     try {
       const kept = task ? { thread_id: task.thread_id ?? undefined } : {};
@@ -202,7 +247,7 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
         schedule: {
           ...task?.schedule,
           kind,
-          every_minutes: kind === "interval" ? Number(minutes) : null,
+          every_minutes: kind === "interval" ? intervalMinutes(minutes, lastValidMinutes.current) : null,
           time: kind === "fixed_time" ? time : null,
           weekdays: kind === "fixed_time" ? weekdays : [],
           utc_offset_minutes: -new Date().getTimezoneOffset(),
@@ -227,7 +272,7 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
           <Button tone="quiet" onClick={onClose}>
             Cancel
           </Button>
-          <Button tone="primary" disabled={!name.trim() || !prompt.trim() || !project || (kind === "after_thread" && !after)} onClick={() => void save()}>
+          <Button tone="primary" disabled={missing.length > 0} aria-describedby={saveReason ? saveReasonId : undefined} onClick={() => void save()}>
             {task ? "Save changes" : "Save task"}
           </Button>
         </>
@@ -240,9 +285,11 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
       <Field label="What should the agent do?">
         {(props) => <textarea {...props} rows={3} value={prompt} onChange={(event) => setPrompt(event.target.value)} />}
       </Field>
-      <Field label="Project">
+      <Field label="Project" hint={noProjects ? "No projects yet. Add one in Settings › Projects, then come back." : undefined}>
         {(props) => (
-          <select {...props} value={project} onChange={(event) => setProject(event.target.value)}>
+          <select {...props} required value={projectChosen ? project : ""} onChange={(event) => setProject(event.target.value)}>
+            {projectChosen ? null : <option value="">{projectPlaceholder}</option>}
+            {ownProject ? <option value={project}>This task's project</option> : null}
             {projects.map((entry) => (
               <option key={entry.id} value={entry.id}>
                 {entry.name}
@@ -264,7 +311,16 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
       {kind === "interval" ? (
         <Field label="Every (minutes)">
           {(props) => (
-            <input {...props} type="number" min="1" value={minutes} onChange={(event) => setMinutes(event.target.value)} />
+            <input {...props} type="number" min="1" value={minutes} onChange={(event) => {
+              const value = event.target.value;
+              const number = Number(value);
+              if (value !== "" && Number.isInteger(number) && number >= 1 && number <= MAX_INTERVAL) lastValidMinutes.current = number;
+              setMinutes(value);
+            }} onBlur={() => {
+              const value = intervalMinutes(minutes, lastValidMinutes.current);
+              lastValidMinutes.current = value;
+              setMinutes(String(value));
+            }} />
           )}
         </Field>
       ) : null}
@@ -310,6 +366,11 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
             <span>Only when it succeeds</span>
           </label>
         </>
+      ) : null}
+      {saveReason ? (
+        <p id={saveReasonId} className="field-hint">
+          {saveReason}
+        </p>
       ) : null}
       {error ? (
         <p className="field-error" role="alert">
@@ -424,9 +485,6 @@ function TasksView({ page }: { page: boolean }) {
         </PageBar>
       ) : (
         <>
-          <h1 className="sr-only" tabIndex={-1} data-page-title>
-            Scheduled tasks
-          </h1>
           <TaskDefaults />
           <div className="tasks-head">
             <p className="set-grp">Tasks</p>

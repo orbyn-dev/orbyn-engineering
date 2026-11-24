@@ -155,6 +155,8 @@ h4.ap-sub { margin: 0; }
 .ap-crew-row { grid-template-columns: minmax(0, 1.2fr) 90px minmax(0, 1.4fr); }
 .ap-target-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr); }
 .ap-destroy-row { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+/* A target's name and kind are the person's own words: in a narrow column they wrap instead of ending in an ellipsis nothing explains. */
+.ap-target-row b, .ap-target-row small { white-space: normal; overflow-wrap: anywhere; }
 .ap-target-row code { display: block; font-family: var(--font-mono, ui-monospace, monospace); font-size: 11.5px; color: var(--color-text); overflow-wrap: anywhere; }
 .ap-note { padding: 9px 12px; border-top: 1px solid var(--color-border); }
 .ap-dialog { width: min(560px, calc(100vw - 32px)); }
@@ -356,3 +358,22 @@ h4.ap-sub { margin: 0; }
   .dg-row { grid-template-columns: minmax(0, 1fr); }
   .dg-time { justify-self: start; }
 }
+
+/* KC6 watches (watch-list and each watch's page): the name opens the watch, the page stacks its banner, facts, tail and
+   change table, and the table's four columns are the design's. */
+.ap-watch-name { display: block; max-width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.ap-watch-name:hover b { text-decoration: underline; }
+.ap-watch-name:focus-visible { outline: 2px solid var(--color-focus, var(--color-text)); outline-offset: 2px; border-radius: 4px; }
+.ap-watch { gap: 12px; }
+.ap-watch-head b { font-weight: 500; color: var(--color-text); }
+.ap-watch-back { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: var(--color-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.ap-watch-back:hover { color: var(--color-text); }
+.ap-watch-back:focus-visible { outline: 2px solid var(--color-focus, var(--color-text)); outline-offset: 2px; border-radius: 4px; }
+.ap-watch-banner h4 { font-size: 12px; }
+.ap-watch-banner p { margin: 0; line-height: 1.45; color: var(--color-muted); }
+.ap-watch-banner .btn { align-self: flex-start; }
+.ap-watch-facts .ap-facts { grid-template-columns: 150px minmax(0, 1fr); }
+.ap-watch-output pre { margin: 0; overflow-x: auto; font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; line-height: 1.5; color: var(--color-text); }
+.ap-watch-changes .ap-bg-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) 60px minmax(0, 1.7fr); }
+.ap-watch-changes .ap-mono { font-family: var(--font-mono, ui-monospace, monospace); }
+

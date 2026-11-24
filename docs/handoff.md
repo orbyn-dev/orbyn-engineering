@@ -13,8 +13,10 @@ repository and task instructions, and reconcile newer main before acting.
 ## Usage limits reconciliation (#474)
 
 - The Limits view uses registry names, including OpenCode and Cursor; provider names in the narrow design are examples, not aliases. See [Limits](../web/src/features/usage/UsageLimits.tsx) and its [tests](../web/src/features/usage/UsagePage.test.tsx).
+- The Limits copy follows the frames: `usage-claude-windows-narrow` and the other `usage-claude-windows*` frames read "Claude Code doesn’t report one. Usage is on the Usage tab.", and `usage-providers`, `usage-providers-error` and `usage-providers-unsupported` carry the group intro and "Couldn’t read the limit." with Try again as drawn (design revision `43fa8367`).
 - A missing or invalid reset omits reset text; percentage and near/reached status remain independent. The service exposes `checked_at` and unavailable reads in the [usage contract](../crates/orbyn-contracts/src/usage.rs).
-- The [preview catalog](../web/tools/pr-preview/catalog.mjs) already includes the 640px `usage-claude-windows-narrow` frame. The published failed-read frame shows no figure and offers Try again; it is not a dimmed stale bar.
+- The [preview catalog](../web/tools/pr-preview/catalog.mjs) includes the 640px `usage-claude-windows-narrow` frame, and the [preview tests](../web/tools/pr-preview/preview.test.ts) pin that width. The failed-read frame (`usage-providers-error`) shows no figure and offers Try again; it is not a dimmed stale bar.
+- Still with the Designer: how a window with a percentage and no reset time should read. No frame draws one (`usage-claude-windows-near`, `-narrow`, `-reached`, `-loading` and `usage-providers*` checked at revision `43fa8367`), so the app omits the reset text rather than inventing a line.
 - This is a source and design comparison, not fresh real-engine, Windows, macOS or packaged-app qualification. The separate #475 fresh-account safety work is not assumed here.
 
 ## Goal
@@ -41,7 +43,7 @@ Treat these as settled. Earlier ideas that contradict them are superseded.
 | Worktrees | `<repo>-wt/<purpose>/` sibling of the primary clone. No custom location. |
 | Scope | Desktop and local web only. Out for now: login, Tailscale, tunnels, pairing, guest links, mobile, and hosted features that wait for Orbyn's own server. Engine credentials stay with the engine. |
 | Engine login | Engines keep their own login. Orbyn never reads or stores engine credentials. Run the unmodified CLI. |
-| Claude | CLI only, never the Agent SDK. Keep it on the MCP approval gate, because its native modes would bypass the write scope. Never use `--bare`, which ignores subscription login. |
+| Claude | The person's own `claude`: the engine host with the Agent SDK becomes the default path and the CLI stays selectable (rule 3 in architecture.md; the SDK path is the core default; the Settings path choice and the engine picker rows are built, and a packaged real turn is unobserved). Keep it on the MCP approval gate, because its native modes would bypass the write scope. Never use `--bare`, which ignores subscription login. |
 | Default mode | Supervised, where T3 defaults to Full access. All four modes are offered. |
 | Delivery | One active branch per section, one small commit per completed row, local checks before pushing. Open a PR for a section or about 20 coherent rows; merge only with every required check green, without squashing. Keep active branches current with main at least daily and deliver ready green batches daily. No agent attribution in commits or branch names; every PR fills in its AI usage section. |
 | Autonomy | The owner makes no routine decisions: decide from T3's behaviour. Never ask for browser access; use the local references. |

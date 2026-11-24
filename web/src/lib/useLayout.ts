@@ -2,7 +2,8 @@ import { useSyncExternalStore } from "react";
 
 /**
  * The window's layout, by width (Engineer Designs, "Window widths and layouts"):
- * - phone, under 600: one column, the sidebar and the side panel are full-screen sheets;
+ * - phone, under 600: one column; the sidebar has the page to itself on the home screen and is a
+ *   full-screen sheet over any other page, and the side panel is a full-screen sheet too;
  * - small, 600 to 899: the sidebar is a drawer, the side panel an overlay;
  * - medium, 900 to 1159: the sidebar stays docked, the side panel is an overlay;
  * - wide, 1160 and up: sidebar, thread and side panel all docked;

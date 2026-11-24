@@ -18,12 +18,18 @@ import { useAsync } from "../../lib/useAsync";
 import { commandShortcut, formatShortcut } from "../../product/shell/shortcuts";
 import { usePanelShortcuts } from "./usePanelShortcuts";
 import { PanelEmpty } from "./strip/PanelEmpty";
+import { crewViewsItem, deviceLauncherItem } from "./strip/launcher";
 import { moveIndex, slotShift, useTabDrag } from "./strip/tabDrag";
+import { repoLabel, useThreadRepos } from "../repos";
 import { RIGHT_TABS, SLOT_PITCH, orderChanged, tabOf, tabSlots, visibleTabs } from "./strip/tabs";
 import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./strip/panelWidth";
 import { useConnectionKind } from "../../product/state/connection";
+import { useLayoutWidth } from "../../lib/useLayout";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
+import { useDevicesEntry } from "../devices";
+import { useLibraryOffered } from "../library";
+import { setPageResizing, type PanelDrag } from "./strip/panelDrag";
 /** The launcher entries that already have a shortcut, by the command it runs. The rest show none. */
 const LAUNCHER_COMMANDS: Partial<Record<BuiltinTab, string>> = { diff: "diff.toggle", browser: "preview.toggle" };
 /** The strip's side padding (8 px each side), and the width of the "..." menu. */
@@ -36,22 +42,12 @@ const WAITING_LINE: Partial<Record<BuiltinTab, string>> = {
   side: "Your side chats open again as soon as it is back. Nothing is lost.",
   linked: "Linked threads show again as soon as it is back.",
   tools: "The tools list comes back when the service does.",
+  devices: "Devices show again as soon as it is back.",
+  library: "Your library shows again as soon as it is back.",
   review: "Your comments are kept here and show again when it is back.",
 };
 /** Tabs that need this device's network. Diff, Files, Activity and the terminal keep working offline. */
 const NEEDS_NETWORK: readonly RightTab[] = ["browser", "side"];
-
-interface PanelDrag {
-  panel: HTMLElement;
-  handle: HTMLElement;
-  pointerId: number;
-  right: number;
-  layoutKey: string;
-  startWidth: string;
-  /** The width this drag last wrote to the panel, or null before the first move. */
-  writtenWidth: string | null;
-  current: number;
-}
 
 /**
  * The panel's left edge. Dragging it resizes the panel, snapping to 380, 520 or 720 px within 12 px
@@ -71,10 +67,11 @@ export function PanelResizer({ drawer = false }: { drawer?: boolean }) {
   const widthOfRef = useRef(widthOf);
   widthOfRef.current = widthOf;
 
-  /** Lets go of the pointer and clears the drag's marks on the panel. */
+  /** Lets go of the pointer and clears the drag's marks on the page and the panel. */
   const release = (active: PanelDrag) => {
     drag.current = null;
     delete active.panel.dataset.resizing;
+    setPageResizing(false);
     if (active.handle.hasPointerCapture?.(active.pointerId)) active.handle.releasePointerCapture(active.pointerId);
   };
 
@@ -119,6 +116,7 @@ export function PanelResizer({ drawer = false }: { drawer?: boolean }) {
           // Without this the drag selects the text it passes over.
           event.preventDefault();
           event.currentTarget.setPointerCapture(event.pointerId);
+          setPageResizing(true);
           const current = clampPanelWidth(panel.getBoundingClientRect().width, window.innerWidth);
           panel.dataset.resizing = "";
           drag.current = {
@@ -196,7 +194,11 @@ export function PanelHost({
 }) {
   const order = useUi((state) => state.panelTabOrder);
   const closedTabs = useUi((state) => state.panelTabsClosed);
-  const rowIds = order.filter((id) => isFileTab(id) || !closedTabs.includes(id));
+  const devices = useDevicesEntry();
+  const phone = useLayoutWidth() === "phone";
+  const libraryOffered = useLibraryOffered();
+  const devicesShown = devices.state === "ready" && devices.enabled;
+  const rowIds = order.filter((id) => isFileTab(id) || (!closedTabs.includes(id) && (id !== "devices" || devicesShown) && (id !== "library" || libraryOffered)));
   // With no surface chosen yet, or the chosen one closed, the panel shows the first in the row; with none open, it is empty.
   const chosen = useUi((state) => state.panelTab);
   const tab: RightTab | null = chosen && rowIds.includes(chosen) ? chosen : (rowIds[0] ?? null);
@@ -224,9 +226,15 @@ export function PanelHost({
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number } | null>(null);
   const count = rowIds.length;
+  // A file of another repository names its repository on its tab and under its title; the thread's repositories are asked only while one is open.
+  const hasRepoTab = rowIds.some((id) => { const file = parseFileTab(id); return file?.kind === "thread" && file.repoId !== undefined; });
+  const threadRepos = useThreadRepos(thread.id, 0, hasRepoTab).repos;
+  const repoName = (repoId: string): string | undefined => { const found = threadRepos?.find((repo) => repo.repo_id === repoId); return found ? repoLabel(found.name) : undefined; };
   // The line beside the open file's name: the worktree it is in, and for another project's, which project.
   const target = tab ? parseFileTab(tab) : null;
-  const names = useFileTabNames(target && target.kind !== "thread" ? target.projectId : "", target && target.kind !== "thread" ? target.worktreeId : "", thread.id);
+  // An issue tab has no folder: only a file of another worktree has names to look up.
+  const placed = target && target.kind !== "thread" && target.kind !== "issue" ? target : null;
+  const names = useFileTabNames(placed ? placed.projectId : "", placed ? placed.worktreeId : "", thread.id);
   // A folder outside Git has nothing to compare with: Changes is offered greyed out, and the empty panel says why.
   // A Jujutsu checkout is no Git repository either, but has changes to show: only a folder with neither is gitless.
   const notGit = useWorkspace((state) => state.projects.data?.find((one) => one.id === thread.project_id)?.is_git === false);
@@ -234,9 +242,9 @@ export function PanelHost({
   const gitless = notGit && jj.status === "ready" && jj.data === null;
   const subtitle =
     target === null ? null
-    : target.kind === "thread" ? (thread.worktree?.branch ?? null)
-    : !names.worktree ? null
-    : target.projectId === thread.project_id || !names.project ? names.worktree : `${names.project} · ${names.worktree}`;
+    : target.kind === "thread" ? (target.repoId !== undefined ? (repoName(target.repoId) ?? null) : (thread.worktree?.branch ?? null))
+    : placed === null || !names.worktree ? null
+    : placed.projectId === thread.project_id || !names.project ? names.worktree : `${names.project} · ${names.worktree}`;
   const latest = useRef({ count });
   latest.current = { count };
   const refit = useCallback(() => {
@@ -278,7 +286,7 @@ export function PanelHost({
   const reset: MenuItem = { label: "Reset tab order", icon: <RefreshCw size={14} aria-hidden />, separatorBefore: true, onSelect: resetTabs };
   // The "..." menu: the tabs that do not fit, by name. The one chosen takes the last visible slot.
   const hiddenTabs: MenuItem[] = hidden.map((id) => {
-    const { label, icon: Icon } = tabOf(id);
+    const { label, icon: Icon } = tabOf(id, repoName);
     return {
       label,
       icon: <Icon size={14} aria-hidden />,
@@ -290,11 +298,18 @@ export function PanelHost({
     };
   });
   // The "+" lists everything that can be opened; choosing one already open shows it. Reset tab order shows once the order has changed.
+  // A phone does not show the Devices row; a missing route or no tools draws it disabled, a failure leaves it out.
+  const devicesItem: MenuItem[] = phone || devices.state === "loading" || devices.state === "failed" ? [] : [{
+    ...deviceLauncherItem(devices.enabled, devices.reason),
+    onSelect: () => reopenTab("devices"),
+  }];
   const launcher: MenuItem[] = [
-    ...RIGHT_TABS.map(({ id, label, icon: Icon }) => {
+    ...RIGHT_TABS.filter(({ id }) => id !== "devices" && (id !== "library" || libraryOffered)).map(({ id, label, icon: Icon }) => {
       const key = LAUNCHER_COMMANDS[id] ? commandShortcut(keymap.data?.rules, LAUNCHER_COMMANDS[id]!) : null;
       return { label, icon: <Icon size={14} aria-hidden />, shortcut: key ? formatShortcut(key) : undefined, disabled: gitless && id === "diff", onSelect: () => reopenTab(id) };
-    }),
+    }).flatMap((item) => item.label === "Review and comments" ? [item, ...devicesItem] : [item]),
+    // Crew views is drawn in the launcher as Planned: its submenu lists the open thread's crew views, and nothing reads a thread's crew yet.
+    crewViewsItem(),
     { label: "Open file…", icon: <File size={14} aria-hidden />, separatorBefore: true, shortcut: formatShortcut(commandShortcut(keymap.data?.rules, "filePicker.toggle") ?? ""), onSelect: () => useUi.getState().setPalette("files") },
     ...(orderChanged(order) ? [{ ...reset, separatorBefore: true }] : []),
   ];
@@ -422,7 +437,7 @@ export function PanelHost({
       <header ref={strip} className="ctx-strip">
         <div ref={list} className="ctx-tabs" role={shown.length > 0 ? "tablist" : undefined} aria-label={shown.length > 0 ? "Panel tabs" : undefined} onKeyDown={onTabKey}>
           {shown.map((id) => {
-            const { label, icon: Icon } = tabOf(id);
+            const { label, icon: Icon } = tabOf(id, repoName);
             return (
               <button
                 key={id}
@@ -506,7 +521,7 @@ export function PanelHost({
       </header>
       {tab === null ? null : (
         <div className="ctx-title">
-          <b>{tabOf(tab).label}</b>
+          <b>{tabOf(tab, repoName).label}</b>
           {subtitle ? <span className="ctx-sub">{subtitle}</span> : null}
           {isFileTab(tab) ? <EditorTitleExtras threadId={thread.id} tabId={tab} onSave={() => { const own = sessionFor(tab); return own ? saveSession(own.key) : undefined; }} /> : null}
           <IconButton

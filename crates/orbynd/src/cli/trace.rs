@@ -102,8 +102,16 @@ mod tests {
         assert_eq!(duration(" 15 minutes ").unwrap(), Duration::from_secs(900));
         assert_eq!(duration("1W").unwrap(), Duration::from_secs(7 * 86400));
         assert_eq!(duration("0s").unwrap(), Duration::ZERO);
-        for value in ["", "bad", "-1h", "18446744073709551615d"] {
-            assert!(duration(value).is_err());
+        for value in ["", "bad", "-1h"] {
+            assert_eq!(
+                duration(value).unwrap_err(),
+                "Use a duration such as 30m or 2h.",
+                "{value}"
+            );
         }
+        assert_eq!(
+            duration("18446744073709551615d").unwrap_err(),
+            "Choose a duration within range."
+        );
     }
 }

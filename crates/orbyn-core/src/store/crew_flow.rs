@@ -9,6 +9,17 @@ use crate::error::Result;
 /// The condition that leaves out reviewer runs and fix tasks.
 const WORK: &str = "id NOT IN (SELECT task_id FROM crew_reviews) AND id NOT IN (SELECT fix_task_id FROM crew_fixes)";
 
+/// The most workers the dashboard's live count reads for one project. The read says when the bound cut rows.
+pub const LIVE_WORKERS_MAX: u32 = 500;
+
+/// One task whose worker may own live work now: its own state, and its latest fix's state when it has a fix (KC3's
+/// dashboard live count).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiveWorker {
+    pub state: String,
+    pub fix_state: Option<String>,
+}
+
 /// One crew's count of work tasks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CrewTotals {
@@ -42,6 +53,44 @@ impl Store {
             })?
             .collect::<rusqlite::Result<_>>()?;
         Ok((rows, total))
+    }
+
+    /// The newest tasks of one project whose worker could own live work now, newest first, with the state of the task's
+    /// latest fix: the KC3 dashboard's Working count (docs/crew-dashboard.md). A task is here when its own state is a live
+    /// turn or when its latest fix has not finished; a queued, waiting, passed or stopped one is not. One query, bounded:
+    /// the caller says whether the bound cut rows, never the count.
+    pub fn crew_live_workers_of_project(
+        &self,
+        project: &str,
+        limit: u32,
+    ) -> Result<(Vec<LiveWorker>, bool)> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT t.state, ft.state
+             FROM crew_tasks t
+             JOIN crew_runs r ON r.task_id = t.id
+             JOIN threads th ON th.id = r.lead_thread_id
+             LEFT JOIN crew_fixes f ON f.rowid = (
+                 SELECT MAX(f2.rowid) FROM crew_fixes f2 WHERE f2.subject_id = t.id
+             )
+             LEFT JOIN crew_tasks ft ON ft.id = f.fix_task_id
+             WHERE th.project_id = ?1
+               AND t.id NOT IN (SELECT fix_task_id FROM crew_fixes)
+               AND (t.state IN ('running', 'verifying', 'failed', 'changed_approach')
+                    OR (ft.state IS NOT NULL AND ft.state NOT IN ('passed', 'stopped', 'cancelled')))
+             ORDER BY t.updated_at DESC, t.rowid DESC LIMIT ?2",
+        )?;
+        let mut rows: Vec<LiveWorker> = statement
+            .query_map(rusqlite::params![project, limit.saturating_add(1)], |row| {
+                Ok(LiveWorker {
+                    state: row.get(0)?,
+                    fix_state: row.get(1)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        let cut = rows.len() > limit as usize;
+        rows.truncate(limit as usize);
+        Ok((rows, cut))
     }
 
     /// The newest `limit` work tasks of a crew, newest first.

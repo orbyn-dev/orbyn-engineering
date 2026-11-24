@@ -1,0 +1,342 @@
+//! The engine host driver: runs an engine SDK in `orbyn-engine-host` and speaks
+//! docs/engine-host-protocol.md to it. Used only when the desktop shell sets `ORBYN_ENGINE_HOST`; with it missing the
+//! Rust drivers run exactly as before. Claude is on by default (`ORBYN_ENGINE_HOST_CLAUDE=0` opts out, `1` and
+//! an unset or empty flag mean on); Cursor and ACP stay opt-in (`ORBYN_ENGINE_HOST_CURSOR=1`, `ORBYN_ENGINE_HOST_ACP=1`).
+//!
+//! With the Claude host on, the person's `claude_engine_path` setting (`sdk`, the default, or `cli`) is read at the
+//! start of every run: `sdk` runs through the host, `cli` hands the run to the wrapped Rust driver exactly as if the
+//! host were not there. Nothing switches on its own: a down host under `sdk` fails the run with the host's reason.
+//! Both paths resume the same transcript files, so a thread continues on either.
+//!
+//! One responsibility per file: `frames` (wire format), `process` (spawn, handshake),
+//! `connection` (one live host), `pool` (restarts, state), `state` (pure rules),
+//! `options`, `confinement`, `delta`, `outcome` (what a run gets from the host),
+//! `run` (one turn), `driver` (the `EngineDriver`).
+
+mod acp;
+mod confinement;
+mod connection;
+mod cursor_delta;
+mod delta;
+mod driver;
+mod frames;
+mod options;
+mod outcome;
+mod pool;
+mod process;
+mod run;
+mod state;
+
+#[cfg(test)]
+mod path_tests;
+#[cfg(test)]
+mod support;
+#[cfg(test)]
+mod tests;
+
+use std::path::PathBuf;
+use std::sync::{Arc, OnceLock, Weak};
+
+pub use acp::HostAcpAgent;
+pub use driver::{EnginePath, HostDriver, PathSetting};
+pub use frames::{ErrorKind, HostSdk, PROTOCOL};
+#[cfg(test)]
+pub(crate) use outcome::host_stopped;
+pub use outcome::{HOST_STOPPED, HOST_STOPPED_CODE};
+pub use pool::{HostRestart, HostStatus, Pool, Refusal, SecretSource};
+pub use process::HostSpec;
+pub use state::{CrashInfo, CrashKind, ExitRecord, HostState, NotUsed, Timings};
+
+use crate::agents::driver::EngineDriver;
+use crate::app::Core;
+
+/// How the service was told to use the host.
+#[derive(Clone, Debug)]
+pub struct HostConfig {
+    /// `ORBYN_ENGINE_HOST`: the host binary the desktop shell found.
+    pub program: PathBuf,
+    /// `ORBYN_ENGINE_HOST_CLAUDE`: on unless it is exactly `0`.
+    pub claude: bool,
+    /// `ORBYN_ENGINE_HOST_CURSOR=1`.
+    pub cursor: bool,
+    /// `ORBYN_ENGINE_HOST_ACP=1`.
+    pub acp: bool,
+    pub timings: Timings,
+}
+
+impl HostConfig {
+    /// From the service's environment: `None` when `ORBYN_ENGINE_HOST` is absent or empty.
+    pub fn from_env(host: Option<std::ffi::OsString>, claude_flag: Option<&str>) -> Option<Self> {
+        let program = host.filter(|path| !path.is_empty())?;
+        Some(Self {
+            program: PathBuf::from(program),
+            // On by default: a missing or empty flag means on, and only `0` opts out. The host still gets `1`.
+            claude: claude_flag != Some("0"),
+            cursor: false,
+            acp: false,
+            timings: Timings::default(),
+        })
+    }
+
+    /// Also reads `ORBYN_ENGINE_HOST_CURSOR`, which wants exactly `1`.
+    #[must_use]
+    pub fn with_cursor(mut self, cursor_flag: Option<&str>) -> Self {
+        self.cursor = cursor_flag == Some("1");
+        self
+    }
+
+    /// Also reads `ORBYN_ENGINE_HOST_ACP`, which wants exactly `1` as the Claude flag does.
+    #[must_use]
+    pub fn with_acp(mut self, acp_flag: Option<&str>) -> Self {
+        self.acp = acp_flag == Some("1");
+        self
+    }
+}
+
+/// Intel Macs keep the Rust drivers: the single executable crashes there.
+fn platform_supported() -> bool {
+    !cfg!(all(target_os = "macos", target_arch = "x86_64"))
+}
+
+/// Where the hub finds the core that owns the person's keys. The core is shared after the engines
+/// are built, so it is bound once, later; until then no key is handed out.
+pub type CoreCell = Arc<OnceLock<Weak<Core>>>;
+
+/// The secret source of a family: every spawn asks the core, which honours the person's per-engine
+/// opt-in (`Core::engine_spawn_secret`). It is the only place a spawn's key comes from. A core that is
+/// not bound, an engine the allowlist does not name, an opt-in that is off and a keychain that refuses
+/// all mean no key, never a fallback.
+pub fn secrets_from(core: CoreCell, family: &str) -> SecretSource {
+    let family = family.to_owned();
+    Arc::new(move || {
+        let core = core.get()?.upgrade()?;
+        core.engine_spawn_secret(&family).ok().flatten()
+    })
+}
+
+/// Why the person's stop or restart reached no host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ControlError {
+    /// No family of this name.
+    UnknownFamily,
+    Refused(Refusal),
+}
+
+enum Slot {
+    Pool(Arc<Pool>),
+    NotUsed(&'static str, NotUsed),
+}
+
+/// Every family's host state, one pool per family.
+pub struct HostHub {
+    slots: Vec<Slot>,
+    core: CoreCell,
+}
+
+impl HostHub {
+    pub fn new(config: &HostConfig) -> Self {
+        let core = CoreCell::default();
+        let claude = if !platform_supported() {
+            Slot::NotUsed("claude", NotUsed::UnsupportedPlatform)
+        } else if !config.claude {
+            Slot::NotUsed("claude", NotUsed::FlagOff)
+        } else {
+            Slot::Pool(Pool::new(
+                "claude",
+                HostSpec {
+                    program: config.program.clone(),
+                    args: vec!["claude".into()],
+                    env: vec![("ORBYN_ENGINE_HOST_CLAUDE".into(), "1".into())],
+                    instance: "claude-default".into(),
+                },
+                config.timings.clone(),
+                Some(secrets_from(core.clone(), "claude")),
+            ))
+        };
+        // Off still gets a slot, as Claude does: the status route reports the family as
+        // not used instead of hiding it. The host starts only when the flag is on.
+        let acp = if !platform_supported() {
+            Slot::NotUsed("acp", NotUsed::UnsupportedPlatform)
+        } else if !config.acp {
+            Slot::NotUsed("acp", NotUsed::FlagOff)
+        } else {
+            Slot::Pool(Pool::new(
+                "acp",
+                HostSpec {
+                    program: config.program.clone(),
+                    args: vec!["acp".into()],
+                    env: vec![("ORBYN_ENGINE_HOST_ACP".into(), "1".into())],
+                    instance: "acp-default".into(),
+                },
+                config.timings.clone(),
+                // ACP agents sign in through their own CLI. No engine key is
+                // allowlisted under this family, so there is no spawn secret to ask for.
+                None,
+            ))
+        };
+        let mut slots = vec![claude, acp];
+        // Off means no slot at all: nothing about Cursor changes until the flag is on.
+        if config.cursor {
+            slots.push(if platform_supported() {
+                Slot::Pool(Pool::new(
+                    "cursor",
+                    HostSpec {
+                        program: config.program.clone(),
+                        args: vec!["cursor".into()],
+                        env: vec![("ORBYN_ENGINE_HOST_CURSOR".into(), "1".into())],
+                        instance: "cursor-default".into(),
+                    },
+                    config.timings.clone(),
+                    // The key is `CURSOR_API_KEY` in the host's spawn environment, from the core and no other place.
+                    Some(secrets_from(core.clone(), "cursor")),
+                ))
+            } else {
+                Slot::NotUsed("cursor", NotUsed::UnsupportedPlatform)
+            });
+        }
+        Self { slots, core }
+    }
+
+    /// Hands the hub the core that owns the person's keys. Called once, when the core is shared.
+    pub fn bind(&self, core: &Arc<Core>) {
+        let _ = self.core.set(Arc::downgrade(core));
+    }
+
+    /// `inner` run through the host, when its family uses it; otherwise `inner` unchanged.
+    pub fn wrap(
+        &self,
+        family: &str,
+        inner: Arc<dyn EngineDriver>,
+        program: String,
+    ) -> Arc<dyn EngineDriver> {
+        self.wrap_with(family, inner, program, driver::always_sdk())
+    }
+
+    /// Like [`Self::wrap`], with the setting that picks the SDK or the CLI path at the start of each run.
+    pub fn wrap_with(
+        &self,
+        family: &str,
+        inner: Arc<dyn EngineDriver>,
+        program: String,
+        path: PathSetting,
+    ) -> Arc<dyn EngineDriver> {
+        for slot in &self.slots {
+            if let Slot::Pool(pool) = slot
+                && pool.family == family
+            {
+                pool.mark_wrapped();
+                return Arc::new(HostDriver::new(inner, pool.clone(), program).with_path(path));
+            }
+        }
+        inner
+    }
+
+    /// `inner` run through the host as the ACP family, when the flag is on; otherwise
+    /// `inner` unchanged. The agent is what `open.options.agent` will name.
+    pub fn wrap_acp(
+        &self,
+        inner: Arc<dyn EngineDriver>,
+        agent: HostAcpAgent,
+    ) -> Arc<dyn EngineDriver> {
+        for slot in &self.slots {
+            if let Slot::Pool(pool) = slot
+                && pool.family == "acp"
+            {
+                return Arc::new(HostDriver::for_acp(inner, pool.clone(), agent));
+            }
+        }
+        inner
+    }
+
+    pub async fn statuses(&self) -> Vec<HostStatus> {
+        let mut statuses = Vec::new();
+        for slot in &self.slots {
+            statuses.push(match slot {
+                Slot::Pool(pool) => pool.status().await,
+                Slot::NotUsed(family, why) => HostStatus {
+                    family: (*family).to_owned(),
+                    state: HostState::NotUsed(*why),
+                    host_version: None,
+                    restart_count: 0,
+                    last_crash: None,
+                    threads: Vec::new(),
+                    last_error: None,
+                    since: None,
+                    sdk: None,
+                    capabilities: None,
+                    pooled: false,
+                    restart: None,
+                    stops_in_window: None,
+                    has_driver: false,
+                    sdk_missing: false,
+                },
+            });
+        }
+        statuses
+    }
+
+    /// The person asked again after a family gave up.
+    pub async fn retry(&self, family: &str) {
+        for slot in &self.slots {
+            if let Slot::Pool(pool) = slot
+                && pool.family == family
+            {
+                pool.retry().await;
+            }
+        }
+    }
+
+    /// The pool of `family`, or why the person's stop or restart cannot reach one.
+    fn pool_of(&self, family: &str) -> Result<&Arc<Pool>, ControlError> {
+        for slot in &self.slots {
+            match slot {
+                Slot::Pool(pool) if pool.family == family => return Ok(pool),
+                Slot::NotUsed(name, _) if *name == family => {
+                    return Err(ControlError::Refused(Refusal::NotUsed));
+                }
+                _ => {}
+            }
+        }
+        Err(ControlError::UnknownFamily)
+    }
+
+    /// Whether `family` is one of the hub's (running on the host or not).
+    pub fn knows(&self, family: &str) -> bool {
+        !matches!(self.pool_of(family), Err(ControlError::UnknownFamily))
+    }
+
+    /// The person stopped a family's host (see [`Pool::stop`]).
+    pub async fn stop(
+        &self,
+        family: &str,
+        stop_background: bool,
+    ) -> Result<HostStatus, ControlError> {
+        let pool = self.pool_of(family)?;
+        pool.stop(stop_background)
+            .await
+            .map_err(ControlError::Refused)?;
+        Ok(pool.status().await)
+    }
+
+    /// The person restarted a family's host (see [`Pool::restart_now`]).
+    pub async fn restart(
+        &self,
+        family: &str,
+        stop_background: bool,
+    ) -> Result<HostStatus, ControlError> {
+        let pool = self.pool_of(family)?;
+        pool.restart_now(stop_background)
+            .await
+            .map_err(ControlError::Refused)?;
+        Ok(pool.status().await)
+    }
+
+    /// The app is exiting: every host's stdin closes and it is killed after the grace.
+    pub async fn shutdown(&self) {
+        for slot in &self.slots {
+            if let Slot::Pool(pool) = slot {
+                pool.shutdown().await;
+            }
+        }
+    }
+}

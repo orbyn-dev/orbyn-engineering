@@ -28,6 +28,10 @@ pub struct GitAction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub pull_request: Option<PullRequestDraft>,
+    /// A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_id: Option<String>,
 }
 }
 
@@ -87,12 +91,20 @@ pub struct CreateBranch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub start: Option<String>,
+    /// A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_id: Option<String>,
 }
 }
 
 wire! {
 pub struct SwitchBranch {
     pub name: String,
+    /// A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_id: Option<String>,
 }
 }
 

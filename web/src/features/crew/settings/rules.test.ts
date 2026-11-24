@@ -1,3 +1,4 @@
+import { within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { openFrame } from "../shared/test-support";
 
@@ -28,5 +29,18 @@ describe("Settings › Crew rows (Crew Designs v23)", () => {
     const { container } = await openFrame("settings-crew");
     expect(container.textContent).not.toContain("Default budget for background crews");
     expect(container.textContent).not.toContain("Claude Code 300k tokens · Codex 250k tokens");
+  });
+
+  it("draws the Cursor row as crew-cursor-reviewer-only: a small Map it and the Reviewer only chip whose title is the reason", async () => {
+    const { container } = await openFrame("settings-crew");
+    const row = [...container.querySelectorAll<HTMLElement>(".cx-setrow")].find((entry) => entry.textContent?.startsWith("Cursor"));
+    expect(row).toBeDefined();
+    expect(row!.textContent).toContain("Builder · not mapped");
+    expect(row!.textContent).not.toContain("Role limit");
+    const mapIt = within(row!).getByRole("button", { name: "Map it" });
+    expect(mapIt).toHaveClass("cx-sm");
+    const chip = within(row!).getByText("Reviewer only");
+    expect(chip.closest("[title]")).toHaveAttribute("title", "Not yet confined for writing work");
+    expect(within(row!).queryByText("Not yet confined for writing work")).toBeNull();
   });
 });
