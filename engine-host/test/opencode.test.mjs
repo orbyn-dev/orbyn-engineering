@@ -806,3 +806,40 @@ test("question: a form asked from a subagent reaches the run and is answered on 
   await h.next((f) => f.id === 4);
   assert.deepEqual(calls.forms, [{ sessionID: "ses_c", formID: "frm_1", answer: { q0: "a" } }]);
 });
+
+test("a send is refused for an unknown session, a second send during a run, and a message that is not text", async () => {
+  const { client } = scripted([]);
+  const h = boot({ client });
+  await handshake(h);
+  h.send({ id: 3, type: "send", sessionId: "nope", message: "hi" });
+  const unknown = await h.next((f) => f.id === 3);
+  assert.equal(unknown.ok, false);
+  assert.equal(unknown.error.cause.name, "UnknownSession");
+  assert.equal(unknown.error.cause.kind, "invalid_request");
+
+  await open(h);
+  h.send({ id: 4, type: "send", sessionId: "s", message: { attachments: [] } });
+  const notText = await h.next((f) => f.id === 4);
+  assert.equal(notText.error.cause.name, "InvalidMessage");
+  assert.equal(notText.error.cause.kind, "invalid_request");
+
+  h.send({ id: 5, type: "send", sessionId: "s", message: "first" });
+  assert.equal((await h.next((f) => f.id === 5)).ok, true);
+  h.send({ id: 6, type: "send", sessionId: "s", message: "second" });
+  const busy = await h.next((f) => f.id === 6);
+  assert.equal(busy.ok, false);
+  assert.equal(busy.error.cause.name, "RunInProgress");
+  assert.equal(busy.error.cause.kind, "invalid_request");
+  assert.equal(runs(h, 6).length, 0, "the refused send never starts a run");
+});
+
+test("a request type the host does not know is refused as UnsupportedRequest", async () => {
+  const { client } = scripted([]);
+  const h = boot({ client });
+  await handshake(h);
+  await open(h);
+  h.send({ id: 3, type: "frobnicate", sessionId: "s" });
+  const res = await h.next((f) => f.id === 3);
+  assert.equal(res.ok, false);
+  assert.equal(res.error.cause.name, "UnsupportedRequest");
+});
