@@ -12,7 +12,7 @@ import { ago } from "../board/model";
 import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { useRefresh } from "../flow/live/useFlow";
 import { CrewPick } from "./CrewPick";
-import { clock, deliveryWord, engineProblem, engineStatusWord, kindLabel, leaseWord, modelWord, elapsedWord, ordered, quietWord, stateWord, subagentsWord, treeLayout } from "./model";
+import { clock, deliveryWord, engineProblem, engineStatusWord, kindLabel, leaseWord, modelWord, elapsedWord, ordered, quietWord, subagentsWord, treeLayout, whyLine, workerState, crewSummary } from "./model";
 import { useCrewMap, useCrewMessages } from "./useMap";
 import "./map.css";
 
@@ -54,6 +54,7 @@ function CrewMap({ crew }: { crew: string }) {
     const line = engineProblem(row.engine, row.status);
     return line ? [{ engine: row.engine, line }] : [];
   });
+  const summary = crewSummary(nodes);
   const nested = narrow || workers.length > MANY;
   const tree = nested ? null : treeLayout(nodes, map.edges);
   const pick = (id: string) => setMember(id === member ? null : id);
@@ -64,6 +65,7 @@ function CrewMap({ crew }: { crew: string }) {
           A list was cut at its cap; the newest are shown.
         </p>
       ) : null}
+      {summary ? <p className="mp-summary" data-testid="map-summary">{summary}</p> : null}
       <ul className="mp-engines" aria-label="Engines">
         {map.engines.map((row) => (
           <li key={row.engine}>
@@ -146,7 +148,8 @@ function CrewMap({ crew }: { crew: string }) {
 
 /** One row of the nested list of the narrow frames and of a crew past eight workers. */
 function Row({ node, selected, onPick }: { node: FlowNode; selected: boolean; onPick(): void }) {
-  const state = stateWord(node);
+  const state = workerState(node);
+  const why = whyLine(node.working);
   const quiet = quietWord(node.quiet);
   const subs = subagentsWord(node.subagents);
   const model = modelWord(node);
@@ -161,6 +164,7 @@ function Row({ node, selected, onPick }: { node: FlowNode; selected: boolean; on
         {quiet ? <span className={`mp-st mp-${quiet.tone}`}>{quiet.text}</span> : null}
         {node.engine_status !== "ready" ? <span className="mp-st mp-neutral">{engineStatusWord(node.engine_status)}</span> : null}
         {node.outcome ? <span className="mp-outcome">{node.outcome}</span> : null}
+        {why ? <span className="mp-why">{why}</span> : null}
         <span className="mp-meta">
           {node.unread > 0 ? <span>{node.unread} unread</span> : null}
           {subs ? <span>{subs}</span> : null}
@@ -173,7 +177,8 @@ function Row({ node, selected, onPick }: { node: FlowNode; selected: boolean; on
 
 /** One node of the wide tree. Fields no read carries are chips naming the missing read; nothing is guessed. */
 function Card({ node, selected, onPick }: { node: FlowNode; selected: boolean; onPick(): void }) {
-  const state = stateWord(node);
+  const state = workerState(node);
+  const why = whyLine(node.working);
   const quiet = quietWord(node.quiet);
   const model = modelWord(node);
   const elapsed = elapsedWord(node);
@@ -203,6 +208,7 @@ function Card({ node, selected, onPick }: { node: FlowNode; selected: boolean; o
         </span>
       </span>
       {node.outcome ? <span className="mp-card-outcome" title={node.outcome}>{node.outcome}</span> : null}
+      {why ? <span className="mp-why">{why}</span> : null}
       <span className="mp-card-meta">
         {node.engine_status !== "ready" ? <span className="mp-st mp-neutral">{engineStatusWord(node.engine_status)}</span> : null}
         {quiet ? <span className={"mp-st mp-" + quiet.tone}>{quiet.text}</span> : null}
@@ -269,7 +275,7 @@ function Detail({ crew, node, onClose }: { crew: string; node: FlowNode; onClose
   const messages = useCrewMessages(crew, node.member);
   // The same shared refresh as the other lists: every 30 s while the window is visible, paused while hidden, only for what is shown.
   useRefresh(messages.first.reload, messages.first.status !== "ready" || !messages.filterable || messages.rows.length > (messages.first.data?.messages.length ?? 0));
-  const state = stateWord(node);
+  const state = workerState(node);
   const model = modelWord(node);
   const button = useRef<HTMLButtonElement>(null);
   const [at, setAt] = useState<{ x: number; y: number } | null>(null);

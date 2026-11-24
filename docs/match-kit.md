@@ -83,6 +83,8 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **Crew, KC3 the dashboard's Right now row** (Crew Designs v147, `needs-one-source-dashboard`), on the dashboard over the mock's live sample: the Needs you and Working tiles with each kind's own row and the line under each, while the Idle tile and the "A command to approve"/"A review that waits" rows stay Planned because the service has no such kind. `needs-one-source-dashboard`
 
+**Crew, KC3 the Map's Working word** (Crew Designs v147, `needs-one-source-working-not-idle`), on the live Map over the mock's `crew-map-working` scenario: "Working" replaces Running and Verifying on a worker that owns live work, the muted why line sits under its task, and the summary above the engines counts workers, those working and those that need you; no idle count, because the service sends none. `needs-one-source-working-not-idle`
+
 **Crew, KC8 the resumed task's inbox row** (Crew Designs v145, `kc8-resumed-inbox`), on the live inbox over the mock's `crew-worker-stopped-twice` scenario: the Stops row for a task whose worker stopped twice after its one resume, with Dismiss alone and the note under the list; the card, the zoom and the ledger frames are separate. `kc8-resumed-inbox`
 
 **Crew, KC4 a background start the disk guard refused** (Crew Designs, `kc4-low-disk-background-run`), on the live Background tab over the mock's `crew-background-disk-low` scenario: the newest row of Recent runs reads "Not started · Disk", and the crew's last-run cell says the same. `kc4-low-disk-background-run`
