@@ -4,9 +4,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use base64::Engine as _;
 use orbyn_contracts::{
-    ConnectTracker, IssueDetail, IssueState, IssueStateCategory, IssueSummary, PermissionMode,
-    PullCheck, PullChecks, PullRequest, PullRequestDetail, TrackerKind,
+    ActionKind, AuditEvent, ConnectTracker, CreatePolicyRule, IssueDetail, IssueState,
+    IssueStateCategory, IssueSummary, PermissionMode, PolicyEffect, PullCheck, PullChecks,
+    PullRequest, PullRequestDetail, TrackerKind,
 };
 use serde_json::{Value, json};
 
@@ -16,6 +18,7 @@ use crate::browser::preview::{
     PreviewAct, PreviewAction,
 };
 use crate::credentials::{Credentials, MemoryBackend};
+use crate::devices::test_support::{Fake, fake_png};
 use crate::error::CoreError;
 use crate::governance::approvals::RunScope;
 use crate::issues::{IssueQuery, IssueSource, ScopeList, StateFilter};
@@ -1935,6 +1938,534 @@ fn a_crew_worker_cannot_use_the_pull_write_or_ci_tools() {
     ] {
         assert_eq!(
             crate::crew::worker_refusal(name, &json!({ "number": 7 }), "own-thread"),
+            Some(format!("A crew worker cannot use {name}."))
+        );
+    }
+}
+
+/// A real Core with one git project, the caller's MCP token, and the device service the test
+/// asked for: the fake platform tools, or the same service with no platform tools at all.
+struct DeviceWorld {
+    _dir: TempDir,
+    core: Arc<Core>,
+    token: String,
+    thread: String,
+    binding: McpBinding,
+    fake: Fake,
+}
+
+impl DeviceWorld {
+    async fn new(devices: impl FnOnce(&Fake) -> crate::devices::Devices) -> Self {
+        let dir = TempDir::new();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        run_git(&repo, &["init", "-q", "-b", "main"]);
+        let fake = Fake::new();
+        let mut config =
+            crate::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        config.engines.claude_program = dir.path().join("no-claude").to_string_lossy().into_owned();
+        config.engines.codex_program = dir.path().join("no-codex").to_string_lossy().into_owned();
+        config.engines.known_engine_ids = Some(Vec::new());
+        let mut core = Core::open(config).unwrap();
+        core.devices = Arc::new(devices(&fake));
+        let core = Arc::new(core);
+        core.mcp.bind_host(&core);
+        let path = repo.to_str().unwrap();
+        let project = core
+            .store
+            .add_project(NewProject {
+                path,
+                name: "project",
+                is_git: true,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+        core.store.trust_project(&project.id, "test").unwrap();
+        let thread = core
+            .store
+            .create_thread(NewThread {
+                project_id: project.id,
+                title: "lead".into(),
+                engine: "alpha".into(),
+                model: None,
+                cwd: path.to_owned(),
+                worktree: None,
+                skill_profile: None,
+                parent_thread_id: None,
+                relation: None,
+                scratch: false,
+            })
+            .unwrap();
+        let binding = McpBinding {
+            scope: RunScope {
+                run_id: "run-devices".into(),
+                thread_id: thread.id.clone(),
+                engine: "alpha".into(),
+                family: "alpha".into(),
+                write_scope: None,
+                mode: PermissionMode::FullAccess,
+                plan: false,
+            },
+            permission_prompt: false,
+            skills: Vec::new(),
+        };
+        let token = core.mcp.register(binding.clone()).unwrap();
+        Self {
+            _dir: dir,
+            core,
+            token,
+            thread: thread.id,
+            binding,
+            fake,
+        }
+    }
+
+    /// Calls the tool through the dispatch entry the MCP layer uses: the gate, the Crew
+    /// refusal, the audit row and the device call all live there. The transport adds its own
+    /// future chain on top, which the screenshot's deep device future does not leave room for
+    /// on a debug build's test thread, so a tool call here skips only that framing.
+    async fn call_text(&self, name: &str, args: Value) -> (String, bool) {
+        match self.core.call_orbyn_tool(&self.binding, name, &args).await {
+            Ok(value) => (value.to_string(), false),
+            Err(error) => (error.public_message(), true),
+        }
+    }
+
+    async fn call_json(&self, name: &str, args: Value) -> (Value, bool) {
+        let (text, error) = self.call_text(name, args).await;
+        let answer = serde_json::from_str(&text)
+            .unwrap_or_else(|why| panic!("{name} answered text that is not JSON ({why}): {text}"));
+        (answer, error)
+    }
+
+    async fn tool_names(&self) -> Vec<String> {
+        let reply = self
+            .core
+            .mcp
+            .handle(
+                &self.token,
+                &json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {} }),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        reply["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    fn audit(&self) -> Vec<AuditEvent> {
+        self.core.store.list_audit(None, 100).unwrap()
+    }
+}
+
+/// The one audit row that action wrote.
+fn the_one<'a>(audit: &'a [AuditEvent], action: &str) -> &'a AuditEvent {
+    let rows: Vec<&AuditEvent> = audit.iter().filter(|row| row.action == action).collect();
+    assert_eq!(rows.len(), 1, "{action}: {rows:?}");
+    rows[0]
+}
+
+/// The gate allowed exactly this tool once, as a tool action.
+fn the_gate_allowed_once(audit: &[AuditEvent], tool: &str) {
+    let row = the_one(audit, "action.allow");
+    assert_eq!(row.target, tool);
+    assert_eq!(row.detail["kind"], json!("tool"));
+    assert!(
+        audit.iter().all(|row| row.action != "action.deny"),
+        "no denial"
+    );
+}
+
+/// Makes the thread the worker of a stored Crew task.
+fn make_crew_worker(core: &Core, thread: &str) {
+    use orbyn_contracts as wire;
+    let stamper = crate::crew::Stamper {
+        crew_id: wire::CrewId::new("crew-1").unwrap(),
+        engine: wire::CrewToken::new("alpha").unwrap(),
+        member: wire::CrewMember::new("lead-01").unwrap(),
+        now: wire::CrewTimestamp::new("2026-11-12T10:00:00Z").unwrap(),
+    };
+    let brief = stamper
+        .brief(&json!({
+            "kind": "implement",
+            "outcome": "The device tools.",
+            "inputs": [],
+            "files": [{ "path": "src/**", "mode": "write" }],
+            "allowed_effects": ["read_repo", "write_leased", "run_checks"],
+            "stop_when": ["Done."],
+            "budget": { "turns": 20, "minutes": 30 }
+        }))
+        .unwrap();
+    let key = stamper
+        .answer_key(
+            &json!({
+                "checks": [{ "id": "chk-run", "kind": "command",
+                    "params": { "run": "echo ok" }, "proves": "It runs." }],
+                "protected_paths": ["tests/**"]
+            }),
+            &brief.id,
+        )
+        .unwrap();
+    let task = core
+        .store
+        .create_crew_task(&brief, &key, "run-device-tools")
+        .unwrap();
+    core.store
+        .add_crew_run(&task.id, "lead-thread", "member-01")
+        .unwrap();
+    core.store
+        .set_crew_worker(&task.id, thread, "/work", None)
+        .unwrap();
+}
+
+/// The device tool names a machine like this one lists, in the table's order.
+fn device_tool_names(devices: &crate::devices::Devices) -> Vec<String> {
+    tool_specs(devices.tools_available())
+        .filter_map(|spec| spec["name"].as_str().map(str::to_owned))
+        .filter(|name| is_device_tool(name))
+        .collect()
+}
+
+#[test]
+fn the_device_tools_are_listed_only_when_one_platform_has_its_tools() {
+    let fake = Fake::new();
+    assert_eq!(
+        device_tool_names(&fake.devices()),
+        ["orbyn_device_list", "orbyn_device_screenshot"]
+    );
+    assert_eq!(
+        device_tool_names(&fake.unavailable_devices()),
+        Vec::<String>::new()
+    );
+    for name in ["orbyn_device_list", "orbyn_device_screenshot"] {
+        assert!(has_effect(name), "{name}");
+        assert!(is_tool(name), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn the_device_tools_are_hidden_from_a_machine_without_platform_tools() {
+    let w = DeviceWorld::new(Fake::unavailable_devices).await;
+    let names = w.tool_names().await;
+    assert!(!names.iter().any(|name| is_device_tool(name)), "{names:?}");
+    // A hidden tool is as unknown as a name the table never held: the dispatch entry the
+    // MCP layer calls answers that tool's NotFound, exactly as it does for an unknown name.
+    for name in ["orbyn_device_list", "orbyn_no_such_tool"] {
+        let (text, error) = w.call_text(name, json!({})).await;
+        assert!(error, "{name}: {text}");
+        assert_eq!(text, format!("tool {name} not found"));
+    }
+}
+
+#[tokio::test]
+async fn the_device_list_is_gated_once_and_audited_before_the_effect() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    w.fake.set("orientation", 2);
+    let (answer, error) = w.call_json("orbyn_device_list", json!({})).await;
+    assert!(!error, "{answer}");
+    // The service's own list: ids, names, platforms, states; no paths.
+    assert_eq!(
+        answer["devices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|device| device["id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>(),
+        [
+            "android:Pixel_8",
+            "android:Tablet",
+            "ios:UDID-1",
+            "ios:UDID-2"
+        ]
+    );
+    assert_eq!(answer["devices"][0]["state"], "booted");
+    assert_eq!(answer["devices"][1]["state"], "shutdown");
+    assert_eq!(answer["devices"][0]["platform"], "android");
+    assert!(answer["platforms"][0]["available"].as_bool().unwrap());
+
+    let audit = w.audit();
+    the_gate_allowed_once(&audit, "orbyn_device_list");
+    let row = the_one(&audit, "device.tool.list");
+    assert_eq!(row.actor, "engine:alpha");
+    assert_eq!(row.target, "");
+    assert_eq!(row.thread_id.as_deref(), Some(w.thread.as_str()));
+    // Rule 6: written before the list is read, so it holds fixed values only.
+    assert_eq!(row.detail, json!({}));
+}
+
+#[tokio::test]
+async fn the_device_screenshot_is_gated_once_and_audited_before_the_effect() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    w.fake.set("screenshot_bytes", 64);
+    let (answer, error) = w
+        .call_json(
+            "orbyn_device_screenshot",
+            json!({ "device_id": "android:Pixel_8" }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["ok"], true);
+    assert_eq!(answer["device"]["id"], "android:Pixel_8");
+    let image = base64::engine::general_purpose::STANDARD.encode(fake_png(64));
+    assert_eq!(answer["image"], json!(image));
+    // The effect ran: the fake tool took exactly one screenshot.
+    let screenshots = w
+        .fake
+        .calls()
+        .into_iter()
+        .filter(|call| {
+            call["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|arg| arg.as_str() == Some("screencap"))
+        })
+        .count();
+    assert_eq!(screenshots, 1);
+
+    let audit = w.audit();
+    the_gate_allowed_once(&audit, "orbyn_device_screenshot");
+    let row = the_one(&audit, "device.tool.screenshot");
+    assert_eq!(row.actor, "engine:alpha");
+    assert_eq!(row.target, "android:Pixel_8");
+    // Rule 6: written before the shot, so it holds fixed values only.
+    assert_eq!(row.detail, json!({}));
+    let serialized = serde_json::to_string(row).unwrap();
+    assert!(!serialized.contains(&image[..16]), "the row holds no bytes");
+    assert!(!serialized.contains('/'), "the row holds no path");
+}
+
+#[tokio::test]
+async fn a_denied_device_call_answers_the_denial_and_runs_nothing() {
+    for (tool, args) in [
+        ("orbyn_device_list", json!({})),
+        (
+            "orbyn_device_screenshot",
+            json!({ "device_id": "android:Pixel_8" }),
+        ),
+    ] {
+        let w = DeviceWorld::new(Fake::devices).await;
+        w.core
+            .store
+            .add_rule(
+                &CreatePolicyRule {
+                    effect: PolicyEffect::Deny,
+                    kind: ActionKind::Tool,
+                    pattern: format!("={tool}"),
+                    engine: None,
+                    note: None,
+                },
+                "test",
+            )
+            .unwrap();
+        let (text, error) = w.call_text(tool, args).await;
+        assert!(error, "{tool}: {text}");
+        assert_eq!(text, format!("Blocked by policy: Matched rule ={tool}"));
+        // The gate refused before either tool ran, and no device tool row was written.
+        assert!(w.fake.calls().is_empty(), "{tool} reached a platform tool");
+        let audit = w.audit();
+        let row = the_one(&audit, "action.deny");
+        assert_eq!(row.target, tool);
+        assert_eq!(row.detail["kind"], json!("tool"));
+        assert!(
+            audit
+                .iter()
+                .all(|row| !row.action.starts_with("device.tool.")),
+            "{tool} was audited as done"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_crew_worker_is_refused_the_device_tools_before_the_gate() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    make_crew_worker(&w.core, &w.thread);
+    for (tool, args) in [
+        ("orbyn_device_list", json!({})),
+        (
+            "orbyn_device_screenshot",
+            json!({ "device_id": "android:Pixel_8" }),
+        ),
+    ] {
+        let (text, error) = w.call_text(tool, args).await;
+        assert!(error, "{tool}: {text}");
+        assert_eq!(text, format!("A crew worker cannot use {tool}."));
+    }
+    // Refused before the gate: no decision, no platform process, no device tool row.
+    assert!(w.fake.calls().is_empty());
+    let audit = w.audit();
+    assert!(
+        audit
+            .iter()
+            .all(|row| row.action != "action.allow" && row.action != "action.deny"),
+        "{audit:?}"
+    );
+    assert!(
+        audit
+            .iter()
+            .all(|row| !row.action.starts_with("device.tool."))
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_device_id_is_the_services_device_not_found() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    let (text, error) = w
+        .call_text(
+            "orbyn_device_screenshot",
+            json!({ "device_id": "android:NoSuchDevice" }),
+        )
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(text, crate::devices::DEVICE_NOT_FOUND_MESSAGE);
+    // No screenshot was taken for a device the list never named.
+    let screenshots = w
+        .fake
+        .calls()
+        .iter()
+        .filter(|call| {
+            call["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|arg| arg.as_str() == Some("screencap"))
+        })
+        .count();
+    assert_eq!(screenshots, 0);
+    // The row exists even though the device call failed: it is written before that call.
+    let audit = w.audit();
+    let row = the_one(&audit, "device.tool.screenshot");
+    assert_eq!(row.target, "android:NoSuchDevice");
+    assert_eq!(row.detail, json!({}));
+}
+
+#[tokio::test]
+async fn a_screenshot_over_the_tools_image_cap_is_taken_and_says_its_size() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    // 200 KiB of PNG: 273068 base64 characters, over the tool's 192 KiB image cap.
+    w.fake.set("screenshot_bytes", 200 * 1024);
+    let (answer, error) = w
+        .call_json(
+            "orbyn_device_screenshot",
+            json!({ "device_id": "android:Pixel_8" }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["ok"], true);
+    assert_eq!(answer["device"]["id"], "android:Pixel_8");
+    assert!(answer.get("image").is_none(), "{answer}");
+    assert_eq!(answer["image_base64_bytes"], json!(273_068));
+    let note = answer["note"].as_str().unwrap();
+    assert!(note.contains("over the tool's 192 KiB image cap"), "{note}");
+    assert!(!note.contains('/'), "the note holds no path");
+    // The row is written before the call, so it never carries the image's size either.
+    let audit = w.audit();
+    let row = the_one(&audit, "device.tool.screenshot");
+    assert_eq!(row.detail, json!({}));
+    let serialized = serde_json::to_string(row).unwrap();
+    assert!(!serialized.contains("273068"), "the row holds no size");
+}
+
+#[tokio::test]
+async fn the_device_list_row_is_written_before_the_devices_are_read() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    w.fake.set("list_delay_ms", 2000);
+    let core = w.core.clone();
+    let binding = w.binding.clone();
+    let call = tokio::spawn(async move {
+        core.call_orbyn_tool(&binding, "orbyn_device_list", &json!({}))
+            .await
+    });
+    w.fake.wait_for_call("adb", "devices").await;
+    let audit = w.audit();
+    let row = the_one(&audit, "device.tool.list");
+    assert_eq!(row.target, "");
+    assert_eq!(row.detail, json!({}));
+    let answer = call.await.unwrap().unwrap();
+    assert_eq!(answer["devices"].as_array().unwrap().len(), 4);
+    // One row for the one call, not a second one after the answer.
+    let audit = w.audit();
+    assert_eq!(
+        audit
+            .iter()
+            .filter(|row| row.action == "device.tool.list")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn the_device_screenshot_row_is_written_before_the_device_answers() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    // The fake logs the screenshot command and then holds its answer, so the row has to be
+    // there while the call is still running.
+    w.fake.set("screenshot_delay_ms", 2000);
+    let core = w.core.clone();
+    let binding = w.binding.clone();
+    let args = json!({ "device_id": "android:Pixel_8" });
+    let call = tokio::spawn(async move {
+        core.call_orbyn_tool(&binding, "orbyn_device_screenshot", &args)
+            .await
+    });
+    w.fake.wait_for_call("adb", "screencap").await;
+    let audit = w.audit();
+    let row = the_one(&audit, "device.tool.screenshot");
+    assert_eq!(row.target, "android:Pixel_8");
+    assert_eq!(row.detail, json!({}));
+    let answer = call.await.unwrap().unwrap();
+    assert_eq!(answer["ok"], true);
+    // One row for the one call, not a second one after the answer.
+    let audit = w.audit();
+    assert_eq!(
+        audit
+            .iter()
+            .filter(|row| row.action == "device.tool.screenshot")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_path_like_device_id_never_reaches_the_audit_target() {
+    for id in [
+        "/Users/alice/private.png",
+        "C:\\Users\\alice\\private.png",
+        "android:Pi\ncel",
+    ] {
+        let w = DeviceWorld::new(Fake::devices).await;
+        let (text, error) = w
+            .call_text("orbyn_device_screenshot", json!({ "device_id": id }))
+            .await;
+        assert!(error, "{id}: {text}");
+        assert_eq!(text, crate::devices::DEVICE_NOT_FOUND_MESSAGE, "{id}");
+        // The row exists even though the call failed, because it is written before the call.
+        let audit = w.audit();
+        let row = the_one(&audit, "device.tool.screenshot");
+        assert_eq!(row.target, "-", "{id}");
+        assert_eq!(row.detail, json!({}));
+        let serialized = serde_json::to_string(row).unwrap();
+        assert!(!serialized.contains('/'), "{id}: {serialized}");
+        assert!(!serialized.contains('\\'), "{id}: {serialized}");
+        assert!(!serialized.contains("alice"), "{id}: {serialized}");
+        assert!(!serialized.contains("private"), "{id}: {serialized}");
+    }
+}
+
+#[test]
+fn a_crew_worker_cannot_use_the_device_tools() {
+    for name in ["orbyn_device_list", "orbyn_device_screenshot"] {
+        assert_eq!(
+            crate::crew::worker_refusal(
+                name,
+                &json!({ "device_id": "android:Pixel_8" }),
+                "own-thread"
+            ),
             Some(format!("A crew worker cannot use {name}."))
         );
     }

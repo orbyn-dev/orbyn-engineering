@@ -107,6 +107,15 @@ impl McpService {
             .is_some_and(|core| core.crew_enabled())
     }
 
+    /// Whether this machine has a platform's device tools, so the agent device tools
+    /// exist; without them the list hides them and a call is unknown.
+    fn devices_available(&self) -> bool {
+        self.host
+            .get()
+            .and_then(Weak::upgrade)
+            .is_some_and(|core| core.devices.tools_available())
+    }
+
     /// Whether the Code Mode tools exist for `engine`: off until `CoreConfig::code_mode`, then only for an engine whose
     /// own switch is on.
     fn code_mode_enabled(&self, engine: &str) -> bool {
@@ -210,7 +219,7 @@ impl McpService {
             })),
             "ping" => Ok(json!({})),
             "tools/list" => {
-                let mut tools = tool_list(binding.permission_prompt);
+                let mut tools = tool_list(binding.permission_prompt, self.devices_available());
                 if self.crew_enabled() {
                     tools.extend(crate::crew::tool_specs());
                 }
@@ -522,9 +531,9 @@ fn computer_action(tool: &str, args: &Value) -> Option<ComputerAction> {
     })
 }
 
-fn tool_list(permission_prompt: bool) -> Vec<Value> {
+fn tool_list(permission_prompt: bool, devices_available: bool) -> Vec<Value> {
     let object = |properties: Value, required: Value| json!({ "type": "object", "properties": properties, "required": required });
-    let mut tools: Vec<Value> = crate::tools::mcp_tools::tool_specs().collect();
+    let mut tools: Vec<Value> = crate::tools::mcp_tools::tool_specs(devices_available).collect();
     tools.extend([
         json!({
             "name": "skill_search",
@@ -660,8 +669,8 @@ mod tests {
                 .map(|tool| tool["name"].as_str().unwrap().to_owned())
                 .collect()
         };
-        assert!(names(tool_list(true)).contains(&"approve".to_owned()));
-        assert!(!names(tool_list(false)).contains(&"approve".to_owned()));
+        assert!(names(tool_list(true, false)).contains(&"approve".to_owned()));
+        assert!(!names(tool_list(false, false)).contains(&"approve".to_owned()));
     }
 
     #[test]
