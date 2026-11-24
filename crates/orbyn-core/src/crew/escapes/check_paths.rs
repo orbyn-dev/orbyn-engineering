@@ -347,17 +347,44 @@ mod tests {
             judge(&[add("tests/a.rs")], "tests/a.rs").unwrap(),
             vec!["tests/a.rs"]
         );
-        assert!(judge(&[], "tests/a.rs").is_err());
-        assert!(judge(&[add("tests/b.rs")], "tests/a.rs").is_err());
-        assert!(judge(&[add("tests/a.rs"), add("src/lib.rs")], "tests/a.rs").is_err());
-        assert!(judge(&[add("tests/a.rs"), add("tests/b.rs")], "tests/a.rs").is_err());
-        assert!(judge(&[add("tests/a.rs"), add(".orbyn/crew.json")], "tests/a.rs").is_err());
+        assert_eq!(
+            judge(&[], "tests/a.rs").unwrap_err(),
+            "The worker committed no change, so there is no test file to prove."
+        );
+        assert_eq!(
+            judge(&[add("tests/b.rs")], "tests/a.rs").unwrap_err(),
+            "The change adds tests/b.rs, but a check adds only the proposed file tests/a.rs."
+        );
+        assert_eq!(
+            judge(&[add("tests/a.rs"), add("src/lib.rs")], "tests/a.rs").unwrap_err(),
+            "src/lib.rs: A check may only add a test file: put it in a tests, test, __tests__, spec, specs or e2e folder, or name it test_x, x.test.y, x_test.y or x.spec.y."
+        );
+        assert_eq!(
+            judge(&[add("tests/a.rs"), add("tests/b.rs")], "tests/a.rs").unwrap_err(),
+            "The change adds tests/b.rs, but a check adds only the proposed file tests/a.rs."
+        );
+        // A dotted first segment is refused by the plain-path rule before the policy rule; a policy file
+        // with a plain name reaches the policy rule itself (the two cases below are different refusals).
+        assert_eq!(
+            judge(&[add("tests/a.rs"), add(".orbyn/crew.json")], "tests/a.rs").unwrap_err(),
+            ".orbyn/crew.json: The path must be a plain relative path with no `..`, `.git` or backslash."
+        );
+        assert_eq!(
+            judge(&[add("tests/a.rs"), add("package.json")], "tests/a.rs").unwrap_err(),
+            "package.json: A check cannot add a policy, CI or manifest file. It may only add a test file."
+        );
         let mut modified = add("tests/a.rs");
         modified.status = 'M';
-        assert!(judge(&[modified], "tests/a.rs").is_err());
+        assert_eq!(
+            judge(&[modified], "tests/a.rs").unwrap_err(),
+            "The change touches tests/a.rs, which is not a new file. A check only adds test files."
+        );
         let mut link = add("tests/a.rs");
         link.mode = "120000".into();
-        assert!(judge(&[link], "tests/a.rs").is_err());
+        assert_eq!(
+            judge(&[link], "tests/a.rs").unwrap_err(),
+            "tests/a.rs is a link or a submodule, not a plain test file."
+        );
     }
 
     #[test]
@@ -375,7 +402,13 @@ mod tests {
             ('A', "100644", "tests/a.rs")
         );
         assert_eq!(changes[1].status, 'M');
-        assert!(parse_raw(b":000000 100644 0 a A\0").is_err());
-        assert!(parse_raw(b":000000 100644 0 A\0tests/a.rs\0").is_err());
+        assert_eq!(
+            parse_raw(b":000000 100644 0 a A\0").unwrap_err(),
+            "The change could not be read."
+        );
+        assert_eq!(
+            parse_raw(b":000000 100644 0 A\0tests/a.rs\0").unwrap_err(),
+            "The change could not be read."
+        );
     }
 }

@@ -7,6 +7,14 @@ use super::*;
 use crate::CoreConfig;
 use crate::testing::{TempDir, library, run_git};
 
+/// An `Invalid` refusal and its exact sentence, which is what a caller sees for these name and slot rules.
+fn refused_invalid<T: std::fmt::Debug>(result: crate::error::Result<T>, what: &str) -> String {
+    match result {
+        Err(CoreError::Invalid(message)) => message,
+        other => panic!("{what}: expected an Invalid refusal, got {other:?}"),
+    }
+}
+
 async fn core(dir: &TempDir) -> Core {
     let root = library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
@@ -61,9 +69,13 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 #[test]
 fn slugs_are_plain_and_never_a_worktree_root() {
     assert_eq!(slug_of("My Project").unwrap(), "my-project");
-    assert!(slug_of("app-wt").is_err());
-    assert!(slug_of("..").is_err());
-    assert!(slug_of("  ").is_err());
+    for name in ["app-wt", "..", "  "] {
+        assert_eq!(
+            refused_invalid(slug_of(name), name),
+            "Choose another project name.",
+            "{name:?}"
+        );
+    }
     assert_eq!(
         slug_of("../../etc").unwrap(),
         "etc",
@@ -88,7 +100,11 @@ fn project_name_checks_host_specific_rules() {
         "name.",
         "name ",
     ] {
-        assert!(validate_new_project_name(name, true).is_err(), "{name:?}");
+        assert_eq!(
+            refused_invalid(validate_new_project_name(name, true), name),
+            "Enter a valid project name without path separators or invalid characters.",
+            "{name:?}"
+        );
     }
     for name in ["Café Notes", "My project", "a.b", "widget-1"] {
         assert!(validate_new_project_name(name, true).is_ok(), "{name:?}");
@@ -100,16 +116,24 @@ fn project_name_checks_host_specific_rules() {
 #[test]
 fn new_project_destination_checks_windows_folder_name_after_normalization() {
     for name in [" CON", "CON!", "😺CON", "lpt1!"] {
-        assert!(
-            validate_new_project_destination(name, None, true).is_err(),
+        assert_eq!(
+            refused_invalid(validate_new_project_destination(name, None, true), name),
+            "Enter a valid project name without path separators or invalid characters.",
             "{name:?}"
         );
     }
     assert!(validate_new_project_destination("Café Notes", None, true).is_ok());
     assert!(validate_new_project_destination(" CON", Some("/tmp/safe"), true).is_ok());
-    assert!(validate_new_project_destination("safe", Some("/tmp/CON.txt"), true).is_err());
-    assert!(validate_new_project_destination("safe", Some("/tmp/conin$"), true).is_err());
-    assert!(validate_new_project_destination("safe", Some("/tmp/CONOUT$"), true).is_err());
+    for chosen in ["/tmp/CON.txt", "/tmp/conin$", "/tmp/CONOUT$"] {
+        assert_eq!(
+            refused_invalid(
+                validate_new_project_destination("safe", Some(chosen), true),
+                chosen
+            ),
+            "Enter a valid project name without path separators or invalid characters.",
+            "{chosen}"
+        );
+    }
     assert!(validate_new_project_destination("safe", Some("/tmp/CON!"), true).is_ok());
     assert!(validate_new_project_destination("safe", Some("/tmp/CON.txt"), false).is_ok());
 }
@@ -138,8 +162,9 @@ async fn new_project_rejects_path_components_before_any_creation() {
             error.to_string().contains("project name"),
             "{name:?}: {error}"
         );
-        assert!(
-            core.new_project(name, false, None).await.is_err(),
+        assert_eq!(
+            refused_invalid(core.new_project(name, false, None).await, name),
+            "Enter a valid project name without path separators or invalid characters.",
             "{name:?}"
         );
     }
@@ -162,8 +187,9 @@ async fn create_makes_a_nested_repository() {
     assert_eq!(path, core.workspace.repo_dir().unwrap().join("app"));
     assert!(path.join(".git").exists());
     assert!(!project.trusted);
-    assert!(
-        core.new_project("app", false, None).await.is_err(),
+    assert_eq!(
+        refused_invalid(core.new_project("app", false, None).await, "duplicate slug"),
+        "app already exists.",
         "slugs are unique"
     );
 }
@@ -181,21 +207,25 @@ async fn clone_lands_under_repo_and_a_failed_clone_leaves_nothing() {
     assert!(Path::new(&project.path).join("a.txt").exists());
 
     let missing = dir.path().join("nowhere");
-    assert!(
+    // Git's own stderr names the missing repository, and that text varies by version: the fixed
+    // claim is the variant. The next lines assert the failed clone left nothing behind.
+    assert!(matches!(
         core.clone_project(missing.to_str().unwrap(), None, None)
-            .await
-            .is_err()
-    );
+            .await,
+        Err(CoreError::Git(_))
+    ));
     let leftovers: Vec<_> = std::fs::read_dir(core.workspace.repo_dir().unwrap())
         .unwrap()
         .flatten()
         .filter(|entry| entry.file_name().to_string_lossy().starts_with(".incoming"))
         .collect();
     assert!(leftovers.is_empty());
-    assert!(
-        core.clone_project("--upload-pack=evil", None, None)
-            .await
-            .is_err()
+    assert_eq!(
+        refused_invalid(
+            core.clone_project("--upload-pack=evil", None, None).await,
+            "flag URL"
+        ),
+        "That URL is not valid."
     );
 }
 
@@ -232,7 +262,12 @@ async fn adding_registers_in_place_untrusted_and_touches_nothing() {
             .unwrap()
             .is_git
     );
-    assert!(core.add_project("relative").await.is_err());
+    match core.add_project("relative").await {
+        Err(CoreError::WorkspaceRefused(message)) => {
+            assert_eq!(message, "Use an absolute path.");
+        }
+        other => panic!("expected WorkspaceRefused for a relative path, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -255,14 +290,25 @@ async fn a_chosen_folder_takes_a_clone_or_a_new_project_and_stays_managed() {
     let again = core
         .new_project("x", false, Some(chosen.to_str().unwrap()))
         .await;
-    assert!(again.is_err(), "a folder with files is not a destination");
+    // The fixed claim is the rule; the path inside the sentence is the one the test chose.
+    match again {
+        Err(CoreError::Invalid(message)) => assert!(
+            message.ends_with("is not empty."),
+            "a folder with files is not a destination: {message}"
+        ),
+        other => panic!("expected an Invalid refusal, got {other:?}"),
+    }
     let root = core.workspace.root().unwrap();
     let inside = root.join("skills/new");
-    assert!(
-        core.new_project("x", false, Some(inside.to_str().unwrap()))
-            .await
-            .is_err()
-    );
+    match core
+        .new_project("x", false, Some(inside.to_str().unwrap()))
+        .await
+    {
+        Err(CoreError::WorkspaceRefused(message)) => {
+            assert_eq!(message, "This folder is inside the skills library.");
+        }
+        other => panic!("expected WorkspaceRefused inside the library, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -531,10 +577,12 @@ async fn init_git_makes_the_folder_a_repository_without_a_commit() {
         "main",
         "the same default branch as a created project"
     );
+    // No HEAD is the whole claim; Git's own words for a missing revision vary by version.
     assert!(
-        git(&folder, &["rev-parse", "--verify", "HEAD"])
-            .await
-            .is_err(),
+        matches!(
+            git(&folder, &["rev-parse", "--verify", "HEAD"]).await,
+            Err(CoreError::Git(_))
+        ),
         "no commit is invented"
     );
 }
@@ -655,11 +703,15 @@ async fn a_background_clone_finishes_and_a_failed_one_can_retry() {
     source_repo(&missing);
     core.retry_clone(&job.id).unwrap();
     assert_eq!(until_settled(&core, &job.id).await.state, CloneState::Done);
-    assert!(
-        core.retry_clone(&job.id).is_err(),
+    assert_eq!(
+        refused_invalid(core.retry_clone(&job.id), "finished clone retry"),
+        "This clone cannot be retried.",
         "a finished clone stays finished"
     );
-    assert!(core.cancel_clone(&job.id).is_err());
+    assert_eq!(
+        refused_invalid(core.cancel_clone(&job.id), "finished clone cancel"),
+        "This clone is not running."
+    );
 }
 
 async fn until_settled(core: &Arc<Core>, id: &str) -> CloneJob {
@@ -838,7 +890,10 @@ async fn a_refused_firing_is_in_the_history_with_its_reason() {
     let project = core.new_project("app", false, None).await.unwrap();
     let task = core.save_task(interval_task(&project.id), "user").unwrap();
 
-    assert!(core.run_task(&task.id).await.is_err());
+    assert!(matches!(
+        core.run_task(&task.id).await,
+        Err(CoreError::FolderUntrusted)
+    ));
 
     let history = core.task_runs(&task.id).unwrap();
     assert_eq!(history.len(), 1);

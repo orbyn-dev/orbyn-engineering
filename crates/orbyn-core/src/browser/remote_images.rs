@@ -238,6 +238,15 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    /// Every refusal here is the one-value `ImageUnavailable`: the type holds no variant or sentence to
+    /// distinguish, so naming the value is the whole claim. This helper keeps the assertion explicit.
+    fn refused<T>(result: Result<T, ImageUnavailable>) -> ImageUnavailable {
+        match result {
+            Err(error) => error,
+            Ok(_) => panic!("expected the one ImageUnavailable value"),
+        }
+    }
+
     async fn fixture(status: &str, headers: &str, body: Vec<u8>) -> reqwest::Response {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -294,12 +303,10 @@ mod tests {
             ),
             ("200 OK", "Content-Type: image/png", vec![0; MAX_BYTES + 1]),
         ] {
-            assert!(
-                read_image(fixture(status, headers, body).await)
-                    .await
-                    .is_err(),
-                "{status} {headers}"
-            );
+            match read_image(fixture(status, headers, body).await).await {
+                Err(ImageUnavailable) => {}
+                Ok(_) => panic!("{status} {headers}: expected the one ImageUnavailable value"),
+            }
         }
     }
 
@@ -324,10 +331,10 @@ mod tests {
                 .as_ref(),
             &[1, 2, 3]
         );
-        assert!(proxy.get("https://127.0.0.1/a").await.is_err());
-        assert!(proxy.get("https://[::1]/a").await.is_err());
+        refused(proxy.get("https://127.0.0.1/a").await);
+        refused(proxy.get("https://[::1]/a").await);
         let _permits = proxy.permits.acquire_many(4).await.unwrap();
-        assert!(proxy.get("https://example.com/uncached").await.is_err());
+        refused(proxy.get("https://example.com/uncached").await);
     }
 
     fn tiny_image() -> RemoteImage {
@@ -398,7 +405,7 @@ mod tests {
                 panic!("an expired queued request must not fetch")
             })
             .await;
-        assert!(result.is_err());
+        refused(result);
         assert_eq!(started.elapsed(), TIMEOUT);
         assert!(proxy.cache.lock().unwrap().is_empty());
         drop(held);
@@ -423,7 +430,7 @@ mod tests {
             })
         );
         assert!(fetch_started.get());
-        assert!(result.is_err());
+        refused(result);
         assert_eq!(started.elapsed(), TIMEOUT);
         assert_eq!(proxy.permits.available_permits(), 4);
         assert!(proxy.cache.lock().unwrap().is_empty());
@@ -433,7 +440,8 @@ mod tests {
     async fn cancellation_and_failure_release_slots() {
         let proxy = ImageProxy::default();
         let held = proxy.permits.acquire_many(4).await.unwrap();
-        // Dropping a queued request must remove its semaphore waiter.
+        // Dropping a queued request must remove its semaphore waiter. The timeout's own one-value
+        // `Elapsed` is the whole claim: the request never completed, and the type has no other error.
         assert!(
             tokio::time::timeout(
                 Duration::from_secs(1),
@@ -448,6 +456,7 @@ mod tests {
         assert_eq!(proxy.permits.available_permits(), 4);
 
         let fetch_started = std::cell::Cell::new(false);
+        // The timeout's one-value `Elapsed` again: the fetch did not finish inside the test's second.
         assert!(
             tokio::time::timeout(
                 Duration::from_secs(1),
@@ -461,13 +470,12 @@ mod tests {
         );
         assert!(fetch_started.get());
         assert_eq!(proxy.permits.available_permits(), 4);
-        assert!(
+        refused(
             proxy
                 .get_with_fetch("https://example.com/failed", |_| async {
                     Err(ImageUnavailable)
                 })
-                .await
-                .is_err()
+                .await,
         );
         assert_eq!(proxy.permits.available_permits(), 4);
         assert!(proxy.cache.lock().unwrap().is_empty());
@@ -523,7 +531,7 @@ mod tests {
             }
         }
         let _permits = proxy.permits.acquire_many(4).await.unwrap();
-        assert!(proxy.get("https://example.com/small/39").await.is_err());
+        refused(proxy.get("https://example.com/small/39").await);
         assert!(proxy.cache.lock().unwrap().is_empty());
     }
 
@@ -567,17 +575,14 @@ mod tests {
         ] {
             assert!(public_address(ip.parse().unwrap()), "{ip}");
         }
-        assert!(pinned_client("example.com", &[]).is_err());
-        assert!(
-            pinned_client(
-                "example.com",
-                &[
-                    "8.8.8.8:443".parse().unwrap(),
-                    "127.0.0.1:443".parse().unwrap()
-                ]
-            )
-            .is_err()
-        );
+        refused(pinned_client("example.com", &[]));
+        refused(pinned_client(
+            "example.com",
+            &[
+                "8.8.8.8:443".parse().unwrap(),
+                "127.0.0.1:443".parse().unwrap(),
+            ],
+        ));
     }
 
     #[test]
@@ -590,9 +595,15 @@ mod tests {
             "https://example.com:444/a",
             "data:image/png,x",
         ] {
-            assert!(image_url(url).is_err(), "{url}");
+            match image_url(url) {
+                Err(ImageUnavailable) => {}
+                Ok(_) => panic!("{url}: expected the one ImageUnavailable value"),
+            }
         }
-        assert!(image_url(&format!("https://example.com/{}", "a".repeat(4096))).is_err());
+        refused(image_url(&format!(
+            "https://example.com/{}",
+            "a".repeat(4096)
+        )));
         assert_eq!(
             image_url("https://example.com/a?q=1#x").unwrap().as_str(),
             "https://example.com/a?q=1"
