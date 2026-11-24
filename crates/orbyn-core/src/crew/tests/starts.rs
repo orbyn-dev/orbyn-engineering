@@ -574,7 +574,7 @@ async fn a_crew_whose_turns_cannot_be_read_refuses_a_new_start() {
         .unwrap();
     let (refusal, error) = w.start(leased("src/a.txt"), key()).await;
     assert!(error, "the start was not refused: {refusal}");
-    assert_eq!(refusal["code"], "not_authorized");
+    assert_eq!(refusal["code"], "not_authorized", "{refusal}");
     assert_eq!(
         refusal["message"],
         "The crew's turns could not be read, so no new task can start. Try again."
@@ -631,7 +631,10 @@ async fn one_turn_under_the_crew_turn_budget_still_starts_a_task() {
 #[tokio::test]
 async fn a_crew_with_no_turn_budget_recorded_starts_every_task() {
     let w = quiet().await;
-    for budget in [None, Some(json!(0))] {
+    for (budget, paths) in [
+        (None, ["src/a.txt", "src/b.txt"]),
+        (Some(json!(0)), ["src/c.txt", "src/d.txt"]),
+    ] {
         if let Some(value) = budget {
             w.core
                 .set_preferences(
@@ -640,7 +643,7 @@ async fn a_crew_with_no_turn_budget_recorded_starts_every_task() {
                 )
                 .unwrap();
         }
-        for path in ["src/a.txt", "src/b.txt"] {
+        for path in paths {
             let (answer, error) = w.start(leased(path), key()).await;
             assert!(
                 !error,
