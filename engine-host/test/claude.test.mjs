@@ -516,3 +516,36 @@ test("open without resumeAt does not read the history", async () => {
   assert.equal((await resumeAtOpen(h, {})).ok, true);
   assert.deepEqual(h.calls.sessionMessages, []);
 });
+
+test("closeSession closes the live query once, and the session is unknown afterwards", async () => {
+  const h = boot("multi_turn");
+  await open(h);
+  h.send({ id: 3, type: "send", sessionId: "s", message: "Respond with exactly: first fixture turn complete" });
+  await h.next((f) => f.type === "runDone" && f.sendId === 3);
+  h.send({ id: 4, type: "closeSession", sessionId: "s" });
+  const closed = await h.next((f) => f.id === 4);
+  assert.equal(closed.ok, true);
+  assert.equal(h.calls.closes, 1);
+  h.send({ id: 5, type: "send", sessionId: "s", message: "again" });
+  const refused = await h.next((f) => f.id === 5);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error.cause.name, "UnknownSession");
+  // Closing a session that is not open is a no-op, not an error.
+  h.send({ id: 6, type: "closeSession", sessionId: "s" });
+  assert.equal((await h.next((f) => f.id === 6)).ok, true);
+  assert.equal(h.calls.closes, 1);
+});
+
+test("a steer or a cancel for a run that is not open is refused and touches nothing", async () => {
+  const h = boot("multi_turn");
+  await open(h);
+  h.send({ id: 3, type: "steer", sendId: 99, messageId: "m1", text: "go left" });
+  const steer = await h.next((f) => f.id === 3);
+  assert.equal(steer.ok, true);
+  assert.equal(steer.result.outcome, "rejected");
+  assert.equal(steer.result.messageId, "m1");
+  h.send({ id: 4, type: "cancel", sendId: 99 });
+  const cancel = await h.next((f) => f.id === 4);
+  assert.equal(cancel.result.cancelled, false);
+  assert.equal(h.replay.calls.interrupts ?? 0, 0);
+});
