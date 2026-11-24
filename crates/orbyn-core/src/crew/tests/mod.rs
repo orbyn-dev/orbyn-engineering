@@ -71,6 +71,7 @@ mod hardening;
 mod harness;
 mod http_probe;
 mod issues;
+mod lead_stop;
 mod lessons;
 mod lessons_brief;
 mod lessons_person;
