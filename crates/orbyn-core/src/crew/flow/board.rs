@@ -18,6 +18,7 @@ use orbyn_contracts::FlowColumnId as Column;
 use super::cells::{build_state, check_counts};
 use super::facts::Facts;
 use super::scrub::Scrub;
+use super::stop_detail;
 use super::{QUERY_MAX, SCAN_MAX};
 use crate::app::Core;
 use crate::crew::working::{flow_working, working};
@@ -149,6 +150,7 @@ impl Core {
                 effort: facts.route.as_ref().map(|r| wire_name(&r.effort)),
                 state: task.state.clone(),
                 stop_reason: task.stop_reason.clone(),
+                stop_detail: stop_detail(task.stop_detail.as_deref()),
                 updated_at: task.updated_at.clone(),
                 reason,
                 could_not_start: facts.could_not_start(),
@@ -320,6 +322,7 @@ mod tests {
             effort: None,
             state: "needs_person".to_owned(),
             stop_reason: None,
+            stop_detail: None,
             updated_at: at.to_owned(),
             reason: None,
             could_not_start: false,

@@ -97,6 +97,7 @@ fn the_check_and_forge_watch_futures_fit_their_stack_budgets() {
         run_id: "run-01".into(),
         state: "verifying".into(),
         stop_reason: None,
+        stop_detail: None,
         created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-01-01T00:00:00Z".into(),
     };

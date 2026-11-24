@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::NeedsYouKind;
+use super::{NeedsYouKind, StopDetail};
 
 wire_enum! {
 /// The seven columns, in the order work moves through them.
@@ -68,6 +68,10 @@ pub struct FlowCard {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub stop_reason: Option<String>,
+    /// The typed detail of an `engine_error` stop, when it has one (KC8): `worker_stopped_twice`.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub stop_detail: Option<StopDetail>,
     /// When the task last changed state.
     pub updated_at: String,
     /// The one needs-you field's line for this card (one redacted line, at most 160 characters): the task's own scrubbed

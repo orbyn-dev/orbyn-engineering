@@ -115,6 +115,7 @@ async fn a_finished_task_is_one_card_and_its_reviewer_is_not() {
             "owner",
             "reason",
             "state",
+            "stop_detail",
             "stop_reason",
             "updated_at",
             "working"

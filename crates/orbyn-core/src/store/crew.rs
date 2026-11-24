@@ -40,6 +40,8 @@ pub struct CrewTask {
     pub run_id: String,
     pub state: String,
     pub stop_reason: Option<String>,
+    /// The typed detail of an `engine_error` stop, when it has one (KC8): a worker stopped twice.
+    pub stop_detail: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -51,6 +53,7 @@ pub(super) fn task_row(row: &Row<'_>) -> rusqlite::Result<CrewTask> {
         run_id: row.get("run_id")?,
         state: row.get("state")?,
         stop_reason: row.get("stop_reason")?,
+        stop_detail: row.get("stop_detail")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
