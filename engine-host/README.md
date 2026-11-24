@@ -63,7 +63,7 @@ The two SDKs cannot live in the single file (native files, webpack chunks), so `
 --ignore-scripts`, so no install script runs), plus `THIRD_PARTY_NOTICES.md`. Anthropic's `@anthropic-ai/claude-agent-sdk-<platform>`
 packages (the `claude` binary) are left out, because the host runs the person's own `claude`; the Cursor SDK's package for the build
 platform is in. `scripts/prepare-bundle.mjs` copies it to `build/sdk`, which `tauri.conf.json` ships as `Contents/Resources/sdk`
-(macOS arm64 only, like the host; other targets get an empty folder).
+on macOS arm64 and beside the app exe on Windows x64, as `scripts/host-plan.mjs` decides; other targets get an empty folder.
 
 `src/sdkLocation.mjs` picks where the host imports an SDK from: `ORBYN_CLAUDE_SDK_MODULE` / `ORBYN_CURSOR_SDK_MODULE` first, then
 `<dir of the executable>/sdk/node_modules/<pkg>`, then `<dir>/../Resources/sdk/node_modules/<pkg>`, else the bare package name
@@ -394,10 +394,13 @@ and `auth.ts` (stored keys, sign-in); Muse `usage.ts` and `MuseUsageHome.ts` (th
 history, a file reader the host does not need; the core reads them, parity J27); Muse `isMuseUsageLimitFailure` and `museUsageLimitResetAt` (retry scheduling from refusal text: the core owns
 retry, and Muse's quota reset already rides `retry.resetsAt`); Codex `resetCredits` (this document's limit shape has no field for it).
 
-## In the app bundle (macOS arm64)
+## In the app bundle (macOS arm64 and Windows x64)
 
-`scripts/prepare-bundle.mjs` builds the host and stages it as `binaries/orbyn-engine-host-<triple>`; every other target
-stages an empty placeholder (Tauri needs each `externalBin` file), and Intel Macs keep the Rust drivers.
+`scripts/prepare-bundle.mjs` builds the host and stages it as `binaries/orbyn-engine-host-<triple>`, and stages the SDKs as
+the `sdk` resource: macOS arm64 and Windows x64 both do this, as `scripts/host-plan.mjs` decides. Every other target stages
+an empty placeholder (Tauri needs each `externalBin` file) and an empty sdk folder, and Intel Macs keep the Rust drivers.
+The Windows x64 bundle is **not observed**: no Windows build of the host was run, Authenticode signing does not exist, and
+SmartScreen will show for it like for the installer.
 `tauri.conf.json` lists it in `externalBin` and no longer sets `bundle.macOS.entitlements` (one file would apply to the
 app and every sidecar). `scripts/sign-macos-release.sh` signs the host with `entitlements.plist` and every other binary
 with none. The desktop shell sets `ORBYN_ENGINE_HOST` to the binary's path for
