@@ -282,7 +282,10 @@ a `review_lane_tier` reason, and the `route` in a `crew_start` or `crew_review` 
    writes. The brief's `needs` (for example `image`, `mcp`) must match capabilities.
    - **One source for the state facts:** the first three checks and the write check read `ProviderFacts`
      (`agents/provider_facts.rs`), the same facts the Settings Providers list reads for its Not found, Can't start
-     (a `Broken` version) and Unmanaged (no `managed` or no `approvals`) labels, and for the Signed out state.
+     (a `Broken` version), Unmanaged (no `managed` or no `approvals`) and Limited support labels. Signed out is
+     not one of them: the list draws it from the engine's own login state and last start issue
+     (`provider_list.rs`, `ProviderTable.tsx`), and the router's SignedOut filter reads the same login state
+     through `ProviderFacts.unavailable()`.
      A test runs every combination of those facts through the router and the list and fails if they disagree.
      A sign-in that could not be confirmed has no designed label, so the list shows none for it while the router
      still refuses. Limited support (an `Unsupported` or `Graceful` version) is list-only and never keeps an engine out.
