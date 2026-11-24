@@ -72,6 +72,7 @@ export const prefsOf = (state: Prefs & { desktopPanelOpen?: boolean | null }): P
   threadSound: state.threadSound,
   inAppNotifications: state.inAppNotifications,
   taskRunNotifications: state.taskRunNotifications,
+  crewNotifications: state.crewNotifications,
   confirmUnpin: state.confirmUnpin,
   confirmArchive: state.confirmArchive,
   confirmDelete: state.confirmDelete,
