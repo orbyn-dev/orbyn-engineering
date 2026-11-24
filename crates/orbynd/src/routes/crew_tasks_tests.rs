@@ -192,6 +192,7 @@ async fn a_stored_task_is_listed_and_zoomed_without_its_key() {
     assert_eq!(status, 200);
     assert_eq!(list["tasks"][0]["id"], task.as_str());
     assert_eq!(list["tasks"][0]["name"], "Task flow.");
+    assert_eq!(list["tasks"][0]["stop_detail"], json!(null));
     assert_eq!(list["tasks"][0]["cells"].as_array().unwrap().len(), 10);
     let (status, detail) = app.get(&format!("/api/crew/flow/tasks/{task}")).await;
     assert_eq!(status, 200);
@@ -228,6 +229,41 @@ async fn a_stored_task_is_listed_and_zoomed_without_its_key() {
         !run.to_string().contains(key_id.as_str()),
         "the Run page holds the key's id"
     );
+}
+
+#[tokio::test]
+async fn a_stopped_task_names_its_typed_stop_detail_on_the_flow_and_the_board() {
+    let app = serve("stop-detail", true, false).await;
+    let (task, _) = seed_task(&app.core, "stop-detail");
+    for to in ["routed", "running"] {
+        app.core.store.move_crew_task(&task, to, None).unwrap();
+    }
+    let stopped = app
+        .core
+        .store
+        .stop_crew_after_restart(&task, "already_resumed")
+        .unwrap()
+        .unwrap();
+    assert_eq!(stopped.stop_detail.as_deref(), Some("worker_stopped_twice"));
+
+    let (status, list) = app.get("/api/crew/flow/tasks?crew=crew-1").await;
+    assert_eq!(status, 200);
+    let row = &list["tasks"][0];
+    assert_eq!(row["id"], task.as_str());
+    assert_eq!(row["state"], "stopped");
+    assert_eq!(row["stop_detail"], "worker_stopped_twice");
+
+    let (status, board) = app.get("/api/crew/flow/board?crew=crew-1").await;
+    assert_eq!(status, 200);
+    let card = board["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|column| column["cards"].as_array().unwrap())
+        .find(|card| card["id"] == task.as_str())
+        .expect("the task's card");
+    assert_eq!(card["stop_reason"], "engine_error");
+    assert_eq!(card["stop_detail"], "worker_stopped_twice");
 }
 
 #[tokio::test]

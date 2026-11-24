@@ -85,6 +85,14 @@ pub struct FlowCrewList {
 }
 }
 
+wire_enum! {
+/// The typed detail of a stop whose `stop_reason` stays `engine_error`, so every old reader still sees the stop it
+/// always saw (KC8). `worker_stopped_twice` is a worker that died again after its one resume after a restart.
+pub enum StopDetail {
+    WorkerStoppedTwice,
+}
+}
+
 wire! {
 /// One task of the Flow list: the line of ten stages and the round.
 pub struct FlowTaskRow {
@@ -98,6 +106,10 @@ pub struct FlowTaskRow {
     /// The lead's member name.
     pub owner: String,
     pub state: String,
+    /// The typed detail of an `engine_error` stop; absent for every other stop.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub stop_detail: Option<StopDetail>,
     /// The worker never ran because the task was refused at its start; the Build stage is `failed`, not `needs_you`.
     pub could_not_start: bool,
     pub round: u32,

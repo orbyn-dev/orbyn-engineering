@@ -122,5 +122,5 @@ over 600 characters or `can_approve: false`, `400 secret_refused` as above. An a
 
 On the Flow task row (`FlowTaskRow`): `resumed: boolean` (the task resumed once after a restart) and the existing `round: number`,
 the attempt now running (a resume counts the lost turn as used); "resumed from round N" is `round - 1`. Audit rows `crew.task.resumed` and `crew.task.restart_stopped`. A worker
-stopped after its one resume keeps stop reason `engine_error`; its `crew.task.restart_stopped` row says `why: already_resumed`
-(a typed `worker_stopped_twice` stop reason needs a rebuild of the `crew_tasks` stop-reason constraint and is not built yet).
+stopped after its one resume keeps stop reason `engine_error`; its `crew.task.restart_stopped` row says `why: already_resumed`, and a typed `stop_detail: "worker_stopped_twice"` names the second death.
+Migration 86 adds that column without rebuilding `crew_tasks` (26 foreign keys point at it), so every old reader still sees `engine_error`.

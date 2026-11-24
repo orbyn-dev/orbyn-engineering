@@ -33,7 +33,8 @@ use crate::util::{format_unix, parse_time};
 /// The most items one request may ask to announce.
 pub const NOTIFY_MAX: usize = 50;
 
-/// The stop reason a worker that stopped twice writes. Another engineer writes the row; this module only reads it.
+/// The typed stop detail a worker that stopped twice carries. Its `stop_reason` stays `engine_error`; another
+/// engineer writes the row, and this module only reads it.
 pub const WORKER_STOPPED_TWICE: &str = "worker_stopped_twice";
 
 /// The most items one read answers with.
@@ -363,9 +364,10 @@ impl Core {
             });
         }
         for place in &stopped {
-            if place.task.stop_reason.as_deref() != Some(WORKER_STOPPED_TWICE)
-                || !seen.insert(place.task.id.clone())
-            {
+            // A second death keeps `stop_reason = 'engine_error'` for every old reader; the typed detail names it.
+            let stopped_twice = place.task.stop_reason.as_deref() == Some("engine_error")
+                && place.task.stop_detail.as_deref() == Some(WORKER_STOPPED_TWICE);
+            if !stopped_twice || !seen.insert(place.task.id.clone()) {
                 continue;
             }
             items.push(wire::NeedsYouItem {

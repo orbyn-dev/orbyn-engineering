@@ -5,7 +5,9 @@
 //! The claim is `crew_runs.verifying_since`, the column a live verification uses, so a re-run and a verification can never run
 //! together, and a second re-run finds the claim taken. A claim on a task that is `passed` or `stopped` can only be a re-run's, so
 //! "one re-run at a time on this device" is one query over all claims. A start of the service clears every claim
-//! (`clear_crew_claims`), so a crash never leaves a task locked. The task's state is never changed here (SPEC.md H7).
+//! (`clear_crew_claims`), so a crash never leaves a task locked. The task's state is never changed here (SPEC.md H7). A re-run
+//! of a stopped task clears its typed `stop_detail` (KC8): the person answered the worker-stopped-twice wait, while
+//! `stop_reason` stays `engine_error` for every old reader.
 //!
 //! Which tasks: `passed` ones, and `stopped` ones whose reason is on [`BENIGN_STOPS`] and whose checks ran live at least once. A task
 //! Autopilot stopped for hostile behaviour (`injection_suspected`, `too_many_denials`) never had the key run in its checkout, and a
@@ -151,11 +153,18 @@ impl Store {
                 task_id,
                 json!({ "state": task.state, "reason": reason }),
             )?;
+            // A person's re-run answers the wait a second restart left. The task keeps `engine_error`, so every old
+            // reader still sees the stop, but the typed detail no longer names a wait.
+            tx.execute(
+                "UPDATE crew_tasks SET stop_detail = NULL WHERE id = ?1 AND stop_detail IS NOT NULL",
+                [task_id],
+            )?;
             tx.execute(
                 "UPDATE crew_runs SET verifying_since = ?2
                  WHERE task_id = ?1 AND verifying_since IS NULL",
                 params![task_id, now()],
             )?;
+            let task = find_task(tx, task_id)?;
             Ok((task, run))
         })
     }

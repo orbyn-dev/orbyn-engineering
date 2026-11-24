@@ -49,17 +49,16 @@ fn stop_task(w: &World, id: &str, reason: &str) {
         .unwrap();
 }
 
-fn set_worker_stopped_twice(w: &World, id: &str) {
-    let conn = w.core.store.reader();
-    conn.execute_batch("PRAGMA ignore_check_constraints = ON")
-        .unwrap();
-    conn.execute(
-        "UPDATE crew_tasks SET stop_reason = ?1 WHERE id = ?2",
-        rusqlite::params![WORKER_STOPPED_TWICE, id],
-    )
-    .unwrap();
-    conn.execute_batch("PRAGMA ignore_check_constraints = OFF")
-        .unwrap();
+fn worker_stopped_twice(w: &World, id: &str) {
+    let stopped = w
+        .core
+        .store
+        .stop_crew_after_restart(id, "already_resumed")
+        .unwrap()
+        .expect("a task still in flight is stopped");
+    assert_eq!(stopped.state, "stopped");
+    assert_eq!(stopped.stop_reason.as_deref(), Some("engine_error"));
+    assert_eq!(stopped.stop_detail.as_deref(), Some(WORKER_STOPPED_TWICE));
 }
 
 #[tokio::test]
@@ -302,8 +301,7 @@ async fn a_stopped_task_with_a_tripwire_event_is_tripwire_stop() {
 async fn a_stopped_task_whose_worker_stopped_twice_is_worker_stopped_twice() {
     let w = crew(arc(|_, _| Turn::Hang)).await;
     let id = started_hanging(&w, "Stopped twice.").await;
-    stop_task(&w, &id, "repeated_failure");
-    set_worker_stopped_twice(&w, &id);
+    worker_stopped_twice(&w, &id);
 
     let item = item_of(&w, NeedsYouKind::WorkerStoppedTwice, &id);
     assert!(item.dismissible);
@@ -427,11 +425,10 @@ async fn a_task_is_one_item_and_the_first_rule_wins() {
     assert_eq!(matching.len(), 1, "the task is one item");
     assert_eq!(matching[0].kind, NeedsYouKind::CouldNotStart);
 
-    // A stopped task with both a trip wire and the worker-stopped-twice reason is still one item: the trip wire wins.
+    // A stopped task with both a trip wire and the worker-stopped-twice detail is still one item: the trip wire wins.
     let stopped = started_hanging(&w, "Both reasons.").await;
     let crew_id = w.task(&stopped).crew_id;
-    stop_task(&w, &stopped, "repeated_failure");
-    set_worker_stopped_twice(&w, &stopped);
+    worker_stopped_twice(&w, &stopped);
     w.core
         .store
         .add_crew_autopilot_event(&stopped, &crew_id, "tripwire", &json!({ "in_a_row": 3 }))
