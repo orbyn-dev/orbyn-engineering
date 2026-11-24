@@ -41,6 +41,9 @@ fn fixed_reason(kind: wire::NeedsYouKind) -> Option<&'static str> {
         wire::NeedsYouKind::BackgroundReview => {
             Some("A background run is waiting for your review.")
         }
+        wire::NeedsYouKind::WatchFailing => Some("The watch's command is failing."),
+        // The streak and the fixed reason word say it, so it is built per item.
+        wire::NeedsYouKind::WatchCouldNotRun => None,
         wire::NeedsYouKind::TripwireStop => Some("A trip wire stopped the task."),
         wire::NeedsYouKind::WorkerStoppedTwice => Some("The worker stopped twice."),
         wire::NeedsYouKind::CouldNotStop => Some("The worker could not be stopped. Stop it again."),
@@ -190,6 +193,51 @@ impl Core {
                 since,
                 dismissible: false,
                 reason: fixed_reason(wire::NeedsYouKind::BackgroundReview).map(str::to_owned),
+            });
+        }
+
+        // A watch beside them: one that turned failing and asked for the person, and one whose last three checks in a row could
+        // not run. Both resolve themselves on a check that runs again, so neither is dismissible.
+        for watch in self.store.watch_raised()? {
+            if !seen.insert(watch.crew_id.clone()) {
+                continue;
+            }
+            // The could-not-run kind is the raised one only once the streak reaches three; before that a kept failing row is
+            // still the failing kind.
+            let could_not_run = watch.last_state == "could_not_run" && watch.error_streak >= 3;
+            let kind = if could_not_run {
+                wire::NeedsYouKind::WatchCouldNotRun
+            } else {
+                wire::NeedsYouKind::WatchFailing
+            };
+            let reason = if could_not_run {
+                let why = watch
+                    .last_reason
+                    .as_deref()
+                    .and_then(crate::crew::watch::CouldNotRun::of_word)
+                    .map_or("could not run", crate::crew::watch::CouldNotRun::sentence);
+                line(format!(
+                    "{} checks in a row could not run: {why}.",
+                    watch.error_streak
+                ))
+            } else {
+                fixed_reason(kind).map(str::to_owned)
+            };
+            // A could-not-run row began with its latest check; a failing row began with the change that raised it.
+            let at = if could_not_run {
+                watch.last_checked_unix.or(watch.change_at)
+            } else {
+                watch.change_at.or(watch.last_checked_unix)
+            }
+            .unwrap_or_default();
+            items.push(wire::NeedsYouItem {
+                id: watch.crew_id.clone(),
+                kind,
+                project_id: Some(watch.project_id),
+                crew_id: Some(watch.crew_id),
+                since: format_unix(at),
+                dismissible: false,
+                reason,
             });
         }
 

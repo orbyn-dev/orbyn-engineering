@@ -56,6 +56,8 @@
     ["GET","/api/crew/background","local"],
     ["GET","/api/crew/background/{id}","local"],
     ["GET","/api/crew/background/{id}/runs","local"],
+    ["GET","/api/crew/background/{id}/watch","local"],
+    ["GET","/api/crew/background/{id}/watch/changes","local"],
     ["GET","/api/crew/backtest/estimate","local"],
     ["GET","/api/crew/backtest/start-view","local"],
     ["GET","/api/crew/backtest/{id}/report","local"],

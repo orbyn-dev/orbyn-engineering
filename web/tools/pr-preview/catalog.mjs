@@ -1039,4 +1039,39 @@ export const FRAMES = {
   "transcript-import-error-key-missing": importRoute("nokey.orbyn.json", engineThread),
   "transcript-imported-thread": { route: "#/threads/t-imported", scenario: "transcript-imported" },
 
+  /** Crew, a lesson's card and its states (Crew Designs v121, KC5), on the real lessons routes over the mock's
+   *  crew-lessons scenario, whose five sample lessons follow the design's states: the card, its edit form, a lesson
+   *  turned off, a correction for all repositories, the promote confirm and the refusal the contract gives a lesson that
+   *  names a path, the move-back confirm, the add form, and the list right after a delete with its Undo toast. */
+  "lessons-card": { route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-returnto", scenario: "crew-lessons" },
+  "lessons-edit": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-dates",
+    scenario: "crew-lessons",
+    steps: [click("button", "Edit")],
+  },
+  "lessons-disabled": { route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-session", scenario: "crew-lessons" },
+  "lessons-from-correction": { route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-dates", scenario: "crew-lessons" },
+  "lessons-promote-confirm": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-session",
+    scenario: "crew-lessons",
+    steps: [click("button", "Promote to all repositories")],
+  },
+  "lessons-promote-refused": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-returnto",
+    scenario: "crew-lessons",
+    steps: [click("button", "Promote to all repositories")],
+  },
+  "lessons-move-back-confirm": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-dates",
+    scenario: "crew-lessons",
+    steps: [click("button", "Move back to one repository")],
+  },
+  "lessons-add": { route: "#/settings/crew/lessons/add?repo=p-app", scenario: "crew-lessons" },
+  "lessons-deleted-undo": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-returnto",
+    scenario: "crew-lessons",
+    steps: [click("button", "Delete")],
+    wait: 1800,
+  },
+
 };

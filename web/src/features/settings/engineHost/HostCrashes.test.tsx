@@ -1,34 +1,28 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import { createEngineHostMock, crashFixtures } from "../../../../mock/engineHost";
-import { api, request } from "../../../api/client";
+import type { MockApi } from "../../../../mock/api";
 import { useConnection } from "../../../product/state/connection";
 import { useWorkspace } from "../../../product/state/workspace";
-import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
+import { installMockFetch } from "../../../test-support";
 import { MaintenanceSection } from "../maintenance/Maintenance";
 import { setEngineHostApi } from "../../enginehost";
 
-vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
-
 const minutes = (count: number) => new Date(Date.now() - count * 60_000).toISOString();
-const diagnostics = (events: unknown[]) => ({ version: "0.42.1", pid: 1, active_runs: 2, terminals: 0,
-  database: { bytes: 41_000_000, reclaimable_bytes: 0 }, history: [{ at: minutes(0), memory_bytes: 182_000_000, processes: 1 }], processes: [], events });
-const app = () => ({ library: { incoming: [], blocked_reason: null }, engines: [], checked_at: null, error: null,
-  app: { current: "0.42.1", latest: null, notes: null, mode: "browser", can_apply: false, blocked_reason: null, unconfigured: false } }) as never;
+let mock: MockApi;
 
-beforeEach(() => {
-  vi.mocked(request).mockReset();
-  vi.mocked(request).mockImplementation(async (_method, path) => {
-    if (path === "/api/diagnostics") return diagnostics([{ at: minutes(30), level: "WARN", target: "t", message: "Provider health check for Codex timed out after 10 s." }]) as never;
-    if (path === "/api/settings/preferences/query") return scopedFixture([]) as never;
-    return null as never;
+beforeEach(async () => {
+  mock = installMockFetch();
+  // One ordinary problem in the service's log, and only the service itself running.
+  mock.patchDiagnostics({
+    events: [{ at: minutes(30), level: "WARN", target: "t", message: "Provider health check for Codex timed out after 10 s." }],
+    processes: [{ pid: 4120, parent: null, name: "orbynd", memory_bytes: 182_000_000, running_seconds: 5400 }],
   });
-  vi.spyOn(api, "settings").mockResolvedValue({ background_update_checks: true } as Awaited<ReturnType<typeof api.settings>>);
   useConnection.setState({ offline: false });
-  useWorkspace.getState().putUpdates(app());
+  await useWorkspace.getState().refreshUpdates();
 });
-afterEach(() => { setEngineHostApi(null); vi.restoreAllMocks(); });
+afterEach(() => setEngineHostApi(null));
 
 it("leaves Recent problems as it was while the service reports no host crash", async () => {
   const user = userEvent.setup();

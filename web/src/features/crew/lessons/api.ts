@@ -5,8 +5,8 @@
 import { ApiFailure, request } from "../../../api/client";
 import type { Lesson, LessonDeleted, LessonDetail, LessonFilter, LessonList, LessonScope } from "./types";
 
-/** The same shape the service's every crew id check accepts. */
-const validLessonId = (id: string): boolean => id.length <= 96 && /^[A-Za-z0-9:_-][A-Za-z0-9:_.-]*$/.test(id);
+/** The same shape the service's every crew id check accepts: a page checks it before it reads, so a bad id sends nothing. */
+export const validLessonId = (id: string): boolean => id.length <= 96 && /^[A-Za-z0-9:_-][A-Za-z0-9:_.-]*$/.test(id);
 
 const repoQuery = (repo: string) => `repo=${encodeURIComponent(repo)}`;
 const path = (id: string): string => {

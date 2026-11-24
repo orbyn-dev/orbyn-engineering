@@ -7,13 +7,17 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 wire_enum! {
-/// Why an item is in the inbox: the first matching rule for a task, or the wait of a merge or a background run.
+/// Why an item is in the inbox: the first matching rule for a task, or the wait of a merge, a background run or a watch.
 pub enum NeedsYouKind {
     TaskNeedsPerson,
     CouldNotStart,
     ManualCheck,
     MergeWaiting,
     BackgroundReview,
+    /// A watch's command turned failing and asked for the person (or its template could not start).
+    WatchFailing,
+    /// Three checks in a row of a watch could not run. A check that runs again resolves it.
+    WatchCouldNotRun,
     TripwireStop,
     WorkerStoppedTwice,
     /// The task's last cancel attempt could not stop its worker; the task keeps its state and the stop is tried again.
@@ -22,16 +26,17 @@ pub enum NeedsYouKind {
 }
 
 wire! {
-/// One thing that waits for the person. `id` is the task's id, or a background run's id; `since` is when it began to wait.
+/// One thing that waits for the person. `id` is the task's id, a background run's id or a watch crew's id; `since` is when it
+/// began to wait.
 pub struct NeedsYouItem {
-    /// The task's id, or a background run's id.
+    /// The task's id, a background run's id, or a watch crew's id.
     pub id: String,
     pub kind: NeedsYouKind,
     /// The project the item belongs to, when its task or run still names one.
     #[serde(default)]
     #[ts(optional = nullable)]
     pub project_id: Option<String>,
-    /// The crew the item belongs to: a task's crew, a merge's crew, or a background crew.
+    /// The crew the item belongs to: a task's crew, a merge's crew, a background crew, or a watch crew.
     #[serde(default)]
     #[ts(optional = nullable)]
     pub crew_id: Option<String>,

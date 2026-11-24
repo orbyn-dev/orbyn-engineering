@@ -1,37 +1,33 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiFailure } from "../../../api/client";
-import type { EngineModels, EngineStatus } from "../../../api/types";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { MockApi } from "../../../../mock/api";
+import type { EngineStatus } from "../../../api/types";
+import { useWorkspace } from "../../../product/state/workspace";
+import { installMockFetch } from "../../../test-support";
+import { holdFetch, wire, wireWrites } from "../../../wire.test-support";
 import { ProvidersSection } from "./Providers";
 
-const mock = vi.hoisted(() => ({ refresh: vi.fn(), engines: [] as EngineStatus[] }));
-const actions = vi.hoisted(() => ({ sendFeedback: vi.fn(), models: vi.fn(), updateAllEngines: vi.fn(), updateEngine: vi.fn() }));
-vi.mock("../../../api/client", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../../api/client")>();
-  return { ...original, api: { ...original.api, ...actions } };
+let mock: MockApi;
+beforeEach(() => {
+  mock = installMockFetch();
+  // No thread is running, so an engine is only busy when a test says it is.
+  mock.reset("empty");
 });
-vi.mock("../../../product/state/workspace", () => ({
-  useWorkspace: (select: (state: {
-    refreshEngines: typeof mock.refresh;
-    engines: { data: EngineStatus[]; error: null };
-    projects: { data: unknown[]; error: null };
-    threads: Record<string, never>;
-  }) => unknown) =>
-    select({
-      refreshEngines: mock.refresh,
-      engines: { data: mock.engines, error: null },
-      projects: { data: [], error: null },
-      threads: {},
-    }),
-}));
-vi.mock("../rows/SettingsScopeContext", () => ({ useSettingsScope: () => null }));
 
-const catalog: EngineModels = {
-  engine: "codex", source: "engine", models: [], error: null,
-  checked_at: "2026-11-05T00:00:00Z", fallback: false, options: [], agents: [],
-  output_styles: [],
-};
+/** The service reports these engines, and the page has read them. */
+async function report(engines: EngineStatus[]) {
+  mock.setEngines(engines);
+  await useWorkspace.getState().refreshEngines();
+}
+
+/** Opens a provider's page once the list has settled into its groups (the rows are replaced when the catalogue arrives). */
+async function openProvider(name: string) {
+  await screen.findByText("Not built yet");
+  await userEvent.click(await screen.findByRole("button", { name }));
+}
+
+const engineWrites = () => wireWrites().filter((call) => call.path.startsWith("/api/engines"));
 
 function engine(overrides: Partial<EngineStatus> = {}): EngineStatus {
   return {
@@ -59,20 +55,12 @@ function engine(overrides: Partial<EngineStatus> = {}): EngineStatus {
   };
 }
 
-beforeEach(() => {
-  mock.refresh.mockReset();
-  actions.sendFeedback.mockReset();
-  actions.models.mockReset();
-  actions.models.mockResolvedValue(catalog);
-});
-
 describe("codex feedback", () => {
   it("sends the written reason and the chosen log setting", async () => {
     const user = userEvent.setup();
-    mock.engines = [engine()];
-    actions.sendFeedback.mockResolvedValue({ thread_id: "report-1", prompt_hash: null });
+    await report([engine()]);
     render(<ProvidersSection />);
-    await userEvent.click(await screen.findByRole("button", { name: "Codex" }));
+    await openProvider("Codex");
 
     await user.click(await screen.findByRole("button", { name: "Send feedback" }));
     const dialog = await screen.findByRole("dialog");
@@ -84,23 +72,21 @@ describe("codex feedback", () => {
     await user.click(within(dialog).getByRole("button", { name: "Send feedback" }));
 
     await waitFor(() =>
-      expect(actions.sendFeedback).toHaveBeenCalledWith("codex", {
-        reason: "it broke",
-        include_logs: true,
-        thread_id: null,
-      }),
+      expect(engineWrites()).toEqual([{
+        method: "POST",
+        path: "/api/engines/codex/feedback",
+        body: { reason: "it broke", include_logs: true, thread_id: null },
+      }]),
     );
     expect(await screen.findByRole("status")).toHaveTextContent("report-1");
   });
 
   it("keeps the dialog open and reports a failed send", async () => {
     const user = userEvent.setup();
-    mock.engines = [engine()];
-    actions.sendFeedback.mockRejectedValue(
-      new ApiFailure("unsupported", "Codex refused the report.", 422),
-    );
+    await report([engine()]);
+    mock.fail("/api/engines/codex/feedback", 1, 422, "unsupported", "Codex refused the report.");
     render(<ProvidersSection />);
-    await userEvent.click(await screen.findByRole("button", { name: "Codex" }));
+    await openProvider("Codex");
 
     await user.click(await screen.findByRole("button", { name: "Send feedback" }));
     const dialog = await screen.findByRole("dialog");
@@ -112,11 +98,10 @@ describe("codex feedback", () => {
 
   it("blocks duplicate sends and closing while the report is pending", async () => {
     const user = userEvent.setup();
-    mock.engines = [engine()];
-    let accept!: (receipt: { thread_id: string }) => void;
-    actions.sendFeedback.mockReturnValue(new Promise((resolve) => { accept = resolve; }));
+    await report([engine()]);
+    const slow = holdFetch("POST", "/api/engines/codex/feedback");
     render(<ProvidersSection />);
-    await userEvent.click(await screen.findByRole("button", { name: "Codex" }));
+    await openProvider("Codex");
     await user.click(await screen.findByRole("button", { name: "Send feedback" }));
     const dialog = await screen.findByRole("dialog");
     const send = within(dialog).getByRole("button", { name: "Send feedback" });
@@ -124,16 +109,17 @@ describe("codex feedback", () => {
     expect(send).toBeDisabled();
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
     await user.click(send);
-    expect(actions.sendFeedback).toHaveBeenCalledTimes(1);
-    accept({ thread_id: "pending-report" });
-    expect(await screen.findByRole("status")).toHaveTextContent("pending-report");
+    expect(engineWrites()).toHaveLength(1);
+    slow.release();
+    expect(await screen.findByRole("status")).toHaveTextContent("report-1");
+    expect(engineWrites()).toHaveLength(1);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("offers the action only where the route exists", async () => {
-    mock.engines = [engine({ id: "claude", name: "Claude" })];
+    await report([engine({ id: "claude", name: "Claude" })]);
     render(<ProvidersSection />);
-    await userEvent.click(await screen.findByRole("button", { name: "Claude (SDK)" }));
+    await openProvider("Claude (SDK)");
 
     expect(await screen.findByRole("heading", { name: "Claude" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Send feedback" })).toBeNull();
@@ -145,59 +131,57 @@ describe("update all", () => {
 
   it("offers update all for two owned engines with newer versions and reports a failure", async () => {
     const user = userEvent.setup();
-    mock.engines = [
+    await report([
       engine({ ...owned, id: "codex", name: "Codex" }),
       engine({ ...owned, id: "claude", name: "Claude", update_command: "npm install -g y@latest" }),
       engine({ ...owned, id: "work", name: "Work", instance_of: "codex" }),
-    ];
-    actions.updateAllEngines.mockResolvedValue([
-      { id: "codex", name: "Codex", version: "2.0.0" },
-      { id: "claude", name: "Claude", error: "Claude is busy." },
     ]);
+    mock.fail("/api/engines/claude/update", 1, 409, "engine_busy", "claude has an active run or update");
     render(<ProvidersSection />);
 
+    await screen.findByText("Not built yet");
     await user.click(await screen.findByRole("button", { name: "Update all" }));
     const dialog = await screen.findByRole("dialog", { name: "Update 2 engines?" });
     expect(within(dialog).getByText("npm install -g x@latest")).toBeVisible();
     expect(within(dialog).getByText("npm install -g y@latest")).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "Update 2 engines" }));
 
-    expect(actions.updateAllEngines).toHaveBeenCalledTimes(1);
     expect(await screen.findByRole("heading", { name: "Updating engines" })).toBeVisible();
     expect(await screen.findByText("1 of 2 engines couldn’t be updated.")).toBeVisible();
-    expect(screen.getByText("Claude is busy.")).toBeVisible();
-    await waitFor(() => expect(mock.refresh).toHaveBeenCalled());
+    expect(screen.getByText("claude has an active run or update")).toBeVisible();
+    expect(engineWrites()).toEqual([{ method: "POST", path: "/api/engines/update-all" }]);
+    // The page reads the engines again once the update ends.
+    const calls = wire();
+    await waitFor(() => expect(wire().slice(calls.findIndex((call) => call.path === "/api/engines/update-all") + 1)).toContainEqual({ method: "GET", path: "/api/engines" }));
   });
 
   it("names an engine with no installer as skipped, and Try again runs only the one that failed", async () => {
     const user = userEvent.setup();
-    mock.engines = [
+    await report([
       engine({ ...owned, id: "codex", name: "Codex" }),
       engine({ ...owned, id: "claude", name: "Claude", update_command: "npm install -g y@latest" }),
       engine({ ...owned, id: "gemini", name: "Gemini CLI", update_command: null }),
-    ];
-    actions.updateAllEngines.mockResolvedValue([
-      { id: "codex", name: "Codex", version: "2.0.0" },
-      { id: "claude", name: "Claude", error: "brew: Permission denied" },
     ]);
-    actions.updateEngine.mockResolvedValue(undefined);
+    mock.fail("/api/engines/claude/update", 1, 502, "update_failed", "brew: Permission denied");
     render(<ProvidersSection />);
 
+    await screen.findByText("Not built yet");
     await user.click(await screen.findByRole("button", { name: "Update all" }));
     const dialog = await screen.findByRole("dialog", { name: "Update 2 engines?" });
     expect(within(dialog).getByText("Skipped: Gemini CLI has no installer Orbyn recognises.")).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "Update 2 engines" }));
 
     await user.click(await screen.findByRole("button", { name: "Try again" }));
-    expect(actions.updateEngine).toHaveBeenCalledTimes(1);
-    expect(actions.updateEngine).toHaveBeenCalledWith("claude");
-    expect(actions.updateAllEngines).toHaveBeenCalledTimes(1);
+    expect(engineWrites()).toEqual([
+      { method: "POST", path: "/api/engines/update-all" },
+      { method: "POST", path: "/api/engines/claude/update" },
+    ]);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Try again" })).toBeNull());
     expect(screen.queryByText("1 of 2 engines couldn’t be updated.")).toBeNull();
   });
 
   it("does not offer update all for a single engine or one already current", async () => {
-    mock.engines = [engine({ ...owned }), engine({ ...owned, id: "claude", name: "Claude", latest: "1.0.0" })];
+    await report([engine({ ...owned }), engine({ ...owned, id: "claude", name: "Claude", latest: "1.0.0" })]);
     render(<ProvidersSection />);
     expect(await screen.findByRole("button", { name: "Check again" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Update all" })).toBeNull();
@@ -207,16 +191,16 @@ describe("update all", () => {
 describe("acp sign-in", () => {
   it("shows the terminal sign-in an ACP agent named, and nothing when it named none", async () => {
     const acp = { id: "opencode", name: "OpenCode", tier: "acp" as const, auth: "not_applicable" as const, installer: "unknown" as const };
-    mock.engines = [engine({ ...acp, sign_in_command: "opencode acp --login" })];
+    await report([engine({ ...acp, sign_in_command: "opencode acp --login" })]);
     const { unmount } = render(<ProvidersSection />);
-    await userEvent.click(await screen.findByRole("button", { name: "OpenCode" }));
+    await openProvider("OpenCode");
     expect(await screen.findByRole("button", { name: "Copy sign-in command" })).toBeVisible();
     expect(screen.getByText("opencode acp --login")).toBeVisible();
     unmount();
 
-    mock.engines = [engine({ ...acp, sign_in_command: null })];
+    await report([engine({ ...acp, sign_in_command: null })]);
     render(<ProvidersSection />);
-    await userEvent.click(await screen.findByRole("button", { name: "OpenCode" }));
+    await openProvider("OpenCode");
     expect((await screen.findAllByText("OpenCode")).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Copy sign-in command" })).toBeNull();
   });
