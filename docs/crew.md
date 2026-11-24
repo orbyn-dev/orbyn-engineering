@@ -1816,6 +1816,8 @@ writes `crew.task.resumed` in the same transaction as the state, attempt and res
 `crew.task.restart_stopped` with `why` (`reviewer`, `already_resumed`, `not_resumable` or `send_failed`) in
 the same transaction as its `stopped`/`engine_error` move.
 
+**Device notifications (KC10), as built (service).** A window that wants to show a desktop notification first asks `POST /api/crew/needs-you/notify` with at most 50 `{kind, id}` refs (more is `400 invalid_input`). The answer is the refs it may announce: the ones that are current items of the needs-you list (so never a dismissed one), not announced yet at their current wait. Each is marked announced in the same call (migration 83, `crew_needs_you_notified`: kind, id, the item's `since`, the time; ids and times only), so the first window to ask is given the item and every later one, another window or a restart, is not. An item that waits again with a later `since` is a new wait and is announced again. Nothing behind an item is touched; the route is local, behind Crew Preview, and writes no audit row (it records no decision). The window's own notification, its wording and the settings switch are the web half (Eng 1), not built; a notification carries a kind and a fixed line, never task content or an answer.
+
 **One needs you (KC3), as built (service).** The one field is `Core::crew_needs_you` (`GET /api/crew/needs-you`, dismissal in `POST …/dismiss`, migration 78): every wait across every crew — a task waiting on a person, a task that could not start, a manual check, a merge waiting on a person, a background run waiting for review, a trip-wire stop and a worker-stopped-twice stop — first rule wins, newest first, at most 200, device-local dismissals, never touching what it reads. The service half of KC3 reads it everywhere a "needs you" count is drawn:
 - **Taskboard:** the Needs you column reads that field, not the task's run state. A passed task whose merge waits and a stopped task whose trip wire stopped it are cards there (the first was in Passed, the second in Stopped · Cancelled), each with the field's kind and its scrubbed reason — the task's own latest `needs_person` result where it has one, so a could-not-start card carries the refusal that kept it from starting and a manual check carries its own words, and the kind's fixed words stand in only when there is none; a dismissed trip-wire or stopped-twice wait leaves the column on the next read. `FlowCard.needs_you` carries the kind. The cards come from the same field the Inbox and the dashboard read, not necessarily the same count: a background run's wait has no card, and the board only reads work tasks. **The one dismissal that keeps its card:** a could-not-start task whose dismissible wait was dismissed on this device still reads `needs_person`, so its card stays in Needs you with no field kind and no sentence — the board never hides a task that still cannot run — while the Inbox and the dashboard, which read only the field, drop it; the product decision is recorded in [#1367](https://github.com/orbyn-dev/orbyn-engineering/issues/1367). No merged frame draws an urgent mark (Crew Designs v121, the `needs-one-source-*` group), so the column keeps its one existing order: a High-risk merge or an overdue review first, then newest.
 - **Working:** one pure function, `crate::crew::working::working` (`crew/working.rs`), with a truth table as its test. A worker owns live work while a turn runs, while the checks run, while a retry is queued (`failed`, `changed_approach`), and on a finished task while its latest fix has not finished; a queued or routed task that never started, one waiting on the person and a finished one own nothing, and a background run in flight is working while an idle or waiting crew is not. It is deliberately not `quiet_of(...) == FlowQuiet::Active`, which answers silence rather than ownership and disagrees both ways (a passed worker is Active; a worker quiet for five minutes is Quiet and still owns its work). The Taskboard card (`FlowCard.working`), the Map node (`FlowNode.working`) and the dashboard's live count all ask it.
@@ -2036,8 +2038,10 @@ The person's stop button for a Crew task (Preview). Backend only: the card actio
   message queued, after the cancel read the task. Once the task is `cancelled` the worker is read again and stopped once more (with
   its queue emptied); a later start or retry meets its own final-state guard. If that second stop fails, **the task stays
   `cancelled` with a worker that may still run**: a `crew.task.cancel_failed` row flags it and the caller gets `502
-  engine_unavailable` ("The task is cancelled, but its worker could not be stopped"). Repeating the cancel answers `already: true`,
-  so the person stops that worker from its thread.
+  engine_unavailable` ("The task is cancelled, but its worker could not be stopped"). Repeating the cancel tries the worker's stop again: it
+  writes `crew.task.stop_retry`, stops the worker and, if that holds, writes `crew.task.stop_retried` (which clears the flag) and
+  answers `already: true`; a stop that fails again writes another `cancel_failed` row and the same 502. A cancelled task with no
+  failed stop writes nothing.
 - **Wording.** When the worker's run end moves the task first, its final result still says the person cancelled it if the cancel's
   intent row exists.
 - **Races with a start or a retry.** A task cannot get a worker once it ended (`set_crew_worker` refuses in its transaction, the thread
@@ -2084,9 +2088,10 @@ the person key were merged first (#1342).
   "The lead thread was closed."; a cancel with another reason still tells it. Without this the note would start the thread the
   person is closing and the patch would answer `409 thread_busy`.
 - **Could not stop.** A task whose last cancel attempt failed is an item of the person's *needs you* inbox with kind
-  `could_not_stop` (not dismissible): the read joins non-final tasks to their latest `crew.task.cancel_failed` row with no
-  `crew.task.cancelled` row after it, and shows that row's time as `since`. It adds no storage and moves nothing. The item clears when
-  the person stops the task again and it ends `cancelled`.
+  `could_not_stop` (not dismissible): the read joins tasks that have not passed or stopped (a `cancelled` one whose second stop failed
+  included) to their latest `crew.task.cancel_failed` row with no `crew.task.cancelled` or `crew.task.stop_retried` row after it,
+  and shows that row's time as `since`. It adds no storage and moves nothing. The item clears when the person stops the task again
+  and the stop holds.
 - **Not run against a real service.** The routes, the agreement between the live read and the close, the failed-task path, the inbox
   item and the thread's own close are covered by fake-engine and route tests; the web half hides until the Preview flag is on.
 

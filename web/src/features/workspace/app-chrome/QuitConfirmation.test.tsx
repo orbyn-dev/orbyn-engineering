@@ -1,6 +1,7 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { installMockFetch } from "../../../test-support";
+import { wire } from "../../../wire.test-support";
 import { useWorkspace } from "../../../product/state/workspace";
 import type { Thread } from "../../../api/types";
 import { QuitConfirmation } from "./QuitConfirmation";
@@ -20,8 +21,14 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 const press = async () => {
+  // The key is live only once the platform and the saved mode have been read; the component shows no sign of that.
+  await waitFor(() => {
+    const paths = wire().filter((call) => call.method === "GET").map((call) => call.path);
+    expect(paths).toContain("/api/info");
+    expect(paths).toContain("/api/preferences");
+  });
   await act(async () => {
-    await new Promise((done) => setTimeout(done, 0));
+    await Promise.resolve(); // let both answers land
     fireEvent.keyDown(window, { key: "q", metaKey: true });
   });
 };

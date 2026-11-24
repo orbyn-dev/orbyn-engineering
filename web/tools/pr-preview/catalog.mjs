@@ -822,6 +822,8 @@ export const FRAMES = {
   // Crew, the background create form and its daily budget (Crew Designs frames background-new, background-new-label,
   // background-new-schedule and background-create-daily-*). The mock's crew-background scenario lists crews, so the
   // header's New background crew opens the form with the default template, budget and daily budget.
+  // Crew KC4 PR B: a background start the disk guard refused, as the newest row of Recent runs (frame kc4-low-disk-background-run).
+  "kc4-low-disk-background-run": { route: "#/crew/background", scenario: "crew-background-disk-low" },
   "background-new": { route: "#/crew/background", scenario: "crew-background", steps: [click("button", "New background crew")] },
   "background-new-label": {
     route: "#/crew/background",
@@ -1006,6 +1008,9 @@ export const FRAMES = {
   "watch-history": { route: "#/preview/crew/watch-history", scenario: "crew-background-watch-failing" },
   /** The inbox with the two watch rows (watch-needsyou), on the app's own Inbox tab. */
   "watch-needsyou": { route: "#/crew/inbox", scenario: "crew-background-watch-needsyou" },
+
+  /** KC2: the inbox row of a task whose worker could not be stopped (kc2-close-lead-could-not-stop, the Needs you half; the Board card is not served yet). */
+  "kc2-close-lead-could-not-stop": { route: "#/crew/inbox", scenario: "crew-could-not-stop" },
 
   /** Crew, the escape log (Crew Designs v79), on the real escape routes over the mock's crew-escapes scenarios. A detail
    *  frame names its escape in the hash; escape-gap opens the same escape with its Set-the-gap dialog. */

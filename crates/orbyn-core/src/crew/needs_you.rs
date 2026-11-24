@@ -30,6 +30,9 @@ use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::util::{format_unix, parse_time};
 
+/// The most items one request may ask to announce.
+pub const NOTIFY_MAX: usize = 50;
+
 /// The stop reason a worker that stopped twice writes. Another engineer writes the row; this module only reads it.
 pub const WORKER_STOPPED_TWICE: &str = "worker_stopped_twice";
 
@@ -366,5 +369,42 @@ impl Core {
         self.store
             .dismiss_crew_needs_you(&wire_name(&kind), id, &item.since, actor)?;
         Ok(wire::NeedsYouDismissed { dismissed: true })
+    }
+
+    /// A window asks to announce items with a desktop notification (KC10). Only current, undismissed items are considered, at
+    /// most 50 refs are read, and an item is handed out once per wait: the first window to ask for it gets it and every later one
+    /// (another window, a restart) gets nothing, until the item waits again with a later `since`. The answer keeps the order asked.
+    /// Nothing behind an item is touched.
+    pub fn crew_needs_you_notify(
+        &self,
+        items: &[wire::NeedsYouRef],
+    ) -> Result<wire::NeedsYouNotified> {
+        self.crew_preview_only()?;
+        if items.len() > NOTIFY_MAX {
+            return Err(CoreError::Invalid(format!(
+                "at most {NOTIFY_MAX} items can be announced at once"
+            )));
+        }
+        for item in items {
+            valid_id(&item.id)?;
+        }
+        let current = self.needs_you_list()?;
+        let mut claimed = Vec::new();
+        for asked in items {
+            let Some(item) = current
+                .iter()
+                .find(|item| item.kind == asked.kind && item.id == asked.id)
+            else {
+                continue;
+            };
+            if self.store.claim_crew_needs_you_notice(
+                &wire_name(&item.kind),
+                &item.id,
+                &item.since,
+            )? {
+                claimed.push(asked.clone());
+            }
+        }
+        Ok(wire::NeedsYouNotified { claimed })
     }
 }

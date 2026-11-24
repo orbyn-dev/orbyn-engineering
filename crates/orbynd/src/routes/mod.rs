@@ -93,6 +93,8 @@ mod crew_manual_tests;
 mod crew_map_tests;
 #[cfg(test)]
 mod crew_needs_you_tests;
+#[cfg(test)]
+mod crew_notify_tests;
 #[cfg(all(test, unix))]
 mod crew_rerun_tests;
 #[cfg(test)]

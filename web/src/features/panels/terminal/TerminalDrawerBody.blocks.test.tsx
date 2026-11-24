@@ -69,6 +69,7 @@ describe("command blocks in the drawer", () => {
 
     // The command ran after that first read.
     mock.terminals.setBlocks("th", "t2", [block], { b1: "ok\n" });
+    // Real time on purpose: the idle re-read runs on the drawer's own interval, which this wait spans (the timeout is its upper bound).
     await waitFor(() => expect(blockReads().length).toBeGreaterThan(1), { timeout: 7000 });
     expect(await screen.findByRole("group", { name: "Command blocks" })).toBeInTheDocument();
   }, 12000);

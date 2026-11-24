@@ -639,7 +639,20 @@ impl Core {
 }
 
 #[cfg(test)]
+/// The call refused the value with exactly this message.
+fn invalid<T>(result: Result<T>, message: &str) {
+    match result {
+        Err(CoreError::Invalid(got)) => {
+            assert_eq!(got, message)
+        }
+        Err(other) => panic!("refused with {other:?}, not {message}"),
+        Ok(_) => panic!("accepted what must be refused: {message}"),
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use super::invalid;
     use super::*;
 
     #[test]
@@ -652,7 +665,10 @@ mod tests {
         assert!(serde_json::from_value::<ScopedPreferencesQuery>(json!({})).is_err());
         assert!(serde_json::from_value::<ScopedPreferencesQuery>(json!({"scope":null})).is_err());
         assert!(check(definition("auto_settle_after_days").unwrap(), &Value::Null).is_ok());
-        assert!(check(definition("auto_pull").unwrap(), &Value::Null).is_err());
+        invalid(
+            check(definition("auto_pull").unwrap(), &Value::Null),
+            "That is not a valid value for auto_pull.",
+        );
     }
 
     #[test]
@@ -660,9 +676,18 @@ mod tests {
         let budget = definition(CREW_TURN_BUDGET).unwrap();
         assert!(check(budget, &json!(0)).is_ok(), "0 is no crew budget");
         assert!(check(budget, &json!(30)).is_ok());
-        assert!(check(budget, &json!(1.5)).is_err());
-        assert!(check(budget, &json!("30")).is_err());
-        assert!(check(budget, &json!(-1)).is_err());
+        invalid(
+            check(budget, &json!(1.5)),
+            "A crew turn budget is a whole number of turns, or 0 for no budget.",
+        );
+        invalid(
+            check(budget, &json!("30")),
+            "That is not a valid value for crew_turn_budget.",
+        );
+        invalid(
+            check(budget, &json!(-1)),
+            "That is not a valid value for crew_turn_budget.",
+        );
     }
 
     #[test]
@@ -692,8 +717,14 @@ mod tests {
     fn a_background_interval_is_at_least_a_minute() {
         for key in BACKGROUND_INTERVALS {
             let interval = definition(key).unwrap();
-            assert!(check(interval, &json!(0)).is_err(), "{key} accepted 0");
-            assert!(check(interval, &json!(-5)).is_err(), "{key} accepted -5");
+            invalid(
+                check(interval, &json!(0)),
+                "The shortest background interval is 1 minute.",
+            );
+            invalid(
+                check(interval, &json!(-5)),
+                &format!("That is not a valid value for {key}."),
+            );
             assert!(
                 check(interval, &json!(1)).is_ok(),
                 "{key} refused its own min"
@@ -725,7 +756,10 @@ mod tests {
         assert!(check(path, &json!("cli")).is_ok());
         assert!(check(path, &json!("sdk")).is_ok());
         for bad in [json!("auto"), json!(""), json!(true), json!(null)] {
-            assert!(check(path, &bad).is_err(), "{bad}");
+            invalid(
+                check(path, &bad),
+                "That is not a valid value for claude_engine_path.",
+            );
         }
     }
 
@@ -733,14 +767,21 @@ mod tests {
     fn shapes_are_enforced() {
         let submodules = definition("worktree_submodules").unwrap();
         assert!(check(submodules, &json!("skip")).is_ok());
-        assert!(check(submodules, &json!("sometimes")).is_err());
-        assert!(check(definition("auto_pull").unwrap(), &json!("yes")).is_err());
-        assert!(definition("api_token").is_err());
+        invalid(
+            check(submodules, &json!("sometimes")),
+            "That is not a valid value for worktree_submodules.",
+        );
+        invalid(
+            check(definition("auto_pull").unwrap(), &json!("yes")),
+            "That is not a valid value for auto_pull.",
+        );
+        invalid(definition("api_token"), "Unknown setting api_token.");
     }
 }
 
 #[cfg(test)]
 mod scoped_consumer_tests {
+    use super::invalid;
     use super::*;
     use crate::{
         CoreConfig,
@@ -798,12 +839,12 @@ mod scoped_consumer_tests {
             (view.source.as_str(), view.project_scoped),
             ("global", false)
         );
-        assert!(
+        invalid(
             core.set_preferences(
                 Some(&project.id),
                 &BTreeMap::from([("default_permission_mode".into(), json!("auto"))]),
-            )
-            .is_err()
+            ),
+            "default_permission_mode is not set per project.",
         );
     }
 
@@ -1076,7 +1117,7 @@ mod scoped_consumer_tests {
                 ("no_such_preference".to_owned(), json!(1)),
             ]),
         );
-        assert!(error.is_err());
+        invalid(error, "Unknown setting no_such_preference.");
         assert_eq!(core.preference(CREW_MIN_FREE_GB, None).unwrap(), json!(5));
         let audit = core.store.list_audit(None, 20).unwrap();
         assert!(

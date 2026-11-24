@@ -102,6 +102,38 @@ export function couldNotStartItems(cards: CouldNotStartCard[]): NeedsItem[] {
     });
 }
 
+/** The sentence of the design when the service's item carries no line of its own. */
+export const WORKER_MAY_RUN = "Its worker may still be running. Stop it again.";
+
+/**
+ * Tasks whose last cancel attempt could not stop their worker (kc2-close-lead-could-not-stop). The task's name and engine come
+ * from the board card when there is one; the item alone names only the task's id. The line is the service's own (the card and the
+ * row carry the same sentence). Not dismissible: only stopping the task again clears it, and that never restarts the task.
+ */
+export function couldNotStopItems(read: { items: NeedsYouItem[]; cards: Record<string, FlowCard> }): NeedsItem[] {
+  return read.items
+    .filter((item) => item.kind === "could_not_stop")
+    .map((item) => {
+      const card = read.cards[item.id];
+      const name = card?.name?.trim() || `Task ${item.id}`;
+      const engine = [card?.engine, card?.model].filter(Boolean).join(" · ");
+      return {
+        id: `stuck:${item.id}`,
+        kind: "could_not_stop" as const,
+        title: name,
+        risk: null,
+        undo: null,
+        from: engine || `Task ${item.id}`,
+        cost: item.reason?.trim() || WORKER_MAY_RUN,
+        since: time(item.since),
+        ...(card?.engine ? { engine: card.engine } : {}),
+        actions: [{ key: "stop-again" as const, label: "Stop again", primary: true }, { key: "open" as const, label: "Open task" }],
+        ref: item.id,
+        ...(item.project_id ? { project: item.project_id } : {}),
+      };
+    });
+}
+
 /** Dismissing a stop is local to this device: nothing is sent to the service. */
 export const STOP_HINT = "Dismiss hides this stop on this device.";
 
