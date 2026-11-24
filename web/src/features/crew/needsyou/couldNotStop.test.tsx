@@ -93,6 +93,15 @@ describe("a task whose worker could not be stopped (kc2-close-lead-could-not-sto
     expect(screen.queryByText(/Can’t read tasks that could not be stopped/)).toBeNull();
   });
 
+  it("keeps the could-not-stop row when the crew list that names the watches cannot be read", async () => {
+    mock.reset("crew-could-not-stop-and-watch");
+    mock.fail("/api/crew/background", 8, 503, "unavailable");
+    render(<NeedsYouInbox />);
+    const list = await screen.findByRole("list", { name: "Needs you" });
+    const row = await waitFor(() => within(list).getAllByRole("listitem").find((one) => one.getAttribute("data-kind") === "could_not_stop")!);
+    expect(within(row).getByRole("button", { name: /^Stop again/ })).toBeEnabled();
+  });
+
   it("draws no row when the shared Needs you read is not served: an older service never sends the kind", async () => {
     mock.reset("crew-could-not-stop");
     mock.fail("/api/crew/needs-you", 1, 404, "not_found", "Not found.");

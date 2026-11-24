@@ -86,7 +86,15 @@ export const needsApi = {
     }
     const watchItems = all.filter((one) => one.kind === "watch_failing" || one.kind === "watch_could_not_run");
     const stoppedItems = all.filter((one) => one.kind === "could_not_stop");
-    const [names, cards] = await Promise.all([watchNames(watchItems, signal), stoppedCards(stoppedItems, signal)]);
+    // A watch's name is enrichment: when the crew list cannot be read the row keeps its id (as `watchItems` does for an unknown crew),
+    // and the stopped-task rows still draw. An abort still stops the read.
+    const [names, cards] = await Promise.all([
+      watchNames(watchItems, signal).catch((failure: unknown) => {
+        if (signal?.aborted) throw failure;
+        return {} as Record<string, string>;
+      }),
+      stoppedCards(stoppedItems, signal),
+    ]);
     return { watch: { items: watchItems, names }, stopped: { items: stoppedItems, cards } };
   },
   /** The background crews that have a run waiting for review, each with its runs. */

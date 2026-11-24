@@ -109,9 +109,9 @@ const couldNotStopRows = () => [
 /** The answer for a Needs you read, or null when the route is not one of these (or Crew is off) and the Crew mock answers. */
 export function needsYouMock(scenario: string, method: string, path: string): MockResponse | null {
   if (method !== "GET" || !(scenario === "crew" || scenario.startsWith("crew-"))) return null;
-  const empty = scenario === "crew-empty" || scenario.startsWith("crew-background-watch") || scenario === "crew-could-not-stop";
+  const empty = scenario === "crew-empty" || scenario.startsWith("crew-background-watch") || scenario === "crew-could-not-stop" || scenario === "crew-could-not-stop-and-watch";
   if (path === "/api/crew/needs-you") {
-    const items = scenario === "crew-background-watch-needsyou" ? watchRows("p-app") : scenario === "crew-background-watch-needsyou-p-two" ? watchRows("p-two") : scenario === "crew-could-not-stop" ? couldNotStopRows() : [];
+    const items = scenario === "crew-background-watch-needsyou" ? watchRows("p-app") : scenario === "crew-background-watch-needsyou-p-two" ? watchRows("p-two") : scenario === "crew-could-not-stop" ? couldNotStopRows() : scenario === "crew-could-not-stop-and-watch" ? [...couldNotStopRows(), ...watchRows("p-app")] : [];
     return { status: 200, body: { items, count: items.length } };
   }
   if (path === "/api/crew/autopilot/review") {
