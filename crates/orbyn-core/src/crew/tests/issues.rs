@@ -2165,6 +2165,102 @@ mod binding {
     }
 
     #[tokio::test]
+    async fn a_scope_outside_the_size_and_control_character_rules_is_invalid_and_stores_nothing() {
+        let (w, project) = project_world().await;
+        connect(&w).await;
+        for scope in ["x".repeat(201), "team/app\u{7}".to_owned()] {
+            let refused = w
+                .core
+                .bind_project_issue_tracker(
+                    &project,
+                    SetProjectIssueTracker {
+                        tracker: Some(TrackerKind::Gitlab),
+                        scope: Some(scope),
+                    },
+                )
+                .await;
+            assert!(
+                matches!(refused, Err(CoreError::Invalid(_))),
+                "{refused:?}"
+            );
+        }
+        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
+        assert!(
+            !w.core
+                .audit_events(None, 50)
+                .unwrap()
+                .iter()
+                .any(|event| event.action == "issues.project.bind"),
+            "nothing was audited"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_tracker_whose_stored_scope_matches_is_still_refused_when_not_connected() {
+        let (w, project) = project_world().await;
+        // A connection with the right scope but no usable credential: the scope check would pass, so only the
+        // connected-tracker check can refuse this.
+        w.core
+            .store
+            .put_tracker(
+                &TrackerConnection {
+                    tracker: TrackerKind::Gitlab,
+                    host: Some("https://gitlab.example.test".into()),
+                    scopes: vec!["team/app".into()],
+                },
+                "2026-11-25T00:00:00Z",
+            )
+            .unwrap();
+        let refused = w
+            .core
+            .bind_project_issue_tracker(&project, request(TrackerKind::Gitlab, "team/app"))
+            .await
+            .map(|_| ());
+        match refused {
+            Err(CoreError::Invalid(message)) => {
+                assert!(message.contains("not connected"), "{message}")
+            }
+            other => panic!("an unconnected tracker is refused before its scope is read: {other:?}"),
+        }
+        // A forge whose scope no remote names is the same refusal, not a scope refusal.
+        let azure = w
+            .core
+            .bind_project_issue_tracker(&project, request(TrackerKind::AzureDevops, "org/proj"))
+            .await
+            .map(|_| ());
+        match azure {
+            Err(CoreError::Invalid(message)) => {
+                assert!(message.contains("Azure DevOps is not connected"), "{message}")
+            }
+            other => panic!("an unconnected forge is refused: {other:?}"),
+        }
+        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn an_audit_failure_leaves_no_binding() {
+        let (w, project) = project_world().await;
+        connect(&w).await;
+        rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3"))
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER refuse_binding_audit BEFORE INSERT ON audit_events
+                 WHEN NEW.action = 'issues.project.bind'
+                 BEGIN SELECT RAISE(ABORT, 'binding audit unavailable'); END;",
+            )
+            .unwrap();
+        let refused = w
+            .core
+            .bind_project_issue_tracker(&project, request(TrackerKind::Gitlab, "team/app"))
+            .await;
+        assert!(refused.is_err(), "the audit refusal fails the bind: {refused:?}");
+        assert!(
+            w.core.store.project_issue_tracker(&project).unwrap().is_none(),
+            "the audit row is written before the binding, so a failed audit leaves none"
+        );
+    }
+
+    #[tokio::test]
     async fn an_unknown_project_and_an_unbind_with_a_scope_are_refused() {
         let (w, project) = project_world().await;
         let missing = w

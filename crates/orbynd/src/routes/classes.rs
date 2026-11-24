@@ -841,6 +841,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/projects/{id}/issue-tracker",
+        "the person chooses the tracker and scope the project's issues come from",
+    ),
+    (
+        "POST",
         "/api/projects/{id}/publish",
         "publishes the project to the forge",
     ),
@@ -903,11 +908,6 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/projects/{id}/pulls/{number}/review",
         "submits a review, which can approve, as the person",
-    ),
-    (
-        "POST",
-        "/api/projects/{id}/issue-tracker",
-        "the person chooses the tracker and scope the project's issues come from",
     ),
     (
         "POST",

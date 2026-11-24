@@ -23,6 +23,12 @@ fn repo(path: &Path) {
     );
 }
 
+fn options_with_issues(dir: &TempDir) -> Options {
+    let mut options = options(dir);
+    options.env.push(("ORBYN_ISSUES".into(), "1".into()));
+    options
+}
+
 fn options(dir: &TempDir) -> Options {
     Options {
         args: vec![],
@@ -54,7 +60,7 @@ fn stand_in_gh(_dir: &TempDir) {}
 async fn fixture() -> (TempDir, Service, String) {
     let dir = TempDir::new();
     stand_in_gh(&dir);
-    let service = Service::start(&dir.path().join("data"), options(&dir));
+    let service = Service::start(&dir.path().join("data"), options_with_issues(&dir));
     let folder = dir.path().join("app");
     repo(&folder);
     let project = service.project(&folder, true).await;
@@ -148,6 +154,37 @@ async fn a_scope_outside_the_connection_is_400_and_nothing_is_written() {
     assert!(bindings(&audit(&service).await).is_empty());
 }
 
+/// The table the binding lives in, from the service's own database: the one way a test can see that a refused call
+/// stored nothing.
+fn stored_bindings(dir: &TempDir) -> i64 {
+    rusqlite::Connection::open(dir.path().join("data/orbyn.sqlite3"))
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM project_issue_trackers", [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+}
+
+#[tokio::test]
+async fn the_route_is_behind_the_issues_flag_and_stores_nothing_when_it_is_off() {
+    let dir = TempDir::new();
+    stand_in_gh(&dir);
+    let service = Service::start(&dir.path().join("data"), options(&dir));
+    let folder = dir.path().join("app");
+    repo(&folder);
+    let project = service.project(&folder, true).await;
+    let path = format!("/api/projects/{project}/issue-tracker");
+    let (status, body) = service
+        .send(&path, json!({ "tracker": "github", "scope": "acme/app" }))
+        .await;
+    assert_eq!(status, 404, "the issues flag is off: {body}");
+    assert_eq!(body["code"], "not_found");
+    assert_eq!(stored_bindings(&dir), 0, "nothing was stored");
+    assert!(bindings(&audit(&service).await).is_empty());
+    let (status, _) = service.send(&path, json!({ "tracker": null })).await;
+    assert_eq!(status, 404, "the unbind is behind the flag too");
+}
+
 #[tokio::test]
 async fn invalid_bodies_and_an_unknown_project_are_refused() {
     let (_dir, service, project) = fixture().await;
@@ -160,6 +197,14 @@ async fn invalid_bodies_and_an_unknown_project_are_refused() {
         .send(&path, json!({ "tracker": "github" }))
         .await;
     assert_eq!(status, 400, "a binding needs a scope");
+    // A body that does not name the tracker must not unbind by accident.
+    for body in [json!({}), json!({ "scope": "acme/app" })] {
+        let (status, refusal) = service.send(&path, body.clone()).await;
+        assert_eq!(status, 400, "a body without the tracker is refused: {body} {refusal}");
+        assert_eq!(refusal["code"], "invalid_input");
+    }
+    let (status, body) = service.send(&path, json!({ "tracker": null })).await;
+    assert_eq!(status, 204, "an explicit null unbinds: {body}");
     let (status, _) = service
         .send(
             "/api/projects/not-a-project/issue-tracker",

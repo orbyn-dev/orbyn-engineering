@@ -16,6 +16,8 @@ use serde::Deserialize;
 
 use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
 
+use super::issues::on;
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/projects", get(list_projects))
@@ -334,6 +336,8 @@ async fn bind_issue_tracker(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<orbyn_contracts::SetProjectIssueTracker>,
 ) -> ApiResult<axum::response::Response> {
+    // The whole issues section is behind the flag: with it off this route answers 404 like every other issues route.
+    on(&state)?;
     match state.core.bind_project_issue_tracker(&id, body).await? {
         Some(binding) => Ok(Json(binding).into_response()),
         None => Ok(StatusCode::NO_CONTENT.into_response()),

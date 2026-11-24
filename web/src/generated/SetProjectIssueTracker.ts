@@ -7,9 +7,10 @@ import type { TrackerKind } from "./TrackerKind";
  */
 export type SetProjectIssueTracker = { 
 /**
- * The tracker to bind; `null` unbinds.
+ * The tracker to bind; `null` unbinds. The field is required: a body without it is refused rather than read as
+ * an unbind a client did not ask for.
  */
-tracker?: TrackerKind | null, 
+tracker: TrackerKind | null, 
 /**
  * The one scope of the connection the project's issues come from; required when binding.
  */

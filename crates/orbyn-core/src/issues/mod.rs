@@ -1143,12 +1143,8 @@ impl Core {
                 "That scope is not part of this connection.".into(),
             ));
         }
-        self.store.set_project_issue_tracker(
-            project_id,
-            tracker_name(tracker),
-            scope,
-            &crate::util::now(),
-        )?;
+        // The audit row is written before the effect it describes (docs/architecture.md rule 6): an audit failure
+        // leaves no binding behind.
         self.store.append_audit(&AuditRecord {
             actor: "user".into(),
             action: "issues.project.bind".into(),
@@ -1163,6 +1159,12 @@ impl Core {
                 "scope": scope,
             }),
         })?;
+        self.store.set_project_issue_tracker(
+            project_id,
+            tracker_name(tracker),
+            scope,
+            &crate::util::now(),
+        )?;
         // Answer from the row that was stored: the write is what the page reads back.
         let stored = self
             .store

@@ -634,20 +634,24 @@ create form; nothing feeds it to an engine.
 
 ### As built (R15 PR3)
 
-`POST /api/projects/{id}/issue-tracker` is a Person-class write behind the Issues flag. Body `{ tracker, scope }`
-binds; `{ tracker: null }` unbinds. A bind answers `200 { tracker, scope }`; an unbind answers `204`.
+`POST /api/projects/{id}/issue-tracker` is a Person-class write behind the Issues flag, and with the flag off it
+answers `404 not_found` like every other issues route. Body `{ tracker, scope }` binds; `{ tracker: null }` unbinds.
+The tracker field is required: a body without it is `400 invalid_input`, never read as an unbind. A bind answers
+`200 { tracker, scope }`; an unbind answers `204`.
 
 - **Validation, before anything is stored**: the project must exist (`404` otherwise); a tracker that is not
   connected is `400 invalid` (the write routes' invalid, not the reads' `409`); `scope` is required on a bind, is at
-  most 200 bytes with no control characters, and must be one of the connection's scopes (the stored scopes, plus for
-  GitHub, GitLab, Azure DevOps and Forgejo the project remotes on the connection's host), else `400 invalid`. An
-  unbind that names a scope is `400 invalid`.
+  most 200 bytes with no control characters, and must be one of the connection's scopes (the stored scopes; for
+  GitHub, GitLab, Azure DevOps and Forgejo the project remotes on the connection's host; for Linear the teams its key
+  can see when the connection stores none), else `400 invalid`. An unbind that names a scope is `400 invalid`.
 - **What it stores**: one row per project — the tracker and scope, two names and no secret (migration 89, table
   `project_issue_trackers`, `ON DELETE CASCADE` so a removed project takes its binding with it). It never writes the
   connection, the project row or an issue.
-- **Audit**: one `issues.project.bind` row per bind, target the project id and detail `{ project, tracker, scope }` —
-  ids and names only, never a token. An unbind writes no audit row and answers `204` again when there was nothing
-  bound: "no binding" is the desired end state, so the call is idempotent rather than a `404`.
+- **Audit**: one `issues.project.bind` row per bind, written **before** the binding row it describes
+  (docs/architecture.md rule 6), so an audit failure leaves no binding; target the project id and detail
+  `{ project, tracker, scope }` — ids and names only, never a secret. An unbind writes no audit row and answers
+  `204` again when there was nothing bound: "no binding" is the desired end state, so the call is idempotent rather
+  than a `404`.
 - **Read side**: the contract specifies no read route for the binding, so none is added and nothing defaults to it
   yet: the page does not draw a bound tracker and the engine tools (N24) still take an explicit tracker and scope.
   A later read (and the page/engine defaulting) can read the stored row; the storage is the minimal write-only slice.
