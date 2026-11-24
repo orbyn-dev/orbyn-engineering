@@ -1052,3 +1052,614 @@ fn a_remote_gives_the_project_path_only_on_the_connections_host() {
         );
     }
 }
+
+mod writes {
+    //! GitLab's issue writes against the same local fake server: the exact method, address, query and JSON body they
+    //! send, the issue they answer, and the award lookup an idempotent reaction needs.
+
+    use super::*;
+    use crate::issues::NewIssue;
+    use crate::issues::fake_http::Seen;
+    use orbyn_contracts::{IssueReaction, IssueReactionCount};
+    use std::sync::{Arc, Mutex};
+
+    /// The method and address of every write the server saw, without the HTTP version.
+    fn written_requests(seen: &[Seen]) -> Vec<String> {
+        seen.iter()
+            .filter(|req| req.line.starts_with("POST ") || req.line.starts_with("DELETE "))
+            .map(|req| req.line.split(' ').take(2).collect::<Vec<_>>().join(" "))
+            .collect()
+    }
+
+    fn new_issue<'a>(
+        title: &'a str,
+        body: &'a str,
+        labels: &'a [String],
+        assignees: &'a [String],
+    ) -> NewIssue<'a> {
+        NewIssue {
+            title,
+            body,
+            labels,
+            assignees,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_create_sends_every_field_and_answers_the_new_issue() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            assert_eq!(req.line.split(' ').next(), Some("POST"));
+            assert_eq!(req.path(), "/api/v4/projects/grp%2Fproj/issues");
+            assert_eq!(req.header("private-token"), Some(TOKEN));
+            assert_eq!(
+                req.json(),
+                Some(json!({
+                    "title": "Crash on start",
+                    "description": "It breaks.",
+                    "labels": "bug,ui",
+                    "assignee_ids": [12],
+                })),
+                "the person's text travels as body fields, never in the address"
+            );
+            let mut row = issue(&base, 21);
+            row["title"] = json!("Crash on start");
+            row["description"] = json!("It breaks.");
+            row["labels"] = json!(["bug", "ui"]);
+            row["assignees"] = json!([{ "username": "bo" }]);
+            Reply::json(&row)
+        })
+        .await;
+        assert!(reader(&server).can_write(), "GitLab writes in this build");
+        let labels = vec!["bug".to_owned(), "ui".to_owned()];
+        let assignees = vec!["12".to_owned()];
+        let detail = reader(&server)
+            .create(
+                "grp/proj",
+                &new_issue("Crash on start", "It breaks.", &labels, &assignees),
+            )
+            .await
+            .unwrap();
+        assert_eq!(detail.summary.key, "21");
+        assert_eq!(detail.summary.title, "Crash on start");
+        assert_eq!(
+            detail
+                .summary
+                .labels
+                .iter()
+                .map(|label| label.name.as_str())
+                .collect::<Vec<_>>(),
+            ["bug", "ui"]
+        );
+        assert_eq!(detail.summary.assignees[0].login, "bo");
+        assert_eq!(detail.body, "It breaks.");
+        assert!(detail.comments.is_empty(), "a new issue has no comments");
+        assert_eq!(detail.reactions, None);
+    }
+
+    #[tokio::test]
+    async fn a_comment_sends_the_body_and_answers_the_stored_note() {
+        let server = Server::start(|req| {
+            assert_eq!(req.line.split(' ').next(), Some("POST"));
+            assert_eq!(req.path(), "/api/v4/projects/grp%2Fproj/issues/21/notes");
+            assert_eq!(req.header("private-token"), Some(TOKEN));
+            assert_eq!(req.json(), Some(json!({ "body": "Looks good." })));
+            Reply::json(&json!({
+                "id": 9,
+                "author": { "username": "ann" },
+                "body": "Looks good.",
+                "created_at": "2026-11-25T00:00:00Z",
+            }))
+        })
+        .await;
+        let note = reader(&server)
+            .comment("grp/proj", "21", "Looks good.")
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                note.id.as_str(),
+                note.body.as_str(),
+                note.created_at.as_str()
+            ),
+            ("9", "Looks good.", "2026-11-25T00:00:00Z")
+        );
+        assert_eq!(note.author.unwrap().login, "ann");
+    }
+
+    #[tokio::test]
+    async fn a_reaction_is_added_once_taken_back_by_its_award_id_and_answered_with_counts() {
+        let present = Arc::new(Mutex::new(false));
+        let state = present.clone();
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v4/user" {
+                return Reply::json(&json!({ "username": "ann" }));
+            }
+            if path.ends_with("/award_emoji") && req.line.starts_with("GET") {
+                return Reply::json(&if *state.lock().unwrap() {
+                    json!([{ "id": 5, "name": "heart", "user": { "username": "ann" } }])
+                } else {
+                    json!([])
+                });
+            }
+            if path.ends_with("/award_emoji") && req.line.starts_with("POST") {
+                assert_eq!(req.param("name").as_deref(), Some("heart"));
+                *state.lock().unwrap() = true;
+                return Reply::json(&json!({ "id": 5, "name": "heart" }));
+            }
+            if path.ends_with("/award_emoji/5") && req.line.starts_with("DELETE") {
+                *state.lock().unwrap() = false;
+                return Reply::json(&json!({}));
+            }
+            if path.ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            if path.contains("/issues/21") {
+                return Reply::json(&issue(&base, 21));
+            }
+            Reply::json(&json!([]))
+        })
+        .await;
+        let gitlab = reader(&server);
+        let added = gitlab
+            .react("grp/proj", "21", None, IssueReaction::Heart, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            added.reactions,
+            Some(vec![IssueReactionCount {
+                content: "heart".into(),
+                count: 1,
+            }]),
+            "the answer keeps GitLab's own award name and its count"
+        );
+        // A second add writes nothing: the award is already the reader's.
+        gitlab
+            .react("grp/proj", "21", None, IssueReaction::Heart, true)
+            .await
+            .unwrap();
+        let removed = gitlab
+            .react("grp/proj", "21", None, IssueReaction::Heart, false)
+            .await
+            .unwrap();
+        assert_eq!(removed.reactions, Some(vec![]));
+        // A second remove writes nothing: there is no award to take back.
+        gitlab
+            .react("grp/proj", "21", None, IssueReaction::Heart, false)
+            .await
+            .unwrap();
+        let seen = server.seen();
+        let written = written_requests(&seen);
+        assert_eq!(
+            written,
+            vec![
+                "POST /api/v4/projects/grp%2Fproj/issues/21/award_emoji?name=heart".to_owned(),
+                "DELETE /api/v4/projects/grp%2Fproj/issues/21/award_emoji/5".to_owned(),
+            ],
+            "{seen:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_comment_reaction_uses_the_notes_own_award_path() {
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v4/user" {
+                return Reply::json(&json!({ "username": "ann" }));
+            }
+            if path.ends_with("/notes/9/award_emoji") && req.line.starts_with("GET") {
+                return Reply::json(&json!([]));
+            }
+            if path.ends_with("/notes/9/award_emoji") && req.line.starts_with("POST") {
+                assert_eq!(req.param("name").as_deref(), Some("eyes"));
+                return Reply::json(&json!({ "id": 8, "name": "eyes" }));
+            }
+            if path.ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            if path.contains("/issues/21") {
+                return Reply::json(&issue(&base, 21));
+            }
+            Reply::json(&json!([]))
+        })
+        .await;
+        reader(&server)
+            .react("grp/proj", "21", Some("9"), IssueReaction::Eyes, true)
+            .await
+            .unwrap();
+        let seen = server.seen();
+        assert!(
+            written_requests(&seen).iter().any(|line| line
+                == "POST /api/v4/projects/grp%2Fproj/issues/21/notes/9/award_emoji?name=eyes"),
+            "{seen:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_create_keeps_the_contract_error_and_never_its_raw_body() {
+        let server = Server::start(|_| Reply::status(403)).await;
+        let error = reader(&server)
+            .create("grp/proj", &new_issue("T", "", &[], &[]))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        match error {
+            CoreError::TrackerForbidden(message) => assert!(
+                !message.contains("raw-tracker-text") && !message.contains("secret-detail"),
+                "{message}"
+            ),
+            other => panic!("a 403 is forbidden, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_assignee_or_note_id_that_is_not_numeric_is_refused_before_a_request() {
+        let server = Server::start(|_| Reply::json(&json!({}))).await;
+        let bad = vec!["ann".to_owned()];
+        let refused = reader(&server)
+            .create("grp/proj", &new_issue("T", "", &[], &bad))
+            .await
+            .map(|_| ());
+        assert!(matches!(refused, Err(CoreError::Invalid(_))));
+        let refused = reader(&server)
+            .react(
+                "grp/proj",
+                "21",
+                Some("not-a-note"),
+                IssueReaction::Heart,
+                true,
+            )
+            .await
+            .map(|_| ());
+        assert!(matches!(refused, Err(CoreError::Invalid(_))));
+        assert!(
+            server.seen().is_empty(),
+            "nothing is sent for an id the tracker cannot address: {:?}",
+            server.seen()
+        );
+    }
+
+    #[test]
+    fn every_contract_reaction_has_one_award_name() {
+        for (reaction, name) in [
+            (IssueReaction::ThumbsUp, "thumbsup"),
+            (IssueReaction::ThumbsDown, "thumbsdown"),
+            (IssueReaction::Laugh, "laughing"),
+            (IssueReaction::Hooray, "tada"),
+            (IssueReaction::Confused, "confused"),
+            (IssueReaction::Heart, "heart"),
+            (IssueReaction::Rocket, "rocket"),
+            (IssueReaction::Eyes, "eyes"),
+        ] {
+            assert_eq!(award_name(reaction), name);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_ten_digit_note_id_is_accepted() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v4/user" {
+                return Reply::json(&json!({ "username": "ann" }));
+            }
+            if path.ends_with("/notes/1234567890/award_emoji") && req.line.starts_with("GET") {
+                return Reply::json(&json!([]));
+            }
+            if path.ends_with("/notes/1234567890/award_emoji") && req.line.starts_with("POST") {
+                assert_eq!(req.param("name").as_deref(), Some("heart"));
+                return Reply::json(&json!({ "id": 7, "name": "heart" }));
+            }
+            if path.ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            if path.ends_with("/award_emoji") && req.line.starts_with("GET") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        reader(&server)
+            .react(
+                "grp/proj",
+                "21",
+                Some("1234567890"),
+                IssueReaction::Heart,
+                true,
+            )
+            .await
+            .expect("a ten-digit note id is a valid GitLab note id");
+        assert!(
+            written_requests(&server.seen())
+                .iter()
+                .any(|line| line.contains("/notes/1234567890/award_emoji?name=heart")),
+            "{:?}",
+            server.seen()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_label_with_a_comma_is_refused_before_a_request() {
+        let server = Server::start(|_| Reply::json(&json!({}))).await;
+        let labels = vec!["needs,review".to_owned()];
+        let refused = reader(&server)
+            .create("grp/proj", &new_issue("T", "", &labels, &[]))
+            .await
+            .map(|_| ());
+        assert!(
+            matches!(&refused, Err(CoreError::Invalid(message)) if message.contains("comma")),
+            "{refused:?}"
+        );
+        assert!(server.seen().is_empty(), "{:?}", server.seen());
+    }
+
+    #[tokio::test]
+    async fn a_comment_reaction_removal_deletes_the_readers_award_by_id() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v4/user" {
+                return Reply::json(&json!({ "username": "ann" }));
+            }
+            if path.ends_with("/notes/9/award_emoji") && req.line.starts_with("GET") {
+                return Reply::json(&json!([{
+                    "id": 7, "name": "heart", "user": { "username": "ann" },
+                }]));
+            }
+            if path.ends_with("/notes/9/award_emoji/7") && req.line.starts_with("DELETE") {
+                return Reply::json(&json!({}));
+            }
+            if path.ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            if path.ends_with("/award_emoji") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        reader(&server)
+            .react("grp/proj", "21", Some("9"), IssueReaction::Heart, false)
+            .await
+            .unwrap();
+        assert!(
+            written_requests(&server.seen())
+                .iter()
+                .any(|line| line
+                    == "DELETE /api/v4/projects/grp%2Fproj/issues/21/notes/9/award_emoji/7"),
+            "{:?}",
+            server.seen()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_comment_reaction_keeps_the_contract_error_and_never_its_raw_body() {
+        let server = Server::start(|req| {
+            if req.path() == "/api/v4/user" {
+                return Reply::json(&json!({ "username": "ann" }));
+            }
+            Reply::status(403)
+        })
+        .await;
+        let error = reader(&server)
+            .react("grp/proj", "21", Some("9"), IssueReaction::Heart, true)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        match error {
+            CoreError::TrackerForbidden(message) => assert!(
+                !message.contains("raw-tracker-text") && !message.contains("secret-detail"),
+                "{message}"
+            ),
+            other => panic!("a 403 is forbidden, got {other:?}"),
+        }
+    }
+}
+
+mod limits {
+    //! The two honesty limits of GitLab's reaction reads: a list the reader cannot see whole answers no counts,
+    //! and a removal whose award lookup ran out pages is an error, never a quiet success.
+
+    use super::*;
+    use crate::issues::fake_http::Seen;
+    use orbyn_contracts::IssueReaction;
+
+    /// The method and address of every write the server saw, without the HTTP version.
+    fn written_requests(seen: &[Seen]) -> Vec<String> {
+        seen.iter()
+            .filter(|req| req.line.starts_with("POST ") || req.line.starts_with("DELETE "))
+            .map(|req| req.line.split(' ').take(2).collect::<Vec<_>>().join(" "))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_full_award_page_answers_no_counts() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v4/user" {
+                return Reply::json(&json!({ "username": "ann" }));
+            }
+            if path.ends_with("/award_emoji") && req.line.starts_with("GET") {
+                // The own-award lookup asks for page 1 and finds nothing; the counts read asks for no page and
+                // answers a full first page, so more may be behind it.
+                if req.param("page").is_some() {
+                    return Reply::json(&json!([]));
+                }
+                let rows: Vec<Value> = (0..100)
+                    .map(|n| json!({ "id": n + 1, "name": "eyes", "user": { "username": "bo" } }))
+                    .collect();
+                return Reply::json(&Value::Array(rows));
+            }
+            if path.ends_with("/award_emoji") && req.line.starts_with("POST") {
+                return Reply::json(&json!({ "id": 1, "name": "heart" }));
+            }
+            if path.ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let detail = reader(&server)
+            .react("grp/proj", "21", None, IssueReaction::Heart, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            detail.reactions, None,
+            "a full first page may hide more: no counts rather than a partial list"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_own_award_lookup_that_runs_out_of_pages_is_an_error_not_a_removal() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v4/user" {
+                return Reply::json(&json!({ "username": "ann" }));
+            }
+            if path.ends_with("/notes/9/award_emoji") {
+                let rows: Vec<Value> = (0..100)
+                    .map(|n| json!({ "id": n + 1, "name": "eyes", "user": { "username": "bo" } }))
+                    .collect();
+                return Reply::json(&Value::Array(rows));
+            }
+            // The reads after a successful removal answer normally, so the only way this errors is the bound.
+            if path.ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            if path.ends_with("/award_emoji") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let error = reader(&server)
+            .react("grp/proj", "21", Some("9"), IssueReaction::Eyes, false)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            matches!(error, CoreError::TrackerUnavailable(_)),
+            "an award the reader cannot see is not a successful removal: {error:?}"
+        );
+        assert!(
+            !written_requests(&server.seen())
+                .iter()
+                .any(|line| line.starts_with("DELETE ")),
+            "no removal is sent"
+        );
+    }
+}
+
+mod templates {
+    //! GitLab's project issue templates: the entry list and one content read per template, at most 50, each body cut
+    //! to 16 KiB; a project with none answers an empty list.
+
+    use super::*;
+
+    fn entries(count: usize) -> Value {
+        Value::Array(
+            (0..count)
+                .map(|n| json!({ "key": format!("t{n}"), "name": format!("Template {n}") }))
+                .collect(),
+        )
+    }
+
+    #[tokio::test]
+    async fn templates_list_entries_and_read_their_bodies() {
+        let server = Server::start(|req| {
+            let path = req.path();
+            assert_eq!(req.header("private-token"), Some(TOKEN));
+            if path.ends_with("/templates/issues") {
+                assert_eq!(
+                    req.param("per_page").as_deref(),
+                    Some("100"),
+                    "one page of 100 covers the 50 kept; GitLab pages this list at 20 by default"
+                );
+                return Reply::json(&entries(2));
+            }
+            match path {
+                "/api/v4/projects/grp%2Fproj/templates/issues/t0" => {
+                    Reply::json(&json!({ "name": "Template 0", "content": "Steps: one." }))
+                }
+                "/api/v4/projects/grp%2Fproj/templates/issues/t1" => {
+                    Reply::json(&json!({ "name": "Template 1", "content": "Steps: two." }))
+                }
+                other => panic!("unexpected path {other}"),
+            }
+        })
+        .await;
+        let templates = reader(&server).templates("grp/proj").await.unwrap();
+        assert_eq!(templates.len(), 2);
+        assert_eq!(
+            (
+                templates[0].id.as_str(),
+                templates[0].name.as_str(),
+                templates[0].body.as_str(),
+            ),
+            ("t0", "Template 0", "Steps: one.")
+        );
+        assert_eq!(templates[1].id, "t1");
+        assert_eq!(templates[0].description, None);
+        assert!(templates[0].labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn at_most_fifty_templates_are_read() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/templates/issues") {
+                return Reply::json(&entries(60));
+            }
+            Reply::json(&json!({ "content": "Body" }))
+        })
+        .await;
+        let templates = reader(&server).templates("grp/proj").await.unwrap();
+        assert_eq!(templates.len(), 50, "at most fifty templates");
+        assert_eq!(templates[49].id, "t49");
+        let content_reads = server
+            .seen()
+            .iter()
+            .filter(|req| req.path().contains("/templates/issues/"))
+            .count();
+        assert_eq!(content_reads, 50, "no body is read past the fifty kept");
+    }
+
+    #[tokio::test]
+    async fn a_long_template_body_is_cut_to_sixteen_kib() {
+        let long = "x".repeat(20_000);
+        let server = Server::start(move |req| {
+            if req.path().ends_with("/templates/issues") {
+                return Reply::json(&entries(1));
+            }
+            Reply::json(&json!({ "content": long }))
+        })
+        .await;
+        let templates = reader(&server).templates("grp/proj").await.unwrap();
+        assert_eq!(templates[0].body.len(), 16 * 1024);
+    }
+
+    #[tokio::test]
+    async fn a_project_with_no_templates_answers_an_empty_list() {
+        let server = Server::start(|req| {
+            assert!(
+                req.path().ends_with("/templates/issues"),
+                "{:?}",
+                req.path()
+            );
+            Reply::json(&json!([]))
+        })
+        .await;
+        assert!(
+            reader(&server)
+                .templates("grp/proj")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(server.seen().len(), 1, "only the list is read");
+    }
+}
