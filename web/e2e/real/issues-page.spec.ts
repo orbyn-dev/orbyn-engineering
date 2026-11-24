@@ -5,10 +5,12 @@ import { settled, startProject, threadIdOf, type Service } from "./service";
  * F68: the Issues page against a real `orbynd` with `ORBYN_ISSUES=1` and a stand-in `gh`. No real GitHub is contacted; the
  * connection names the `o/r` scope the stand-in answers for.
  *
- * Covered: the list with its tracker, counts, state tabs and the label, assignee and text filters, no-match and closed rows;
- * the detail page with body, comments, facts and its linked pull requests empty card absent; and Start a thread, the service's
- * framed draft read and one write that creates, links and queues. The Issue writes (`update`, `state`, `candidates`, `sort`)
- * are not on this service, so each control is the disabled Planned pill and sends nothing — asserted, not exercised.
+ * Covered: the list with its tracker, counts, state tabs and the label, assignee and text filters, no-match and closed rows,
+ * and the absence of a Load more row; the detail page with body, comments, facts and its linked pull requests card absent
+ * (the fixture reports none); and Start a thread, the service's framed draft read and one write that creates, links and queues.
+ * `update`, `state` and the `candidates` read are not on this service (create, comment and react are, but the client does not
+ * call them); the client's not-offered probe reads this service's fallback 404 as a live route, so Sort starts live and is
+ * exercised: a chosen sort is refused 400 invalid and the control then returns to the disabled Planned pill.
  */
 
 test.setTimeout(60_000);
@@ -41,8 +43,10 @@ test("the list shows the tracker's issues with counts, state tabs, the filters a
   await expect(tabs.getByRole("button", { name: "Open · 2" })).toBeVisible();
   await expect(tabs.getByRole("button", { name: "Closed · 1" })).toBeVisible();
   await expect(tabs.getByRole("button", { name: "All", exact: true })).toBeVisible();
-  // The default list is the open issues, newest update first, with the tracker's own fields.
+  // The default list is the open issues, newest update first, with the tracker's own fields. GitHub issues no cursor, so no
+  // Load more row is drawn; paging beyond the first page is not exercised.
   await expect(rows(page)).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
   const retry = rows(page).filter({ hasText: "Retry the queue" });
   await expect(retry).toContainText("#7 · GitHub · opened by grace");
   await expect(retry.locator(".iss-label")).toHaveText("bug");
@@ -108,7 +112,8 @@ test("the list shows the tracker's issues with counts, state tabs, the filters a
   const old = rows(page).first();
   await expect(old).toContainText("Old cache bug");
   await expect(old.locator(".iss-state")).toHaveText("Closed");
-  await expect(old).toContainText("closed");
+  // The list line carries the tracker's close date as a relative phrase: closed 2 mo. ago for this fixture.
+  await expect(old.locator(".iss-sub")).toHaveText(/· closed \d+ [a-z]+\.? ago/);
   await tabs.getByRole("button", { name: "All", exact: true }).click();
   await expect(rows(page)).toHaveCount(3);
 });

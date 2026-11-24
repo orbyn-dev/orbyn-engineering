@@ -1,6 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { openDetails, send, settled, startProject, threadIdOf, type Service } from "./service";
 
+// The tests share one thread's links: the first links #7, the second unlinks it, the third links #12 and then #7 again.
+test.describe.configure({ mode: "serial" });
+
 /**
  * F69: thread issue links, through a real `orbynd` with `ORBYN_ISSUES=1` and a stand-in `gh` holding the issues. No real
  * GitHub is contacted: the service's GitHub reader runs the stand-in, and the connection names the `o/r` scope it answers for.

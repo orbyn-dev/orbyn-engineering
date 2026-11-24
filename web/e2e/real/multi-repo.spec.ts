@@ -4,6 +4,9 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { projectSettingsUrl, startProject, threadIdOf, type Service } from "./service";
 
+// The second test starts from the project the first one changed: it adds and trusts the second repository there.
+test.describe.configure({ mode: "serial" });
+
 /**
  * F70: multi-repository projects and task folders, through a real `orbynd` with `ORBYN_MULTI_REPO=1`.
  *
@@ -173,7 +176,9 @@ test("a thread in two repositories gets one task folder and one branch in each, 
   await expect(again.locator(".repos-pop-row").filter({ hasText: "third-repo" }).locator(".repos-branch")).toHaveText(folder.branch);
   const grown = await service.api<{ name: string; branch: string }[]>("GET", `/api/threads/${threadId}/repos`);
   expect(grown.map((repo) => [repo.name, repo.branch])).toEqual([["my-repo", folder.branch], ["second-repo", folder.branch], ["third-repo", folder.branch]]);
-  expect(existsSync(join(folder.root, "third-repo"))).toBe(true);
+  const thirdWorktree = join(folder.root, "third-repo");
+  expect(existsSync(thirdWorktree)).toBe(true);
+  expect(execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: thirdWorktree }).toString().trim()).toBe(folder.branch);
 
   // The repositories list carries each repository's own branch, the thread's one.
   await page.goto(await projectSettingsUrl(service, projectId));

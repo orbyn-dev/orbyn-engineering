@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { startProject, type Service } from "./service";
 
+// The first test reads the trackers before any connection is stored; a later test stores one, and the next clears it.
+test.describe.configure({ mode: "serial" });
+
 /**
  * F67: issue trackers through a real `orbynd` with `ORBYN_ISSUES=1` and a stand-in `gh`. The tracker is GitHub through the
  * person's own `gh` sign-in: the real `gh` program on the fixture PATH is the stand-in, so no real GitHub is contacted and no
@@ -68,11 +71,13 @@ test("Settings › Source control draws the Issue trackers group and the Hosts t
   await expect(hosts.getByRole("row").filter({ hasText: "GitHub" })).toContainText("Signed in");
   await expect(page.getByRole("button", { name: "Rescan" })).toBeVisible();
   // The page's switches belong to preferences (Automatically pull); no source-control host has a local on/off control, and no
-  // host row carries an account picker or a switch, toggle or button of its own.
+  // host row carries an account picker or a switch, toggle, button, checkbox or radio of its own.
   expect(await page.getByRole("switch").count()).toBeGreaterThan(0);
   await expect(hosts.getByRole("switch")).toHaveCount(0);
   await expect(hosts.getByRole("button")).toHaveCount(0);
   await expect(hosts.getByRole("combobox")).toHaveCount(0);
+  await expect(hosts.getByRole("checkbox")).toHaveCount(0);
+  await expect(hosts.getByRole("radio")).toHaveCount(0);
 });
 
 test("connect and disconnect are the real Person routes, and a stored scope comes back on the row", async () => {
