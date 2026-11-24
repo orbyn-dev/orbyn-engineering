@@ -173,6 +173,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     // Projects, approvals and questions.
     ("POST", "/api/approvals/{id}/decide"),
     ("POST", "/api/projects/{id}/git/init"),
+    ("POST", "/api/projects/{id}/issue-tracker"),
     ("POST", "/api/projects/{id}/publish"),
     ("POST", "/api/projects/{id}/pulls/close"),
     ("PATCH", "/api/projects/{id}/pulls/{number}"),
@@ -902,6 +903,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/projects/{id}/pulls/{number}/review",
         "submits a review, which can approve, as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/issue-tracker",
+        "the person chooses the tracker and scope the project's issues come from",
     ),
     (
         "POST",

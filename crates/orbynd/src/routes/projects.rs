@@ -33,6 +33,10 @@ pub fn routes() -> Router<AppState> {
         .route("/api/projects/{id}/git/init", post(init_project_git))
         .route("/api/fs/browse", get(browse))
         .route("/api/projects/{id}/publish", post(publish_project))
+        .route(
+            "/api/projects/{id}/issue-tracker",
+            post(bind_issue_tracker),
+        )
         .route("/api/projects/{id}/icon", get(project_icon))
         .route(
             "/api/projects/{id}/icon/resource",
@@ -322,6 +326,18 @@ async fn browse(Query(query): Query<BrowseQuery>) -> ApiResult<Json<FsListing>> 
         path: path.to_string_lossy().into_owned(),
         entries,
     }))
+}
+
+/// Binds (200 with the binding) or unbinds (204) the project's issue tracker scope.
+async fn bind_issue_tracker(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<orbyn_contracts::SetProjectIssueTracker>,
+) -> ApiResult<axum::response::Response> {
+    match state.core.bind_project_issue_tracker(&id, body).await? {
+        Some(binding) => Ok(Json(binding).into_response()),
+        None => Ok(StatusCode::NO_CONTENT.into_response()),
+    }
 }
 
 async fn publish_project(

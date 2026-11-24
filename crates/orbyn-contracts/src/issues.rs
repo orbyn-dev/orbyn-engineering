@@ -315,6 +315,29 @@ pub struct IssueTemplate {
 }
 }
 
+wire! {
+/// Binds a project to the connected tracker and scope its issues come from, or unbinds it (docs/issues.md,
+/// "Create, comment, react, templates and project binding"). `tracker: null` unbinds; a binding names one scope.
+pub struct SetProjectIssueTracker {
+    /// The tracker to bind; `null` unbinds.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub tracker: Option<TrackerKind>,
+    /// The one scope of the connection the project's issues come from; required when binding.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub scope: Option<String>,
+}
+}
+
+wire! {
+/// The tracker and scope a project's issues now come from.
+pub struct ProjectIssueTracker {
+    pub tracker: TrackerKind,
+    pub scope: String,
+}
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
