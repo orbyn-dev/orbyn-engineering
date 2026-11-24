@@ -1,4 +1,4 @@
-import type { Evidence, Lesson, LessonDeleted, LessonDetail, LessonFilter, LessonList, LessonScope, LessonSource } from "../src/features/crew/lessons/types.ts";
+import type { Lesson, LessonDeleted, LessonDetail, LessonEvidence, LessonFilter, LessonList, LessonScope } from "../src/features/crew/lessons/types.ts";
 import type { MockResponse, Scenario } from "./api.ts";
 
 /**
@@ -18,7 +18,7 @@ const lesson = (over: Partial<Lesson> = {}): Lesson => ({
   id: "les-1",
   scope: "repo",
   repo: "p-app",
-  source: "fingerprint" as LessonSource,
+  source: "fingerprint",
   text: "Checks like repo_required failed on test files before: check the fixture path first.",
   state: "active",
   hidden_by_cap: false,
@@ -184,7 +184,7 @@ export function createLessonsMock() {
   // Evidence is ids only, and the ids are the design's own. A repeated failure carries the two tasks behind it, the other
   // sources their escape or merge, and a seeded correction the task it was made on. A lesson added by hand has no task
   // behind it, so it carries none: its id is not in this map.
-  const personTask: Record<string, Evidence[]> = {
+  const personTask: Record<string, LessonEvidence[]> = {
     "les-cookies": [{ kind: "task", id: "91c4e07" }],
     "les-dates": [{ kind: "task", id: "5d1c8e0" }],
   };

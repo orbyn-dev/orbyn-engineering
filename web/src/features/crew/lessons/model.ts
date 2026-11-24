@@ -1,4 +1,4 @@
-import type { Evidence, Lesson, LessonScope, LessonSource } from "./types";
+import type { Lesson, LessonEvidence, LessonScope, LessonSource } from "./types";
 import { dayOf } from "../autopilot/approvals/ledger";
 
 /** A lesson's own words for its source, as the design's chip draws them. */
@@ -16,6 +16,16 @@ export const SOURCE_CHIP: Record<LessonSource, string> = {
   revert: "cx-apchip",
   person: "cx-apchip cx-dim",
 };
+
+/** Whether a read named a source these tables know; a newer service may name another one. */
+const knownSource = (source: string): source is LessonSource =>
+  Object.prototype.hasOwnProperty.call(SOURCE_WORD, source);
+
+/** The word for a source: the design's own, or the raw string for one a newer service named. */
+export const sourceWord = (source: string): string => (knownSource(source) ? SOURCE_WORD[source] : source);
+
+/** The chip class for a source: the design's own tone, or the plain chip for one a newer service named. */
+export const sourceChip = (source: string): string => (knownSource(source) ? SOURCE_CHIP[source] : "cx-apchip");
 
 export const SCOPE_WORD: Record<LessonScope, string> = { repo: "This repository", global: "All repositories" };
 
@@ -36,18 +46,31 @@ export const leftOutWords = (n: number): string => `${briefs(n)}: it matched tha
 /** A count of briefs as the card says it: "1 brief" or "3 briefs". */
 export const briefsWord = (n: number): string => briefs(n);
 
-/** One evidence id with the word its kind carries: "Task 5b2d8a3", "Escape 9be4410", "Revert 3b9f2c1". */
-export function evidenceWord(one: Evidence): string {
-  const kind = one.kind === "task" ? "Task" : one.kind === "escape" ? "Escape" : "Revert";
+/** One word with its first letter capitalised, for a kind the contract does not name. */
+const capitalised = (word: string): string => word.charAt(0).toUpperCase() + word.slice(1);
+
+/**
+ * One evidence id with the word its kind carries: "Task 5b2d8a3", "Escape 9be4410", "Revert 3b9f2c1"; a kind a newer
+ * service names is drawn by its own capitalised word.
+ */
+export function evidenceWord(one: LessonEvidence): string {
+  const kind =
+    one.kind === "task"
+      ? "Task"
+      : one.kind === "escape"
+        ? "Escape"
+        : one.kind === "merge" || one.kind === "revert"
+          ? "Revert"
+          : capitalised(one.kind);
   return `${kind} ${one.id}`;
 }
 
 /** The evidence ids a lesson came from, as one line; empty when there are none. */
-export const evidenceLine = (evidence: readonly Evidence[]): string => evidence.map(evidenceWord).join(", ");
+export const evidenceLine = (evidence: readonly LessonEvidence[]): string => evidence.map(evidenceWord).join(", ");
 
 /** The word for a lesson's source: a person's lesson with no evidence behind it was added by hand. */
-export function sourceWordOf(source: LessonSource, evidence: readonly Evidence[]): string {
-  return source === "person" && evidence.length === 0 ? "Added by you" : SOURCE_WORD[source];
+export function sourceWordOf(source: string, evidence: readonly LessonEvidence[]): string {
+  return source === "person" && evidence.length === 0 ? "Added by you" : sourceWord(source);
 }
 
 const clock = (at: Date) => `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;

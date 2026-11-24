@@ -10,7 +10,7 @@ import {
   BRIEF_LESSONS,
   EVERY_REPOSITORY,
   SCOPE_WORD,
-  SOURCE_CHIP,
+  sourceChip,
   briefsWord,
   evidenceWord,
   happenedWords,
@@ -19,7 +19,7 @@ import {
   usedWords,
 } from "./model";
 import { takeAdded } from "./saved";
-import type { Evidence, Lesson, LessonDetail } from "./types";
+import type { Lesson, LessonDetail, LessonEvidence } from "./types";
 import { UNDO_MS, showLessonUndo } from "./undo";
 import type { LessonReader } from "./useLesson";
 import { useLesson } from "./useLesson";
@@ -265,7 +265,7 @@ function WhereItCameFrom({ detail, repo, name }: { detail: LessonDetail; repo: s
   const lesson = detail.lesson;
   const sourceWord = sourceWordOf(lesson.source, detail.evidence);
   const rows: (readonly [string, ReactNode])[] = [
-    ["Learned from", <span className={SOURCE_CHIP[lesson.source]}>{sourceWord}</span>],
+    ["Learned from", <span className={sourceChip(lesson.source)}>{sourceWord}</span>],
   ];
   // Evidence is ids only. A person's lesson with none was added by hand, and says so; other sources always carry one.
   if (detail.evidence.length > 0) rows.push(["Source", <EvidenceIds evidence={detail.evidence} />]);
@@ -278,7 +278,7 @@ function WhereItCameFrom({ detail, repo, name }: { detail: LessonDetail; repo: s
 }
 
 /** The evidence ids as their own elements: a task opens its thread, an escape the Escapes page, and a revert is plain text. */
-function EvidenceIds({ evidence }: { evidence: readonly Evidence[] }) {
+function EvidenceIds({ evidence }: { evidence: readonly LessonEvidence[] }) {
   return (
     <>
       {evidence.map((one, index) => (
