@@ -47,7 +47,7 @@ test("a fake engine named on PATH and a cursor-agent binary are discovered with 
   expect(readdirSync(forgeBin).sort()).toEqual(["cline", "cursor-agent"]);
 });
 
-test("an instance's program override is used instead of PATH", async () => {
+test("an instance's program override is the program the service uses", async () => {
   const override = join(forgeBin, "custom-agent");
   if (!existsSync(override)) symlinkSync(executable, override);
   chmodSync(override, 0o755);

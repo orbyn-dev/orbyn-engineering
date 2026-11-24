@@ -78,7 +78,7 @@ test("a dropped transcript is attached through the real route and rides the next
   await settled(service, target.id);
 });
 
-test("an over-2 MiB transcript and a newer format are refused and nothing is uploaded", async ({ page }) => {
+test("an over-2 MiB transcript and a newer format are refused: only the oversized file never leaves the page", async ({ page }) => {
   await page.setViewportSize({ width: 1500, height: 1000 });
   const target = await finishedThread("Refused transcripts");
   await page.goto(`${service.page}#/threads/${target.id}`);

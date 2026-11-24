@@ -31,8 +31,8 @@ function worktreeOf(path: string | undefined): string {
 }
 
 test.beforeAll(async () => {
-  // The fixture gives the project a real local bare origin on disk and pushes to it here; the service clones that remote as
-  // the project, and fetches it when it makes the worktree in the second step.
+  // The fixture gives the project a real local bare origin on disk and pushes to it here; the service registers the fixture
+  // repository in place, and fetches that remote when it makes the worktree in the second step.
   ({ service, projectId } = await startProject({ fakeEngines: true, forge: true }));
   // Another clone pushes a new commit to that origin: the project's own HEAD does not move.
   const holder = mkdtempSync(join(tmpdir(), "origin-head-"));
