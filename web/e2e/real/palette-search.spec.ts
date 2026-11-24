@@ -2,11 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 import { startProject, type Service } from "./service";
 
 /**
- * A37: the command palette's search over a real `orbynd`. The pull-request group is read first while the forge is slow
- * and then refuses it, so the palette's reading note, its unreadable-forge note with Retry, and what the rest of the
- * palette does meanwhile are observed on the real route; the same spec then searches a thread by title, project and
- * worktree branch, an open pull request by title, head branch and project from the service's own pull list through the
- * stand-in `gh`, and picks a thread to see frecency rank it first (browser storage keeps row ids and times only).
+ * A37: the command palette's search over a real `orbynd`. The pull-request group is read first while the forge is slow,
+ * so the palette's reading note is observed on the real route; the unreadable-forge note and its Retry stay
+ * component-tested because `GET /api/pulls` answers 200 with a per-project `failed` list instead of failing the whole
+ * read. The same spec then searches a thread by title, project and worktree branch, an open pull request by title, head
+ * branch and project from the service's own pull list through the stand-in `gh`, and picks a thread to see frecency
+ * rank it first (browser storage keeps row ids and times only).
  */
 
 const WINDOW = { width: 1500, height: 900 };

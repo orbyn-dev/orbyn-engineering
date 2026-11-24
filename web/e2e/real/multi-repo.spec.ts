@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import { projectSettingsUrl, startProject, threadIdOf, type Service } from "./service";
 
 // The settings test must see the project's one-repository start; the thread test registers its own repositories, so each
-// runs alone (a title filter or a retry does not replay the other test).
+// of those two runs alone (a title filter or a retry does not replay the other test). The scan test at the end scans the
+// repositories the two earlier tests created, so it runs in this file's serial order and is not independently runnable.
 test.describe.configure({ mode: "serial" });
 
 /**
