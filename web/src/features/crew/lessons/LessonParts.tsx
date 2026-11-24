@@ -249,3 +249,32 @@ function FragmentRow({ label, value }: { label: string; value: ReactNode }) {
     </>
   );
 }
+
+/** The one red banner of an unreadable list: nothing was changed here, and the person may try again or copy the error. */
+export function ReadError({ failure, onRetry, title = "Can’t read the lessons" }: { failure: ApiFailure; onRetry: () => void; title?: string }) {
+  const detail = failure.code === NETWORK_ERROR ? failure.message : `${failure.code}: ${failure.message}`;
+  const copy = () => {
+    try {
+      void navigator.clipboard?.writeText(detail).catch(() => undefined);
+    } catch {
+      /* no clipboard here: the text stays visible below */
+    }
+  };
+  return (
+    <div className="cx-cwbn cx-red" style={{ margin: "0" }} role="alert">
+      <Ic n="alert" sm />
+      <span>
+        <b>{title}</b>
+        <span style={{ display: "block" }}>Nothing was changed. {detail}</span>
+      </span>
+      <span className="cx-acts">
+        <button type="button" className="cx-ghost" onClick={copy}>
+          Copy the error
+        </button>
+        <button type="button" className="cx-btn" onClick={onRetry}>
+          Try again
+        </button>
+      </span>
+    </div>
+  );
+}

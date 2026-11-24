@@ -6,7 +6,7 @@ import type { SkillProposal, SkillProposalList } from "./types";
 /**
  * One repository's proposals. A 404 `not_found` is not an error: it is the answer of a service that has no skill-proposal
  * routes (Crew Preview off, or an older service), and the Lessons page draws no proposals section and the Skills page no
- * group. Any other failure is reported; the section draws nothing rather than a state the design has not drawn.
+ * group. Any other failure is reported by the section as the lessons page reports its own: a red banner with Try again.
  */
 export type ProposalsRead =
   | { status: "loading"; list: null; failure: null }
