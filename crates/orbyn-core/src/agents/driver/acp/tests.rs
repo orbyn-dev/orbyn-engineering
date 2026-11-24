@@ -104,14 +104,275 @@ fn cancellation_answers_cancelled() {
 }
 
 #[test]
-fn chunks_form_one_message_until_the_kind_changes() {
+fn text_and_thought_chunks_form_one_message_each_until_the_tool_call() {
     let mut mapper = UpdateMapper::default();
     let chunk = json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "a" } });
+    let thought = json!({ "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": "b" } });
     assert_eq!(mapper.on_update(&chunk).len(), 2);
+    assert_eq!(mapper.on_update(&thought).len(), 2);
     assert_eq!(mapper.on_update(&chunk).len(), 1);
     let tool = json!({ "sessionUpdate": "tool_call", "toolCallId": "c", "title": "ls" });
-    assert_eq!(mapper.on_update(&tool).len(), 2);
+    assert_eq!(mapper.on_update(&tool).len(), 3);
     assert_eq!(mapper.close().len(), 1);
+}
+
+fn chunk(kind: &str, text: &str) -> Value {
+    json!({ "sessionUpdate": kind, "content": { "type": "text", "text": text } })
+}
+
+fn mapped(mapper: &mut UpdateMapper, updates: &[Value]) -> Vec<EngineEvent> {
+    updates
+        .iter()
+        .flat_map(|update| mapper.on_update(update))
+        .collect()
+}
+
+/// `(kind, message id, role)` for every message opened, in order.
+fn message_starts(events: &[EngineEvent]) -> Vec<(&'static str, String, String)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::Agui(AgUiEvent::TextMessageStart { message_id, role }) => {
+                Some(("text", message_id.clone(), role.clone()))
+            }
+            EngineEvent::Agui(AgUiEvent::ReasoningMessageStart { message_id, role }) => {
+                Some(("reasoning", message_id.clone(), role.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// `(kind, message id, delta)` for every chunk, in order.
+fn message_contents(events: &[EngineEvent]) -> Vec<(&'static str, String, String)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::Agui(AgUiEvent::TextMessageContent { message_id, delta }) => {
+                Some(("text", message_id.clone(), delta.clone()))
+            }
+            EngineEvent::Agui(AgUiEvent::ReasoningMessageContent { message_id, delta }) => {
+                Some(("reasoning", message_id.clone(), delta.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// `(kind, message id)` for every message closed, in order.
+fn message_ends(events: &[EngineEvent]) -> Vec<(&'static str, String)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::Agui(AgUiEvent::TextMessageEnd { message_id }) => {
+                Some(("text", message_id.clone()))
+            }
+            EngineEvent::Agui(AgUiEvent::ReasoningMessageEnd { message_id }) => {
+                Some(("reasoning", message_id.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn interleaved_thought_and_message_chunks_keep_both_messages_open() {
+    let mut mapper = UpdateMapper::default();
+    let events = mapped(
+        &mut mapper,
+        &[
+            chunk("agent_thought_chunk", "t1"),
+            chunk("agent_message_chunk", "a1"),
+            chunk("agent_thought_chunk", "t2"),
+            chunk("agent_message_chunk", "a2"),
+        ],
+    );
+    let starts = message_starts(&events);
+    assert_eq!(starts.len(), 2, "{events:?}");
+    let reasoning = starts.iter().find(|start| start.0 == "reasoning").unwrap();
+    let text = starts.iter().find(|start| start.0 == "text").unwrap();
+    assert_eq!(reasoning.2, "reasoning");
+    assert_eq!(text.2, "assistant");
+    assert_ne!(reasoning.1, text.1);
+    assert_eq!(
+        message_contents(&events),
+        vec![
+            ("reasoning", reasoning.1.clone(), "t1".to_owned()),
+            ("text", text.1.clone(), "a1".to_owned()),
+            ("reasoning", reasoning.1.clone(), "t2".to_owned()),
+            ("text", text.1.clone(), "a2".to_owned()),
+        ],
+        "{events:?}"
+    );
+    assert!(
+        message_ends(&events).is_empty(),
+        "no message may end before close(): {events:?}"
+    );
+    let closed = mapper.close();
+    assert_eq!(
+        message_ends(&closed),
+        vec![("text", text.1.clone()), ("reasoning", reasoning.1.clone()),],
+        "{closed:?}"
+    );
+}
+
+#[test]
+fn a_tool_call_between_chunks_splits_each_kind() {
+    let mut mapper = UpdateMapper::default();
+    let events = mapped(
+        &mut mapper,
+        &[
+            chunk("agent_thought_chunk", "t1"),
+            chunk("agent_message_chunk", "a1"),
+            json!({ "sessionUpdate": "tool_call", "toolCallId": "c", "title": "ls" }),
+            chunk("agent_thought_chunk", "t2"),
+            chunk("agent_message_chunk", "a2"),
+        ],
+    );
+    let starts = message_starts(&events);
+    assert_eq!(starts.len(), 4, "{events:?}");
+    assert_eq!(
+        starts.iter().map(|start| start.0).collect::<Vec<_>>(),
+        ["reasoning", "text", "reasoning", "text"],
+        "{events:?}"
+    );
+    assert_ne!(starts[0].1, starts[2].1);
+    assert_ne!(starts[1].1, starts[3].1);
+    assert_eq!(
+        message_contents(&events),
+        vec![
+            ("reasoning", starts[0].1.clone(), "t1".to_owned()),
+            ("text", starts[1].1.clone(), "a1".to_owned()),
+            ("reasoning", starts[2].1.clone(), "t2".to_owned()),
+            ("text", starts[3].1.clone(), "a2".to_owned()),
+        ],
+        "{events:?}"
+    );
+    assert_eq!(
+        message_ends(&events),
+        vec![
+            ("text", starts[1].1.clone()),
+            ("reasoning", starts[0].1.clone()),
+        ],
+        "the tool call closes the first pair: {events:?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            EngineEvent::Agui(AgUiEvent::ToolCallStart { tool_call_id, .. }) if tool_call_id == "c"
+        )),
+        "{events:?}"
+    );
+    let closed = mapper.close();
+    let mut ends = message_ends(&events);
+    ends.extend(message_ends(&closed));
+    assert_eq!(
+        ends,
+        vec![
+            ("text", starts[1].1.clone()),
+            ("reasoning", starts[0].1.clone()),
+            ("text", starts[3].1.clone()),
+            ("reasoning", starts[2].1.clone()),
+        ],
+        "{events:?} {closed:?}"
+    );
+}
+
+#[test]
+fn the_historical_mapper_keeps_interleaved_messages_open_too() {
+    let updates = [
+        chunk("agent_thought_chunk", "t1"),
+        chunk("agent_message_chunk", "a1"),
+        chunk("agent_thought_chunk", "t2"),
+        chunk("agent_message_chunk", "a2"),
+    ];
+    let mut historical = UpdateMapper::historical();
+    let mut events = mapped(&mut historical, &updates);
+    assert!(
+        message_ends(&events).is_empty(),
+        "no message may end before close(): {events:?}"
+    );
+    events.extend(historical.close());
+    assert_eq!(
+        message_starts(&events),
+        vec![
+            (
+                "reasoning",
+                "acp-history-1".to_owned(),
+                "reasoning".to_owned()
+            ),
+            ("text", "acp-history-2".to_owned(), "assistant".to_owned()),
+        ],
+        "{events:?}"
+    );
+    assert_eq!(
+        message_contents(&events),
+        vec![
+            ("reasoning", "acp-history-1".to_owned(), "t1".to_owned()),
+            ("text", "acp-history-2".to_owned(), "a1".to_owned()),
+            ("reasoning", "acp-history-1".to_owned(), "t2".to_owned()),
+            ("text", "acp-history-2".to_owned(), "a2".to_owned()),
+        ],
+        "{events:?}"
+    );
+    assert_eq!(
+        message_ends(&events),
+        vec![
+            ("text", "acp-history-2".to_owned()),
+            ("reasoning", "acp-history-1".to_owned()),
+        ],
+        "{events:?}"
+    );
+}
+
+#[test]
+fn a_user_chunk_between_assistant_chunks_splits_the_text_message() {
+    let mut mapper = UpdateMapper::default();
+    let events = mapped(
+        &mut mapper,
+        &[
+            chunk("agent_message_chunk", "a1"),
+            chunk("user_message_chunk", "u1"),
+            chunk("agent_message_chunk", "a2"),
+        ],
+    );
+    let starts = message_starts(&events);
+    assert_eq!(starts.len(), 3, "{events:?}");
+    assert_eq!(
+        starts.iter().map(|start| start.0).collect::<Vec<_>>(),
+        ["text", "text", "text"],
+        "{events:?}"
+    );
+    assert_eq!(
+        starts
+            .iter()
+            .map(|start| start.2.as_str())
+            .collect::<Vec<_>>(),
+        ["assistant", "user", "assistant"],
+        "{events:?}"
+    );
+    assert_ne!(starts[0].1, starts[1].1);
+    assert_ne!(starts[0].1, starts[2].1);
+    assert_eq!(
+        message_contents(&events),
+        vec![
+            ("text", starts[0].1.clone(), "a1".to_owned()),
+            ("text", starts[1].1.clone(), "u1".to_owned()),
+            ("text", starts[2].1.clone(), "a2".to_owned()),
+        ],
+        "{events:?}"
+    );
+    assert_eq!(
+        message_ends(&events),
+        vec![("text", starts[0].1.clone()), ("text", starts[1].1.clone()),],
+        "{events:?}"
+    );
+    let closed = mapper.close();
+    assert_eq!(
+        message_ends(&closed),
+        vec![("text", starts[2].1.clone())],
+        "{closed:?}"
+    );
 }
 
 #[test]
