@@ -60,6 +60,39 @@ it("shows window controls only for the Windows desktop frame", async () => {
   expect(screen.queryByRole("button", { name: "Minimize" })).toBeNull();
 });
 
+it("titles each titlebar icon button, with its key on this platform", async () => {
+  const platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  const windows = render(<TitleBar layout="wide" navShown />);
+  expect(await screen.findByRole("button", { name: "Hide sidebar" })).toHaveAttribute("title", "Hide sidebar (Ctrl+B)");
+  expect(screen.getByRole("button", { name: "Back" })).toHaveAttribute("title", "Back (Ctrl+[)");
+  expect(screen.getByRole("button", { name: "Forward" })).toHaveAttribute("title", "Forward (Ctrl+])");
+  windows.unmount();
+
+  platform.mockReturnValue("MacIntel");
+  render(<TitleBar layout="wide" navShown={false} />);
+  expect(await screen.findByRole("button", { name: "Show sidebar" })).toHaveAttribute("title", "Show sidebar (⌘B)");
+  expect(screen.getByRole("button", { name: "Back" })).toHaveAttribute("title", "Back (⌘[)");
+  expect(screen.getByRole("button", { name: "Forward" })).toHaveAttribute("title", "Forward (⌘])");
+});
+
+it("reads each tooltip shortcut from the saved keymap when a command is remapped", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  mock.setKeybindings({
+    path: "~/.orbyn/keybindings.json",
+    rules: [
+      { key: "alt+b", command: "sidebar.toggle", when: null, remove: false, custom: true, default_keys: ["mod+b"] },
+      { key: "alt+left", command: "navigation.back", when: "!terminalFocus", remove: false, custom: true, default_keys: ["mod+["] },
+      { key: "alt+right", command: "navigation.forward", when: "!terminalFocus", remove: false, custom: true, default_keys: ["mod+]"] },
+    ],
+    issues: [],
+    conflicts: [],
+  });
+  render(<TitleBar layout="wide" navShown />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveAttribute("title", "Hide sidebar (Alt+B)"));
+  expect(screen.getByRole("button", { name: "Back" })).toHaveAttribute("title", "Back (Alt+←)");
+  expect(screen.getByRole("button", { name: "Forward" })).toHaveAttribute("title", "Forward (Alt+→)");
+});
+
 it("sends each window control's command to the shell", async () => {
   const invoke = vi.fn(async () => undefined);
   withBridge(invoke);

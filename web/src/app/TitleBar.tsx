@@ -6,6 +6,7 @@ import { SyncTitleButton, useSignedInAccount } from "../features/account";
 import { attentionRank, EnvironmentIdentity } from "../features/workspace";
 import { useAsync } from "../lib/useAsync";
 import { useReadingNav } from "./readingNav";
+import { commandShortcut, formatShortcut } from "../product/shell/shortcuts";
 import { togglePhoneSidebar, toggleSidebarDrawer } from "../product/shell/sidebarDrawer";
 import type { LayoutWidth } from "../lib/useLayout";
 import { useUi } from "../product/state/ui";
@@ -119,6 +120,8 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
   const ledger = useUi((state) => state.workspaceLayout === "ledger");
   const waiting = useWaitingCount();
   const account = useSignedInAccount();
+  // The person's keys, so a tooltip shows the chord a command really answers to.
+  const keymap = useAsync("keybindings", (signal) => api.keybindings(signal));
 
   // What the shell puts on screen, so the button and its label never disagree with the sidebar.
   const shown = navShown;
@@ -150,6 +153,10 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
   const end = useRef<HTMLSpanElement>(null);
   useBarEndWidth(end);
   const sidebarLabel = shown ? "Hide sidebar" : "Show sidebar";
+  const shortcut = (command: string, builtIn: string) => formatShortcut(commandShortcut(keymap.data?.rules, command) ?? builtIn);
+  const sidebarTitle = `${sidebarLabel} (${shortcut("sidebar.toggle", "mod+b")})`;
+  const backTitle = `Back (${shortcut("navigation.back", "mod+[")})`;
+  const forwardTitle = `Forward (${shortcut("navigation.forward", "mod+]")})`;
 
   // One 44px bar in every layout (the v60 frames): it floats over the top of the page, where the page's own header
   // carries the title, chips and actions on the same centre line, with the sidebar shown or not. Only the phone,
@@ -168,6 +175,7 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
         type="button"
         className="tbi"
         aria-label={sidebarLabel}
+        title={sidebarTitle}
         aria-expanded={shown}
         data-sidebar-toggle
         onClick={
@@ -187,10 +195,10 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
       >
         <PanelLeft size={16} aria-hidden />
       </button>
-      <button type="button" className="tbi" aria-label="Back" aria-disabled={!trail.back} data-dim={!trail.back || undefined} onClick={() => trail.back && goBack()}>
+      <button type="button" className="tbi" aria-label="Back" title={backTitle} aria-disabled={!trail.back} data-dim={!trail.back || undefined} onClick={() => trail.back && goBack()}>
         <ChevronLeft size={16} aria-hidden />
       </button>
-      <button type="button" className="tbi" aria-label="Forward" aria-disabled={!trail.forward} data-dim={!trail.forward || undefined} onClick={() => trail.forward && goForward()}>
+      <button type="button" className="tbi" aria-label="Forward" title={forwardTitle} aria-disabled={!trail.forward} data-dim={!trail.forward || undefined} onClick={() => trail.forward && goForward()}>
         <ChevronRight size={16} aria-hidden />
       </button>
       <span ref={end} className="titlebar-end">
