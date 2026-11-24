@@ -150,7 +150,7 @@ impl Core {
         // KC3: what waits elsewhere is read from the one needs-you field, never assembled here. The review waits this
         // queue answers (`MergeWaiting` and `BackgroundReview`) are left out: they are its own lists above.
         let mut elsewhere: BTreeMap<String, (wire::NeedsYouKind, u32)> = BTreeMap::new();
-        for item in self.needs_you_all()? {
+        for item in self.needs_you_all(&|_, _| true)? {
             match item.kind {
                 wire::NeedsYouKind::MergeWaiting | wire::NeedsYouKind::BackgroundReview => {}
                 kind => {

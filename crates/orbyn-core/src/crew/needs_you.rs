@@ -88,8 +88,13 @@ impl Core {
             .and_then(|result| line(scrub.text(&result.summary, REASON_MAX))))
     }
 
-    /// Every item, dismissed or not, before the cap and the order. The first rule for an id wins.
-    fn needs_you_items(&self) -> Result<Vec<wire::NeedsYouItem>> {
+    /// Every item, dismissed or not, before the cap and the order. The first rule for an id wins. `keep` says, from an item's
+    /// project and crew, whether the caller wants it, and is asked before any facts, results or scrubs are loaded for it, so a
+    /// read scoped to one crew or one repository does not pay for the others.
+    fn needs_you_items(
+        &self,
+        keep: &dyn Fn(Option<&str>, &str) -> bool,
+    ) -> Result<Vec<wire::NeedsYouItem>> {
         let person = self.display_redactor()?;
         let mut scrubs: BTreeMap<String, Scrub> = BTreeMap::new();
         let mut seen = BTreeSet::new();
@@ -100,6 +105,9 @@ impl Core {
             .store
             .crew_tasks_in_states(&["needs_person", "stopped"])?
         {
+            if !keep(place.project_id.as_deref(), &place.task.crew_id) {
+                continue;
+            }
             if place.task.state == "stopped" {
                 stopped.push(place);
                 continue;
@@ -143,16 +151,15 @@ impl Core {
             }
         }
 
-        let merges: Vec<_> = self
-            .store
-            .crew_all_merges()?
-            .into_iter()
-            .filter(|merge| merge.review_state == "waiting" && merge.needs_person.is_some())
-            .collect();
+        let merges = self.store.crew_waiting_merges()?;
         let task_ids: Vec<String> = merges.iter().map(|merge| merge.task_id.clone()).collect();
         let projects = self.store.crew_projects_of_tasks(&task_ids)?;
         for merge in merges {
-            if !seen.insert(merge.task_id.clone()) {
+            if !keep(
+                projects.get(&merge.task_id).map(String::as_str),
+                &merge.crew_id,
+            ) || !seen.insert(merge.task_id.clone())
+            {
                 continue;
             }
             items.push(wire::NeedsYouItem {
@@ -167,7 +174,10 @@ impl Core {
         }
 
         for review in self.store.background_reviews()? {
-            if !review.run.review_waiting || !seen.insert(review.run.id.clone()) {
+            if !review.run.review_waiting
+                || !keep(Some(&review.project_id), &review.run.background_id)
+                || !seen.insert(review.run.id.clone())
+            {
                 continue;
             }
             let since = review
@@ -224,8 +234,11 @@ impl Core {
     /// Every wait a person has not dismissed, newest first, ties by id, with no cap. The reads that scope the field to one
     /// crew or one repository (the Taskboard, the dashboard, the Review queue digest) take this, so another crew's newer waits
     /// can never push this one's out of its own count; a presentation cap belongs after that scoping.
-    pub(super) fn needs_you_all(&self) -> Result<Vec<wire::NeedsYouItem>> {
-        let mut items = self.needs_you_items()?;
+    pub(super) fn needs_you_all(
+        &self,
+        keep: &dyn Fn(Option<&str>, &str) -> bool,
+    ) -> Result<Vec<wire::NeedsYouItem>> {
+        let mut items = self.needs_you_items(keep)?;
         let mut dismissed: BTreeMap<(String, String), String> = BTreeMap::new();
         for row in self.store.crew_needs_you_dismissals()? {
             dismissed.insert((row.kind, row.id), row.since);
@@ -247,7 +260,7 @@ impl Core {
 
     /// The items the Inbox shows: `needs_you_all`, at most 200.
     fn needs_you_list(&self) -> Result<Vec<wire::NeedsYouItem>> {
-        let mut items = self.needs_you_all()?;
+        let mut items = self.needs_you_all(&|_, _| true)?;
         items.truncate(CAP);
         Ok(items)
     }
@@ -279,7 +292,7 @@ impl Core {
         }
         valid_id(id)?;
         let item = self
-            .needs_you_items()?
+            .needs_you_items(&|_, _| true)?
             .into_iter()
             .find(|item| item.kind == kind && item.id == id)
             .ok_or_else(|| CoreError::NotFound(format!("needs you item {id}")))?;

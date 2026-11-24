@@ -389,7 +389,7 @@ impl Core {
     /// function over this project's tasks for the workers. It is not windowed, writes nothing and starts nothing.
     fn dashboard_live(&self, project: &str) -> Result<wire::CrewDashboardLive> {
         let mut waits: BTreeMap<String, (wire::NeedsYouKind, u32)> = BTreeMap::new();
-        for item in self.needs_you_all()? {
+        for item in self.needs_you_all(&|item_project, _| item_project == Some(project))? {
             if item.project_id.as_deref() != Some(project) {
                 continue;
             }
