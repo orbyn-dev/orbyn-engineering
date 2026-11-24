@@ -2091,7 +2091,9 @@ the person key were merged first (#1342).
   `could_not_stop` (not dismissible): the read joins tasks that have not passed or stopped (a `cancelled` one whose second stop failed
   included) to their latest `crew.task.cancel_failed` row with no `crew.task.cancelled` or `crew.task.stop_retried` row after it,
   and shows that row's time as `since`. It adds no storage and moves nothing. The item clears when the person stops the task again
-  and the stop holds.
+  and the stop holds. It also carries the task's `name`, `engine`, `model` and `task_kind` (only for this kind, so the inbox row
+  needs no board read). The Board's Needs-you card for it is the field's own: `needs_you` is `could_not_stop` and `reason` is the
+  fixed line, cleared when a stop holds.
 - **Not run against a real service.** The routes, the agreement between the live read and the close, the failed-task path, the inbox
   item and the thread's own close are covered by fake-engine and route tests; the web half hides until the Preview flag is on.
 

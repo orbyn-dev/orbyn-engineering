@@ -9,7 +9,7 @@ use orbyn_contracts::{
 use serde_json::{Value, json};
 
 use super::flow::{built_another, crew_rows, nonce, page};
-use super::harness::{Turn, brief, key, world};
+use super::harness::{Turn, brief, give_back_worker_run, key, take_worker_run, world};
 use super::review_support::{arc, built, crew, reviewed};
 use crate::crew::Page;
 
@@ -307,6 +307,53 @@ async fn a_task_that_needs_the_person_carries_its_reason() {
     assert!(card.reason.as_ref().is_some_and(|r| !r.is_empty()));
     assert!(card.can_cancel);
     assert!(!card.can_rerun);
+}
+
+/// A task whose last cancel attempt could not stop its worker is a Needs-you card from the one field, with its own kind and
+/// line; once a stop holds, the field no longer names it and the card leaves the column.
+#[tokio::test]
+async fn a_cancelled_task_whose_worker_could_not_be_stopped_is_a_needs_you_card_until_a_stop_holds()
+{
+    let w = crew(arc(|_, _| Turn::Hang)).await;
+    let (answer, error) = w
+        .start(
+            brief(json!({
+                "outcome": "Stuck in a loop.",
+                "files": [{ "path": "src/stuck/**", "mode": "write" }]
+            })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let crew_id = w.task(&id).crew_id;
+    let epoch = take_worker_run(&w, &id);
+    let closed = w.core.crew_close_lead(&w.lead, "user").await.unwrap();
+    assert_eq!(closed.failed, vec![id.clone()]);
+
+    let view = board(&w, &crew_id);
+    let card = column(&view, Column::NeedsYou)
+        .cards
+        .iter()
+        .find(|card| card.id == id)
+        .expect("the could-not-stop card");
+    assert_eq!(card.needs_you, Some(NeedsYouKind::CouldNotStop));
+    assert!(
+        card.reason
+            .as_ref()
+            .is_some_and(|reason| !reason.is_empty())
+    );
+
+    give_back_worker_run(&w, &id, &epoch);
+    w.core.crew_cancel_task(&id, None, "user").await.unwrap();
+    let view = board(&w, &crew_id);
+    assert!(
+        column(&view, Column::NeedsYou)
+            .cards
+            .iter()
+            .all(|card| card.id != id),
+        "the card stays after the stop held"
+    );
 }
 
 #[tokio::test]
