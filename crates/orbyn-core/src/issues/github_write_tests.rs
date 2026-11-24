@@ -48,8 +48,9 @@ fn rest_issue() -> Value {
     })
 }
 
-/// A `gh issue view --json DETAIL_FIELDS` answer for issue 7.
-fn detail_json(reactions: Value) -> Value {
+/// A `gh issue view --json DETAIL_FIELDS` answer for issue 7. The detail read names no reaction field: counts are
+/// the react answer's own optional read.
+fn detail_json() -> Value {
     json!({
         "number": 7,
         "title": "Crash on start",
@@ -63,7 +64,6 @@ fn detail_json(reactions: Value) -> Value {
         "labels": [],
         "comments": [],
         "body": "It breaks.",
-        "reactionGroups": reactions,
     })
 }
 
@@ -239,7 +239,7 @@ async fn a_comment_sends_the_body_as_a_field_and_answers_the_stored_comment() {
     assert_eq!(seen(&calls).len(), 1);
 }
 
-/// The answer to a react: the node query, the mutation, then the read the route answers with.
+/// The answer to a react: the node query, the mutation, the detail's two reads and the counts' optional read.
 fn react_fixture(
     calls: Calls,
     on: bool,
@@ -293,10 +293,19 @@ fn react_fixture(
             {
                 return Ok(json!({ "closedByPullRequestsReferences": [] }).to_string());
             }
+            if names_field(&args, "reactionGroups") {
+                return Ok(json!({ "reactionGroups": reactions.clone() }).to_string());
+            }
             assert_eq!(args[0], "issue", "{args:?}");
-            Ok(detail_json(reactions.clone()).to_string())
+            Ok(detail_json().to_string())
         },
     )
+}
+
+/// Whether a `gh --json` argument names one field, alone or in the detail's comma-separated list.
+fn names_field<S: AsRef<str>>(args: &[S], field: &str) -> bool {
+    args.iter()
+        .any(|arg| arg.as_ref().split(',').any(|name| name.trim() == field))
 }
 
 #[tokio::test]
@@ -326,8 +335,8 @@ async fn an_issue_reaction_is_added_by_node_id_and_answers_the_trackers_counts()
     );
     assert_eq!(
         seen(&calls).len(),
-        4,
-        "the issue's node id, one mutation and the two reads of a detail"
+        5,
+        "the issue's node id, one mutation, the detail's two reads and the counts read"
     );
 }
 
@@ -358,14 +367,97 @@ async fn a_comment_reaction_uses_the_comments_node_id_and_removes_the_same_conte
     let calls = seen(&calls);
     assert_eq!(
         calls.len(),
-        3,
-        "a comment id needs no node lookup: the mutation and the two detail reads"
+        4,
+        "a comment id needs no node lookup: the mutation, the detail's two reads and the counts read"
     );
     assert!(
         calls
             .iter()
             .all(|(args, _)| !args.iter().any(|arg| arg.contains("OrbynIssueNode"))),
         "a comment react never looks the issue's node id up"
+    );
+}
+
+/// A `gh` older than the `reactionGroups` field: the read that names it fails, as the real one answers "Unknown
+/// JSON field". Everything else answers, so the test proves that field is not in the mandatory detail read.
+fn older_gh_fixture() -> GhAnswer {
+    Arc::new(
+        |_forge: Forge, _cwd: &Path, args: &[&str], _input: Option<&str>| -> Result<String> {
+            if names_field(args, "reactionGroups") {
+                return Err(CoreError::Git(
+                    "Unknown JSON field: \"reactionGroups\"".into(),
+                ));
+            }
+            if args.contains(&"closedByPullRequestsReferences") {
+                return Ok(json!({ "closedByPullRequestsReferences": [] }).to_string());
+            }
+            Ok(detail_json().to_string())
+        },
+    )
+}
+
+#[tokio::test]
+async fn a_gh_without_the_reactions_field_still_answers_the_issue() {
+    let detail = with_crew_input_fixture(older_gh_fixture(), async {
+        github().get("acme/app", "7").await
+    })
+    .await
+    .unwrap();
+    assert_eq!(detail.summary.key, "7");
+    assert_eq!(
+        detail.reactions, None,
+        "a detail read does not ask for counts, so an old gh answers the issue"
+    );
+}
+
+#[tokio::test]
+async fn a_react_on_a_gh_without_the_reactions_field_answers_without_counts() {
+    let calls = calls();
+    let record = calls.clone();
+    let older = older_gh_fixture();
+    let fixture = Arc::new(
+        move |forge: Forge, cwd: &Path, args: &[&str], input: Option<&str>| -> Result<String> {
+            let args_vec: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+            record
+                .lock()
+                .unwrap()
+                .push((args_vec.clone(), input.map(str::to_owned)));
+            if args.first().is_some_and(|arg| *arg == "api") {
+                let query = args
+                    .iter()
+                    .find(|arg| arg.starts_with("query="))
+                    .map(|arg| (*arg).to_owned())
+                    .unwrap_or_default();
+                if query.contains("OrbynIssueNode") {
+                    return Ok(
+                        json!({ "data": { "repository": { "issue": { "id": "I_issue_7" } } } })
+                            .to_string(),
+                    );
+                }
+                return Ok(
+                    json!({ "data": { "addReaction": { "reaction": { "content": "HEART" } } } })
+                        .to_string(),
+                );
+            }
+            older(forge, cwd, args, input)
+        },
+    );
+    let detail = with_crew_input_fixture(fixture, async {
+        github()
+            .react("acme/app", "7", None, IssueReaction::Heart, true)
+            .await
+    })
+    .await
+    .expect("a gh without the counts field still answers the issue it changed");
+    assert_eq!(detail.summary.key, "7");
+    assert_eq!(
+        detail.reactions, None,
+        "the optional counts read failed, so the answer says unknown, not zero"
+    );
+    assert_eq!(
+        seen(&calls).len(),
+        5,
+        "the counts read ran and answered nothing: node, mutation, detail, links, counts"
     );
 }
 
@@ -437,6 +529,13 @@ fn a_reaction_counts_answer_keeps_the_trackers_own_word_and_drops_empty_groups()
         reaction_counts(&json!({ "reactionGroups": [] })),
         Some(vec![]),
         "what shares no reaction is an empty list, not an unknown one"
+    );
+    assert_eq!(
+        reaction_counts(&json!({ "reactionGroups": [
+            { "content": "HEART", "users": { "totalCount": 0 } },
+        ] })),
+        Some(vec![]),
+        "a group nobody used is dropped: the answer is the counts the person can see"
     );
 }
 

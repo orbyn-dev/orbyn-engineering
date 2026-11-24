@@ -21,7 +21,7 @@ const LIST_FIELDS: &str = "number,title,url,author,state,stateReason,createdAt,u
 /// Open Dependabot alerts per `gh api` page, and the pages one read takes (1000 alerts).
 const DEPENDENCY_PAGE_SIZE: usize = 100;
 const DEPENDENCY_PAGES: u32 = 10;
-const DETAIL_FIELDS: &str = "number,title,url,author,state,stateReason,createdAt,updatedAt,closedAt,assignees,labels,comments,body,reactionGroups";
+const DETAIL_FIELDS: &str = "number,title,url,author,state,stateReason,createdAt,updatedAt,closedAt,assignees,labels,comments,body";
 /// The one issue a reaction is added to, by its GraphQL node id: `addReaction` takes a node id, never a number.
 const ISSUE_NODE_QUERY: &str = "query OrbynIssueNode($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){id}}}";
 /// Both directions are idempotent in GitHub: adding a reaction that is already there answers the stored one, and
@@ -118,8 +118,9 @@ fn assignees_of(value: &Value) -> Vec<IssueActor> {
 }
 
 /// The reactions `gh issue view --json reactionGroups` reports: each group's own word (`THUMBS_UP`) and how many
-/// people used it. `None` when the answer carries no groups at all, so a reader that cannot report them says so
-/// rather than guessing zero.
+/// people used it. A group nobody used is dropped, so the answer is the counts the person can see, not every enum
+/// value. `None` when the answer carries no groups at all, so a reader that cannot report them says so rather than
+/// guessing zero.
 fn reaction_counts(value: &Value) -> Option<Vec<IssueReactionCount>> {
     let groups = value.get("reactionGroups").and_then(Value::as_array)?;
     Some(
@@ -532,6 +533,30 @@ fn scope_ok(scope: &str) -> Result<()> {
     }
 }
 
+/// The reactions `gh` reports for one issue, or `None` when this `gh` cannot say. It is a read of its own because
+/// `reactionGroups` is a field an older `gh` does not know: naming it in the detail read would fail that whole call,
+/// and the module's rule is that a field a tracker lacks becomes empty, never an error. Only the react answer carries
+/// counts (docs/issues.md); a plain detail read does not ask for them.
+async fn optional_reactions(
+    cwd: &std::path::Path,
+    scope: &str,
+    key: &str,
+) -> Option<Vec<IssueReactionCount>> {
+    let args: Vec<String> = [
+        "issue",
+        "view",
+        key,
+        "--repo",
+        scope,
+        "--json",
+        "reactionGroups",
+    ]
+    .map(str::to_owned)
+    .into();
+    let value = run(cwd, &args).await.ok()?;
+    reaction_counts(&value)
+}
+
 /// The GraphQL node id of one issue: `addReaction` and `removeReaction` take a node id, never a number.
 async fn node_id(cwd: &std::path::Path, scope: &str, key: &str) -> Result<String> {
     let (owner, name) = scope
@@ -750,7 +775,11 @@ impl IssueSource for GitHub {
             format!("content={}", reaction_content(reaction)),
         ];
         graphql(&self.cwd, &args).await?;
-        self.get(scope, key).await
+        let mut detail = self.get(scope, key).await?;
+        // The counts go in the reaction's answer only. The read is optional so a `gh` without the field still answers
+        // the issue it just changed, with no counts rather than a failure.
+        detail.reactions = optional_reactions(&self.cwd, scope, key).await;
+        Ok(detail)
     }
 
     async fn get(&self, scope: &str, key: &str) -> Result<IssueDetail> {
@@ -791,7 +820,8 @@ impl IssueSource for GitHub {
             comments: comments(&value),
             linked_pull_requests: linked,
             linked_threads: Vec::new(),
-            reactions: reaction_counts(&value),
+            // Counts are the react answer's alone: a detail read keeps them absent (docs/issues.md, "As built").
+            reactions: None,
         })
     }
 }

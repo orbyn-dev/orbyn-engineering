@@ -70,7 +70,7 @@ type IssueDetail = IssueSummary & {
   linked_pull_requests: { repository: string; number: number; title: string; url: string;
                           state: "open" | "closed" | "merged"; is_draft: boolean; closes_issue: boolean }[];
   linked_threads: string[];            // thread ids that link this issue
-  reactions?: { content: string; count: number }[] | null;  // absent when the tracker does not report them
+  reactions?: { content: string; count: number }[] | null;  // null unless this answer reports them
 };
 type IssueRef = { tracker; scope; key; display_key; title; state; labels };  // what a link stores
 type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: number } | null;
@@ -523,9 +523,16 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   (never a token Orbyn holds): create is one REST call whose JSON body carries the title, body, labels and assignees,
   and its answer is built from that call's own reply, so a successful create is never reported as a failure; comment
   is one REST call and answers the comment GitHub stored; react is GitHub's GraphQL `addReaction`/`removeReaction`
-  with the issue's or the comment's node id, then a read of the issue, and the answer's `IssueDetail.reactions` is
-  what `gh` reports (`THUMBS_UP`, `HEART`, ... in its own words). A create whose outcome is unknown answers
-  `tracker_unavailable` saying the issue was possibly created; nothing retries.
+  with the issue's or the comment's node id, then a read of the issue, then one optional read of GitHub's
+  `reactionGroups`, and the answer's `IssueDetail.reactions` is what that read reports (`THUMBS_UP`, `HEART`, ...
+  in its own words), with a group nobody used dropped. The counts read is separate because an older `gh` does not know
+  the field: named in the mandatory detail read it would fail that whole call, so when this read fails the answer is
+  the issue with `reactions: null`. A plain detail read (`GET /api/issues/item`) carries no reactions. A create whose
+  outcome is unknown answers `tracker_unavailable` saying the issue was possibly created; nothing retries.
+- **The routes' own caps, checked before anything is sent**: a title is one line of 1 to 256 characters; an issue body
+  or a comment is at most 64 KiB and a comment is not blank; at most 50 labels, each a name of 1 to 200 characters; at
+  most 25 assignee ids, each 1 to 200 characters; a comment id is 1 to 200 characters; no control characters in a
+  title, a label name, an assignee id or a comment id.
 - **The other four trackers answer `422 unsupported`** with one sentence naming the tracker ("GitLab issue writes
   arrive in a later update.") and send nothing. R15 PR1b adds them: GitLab, Forgejo, Azure DevOps and Linear each need
   their own label/assignee id resolution, reaction removal by id, and (Azure DevOps) its comments-only six of the
@@ -538,8 +545,9 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   goes with them.
 - **Not verified.** No real GitHub issue was created, commented on or reacted to; the writer is tested against a
   scripted `gh` and the REST/GraphQL shapes, including that adding a reaction that is already there and removing one
-  that is not answer without an error, are from GitHub's documentation as understood. No real `orbynd` service run
-  exercises these routes.
+  that is not answer without an error, are from GitHub's documentation as understood. The older-`gh` shape (a
+  `reactionGroups` read that fails while the detail read answers) is scripted too, not observed on a real old `gh`. No
+  real `orbynd` service run exercises these routes.
 
 ## What T3 has that this does not (Planned)
 
