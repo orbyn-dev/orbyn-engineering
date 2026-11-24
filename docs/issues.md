@@ -2,7 +2,8 @@
 
 Issue trackers beside the code: a list of issues from GitHub, GitLab, Azure DevOps, Forgejo and Linear, a
 thread started from an issue, and a link between a thread and the issues it works on. Beta: read-only
-against the tracker, with exactly four writes of Orbyn's own (connect, disconnect, link, start a thread).
+against the tracker, with Orbyn's own writes only (connect, disconnect, link, start a thread, and — through
+the person's own account, GitHub only so far — create, comment and react).
 Behind a flag until it ships; with the flag off every route here answers `404` and the web app hides Issues.
 
 Field names follow the T3 Code issue schema (MIT, `9168ca73d`, names only) in snake_case. The web side's
@@ -69,6 +70,7 @@ type IssueDetail = IssueSummary & {
   linked_pull_requests: { repository: string; number: number; title: string; url: string;
                           state: "open" | "closed" | "merged"; is_draft: boolean; closes_issue: boolean }[];
   linked_threads: string[];            // thread ids that link this issue
+  reactions?: { content: string; count: number }[] | null;  // absent when the tracker does not report them
 };
 type IssueRef = { tracker; scope; key; display_key; title; state; labels };  // what a link stores
 type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: number } | null;
@@ -465,10 +467,11 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   `tracker_unavailable`) and changes nothing here. Issue text going in is as untrusted as issue text coming
   out: it is sent as a field value, never in an argument position, and never rendered as markup by this side.
 
-## Create, comment, react, templates and project binding (contract, not built)
+## Create, comment, react, templates and project binding (contract)
 
-R15 rows `create`, `comment`, `react`, `templates` and `bindProject`. This section is the contract; no route below
-exists yet and the web keeps each control as Planned until it does. They follow the rules of "Issue writes and list
+R15 rows `create`, `comment`, `react`, `templates` and `bindProject`. `create`, `comment` and `react` are built
+for GitHub in R15 PR1 and the other four trackers answer `422 unsupported` until R15 PR1b; `templates` and
+`bindProject` are not built yet (PR2 and PR3), and the web keeps each unbuilt control as Planned. They follow the rules of "Issue writes and list
 controls": every write is Person-class and goes in `ENFORCED` and `PERSON_ROUTES`, answers the stored issue, and a
 tracker refusal answers the usual error (`forbidden`, `not_found`, `rate_limited`, `tracker_unavailable`) and changes
 nothing here. Issue text going in is sent as a field value, never in an argument position, and never rendered as markup
@@ -483,22 +486,25 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
 | `GET /api/issues/templates` | no | `IssueTemplate[]`. Query `tracker`, `scope` |
 | `POST /api/projects/{id}/issue-tracker` | **yes** | `200 { tracker, scope }`, or `204` to unbind. Body `{ tracker, scope }` or `{ tracker: null }` |
 
-- `create`: `title` is one line, 1 to 256 characters; `body` at most 64 KiB; `labels` (at most 50) are names, `assignees`
+- `create` (**built, GitHub**): `title` is one line, 1 to 256 characters; `body` at most 64 KiB; `labels` (at most 50) are names, `assignees`
   (at most 25) are candidate `id`s from `GET /api/issues/candidates`, as in `update`. `template` is the `id` of a template
   from `templates`; when present, a missing `body` is filled from the template's body and an unknown id is `400 invalid`.
+  The templates read is not built yet (PR2), so no template id can be known and any present one is `400 invalid`
+  ("Unknown issue template."); the fill lands with that read.
   One call creates one issue: no retry loop, and a timeout answers `tracker_unavailable` with the issue possibly created
   (the answer says so, and the page re-reads the list rather than sending again). A `scope` outside the connection is
   refused as everywhere else.
-- `comment`: `body` is 1 to 64 KiB and not blank. It answers the stored comment (`id`, `author`, `created_at`, `body` as the
+- `comment` (**built, GitHub**): `body` is 1 to 64 KiB and not blank. It answers the stored comment (`id`, `author`, `created_at`, `body` as the
   tracker returned it). Editing and deleting comments are not part of this row.
-- `react`: `reaction` is one of `thumbs_up`, `thumbs_down`, `laugh`, `hooray`, `confused`, `heart`, `rocket`, `eyes`;
+- `react` (**built, GitHub**): `reaction` is one of `thumbs_up`, `thumbs_down`, `laugh`, `hooray`, `confused`, `heart`, `rocket`, `eyes`;
   `on` true adds the person's reaction and false removes it, both idempotent. `comment_id` absent means the issue itself.
   A tracker with a smaller set refuses a value it lacks with `400 invalid` and names the ones it has; none is mapped to a
-  near one. The answer is the issue with its reaction counts as the tracker reports them.
-- `templates`: the tracker's own issue templates for the scope, read-only: `{ id, name, description?, body, labels[] }`,
+  near one. The answer is the issue with its reaction counts as the tracker reports them, in the tracker's own words
+  (`IssueDetail.reactions`).
+- `templates` (not built, PR2): the tracker's own issue templates for the scope, read-only: `{ id, name, description?, body, labels[] }`,
   at most 50, bodies cut at 16 KiB. A tracker with none answers `[]`, never `404`. Template text is the tracker's text and as
   untrusted as any other (see "Issue text is untrusted"); it only ever fills the person's own create form.
-- `bindProject`: stores which connected tracker and scope this project's issues come from, so the page and the engine
+- `bindProject` (not built, PR3): stores which connected tracker and scope this project's issues come from, so the page and the engine
   tools default to it. `scope` must be one of the connection's scopes; a tracker that is not connected is
   `400 invalid`. It stores two names and no secret, writes one audit row (`issues.project.bind`, ids only), and never
   changes the connection, the project or any issue.
@@ -508,11 +514,39 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   the exact field sent, no token in the answer or the audit row; `403 desktop_required` without the person key and
   nothing sent; a refusal changes nothing here; the route table and class tests pass without special cases.
 
+### As built (R15 PR1)
+
+`POST /api/issues/item/create`, `/comment` and `/react` exist behind the Issues flag, are Person-class
+(`ENFORCED` + `PERSON_ROUTES` + `tests/routes.json`), and write only through a tracker whose own write is built:
+
+- **GitHub is the only tracker that writes in this PR.** Create, comment and react run through the person's own `gh`
+  (never a token Orbyn holds): create is one REST call whose JSON body carries the title, body, labels and assignees,
+  and its answer is built from that call's own reply, so a successful create is never reported as a failure; comment
+  is one REST call and answers the comment GitHub stored; react is GitHub's GraphQL `addReaction`/`removeReaction`
+  with the issue's or the comment's node id, then a read of the issue, and the answer's `IssueDetail.reactions` is
+  what `gh` reports (`THUMBS_UP`, `HEART`, ... in its own words). A create whose outcome is unknown answers
+  `tracker_unavailable` saying the issue was possibly created; nothing retries.
+- **The other four trackers answer `422 unsupported`** with one sentence naming the tracker ("GitLab issue writes
+  arrive in a later update.") and send nothing. R15 PR1b adds them: GitLab, Forgejo, Azure DevOps and Linear each need
+  their own label/assignee id resolution, reaction removal by id, and (Azure DevOps) its comments-only six of the
+  eight reactions.
+- **A write the tracker refuses** answers the usual `forbidden`, `not_found`, `rate_limited` or
+  `tracker_unavailable` and changes nothing here. Issue text goes in as a JSON field value, never as an argument
+  position.
+- **The web client does not call the three writes yet**: its create, comment and react controls stay Planned until a
+  web slice builds them against these routes; `web/src/api/personKey.ts` lists the routes now, so the key already
+  goes with them.
+- **Not verified.** No real GitHub issue was created, commented on or reacted to; the writer is tested against a
+  scripted `gh` and the REST/GraphQL shapes, including that adding a reaction that is already there and removing one
+  that is not answer without an error, are from GitHub's documentation as understood. No real `orbynd` service run
+  exercises these routes.
+
 ## What T3 has that this does not (Planned)
 
 The event timeline, "involved/mentioned"
-filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting, reactions, templates
-and project binding are specified above and not built. The engine-facing
+filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting and
+reactions are built for GitHub in R15 PR1 and come to the other four trackers in R15 PR1b; templates and project
+binding are specified above and not built (PR2 and PR3). The engine-facing
 issue tools (N24) list, read, link, unlink and list a thread's linked issues; they do not create, comment or
 change state.
 
@@ -523,8 +557,9 @@ change state.
 
 - `get` takes the whole ref, `get(tracker, scope, key)`: a key is unique only within a scope.
 - `TrackerRow` adds `host` and `detail`; `connect` and `disconnect` are new calls (Person-class).
-- `IssueSummary` adds `closed_at`; `IssueDetail` adds `linked_pull_requests` and `linked_threads`;
-  `IssueList` adds `next_cursors`.
+- `IssueSummary` adds `closed_at`; `IssueDetail` adds `linked_pull_requests` and `linked_threads`, and
+  `reactions` (the tracker's own words and counts, absent when it does not report them); `IssueList` adds
+  `next_cursors`.
 - A new read, `draft`, builds the framed first message; `startThread` sends the edited message as before.
 - `link`, `unlink` and `startThread` are as guessed. `startThread` is one write that creates and links.
 - `trackers()` returning `null` is a `404` from the route.
