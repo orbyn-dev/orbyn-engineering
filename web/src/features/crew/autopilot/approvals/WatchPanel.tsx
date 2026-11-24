@@ -53,11 +53,9 @@ export interface WatchPanelProps {
   onToggle?(crew: WireCrew, enabled: boolean): void;
   /** Opens the Needs you inbox, where the row this change raised waits. */
   onOpenNeeds?(): void;
-  /** Opens the Background page again, where the run a failing change started is listed. */
-  onOpenRun?(): void;
 }
 
-export function WatchPanel({ crew, watch, repo, busy, onBack, onToggle, onOpenNeeds, onOpenRun }: WatchPanelProps) {
+export function WatchPanel({ crew, watch, repo, busy, onBack, onToggle, onOpenNeeds }: WatchPanelProps) {
   const view = watchView(crew, watch.status, watch.changes, new Date(), repo);
   const changed = view.chip.tone === "am" || view.chip.tone === "no";
   return (
@@ -81,7 +79,7 @@ export function WatchPanel({ crew, watch, repo, busy, onBack, onToggle, onOpenNe
         <h4>{view.banner.title}</h4>
         <p>{view.banner.text}</p>
         {view.banner.action === "needs_you" ? <Button small disabled={!onOpenNeeds} onClick={onOpenNeeds}>Open in Needs you</Button> : null}
-        {view.banner.action === "run" ? <Button small disabled={!onOpenRun} onClick={onOpenRun}>Open the run</Button> : null}
+        {/* No "Open the run" until the run route exists (#1354): a button that only closes this page would say what it does not do. */}
       </div>
       <div className="ap-box ap-watch-facts">
         <Facts rows={view.facts} />
