@@ -6,16 +6,16 @@
 use super::frame::cut;
 use super::host::validate_host;
 use super::query::{AssigneeFilter, IssueQuery, MAX_LIMIT, StateFilter};
-use super::{IssueSource, MAX_SCOPE_BYTES, ScopeList};
+use super::{IssueSource, MAX_SCOPE_BYTES, NewIssue, ScopeList};
 use crate::error::{CoreError, Result};
 use async_trait::async_trait;
 use orbyn_contracts::{
-    IssueActor, IssueComment, IssueCounts, IssueDetail, IssueLabel, IssueState, IssueStateCategory,
-    IssueSummary, TrackerKind,
+    IssueActor, IssueComment, IssueCounts, IssueDetail, IssueLabel, IssueReaction,
+    IssueReactionCount, IssueState, IssueStateCategory, IssueSummary, TrackerKind,
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use reqwest::{Client, StatusCode, Url, redirect};
-use serde_json::Value;
+use reqwest::{Client, Method, StatusCode, Url, redirect};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -37,6 +37,9 @@ const MAX_BODY_BYTES: usize = 64 * 1024;
 const MAX_COMMENTS: usize = 50;
 const MAX_NOTE_PAGES: u32 = 5;
 const MAX_SEGMENTS: usize = 20;
+/// One issue's reactions are read back at most this deep: a removal needs the reader's own award id.
+const MAX_AWARD_PAGES: u32 = 5;
+const MAX_AWARDS_PER_PAGE: usize = 100;
 
 pub(crate) struct GitLab {
     /// `https://host[/prefix]`, validated, no trailing slash.
@@ -131,22 +134,38 @@ impl GitLab {
 
     /// One read of the API. `what` names the thing a 404 means is missing.
     async fn fetch(&self, path: &str, query: &[(&str, String)], what: &str) -> Result<Fetched> {
+        self.send(Method::GET, path, query, None, what).await
+    }
+
+    /// One request of the API, read or write. The token, host, redirect, timeout and size rules are the read's; a
+    /// JSON body travels in the body, never in the address, and never as an argument.
+    async fn send(
+        &self,
+        method: Method,
+        path: &str,
+        query: &[(&str, String)],
+        body: Option<&Value>,
+        what: &str,
+    ) -> Result<Fetched> {
         let mut token = HeaderValue::from_str(self.token.as_str()).map_err(|_| {
             CoreError::TrackerNotConnected(
                 "The saved GitLab token cannot be used. Connect again with a new one.".into(),
             )
         })?;
         token.set_sensitive(true);
-        let mut response = self
+        let mut request = self
             .client
-            .get(format!("{}{path}", self.host))
+            .request(method, format!("{}{path}", self.host))
             .query(query)
             .header(token_header(), token)
             .header(reqwest::header::ACCEPT, "application/json")
-            .timeout(self.timeout)
-            .send()
-            .await
-            .map_err(|_| unavailable())?;
+            .timeout(self.timeout);
+        if let Some(body) = body {
+            request = request
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body.to_string());
+        }
+        let mut response = request.send().await.map_err(|_| unavailable())?;
         let status = response.status();
         if !status.is_success() {
             return Err(failure(status, response.headers(), what));
@@ -187,6 +206,76 @@ impl GitLab {
             open: n("opened")?,
             closed: n("closed")?,
         })
+    }
+
+    /// The username the saved token belongs to: GitLab removes an award by its id, so the reader must know which
+    /// award is its own.
+    async fn signed_in_login(&self) -> Result<String> {
+        let got = self.fetch("/api/v4/user", &[], "user").await?;
+        let value = parse(&got.body)?;
+        value
+            .get("username")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(unreadable)
+    }
+
+    /// The reader's own award of one name on a subject, if there is one: its id is what a removal takes.
+    async fn own_award(&self, subject: &str, name: &str, login: &str) -> Result<Option<u64>> {
+        for page in 1..=MAX_AWARD_PAGES {
+            let got = self
+                .fetch(
+                    subject,
+                    &[
+                        ("per_page", MAX_AWARDS_PER_PAGE.to_string()),
+                        ("page", page.to_string()),
+                    ],
+                    "issue",
+                )
+                .await?;
+            let rows = parse(&got.body)?;
+            let rows = rows.as_array().ok_or_else(unreadable)?;
+            for row in rows {
+                if row.get("name").and_then(Value::as_str) == Some(name)
+                    && row
+                        .pointer("/user/username")
+                        .and_then(Value::as_str)
+                        .is_some_and(|user| user.eq_ignore_ascii_case(login))
+                    && let Some(id) = row.get("id").and_then(Value::as_u64)
+                {
+                    return Ok(Some(id));
+                }
+            }
+            if rows.len() < MAX_AWARDS_PER_PAGE {
+                return Ok(None);
+            }
+            if page == MAX_AWARD_PAGES {
+                // The reader's own award may be on a page this reader does not read: a removal must not answer
+                // success while it could not see it.
+                return Err(CoreError::TrackerUnavailable(
+                    "GitLab's award list is longer than Orbyn reads.".into(),
+                ));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The issue's reactions as GitLab reports them, each under its own award name. `None` when the read fails:
+    /// the reaction is already written, so its answer is the issue without counts rather than an error.
+    async fn issue_reactions(&self, project: &str, key: &str) -> Option<Vec<IssueReactionCount>> {
+        let path = format!("/api/v4/projects/{project}/issues/{key}/award_emoji");
+        let got = self
+            .fetch(&path, &[("per_page", "100".to_owned())], "issue")
+            .await
+            .ok()?;
+        let rows = parse(&got.body).ok()?;
+        // A full first page may have more behind it: the answer is no counts, never a partial list presented as
+        // the totals.
+        if rows.as_array()?.len() >= MAX_AWARDS_PER_PAGE {
+            return None;
+        }
+        reaction_counts(&rows)
     }
 }
 
@@ -459,8 +548,189 @@ fn parse(body: &[u8]) -> Result<Value> {
     serde_json::from_slice(body).map_err(|_| unreadable())
 }
 
+/// GitLab's own name for one reaction, sent as `name=` on an award and returned as the reaction's word.
+fn award_name(reaction: IssueReaction) -> &'static str {
+    match reaction {
+        IssueReaction::ThumbsUp => "thumbsup",
+        IssueReaction::ThumbsDown => "thumbsdown",
+        IssueReaction::Laugh => "laughing",
+        IssueReaction::Hooray => "tada",
+        IssueReaction::Confused => "confused",
+        IssueReaction::Heart => "heart",
+        IssueReaction::Rocket => "rocket",
+        IssueReaction::Eyes => "eyes",
+    }
+}
+
+/// The awards in one answer, grouped by GitLab's own award name as counts. An award is listed only while somebody
+/// holds it, so the counts are the person's own.
+fn reaction_counts(rows: &Value) -> Option<Vec<IssueReactionCount>> {
+    let rows = rows.as_array()?;
+    let mut counts: Vec<IssueReactionCount> = Vec::new();
+    for row in rows {
+        let Some(name) = row
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|n| !n.is_empty())
+        else {
+            continue;
+        };
+        if let Some(count) = counts.iter_mut().find(|count| count.content == name) {
+            count.count = count.count.saturating_add(1);
+        } else {
+            counts.push(IssueReactionCount {
+                content: name.to_owned(),
+                count: 1,
+            });
+        }
+    }
+    Some(counts)
+}
+
+/// A GitLab note id: a 64-bit numeric id, up to 19 digits (note ids are global and already ten digits today),
+/// because an award is removed by the note's own award id path.
+fn note_id_ok(comment: &str) -> Result<()> {
+    if comment.is_empty()
+        || comment.len() > 19
+        || !comment.chars().all(|c| c.is_ascii_digit())
+        || comment.parse::<u64>().is_err()
+    {
+        return Err(CoreError::Invalid(
+            "That comment id is not a GitLab note.".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The assignee ids a create sends: a candidate id is the numeric user id on GitLab, never a login typed by hand.
+fn assignee_ids(assignees: &[String]) -> Result<Vec<u64>> {
+    assignees
+        .iter()
+        .map(|id| {
+            id.parse::<u64>().map_err(|_| {
+                CoreError::Invalid("A GitLab assignee is a numeric candidate id.".into())
+            })
+        })
+        .collect()
+}
+
 #[async_trait]
 impl IssueSource for GitLab {
+    fn can_write(&self) -> bool {
+        true
+    }
+
+    async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
+        let project = project_segment(scope)?;
+        // GitLab takes labels as one comma-separated value, so a name with a comma in it would silently become two.
+        if new.labels.iter().any(|label| label.contains(',')) {
+            return Err(CoreError::Invalid(
+                "A GitLab label cannot contain a comma.".into(),
+            ));
+        }
+        let payload = json!({
+            "title": new.title,
+            "description": new.body,
+            "labels": new.labels.join(","),
+            "assignee_ids": assignee_ids(new.assignees)?,
+        });
+        let path = format!("/api/v4/projects/{project}/issues");
+        let got = self
+            .send(Method::POST, &path, &[], Some(&payload), "project")
+            .await?;
+        let value = parse(&got.body)?;
+        let summary = summary(&self.host, scope, &value).ok_or_else(unreadable)?;
+        // A new issue has no comments: its own reply is the whole answer, so a successful create is never reported
+        // as a failure by a second read.
+        Ok(IssueDetail {
+            summary,
+            body: cut(&text(&value, "description"), MAX_BODY_BYTES).to_owned(),
+            comments: Vec::new(),
+            linked_pull_requests: Vec::new(),
+            linked_threads: Vec::new(),
+            reactions: None,
+        })
+    }
+
+    async fn comment(&self, scope: &str, key: &str, body: &str) -> Result<IssueComment> {
+        let project = project_segment(scope)?;
+        key_ok(key)?;
+        let path = format!("/api/v4/projects/{project}/issues/{key}/notes");
+        let got = self
+            .send(
+                Method::POST,
+                &path,
+                &[],
+                Some(&json!({ "body": body })),
+                "issue",
+            )
+            .await?;
+        let value = parse(&got.body)?;
+        Ok(IssueComment {
+            id: value
+                .get("id")
+                .and_then(Value::as_u64)
+                .map(|id| id.to_string())
+                .ok_or_else(unreadable)?,
+            author: value.get("author").and_then(actor),
+            body: cut(&text(&value, "body"), MAX_BODY_BYTES).to_owned(),
+            created_at: text(&value, "created_at"),
+        })
+    }
+
+    async fn react(
+        &self,
+        scope: &str,
+        key: &str,
+        comment: Option<&str>,
+        reaction: IssueReaction,
+        on: bool,
+    ) -> Result<IssueDetail> {
+        let project = project_segment(scope)?;
+        key_ok(key)?;
+        if let Some(comment) = comment {
+            note_id_ok(comment)?;
+        }
+        let award = award_name(reaction);
+        let subject = match comment {
+            Some(comment) => {
+                format!("/api/v4/projects/{project}/issues/{key}/notes/{comment}/award_emoji")
+            }
+            None => format!("/api/v4/projects/{project}/issues/{key}/award_emoji"),
+        };
+        // GitLab deletes an award by its id and takes no name there: the reader's own award is looked up first, so
+        // both directions answer the same way when the reaction is already (or no longer) there.
+        let login = self.signed_in_login().await?;
+        let own = self.own_award(&subject, award, &login).await?;
+        match (on, own) {
+            (true, None) => {
+                self.send(
+                    Method::POST,
+                    &subject,
+                    &[("name", award.to_owned())],
+                    None,
+                    "issue",
+                )
+                .await?;
+            }
+            (false, Some(id)) => {
+                self.send(
+                    Method::DELETE,
+                    &format!("{subject}/{id}"),
+                    &[],
+                    None,
+                    "issue",
+                )
+                .await?;
+            }
+            // Already there, or nothing to take back: nothing is written and the answer is the issue.
+            (_, _) => {}
+        }
+        let mut detail = self.get(scope, key).await?;
+        detail.reactions = self.issue_reactions(&project, key).await;
+        Ok(detail)
+    }
+
     async fn list(&self, scope: &str, query: &IssueQuery) -> Result<ScopeList> {
         let project = project_segment(scope)?;
         let page = page_of(scope, query)?;

@@ -11,12 +11,12 @@
 use super::frame::cut;
 use super::host::validate_host;
 use super::query::{AssigneeFilter, IssueQuery, StateFilter};
-use super::{IssueSource, ScopeList};
+use super::{IssueSource, NewIssue, ScopeList};
 use crate::error::{CoreError, Result};
 use async_trait::async_trait;
 use orbyn_contracts::{
-    IssueActor, IssueComment, IssueDetail, IssueState, IssueStateCategory, IssueSummary,
-    TrackerKind,
+    IssueActor, IssueComment, IssueDetail, IssueReaction, IssueReactionCount, IssueState,
+    IssueStateCategory, IssueSummary, TrackerKind,
 };
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Client, StatusCode, Url, redirect};
@@ -60,6 +60,22 @@ const DETAIL_FIELDS: &str = "identifier title description url createdAt updatedA
      labels(first: 100) { nodes { name } }";
 /// The one read a connection with no stored scope makes (docs/issues.md, "Linear as built").
 const TEAMS_QUERY: &str = "query OrbynTeams { teams(first: 20) { nodes { key } } }";
+/// The writes' GraphQL documents: fixed strings, so the person's text is only ever a variable value.
+const TEAM_ID_QUERY: &str =
+    "query OrbynTeamId($key:String!){teams(first:1,filter:{key:{eq:$key}}){nodes{id key}}}";
+const LABELS_QUERY: &str = "query OrbynLabels{issueLabels(first:250){nodes{id name team{key}}}}";
+const ISSUE_REF_QUERY: &str =
+    "query OrbynIssueRef($id:String!){issue(id:$id){id identifier team{key}}}";
+const COMMENT_REF_QUERY: &str = "query OrbynCommentRef($id:String!){comment(id:$id){id issue{id}}}";
+const ISSUE_CREATE_MUTATION: &str = "mutation OrbynIssueCreate($input:IssueCreateInput!){issueCreate(input:$input){success issue{identifier title description url createdAt updatedAt completedAt canceledAt state{name type} creator{name displayName} assignee{name displayName} labels(first:100){nodes{name}}}}}";
+const COMMENT_CREATE_MUTATION: &str = "mutation OrbynCommentCreate($input:CommentCreateInput!){commentCreate(input:$input){success comment{id body createdAt user{name displayName}}}}";
+const VIEWER_QUERY: &str = "query OrbynViewer{viewer{id}}";
+const ISSUE_REACTIONS_QUERY: &str =
+    "query OrbynIssueReactions($id:String!){issue(id:$id){reactions{id emoji user{id}}}}";
+const COMMENT_REACTIONS_QUERY: &str = "query OrbynCommentReactions($id:String!){comment(id:$id){issue{id} reactions{id emoji user{id}}}}";
+const REACTION_CREATE_MUTATION: &str = "mutation OrbynReactionCreate($input:ReactionCreateInput!){reactionCreate(input:$input){success}}";
+const REACTION_DELETE_MUTATION: &str =
+    "mutation OrbynReactionDelete($id:String!){reactionDelete(id:$id){success}}";
 
 pub(crate) struct Linear {
     /// `https://api.linear.app`, validated, no trailing slash.
@@ -337,6 +353,44 @@ fn detail_body(key: &str) -> Value {
          comments(first: 50) {{ nodes {{ id body createdAt user {{ name displayName }} }} }} }} }}"
     );
     json!({ "query": query, "variables": { "id": key } })
+}
+
+/// Linear reacts with the emoji itself and reports that emoji back, so its own word for the reaction is the emoji.
+fn reaction_emoji(reaction: IssueReaction) -> &'static str {
+    match reaction {
+        IssueReaction::ThumbsUp => "👍",
+        IssueReaction::ThumbsDown => "👎",
+        IssueReaction::Laugh => "😄",
+        IssueReaction::Hooray => "🎉",
+        IssueReaction::Confused => "😕",
+        IssueReaction::Heart => "❤️",
+        IssueReaction::Rocket => "🚀",
+        IssueReaction::Eyes => "👀",
+    }
+}
+
+/// The reactions in these rows, grouped by Linear's own emoji word as counts. Only rows the tracker returned are
+/// counted, so an emoji nobody used is never reported.
+fn reaction_counts(rows: &[Value]) -> Option<Vec<IssueReactionCount>> {
+    let mut counts: Vec<IssueReactionCount> = Vec::new();
+    for row in rows {
+        let Some(emoji) = row
+            .get("emoji")
+            .and_then(Value::as_str)
+            .filter(|emoji| !emoji.is_empty())
+        else {
+            continue;
+        };
+        if let Some(count) = counts.iter_mut().find(|count| count.content == emoji) {
+            count.count = count.count.saturating_add(1);
+        } else {
+            counts.push(IssueReactionCount {
+                content: emoji.to_owned(),
+                count: 1,
+            });
+        }
+    }
+    Some(counts)
 }
 
 struct Fetched {
@@ -639,10 +693,306 @@ impl Linear {
         }
         Ok(value)
     }
+
+    /// One GraphQL call whose fixed document and variable values are the whole request.
+    async fn graph(&self, query: &str, variables: Value, detail: bool) -> Result<Value> {
+        let got = self
+            .fetch(&json!({ "query": query, "variables": variables }))
+            .await?;
+        Self::answer(&got, detail)
+    }
+
+    /// The team's own id, which every write names.
+    async fn team_id(&self, scope: &str) -> Result<String> {
+        let value = self
+            .graph(TEAM_ID_QUERY, json!({ "key": scope }), false)
+            .await?;
+        value
+            .pointer("/data/teams/nodes/0/id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| CoreError::TrackerUnavailable("Linear has no team by that key.".into()))
+    }
+
+    /// The label ids for these names: Linear writes labels by id, so a name the workspace lacks refuses the write
+    /// rather than being dropped. A workspace label (one with no team) is offered in every team.
+    async fn label_ids(&self, scope: &str, names: &[String]) -> Result<Vec<String>> {
+        let mut found: Vec<(String, String)> = Vec::new();
+        if !names.is_empty() {
+            let value = self.graph(LABELS_QUERY, json!({}), false).await?;
+            let rows = value
+                .pointer("/data/issueLabels/nodes")
+                .and_then(Value::as_array)
+                .ok_or_else(unreadable)?;
+            for row in rows {
+                let Some(name) = row.get("name").and_then(Value::as_str) else {
+                    continue;
+                };
+                let team = row.pointer("/team/key").and_then(Value::as_str);
+                let in_scope = team.is_none_or(|key| key.eq_ignore_ascii_case(scope));
+                if in_scope
+                    && names.iter().any(|wanted| wanted.eq_ignore_ascii_case(name))
+                    && let Some(id) = row.get("id").and_then(Value::as_str)
+                    && !found.iter().any(|(seen, _)| seen == name)
+                {
+                    found.push((name.to_owned(), id.to_owned()));
+                }
+            }
+        }
+        names
+            .iter()
+            .map(|name| {
+                found
+                    .iter()
+                    .find(|(seen, _)| seen.eq_ignore_ascii_case(name))
+                    .map(|(_, id)| id.clone())
+                    .ok_or_else(|| {
+                        CoreError::Invalid("Linear has no label by one of the names given.".into())
+                    })
+            })
+            .collect()
+    }
+
+    /// The issue's internal id, refused unless it sits in the bound team.
+    async fn issue_internal_id(&self, scope: &str, key: &str) -> Result<String> {
+        issue_key(key)?;
+        let value = self
+            .graph(ISSUE_REF_QUERY, json!({ "id": key }), true)
+            .await?;
+        let node = value
+            .pointer("/data/issue")
+            .filter(|node| !node.is_null())
+            .ok_or_else(|| CoreError::NotFound("issue".into()))?;
+        let team = node.pointer("/team/key").and_then(Value::as_str);
+        if !team.is_some_and(|team| team.eq_ignore_ascii_case(scope)) {
+            return Err(CoreError::NotFound("issue".into()));
+        }
+        node.get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| CoreError::NotFound("issue".into()))
+    }
+
+    /// Proves a comment id belongs to one issue before a reaction is written to it: comment ids are workspace-wide,
+    /// so a Person-authorized caller must not have a reaction written outside the scope the guard checked.
+    async fn comment_belongs(&self, issue: &str, comment: &str) -> Result<()> {
+        let value = self
+            .graph(COMMENT_REF_QUERY, json!({ "id": comment }), true)
+            .await?;
+        let node = value
+            .pointer("/data/comment")
+            .filter(|node| !node.is_null())
+            .ok_or_else(|| CoreError::NotFound("issue".into()))?;
+        if node.pointer("/issue/id").and_then(Value::as_str) != Some(issue) {
+            return Err(CoreError::NotFound("issue".into()));
+        }
+        Ok(())
+    }
+
+    /// The rows of the subject's reactions: the issue by identifier, or the comment by its id.
+    async fn reaction_rows(&self, key: &str, comment: Option<&str>) -> Result<Vec<Value>> {
+        let query = if comment.is_some() {
+            COMMENT_REACTIONS_QUERY
+        } else {
+            ISSUE_REACTIONS_QUERY
+        };
+        let id = comment.unwrap_or(key);
+        let value = self.graph(query, json!({ "id": id }), false).await?;
+        let path = if comment.is_some() {
+            "/data/comment/reactions"
+        } else {
+            "/data/issue/reactions"
+        };
+        Ok(value
+            .pointer(path)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// The signed-in account's id: a reaction is found among the others by its owner.
+    async fn viewer_id(&self) -> Result<String> {
+        let value = self.graph(VIEWER_QUERY, json!({}), false).await?;
+        value
+            .pointer("/data/viewer/id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                CoreError::TrackerUnavailable("Linear did not say who this key belongs to.".into())
+            })
+    }
+
+    /// The reader's own reaction id of one emoji on the subject, if it is there: what a removal deletes.
+    async fn own_reaction(
+        &self,
+        key: &str,
+        comment: Option<&str>,
+        emoji: &str,
+    ) -> Result<Option<String>> {
+        let rows = self.reaction_rows(key, comment).await?;
+        let viewer = self.viewer_id().await?;
+        for row in rows {
+            if row.get("emoji").and_then(Value::as_str) == Some(emoji)
+                && row.pointer("/user/id").and_then(Value::as_str) == Some(viewer.as_str())
+            {
+                return Ok(row.get("id").and_then(Value::as_str).map(str::to_owned));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The issue's reactions as Linear reports them. `None` when the read fails: the reaction is already written, so
+    /// its answer is the issue without counts rather than an error.
+    async fn issue_reactions(&self, key: &str) -> Option<Vec<IssueReactionCount>> {
+        let value = self
+            .graph(ISSUE_REACTIONS_QUERY, json!({ "id": key }), false)
+            .await
+            .ok()?;
+        let rows = value
+            .pointer("/data/issue/reactions")
+            .and_then(Value::as_array)?;
+        reaction_counts(rows)
+    }
 }
 
 #[async_trait]
 impl IssueSource for Linear {
+    fn can_write(&self) -> bool {
+        true
+    }
+
+    async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
+        team_key(scope)?;
+        if new.assignees.len() > 1 {
+            return Err(CoreError::Invalid(
+                "A Linear issue has one assignee at most.".into(),
+            ));
+        }
+        let team_id = self.team_id(scope).await?;
+        let labels = self.label_ids(scope, new.labels).await?;
+        let mut input = json!({
+            "teamId": team_id,
+            "title": new.title,
+            "description": new.body,
+            "labelIds": labels,
+        });
+        if let Some(assignee) = new.assignees.first() {
+            input["assigneeId"] = json!(assignee);
+        }
+        let value = self
+            .graph(ISSUE_CREATE_MUTATION, json!({ "input": input }), false)
+            .await?;
+        if value
+            .pointer("/data/issueCreate/success")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            return Err(CoreError::TrackerUnavailable(
+                "Linear did not create the issue.".into(),
+            ));
+        }
+        let issue = value
+            .pointer("/data/issueCreate/issue")
+            .filter(|issue| !issue.is_null())
+            .ok_or_else(unreadable)?;
+        let summary = summary(scope, issue, 0).ok_or_else(unreadable)?;
+        // A new issue has no comments: its own reply is the whole answer, so a successful create is never reported
+        // as a failure by a second read.
+        Ok(IssueDetail {
+            summary,
+            body: cut(&text(issue, "description"), MAX_BODY_BYTES).to_owned(),
+            comments: Vec::new(),
+            linked_pull_requests: Vec::new(),
+            linked_threads: Vec::new(),
+            reactions: None,
+        })
+    }
+
+    async fn comment(&self, scope: &str, key: &str, body: &str) -> Result<IssueComment> {
+        let issue = self.issue_internal_id(scope, key).await?;
+        let value = self
+            .graph(
+                COMMENT_CREATE_MUTATION,
+                json!({ "input": { "issueId": issue, "body": body } }),
+                false,
+            )
+            .await?;
+        if value
+            .pointer("/data/commentCreate/success")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            return Err(CoreError::TrackerUnavailable(
+                "Linear did not write the comment.".into(),
+            ));
+        }
+        let comment = value
+            .pointer("/data/commentCreate/comment")
+            .filter(|comment| !comment.is_null())
+            .ok_or_else(unreadable)?;
+        Ok(IssueComment {
+            id: clip(&text(comment, "id"), MAX_ID),
+            author: comment.get("user").and_then(actor),
+            body: cut(&text(comment, "body"), MAX_BODY_BYTES).to_owned(),
+            created_at: text(comment, "createdAt"),
+        })
+    }
+
+    async fn react(
+        &self,
+        scope: &str,
+        key: &str,
+        comment: Option<&str>,
+        reaction: IssueReaction,
+        on: bool,
+    ) -> Result<IssueDetail> {
+        team_key(scope)?;
+        let issue = self.issue_internal_id(scope, key).await?;
+        if let Some(comment) = comment {
+            self.comment_belongs(&issue, comment).await?;
+        }
+        let emoji = reaction_emoji(reaction);
+        if on {
+            let input = match comment {
+                Some(comment) => json!({ "commentId": comment, "emoji": emoji }),
+                None => json!({ "issueId": issue.clone(), "emoji": emoji }),
+            };
+            let value = self
+                .graph(REACTION_CREATE_MUTATION, json!({ "input": input }), false)
+                .await?;
+            if value
+                .pointer("/data/reactionCreate/success")
+                .and_then(Value::as_bool)
+                != Some(true)
+            {
+                return Err(CoreError::TrackerUnavailable(
+                    "Linear did not add the reaction.".into(),
+                ));
+            }
+        } else if let Some(id) = self.own_reaction(key, comment, emoji).await? {
+            let value = self
+                .graph(REACTION_DELETE_MUTATION, json!({ "id": id }), false)
+                .await?;
+            if value
+                .pointer("/data/reactionDelete/success")
+                .and_then(Value::as_bool)
+                != Some(true)
+            {
+                return Err(CoreError::TrackerUnavailable(
+                    "Linear did not take the reaction back.".into(),
+                ));
+            }
+        }
+        // Refresh by the resolved internal id, not the key the caller sent: an issue that moved teams keeps its
+        // old identifier resolvable for the write but its current identifier no longer names the requested scope.
+        let mut detail = self.get(scope, &issue).await?;
+        detail.reactions = self.issue_reactions(&issue).await;
+        Ok(detail)
+    }
+
     async fn list(&self, scope: &str, query: &IssueQuery) -> Result<ScopeList> {
         team_key(scope)?;
         check_filters(query)?;
