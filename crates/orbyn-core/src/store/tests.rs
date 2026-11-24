@@ -1548,17 +1548,28 @@ fn a_project_issue_tracker_binding_is_one_row_with_cascade() {
     assert!(f.store.project_issue_tracker(&project).unwrap().is_none());
     assert!(f.store.project(&project).is_ok());
     assert_eq!(f.store.tracker_connections().unwrap().len(), 1);
-    // Deleting the project cascades the binding away; the connection stays.
+    // Deleting the project cascades the binding away; the connection stays. The fixture's own project keeps a thread,
+    // so this uses a bare project row: the app removes a project softly, but the table's cascade is what is tested.
+    let bare = f
+        .store
+        .add_project(crate::store::NewProject {
+            path: "/binding-cascade",
+            name: "binding",
+            is_git: false,
+            managed: false,
+            scratch: false,
+        })
+        .unwrap();
     f.store
-        .set_project_issue_tracker(&project, "gitlab", "team/app", now)
+        .set_project_issue_tracker(&bare.id, "gitlab", "team/app", now)
         .unwrap();
     f.store
         .commit(|tx, _| {
-            tx.execute("DELETE FROM projects WHERE id = ?1", [&project])?;
+            tx.execute("DELETE FROM projects WHERE id = ?1", [&bare.id])?;
             Ok(())
         })
         .unwrap();
-    assert!(f.store.project_issue_tracker(&project).unwrap().is_none());
+    assert!(f.store.project_issue_tracker(&bare.id).unwrap().is_none());
     assert_eq!(f.store.tracker_connections().unwrap().len(), 1);
 }
 
