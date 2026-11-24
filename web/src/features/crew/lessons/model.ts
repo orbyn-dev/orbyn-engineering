@@ -45,6 +45,11 @@ export function evidenceWord(one: Evidence): string {
 /** The evidence ids a lesson came from, as one line; empty when there are none. */
 export const evidenceLine = (evidence: readonly Evidence[]): string => evidence.map(evidenceWord).join(", ");
 
+/** The word for a lesson's source: a person's lesson with no evidence behind it was added by hand. */
+export function sourceWordOf(source: LessonSource, evidence: readonly Evidence[]): string {
+  return source === "person" && evidence.length === 0 ? "Added by you" : SOURCE_WORD[source];
+}
+
 const clock = (at: Date) => `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
 
 /** A moment as the design draws it: "Sat 7 Nov, 14:20". */
@@ -61,24 +66,19 @@ export function usedWords(lesson: Lesson): string {
     : "Not used yet";
 }
 
-/** "Not edited", or "You". No time: `updated_at` also moves on turn off, turn on and promote, so it is not an edit time. */
-export function editedWords(lesson: Lesson): string {
-  return lesson.edited_by_person ? "You" : "Not edited";
-}
-
 /**
  * What a lesson is, for its own card: the contract's source, its evidence ids only (never content),
  * and where it applies. The design draws a fingerprint line and the names behind a repeat, and a
  * correction's own action ("your answer", "your override", a finding edited); the read carries
  * neither, so those rows stay out rather than being made up here.
  */
-export function happenedWords(source: LessonSource): string {
-  return source === "fingerprint"
+export function happenedWords(lesson: Lesson): string {
+  return lesson.source === "fingerprint"
     ? "The same failing check, ended the same way, with the same names of what failed, on 2 or more tasks of this repository within 60 days. The text is built from names Crew already redacts for a worker, never from worker output."
-    : source === "escape"
-      ? "You confirmed this escape. The text is the escape’s own recorded reason."
-      : source === "revert"
-        ? "The text is the reason that was recorded with the revert. A revert you make is a source; a revert Crew makes itself writes no lesson until you confirm it as an escape."
+    : lesson.source === "escape"
+      ? `You confirmed this escape on ${moment(lesson.created_at)}. The text is the escape’s own recorded reason.`
+      : lesson.source === "revert"
+        ? `You reverted this merge on ${moment(lesson.created_at)}. The text is the reason that was recorded with the revert. A revert you make is a source; a revert Crew makes itself writes no lesson until you confirm it as an escape.`
         : "The lesson is the words you typed, capped, and it is marked as yours.";
 }
 

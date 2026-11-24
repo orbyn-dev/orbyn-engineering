@@ -1186,10 +1186,12 @@ export const FRAMES = {
   "kc9-skills-added-group": { route: "#/skills", scenario: "crew-proposals-approved" },
   "kc9-skills-added-group-empty": { route: "#/skills", scenario: "crew" },
 
-  /** Crew, a lesson's card and its states (Crew Designs v121, KC5), on the real lessons routes over the mock's
-   *  crew-lessons scenario, whose five sample lessons follow the design's states: the card, its edit form, a lesson
-   *  turned off, a correction for all repositories, the promote confirm and the refusal the contract gives a lesson that
-   *  names a path, the move-back confirm, the add form, and the list right after a delete with its Undo toast. */
+  /** Crew, a lesson's card and its states (Crew Designs v125, KC5), on the real lessons routes over the mock's
+   *  crew-lessons scenarios, whose sample lessons follow the design's states: the card, its edit form, a lesson turned
+   *  off, a correction for all repositories, the promote confirm and the refusal the contract gives a lesson that names
+   *  a path, the move-back confirm, the add form, the list right after a delete with its Undo toast, the add's saved
+   *  card, a lesson over the five-lesson limit, one that became a skill, one the repository's switch keeps out, one left
+   *  out of a brief, and the escape and revert sources on a repository lesson. */
   "lessons-card": { route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-returnto", scenario: "crew-lessons" },
   "lessons-edit": {
     route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-dates",
@@ -1214,6 +1216,40 @@ export const FRAMES = {
     steps: [click("button", "Move back to one repository")],
   },
   "lessons-add": { route: "#/settings/crew/lessons/add?repo=p-app", scenario: "crew-lessons" },
+  "lessons-add-saved": {
+    route: "#/settings/crew/lessons/add?repo=p-app",
+    scenario: "crew-lessons",
+    steps: [
+      { do: "fill", label: "Lesson text", value: "Run the web tests before you open a pull request." },
+      click("button", "Save"),
+      { do: "wait", ms: 800 },
+    ],
+    wait: 1800,
+  },
+  "lessons-card-not-in-brief-cap": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-cookies",
+    scenario: "crew-lessons-states",
+  },
+  "lessons-card-not-in-brief-skill": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-returnto",
+    scenario: "crew-proposals-approved",
+  },
+  "lessons-card-not-in-brief-switch-off": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-returnto",
+    scenario: "crew-lessons-off",
+  },
+  "lessons-left-out": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-returnto",
+    scenario: "crew-lessons-states",
+  },
+  "lessons-from-escape": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-session",
+    scenario: "crew-lessons-states",
+  },
+  "lessons-from-revert": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-return",
+    scenario: "crew-lessons-states",
+  },
   "lessons-deleted-undo": {
     route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-returnto",
     scenario: "crew-lessons",

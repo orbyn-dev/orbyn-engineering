@@ -3,12 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useWorkspace } from "../../../product/state/workspace";
 import { LessonCardPage } from "./LessonCardPage";
+import { moment } from "./model";
 import { markAdded } from "./saved";
 import { clearLessonUndo, useLessonUndo } from "./undo";
-import { bodyOf, detail, lesson, project, stubFetch, writes, type Answer, type Call, type Write } from "./support";
+import { bodyOf, detail, lesson, list, project, stubFetch, writes, type Answer, type Call, type Write } from "./support";
 
 let calls: Call[] = [];
-let answers: { preview?: Answer; projects?: Answer; detail?: Answer; write?: (one: Write) => Answer };
+let answers: { preview?: Answer; projects?: Answer; list?: Answer; detail?: Answer; write?: (one: Write) => Answer };
 
 const notFound = { status: 404, body: { code: "not_found", message: "No such route." } } as const;
 
@@ -49,7 +50,10 @@ describe("a lesson's card on the real route", () => {
   it("draws the lesson, its evidence ids, how it is used and the person's actions", async () => {
     answers.detail = {
       status: 200,
-      body: detail({ evidence: [{ kind: "task", id: "5b2d8a3" }, { kind: "escape", id: "9be4410" }] }),
+      body: detail({
+        lesson: lesson({ updated_at: "2026-11-09T10:00:00Z" }),
+        evidence: [{ kind: "task", id: "5b2d8a3" }, { kind: "escape", id: "9be4410" }],
+      }),
     };
     open();
     await loaded();
@@ -57,9 +61,9 @@ describe("a lesson's card on the real route", () => {
       screen.getByText("Checks like repo_required failed on test files before: check the fixture path first."),
     ).toBeInTheDocument();
     expect(screen.getByText("Repeated failure")).toBeInTheDocument();
-    expect(screen.getByText("Task 5b2d8a3, Escape 9be4410")).toBeInTheDocument();
+    expect(screen.getByText("Source").nextElementSibling).toHaveTextContent("Task 5b2d8a3, Escape 9be4410");
     expect(screen.getByText(/The same failing check, ended the same way/)).toBeInTheDocument();
-    expect(screen.getByText("Not edited")).toBeInTheDocument();
+    expect(screen.getByText("Updated").nextElementSibling).toHaveTextContent(moment("2026-11-09T10:00:00Z"));
     expect(screen.getByText("This repository", { selector: ".cx-apchip" })).toBeInTheDocument();
     expect(screen.getByText("orbyn-engineering", { selector: "span" })).toBeInTheDocument();
     expect(screen.getByText("On: goes into briefs")).toBeInTheDocument();
@@ -84,14 +88,14 @@ describe("a lesson's card on the real route", () => {
       {
         source: "escape",
         chip: "Confirmed escape",
-        happened: /You confirmed this escape\. The text is the escape’s own recorded reason\./,
+        happened: `You confirmed this escape on ${moment(lesson().created_at)}. The text is the escape’s own recorded reason.`,
         evidence: [{ kind: "escape", id: "9be4410" }],
         line: "Escape 9be4410",
       },
       {
         source: "revert",
         chip: "Revert",
-        happened: /The text is the reason that was recorded with the revert\./,
+        happened: `You reverted this merge on ${moment(lesson().created_at)}. The text is the reason that was recorded with the revert. A revert you make is a source; a revert Crew makes itself writes no lesson until you confirm it as an escape.`,
         evidence: [{ kind: "merge", id: "3b9f2c1" }],
         line: "Revert 3b9f2c1",
       },
@@ -106,7 +110,10 @@ describe("a lesson's card on the real route", () => {
     for (const one of cases) {
       answers.detail = {
         status: 200,
-        body: detail({ lesson: lesson({ source: one.source }), evidence: [...one.evidence] }),
+        body: detail({
+          lesson: lesson({ source: one.source, updated_at: "2026-11-09T10:00:00Z" }),
+          evidence: [...one.evidence],
+        }),
       };
       const { unmount } = open();
       await loaded();
@@ -117,15 +124,39 @@ describe("a lesson's card on the real route", () => {
     }
   });
 
-  it("draws no Source row for a lesson added by hand, which has no evidence behind it", async () => {
+  it("links a task to its thread and an escape to the Escapes page, and leaves a revert as plain text", async () => {
+    const linked = [
+      { evidence: [{ kind: "task", id: "5b2d8a3" }], text: "Task 5b2d8a3", href: "#/threads/5b2d8a3" },
+      { evidence: [{ kind: "escape", id: "9be4410" }], text: "Escape 9be4410", href: "#/settings/crew/escapes" },
+    ] as const;
+    for (const one of linked) {
+      answers.detail = { status: 200, body: detail({ evidence: [...one.evidence] }) };
+      const { unmount } = open();
+      await loaded();
+      expect(screen.getByRole("link", { name: one.text })).toHaveAttribute("href", one.href);
+      unmount();
+    }
+    answers.detail = {
+      status: 200,
+      body: detail({ lesson: lesson({ source: "revert" }), evidence: [{ kind: "merge", id: "3b9f2c1" }] }),
+    };
+    open();
+    await loaded();
+    expect(screen.getByText("Revert 3b9f2c1")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Revert 3b9f2c1" })).toBeNull();
+  });
+
+  it("says a lesson added by hand has no task, escape or revert behind it", async () => {
     answers.detail = {
       status: 200,
       body: detail({ lesson: lesson({ id: "les-added-1", source: "person" }), evidence: [] }),
     };
     open();
     await loaded();
-    expect(screen.getByText("Your correction")).toBeInTheDocument();
-    expect(screen.queryByText("Source")).toBeNull();
+    expect(screen.getByText("Added by you")).toBeInTheDocument();
+    expect(screen.getByText("Source")).toBeInTheDocument();
+    expect(screen.getByText("Added by you · no task, escape or revert behind it")).toBeInTheDocument();
+    expect(screen.queryByText("Your correction")).toBeNull();
   });
 
   it("says Saved once on the card the Add page opened", async () => {
@@ -157,27 +188,47 @@ describe("a lesson's card on the real route", () => {
     expect(screen.queryByText("On: goes into briefs")).toBeNull();
   });
 
-  it("says a lesson that became a skill leaves briefs while that skill exists", async () => {
+  it("says a lesson that became a skill is not in the next brief", async () => {
     answers.detail = {
       status: 200,
       body: detail({ lesson: lesson({ skill: { name: "Fixture first" }, in_next_brief: false }) }),
     };
     open();
     await loaded();
-    expect(screen.getByText("On, but it became a skill: it leaves briefs while that skill exists")).toBeInTheDocument();
+    expect(screen.getByText("On, not in the next brief: it is now a skill.")).toBeInTheDocument();
     expect(screen.queryByText("On: goes into briefs")).toBeNull();
   });
 
-  it("says an active lesson the switch or the cap keeps out is not in the next brief right now", async () => {
+  it("says a lesson over the five-lesson limit is not in the next brief", async () => {
     answers.detail = { status: 200, body: detail({ lesson: lesson({ in_next_brief: false }) }) };
     open();
     await loaded();
     expect(
-      screen.getByText(
-        /On, but not in the next brief right now: the repository’s switch, the newest five or the 1500-character cap\./,
-      ),
+      screen.getByText("On, not in the next brief: this repository is over the 5-lesson limit for a brief."),
     ).toBeInTheDocument();
     expect(screen.queryByText("On: goes into briefs")).toBeNull();
+  });
+
+  it("says the repository's lessons are switched off when its list answers use_lessons:false", async () => {
+    answers.list = { status: 200, body: list({ use_lessons: false }) };
+    answers.detail = { status: 200, body: detail({ lesson: lesson({ in_next_brief: false }) }) };
+    open();
+    await loaded();
+    expect(
+      await screen.findByText("On, not in the next brief: lessons are switched off for this repository."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("On, not in the next brief: this repository is over the 5-lesson limit for a brief.")).toBeNull();
+  });
+
+  it("treats the repository's switch as on while the lessons list is still loading", async () => {
+    answers.list = "never";
+    answers.detail = { status: 200, body: detail({ lesson: lesson({ in_next_brief: false }) }) };
+    open();
+    await loaded();
+    expect(
+      screen.getByText("On, not in the next brief: this repository is over the 5-lesson limit for a brief."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("On, not in the next brief: lessons are switched off for this repository.")).toBeNull();
   });
 
   it("says a lesson is off and left out of two briefs, and offers Turn on", async () => {
@@ -369,18 +420,6 @@ describe("a lesson's card on the real route", () => {
     expect(field).toHaveValue("My sentence.");
   });
 
-  it("says only that the person edited a lesson, never a time that turn off or promote also move", async () => {
-    answers.detail = {
-      status: 200,
-      body: detail({ lesson: lesson({ edited_by_person: true, updated_at: "2026-11-09T10:00:00Z" }) }),
-    };
-    open();
-    await loaded();
-    expect(screen.getByText("You")).toBeInTheDocument();
-    expect(screen.queryByText(/^You,/)).toBeNull();
-    expect(screen.queryByText("Not edited")).toBeNull();
-  });
-
   it("says the same failing check happened on two or more tasks, not exactly two", async () => {
     open();
     await loaded();
@@ -438,7 +477,7 @@ describe("a lesson's card on the real route", () => {
     await user.click(screen.getByRole("button", { name: "Promote to all repositories" }));
     expect(await screen.findByText("Can’t promote this lesson")).toBeInTheDocument();
     expect(
-      screen.getByText(/It names a path, and a lesson for all repositories may name a path class, never a path\./),
+      screen.getByText("It names a path, so it can’t apply to all repositories. Edit the text first."),
     ).toBeInTheDocument();
     expect(writes(calls, "POST")).toHaveLength(0);
     expect(screen.queryByRole("dialog", { hidden: true })).toBeNull();
