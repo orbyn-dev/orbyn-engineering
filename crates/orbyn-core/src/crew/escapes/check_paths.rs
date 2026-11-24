@@ -357,10 +357,7 @@ mod tests {
         );
         assert_eq!(
             judge(&[add("tests/a.rs"), add("src/lib.rs")], "tests/a.rs").unwrap_err(),
-            format!(
-                "src/lib.rs: {}",
-                refusal("src/lib.rs").expect("a source file is refused")
-            )
+            "src/lib.rs: A check may only add a test file: put it in a tests, test, __tests__, spec, specs or e2e folder, or name it test_x, x.test.y, x_test.y or x.spec.y."
         );
         assert_eq!(
             judge(&[add("tests/a.rs"), add("tests/b.rs")], "tests/a.rs").unwrap_err(),
@@ -368,10 +365,7 @@ mod tests {
         );
         assert_eq!(
             judge(&[add("tests/a.rs"), add(".orbyn/crew.json")], "tests/a.rs").unwrap_err(),
-            format!(
-                ".orbyn/crew.json: {}",
-                refusal(".orbyn/crew.json").expect("a policy file is refused")
-            )
+            ".orbyn/crew.json: A check cannot add a policy, CI or manifest file. It may only add a test file."
         );
         let mut modified = add("tests/a.rs");
         modified.status = 'M';

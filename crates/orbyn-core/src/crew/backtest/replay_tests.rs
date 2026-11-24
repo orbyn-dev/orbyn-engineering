@@ -650,11 +650,15 @@ fn a_run_id_is_used_once_and_a_second_start_changes_nothing() {
         &[("engine-a", 10)],
     );
     let first = run(&store, "run-1", &req, &prs(2), NOW, &fake, &NoEscapeLog).unwrap();
-    // The run id is the primary key: the second start is a store constraint, not any error.
-    assert!(matches!(
-        run(&store, "run-1", &req, &prs(2), NOW + 1, &fake, &NoEscapeLog),
-        Err(CoreError::Store(rusqlite::Error::SqliteFailure(_, _)))
-    ));
+    // The run id is the primary key: the second start is that table's unique constraint, not any error.
+    match run(&store, "run-1", &req, &prs(2), NOW + 1, &fake, &NoEscapeLog) {
+        Err(CoreError::Store(rusqlite::Error::SqliteFailure(code, message))) => assert_eq!(
+            code.code,
+            rusqlite::ErrorCode::ConstraintViolation,
+            "{message:?}"
+        ),
+        other => panic!("the reused run id was not refused by the table constraint: {other:?}"),
+    }
     assert_eq!(report(&store, "run-1").unwrap(), first);
 }
 
