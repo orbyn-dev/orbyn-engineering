@@ -8,6 +8,8 @@
 //! exit status and duration.
 
 mod parse;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod tools;
 
 #[cfg(test)]
@@ -17,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -64,6 +66,9 @@ pub struct Devices {
     timeouts: Timeouts,
     avd_home: Option<PathBuf>,
     busy: Mutex<HashSet<String>>,
+    /// Whether this machine has a platform's tools, read once: the tool list asks on every
+    /// handshake and on every Code Mode search, and resolving a program walks PATH.
+    tools_available: OnceLock<bool>,
 }
 
 /// One row of the list with the id the platform tool itself uses. Android's wire
@@ -92,6 +97,7 @@ impl Devices {
             timeouts: Timeouts::default(),
             avd_home: default_avd_home(),
             busy: Mutex::new(HashSet::new()),
+            tools_available: OnceLock::new(),
         }
     }
 
@@ -102,7 +108,17 @@ impl Devices {
             timeouts,
             avd_home,
             busy: Mutex::new(HashSet::new()),
+            tools_available: OnceLock::new(),
         }
+    }
+
+    /// Whether this machine has at least one platform's tools, as the list decides it:
+    /// Android needs both `adb` and the emulator, iOS needs `xcrun`. Read once per
+    /// process; tools installed later are picked up by the next start.
+    pub fn tools_available(&self) -> bool {
+        *self
+            .tools_available
+            .get_or_init(|| self.tools.any_platform())
     }
 
     /// The list rebuilt from the platform tools. A missing or failing tool is a
@@ -796,6 +812,17 @@ impl Default for Tools {
             emulator: ToolSource::Named("emulator"),
             xcrun: ToolSource::Named("xcrun"),
         }
+    }
+}
+
+impl Tools {
+    /// Whether one platform's tools are all here: Android needs `adb` and the emulator,
+    /// iOS needs `xcrun`.
+    fn any_platform(&self) -> bool {
+        let adb = self.adb.get().is_some();
+        let emulator = self.emulator.get().is_some();
+        let xcrun = self.xcrun.get().is_some();
+        (adb && emulator) || xcrun
     }
 }
 
