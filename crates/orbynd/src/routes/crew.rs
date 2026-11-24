@@ -295,6 +295,51 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/lessons",
+        "core crew_lesson_add: Preview; a person's own words as a repository or global lesson, source person, the same secret scan and path rule as every lesson, audited in the same transaction; no agent tool reaches it; local only",
+    ),
+    (
+        "PATCH",
+        "/api/crew/lessons/{id}",
+        "core crew_lesson_edit: Preview; a person's words with edited_by_person and names_path set, the lesson as seen (else stale), audited in the same transaction; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/disable",
+        "core crew_lesson_set_enabled: Preview; the person's switch off, the lesson as seen (else stale), audited in the same transaction; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/enable",
+        "core crew_lesson_set_enabled: Preview; the person's switch back on, the lesson as seen (else stale), audited in the same transaction; no agent tool reaches it; local only",
+    ),
+    (
+        "DELETE",
+        "/api/crew/lessons/{id}",
+        "core crew_lesson_delete: Preview; the person's 10 s Undo, the lesson as seen (else stale), audited in the same transaction; hidden until undo and purged after; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/undo",
+        "core crew_lesson_undo: Preview; restores a lesson while its 10 s Undo is open and bumps its rev, audited in the same transaction; after the window it is not found; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/promote",
+        "core crew_lesson_promote: Preview; a repository lesson to global, never one that names a path, the lesson as seen (else stale), audited in the same transaction; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/demote",
+        "core crew_lesson_demote: Preview; a global lesson back to one repository, the lesson as seen (else stale), audited in the same transaction; no agent tool reaches it; local only",
+    ),
+    (
+        "PUT",
+        "/api/crew/lessons/settings",
+        "core crew_lessons_set_use: Preview; the person's per-repository use-lessons switch, audited in the same transaction; starts nothing and changes no lesson; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
         "/api/crew/projects/{id}/worker-provider/set",
         "core crew_set_worker_provider: a person's per-project choice of same_as_lead or any, a known project, audited in the same transaction; it changes where later work runs and never an engine a task already has; no agent tool reaches it; local only",
     ),
@@ -383,6 +428,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .merge(super::crew_backtest::writes())
         .merge(super::crew_capacity::writes())
         .merge(super::crew_escapes::writes())
+        .merge(super::crew_lessons::writes())
         .route("/api/crew/tasks/{id}/rerun-checks", post(rerun_checks))
         .route(
             "/api/crew/tasks/{id}/checks/{check}/decide",
@@ -451,6 +497,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .merge(super::crew_tasks::routes())
         .merge(super::crew_board::routes())
         .merge(super::crew_escapes::routes())
+        .merge(super::crew_lessons::routes())
         .merge(super::crew_map::routes())
         .layer(from_fn_with_state(state, preview_gate))
 }

@@ -101,7 +101,10 @@ async fn a_running_builder_resumes_once_with_its_key_and_attempt() {
     let run = w.core.store.crew_run(&id).unwrap().unwrap();
     assert_eq!((run.resume_count, run.attempts), (1, 1));
     assert!(run.resumed_at.is_some(), "the resume time is stored");
-    assert!(run.downtime_secs <= 2, "a live task has no off time beyond a second boundary");
+    assert!(
+        run.downtime_secs <= 2,
+        "a live task has no off time beyond a second boundary"
+    );
 
     let resumed = audits(&w, &id, "crew.task.resumed");
     assert_eq!(resumed.len(), 1);

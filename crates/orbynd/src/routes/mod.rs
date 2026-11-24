@@ -17,6 +17,7 @@ mod crew_backtest;
 mod crew_board;
 mod crew_capacity;
 mod crew_escapes;
+mod crew_lessons;
 mod crew_map;
 mod crew_tasks;
 mod devices;
@@ -87,6 +88,8 @@ mod crew_guard_tests;
 mod crew_held_tests;
 #[cfg(test)]
 mod crew_lead_tests;
+#[cfg(test)]
+mod crew_lessons_tests;
 #[cfg(test)]
 mod crew_manual_tests;
 #[cfg(test)]
