@@ -35,7 +35,7 @@ impl SetupPlatform for StubSetup {
     fn open_screen_recording_settings(&self) {}
 }
 
-pub fn capturer(_own_bundle_id: &str) -> Box<dyn Capturer> {
+pub fn capturer(_own_bundle_id: &str, _include_accessibility: bool) -> Box<dyn Capturer> {
     Box::new(StubCapturer)
 }
 
@@ -66,7 +66,7 @@ mod tests {
             if cfg!(windows) { "windows" } else { "linux" }
         );
         assert!(facts.message.is_none());
-        let capturer = capturer("com.example.own");
+        let capturer = capturer("com.example.own", true);
         assert!(matches!(
             capturer.capture_frontmost(&|_, _| false),
             Err(Failure::CaptureError)

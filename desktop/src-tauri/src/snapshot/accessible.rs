@@ -1,5 +1,5 @@
 //! Reads accessible text through a pure tree interface. No OS calls live here, so every target compiles
-//! and tests the collector; a later platform reader supplies the nodes.
+//! and tests the collector; the macOS reader in `ax` supplies the nodes.
 
 use std::time::{Duration, Instant};
 
@@ -102,6 +102,21 @@ pub fn collect<T: Tree>(tree: &T, root: &T::Node, budget: &Budget) -> Option<Str
         text.truncate(end);
     }
     Some(text)
+}
+
+/// The first title that matches `wanted` exactly. An empty `wanted` never matches, so the caller
+/// falls back to the focused window.
+pub fn pick_window_index(titles: &[String], wanted: &str) -> Option<usize> {
+    if wanted.is_empty() {
+        return None;
+    }
+    titles.iter().position(|title| title == wanted)
+}
+
+/// The UTF-8 buffer bound for `utf16_units` UTF-16 units: three bytes per unit is the worst case,
+/// plus four spare bytes, saturating instead of overflowing.
+pub fn utf8_buffer_len(utf16_units: usize) -> usize {
+    utf16_units.saturating_mul(3).saturating_add(4)
 }
 
 fn is_secure(fields: &Fields) -> bool {
@@ -363,5 +378,27 @@ mod tests {
         );
 
         assert_eq!(collect(&arena, &root, &budget()), None);
+    }
+
+    #[test]
+    fn a_window_title_matches_the_first_exact_title() {
+        let titles = vec!["Notes".to_owned(), "Mail".to_owned(), "Notes".to_owned()];
+
+        assert_eq!(pick_window_index(&titles, "Notes"), Some(0));
+        assert_eq!(pick_window_index(&titles, "Mail"), Some(1));
+        assert_eq!(pick_window_index(&titles, "notes"), None);
+        assert_eq!(pick_window_index(&titles, "Note"), None);
+        assert_eq!(pick_window_index(&titles, " Notes"), None);
+        assert_eq!(pick_window_index(&titles, ""), None);
+        assert_eq!(pick_window_index(&[], "Notes"), None);
+    }
+
+    #[test]
+    fn the_utf8_buffer_is_three_bytes_per_utf16_unit_plus_four() {
+        assert_eq!(utf8_buffer_len(0), 4);
+        assert_eq!(utf8_buffer_len(1), 7);
+        assert_eq!(utf8_buffer_len(20_000), 60_004);
+        assert_eq!(utf8_buffer_len(usize::MAX), usize::MAX);
+        assert_eq!(utf8_buffer_len(usize::MAX / 3 + 1), usize::MAX);
     }
 }
