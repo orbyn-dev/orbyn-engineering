@@ -465,10 +465,54 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   `tracker_unavailable`) and changes nothing here. Issue text going in is as untrusted as issue text coming
   out: it is sent as a field value, never in an argument position, and never rendered as markup by this side.
 
+## Create, comment, react, templates and project binding (contract, not built)
+
+R15 rows `create`, `comment`, `react`, `templates` and `bindProject`. This section is the contract; no route below
+exists yet and the web keeps each control as Planned until it does. They follow the rules of "Issue writes and list
+controls": every write is Person-class and goes in `ENFORCED` and `PERSON_ROUTES`, answers the stored issue, and a
+tracker refusal answers the usual error (`forbidden`, `not_found`, `rate_limited`, `tracker_unavailable`) and changes
+nothing here. Issue text going in is sent as a field value, never in an argument position, and never rendered as markup
+by this side. Only trackers whose connection already holds the person's own credential can write (GitHub through the
+user's `gh`, the others through their keychain token); a tracker that needs a key Orbyn itself would hold is out.
+
+| Route | Person | Answers |
+|---|---|---|
+| `POST /api/issues/item/create` | **yes** | `IssueDetail`. Body `{ tracker, scope, title, body?, labels?, assignees?, template? }` |
+| `POST /api/issues/item/comment` | **yes** | `IssueComment`. Body `{ tracker, scope, key, body }` |
+| `POST /api/issues/item/react` | **yes** | `IssueDetail`. Body `{ tracker, scope, key, comment_id?, reaction, on }` |
+| `GET /api/issues/templates` | no | `IssueTemplate[]`. Query `tracker`, `scope` |
+| `POST /api/projects/{id}/issue-tracker` | **yes** | `200 { tracker, scope }`, or `204` to unbind. Body `{ tracker, scope }` or `{ tracker: null }` |
+
+- `create`: `title` is one line, 1 to 256 characters; `body` at most 64 KiB; `labels` (at most 50) are names, `assignees`
+  (at most 25) are candidate `id`s from `GET /api/issues/candidates`, as in `update`. `template` is the `id` of a template
+  from `templates`; when present, a missing `body` is filled from the template's body and an unknown id is `400 invalid`.
+  One call creates one issue: no retry loop, and a timeout answers `tracker_unavailable` with the issue possibly created
+  (the answer says so, and the page re-reads the list rather than sending again). A `scope` outside the connection is
+  refused as everywhere else.
+- `comment`: `body` is 1 to 64 KiB and not blank. It answers the stored comment (`id`, `author`, `created_at`, `body` as the
+  tracker returned it). Editing and deleting comments are not part of this row.
+- `react`: `reaction` is one of `thumbs_up`, `thumbs_down`, `laugh`, `hooray`, `confused`, `heart`, `rocket`, `eyes`;
+  `on` true adds the person's reaction and false removes it, both idempotent. `comment_id` absent means the issue itself.
+  A tracker with a smaller set refuses a value it lacks with `400 invalid` and names the ones it has; none is mapped to a
+  near one. The answer is the issue with its reaction counts as the tracker reports them.
+- `templates`: the tracker's own issue templates for the scope, read-only: `{ id, name, description?, body, labels[] }`,
+  at most 50, bodies cut at 16 KiB. A tracker with none answers `[]`, never `404`. Template text is the tracker's text and as
+  untrusted as any other (see "Issue text is untrusted"); it only ever fills the person's own create form.
+- `bindProject`: stores which connected tracker and scope this project's issues come from, so the page and the engine
+  tools default to it. `scope` must be one of the connection's scopes; a tracker that is not connected is
+  `400 invalid`. It stores two names and no secret, writes one audit row (`issues.project.bind`, ids only), and never
+  changes the connection, the project or any issue.
+- **Engines.** The engine-facing issue tools (N24) stay read, link and unlink. These five do not give an engine any new
+  power: create, comment and react are the person's own actions from the page; an engine that wants one asks the person.
+- **Tests when built.** Each write against the local fake server of each tracker that supports it: exact status and `code`,
+  the exact field sent, no token in the answer or the audit row; `403 desktop_required` without the person key and
+  nothing sent; a refusal changes nothing here; the route table and class tests pass without special cases.
+
 ## What T3 has that this does not (Planned)
 
-Creating and commenting on issues, reactions, issue templates, the event timeline, "involved/mentioned"
-filters and more than the first 50 comments. None is in the beta; each is a later row. The engine-facing
+The event timeline, "involved/mentioned"
+filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting, reactions, templates
+and project binding are specified above and not built. The engine-facing
 issue tools (N24) list, read, link, unlink and list a thread's linked issues; they do not create, comment or
 change state.
 
