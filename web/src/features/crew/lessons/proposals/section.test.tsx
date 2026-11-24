@@ -87,6 +87,8 @@ describe("the Skill proposals section of the Lessons page", () => {
     ).toBeInTheDocument();
     expect(within(region).getByText("Applies to")).toBeInTheDocument();
     expect(within(region).getByText(/All your projects/)).toBeInTheDocument();
+    expect(within(region).getByText("· Default profile")).toBeInTheDocument();
+    expect(within(region).queryByText(/Default selection/)).toBeNull();
     expect(within(region).getByText(/Would be saved in/)).toBeInTheDocument();
     expect(within(region).getAllByText(/skills-local/).length).toBeGreaterThan(0);
     expect(within(region).getByText("(device-local)")).toBeInTheDocument();
@@ -256,6 +258,8 @@ describe("the Skill proposals section of the Lessons page", () => {
     expect(within(box).getByText("Add redirect-checks to skills-local?")).toBeInTheDocument();
     expect(within(box).getByText(/You have not opened the full text yet\./)).toBeInTheDocument();
     expect(within(box).getByText(new RegExp(`^${REACH}`))).toBeInTheDocument();
+    expect(within(box).getByText("Default profile")).toBeInTheDocument();
+    expect(within(box).getByText("Threads on it can use the skill")).toBeInTheDocument();
     expect(within(box).getByText("As proposed, 14 lines.")).toBeInTheDocument();
     await user.click(within(box).getByRole("button", { name: "Add to skills-local" }));
     expect(await screen.findByText("Added to skills-local.")).toBeInTheDocument();

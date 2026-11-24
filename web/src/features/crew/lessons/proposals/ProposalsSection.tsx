@@ -418,8 +418,8 @@ function ApproveConfirm({
           <b>skills-local (device-local)</b>
           <span>Applies to</span>
           <b>All your projects</b>
-          <span>Default selection</span>
-          <b>The skill joins it</b>
+          <span>Default profile</span>
+          <b>Threads on it can use the skill</b>
           <span>Text</span>
           <b>
             As proposed, {text.lines} lines.{" "}
