@@ -1,6 +1,8 @@
 //! Issue trackers beside the code (docs/issues.md): the list a tracker reports, the connections that read it,
-//! a thread's links to issues and a thread started from one. Beta, read-only against the tracker. Everything a
-//! tracker returns is untrusted text and is never fed to an engine except in the framed first message.
+//! a thread's links to issues, a thread started from one, and the person's own issue writes (create, comment and
+//! react) through the tracker's own credential, GitHub only so far. Everything a tracker returns is untrusted
+//! text and is never fed to an engine except in the framed first message; issue text going in travels as a field
+//! value, never as an argument.
 
 mod azure;
 #[cfg(test)]
@@ -29,9 +31,9 @@ use crate::error::{CoreError, Result};
 use crate::store::{TrackerConnection, tracker_name};
 use async_trait::async_trait;
 use orbyn_contracts::{
-    ConnectTracker, CreateThread, IssueCounts, IssueDetail, IssueDraft, IssueKey, IssueList,
-    IssueListFailure, IssueRef, IssueSummary, Project, StartIssueThread, Thread, TrackerKind,
-    TrackerRow,
+    CommentIssue, ConnectTracker, CreateIssue, CreateThread, IssueComment, IssueCounts,
+    IssueDetail, IssueDraft, IssueKey, IssueList, IssueListFailure, IssueReaction, IssueRef,
+    IssueSummary, Project, ReactIssue, StartIssueThread, Thread, TrackerKind, TrackerRow,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -46,6 +48,15 @@ const ALL: [TrackerKind; 5] = [
 ];
 const CACHE_FOR: Duration = Duration::from_secs(30);
 const MAX_SCOPE_BYTES: usize = 200;
+/// The most a title may hold, in characters (docs/issues.md, "Create, comment, react").
+const MAX_TITLE_CHARS: usize = 256;
+/// The most an issue body or a comment may hold, in bytes.
+const MAX_BODY_BYTES: usize = 64 * 1024;
+const MAX_LABELS: usize = 50;
+const MAX_LABEL_CHARS: usize = 200;
+const MAX_ASSIGNEES: usize = 25;
+/// The most a candidate id or a comment id may hold, in characters (a reader's own id cap).
+const MAX_ID_CHARS: usize = 200;
 const GITLAB_DEFAULT_HOST: &str = "https://gitlab.com";
 /// The one Linear connection's teams fallback, cached for [`CACHE_FOR`] like a listing.
 const LINEAR_TEAMS: &str = "linear teams";
@@ -101,6 +112,15 @@ pub(crate) enum LabelFeed {
     Events(Vec<LabelEvent>),
 }
 
+/// A new issue as the owning tracker receives it: the person's validated text and the choices that name labels and
+/// people. `Core::create_issue` checks every field before a source sees it.
+pub(crate) struct NewIssue<'a> {
+    pub title: &'a str,
+    pub body: &'a str,
+    pub labels: &'a [String],
+    pub assignees: &'a [String],
+}
+
 /// What a tracker offers. A scope and a key are checked by the source before anything is sent.
 #[async_trait]
 pub(crate) trait IssueSource: Send + Sync {
@@ -122,6 +142,41 @@ pub(crate) trait IssueSource: Send + Sync {
     /// cannot answer spends no event.
     async fn label_events(&self, _scope: &str, _label: &str) -> Result<LabelFeed> {
         Ok(LabelFeed::Cannot)
+    }
+    /// Whether this reader also writes issues (docs/issues.md, "Create, comment, react"). Only the trackers whose
+    /// own write is built say true; `Core` refuses a write for the others before anything is sent, and R15 PR1b
+    /// adds them. The default is false.
+    fn can_write(&self) -> bool {
+        false
+    }
+    /// Creates one issue and answers it as the tracker has it. Only called when [`Self::can_write`] is true. A call
+    /// whose outcome is unknown (a timeout) is `TrackerUnavailable` and says the issue was possibly created: the
+    /// caller creates one issue per call and never retries.
+    async fn create(&self, _scope: &str, _new: &NewIssue<'_>) -> Result<IssueDetail> {
+        Err(CoreError::Unsupported(
+            "This tracker cannot create issues from Orbyn yet.".into(),
+        ))
+    }
+    /// Writes one comment on one issue and answers it as the tracker stored it. Only called when
+    /// [`Self::can_write`] is true.
+    async fn comment(&self, _scope: &str, _key: &str, _body: &str) -> Result<IssueComment> {
+        Err(CoreError::Unsupported(
+            "This tracker cannot comment on issues from Orbyn yet.".into(),
+        ))
+    }
+    /// Adds (`on`) or takes back (`!on`) one reaction, on the issue when `comment` is none, and answers the issue
+    /// with its reaction counts. Both directions are idempotent. Only called when [`Self::can_write`] is true.
+    async fn react(
+        &self,
+        _scope: &str,
+        _key: &str,
+        _comment: Option<&str>,
+        _reaction: IssueReaction,
+        _on: bool,
+    ) -> Result<IssueDetail> {
+        Err(CoreError::Unsupported(
+            "This tracker cannot react from Orbyn yet.".into(),
+        ))
     }
 }
 
@@ -920,10 +975,89 @@ impl Core {
         Ok(list)
     }
 
+    /// Creates one issue (docs/issues.md, "Create, comment, react") and answers it as the tracker stored it. One
+    /// call creates one issue: a call whose outcome is unknown answers `tracker_unavailable` saying the issue was
+    /// possibly created, and nothing here retries. A template id is refused until the templates read is built (R15
+    /// PR2), because an unknown id is `400 invalid` and no template can be known yet.
+    pub async fn create_issue(&self, input: CreateIssue) -> Result<IssueDetail> {
+        self.require_connected(input.tracker).await?;
+        self.check_issue_scope(input.tracker, &input.scope).await?;
+        let source = self.writing_source(input.tracker)?;
+        let title = checked_title(&input.title)?;
+        let body = input.body.unwrap_or_default();
+        checked_body(&body, "The issue body")?;
+        checked_labels(&input.labels)?;
+        checked_assignees(&input.assignees)?;
+        if input.template.is_some() {
+            return Err(CoreError::Invalid("Unknown issue template.".into()));
+        }
+        source
+            .create(
+                &input.scope,
+                &NewIssue {
+                    title: &title,
+                    body: &body,
+                    labels: &input.labels,
+                    assignees: &input.assignees,
+                },
+            )
+            .await
+    }
+
+    /// Writes one comment on one issue and answers it as the tracker stored it. Editing or deleting a comment is
+    /// not part of this route.
+    pub async fn comment_issue(&self, input: CommentIssue) -> Result<IssueComment> {
+        self.require_connected(input.tracker).await?;
+        self.check_issue_scope(input.tracker, &input.scope).await?;
+        let body = checked_comment(&input.body)?;
+        self.writing_source(input.tracker)?
+            .comment(&input.scope, &input.key, body)
+            .await
+    }
+
+    /// Adds or takes back one reaction and answers the issue with the tracker's reaction counts. Both directions are
+    /// idempotent on the tracker; the same call twice answers the same issue.
+    pub async fn react_issue(&self, input: ReactIssue) -> Result<IssueDetail> {
+        self.require_connected(input.tracker).await?;
+        self.check_issue_scope(input.tracker, &input.scope).await?;
+        if let Some(comment) = &input.comment_id {
+            checked_id(comment, "comment")?;
+        }
+        let source = self.writing_source(input.tracker)?;
+        let mut detail = source
+            .react(
+                &input.scope,
+                &input.key,
+                input.comment_id.as_deref(),
+                input.reaction,
+                input.on,
+            )
+            .await?;
+        detail.linked_threads = self.store.threads_linking(&IssueKey {
+            tracker: input.tracker,
+            scope: input.scope,
+            key: input.key,
+        })?;
+        Ok(detail)
+    }
+
+    /// The source that may write for this tracker. A tracker whose own write is not built yet answers the API's
+    /// `422 unsupported` with one fixed sentence that names it (R15 PR1: GitHub only), and nothing is sent.
+    fn writing_source(&self, kind: TrackerKind) -> Result<Arc<dyn IssueSource>> {
+        let source = self.issue_source(kind)?;
+        if source.can_write() {
+            return Ok(source);
+        }
+        Err(CoreError::Unsupported(format!(
+            "{} issue writes arrive in a later update.",
+            display_name(kind)
+        )))
+    }
+
     /// One issue with its comments, the pull requests the tracker links and the threads that link it.
     pub async fn issue(&self, key: &IssueKey) -> Result<IssueDetail> {
         self.require_connected(key.tracker).await?;
-        self.check_issue_scope(key).await?;
+        self.check_issue_scope(key.tracker, &key.scope).await?;
         let mut detail = self
             .issue_source(key.tracker)?
             .get(&key.scope, &key.key)
@@ -947,19 +1081,24 @@ impl Core {
         }
     }
 
-    /// A scope outside the connection is refused: nothing outside it is read.
-    async fn check_issue_scope(&self, key: &IssueKey) -> Result<()> {
+    /// A scope outside the connection is refused: nothing outside it is read or written.
+    async fn check_issue_scope(&self, tracker: TrackerKind, scope: &str) -> Result<()> {
         let connection = self
             .store
             .tracker_connections()?
             .into_iter()
-            .find(|c| c.tracker == key.tracker)
+            .find(|c| c.tracker == tracker)
             .unwrap_or(TrackerConnection {
-                tracker: key.tracker,
+                tracker,
                 host: None,
                 scopes: Vec::new(),
             });
-        if self.issue_scopes(&connection).await?.contains(&key.scope) {
+        if self
+            .issue_scopes(&connection)
+            .await?
+            .iter()
+            .any(|s| s == scope)
+        {
             Ok(())
         } else {
             Err(CoreError::Invalid(
@@ -1137,6 +1276,80 @@ impl Core {
         }
         Ok(thread)
     }
+}
+
+/// An issue title as the contract takes it: one line, 1 to 256 characters, trimmed.
+fn checked_title(input: &str) -> Result<String> {
+    let title = input.trim();
+    if title.is_empty() {
+        return Err(CoreError::Invalid("The issue needs a title.".into()));
+    }
+    if title.chars().count() > MAX_TITLE_CHARS {
+        return Err(CoreError::Invalid(
+            "The title is over 256 characters.".into(),
+        ));
+    }
+    if title.chars().any(char::is_control) {
+        return Err(CoreError::Invalid("A title is one line.".into()));
+    }
+    Ok(title.to_owned())
+}
+
+/// An issue body or a comment as the contract takes it: at most 64 KiB of bytes.
+fn checked_body(input: &str, what: &str) -> Result<()> {
+    if input.len() > MAX_BODY_BYTES {
+        return Err(CoreError::Invalid(format!("{what} is over 64 KiB.")));
+    }
+    Ok(())
+}
+
+/// A comment is 1 to 64 KiB and not blank: the tracker's own text, sent as a field value.
+fn checked_comment(input: &str) -> Result<&str> {
+    checked_body(input, "The comment")?;
+    if input.trim().is_empty() {
+        return Err(CoreError::Invalid("The comment is empty.".into()));
+    }
+    Ok(input)
+}
+
+/// Label names, at most 50: each 1 to 200 characters and no control characters.
+fn checked_labels(labels: &[String]) -> Result<()> {
+    if labels.len() > MAX_LABELS {
+        return Err(CoreError::Invalid("You can set at most 50 labels.".into()));
+    }
+    if labels.iter().any(|label| {
+        label.is_empty()
+            || label.chars().count() > MAX_LABEL_CHARS
+            || label.chars().any(char::is_control)
+    }) {
+        return Err(CoreError::Invalid(
+            "A label name is empty, too long or has control characters.".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Candidate ids, at most 25: each 1 to 200 characters and no control characters. An id is how the tracker
+/// addresses a person on a write, and the tracker refuses one it does not know.
+fn checked_assignees(assignees: &[String]) -> Result<()> {
+    if assignees.len() > MAX_ASSIGNEES {
+        return Err(CoreError::Invalid(
+            "You can assign at most 25 people.".into(),
+        ));
+    }
+    for assignee in assignees {
+        checked_id(assignee, "assignee")?;
+    }
+    Ok(())
+}
+
+/// A tracker id the person sent: non-empty, at most 200 characters, no control characters. It is a value the tracker
+/// refuses when it does not know it, never part of a path or an argument.
+fn checked_id(id: &str, what: &str) -> Result<()> {
+    if id.is_empty() || id.chars().count() > MAX_ID_CHARS || id.chars().any(char::is_control) {
+        return Err(CoreError::Invalid(format!("That {what} id is not valid.")));
+    }
+    Ok(())
 }
 
 pub(crate) fn display_name(kind: TrackerKind) -> &'static str {
