@@ -340,8 +340,7 @@ async fn rebinding_a_command_leaves_a_removal_marker_so_no_device_keeps_the_old_
     a.save_keybinding(&rule("mod+e", "sidebar.toggle")).unwrap();
     until(&b, |b| {
         let rules = b.keybindings().rules;
-        rules.iter().any(|r| r.key == "mod+e")
-            && !rules.iter().any(|r| r.key == "mod+y" && !r.remove)
+        rules.iter().any(|r| r.key == "mod+e") && !rules.iter().any(|r| r.key == "mod+y")
     })
     .await;
     let (old, _) = rule_field(&rule("mod+y", "sidebar.toggle"));

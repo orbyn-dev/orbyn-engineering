@@ -74,6 +74,11 @@ describe("which requests carry the person key", () => {
     }
   });
 
+  it("sends the key on the keybinding reset and not on the plain keybindings write", () => {
+    expect(sendsPersonKey("POST", "/api/keybindings/reset")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/keybindings")).toBe(false);
+  });
+
   it("is exactly the service's person rows plus its field-level rows", () => {
     const table = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../../crates/orbynd/tests/routes.json"), "utf8")) as {
       protected: [string, string, string][];

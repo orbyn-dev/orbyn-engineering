@@ -361,6 +361,7 @@
     ["POST","/api/issues/trackers/{tracker}/connect","person"],
     ["POST","/api/issues/trackers/{tracker}/disconnect","person"],
     ["POST","/api/keybindings","local"],
+    ["POST","/api/keybindings/reset","person"],
     ["POST","/api/library/env-sets","person"],
     ["POST","/api/library/import","person"],
     ["POST","/api/library/prompts","person"],

@@ -106,6 +106,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/workspace/setup"],
   ["POST", "/api/workspace/update"],
   // Preferences, policy and redaction.
+  ["POST", "/api/keybindings/reset"],
   ["POST", "/api/policy/rules"],
   ["DELETE", "/api/policy/rules/{id}"],
   ["PUT", "/api/preferences"],
