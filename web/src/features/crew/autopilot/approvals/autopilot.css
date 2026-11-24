@@ -359,6 +359,22 @@ h4.ap-sub { margin: 0; }
   .dg-time { justify-self: start; }
 }
 
+/* Settings › Crew › Device notifications (Crew Designs v140, frames `kc10-notify-settings*`): the same row and grid as
+   Daily digest, with the switch where the design draws it and the status line full-width inside the row. At 640 px and
+   below the row is one column, and the switch keeps its On or Off label on the same line. */
+.dn-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 18px; padding: 12px 0; border-top: 1px solid var(--color-border); align-items: center; font-size: 12.5px; color: var(--color-textSoft); }
+.dn-row b { font-weight: 500; color: var(--color-text); }
+.dn-row small { display: block; margin-top: 2px; color: var(--color-muted); font-size: 12px; line-height: 1.4; }
+.dn-status { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; margin: 0; padding: 8px 10px; border: 1px solid var(--color-borderStrong); border-radius: 10px; background: var(--color-chip); color: var(--color-textSoft); font-size: 12px; line-height: 1.45; }
+.dn-note { grid-column: 1 / -1; margin: 0; color: var(--color-muted); font-size: 12px; line-height: 1.4; }
+.dn-status > span { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
+.dn-status .btn { margin-left: auto; }
+@media (max-width: 640px) {
+  .dn-row { grid-template-columns: minmax(0, 1fr); }
+  .dn-row .ap-switch { justify-self: start; white-space: nowrap; }
+  .dn-status .btn { margin-left: 0; }
+}
+
 /* KC6 watches (watch-list and each watch's page): the name opens the watch, the page stacks its banner, facts, tail and
    change table, and the table's four columns are the design's. */
 .ap-watch-name { display: block; max-width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
