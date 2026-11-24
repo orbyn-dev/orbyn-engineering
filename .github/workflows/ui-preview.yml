@@ -71,7 +71,7 @@ jobs:
               exit 1
             fi
             echo "::warning::network error while installing the browser (attempt $attempt of 3)"
-            sleep 30
+            [ "$attempt" -lt 3 ] && sleep 30
           done
           echo "::warning title=UI preview skipped::the package mirror could not be reached after 3 attempts. The preview is skipped; nothing is blocked. Re-run the job once the runner has network access."
           echo "browser=skipped" >> "$GITHUB_OUTPUT"
