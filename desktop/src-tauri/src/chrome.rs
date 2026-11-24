@@ -9,6 +9,9 @@
 
 /// The web title bar's height, in points (`--titlebar-h` in web/src/styles/tokens.css).
 const BAR_HEIGHT: f64 = 44.0;
+/// The bar's height on Windows, in CSS pixels (`--titlebar-h` under `data-window-frame="windows"` in web/src/styles/windowFrame.css).
+#[cfg(test)]
+const WINDOWS_BAR_HEIGHT: u32 = 32;
 /// A traffic light's drawn diameter and the bar's left padding the first one starts at (the design's `.lights`).
 const LIGHT_DIAMETER: f64 = 12.0;
 const LIGHTS_LEFT: f64 = 16.0;
@@ -54,6 +57,13 @@ mod tests {
         assert_eq!(frame_for("windows"), Frame::Drawn);
         assert_eq!(frame_for("linux"), Frame::Native);
         assert_eq!(frame_for("freebsd"), Frame::Native);
+    }
+
+    #[test]
+    fn the_windows_bar_height_matches_the_web_style() {
+        let css = include_str!("../../../web/src/styles/windowFrame.css");
+        assert!(css.contains(&format!("--titlebar-h: {WINDOWS_BAR_HEIGHT}px;")));
+        assert!(css.contains(&format!("--topbar-h: {WINDOWS_BAR_HEIGHT}px;")));
     }
 
     #[test]
