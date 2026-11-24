@@ -62,6 +62,65 @@ const pullRow = ({ number, ...rest }: PullFixture) => ({
   ...rest,
 });
 
+/** One issue the stand-in `gh` answers for (docs/issues.md): the fields GitHub's own `gh issue list` and `gh issue view` print. */
+export interface IssueFixture {
+  number: number;
+  title: string;
+  [field: string]: unknown;
+}
+
+/**
+ * The issues the stand-in `gh` holds: two open and one closed, with a body, a comment, labels and an assignee, so the
+ * Issues pages have something to list, filter and read. The scope is the repository the fixture project's tracker reads.
+ */
+const STAND_IN_ISSUES: IssueFixture[] = [
+  {
+    number: 7,
+    title: "Retry the queue",
+    url: "https://github.com/o/r/issues/7",
+    state: "OPEN",
+    stateReason: "",
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z",
+    closedAt: "",
+    author: { login: "grace" },
+    assignees: [{ login: "me" }],
+    labels: [{ name: "bug" }],
+    body: "The queue stalls when the worker restarts.",
+    comments: [{ id: 71, author: { login: "ada" }, body: "I can reproduce it.", createdAt: "2026-10-01T01:00:00Z" }],
+  },
+  {
+    number: 12,
+    title: "Tidy the docs",
+    url: "https://github.com/o/r/issues/12",
+    state: "OPEN",
+    stateReason: "",
+    createdAt: "2026-09-28T00:00:00Z",
+    updatedAt: "2026-09-30T00:00:00Z",
+    closedAt: "",
+    author: { login: "ada" },
+    assignees: [],
+    labels: [{ name: "docs" }],
+    body: "The Getting started page names the old command.",
+    comments: [],
+  },
+  {
+    number: 9,
+    title: "Old cache bug",
+    url: "https://github.com/o/r/issues/9",
+    state: "CLOSED",
+    stateReason: "COMPLETED",
+    createdAt: "2026-09-01T00:00:00Z",
+    updatedAt: "2026-09-20T00:00:00Z",
+    closedAt: "2026-09-20T00:00:00Z",
+    author: { login: "grace" },
+    assignees: [],
+    labels: [],
+    body: "The cache kept the first answer.",
+    comments: [],
+  },
+];
+
 const STAND_IN_GH = resolve(WEB, "e2e/real/stand-in-gh.mjs");
 
 /** A GitHub-only fixture: `gh` keeps state, and discovery of other forges fails locally. */
@@ -71,7 +130,7 @@ function standInGh(dir: string, pulls: PullFixture[], starred = false): { bin: s
   const state = join(dir, "gh-state.json");
   const log = join(dir, "gh-calls.log");
   writeFileSync(log, "");
-  writeFileSync(state, JSON.stringify({ starred, pulls: pulls.map(pullRow), repos: [], next: 100, people: ["ada", "grace"], labels: ["bug", "docs"], template: pullRow({ number: 0, title: "" }) }));
+  writeFileSync(state, JSON.stringify({ starred, pulls: pulls.map(pullRow), repos: [], next: 100, people: ["ada", "grace"], labels: ["bug", "docs"], template: pullRow({ number: 0, title: "" }), issues: STAND_IN_ISSUES }));
   if (process.platform === "win32") {
     symlinkSync(STAND_IN_GH, join(bin, "gh.mjs"));
     writeFileSync(join(bin, "gh.cmd"), '@echo off\r\nnode "%~dp0gh.mjs" %*\r\n');
@@ -159,6 +218,10 @@ export interface ServiceOptions {
   crewPreview?: boolean;
   /** Runs a debug service with `ORBYN_DEV_SEED_PROPOSALS=1`, so `POST /api/crew/dev/seed-proposal` exists (404 otherwise). */
   seedProposals?: boolean;
+  /** Runs the service with Issues on (`ORBYN_ISSUES=1`): its beta routes, the Issues pages and the thread issue links. */
+  issues?: boolean;
+  /** Runs the service with multi-repository projects on (`ORBYN_MULTI_REPO=1`): repository lists, task folders and repo threads. */
+  multiRepo?: boolean;
 }
 
 /** A port nothing holds, so two checkouts or specs can never answer for each other. */
@@ -216,7 +279,7 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
   if (ui && !existsSync(join(ui, "index.html"))) throw new Error("Build this checkout's production UI first: npm run build");
   const service = spawn(BIN, ["serve", "--data-dir", join(dir, "data"), "--workspace-url", makeLibrary(dir), ...(options.parentStdin ? ["--parent-stdin"] : []), ...(ui ? ["--ui-dir", ui] : [])], {
     // A home of its own, so no real engine history or login is read.
-    env: { ...inherited, ...profile, ...engines, ...(options.crewPreview ? { ORBYN_CREW_PREVIEW: "1" } : {}), ...(options.seedProposals ? { ORBYN_DEV_SEED_PROPOSALS: "1" } : {}), ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${forge ? `${forge.bin}${delimiter}` : ""}${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", ORBYN_DEV_DISABLE_PERSON_KEY: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
+    env: { ...inherited, ...profile, ...engines, ...(options.crewPreview ? { ORBYN_CREW_PREVIEW: "1" } : {}), ...(options.seedProposals ? { ORBYN_DEV_SEED_PROPOSALS: "1" } : {}), ...(options.issues ? { ORBYN_ISSUES: "1" } : {}), ...(options.multiRepo ? { ORBYN_MULTI_REPO: "1" } : {}), ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${forge ? `${forge.bin}${delimiter}` : ""}${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", ORBYN_DEV_DISABLE_PERSON_KEY: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
     stdio: ["pipe", "pipe", "inherit"],
   });
   const ready = await new Promise<{ url: string; token: string }>((done, fail) => {
