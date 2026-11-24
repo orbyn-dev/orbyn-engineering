@@ -1824,9 +1824,23 @@ the same transaction as its `stopped`/`engine_error` move.
 - **Review queue digest:** `crew_review_queue` reads the field for what waits elsewhere — the Inbox's items this queue does not answer, by kind, `waiting_elsewhere` on `GET /api/crew/autopilot/review` — so a page can say "N more wait for you in the Inbox" from the same field the Inbox and Taskboard read, not from a second rule; the waits the queue itself answers are not counted as elsewhere, and the counts need not be equal (the board cards only work tasks).
 - **Dashboard live count:** the `live` field on `GET /api/crew/dashboard` is a "Right now" row that ignores the 30/60/90 day window while the figures beside it are windowed: what waits for this repository now, from the same field, by kind (dismissals included; the same field's items, not a count that must equal the Inbox's), and the workers that own live work now, from the same `working` function, by why. Idle is not served: the store keeps no crew member that holds no task, so a genuinely idle worker cannot be told from one that never joined, and the tile stays Planned.
 - **Dashboard needed-kind:** `tripwire` joins `DASHBOARD_KINDS`, so a task a trip wire stopped and a person then merged by hand is no longer counted as a merge that needed nothing from the person.
-The web side (board column, Inbox rows, Map words, dashboard tiles) is not built. Tests: the truth table in `working.rs`, the board field tests in `crew::tests::flow_board` (the field's column, a dismissed could-not-start card, the refusal it carries, a fix in flight), the dashboard live-row tests in `crew::tests::dashboard` (the same field, dismissals, the window, another project's workers filtered out), and the Review queue digest test in `crew::tests::background_review`. One needs-you read, not necessarily one count: the board cards only work tasks, a background run's wait has no card, and the dashboard narrows to one repository.
+On the web, one shared needs-you read draws the Inbox's watch and could-not-stop rows (#1363, #1415); the board column, the Map words and the dashboard tiles are not drawn from it yet. Tests: the truth table in `working.rs`, the board field tests in `crew::tests::flow_board` (the field's column, a dismissed could-not-start card, the refusal it carries, a fix in flight), the dashboard live-row tests in `crew::tests::dashboard` (the same field, dismissals, the window, another project's workers filtered out), and the Review queue digest test in `crew::tests::background_review`. One needs-you read, not necessarily one count: the board cards only work tasks, a background run's wait has no card, and the dashboard narrows to one repository.
 
 **As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342) and its service side is built (not run against a real service). KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
+
+**As built on 2026-11-24 (main `d84ebfa74`):** no Kiro Crew feature has been run against a real service, so only M21 and M24 are ticked (KC1 and KC4, on tests); the rest stay open or partial.
+
+| Feature | Service | Web | Still to build |
+|---|---|---|---|
+| KC2 close the lead | merged (#1355); Stop again retries a failed worker stop (#1417, #1423) | dialog (#1342) and the Inbox could-not-stop row (#1415) | the Board's Needs you card needs a service field (#1416) |
+| KC3 one needs-you | `working` and every service reader merged (#1368) | Inbox watch and could-not-stop rows (#1363, #1415) | board column, Map words and dashboard tiles from the field; a writer for `worker_stopped_twice` |
+| KC4 disk guard | background "Not started · Disk" row, migration 82 (#1362) | drawn (#1414) | a real run; the Windows branch is unobserved |
+| KC5 lessons | store and write path with brief injection, migrations 80 and 81 (#1350, #1359) | list (#1345) and card (#1349), hidden on a 404 | the lessons routes (slice 3) and EvalHistory samples (slice 4) |
+| KC6 watches | slices 1 to 3 (#1343, #1353) | watch pages and Inbox rows (#1363) | a run route for "Open the run" |
+| KC7 listeners | plumbing and `issue_label` (#1364) | none needed | `dependency_update` needs a reader feed (#1360) |
+| KC8 resume | merged (#1344) | card line (#1340) | the Inbox row |
+| KC9 skill proposals | the `skills-local` area and its one writer (#1366, #1411) | Skills group, proposals, review page, read error (#1358, #1409), hidden on a 404 | the proposal store and the Approve/Dismiss routes; native discovery; a Windows junction check (#1406) |
+| KC10 notifications | the once-per-item claim, migration 83 (#1418) | not built | the notification, its settings switch |
 
 **KC9 library side (built after that snapshot):** an approved skill proposal writes the skill into the device's own
 skills folder, `<data>/skills-local/<slug>/SKILL.md`, whose front matter carries a `local_revision`; the shared library and
@@ -1838,8 +1852,8 @@ including its revision line, refuses a secret with the contract's `secret_refuse
 (`skills.local.write`) with the name, the revision and the proposal and lesson ids only, never the text. The shared library
 wins a name it holds: a local skill cannot be created over one, and if the library later gains the name, `skill_load` reads
 the library copy and `skill_search` lists it once. Engines reach local skills through the MCP `skill_search` and
-`skill_load` tools; native discovery is a follow-up. The proposal store and its routes, and the web, are not built in this
-slice.
+`skill_load` tools; native discovery is a follow-up. The proposal store and its routes are not built in this
+slice; the web is built against the mock (#1358).
 
 **Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
 (our router never swaps an engine) and release channels.
