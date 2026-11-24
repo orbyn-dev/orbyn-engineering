@@ -988,8 +988,8 @@ impl Core {
 
     /// Creates one issue (docs/issues.md, "Create, comment, react") and answers it as the tracker stored it. One
     /// call creates one issue: a call whose outcome is unknown answers `tracker_unavailable` saying the issue was
-    /// possibly created, and nothing here retries. A template id is refused until the templates read is built (R15
-    /// PR2), because an unknown id is `400 invalid` and no template can be known yet.
+    /// possibly created, and nothing here retries. A template id is looked up in the tracker's templates: a missing
+    /// body is filled from the named template and an unknown id is `400 invalid`.
     pub async fn create_issue(&self, input: CreateIssue) -> Result<IssueDetail> {
         self.require_connected(input.tracker).await?;
         self.check_issue_scope(input.tracker, &input.scope).await?;

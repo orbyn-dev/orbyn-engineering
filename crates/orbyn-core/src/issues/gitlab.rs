@@ -746,10 +746,12 @@ impl IssueSource for GitLab {
 
     async fn templates(&self, scope: &str) -> Result<Vec<IssueTemplate>> {
         let project = project_segment(scope)?;
+        // One page of 100 covers the 50 kept: GitLab pages this list at 20 by default, and a project with more
+        // than that would silently answer only the first page.
         let listed = self
             .fetch(
                 &format!("/api/v4/projects/{project}/templates/issues"),
-                &[],
+                &[("per_page", "100".to_owned())],
                 "project",
             )
             .await?;

@@ -1575,6 +1575,11 @@ mod templates {
             let path = req.path();
             assert_eq!(req.header("private-token"), Some(TOKEN));
             if path.ends_with("/templates/issues") {
+                assert_eq!(
+                    req.param("per_page").as_deref(),
+                    Some("100"),
+                    "one page of 100 covers the 50 kept; GitLab pages this list at 20 by default"
+                );
                 return Reply::json(&entries(2));
             }
             match path {
