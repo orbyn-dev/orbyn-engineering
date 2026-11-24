@@ -918,6 +918,95 @@ export const FRAMES = {
     ],
   },
 
+  /** Crew KC6 watches (Crew Designs v121, the watch-* frames), on the real Background routes over the mock's
+   *  crew-background-watch* scenarios. The list mixes watches with the other crews; the create dialog gains Watch and
+   *  its two actions; each watch's page is the state its scenario holds. watch-history is the one section frame and draws
+   *  in the Preview chunk; watch-needsyou is the live inbox with the two watch rows beside a background run. */
+  "watch-list": { route: "#/crew/background", scenario: "crew-background-watch" },
+  "watch-setup": {
+    route: "#/crew/background",
+    scenario: "crew-background-watch",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "Watch"),
+      { do: "fill", label: "Name", value: "Redirect tests", exact: true },
+      { do: "fill", label: "Command", value: "npm test web/nav/redirect" },
+      { do: "fill", label: "Every N hours", value: "1" },
+    ],
+  },
+  "watch-setup-template": {
+    route: "#/crew/background",
+    scenario: "crew-background-watch",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "Watch"),
+      click("radio", "Start the crew template"),
+      { do: "fill", label: "Name", value: "Redirect tests", exact: true },
+      { do: "fill", label: "Command", value: "npm test web/nav/redirect" },
+      { do: "fill", label: "Every N hours", value: "1" },
+    ],
+  },
+  "watch-setup-error": {
+    route: "#/crew/background",
+    scenario: "crew-background-watch",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "Watch"),
+      { do: "fill", label: "Name", value: "Redirect tests", exact: true },
+      { do: "fill", label: "Command", value: "" },
+      { do: "fill", label: "Every N hours", value: "0" },
+    ],
+  },
+  "watch-setup-refused": {
+    route: "#/crew/background",
+    scenario: "crew-background-watch",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "Watch"),
+      { do: "fill", label: "Name", value: "Redirect tests", exact: true },
+      { do: "fill", label: "Command", value: "git push --force origin main" },
+      { do: "fill", label: "Every N hours", value: "1" },
+      click("button", "Create background crew"),
+    ],
+    wait: 700,
+  },
+  "watch-setup-narrow": {
+    route: "#/crew/background",
+    scenario: "crew-background-watch",
+    width: 520,
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "Watch"),
+      { do: "fill", label: "Name", value: "Redirect tests", exact: true },
+      { do: "fill", label: "Command", value: "npm test web/nav/redirect" },
+      { do: "fill", label: "Every N hours", value: "1" },
+    ],
+  },
+  "watch-setup-saved": {
+    route: "#/crew/background",
+    scenario: "crew-background-watch",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "Watch"),
+      { do: "fill", label: "Name", value: "Redirect tests", exact: true },
+      { do: "fill", label: "Command", value: "npm test web/nav/redirect" },
+      { do: "fill", label: "Every N hours", value: "1" },
+      click("button", "Create background crew"),
+    ],
+    wait: 900,
+  },
+  "watch-passing": { route: "#/crew/background", scenario: "crew-background-watch-passing", steps: [click("button", "Open the Redirect tests watch")] },
+  "watch-failing": { route: "#/crew/background", scenario: "crew-background-watch-failing", steps: [click("button", "Open the Redirect tests watch")] },
+  "watch-still-failing": { route: "#/crew/background", scenario: "crew-background-watch-still-failing", steps: [click("button", "Open the Redirect tests watch")] },
+  "watch-recovered": { route: "#/crew/background", scenario: "crew-background-watch-recovered", steps: [click("button", "Open the Redirect tests watch")] },
+  "watch-paused": { route: "#/crew/background", scenario: "crew-background-watch-paused", steps: [click("button", "Open the Docs links watch")] },
+  "watch-command-error": { route: "#/crew/background", scenario: "crew-background-watch-could-not-run", steps: [click("button", "Open the Lockfile check watch")] },
+  "watch-failing-template": { route: "#/crew/background", scenario: "crew-background-watch-template", steps: [click("button", "Open the Main build watch")] },
+  /** The change table alone, the one KC6 frame that is a section of a page (watch-history). */
+  "watch-history": { route: "#/preview/crew/watch-history", scenario: "crew-background-watch-failing" },
+  /** The inbox with the two watch rows (watch-needsyou), on the app's own Inbox tab. */
+  "watch-needsyou": { route: "#/crew/inbox", scenario: "crew-background-watch-needsyou" },
+
   /** Crew, the escape log (Crew Designs v79), on the real escape routes over the mock's crew-escapes scenarios. A detail
    *  frame names its escape in the hash; escape-gap opens the same escape with its Set-the-gap dialog. */
   "escape-log": { route: "#/preview/crew/escape-log", scenario: "crew-escapes", wait: 2500 },
@@ -1038,5 +1127,93 @@ export const FRAMES = {
   "transcript-import-error-unreadable": importRoute("notes.orbyn.json", engineThread),
   "transcript-import-error-key-missing": importRoute("nokey.orbyn.json", engineThread),
   "transcript-imported-thread": { route: "#/threads/t-imported", scenario: "transcript-imported" },
+
+  /** Crew, skill proposals (Crew Designs v121, KC9) on the real routes and the mock's crew-proposals scenarios: the proposal
+   *  waiting on the Lessons page, nothing proposed, the pattern that lost a lesson, the approve and dismiss confirms, the
+   *  review page, the refused edit, the write in flight, the refused write, the
+   *  Lessons page after an approve, the Proposed and Added from lessons groups on the Skills page (and the line while nothing
+   *  is added), and the skill added from lessons on its own page. */
+  "kc9-skill-proposal-card": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals" },
+  "kc9-skill-proposal-none": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals-none" },
+  "kc9-skill-proposal-stale": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals-stale" },
+  "kc9-skill-proposal-confirm": {
+    route: "#/settings/crew/lessons?repo=p-app",
+    scenario: "crew-proposals",
+    steps: [click("button", "Approve")],
+  },
+  "kc9-skill-proposal-dismiss-confirm": {
+    route: "#/settings/crew/lessons?repo=p-app",
+    scenario: "crew-proposals",
+    steps: [click("button", "Dismiss")],
+  },
+  "kc9-skill-proposal-approved": {
+    route: "#/settings/crew/lessons?repo=p-app",
+    scenario: "crew-proposals",
+    steps: [click("button", "Approve"), click("button", "Add to skills-local")],
+    wait: 1800,
+  },
+  "kc9-skill-proposal-review": {
+    route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
+    scenario: "crew-proposals",
+  },
+  "kc9-skill-proposal-review-refused": {
+    route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
+    scenario: "crew-proposals-secret",
+    steps: [
+      { do: "fill", label: "Skill text", value: "Use the staging token sk-live-xxxxxxxxxxxx when you test the redirect." },
+      click("button", "Approve"),
+    ],
+  },
+  "kc9-skill-proposal-approving": {
+    route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
+    scenario: "crew-proposals",
+    pre: [{ route: "**/api/crew/skill-proposals/*/approve", delay: 20000 }],
+    steps: [click("button", "Approve")],
+    wait: 1800,
+  },
+  "kc9-skill-proposal-approve-failed": {
+    route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
+    scenario: "crew-proposals-approve-fails",
+    steps: [click("button", "Approve")],
+  },
+  "kc9-skill-proposal-skills-item": { route: "#/skills", scenario: "crew-proposals" },
+  "kc9-skill-proposal-skill-added": { route: "#/skills/redirect-checks", scenario: "crew-proposals-approved" },
+  "kc9-skills-added-group": { route: "#/skills", scenario: "crew-proposals-approved" },
+  "kc9-skills-added-group-empty": { route: "#/skills", scenario: "crew" },
+
+  /** Crew, a lesson's card and its states (Crew Designs v121, KC5), on the real lessons routes over the mock's
+   *  crew-lessons scenario, whose five sample lessons follow the design's states: the card, its edit form, a lesson
+   *  turned off, a correction for all repositories, the promote confirm and the refusal the contract gives a lesson that
+   *  names a path, the move-back confirm, the add form, and the list right after a delete with its Undo toast. */
+  "lessons-card": { route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-returnto", scenario: "crew-lessons" },
+  "lessons-edit": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-dates",
+    scenario: "crew-lessons",
+    steps: [click("button", "Edit")],
+  },
+  "lessons-disabled": { route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-session", scenario: "crew-lessons" },
+  "lessons-from-correction": { route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-dates", scenario: "crew-lessons" },
+  "lessons-promote-confirm": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-session",
+    scenario: "crew-lessons",
+    steps: [click("button", "Promote to all repositories")],
+  },
+  "lessons-promote-refused": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-returnto",
+    scenario: "crew-lessons",
+    steps: [click("button", "Promote to all repositories")],
+  },
+  "lessons-move-back-confirm": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-dates",
+    scenario: "crew-lessons",
+    steps: [click("button", "Move back to one repository")],
+  },
+  "lessons-add": { route: "#/settings/crew/lessons/add?repo=p-app", scenario: "crew-lessons" },
+  "lessons-deleted-undo": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-returnto",
+    scenario: "crew-lessons",
+    steps: [click("button", "Delete")],
+    wait: 1800,
+  },
 
 };

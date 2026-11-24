@@ -3,7 +3,7 @@ import { NETWORK_ERROR, type ApiFailure } from "../../../api/client";
 import type { Project } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
 import { Button } from "../../../ui/controls";
-import { navigate } from "../../../product/state/route";
+import { navigate, routeHref } from "../../../product/state/route";
 import type { Lesson, LessonFilter } from "./types";
 import { dayOf } from "../autopilot/approvals/ledger";
 import { ProjectChip } from "../escape/live/parts";
@@ -11,6 +11,8 @@ import { Frame } from "../shared/Frame";
 import { Ic } from "../shared/parts";
 import { lessonsApi } from "./api";
 import { useLessons, type LessonsReady } from "./useLessons";
+import { ProposalsSection } from "./proposals/ProposalsSection";
+import { LessonUndoToast } from "./UndoToast";
 import { Loading } from "../../../product/ui/states";
 import "./lessons.css";
 
@@ -22,7 +24,7 @@ const DEFAULT_BRIEF_CAP = { lessons: 5, chars: 1500 } as const;
 
 const SOURCE_WORD: Record<Lesson["source"], string> = {
   fingerprint: "Repeated failure",
-  escape: "Escape",
+  escape: "Confirmed escape",
   revert: "Revert",
   person: "Your correction",
 };
@@ -52,38 +54,41 @@ export function LessonsList({
   if (read.status === "missing") return null;
   const cap = read.status === "ready" ? read.list.brief_cap : DEFAULT_BRIEF_CAP;
   return (
-    <Frame live>
-      <div className="cx-cwpg">
-        <div className="cx-t14pg">
-          <div className="cx-t10hd">
-            <b>Lessons</b>
-            <span className="cx-cwpv">Preview</span>
-            <span className="cx-rtag cx-lo">This device only</span>
-            <span className="cx-t10sp">
-              <ProjectChip name={name} projects={projects} current={project} onPick={onPick} />
-            </span>
+    <>
+      <Frame live>
+        <div className="cx-cwpg">
+          <div className="cx-t14pg">
+            <div className="cx-t10hd">
+              <b>Lessons</b>
+              <span className="cx-cwpv">Preview</span>
+              <span className="cx-rtag cx-lo">This device only</span>
+              <span className="cx-t10sp">
+                <ProjectChip name={name} projects={projects} current={project} onPick={onPick} />
+              </span>
+            </div>
+            <p className="cx-lsintro">
+              What Crew has learned on this device. A lesson comes from a failure that repeated, an escape or a revert
+              you confirmed, or something you typed as a correction, or you add one by hand. You can read, edit, turn off,
+              promote, move back and delete each one.
+            </p>
+            <div className="cx-cwbn cx-lsbanner">
+              <b>Lessons are data, not rules.</b>
+              <span>
+                A worker gets at most {cap.lessons} of them as text added to its brief after the route is chosen. A lesson
+                that matches a task’s checks is left out of that brief. Crew is built so the router, the score, the
+                verifier, the answer key, a lease, a budget and the checks never read one.
+              </span>
+            </div>
+            {read.status === "loading" ? <Loading label="Reading lessons" rows={3} /> : null}
+            {read.status === "error" ? <ReadError failure={read.failure} onRetry={() => void read.reload()} /> : null}
+            {read.status === "ready" ? (
+              <Ready read={read} project={project} name={name} filter={filter} onFilter={setFilter} />
+            ) : null}
           </div>
-          <p className="cx-lsintro">
-            What Crew has learned on this device. A lesson comes from a failure that repeated, an escape or a revert
-            you confirmed, or something you typed as a correction, or you add one by hand. You can read, edit, turn off,
-            promote, move back and delete each one.
-          </p>
-          <div className="cx-cwbn cx-lsbanner">
-            <b>Lessons are data, not rules.</b>
-            <span>
-              A worker gets at most {cap.lessons} of them as text added to its brief after the route is chosen. A lesson
-              that matches a task’s checks is left out of that brief. Crew is built so the router, the score, the
-              verifier, the answer key, a lease, a budget and the checks never read one.
-            </span>
-          </div>
-          {read.status === "loading" ? <Loading label="Reading lessons" rows={3} /> : null}
-          {read.status === "error" ? <ReadError failure={read.failure} onRetry={() => void read.reload()} /> : null}
-          {read.status === "ready" ? (
-            <Ready read={read} project={project} name={name} filter={filter} onFilter={setFilter} />
-          ) : null}
         </div>
-      </div>
-    </Frame>
+      </Frame>
+      <LessonUndoToast onUndone={() => void read.reload()} />
+    </>
   );
 }
 
@@ -167,12 +172,26 @@ function SwitchRow({ read, project, name }: { read: LessonsReady; project: strin
 
 /** One lesson: its text, where it came from, when it was learned, what it reached, and the state it is in. */
 function LessonRow({ lesson, project, hidden }: { lesson: Lesson; project: string; hidden: boolean }) {
-  const used = lesson.last_used_at
-    ? `Used in ${lesson.uses} ${lesson.uses === 1 ? "brief" : "briefs"} · last ${dayOf(lesson.last_used_at)}`
-    : "Not used yet";
+  const briefs = `${lesson.uses} ${lesson.uses === 1 ? "brief" : "briefs"}`;
+  // A lesson that became a skill stops going into briefs while the skill exists, so its line says so instead of "last".
+  const used = lesson.skill
+    ? lesson.last_used_at
+      ? `Used in ${briefs} · not used now, it is a skill`
+      : "Not used now, it is a skill"
+    : lesson.last_used_at
+      ? `Used in ${briefs} · last ${dayOf(lesson.last_used_at)}`
+      : "Not used yet";
   return (
     <div className="cx-lsrow">
       <div className="cx-lsmain">
+        {lesson.skill ? (
+          <span className="cx-lsskill">
+            <span className="cx-apchip cx-skill">Now a skill</span>{" "}
+            <a className="cx-lsskillname" href={routeHref({ name: "skills", skill: lesson.skill.name })}>
+              {lesson.skill.name}
+            </a>
+          </span>
+        ) : null}
         <b>{lesson.text}</b>
         <div className="cx-lsmeta">
           <span>{SOURCE_WORD[lesson.source]}</span>
@@ -277,6 +296,12 @@ function Ready({
           </Button>
         </span>
       </div>
+      <ProposalsSection
+        project={project}
+        name={name}
+        lessons={filter === "all" ? list.lessons : undefined}
+        onLessonsChanged={() => void read.reload()}
+      />
       {list.lessons.length === 0 ? (
         filter === "hidden" ? (
           <div className="cx-cwstate" style={{ margin: "32px auto 0" }}>

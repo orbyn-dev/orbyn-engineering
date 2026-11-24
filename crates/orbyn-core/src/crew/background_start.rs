@@ -165,7 +165,7 @@ impl Core {
     ) -> Result<wire::BackgroundRun> {
         self.crew_preview_only()?;
         let crew = self.background_row(id)?;
-        self.refuse_background_start(&crew)?;
+        self.refuse_background_start(&crew, event)?;
         let branch = match crew.trigger_settings["branch"].as_str() {
             None => None,
             Some(name) if orbyn_contracts::CrewBranch::new(name).is_ok() => Some(name),
@@ -305,8 +305,10 @@ impl Core {
         }
     }
 
-    /// The refusals that need only the stored crew.
-    fn refuse_background_start(&self, crew: &BackgroundRow) -> Result<()> {
+    /// The refusals that need only the stored crew. `event` says who fired the start: a watch's own check fires
+    /// `watch:<bucket>`, which a watch accepts; Run now's `manual` is still refused for it, because a watch runs its command on
+    /// its schedule and not on demand.
+    fn refuse_background_start(&self, crew: &BackgroundRow, event: &str) -> Result<()> {
         if !crew.enabled {
             return Err(CoreError::PolicyDenied(
                 "This background crew is off. Turn it on, then start a run.".into(),
@@ -324,12 +326,12 @@ impl Core {
                     "An issue label crew cannot run yet: Orbyn cannot see new issue labels.".into(),
                 ));
             }
-            "watch" => {
+            "watch" if !event.starts_with("watch:") => {
                 return Err(CoreError::PolicyDenied(
-                    "A watch crew cannot run yet: Orbyn runs its command from the schedule, not on demand."
-                        .into(),
+                    "A watch crew's command runs on its schedule; Run now does not start a run for it.".into(),
                 ));
             }
+            "watch" => {}
             kind => {
                 let words = kind.replace('_', " ");
                 return Err(CoreError::PolicyDenied(format!(

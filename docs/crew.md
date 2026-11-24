@@ -1145,24 +1145,47 @@ is 1 to 720, and `on_failing` is required. A project holds at most 10 watches, c
 is screened at create and update with the always-denied list (N1 to N10) and the blast-radius guard, with the project's folder as the
 worktree; a refusal names the rule in one fixed sentence and never repeats the command. `needs_you` stores the template and budgets as
 given (they must be in range, and no model run follows); `template` validates them like any other crew. The command is stored redacted.
-Nothing runs a watch yet: there is no listener, no command execution, no model call and no UI, and Run now refuses one.
+
+**As built (KC6 slices 2 and 3, service only):** the listener's watch tick runs each enabled watch's stored command once per
+`every_hours` window, in the project's checkout, for at most five minutes (and at most 1 MiB printed on each stream: a command over it is stopped and could not run, `printed too much`), and claims `watch:<crew>:<start>` (the window's start in unix seconds, so a changed `every_hours` never waits on the old interval's claims) before it runs so a
+crash mid-check does not repeat it. The crew is read again just before its claim, so a watch turned off or changed during a long pass is not run on the old row. The command is screened again before every check (the always-denied list and the blast-radius
+guard, whose lists may have changed since the crew was made). Its last 20 lines and at most 2 KiB are kept, redacted through the
+locked redactor; nothing else of its output is stored. **The first check that runs is a baseline and raises nothing** (a failing baseline is
+recorded as failing); after it, only a turn between passing and failing is a change. A turn to failing writes one change row and either
+raises one Needs you row (`on_failing` = `needs_you`) or starts the crew's template once through `crew_background_start`
+(`template`); a turn to passing writes "Passing again" and resolves a raised row, or writes the `passing` row with action `none` when the
+failure was a baseline or a started template, so nothing claims to resolve a row that never existed. A different failure while it stays failing updates the last
+exit code and tail and writes no row. A check that could not run (it timed out, could not start, the screen refuses the command now, or
+the folder is not trusted) counts a streak: three in a row raise one Needs you row, and a check that runs again resolves it. A single command
+that could not run never raises by itself, and no model is called while the result stays the same. A template start the listener is
+refused (a run already in progress, the daily budget, no engine, review capacity) leaves the Needs you row raised and writes one
+`crew.background.listener.refused` audit row; the refusal's sentence is not stored. Run now still refuses a watch: its command runs on
+its own schedule; turning it off writes one `turned_off` change row (action `none`) in the same transaction as the switch, so
+the history says the checks stopped. Reads: `GET /api/crew/background/{id}/watch` (its state, last check time, exit code and reason, and the redacted
+tail) and `GET /api/crew/background/{id}/watch/changes` (the change history, newest first, paged); the Needs you inbox lists a failing
+watch and one that could not run three times in a row, beside the Review queue's background runs. No migration was needed: migration
+77's two tables hold the state and the history. No screen is built in these slices, and the "Not built yet" chip stays until the web
+slice.
 
 **As built (slice 4h, listeners, migration 59):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
 service starts behind the Preview flag **only when it sets an interval** (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60 s to 24 h; unset means no pass, not even at
 startup) and awaits on shutdown. Each pass fires what is due for the crews that are on (a crew that is off is not read from the forge and spends no event):
-a `schedule` crew once per `every_hours` bucket, and a `ci_failure` crew on a failed check run at its branch head (its branch setting, else the project default),
+a `schedule` crew once per `every_hours` bucket, a `watch` crew's command once per `every_hours` bucket (see "Watches" above), and a
+`ci_failure` crew on a failed check run at its branch head (its branch setting, else the project default),
 narrowed by its optional workflow filter. Every firing first claims a row in `crew_background_events` (first write wins) and then starts a run through the same seam as Run now:
 
 | Event | Claim | Held-start key |
 | --- | --- | --- |
 | schedule | `schedule:<crew>:<bucket>` | `<crew>:schedule:<bucket>` |
+| watch | `watch:<crew>:<start>` (the window's start, in unix seconds) | `<crew>:watch:<start>` |
 | CI failure | `ci:<crew>:<head>:<hash>` | `<crew>:ci:<head>:<hash>` |
 
 `<hash>` is the first 16 hex characters of the SHA-256 of the failing check's name. A repeat of an event starts nothing new, and a bucket at or before the newest claimed one
 never fires again (a clock that moves back starts nothing). **One firing per crew per pass**: a head with several failing checks fires the first and leaves the others for a later pass.
 A firing refused for review capacity, the daily budget, an untrusted folder, no engine or a run already in progress is **dropped, not retried**: its claim stays, capacity also leaves its held row,
 and every refusal writes one `crew.background.listener.refused` audit row (the crew, the listener, a fixed reason word; the actor is the constant `crew`). **Text from outside never reaches the prompt**:
-a check's name, a head sha and a `.orbyn/crew.json` trigger's name only decide whether a run starts; the brief, the worker's prompt, the lead thread and the audit stay code-owned. A stop is
+a check's name, a head sha and a `.orbyn/crew.json` trigger's name only decide whether a run starts; the brief, the worker's prompt, the lead thread and the audit stay code-owned. The ticks of one pass run one after another: a slow watch command can hold them (each check is bounded by its five-minute cap,
+but a pass has no overall cap yet; a per-pass cap is a follow-up, #1354). A stop is
 looked at between firings, never inside a start, and a run a crash leaves is settled when the core opens. A trigger in the file with no stored crew is ignored. At most 64 CI crews are watched per pass, from a rotating start.
 `crew_background_events` is not pruned yet.
 
@@ -1229,7 +1252,9 @@ uses it as a hard filter. Preview only; Orbyn reads the file and never writes it
   machine does not have is kept and shown as "not on this machine". Unknown keys at the top of the file belong to other slices: they are noted
   and ignored. A file holding a secret (the shared detector) is refused.
 - **An invalid file fails closed.** If the file cannot be read, does not parse or breaks a rule above, every engine is blocked by the rule
-  "crew.json invalid" with the problem in plain words, and the task waits in Needs you. It is never read as "no rules". The same file also holds
+  "crew.json invalid" with the problem in plain words, and the task waits in Needs you; a file that cannot be read
+  only on the default branch is refused this way. A write task whose key does not already declare a `repo_required` check also reads the same file at the commit it starts from for the repository's own checks, so a file that cannot be read there
+  refuses the start before routing, with the reader's problem and nothing stored. It is never read as "no rules". The same file also holds
   review `lanes` and `allowed_hosts`, so a file that is not JSON at all blocks every start now, not only the review; a file whose `lanes` are wrong
   but which is valid JSON still starts and fails at the review as before. The dry run (`crew_route`) says nothing about classes for a thread with no
   commit to read, and a start there is refused on its own terms.
@@ -1271,7 +1296,7 @@ until #441's sandbox covers it, and a symlink a worker adds during the task is n
 (ruling pending). Known limits: **the rules are read at two places and the stricter applies: the checkout's HEAD at task start, and the project's default
 branch as of the last fetch** (`refs/remotes/origin/HEAD`, else `origin/main`, `origin/master` or `origin/trunk`, else a local `init.defaultBranch`, `main`,
 `master` or `trunk`; with none of them the rules are read at HEAD alone, as before). An engine must be allowed by both, a file that cannot be read on either
-side blocks every engine, and the route card says in words when the two files differ. So an agent that moves HEAD to a commit without the file, or commits a
+side blocks every engine (a write start that inherits the repository's checks, and whose starting commit cannot be read, is refused at start instead, as above), and the route card says in words when the two files differ. So an agent that moves HEAD to a commit without the file, or commits a
 looser one, does not loosen the next task. A remote-tracking ref is moved by `git fetch` and `git pull`, not by `checkout`, `switch`, `reset` or a commit in any
 worktree; a local branch is moved by a commit or `git branch -f` on it, so it is the weaker fallback. **Neither is out of an agent's reach:** a worker runs as the person, the
 macOS confinement of #441 closes the data folder and not the repository's `.git`, and Windows and Linux workers are refused, so an agent that runs git plumbing
@@ -1759,7 +1784,7 @@ worker, the secret scan on the way in and out) and builds no screen before its f
 | KC6 | Watches | A background crew kind `watch`: a fixed command on a schedule with no model call; it acts once when the result turns failing | E4 | M26 |
 | KC7 | The missing listeners | `issue_label` and `dependency_update` background crews get listeners (refused today) | E4 | M27 |
 | KC8 | Resume after restart | A task whose worker died in a restart resumes once from its last verified round with the same key and budget, then stops as today | E2 | M28 |
-| KC9 | Skill proposals | Three lessons with the same pattern propose a skill in the skills workspace; nothing installs without the person | E2, E4 | M29 |
+| KC9 | Skill proposals | Three lessons with the same pattern propose a skill in the device's own skills area, `skills-local`; nothing installs without the person | E2, E4 | M29 |
 | KC10 | Device notifications | A desktop notification the first time something needs the person, once per item | E3, E1 | M30 |
 
 **Resume after restart (KC8).** A builder or fix task left `running` (or `changed_approach`) after a restart
@@ -1773,6 +1798,19 @@ writes `crew.task.resumed` in the same transaction as the state, attempt and res
 the same transaction as its `stopped`/`engine_error` move.
 
 **As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342); its core route is not built. KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
+
+**KC9 library side (built after that snapshot):** an approved skill proposal writes the skill into the device's own
+skills folder, `<data>/skills-local/<slug>/SKILL.md`, whose front matter carries a `local_revision`; the shared library and
+any target repository are never written, so the library's revision and dirty flag cannot change. A local skill is personal
+and applies to every project; the repository a proposal came from appears in its text only and cannot narrow where it
+applies. The one writer (`SkillService::write_local_skill`) refuses a name that already exists in the library or in
+`skills-local` unless it edits that local skill at the revision (and under the name) it read, caps the stored file at 64 KiB
+including its revision line, refuses a secret with the contract's `secret_refused` sentence, and records one audit row
+(`skills.local.write`) with the name, the revision and the proposal and lesson ids only, never the text. The shared library
+wins a name it holds: a local skill cannot be created over one, and if the library later gains the name, `skill_load` reads
+the library copy and `skill_search` lists it once. Engines reach local skills through the MCP `skill_search` and
+`skill_load` tools; native discovery is a follow-up. The proposal store and its routes, and the web, are not built in this
+slice.
 
 **Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
 (our router never swaps an engine) and release channels.

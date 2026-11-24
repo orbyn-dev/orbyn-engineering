@@ -1,14 +1,21 @@
-//! Crew lessons at rest (migration 80, KC5 slice 1): the short, device-local sentences the crew keeps about one
-//! repository or all of them, with where each came from.
+//! Crew lessons at rest (migrations 80 and 81, KC5 slices 1 and 2): the short, device-local sentences the crew keeps
+//! about one repository or all of them, with where each came from.
 //!
 //! A lesson is data in a brief, never a rule: nothing here routes, verifies, holds a lease, reads an answer key or
 //! changes a check. The table holds ids, enums and one short text; evidence is ids only, never content. It is device
 //! local and never synced: the settings sync is an allowlist of preference keys and does not name this table.
 //!
-//! Every write is one immediate transaction in this order (architecture rule 6): the ledger's audit row first, then
-//! the row. A fingerprint already remembered is never rewritten. At a cap (50 per repository, 20 global) one older
+//! Every lesson-content write is one immediate transaction in this order (architecture rule 6): the ledger's audit
+//! row first, then the row. A fingerprint already remembered is never rewritten. At a cap (50 per repository, 20 global) one older
 //! lesson becomes `hidden_by_cap` -- the least used first, then the oldest -- and stays readable; nothing is ever
 //! auto-deleted.
+//!
+//! Slice 2 adds the brief's bookkeeping: a lesson a brief carries grows `uses` and `last_used_at` in the same
+//! transaction that stores the brief (`record_lesson_use`), and one its answer-key check leaves out grows
+//! `left_out_of`. The counters are bookkeeping, not lesson content: they audit nothing and run inside the caller's
+//! transaction, the one that stores the brief. The per-repository "use lessons" switch lives in
+//! `project_preferences` under a key no setting reads, as the remembered default branch and the worker-provider
+//! choice do; absent is on.
 
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde::{Deserialize, Serialize};
@@ -55,6 +62,8 @@ pub struct CrewLesson {
     pub names_path: bool,
     /// Briefs that carried it.
     pub uses: u32,
+    /// Briefs it was left out of because their answer-key check failed.
+    pub left_out_of: u32,
     pub created_at: String,
     pub updated_at: String,
     pub last_used_at: Option<String>,
@@ -94,6 +103,7 @@ fn lesson_row(row: &Row<'_>) -> rusqlite::Result<CrewLesson> {
         edited_by_person: row.get::<_, i64>("edited_by_person")? != 0,
         names_path: row.get::<_, i64>("names_path")? != 0,
         uses: u32::try_from(row.get::<_, i64>("uses")?).unwrap_or(u32::MAX),
+        left_out_of: u32::try_from(row.get::<_, i64>("left_out_of")?).unwrap_or(u32::MAX),
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         last_used_at: row.get("last_used_at")?,
@@ -116,6 +126,25 @@ impl Store {
         let conn = self.reader();
         let mut statement = conn.prepare(
             "SELECT * FROM crew_lessons WHERE scope = ?1 AND project_id IS ?2
+             ORDER BY created_at DESC, id DESC",
+        )?;
+        let rows = statement
+            .query_map(params![scope, project], lesson_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// The lessons one brief may carry: active and not hidden by the cap, of one scope, newest first. The start path
+    /// reads this, not the full history, so a start never pays for lessons it cannot use; the caps bound it.
+    pub fn crew_lessons_for_brief(
+        &self,
+        scope: &str,
+        project: Option<&str>,
+    ) -> Result<Vec<CrewLesson>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT * FROM crew_lessons
+             WHERE scope = ?1 AND project_id IS ?2 AND state = 'active' AND hidden_by_cap = 0
              ORDER BY created_at DESC, id DESC",
         )?;
         let rows = statement
@@ -282,4 +311,99 @@ fn hide_one(tx: &Transaction<'_>, new: &NewCrewLesson, written: &str, at: &str) 
         params![victim, at],
     )?;
     Ok(())
+}
+
+/// Counts one brief's lessons in the caller's transaction, the one that stores the brief: a carried lesson gets a use
+/// and its use time, a lesson the brief's key check left out grows `left_out_of`. A lesson deleted between the read
+/// and this write is skipped, never an error: the brief still starts.
+pub(super) fn record_lesson_use(
+    tx: &Transaction<'_>,
+    used: &[String],
+    left_out: &[String],
+    at: &str,
+) -> Result<()> {
+    // Bookkeeping is never a reason to refuse a start: it runs in a savepoint, and a failure rolls only the counters back
+    // while the task the caller is storing goes on.
+    tx.execute_batch("SAVEPOINT lesson_use")?;
+    let counted = (|| -> Result<()> {
+        for id in used {
+            tx.execute(
+                "UPDATE crew_lessons SET uses = uses + 1, last_used_at = ?2, updated_at = ?2 WHERE id = ?1",
+                params![id, at],
+            )?;
+        }
+        for id in left_out {
+            tx.execute(
+                "UPDATE crew_lessons SET left_out_of = left_out_of + 1, updated_at = ?2 WHERE id = ?1",
+                params![id, at],
+            )?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = counted {
+        tracing::warn!(%error, "a brief's lessons could not be counted, so none is");
+        tx.execute_batch("ROLLBACK TO lesson_use")?;
+    }
+    tx.execute_batch("RELEASE lesson_use")?;
+    Ok(())
+}
+
+/// The project preference that turns a repository's lessons on and off. A key no setting reads, as the remembered
+/// default branch and the worker-provider choice are kept.
+const USE_LESSONS: &str = "crew_use_lessons";
+
+impl Store {
+    /// Whether this repository's briefs carry lessons. Absent is on, as it ships under Preview; an explicit `off`
+    /// is off; damaged or unknown text reads off, so a value this build does not understand never injects a lesson.
+    pub fn crew_use_lessons(&self, project_id: &str) -> Result<bool> {
+        let text: Option<String> = self
+            .reader()
+            .query_row(
+                "SELECT value FROM project_preferences WHERE project_id = ?1 AND key = ?2",
+                params![project_id, USE_LESSONS],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(match text.as_deref() {
+            None | Some("on") => true,
+            Some("off") => false,
+            Some(other) => {
+                tracing::warn!(value = other, "an unknown use-lessons value reads as off");
+                false
+            }
+        })
+    }
+
+    /// A person's "use lessons" switch for one repository, with its audit row in the same transaction. Saving the
+    /// default (on) clears the row.
+    pub fn set_crew_use_lessons(&self, project_id: &str, on: bool, actor: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            insert_audit(
+                tx,
+                &AuditRecord {
+                    actor: actor.to_owned(),
+                    action: "crew.lesson.settings".to_owned(),
+                    target: project_id.to_owned(),
+                    decision: None,
+                    source: "user".to_owned(),
+                    thread_id: None,
+                    run_id: None,
+                    detail: json!({ "repo": project_id, "use_lessons": on }),
+                },
+            )?;
+            if on {
+                tx.execute(
+                    "DELETE FROM project_preferences WHERE project_id = ?1 AND key = ?2",
+                    params![project_id, USE_LESSONS],
+                )?;
+            } else {
+                tx.execute(
+                    "INSERT INTO project_preferences (project_id, key, value) VALUES (?1, ?2, 'off')
+                     ON CONFLICT (project_id, key) DO UPDATE SET value = 'off'",
+                    params![project_id, USE_LESSONS],
+                )?;
+            }
+            Ok(())
+        })
+    }
 }

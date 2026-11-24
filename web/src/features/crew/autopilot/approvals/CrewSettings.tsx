@@ -20,6 +20,7 @@ import { LessonsEntry } from "../../lessons/LessonsEntry";
 import { LiveLessons } from "../../lessons/LiveLessons";
 import { LessonAddPage } from "../../lessons/LessonAddPage";
 import { LessonCardPage } from "../../lessons/LessonCardPage";
+import { SkillProposalPage } from "../../lessons/proposals/SkillProposalPage";
 
 /** Settings › Crew: Autopilot, the production-linked targets the guard watches, then the path classes of the repo. Autopilot by area, its thresholds, Review capacity (and its coverage map), the Dashboard, the escape log, the lessons list, the reviewer backtest and its estimate and report are pages of their own. */
 export function CrewSettingsSection() {
@@ -61,6 +62,8 @@ export function CrewSettingsSection() {
           <LessonCardPage id={id} repo={repo} />
         ) : page === "lesson-add" ? (
           <LessonAddPage repo={repo} />
+        ) : page === "skill-proposal" ? (
+          <SkillProposalPage id={id} repo={repo} />
         ) : (
           <>
             <ProfilesSettings />

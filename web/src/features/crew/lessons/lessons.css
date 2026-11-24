@@ -1,5 +1,6 @@
-/* The lessons list (KC5). Design values mapped to the app tokens the neighbouring crew screens use:
-   sunken = chip, borderStrong = line, textSoft and muted = the two quiet text levels. */
+/* The lessons list, a lesson's card, its edit and add forms and the delete toast (KC5). Design values mapped to the app
+   tokens the neighbouring crew screens use: sunken = the design's raise, borderStrong = line, textSoft and muted = the two
+   quiet text levels, surface = main, greenSoft = green-bg. */
 
 .cx-lsintro { margin: 0; color: var(--color-muted); font-size: 12.5px; line-height: 1.5; }
 
@@ -48,3 +49,75 @@
   .cx-lsrow { flex-direction: column; align-items: stretch; }
   .cx-lsadd { margin-left: 0; }
 }
+
+/* A lesson that became a skill (KC9): the green chip and the skill's own name, above the lesson's text. */
+.cx-apchip.cx-skill { background: var(--color-greenSoft); color: var(--color-green); }
+.cx-lsskill { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.cx-lsskillname { color: var(--color-text); font-size: 11.5px; text-underline-offset: 2px; }
+
+/* A lesson's own page (KC5 part B), from the design's .cwsheet: the text box, the action row and the two facts boxes. */
+.cx-cwbn.cx-green { background: var(--color-greenSoft); }
+.cx-cwbn.cx-red .cx-why b { color: var(--color-text); }
+
+/* The edit and add forms (design .t12fl): the label, the box and the count under it. */
+.cx-t12fl { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.cx-t12fl > .cx-t12lb { color: var(--color-muted); font-size: 11.5px; }
+.cx-t12ip {
+  width: 100%;
+  min-height: 74px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--color-sunken);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  box-shadow: inset 0 0 0 1px var(--color-borderStrong);
+  resize: vertical;
+}
+.cx-t12ip:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.cx-t12ip.cx-err { box-shadow: inset 0 0 0 1px var(--color-danger); }
+.cx-t12ip.cx-ro { color: var(--color-textSoft); }
+
+/* The "Applies to" radio group of the add form: the design's .segx, on real radio buttons. */
+.cx-segx button {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  color: var(--color-textSoft);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cx-segx button.cx-on { background: var(--color-surface); color: var(--color-text); box-shadow: 0 0 0 1px var(--color-border); }
+.cx-segx button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.cx-segx button:disabled { opacity: 0.6; cursor: default; }
+
+/* The confirm dialogs promote and move back open: the design's 600 px crew dialog. */
+.dialog.lessons-dialog { width: min(600px, calc(100vw - 32px)); }
+
+/* The delete's Undo toast (design .toast with its countdown): the app's toast at the window's corner, over the list. */
+.cx-lstoast { position: relative; overflow: hidden; }
+.cx-lstoast .cx-lsta { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.cx-lsundo {
+  border: 0;
+  padding: 2px 4px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.cx-lsundo:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.cx-lsundo:disabled { opacity: 0.6; cursor: default; }
+.cx-lsts { color: var(--color-muted); font-size: 11.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cx-lsbar { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--color-textSoft); }

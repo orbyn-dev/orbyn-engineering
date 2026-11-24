@@ -252,7 +252,7 @@ pub(super) fn run_wire(run: BackgroundRunRow) -> Result<wire::BackgroundRun> {
     })
 }
 
-fn next_offset(page: Page, total: u32) -> Option<u32> {
+pub(super) fn next_offset(page: Page, total: u32) -> Option<u32> {
     let next = page.offset.checked_add(page.limit)?;
     (next < total).then_some(next)
 }
@@ -455,7 +455,8 @@ impl Core {
     }
 
     /// Turns a crew on or off, as the record only: turning it off ends a run in progress with the reason `disabled`, logged as the
-    /// person, and touches nothing else. A person's turn-off goes through `background_turn_off`, which also stops the run's worker.
+    /// person, and (for a watch) writes one `turned_off` row to its change history. A person's turn-off goes through
+    /// `background_turn_off`, which also stops the run's worker.
     pub fn background_set_enabled(&self, id: &str, enabled: bool) -> Result<wire::BackgroundCrew> {
         self.crew_preview_only()?;
         self.background_row(id)?;
@@ -464,7 +465,8 @@ impl Core {
     }
 
     /// A person turns a crew off: the run in progress ends `disabled`, and every task of it that has not ended is cancelled, so the
-    /// worker stops spending with the record. Cancelling after the record is safe: a task's end finds its run no longer running.
+    /// worker stops spending with the record. Cancelling after the record is safe: a task's end finds its run no longer running. A
+    /// watch's change history gets one `turned_off` row, written with the switch.
     pub async fn background_turn_off(self: &Arc<Self>, id: &str) -> Result<wire::BackgroundCrew> {
         self.crew_preview_only()?;
         self.background_row(id)?;

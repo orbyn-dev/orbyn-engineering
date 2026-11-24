@@ -1,5 +1,7 @@
+use crate::app::{Core, CoreConfig};
 use crate::browser::preview_bridge::Bridge;
 use crate::governance::computer::cdp::{BrowserSession, LaunchOptions};
+use crate::testing::TempDir;
 use crate::util::new_id;
 use orbyn_contracts::PreviewRecordingOptions;
 use serde_json::{Value, json};
@@ -33,6 +35,63 @@ mod capture_tests;
 
 #[path = "recording_capture_tests.rs"]
 mod recording_capture_tests;
+
+#[test]
+fn browser_profile_rename_counts_unicode_characters_after_trimming() {
+    let dir = TempDir::new();
+    let core = Core::open(CoreConfig::new(
+        dir.path().join("data"),
+        "http://127.0.0.1:1".into(),
+    ))
+    .unwrap();
+    let profile = core.create_browser_profile("Work").unwrap();
+    let boundary = "🦀".repeat(64);
+    let padded = format!("\u{2003}{boundary}\u{3000}");
+    assert_eq!(
+        core.rename_browser_profile(&profile.id, &padded)
+            .unwrap()
+            .name,
+        boundary
+    );
+
+    let too_long = format!("{boundary}🦀");
+    for invalid in [too_long.as_str(), "\u{2003}\u{3000}"] {
+        assert!(
+            matches!(
+                core.rename_browser_profile(&profile.id, invalid),
+                Err(CoreError::Invalid(_))
+            ),
+            "accepted {invalid:?}"
+        );
+        assert_eq!(core.browser_profiles().unwrap()[0].name, boundary);
+    }
+}
+
+#[test]
+fn browser_profile_rename_persists_the_selected_id_after_reopening_core() {
+    let dir = TempDir::new();
+    let open = || {
+        Core::open(CoreConfig::new(
+            dir.path().join("data"),
+            "http://127.0.0.1:1".into(),
+        ))
+        .unwrap()
+    };
+    let core = open();
+    let first = core.create_browser_profile("Work").unwrap();
+    let second = core.create_browser_profile("Work").unwrap();
+    core.rename_browser_profile(&second.id, "R").unwrap();
+    drop(core);
+
+    let profiles = open().browser_profiles().unwrap();
+    assert_eq!(
+        profiles
+            .iter()
+            .map(|profile| (profile.id.as_str(), profile.name.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(first.id.as_str(), "Work"), (second.id.as_str(), "R")]
+    );
+}
 
 fn fixture_tab(session: BrowserSession, control: &str) -> Arc<Tab> {
     let (frames, _) = broadcast::channel(8);

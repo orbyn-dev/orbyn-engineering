@@ -1,34 +1,41 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
-import { request } from "../../../api/client";
+import { beforeEach, expect, it } from "vitest";
+import type { MockApi } from "../../../../mock/api";
+import type { ScopedPreferencesChange } from "../../../generated/ScopedPreferencesChange";
+import { installMockFetch } from "../../../test-support";
+import { wireWrites } from "../../../wire.test-support";
+import { seedPreference } from "../rows/seedPreference.test-support";
+import { SettingsScopeProvider } from "../rows/SettingsScopeContext";
 import { daysWhenTurnedOn, WorktreeCleanup } from "./WorktreeCleanup";
-import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
 
-vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+let mock: MockApi;
+beforeEach(() => {
+  mock = installMockFetch();
+  // One project's checkout is selected, as on a project's page in Settings.
+  window.location.hash = "#/settings/worktrees?project=mock%3Ap-app&checkout=p-app";
+});
+const page = () => <SettingsScopeProvider section="worktrees"><WorktreeCleanup /></SettingsScopeProvider>;
 
-const view = (value: unknown, source = "default") => ({ key: "worktree_cleanup", value, default: {}, source, project_scoped: true }) as never;
-const serve = (value: unknown, source?: string) => vi.mocked(request).mockImplementation(async () =>
-  scopedFixture([view(value, source)], [view({})], "p1") as never);
-const sent = (value: unknown) => expect(request).toHaveBeenCalledWith("PUT", "/api/settings/preferences", expect.objectContaining({ edits: { worktree_cleanup: { op: "set", value } } }));
-
-beforeEach(() => vi.mocked(request).mockReset());
+/** Whether a save of this value reached the service. */
+const sent = (value: unknown) => expect(wireWrites().some((call) => call.method === "PUT" && call.path === "/api/settings/preferences"
+  && JSON.stringify((call.body as ScopedPreferencesChange).edits) === JSON.stringify({ worktree_cleanup: { op: "set", value } }))).toBe(true);
 
 it("is Off with no Days field until set to On, which starts at seven days", async () => {
-  serve({});
   const user = userEvent.setup();
-  render(<WorktreeCleanup />);
+  render(page());
   const select = await screen.findByRole("combobox", { name: "Automatic worktree cleanup" });
   expect(select).toHaveValue("off");
   expect(screen.queryByRole("spinbutton")).toBeNull();
   await user.selectOptions(select, "on");
   await waitFor(() => sent({ mode: "custom", rules: { settled_after_days: 7 } }));
+  expect(await screen.findByRole("spinbutton", { name: "Automatic worktree cleanup: days" })).toHaveValue(7);
 });
 
 it("shows the saved days beside On, saves a new number on leaving it, and Off hides it", async () => {
-  serve({ mode: "custom", rules: { settled_after_days: 14 } }, "project");
+  seedPreference(mock, "worktree_cleanup", { mode: "custom", rules: { settled_after_days: 14 } });
   const user = userEvent.setup();
-  render(<WorktreeCleanup />);
+  render(page());
   const days = await screen.findByRole("spinbutton", { name: "Automatic worktree cleanup: days" });
   await waitFor(() => expect(days).toBeEnabled());
   expect(days).toHaveValue(14);
@@ -42,6 +49,7 @@ it("shows the saved days beside On, saves a new number on leaving it, and Off hi
   await waitFor(() => expect(select).toBeEnabled());
   await user.selectOptions(select, "off");
   await waitFor(() => sent({ mode: "off" }));
+  await waitFor(() => expect(screen.queryByRole("spinbutton")).toBeNull());
 });
 
 it("turns on from Off at seven days whatever the field still says, and keeps a set number otherwise", () => {

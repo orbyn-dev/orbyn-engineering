@@ -390,6 +390,99 @@ async fn a_watch_is_stored_and_a_refused_command_keeps_the_command_out_of_the_er
     assert_eq!(listed["total"], 1, "the refusals stored nothing");
 }
 
+/// A watch's last check and change history are reads: a fresh watch is `not_checked` with no history, a crew that is not a
+/// watch is refused plainly, and Run now still refuses a watch because its command runs on its own schedule.
+#[tokio::test]
+async fn a_watch_reads_its_state_and_history_and_run_now_still_refuses_it() {
+    let app = serve("watch-read").await;
+    let mut body = app.body("Watch read");
+    body["trigger"] = json!({
+        "kind": "watch", "command": "cargo test", "every_hours": 6, "on_failing": "needs_you"
+    });
+    let (status, crew) = app
+        .call("POST", "/api/crew/background/create", Some(body))
+        .await;
+    assert_eq!(status, 200, "{crew}");
+    let id = crew["id"].as_str().unwrap().to_owned();
+
+    let (status, state) = app
+        .call("GET", &format!("/api/crew/background/{id}/watch"), None)
+        .await;
+    assert_eq!(status, 200, "{state}");
+    assert_eq!(state["crew_id"], id);
+    assert_eq!(state["state"], "not_checked");
+    assert_eq!(state["baseline_done"], false);
+    assert_eq!(state["error_streak"], 0);
+    assert!(state["last_checked_at"].is_null());
+    assert!(state["tail"].is_null());
+
+    let (status, history) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/{id}/watch/changes?limit=1&offset=0"),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{history}");
+    assert_eq!(history["total"], 0);
+    assert_eq!(history["changes"], json!([]));
+    assert!(history["next_offset"].is_null());
+
+    // A crew that is not a watch has no watch state.
+    let (status, plain) = app
+        .call(
+            "POST",
+            "/api/crew/background/create",
+            Some(app.body("Plain")),
+        )
+        .await;
+    assert_eq!(status, 200, "{plain}");
+    let plain_id = plain["id"].as_str().unwrap();
+    let (status, answer) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/{plain_id}/watch"),
+            None,
+        )
+        .await;
+    assert_eq!(status, 400, "{answer}");
+    assert_eq!(answer["message"], "This background crew is not a watch.");
+
+    // Run now still refuses a watch: it runs its command on its schedule, not on demand.
+    app.call("POST", &format!("/api/crew/background/{id}/enable"), None)
+        .await;
+    let (status, answer) = app
+        .call("POST", &format!("/api/crew/background/{id}/run-now"), None)
+        .await;
+    assert_eq!(
+        (status, &answer["code"]),
+        (403, &json!("policy_denied")),
+        "{answer}"
+    );
+    assert_eq!(
+        answer["message"],
+        "A watch crew's command runs on its schedule; Run now does not start a run for it."
+    );
+
+    // Turning it off is recorded in the history the read serves, in the same switch.
+    let (status, _) = app
+        .call("POST", &format!("/api/crew/background/{id}/disable"), None)
+        .await;
+    assert_eq!(status, 200);
+    let (status, history) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/{id}/watch/changes"),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{history}");
+    assert_eq!(history["total"], 1);
+    assert_eq!(history["changes"][0]["kind"], "turned_off");
+    assert_eq!(history["changes"][0]["action"], "none");
+    assert!(history["changes"][0]["exit_code"].is_null());
+}
+
 /// Run now starts one run by hand: the route hands the core's own refusal and plain reason back, and every refusal leaves no
 /// run behind.
 #[tokio::test]
@@ -509,6 +602,8 @@ fn an_agent_is_refused_every_background_change_by_path() {
         "/api/crew/background",
         "/api/crew/background/t-1",
         "/api/crew/background/t-1/runs",
+        "/api/crew/background/t-1/watch",
+        "/api/crew/background/t-1/watch/changes",
     ] {
         assert!(!changes_crew_state(path), "{path}");
     }
