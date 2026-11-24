@@ -24,6 +24,7 @@ export {
   snapshotSettingsOf,
   withoutAccessibleText,
   sourceBodyOf,
+  sourceBodyToSend,
 } from "./types";
 
 /** Dev-only: `#/preview/snapshot?frame=<id>`. The production flag is false, so the lazy chunk is never emitted. */
