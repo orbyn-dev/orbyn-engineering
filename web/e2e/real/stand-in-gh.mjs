@@ -63,6 +63,21 @@ const threads = (number) => ({
 });
 
 const allThreads = () => state.pulls.flatMap((entry) => entry.threads ?? []);
+/** The issues the stand-in holds, and one as `gh issue list` and `gh issue view --json` print it. */
+const issues = () => state.issues ?? [];
+const issue = (number) => issues().find((entry) => entry.number === Number(number)) ?? fail("GraphQL: Could not resolve to an Issue with the number of " + number + ". (repository.issue)");
+/** The fields `gh issue list` and `gh issue view --json` know, as this fixture holds them. */
+const ISSUE_FIELDS = ["number", "title", "url", "author", "state", "stateReason", "createdAt", "updatedAt", "closedAt", "assignees", "labels", "comments", "body", "closedByPullRequestsReferences"];
+/** One issue as gh prints it: only the fields the call asked for. A name gh does not know fails the call, as real gh does. */
+const issueView = (entry, requested) => {
+  const fields = requested.length > 0 ? requested : ISSUE_FIELDS;
+  const unknown = fields.find((name) => !ISSUE_FIELDS.includes(name));
+  if (unknown) fail("Unknown JSON field: " + unknown);
+  const out = {};
+  const list = ["comments", "assignees", "labels", "closedByPullRequestsReferences"];
+  for (const name of fields) out[name] = entry[name] === undefined ? (list.includes(name) ? [] : null) : entry[name];
+  return out;
+};
 const commentById = (id) =>
   state.pulls.flatMap((entry) => [...(entry.issueComments ?? []), ...(entry.threads ?? []).flatMap((thread) => thread.comments.nodes)]).find((comment) => String(comment.id ?? comment.databaseId) === id);
 
@@ -76,8 +91,15 @@ function apiCall() {
   };
   if (args[1] === "user") return out({ login: state.viewer ?? "me" });
   const method = flag("-X") ?? "GET";
-  const path = args.find((arg, at) => at > 0 && /^(repos|graphql|user\/starred\/)/.test(arg)) ?? "";
+  const path = args.find((arg, at) => at > 0 && /^(repos|graphql|search\/|user\/starred\/)/.test(arg)) ?? "";
   if (path === "user/starred/orbyn-dev/orbyn-engineering") process.exit(state.starred ? 0 : 1);
+  // The open and closed totals behind a listing (\`gh api -X GET search/issues --jq .total_count\`).
+  if (path.startsWith("search/issues")) {
+    const q = field("q") ?? "";
+    const wanted = /is:(open|closed)\b/.exec(q)?.[1] ?? "";
+    const total = (state.issues ?? []).filter((entry) => !wanted || (entry.state ?? "OPEN").toLowerCase() === wanted).length;
+    return out(args.includes("--jq") ? String(total) : { total_count: total, incomplete_results: false, items: [] });
+  }
   if (path === "graphql") {
     const query = field("query") ?? "";
     if (query.includes("reviewRequests")) {
@@ -170,6 +192,37 @@ switch (route) {
   case "label list":
     out(state.labels.map((name) => ({ name, description: `About ${name}` })));
     break;
+  // The issue reads the service makes through `gh`: a listing with its four filters, and one issue as a detail.
+  case "issue list": {
+    const labels = args.reduce((all, arg, at) => (arg === "--label" && at + 1 < args.length ? [...all, args[at + 1]] : all), []);
+    const wanted = flag("--state") ?? "open";
+    const assignee = flag("--assignee");
+    const search = (flag("--search") ?? "").trim();
+    const words = search.split(/\s+/).filter((word) => word && !word.includes(":"));
+    const unassigned = search.split(/\s+/).includes("no:assignee");
+    const limit = Number(flag("--limit") ?? 30);
+    const requested = (flag("--json") ?? "").split(",").map((name) => name.trim()).filter(Boolean);
+    const rows = issues()
+      .filter((entry) => wanted === "all" || (entry.state ?? "OPEN").toLowerCase() === wanted)
+      .filter((entry) => labels.every((name) => (entry.labels ?? []).some((label) => label.name === name)))
+      .filter((entry) => {
+        if (!assignee) return true;
+        const login = assignee === "@me" ? state.viewer ?? "me" : assignee;
+        return (entry.assignees ?? []).some((who) => who.login === login);
+      })
+      .filter((entry) => !unassigned || (entry.assignees ?? []).length === 0)
+      .filter((entry) => words.every((word) => (entry.title + " " + (entry.body ?? "")).toLowerCase().includes(word.toLowerCase())))
+      .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 30)
+      .map((entry) => issueView(entry, requested));
+    out(rows);
+    break;
+  }
+  case "issue view": {
+    const entry = issue(args[2]);
+    const requested = (flag("--json") ?? "").split(",").map((name) => name.trim()).filter(Boolean);
+    out(issueView(entry, requested));
+    break;
+  }
   case "pr list":
     out(state.pulls.filter((entry) => (flag("--state") === "all" ? true : entry.state.toLowerCase() === flag("--state"))));
     break;
