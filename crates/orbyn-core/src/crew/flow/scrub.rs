@@ -62,7 +62,7 @@ impl Scrub {
 
     /// As [`Scrub::text`], and whether anything was hidden: the key's text, a built-in secret format or the person's own
     /// pattern. The Run page says so beside a text it quotes.
-    pub(super) fn marked(&self, text: &str, max: usize) -> (String, bool) {
+    pub(in crate::crew) fn marked(&self, text: &str, max: usize) -> (String, bool) {
         let safe = withhold(&redact(text), &self.needles);
         // The person's patterns run on the whole text: a cut first could leave the front of a value they no longer match.
         let trimmed = safe.trim();

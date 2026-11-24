@@ -122,6 +122,46 @@ async fn a_task_waiting_on_a_person_is_task_needs_person_with_its_scrubbed_reaso
 }
 
 #[tokio::test]
+async fn a_clean_question_is_given_in_full_and_not_hidden() {
+    let w = crew(arc(|_, _| Turn::Hang)).await;
+    let id = needs_person_task(&w, "Should the export keep the old column names?").await;
+
+    let item = item_of(&w, NeedsYouKind::TaskNeedsPerson, &id);
+    assert_eq!(
+        item.question.as_deref(),
+        Some("Should the export keep the old column names?")
+    );
+    assert!(!item.question_hidden);
+}
+
+#[tokio::test]
+async fn a_question_that_holds_a_secret_is_hidden_and_no_part_of_it_is_shown() {
+    let w = crew(arc(|_, _| Turn::Hang)).await;
+    let secret = format!("ghp_{}", "a1B2c3D4e5".repeat(4));
+    let id = needs_person_task(&w, &format!("Is it fine to use {secret} for the deploy?")).await;
+
+    let item = item_of(&w, NeedsYouKind::TaskNeedsPerson, &id);
+    assert!(item.question_hidden);
+    assert!(item.question.is_none(), "{:?}", item.question);
+    // The words around the secret are part of the question too: the reason falls back to the kind's fixed words (none here).
+    assert!(item.reason.is_none(), "{:?}", item.reason);
+    let everything = serde_json::to_string(&w.core.crew_needs_you().unwrap()).unwrap();
+    assert!(!everything.contains("ghp_"), "{everything}");
+    assert!(!everything.contains("deploy"), "{everything}");
+
+    // The notify read names ids and kinds only, so the hidden text has no way into it.
+    let asked = [NeedsYouRef {
+        kind: NeedsYouKind::TaskNeedsPerson,
+        id: id.clone(),
+    }];
+    let claimed = serde_json::to_string(&w.core.crew_needs_you_notify(&asked).unwrap()).unwrap();
+    assert!(
+        !claimed.contains("ghp_") && !claimed.contains("deploy"),
+        "{claimed}"
+    );
+}
+
+#[tokio::test]
 async fn a_task_waiting_on_a_manual_check_is_manual_check_and_not_dismissible() {
     let w = crew(arc(|_, _| Turn::Hang)).await;
     let id = needs_person_task(&w, "A manual check waits.").await;

@@ -47,4 +47,15 @@ model?: string | null,
 /**
  * The brief's kind as its wire name, set only for a `could_not_stop` item.
  */
-task_kind?: string | null, };
+task_kind?: string | null, 
+/**
+ * The question a `task_needs_person` item waits on, redacted and on one line, at most 600 characters. Absent when the
+ * secret scan hides it (`question_hidden`) and for every other kind.
+ */
+question?: string | null, 
+/**
+ * True when the secret scan refused to show this item's question: a built-in secret format, one of the person's own
+ * patterns or a crew's answer key was in it. `question` is then absent and `reason` falls back to the kind's fixed words,
+ * so no part of the text is shown.
+ */
+question_hidden: boolean, };

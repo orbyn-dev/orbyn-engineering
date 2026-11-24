@@ -66,6 +66,16 @@ pub struct NeedsYouItem {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub task_kind: Option<String>,
+    /// The question a `task_needs_person` item waits on, redacted and on one line, at most 600 characters. Absent when the
+    /// secret scan hides it (`question_hidden`) and for every other kind.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub question: Option<String>,
+    /// True when the secret scan refused to show this item's question: a built-in secret format, one of the person's own
+    /// patterns or a crew's answer key was in it. `question` is then absent and `reason` falls back to the kind's fixed words,
+    /// so no part of the text is shown.
+    #[serde(default)]
+    pub question_hidden: bool,
 }
 }
 
