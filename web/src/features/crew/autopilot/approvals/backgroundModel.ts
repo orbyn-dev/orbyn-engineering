@@ -3,13 +3,15 @@
 // ids differ, so the two maps below are the only place that knows both.
 import type { BackgroundCrew as WireCrew } from "../../../../generated/BackgroundCrew";
 import type { BackgroundRun as WireRun } from "../../../../generated/BackgroundRun";
+import type { BackgroundRunDetail } from "../../../../generated/BackgroundRunDetail";
 import type { BackgroundTemplate } from "../../../../generated/BackgroundTemplate";
 import type { BackgroundTrigger } from "../../../../generated/BackgroundTrigger";
 import type { BackgroundTriggerKind } from "../../../../generated/BackgroundTriggerKind";
 import type { BackgroundBudget } from "../../../../generated/BackgroundBudget";
 import type { BackgroundDailyBudget } from "../../../../generated/BackgroundDailyBudget";
-import { TEMPLATE_ID_OF } from "./copy";
+import { TEMPLATE_ID_OF, templateNameOf } from "./copy";
 import type { Mode, TemplateId, TriggerId } from "./model";
+import type { ChipTone } from "./parts";
 import { whenLong, whenShort } from "./when";
 import { watchRow, watchStartsWhen, type WatchListRow } from "./watchModel";
 import type { BackgroundWatchChange } from "../../../../generated/BackgroundWatchChange";
@@ -199,6 +201,46 @@ export function runRow(run: WireRun, crew: WireCrew, now: Date): BackgroundRun {
     state: run.state === "running" ? "Running" : run.state === "stopped" ? "Stopped" : "Needs review",
     reason: run.state === "stopped" ? reasonOf(run) : null,
     mode: null,
+  };
+}
+
+/** The state chip one run draws, in the Recent runs table's words: "Stopped · Budget", "Not started · Disk", "Running" or
+ *  "Needs review". A run that never started carries the code's own word ("Disk") instead of a state. */
+export function runChipOf(run: WireRun): { text: string; tone: ChipTone } {
+  const notStartedWord = notStartedWordOf(run);
+  if (notStartedWord) return { text: `Not started · ${notStartedWord}`, tone: "am" };
+  if (run.state === "running") return { text: "Running", tone: "dim" };
+  if (run.state === "stopped") return { text: `Stopped${reasonOf(run) ? ` · ${reasonOf(run)}` : ""}`, tone: "am" };
+  return { text: "Needs review", tone: "plain" };
+}
+
+/** "40 of 40 turns · 31 of 60 min": what one run spent against the budget it was given, in the run page's words. */
+export const spentAgainstBudget = (run: WireRun): string =>
+  `${run.turns_spent} of ${run.budget.turns} turns · ${run.minutes_spent} of ${run.budget.minutes} min`;
+
+/** The run's own page: the state chip and the eight fact rows it draws, from the one run read and nothing else. */
+export interface RunDetailView {
+  chip: { text: string; tone: ChipTone };
+  facts: { label: string; text: string; mono?: boolean }[];
+}
+
+/** What "Open the run" draws (background-run-detail): Crew, Template, Ran at, Ended, State, Spent, Review waiting and Crew id.
+ *  The read's other fields (the run's id, updated_at and review_reason) are not drawn there. */
+export function runDetailView(detail: BackgroundRunDetail): RunDetailView {
+  const chip = runChipOf(detail.run);
+  return {
+    chip,
+    facts: [
+      { label: "Crew", text: detail.name },
+      { label: "Template", text: templateNameOf(detail.template) },
+      { label: "Ran at", text: whenLong(detail.run.started_at) },
+      // A run still going has no end; the app's own mark for an absent value, never a sentence the design did not draw.
+      { label: "Ended", text: detail.run.ended_at ? whenLong(detail.run.ended_at) : "—" },
+      { label: "State", text: chip.text },
+      { label: "Spent", text: spentAgainstBudget(detail.run) },
+      { label: "Review waiting", text: detail.run.review_waiting ? "Yes" : "No" },
+      { label: "Crew id", text: detail.crew_id, mono: true },
+    ],
   };
 }
 
