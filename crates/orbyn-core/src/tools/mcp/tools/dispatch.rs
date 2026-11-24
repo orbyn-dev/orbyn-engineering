@@ -5,11 +5,11 @@ use super::guide::{guide_head, guide_stops};
 use super::preview::{page_act, wait_target};
 use super::render::{render_height, render_title};
 use super::{
-    ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, issue_query,
-    issue_ref_value, issue_summary_value, matches_words, number, pull_checks_value,
-    pull_comment_body, pull_detail_value, pull_filter, pull_limit, pull_list_value,
-    pull_merge_args, pull_merge_refusal, pull_number, pull_reply_to, pull_review, pull_update_args,
-    text, wait_seconds,
+    ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, PULL_NOTE, issue_query,
+    issue_ref_value, issue_summary_value, matches_words, number, pull_check_name,
+    pull_checks_value, pull_comment_body, pull_detail_value, pull_filter, pull_limit,
+    pull_list_value, pull_merge_args, pull_merge_refusal, pull_number, pull_reply_to, pull_review,
+    pull_update_args, text, wait_seconds,
 };
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -104,6 +104,11 @@ impl Core {
                     }
                     summary
                 }
+                "orbyn_pull_request_ci_rerun" => format!(
+                    "Re-run the failed jobs of check {} on pull request #{} of this project",
+                    pull_check_name(args)?,
+                    number(args, "number")?
+                ),
                 _ => format!("Use {name}"),
             };
             let ask = ActionAsk {
@@ -313,6 +318,17 @@ impl Core {
                 let checks = self.pull_checks(&own.project_id, number, false).await?;
                 pull_checks_value(number, &checks)
             }
+            "orbyn_pull_request_ci_logs" => {
+                let number = pull_number(args)?;
+                let check = pull_check_name(args)?;
+                let log = self.pull_check_log(&own.project_id, number, check).await?;
+                json!({
+                    "number": number,
+                    "check": check,
+                    "log": log,
+                    "note": PULL_NOTE,
+                })
+            }
             "orbyn_pull_request_comment" => {
                 let number = pull_number(args)?;
                 let request = AddPullComment {
@@ -360,6 +376,13 @@ impl Core {
                 self.merge_project_pull(&own.project_id, number, &options, &actor)
                     .await?;
                 json!({ "merged": true, "number": number, "method": method })
+            }
+            "orbyn_pull_request_ci_rerun" => {
+                let number = pull_number(args)?;
+                let check = pull_check_name(args)?;
+                self.rerun_pull_checks(&own.project_id, number, check, &actor)
+                    .await?;
+                json!({ "rerun": true, "number": number, "check": check })
             }
             "orbyn_schedule_list" => {
                 let tasks = self.store.tasks()?;
