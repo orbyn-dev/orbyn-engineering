@@ -1091,3 +1091,183 @@ async fn a_repository_leaves_a_thread_only_when_it_is_not_primary_and_holds_noth
             .is_empty()
     );
 }
+
+/// A multi-repository thread whose folder is a task folder outside every repository: one worktree of each
+/// `(repo_id, name, source repository)` under it, on one branch, as a started thread has. No engine runs here.
+fn repo_thread(core: &Core, project: &str, repos: &[(&str, &str, &Path)]) -> (String, PathBuf) {
+    let folder = core.config.data_dir.join("threads").join("task");
+    std::fs::create_dir_all(&folder).unwrap();
+    let mut worktrees: Vec<(&str, &str, PathBuf)> = Vec::new();
+    for &(repo_id, name, source) in repos {
+        let worktree = folder.join(name);
+        let target = path_text(&worktree);
+        run_git(
+            source,
+            &["worktree", "add", "-q", "-b", "orbyn/thread", "--", &target],
+        );
+        worktrees.push((repo_id, name, worktree));
+    }
+    let paths: Vec<(&str, &str, &Path)> = worktrees
+        .iter()
+        .map(|(repo_id, name, path)| (*repo_id, *name, path.as_path()))
+        .collect();
+    (multi_thread(core, project, &paths), folder)
+}
+
+fn diff_paths(files: &[orbyn_contracts::FileDiff]) -> Vec<String> {
+    files.iter().map(|file| file.path.clone()).collect()
+}
+
+#[tokio::test]
+async fn a_diff_reads_only_the_repository_its_scope_names() {
+    let dir = TempDir::new();
+    let (core, project, other_id, main, other) = two_trusted(&dir).await;
+    let (thread, folder) = repo_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&other_id, "other", &other)],
+    );
+    assert_eq!(core.store.thread(&thread).unwrap().cwd, path_text(&folder));
+    assert!(
+        !folder.join(".git").exists(),
+        "the task folder is not a repository"
+    );
+    // The same path in the two repositories is changed to different bytes.
+    std::fs::write(folder.join("main/a.txt"), "from the primary\n").unwrap();
+    std::fs::write(folder.join("other/a.txt"), "from the second\n").unwrap();
+    // No repository named is the primary one.
+    let primary = core.thread_diff(&thread).await.unwrap();
+    assert_eq!(diff_paths(&primary), ["a.txt"]);
+    assert!(primary[0].patch.contains("from the primary"), "{primary:?}");
+    // The scope names the second repository, and its diff is that repository's file.
+    let second = crate::in_repo(Some(other_id.clone()), core.thread_diff(&thread))
+        .await
+        .unwrap();
+    assert_eq!(diff_paths(&second), ["a.txt"]);
+    assert!(second[0].patch.contains("from the second"), "{second:?}");
+    assert!(
+        !second[0].patch.contains("from the primary"),
+        "the primary's bytes are not the second repository's file"
+    );
+    // A repository that is not the thread's is not found.
+    assert!(matches!(
+        crate::in_repo(Some("no-such-repo".into()), core.thread_diff(&thread)).await,
+        Err(CoreError::NotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn a_diff_of_an_untrusted_repository_is_refused() {
+    let dir = TempDir::new();
+    let core = core(&dir, true).await;
+    let (main, other) = two_repos(&dir);
+    let project = core.add_project(&path_text(&main)).await.unwrap().id;
+    core.store.trust_project(&project, "user").unwrap();
+    let added = core
+        .add_repo_folder(
+            &project,
+            AddRepoFolder {
+                path: path_text(&other),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!added.trusted);
+    let thread = multi_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&added.id, "other", &other)],
+    );
+    assert!(matches!(
+        crate::in_repo(Some(added.id.clone()), core.thread_diff(&thread)).await,
+        Err(CoreError::RepoUntrusted(_))
+    ));
+    assert!(
+        core.thread_diff(&thread).await.is_ok(),
+        "the trusted primary still reads"
+    );
+}
+
+#[tokio::test]
+async fn a_turn_diff_reads_the_checkpoint_in_the_repository_its_scope_names() {
+    use crate::source_control::git;
+
+    let dir = TempDir::new();
+    let (core, project, other_id, main, other) = two_trusted(&dir).await;
+    let (thread, folder) = repo_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&other_id, "other", &other)],
+    );
+    let index = dir.path().join("checkpoint-index");
+    // A checkpoint of the primary repository, read with no repository named.
+    let start = git::snapshot(&folder.join("main"), None, &index)
+        .await
+        .unwrap();
+    std::fs::write(folder.join("main/primary.txt"), "primary\n").unwrap();
+    let end = git::snapshot(&folder.join("main"), None, &index)
+        .await
+        .unwrap();
+    core.store
+        .add_checkpoint(&thread, "run-primary", &start)
+        .unwrap();
+    core.store.finish_checkpoint("run-primary", &end).unwrap();
+    let files = core.turn_diff(&thread, "run-primary").await.unwrap();
+    assert_eq!(diff_paths(&files), ["primary.txt"]);
+    // A checkpoint of the second repository, read through its scope.
+    let start = git::snapshot(&folder.join("other"), None, &index)
+        .await
+        .unwrap();
+    std::fs::write(folder.join("other/second.txt"), "second\n").unwrap();
+    let end = git::snapshot(&folder.join("other"), None, &index)
+        .await
+        .unwrap();
+    core.store
+        .add_checkpoint(&thread, "run-second", &start)
+        .unwrap();
+    core.store.finish_checkpoint("run-second", &end).unwrap();
+    let files = crate::in_repo(Some(other_id), core.turn_diff(&thread, "run-second"))
+        .await
+        .unwrap();
+    assert_eq!(diff_paths(&files), ["second.txt"]);
+}
+
+#[tokio::test]
+async fn commits_and_commit_diffs_read_the_repository_its_scope_names() {
+    let dir = TempDir::new();
+    let (core, project, other_id, main, other) = two_trusted(&dir).await;
+    let thread = multi_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&other_id, "other", &other)],
+    );
+    // The stored folder is not a repository; the default repository is the primary one.
+    assert_eq!(
+        core.thread_commits(&thread).await.unwrap()[0].subject,
+        "first"
+    );
+    let commits = crate::in_repo(Some(other_id.clone()), core.thread_commits(&thread))
+        .await
+        .unwrap();
+    assert_eq!(commits[0].subject, "other");
+    // A commit diff runs in the repository that has the commit.
+    let files = crate::in_repo(
+        Some(other_id.clone()),
+        core.commit_diff(&thread, &commits[0].sha),
+    )
+    .await
+    .unwrap();
+    assert_eq!(diff_paths(&files), ["a.txt"]);
+    // A branch comparison reads the named repository's branch.
+    run_git(&other, &["checkout", "-q", "-b", "feature"]);
+    std::fs::write(other.join("feature.txt"), "feature\n").unwrap();
+    run_git(&other, &["add", "."]);
+    run_git(&other, &["commit", "-q", "-m", "feature"]);
+    let files = crate::in_repo(Some(other_id), core.branch_diff(&thread, "main"))
+        .await
+        .unwrap();
+    assert!(
+        diff_paths(&files).contains(&"feature.txt".to_owned()),
+        "{files:?}"
+    );
+}

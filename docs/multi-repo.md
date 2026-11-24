@@ -428,4 +428,6 @@ over the limit is refused; each write route needs the person key; a failed clone
 does not offer is refused before anything is created; a scan never follows a symlink, caps its results
 and adds nothing; a workspace folder outside the file's folder is listed `refused` and not added; a
 `repo_id` on a file write never resolves a path in another repository; a task folder uses one branch name in
-every repository and a taken name creates nothing.
+every repository and a taken name creates nothing; a diff, commits, a commit or branch comparison and a turn's
+checkpoint read the repository their `repo_id` names, the primary when it is absent, and a task folder is never
+handed to Git; an unknown repository is `404` and an untrusted one is refused.
