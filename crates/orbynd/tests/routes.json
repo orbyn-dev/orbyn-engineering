@@ -128,6 +128,7 @@
     ["GET","/api/issues/find","local"],
     ["GET","/api/issues/item","local"],
     ["GET","/api/issues/links","local"],
+    ["GET","/api/issues/templates","local"],
     ["GET","/api/issues/trackers","local"],
     ["GET","/api/keybindings","local"],
     ["GET","/api/library","local"],
