@@ -40,8 +40,8 @@ pub(crate) use process::with_crew_fixture;
 pub(crate) use process::with_crew_input_fixture;
 pub use process::{call, no_such_pull};
 pub use pulls::{
-    PullFilter, approve_workflow, conversation, fetch_pull, list_pulls, pull_checks, pull_detail,
-    pull_files, pull_revisions, revision_files, timeline,
+    PullFilter, approve_workflow, check_log, conversation, fetch_pull, list_pulls, pull_checks,
+    pull_detail, pull_files, pull_revisions, rerun_failed, revision_files, run_id_of, timeline,
 };
 pub use review::{
     add_comment, edit_comment, label_candidates, react, reviewer_candidates, set_labels,
@@ -119,7 +119,7 @@ impl Forge {
         }
     }
 
-    fn unsupported(self, what: &str) -> CoreError {
+    pub(crate) fn unsupported(self, what: &str) -> CoreError {
         CoreError::Unsupported(format!("{} cannot {what} from Orbyn.", self.name()))
     }
 }

@@ -38,6 +38,7 @@ const DEFAULT_PULL_LIMIT: u64 = 30;
 const MAX_PULL_LIMIT: u64 = 50;
 const MAX_PULL_COMMENT_BYTES: usize = 64 * 1024;
 const MAX_PULL_TITLE_CHARS: usize = 256;
+const MAX_CHECK_NAME_CHARS: usize = 256;
 const MAX_REPLY_TO_CHARS: usize = 200;
 const MIN_PULL_HEAD_SHA: usize = 7;
 const MAX_PULL_HEAD_SHA: usize = 64;
@@ -165,6 +166,20 @@ fn pull_reply_to(args: &Value) -> Result<Option<&str>> {
         ));
     }
     Ok(Some(id))
+}
+
+/// The name of one check: required, non-blank, one line of at most 256 characters.
+fn pull_check_name(args: &Value) -> Result<&str> {
+    let check = text(args, "check")?;
+    if check.contains('\n') || check.contains('\r') {
+        return Err(CoreError::Invalid("check must be one line.".into()));
+    }
+    if check.chars().count() > MAX_CHECK_NAME_CHARS {
+        return Err(CoreError::Invalid(
+            "check is at most 256 characters.".into(),
+        ));
+    }
+    Ok(check)
 }
 
 /// An update's title: one non-empty line of at most 256 characters.

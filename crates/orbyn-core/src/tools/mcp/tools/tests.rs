@@ -485,8 +485,8 @@ impl IssueSource for FakeIssues {
     }
 }
 
-/// A real `Core` with one git project whose origin names a GitLab scope, a fake reader and the
-/// caller's MCP token. `connected` false leaves the project with no reader at all.
+/// A real `Core` with one git project whose origin names the forge's scope, a fake reader and
+/// the caller's MCP token. `connected` false leaves the project with no reader at all.
 struct IssueWorld {
     _dir: TempDir,
     core: Arc<Core>,
@@ -495,19 +495,20 @@ struct IssueWorld {
 }
 
 async fn issue_world(connected: bool) -> IssueWorld {
+    issue_world_at(connected, "https://gitlab.example.test/team/app.git").await
+}
+
+/// The same world over a GitHub origin, for the CI tools that read `gh` runs.
+async fn github_pull_world() -> IssueWorld {
+    issue_world_at(false, "https://github.com/acme/app.git").await
+}
+
+async fn issue_world_at(connected: bool, origin: &str) -> IssueWorld {
     let dir = TempDir::new();
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     run_git(&repo, &["init", "-q", "-b", "main"]);
-    run_git(
-        &repo,
-        &[
-            "remote",
-            "add",
-            "origin",
-            "https://gitlab.example.test/team/app.git",
-        ],
-    );
+    run_git(&repo, &["remote", "add", "origin", origin]);
 
     let mut config = crate::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
     config.issues = true;
@@ -1062,7 +1063,26 @@ fn strings(words: &[&str]) -> Vec<String> {
 type ForgeFixture =
     Arc<dyn Fn(Forge, &Path, &[&str]) -> crate::error::Result<String> + Send + Sync>;
 
-/// A fake forge CLI that records every call and answers a pull request read with `view`.
+/// The one check every fake GitHub forge answers, and the run its link names.
+const CHECK_NAME: &str = "ci";
+const CHECK_URL: &str = "https://github.com/acme/app/actions/runs/123/job/9";
+/// A token shaped like a GitHub one, so the redactor's fixed set recognises it.
+const FAKE_TOKEN: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+
+/// Forty KiB of filler with the token before its tail, so the last 32 KiB still holds
+/// the token's place: a tail cut alone would not hide it.
+fn check_log_text() -> String {
+    let mut log = "h".repeat(24 * 1024);
+    log.push('\n');
+    log.push_str(FAKE_TOKEN);
+    log.push('\n');
+    log.push_str(&"t".repeat(16 * 1024));
+    log.push_str("END-OF-LOG\n");
+    log
+}
+
+/// A fake forge CLI that records every call and answers a pull request read with `view`,
+/// a GitHub checks read with one failing check, and its run's failed log.
 fn recording_forge(calls: RecordedForgeCalls, view: Value) -> ForgeFixture {
     Arc::new(move |_, _, args| {
         calls
@@ -1071,6 +1091,18 @@ fn recording_forge(calls: RecordedForgeCalls, view: Value) -> ForgeFixture {
             .push(args.iter().map(|arg| (*arg).to_owned()).collect());
         if matches!(args, ["mr", "view", ..]) {
             Ok(view.to_string())
+        } else if matches!(args, ["pr", "checks", ..]) {
+            Ok(json!([{
+                "name": CHECK_NAME,
+                "state": "FAILURE",
+                "link": CHECK_URL,
+                "workflow": "CI",
+                "description": "the failing job",
+                "bucket": "fail",
+            }])
+            .to_string())
+        } else if matches!(args, ["run", "view", "123", "--log-failed"]) {
+            Ok(check_log_text())
         } else {
             Ok(String::new())
         }
@@ -1182,6 +1214,54 @@ async fn tools_list_names_the_two_pull_review_merge_tools_with_effect() {
             .iter()
             .any(|(name, _)| *name == "auto" || *name == "subject" || *name == "body"),
         "the merge tool must not offer auto, a subject or a body"
+    );
+}
+
+#[tokio::test]
+async fn tools_list_names_the_ci_tools_with_only_the_rerun_gated() {
+    let w = pull_world().await;
+    let names = w.tool_names().await;
+    for (name, effect) in [
+        ("orbyn_pull_request_ci_logs", false),
+        ("orbyn_pull_request_ci_rerun", true),
+    ] {
+        assert!(
+            names.iter().any(|listed| listed.as_str() == name),
+            "{name} is not listed"
+        );
+        assert_eq!(has_effect(name), effect, "{name}");
+        let tool = TOOLS.iter().find(|tool| tool.name == name).expect(name);
+        assert_eq!(tool.effect, effect, "{name}");
+        assert_eq!(tool.args, &[("number", "number"), ("check", "string")]);
+        assert_eq!(tool.required, &["number", "check"]);
+        assert!(
+            tool.description.contains("data from the forge"),
+            "{name} does not say its text is data"
+        );
+    }
+
+    let logs = TOOLS
+        .iter()
+        .find(|tool| tool.name == "orbyn_pull_request_ci_logs")
+        .unwrap();
+    assert!(
+        logs.description.contains("redacted"),
+        "{}",
+        logs.description
+    );
+    assert!(
+        logs.description.contains("last 32 KiB"),
+        "{}",
+        logs.description
+    );
+    let rerun = TOOLS
+        .iter()
+        .find(|tool| tool.name == "orbyn_pull_request_ci_rerun")
+        .unwrap();
+    assert!(
+        rerun.description.contains("failed jobs"),
+        "{}",
+        rerun.description
     );
 }
 
@@ -1649,13 +1729,209 @@ fn pull_merge_refuses_a_pull_request_that_is_not_ready_after_the_fresh_read() {
     }
 }
 
+#[tokio::test]
+async fn pull_ci_tools_refuse_a_forge_that_cannot_read_or_rerun_checks() {
+    let w = pull_world().await;
+    for (name, wanted) in [
+        (
+            "orbyn_pull_request_ci_logs",
+            "GitLab cannot read a check log from Orbyn.",
+        ),
+        (
+            "orbyn_pull_request_ci_rerun",
+            "GitLab cannot re-run a check from Orbyn.",
+        ),
+    ] {
+        let (text, error) = w
+            .call_text(name, json!({ "number": 7, "check": CHECK_NAME }))
+            .await;
+        assert!(error, "{name} answered {text}");
+        assert!(text.contains(wanted), "{name}: {text}");
+    }
+}
+
 #[test]
-fn a_crew_worker_cannot_use_the_pull_write_tools() {
+fn pull_ci_logs_answers_a_redacted_tail_from_a_fresh_checks_read() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (answer, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_json(
+            "orbyn_pull_request_ci_logs",
+            json!({ "number": 7, "check": CHECK_NAME }),
+        )
+        .await
+    });
+    assert!(!error, "{answer}");
+    assert_eq!(answer["number"], 7);
+    assert_eq!(answer["check"], CHECK_NAME);
+    assert_eq!(answer["note"], PULL_NOTE);
+    let log = answer["log"].as_str().unwrap();
+    assert!(!log.contains(FAKE_TOKEN), "the fake token is not hidden");
+    assert!(
+        log.contains("[hidden: GitHub token]"),
+        "the token was cut away instead of redacted: {log:.80}"
+    );
+    assert!(log.len() <= 32 * 1024, "the log is {} bytes", log.len());
+    assert!(log.ends_with("END-OF-LOG\n"), "the log's end was cut");
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(
+        calls[0],
+        strings(&[
+            "pr",
+            "checks",
+            "7",
+            "--json",
+            "name,state,link,workflow,description,bucket",
+        ])
+    );
+    assert_eq!(calls[1], strings(&["run", "view", "123", "--log-failed"]));
+}
+
+#[test]
+fn pull_ci_logs_refuses_a_check_that_is_not_there_without_a_run_read() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (text, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_text(
+            "orbyn_pull_request_ci_logs",
+            json!({ "number": 7, "check": "not-ci" }),
+        )
+        .await
+    });
+    assert!(error, "{text}");
+    assert!(
+        text.contains("No check of that name on this pull request."),
+        "{text}"
+    );
+    let calls = calls.lock().unwrap();
+    assert!(
+        !calls
+            .iter()
+            .any(|args| args.first().map(String::as_str) == Some("run")),
+        "the missing check reached a run: {calls:?}"
+    );
+}
+
+#[test]
+fn pull_ci_rerun_reruns_the_failed_jobs_and_is_audited() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (answer, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_json(
+            "orbyn_pull_request_ci_rerun",
+            json!({ "number": 7, "check": CHECK_NAME }),
+        )
+        .await
+    });
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer,
+        json!({ "rerun": true, "number": 7, "check": CHECK_NAME })
+    );
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(
+        calls[0],
+        strings(&[
+            "pr",
+            "checks",
+            "7",
+            "--json",
+            "name,state,link,workflow,description,bucket",
+        ])
+    );
+    assert_eq!(calls[1], strings(&["run", "rerun", "123", "--failed"]));
+
+    let audit = w.core.store.list_audit(None, 100).unwrap();
+    let row = audit
+        .iter()
+        .find(|row| row.action == "git.ci_rerun")
+        .expect("the rerun is audited");
+    assert_eq!(row.actor, "engine:alpha");
+    assert_eq!(row.target, "7");
+}
+
+#[test]
+fn pull_ci_tools_refuse_bad_arguments_before_the_forge() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let long_check = "c".repeat(MAX_CHECK_NAME_CHARS + 1);
+    for (name, args, wanted) in [
+        (
+            "orbyn_pull_request_ci_logs",
+            json!({ "number": 7 }),
+            "check is required",
+        ),
+        (
+            "orbyn_pull_request_ci_logs",
+            json!({ "number": 7, "check": "   " }),
+            "check is required",
+        ),
+        (
+            "orbyn_pull_request_ci_logs",
+            json!({ "number": 7, "check": "one\ntwo" }),
+            "one line",
+        ),
+        (
+            "orbyn_pull_request_ci_logs",
+            json!({ "number": 7, "check": "one\rtwo" }),
+            "one line",
+        ),
+        (
+            "orbyn_pull_request_ci_logs",
+            json!({ "number": 7, "check": long_check }),
+            "at most 256",
+        ),
+        (
+            "orbyn_pull_request_ci_logs",
+            json!({ "check": CHECK_NAME }),
+            "number is required",
+        ),
+        (
+            "orbyn_pull_request_ci_rerun",
+            json!({ "number": 7 }),
+            "check is required",
+        ),
+        (
+            "orbyn_pull_request_ci_rerun",
+            json!({ "number": 7, "check": "one\ntwo" }),
+            "one line",
+        ),
+        (
+            "orbyn_pull_request_ci_rerun",
+            json!({ "check": CHECK_NAME }),
+            "number is required",
+        ),
+    ] {
+        let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+        let fixture = recording_forge(calls.clone(), json!(null));
+        let (text, error) =
+            run_with_fixture(&runtime, fixture, async { w.call_text(name, args).await });
+        assert!(error, "{name} answered {text}");
+        assert!(text.contains(wanted), "{name}: {text}");
+        let calls = calls.lock().unwrap();
+        assert!(calls.is_empty(), "{name} reached the forge: {calls:?}");
+    }
+}
+
+#[test]
+fn a_crew_worker_cannot_use_the_pull_write_or_ci_tools() {
     for name in [
         "orbyn_pull_request_comment",
         "orbyn_pull_request_update",
         "orbyn_pull_request_review",
         "orbyn_pull_request_merge",
+        "orbyn_pull_request_ci_logs",
+        "orbyn_pull_request_ci_rerun",
     ] {
         assert_eq!(
             crate::crew::worker_refusal(name, &json!({ "number": 7 }), "own-thread"),
