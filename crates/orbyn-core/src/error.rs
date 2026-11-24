@@ -109,6 +109,11 @@ pub enum CoreError {
     UpdateFailed(String),
     #[error("{0}")]
     PolicyDenied(String),
+    /// A Crew start the disk guard refused, kept apart from a plain denial so a background listener records `disk_low`
+    /// instead of the generic word. The person still reads the guard's own sentence, and a route still answers
+    /// `policy_denied` with 403 as it did before.
+    #[error("{0}")]
+    DiskLow(String),
     /// The engine does not have the session a run tried to resume.
     #[error("the engine no longer has this session")]
     SessionLost,
@@ -251,7 +256,7 @@ impl CoreError {
             Self::UnsupportedOption(_) => "unsupported_option",
             Self::UpdateUnavailable(_) => "update_unavailable",
             Self::UpdateFailed(_) => "update_failed",
-            Self::PolicyDenied(_) => "policy_denied",
+            Self::PolicyDenied(_) | Self::DiskLow(_) => "policy_denied",
             Self::StaleOwner => "stale_owner",
             Self::RunClosed => "run_closed",
             Self::CrewTaskBusy(_) => "task_busy",
@@ -292,6 +297,7 @@ impl CoreError {
             Self::FolderUntrusted
             | Self::FolderUntrustedInit
             | Self::PolicyDenied(_)
+            | Self::DiskLow(_)
             | Self::WorkspaceRefused(_)
             | Self::AccountDisabled
             | Self::ReauthRequired
@@ -422,6 +428,7 @@ impl CoreError {
             Self::UpdateUnavailable(s) => Self::UpdateUnavailable(s.clone()),
             Self::UpdateFailed(s) => Self::UpdateFailed(s.clone()),
             Self::PolicyDenied(s) => Self::PolicyDenied(s.clone()),
+            Self::DiskLow(s) => Self::DiskLow(s.clone()),
             Self::SessionLost => Self::SessionLost,
             Self::StaleOwner => Self::StaleOwner,
             Self::RunClosed => Self::RunClosed,

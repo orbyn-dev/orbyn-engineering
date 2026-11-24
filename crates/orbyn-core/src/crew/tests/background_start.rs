@@ -559,7 +559,7 @@ async fn a_background_start_refused_for_low_disk_keeps_one_stopped_history_row()
         .crew_background_run_now(&id, "user")
         .await
         .unwrap_err();
-    let CoreError::PolicyDenied(why) = &error else {
+    let CoreError::DiskLow(why) = &error else {
         panic!("{error}");
     };
     assert_eq!(

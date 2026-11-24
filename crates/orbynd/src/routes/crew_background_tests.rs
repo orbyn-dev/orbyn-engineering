@@ -27,6 +27,7 @@ async fn serve(name: &str) -> Served {
     serve_with(
         name,
         Access::new("token", vec![], None).with_dev_person_override(true),
+        true,
     )
     .await
 }
@@ -36,16 +37,17 @@ async fn serve_keyed(name: &str) -> Served {
     serve_with(
         name,
         Access::new("token", vec![], None).with_person_key(Some("the-key")),
+        true,
     )
     .await
 }
 
-async fn serve_with(name: &str, access: Access) -> Served {
+async fn serve_with(name: &str, access: Access, preview: bool) -> Served {
     let dir = std::env::temp_dir().join(format!("orbynd-bg-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut config = CoreConfig::new(dir.join("data"), "http://127.0.0.1:1".into());
-    config.crew_preview = true;
+    config.crew_preview = preview;
     let core = Arc::new(Core::open(config).unwrap());
     let project = fixtures::add_project(&core, dir.join("repo").to_str().unwrap());
     let app = router(AppState {
@@ -604,6 +606,7 @@ fn an_agent_is_refused_every_background_change_by_path() {
         "/api/crew/background/t-1/runs",
         "/api/crew/background/t-1/watch",
         "/api/crew/background/t-1/watch/changes",
+        "/api/crew/background/runs/run-1",
     ] {
         assert!(!changes_crew_state(path), "{path}");
     }
@@ -817,4 +820,143 @@ async fn a_not_started_run_reads_its_reason_code_over_http() {
     assert_eq!(listed["total"], 2);
     assert_eq!(listed["runs"][0]["state"].as_str(), Some("running"));
     assert!(listed["runs"][0]["reason_code"].is_null());
+}
+
+/// The run read "Open the run" opens: one run with the crew it belongs to, its own state, times, reason and spend, and never
+/// another crew's name. A finished run, the running run of another crew, a not-started run and an unknown id each answer
+/// with their exact status and code.
+#[tokio::test]
+async fn a_run_read_returns_its_own_run_and_crew_over_http() {
+    use orbyn_core::crew::BackgroundEnd;
+
+    let app = serve("run-detail").await;
+    let alpha: wire::BackgroundCrewCreate = serde_json::from_value(app.body("Alpha")).unwrap();
+    let alpha = app.core.background_create(&alpha).await.unwrap();
+    app.core.background_set_enabled(&alpha.id, true).unwrap();
+    let beta: wire::BackgroundCrewCreate = serde_json::from_value(app.body("Beta")).unwrap();
+    let beta = app.core.background_create(&beta).await.unwrap();
+    app.core.background_set_enabled(&beta.id, true).unwrap();
+    let beta_run = app.core.crew_background_start_run(&beta.id).unwrap();
+
+    // A running run: its own id and crew, the crew's name and template, and nothing guessed about its end.
+    let running = app.core.crew_background_start_run(&alpha.id).unwrap();
+    let (status, detail) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/runs/{}", running.id),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{detail}");
+    assert_eq!(detail["crew_id"], alpha.id);
+    assert_eq!(detail["name"], "Alpha");
+    assert_eq!(detail["template"], "dependency_bump");
+    assert_eq!(detail["run"]["id"], running.id);
+    assert_eq!(detail["run"]["crew_id"], alpha.id);
+    assert_eq!(detail["run"]["state"], "running");
+    assert!(detail["run"]["ended_at"].is_null());
+    assert!(detail["run"]["stop_reason"].is_null());
+    assert!(detail["run"]["reason_code"].is_null());
+    assert_eq!(detail["run"]["turns_spent"], 0);
+    assert_eq!(detail["run"]["minutes_spent"], 0);
+    assert_eq!(
+        detail["run"]["budget"],
+        json!({ "turns": 8, "minutes": 20 })
+    );
+    assert_eq!(detail["run"]["review_waiting"], false);
+    assert_eq!(detail["run"]["started_at"], running.started_at);
+    assert_eq!(detail["run"]["updated_at"], running.updated_at);
+    assert!(
+        !detail.to_string().contains("Beta"),
+        "one crew's run never shows another crew: {detail}"
+    );
+
+    // A finished run: the same run read again carries its end and its waiting review.
+    let finished = app
+        .core
+        .crew_background_end_run(&running.id, BackgroundEnd::NeedsReview)
+        .unwrap();
+    let (status, detail) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/runs/{}", finished.id),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{detail}");
+    assert_eq!(detail["run"]["state"], "needs_review");
+    assert_eq!(
+        detail["run"]["ended_at"].as_str(),
+        finished.ended_at.as_deref()
+    );
+    assert_eq!(detail["run"]["review_waiting"], true);
+    assert!(detail["run"]["stop_reason"].is_null());
+    assert!(detail["run"]["reason_code"].is_null());
+
+    // A not-started run: stopped with its code and no stop reason, and the disk guard's sentence as why it waited.
+    let refused = app.core.crew_background_start_run(&alpha.id).unwrap();
+    let why = "Not started: not enough free space. Free space and try again.";
+    let refused = app
+        .core
+        .store
+        .end_background_run_not_started(&refused.id, "disk_low", why, "crew")
+        .unwrap()
+        .expect("the running run");
+    assert_eq!(refused.reason_code.as_deref(), Some("disk_low"));
+    let (status, detail) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/runs/{}", refused.id),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{detail}");
+    assert_eq!(detail["run"]["state"], "stopped");
+    assert_eq!(detail["run"]["reason_code"], "disk_low");
+    assert!(detail["run"]["stop_reason"].is_null());
+    assert_eq!(detail["run"]["review_reason"], why);
+    assert_eq!(detail["run"]["review_waiting"], false);
+    assert!(detail["run"]["ended_at"].is_string());
+
+    // The other crew's running run reads its own name, and not this crew's.
+    let (status, detail) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/runs/{}", beta_run.id),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{detail}");
+    assert_eq!(detail["name"], "Beta");
+    assert_eq!(detail["crew_id"], beta.id);
+    assert_eq!(detail["run"]["state"], "running");
+    assert!(!detail.to_string().contains("Alpha"), "{detail}");
+
+    // An unknown run is not found, with the plain code.
+    let (status, body) = app
+        .call("GET", "/api/crew/background/runs/nothing", None)
+        .await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (404, Some("not_found")),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn the_run_read_is_hidden_with_the_crew_flag_off() {
+    let app = serve_with(
+        "run-detail-off",
+        Access::new("token", vec![], None).with_dev_person_override(true),
+        false,
+    )
+    .await;
+    let (status, body) = app
+        .call("GET", "/api/crew/background/runs/run-1", None)
+        .await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (404, Some("not_found")),
+        "{body}"
+    );
 }

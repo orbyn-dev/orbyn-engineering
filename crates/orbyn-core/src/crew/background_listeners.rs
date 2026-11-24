@@ -51,6 +51,7 @@ use orbyn_contracts::{IssueLabel, IssueSummary};
 use tokio_util::sync::CancellationToken;
 
 use super::background::EVERY_HOURS_MAX;
+use super::background_start::RUN_IN_PROGRESS;
 use super::triggers::{self, TriggerDef, TriggerKind};
 use super::watch::{CouldNotRun, WatchCheck};
 use crate::app::Core;
@@ -804,20 +805,20 @@ impl Core {
     /// new event. A refusal also writes one code-owned audit row (`crew.background.listener.refused`, the crew, the
     /// listener and a fixed category), so it reads beside the crew rather than only in a log. The start's actor is
     /// the constant `LISTENER_ACTOR`, never event text, and the start is never cancelled once it has begun. Answers
-    /// whether a run started, which the watch timer records on the change it fired for.
+    /// whether a run started, or the fixed code of the refusal, which the watch timer records on the change it fired for.
     pub(super) async fn fire_background_event(
         self: &Arc<Self>,
         crew: &str,
         listener: &str,
         event: &str,
-    ) -> bool {
+    ) -> Fired {
         match self
             .crew_background_start(crew, event, LISTENER_ACTOR)
             .await
         {
             Ok(run) => {
                 tracing::info!(crew = %crew, run = %run.id, "a background event started a run");
-                true
+                Fired::Started
             }
             Err(error) => {
                 tracing::warn!(
@@ -825,14 +826,14 @@ impl Core {
                     "a background event was refused: {}",
                     error.public_message()
                 );
-                if let Err(audit) = self.store.audit_background_listener_refusal(
-                    crew,
-                    listener,
-                    refusal_reason(&error),
-                ) {
+                let reason = refusal_reason(&error);
+                if let Err(audit) = self
+                    .store
+                    .audit_background_listener_refusal(crew, listener, reason)
+                {
                     tracing::warn!(%audit, crew = %crew, "a refused background firing could not be audited");
                 }
-                false
+                Fired::Refused(reason)
             }
         }
     }
@@ -930,12 +931,37 @@ impl Core {
 /// The audit actor of every listener start: code-owned, never event text.
 const LISTENER_ACTOR: &str = "crew";
 
+/// How a listener's firing ended: a run started, or the fixed code of the refusal. One of the seven codes
+/// [`crate::crew::watch::refusal_sentence`] writes a sentence for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Fired {
+    Started,
+    Refused(&'static str),
+}
+
+impl Fired {
+    /// Whether a run started. A caller that only cares about that, like every listener but the watch timer, reads this.
+    pub(super) fn is_started(self) -> bool {
+        matches!(self, Self::Started)
+    }
+
+    /// The fixed refusal code, when nothing started.
+    pub(super) fn refusal_code(self) -> Option<&'static str> {
+        match self {
+            Self::Started => None,
+            Self::Refused(code) => Some(code),
+        }
+    }
+}
+
 /// A fixed word for why a start was refused. Never the refusal's own text, which may name a crew or a path.
 fn refusal_reason(error: &CoreError) -> &'static str {
     match error {
+        CoreError::DiskLow(_) => "disk_low",
         CoreError::FolderUntrusted | CoreError::FolderUntrustedInit => "folder_untrusted",
         CoreError::EngineUnavailable(_) => "no_engine",
         CoreError::RunsActive => "run_in_progress",
+        CoreError::PolicyDenied(why) if why == RUN_IN_PROGRESS => "run_in_progress",
         CoreError::PolicyDenied(_) => "not_allowed",
         CoreError::NotFound(_) => "crew_gone",
         _ => "refused",
