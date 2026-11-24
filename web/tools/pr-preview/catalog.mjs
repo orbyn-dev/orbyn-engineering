@@ -1009,8 +1009,9 @@ export const FRAMES = {
   /** The inbox with the two watch rows (watch-needsyou), on the app's own Inbox tab. */
   "watch-needsyou": { route: "#/crew/inbox", scenario: "crew-background-watch-needsyou" },
 
-  /** KC2: the inbox row of a task whose worker could not be stopped (kc2-close-lead-could-not-stop, the Needs you half; the Board card is not served yet). */
+  /** KC2: both halves of a task whose worker could not be stopped (kc2-close-lead-could-not-stop), the inbox row and the Board card, over the mock's crew-could-not-stop scenario. */
   "kc2-close-lead-could-not-stop": { route: "#/crew/inbox", scenario: "crew-could-not-stop" },
+  "kc2-close-lead-could-not-stop-board": { route: "#/crew/board", scenario: "crew-could-not-stop" },
 
   /** Crew, the escape log (Crew Designs v79), on the real escape routes over the mock's crew-escapes scenarios. A detail
    *  frame names its escape in the hash; escape-gap opens the same escape with its Set-the-gap dialog. */

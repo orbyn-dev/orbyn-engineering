@@ -50,7 +50,7 @@ function Inbox() {
     act(item: NeedsItem, action: NeedsAction, anchor: HTMLElement) {
       if (item.kind === "could_not_start") setAsking({ id: item.ref, name: item.from, kind: action.key === "retry" ? "retry" : "dismiss" });
       else if (item.kind === "could_not_stop") {
-        // Stop again is the person's own cancel of the task, as the Board's Cancel; Open task goes to the task's page.
+        // Stop again is the person's own cancel of the task, as the Board card's Stop again; Open task goes to the task's page.
         if (action.key === "stop-again") void runWrite("cancel", item.ref, "", state.retry);
         else navigate({ name: "crew", tab: "flow", task: item.ref });
       }

@@ -1,5 +1,5 @@
-// The Taskboard's one read: a crew's work tasks as seven columns. Reads only: Cancel and Re-run checks have routes, but this view
-// does not call them (a later PR). Every Crew route answers 404 while Crew Preview is off.
+// The Taskboard's one read: a crew's work tasks as seven columns. This client only reads; a card's Stop again goes through the writes
+// store, and its menu's Cancel and Re-run checks through TaskWrite. Every Crew route answers 404 while Crew Preview is off.
 import { request } from "../../../api/client";
 import type { FlowBoard } from "../../../generated/FlowBoard";
 import type { FlowColumnId } from "../../../generated/FlowColumnId";

@@ -1,11 +1,12 @@
 /**
  * The mock's Taskboard read (`GET /api/crew/flow/board`): a crew's work tasks as seven columns. It answers in the Crew scenarios
  * (`crew`, `crew-<state>`) and nowhere else, so the default scenario keeps every Crew route at 404 as the service does with Crew
- * Preview off. Reads only.
+ * Preview off. It also answers the person's cancel, re-run-checks and retry-elsewhere writes.
  *
  * Scenarios: `crew` (the design's sample: one card in each of the first five columns, three passed, two stopped or cancelled),
  * `crew-board-many` (twelve running tasks, so "+N more" pages), `crew-board-empty` (no task), `crew-board-truncated` (the service's
- * cap was hit).
+ * cap was hit), and `crew-could-not-stop*` (the sample's verifying task moved to Needs you as the cancelled card whose worker could
+ * not be stopped, kc2-close-lead-could-not-stop).
  */
 import type { FlowBoard } from "../src/generated/FlowBoard.ts";
 import type { FlowCard } from "../src/generated/FlowCard.ts";
@@ -50,6 +51,25 @@ function sample(): Row[] {
     card("stopped_cancelled", "b-stop1", "implement", "Add a rate limit to the login route", "codex", "GPT-5.5", "medium", "stopped", 300, { stop_reason: "repeated_failure", can_rerun: true }),
     card("stopped_cancelled", "b-stop2", "docs", "Move the CHANGELOG entry", "claude", "Sonnet 5.5", "low", "cancelled", 900),
   ];
+}
+
+/**
+ * The `crew-could-not-stop*` scenarios: the sample, with the verifying task whose lead close could not stop its worker moved to
+ * Needs you, cancelled and final, carrying the service's own line (kc2-close-lead-could-not-stop).
+ */
+function couldNotStop(): Row[] {
+  return sample().map((row) => {
+    if (row.id !== "b-verifying") return row;
+    const moved: Row = {
+      ...row,
+      column: "needs_you",
+      state: "cancelled",
+      can_cancel: false,
+      needs_you: "could_not_stop",
+      reason: "The worker could not be stopped. Stop it again.",
+    };
+    return moved;
+  });
 }
 
 /** `crew-could-not-start`: two implement tasks whose Codex workers were refused at their start, beside one task that really waits. */
@@ -128,7 +148,12 @@ export function boardMock(scenario: string, method: string, path: string, query:
   const crew = query.get("crew");
   if (!crew) return invalid("crew is required");
   if (crew !== MOCK_CREW && crew !== MOCK_CREW_TWO) return { status: 404, body: { code: "not_found", message: "crew not found" } };
-  const all = scenario === "crew-board-empty" || crew === MOCK_CREW_TWO ? [] : scenario === "crew-board-many" ? many() : scenario === "crew-could-not-start-disk" ? couldNotStartDisk() : scenario.startsWith("crew-could-not-start") ? couldNotStart() : sample();
+  const all = scenario === "crew-board-empty" || crew === MOCK_CREW_TWO ? []
+    : scenario === "crew-board-many" ? many()
+    : scenario === "crew-could-not-start-disk" ? couldNotStartDisk()
+    : scenario.startsWith("crew-could-not-start") ? couldNotStart()
+    : scenario.startsWith("crew-could-not-stop") ? couldNotStop()
+    : sample();
   const engine = query.get("engine");
   const kind = query.get("kind");
   const only = query.get("column") as FlowColumnId | null;

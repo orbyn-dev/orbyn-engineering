@@ -5,6 +5,7 @@ import type { MockApi } from "../../../../mock/api";
 import { MOCK_CREW, MOCK_CREW_TWO } from "../../../../mock/flow";
 import { useConnection } from "../../../product/state/connection";
 import { installMockFetch } from "../../../test-support";
+import { useWrites } from "../writes/store";
 import { BoardView } from "./BoardView";
 import { useBoardFocus } from "./focus";
 import { useBoard } from "./useBoard";
@@ -16,6 +17,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-11-07T15:00:00Z"));
   mock = installMockFetch();
   useConnection.setState({ remote: false });
+  useWrites.setState({ ops: {} });
   window.location.hash = "";
 });
 
@@ -23,6 +25,7 @@ afterEach(() => vi.useRealTimers());
 
 const calls = (part: string) => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes(part));
 const writes = () => vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method && init.method !== "GET");
+const posts = () => vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST");
 const urls = () => vi.mocked(fetch).mock.calls.map(([url]) => String(url));
 
 async function open(scenario: "crew" | `crew-${string}`) {
@@ -200,6 +203,47 @@ describe("the Taskboard on the board route", () => {
     expect(within(menu).getByRole("menuitem", { name: /Answer a worker’s question/ })).toBeDisabled();
     expect(within(menu).getByRole("menuitem", { name: /Cancel/ })).toBeEnabled();
     expect(within(menu).queryByRole("menuitem", { name: /Re-run checks/ })).toBeNull();
+  });
+});
+
+describe("a card whose worker could not be stopped (kc2-close-lead-could-not-stop)", () => {
+  const STUCK = "Add tests for the redirect, including //evil.com";
+  const stuckCard = () => within(column(/^Needs you/)).getByText(STUCK).closest("li")!;
+
+  it("says Could not stop with the service's reason, not a question, and draws Stop again under it", async () => {
+    await open("crew-could-not-stop");
+    const card = stuckCard();
+    expect(card).toHaveTextContent("Could not stop · The worker could not be stopped. Stop it again.");
+    expect(card.querySelector(".bd-amber")).toHaveTextContent("Could not stop · The worker could not be stopped. Stop it again.");
+    expect(within(card).getByRole("button", { name: `Stop again: ${STUCK}` })).toBeEnabled();
+  });
+
+  it("sends one POST to the task's cancel and says what the service answered", async () => {
+    const user = await open("crew-could-not-stop");
+    await user.click(within(stuckCard()).getByRole("button", { name: `Stop again: ${STUCK}` }));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect(String(posts()[0]![0])).toBe("/api/crew/tasks/b-verifying/cancel");
+    expect(await screen.findByText(/^Cancelled\./)).toBeVisible();
+  });
+
+  it("keeps Stop again off from another computer, with the reason", async () => {
+    useConnection.setState({ remote: true });
+    await open("crew-could-not-stop");
+    const stop = within(stuckCard()).getByRole("button", { name: `Stop again: ${STUCK}` });
+    expect(stop).toBeDisabled();
+    expect(stop).toHaveAttribute("title", "Not available from another computer");
+  });
+
+  it("still draws a needs_person card's own amber line, and no Stop again", async () => {
+    await open("crew-could-not-stop");
+    const waiting = within(column(/^Needs you/)).getByText("Which target wins when both next and returnTo are set?").closest("li")!;
+    expect(waiting.querySelector(".bd-amber")).toHaveTextContent("Asked you a question: <b>which target wins</b>?");
+    expect(within(waiting).queryByRole("button", { name: /^Stop again/ })).toBeNull();
+  });
+
+  it("never draws Stop again on a card whose needs_you is unset", async () => {
+    await open("crew");
+    expect(screen.queryByRole("button", { name: /^Stop again/ })).toBeNull();
   });
 });
 
