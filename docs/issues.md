@@ -514,12 +514,13 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   the exact field sent, no token in the answer or the audit row; `403 desktop_required` without the person key and
   nothing sent; a refusal changes nothing here; the route table and class tests pass without special cases.
 
-### As built (R15 PR1)
+### As built (R15 PR1 and R15 PR1b)
 
 `POST /api/issues/item/create`, `/comment` and `/react` exist behind the Issues flag, are Person-class
 (`ENFORCED` + `PERSON_ROUTES` + `tests/routes.json`), and write only through a tracker whose own write is built:
 
-- **GitHub is the only tracker that writes in this PR.** Create, comment and react run through the person's own `gh`
+- **GitHub is the first tracker that writes (R15 PR1); the other four follow in the PR1b bullets below.** Create,
+  comment and react run through the person's own `gh`
   (never a token Orbyn holds): create is one REST call whose JSON body carries the title, body, labels and assignees,
   and its answer is built from that call's own reply, so a successful create is never reported as a failure; comment
   is one REST call and answers the comment GitHub stored, with its node id as `IssueComment.id` (the id a reaction
@@ -536,18 +537,24 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   nothing retries.
 - **The routes' own caps, checked before anything is sent**: a title is one line of 1 to 256 characters; an issue body
   or a comment is at most 64 KiB and a comment is not blank; at most 50 labels, each a name of 1 to 200 characters; at
-  most 25 assignee ids, each 1 to 200 characters; a comment id is 1 to 200 characters; no control characters in a
-  title, a label name, an assignee id or a comment id.
+  most 25 assignee ids, each 1 to 200 characters; a comment id is 1 to 200 characters and, where the tracker's
+  reaction path takes a number, numeric and up to 19 digits (its 64-bit id); no control characters in a title, a label
+  name, an assignee id or a comment id.
 - **GitLab, Forgejo, Azure DevOps and Linear write too (R15 PR1b).** Each uses its own REST or GraphQL write path and
   its own rules:
   - **GitLab**: create is one `POST` of the project's issues with the labels as comma-joined names and the assignees as
-    numeric candidate ids; comment is a `POST` to the issue's notes and answers that note's numeric id; react is an
-    `award_emoji` write whose `name=` is GitLab's own word (all eight map), a removal first reads the reader's own
-    award and deletes it by its id (nothing to delete is success), and the answer carries each award name and count.
+    numeric candidate ids; a label name containing a comma is `400 invalid` before anything is sent, because GitLab
+    takes the names as one comma-separated value and would silently read it as two. Comment is a `POST` to the
+    issue's notes and answers that note's numeric id. React is an `award_emoji` write whose `name=` is GitLab's own
+    word (all eight map); both directions first read the reader's own award, so a repeated add or a removal with
+    nothing left writes nothing, and a removal deletes by the award's id. The answer carries each award name and
+    count, read from the award list's first page of 100: a very busy issue can show partial counts.
   - **Forgejo**: create resolves each label name to the repository's label id first (a name the repository lacks is
-    `400 invalid` before anything is sent) and writes the assignees as logins; comment answers the stored comment;
-    react writes or deletes the `content` word on the issue's or a comment's reactions path (all eight map, and a
-    removal that finds nothing is success), and the answer carries each content word and count.
+    `400 invalid` before anything is sent) and writes the assignees as logins; comment answers the stored comment.
+    React writes or deletes the `content` word on the issue's or a comment's reactions path (all eight map); both
+    directions first read the reader's own reaction, so a repeated add writes one reaction and a removal with nothing
+    left writes nothing. The answer carries each content word and count, read from at most two pages of 50: a very
+    busy issue can show partial counts.
   - **Azure DevOps**: create picks the project's first of `Issue`, `Task` and `Bug` and sends the fields as a JSON
     Patch document (title, description HTML-escaped, labels as the semicolon-joined `System.Tags`, one assignee; more
     than one is `400 invalid`, as is a label with a semicolon in it); comment writes markdown and answers the stored
@@ -557,10 +564,12 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
     no reactions: Azure DevOps reports them on comments, not on the work item.
   - **Linear**: create resolves the team's id and the label ids (a workspace or team label; a name the workspace lacks
     is `400 invalid`), takes one assignee at most, and sends a fixed `issueCreate` mutation whose values are
-    variables; comment resolves the issue's internal id inside the team first, then `commentCreate`. React resolves
-    the issue, proves a named comment belongs to it (`not_found`, before any mutation), and uses `reactionCreate`
-    with the emoji; a removal finds the reader's own reaction and deletes it by id (nothing found is success). The
-    answer carries each emoji and count (all eight map).
+    variables. The labels are read once with `issueLabels(first: 250)` and no paging, so a label beyond the first
+    250 is `400 invalid` even though it exists. Comment resolves the issue's internal id inside the team first, then
+    `commentCreate`. React resolves the issue, proves a named comment belongs to it (`not_found`, before any
+    mutation), and sends `reactionCreate` with the emoji (Linear answers success for a duplicate); a removal finds
+    the reader's own reaction and deletes it by id, and writes nothing when it finds none. The answer carries each
+    emoji and count (all eight map).
 - **A write the tracker refuses** answers the usual `forbidden`, `not_found`, `rate_limited` or
   `tracker_unavailable` and changes nothing here. Issue text goes in as a JSON field value, never as an argument
   position.
@@ -571,10 +580,11 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   reacted to; every writer is tested against its own local fake server, and the REST/GraphQL shapes (field names,
   GitLab's award names and its delete-by-id, Forgejo's reaction `content` words and delete body, Azure DevOps' JSON
   Patch create, work item types, `commentsReactions` path and six reaction names, Linear's mutations, label/team
-  reads and reaction ids) come from each API as understood. That adding a reaction that is already there and removing
-  one that is not answer without an error is GitHub's and Linear's documented behaviour; on GitLab and Forgejo the
-  reader makes the write idempotent itself (a lookup, or a removal that ignores a not-found). The older-`gh` shape is
-  scripted too, not observed on a real old `gh`. No real `orbynd` service run exercises these routes.
+  reads and reaction ids) come from each API as understood. Both reaction directions are made idempotent as each
+  tracker allows: GitHub's mutations are, GitLab and Forgejo look the reader's own reaction up first, Azure DevOps'
+  PUT/DELETE are and an absent removal is treated as done, and Linear's add is sent as-is (its documented behaviour is
+  a success for a duplicate) with a removal that writes only when it finds the reader's own reaction. The older-`gh`
+  shape is scripted too, not observed on a real old `gh`. No real `orbynd` service run exercises these routes.
 
 ## What T3 has that this does not (Planned)
 

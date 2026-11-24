@@ -301,6 +301,42 @@ impl Forgejo {
             .collect()
     }
 
+    /// Every reaction row the tracker reports for one reactions path, up to two pages of 50: the counts (and an
+    /// idempotent add's lookup) are read from that first page only.
+    async fn reaction_rows(&self, path: &str) -> Result<Vec<Value>> {
+        let mut rows: Vec<Value> = Vec::new();
+        for page in 1..=MAX_REACTION_PAGES {
+            let got = self
+                .fetch(
+                    path,
+                    &[("page", page.to_string()), ("limit", "50".to_owned())],
+                    "issue",
+                )
+                .await?;
+            let value = parse(&got.body)?;
+            let page_rows = value.as_array().ok_or_else(unreadable)?.clone();
+            let full = page_rows.len() >= 50;
+            rows.extend(page_rows);
+            if !full {
+                break;
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Whether the reader's own reaction of one content word is on the subject. Both directions look it up first,
+    /// so a repeated add or a removal with nothing left answers the same way twice.
+    async fn own_reaction(&self, path: &str, word: &str, login: &str) -> Result<bool> {
+        let rows = self.reaction_rows(path).await?;
+        Ok(rows.iter().any(|row| {
+            row.get("content").and_then(Value::as_str) == Some(word)
+                && row
+                    .pointer("/user/login")
+                    .and_then(Value::as_str)
+                    .is_some_and(|user| user.eq_ignore_ascii_case(login))
+        }))
+    }
+
     /// The issue's reactions as Forgejo reports them, each under its own content word. `None` when the read fails:
     /// the reaction is already written, so its answer is the issue without counts rather than an error.
     async fn issue_reactions(
@@ -309,25 +345,8 @@ impl Forgejo {
         repo: &str,
         key: &str,
     ) -> Option<Vec<IssueReactionCount>> {
-        let mut rows: Vec<Value> = Vec::new();
-        for page in 1..=MAX_REACTION_PAGES {
-            let got = self
-                .fetch(
-                    &format!("/api/v1/repos/{owner}/{repo}/issues/{key}/reactions"),
-                    &[("page", page.to_string()), ("limit", "50".to_owned())],
-                    "issue",
-                )
-                .await
-                .ok()?;
-            let value = parse(&got.body).ok()?;
-            let page_rows = value.as_array()?.clone();
-            let full = page_rows.len() >= 50;
-            rows.extend(page_rows);
-            if !full {
-                break;
-            }
-        }
-        reaction_counts(&rows)
+        let path = format!("/api/v1/repos/{owner}/{repo}/issues/{key}/reactions");
+        reaction_counts(&self.reaction_rows(&path).await.ok()?)
     }
 }
 
@@ -726,9 +745,14 @@ fn reaction_counts(rows: &[Value]) -> Option<Vec<IssueReactionCount>> {
     Some(counts)
 }
 
-/// A Forgejo comment id: the number its reaction path takes.
+/// A Forgejo comment id: a 64-bit numeric id, up to 19 digits, because that number is what its reaction path
+/// takes.
 fn comment_id_ok(comment: &str) -> Result<()> {
-    if comment.is_empty() || comment.len() > 9 || !comment.chars().all(|c| c.is_ascii_digit()) {
+    if comment.is_empty()
+        || comment.len() > 19
+        || !comment.chars().all(|c| c.is_ascii_digit())
+        || comment.parse::<u64>().is_err()
+    {
         return Err(CoreError::Invalid(
             "That comment id is not a Forgejo comment.".into(),
         ));
@@ -819,21 +843,42 @@ impl IssueSource for Forgejo {
             }
             None => format!("/api/v1/repos/{owner}/{repo}/issues/{key}/reactions"),
         };
-        let method = if on { Method::POST } else { Method::DELETE };
-        let sent = self
-            .send(
-                method,
-                &subject,
-                &[],
-                Some(&json!({ "content": content_word(reaction) })),
-                "issue",
-            )
-            .await;
-        match sent {
-            Ok(_) => {}
-            // Forgejo has no reaction of that word to take back: a removal is idempotent at the answer.
-            Err(CoreError::NotFound(_)) if !on => {}
-            Err(error) => return Err(error),
+        let word = content_word(reaction);
+        // The reader's own reaction is looked up first, so a second add writes nothing and a removal with nothing
+        // left writes nothing: both directions answer the same way twice.
+        let login = self.signed_in_login().await?;
+        let present = self.own_reaction(&subject, word, &login).await?;
+        let sent = match (on, present) {
+            (true, false) => Some(
+                self.send(
+                    Method::POST,
+                    &subject,
+                    &[],
+                    Some(&json!({ "content": word })),
+                    "issue",
+                )
+                .await,
+            ),
+            (false, true) => Some(
+                self.send(
+                    Method::DELETE,
+                    &subject,
+                    &[],
+                    Some(&json!({ "content": word })),
+                    "issue",
+                )
+                .await,
+            ),
+            // Already there, or nothing left to take back: nothing is written and the answer is the issue.
+            (_, _) => None,
+        };
+        if let Some(sent) = sent {
+            match sent {
+                Ok(_) => {}
+                // A race between the lookup and the delete leaves nothing to take back.
+                Err(CoreError::NotFound(_)) if !on => {}
+                Err(error) => return Err(error),
+            }
         }
         let mut detail = self.get(scope, key).await?;
         detail.reactions = self.issue_reactions(&owner, &repo, key).await;

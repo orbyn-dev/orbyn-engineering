@@ -1337,4 +1337,124 @@ mod writes {
             assert_eq!(award_name(reaction), name);
         }
     }
+
+    #[tokio::test]
+    async fn a_ten_digit_note_id_is_accepted() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v4/user" {
+                return Reply::json(&json!({ "username": "ann" }));
+            }
+            if path.ends_with("/notes/1234567890/award_emoji") && req.line.starts_with("GET") {
+                return Reply::json(&json!([]));
+            }
+            if path.ends_with("/notes/1234567890/award_emoji") && req.line.starts_with("POST") {
+                assert_eq!(req.param("name").as_deref(), Some("heart"));
+                return Reply::json(&json!({ "id": 7, "name": "heart" }));
+            }
+            if path.ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            if path.ends_with("/award_emoji") && req.line.starts_with("GET") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        reader(&server)
+            .react(
+                "grp/proj",
+                "21",
+                Some("1234567890"),
+                IssueReaction::Heart,
+                true,
+            )
+            .await
+            .expect("a ten-digit note id is a valid GitLab note id");
+        assert!(
+            written_requests(&server.seen())
+                .iter()
+                .any(|line| line.contains("/notes/1234567890/award_emoji?name=heart")),
+            "{:?}",
+            server.seen()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_label_with_a_comma_is_refused_before_a_request() {
+        let server = Server::start(|_| Reply::json(&json!({}))).await;
+        let labels = vec!["needs,review".to_owned()];
+        let refused = reader(&server)
+            .create("grp/proj", &new_issue("T", "", &labels, &[]))
+            .await
+            .map(|_| ());
+        assert!(
+            matches!(&refused, Err(CoreError::Invalid(message)) if message.contains("comma")),
+            "{refused:?}"
+        );
+        assert!(server.seen().is_empty(), "{:?}", server.seen());
+    }
+
+    #[tokio::test]
+    async fn a_comment_reaction_removal_deletes_the_readers_award_by_id() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v4/user" {
+                return Reply::json(&json!({ "username": "ann" }));
+            }
+            if path.ends_with("/notes/9/award_emoji") && req.line.starts_with("GET") {
+                return Reply::json(&json!([{
+                    "id": 7, "name": "heart", "user": { "username": "ann" },
+                }]));
+            }
+            if path.ends_with("/notes/9/award_emoji/7") && req.line.starts_with("DELETE") {
+                return Reply::json(&json!({}));
+            }
+            if path.ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            if path.ends_with("/award_emoji") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        reader(&server)
+            .react("grp/proj", "21", Some("9"), IssueReaction::Heart, false)
+            .await
+            .unwrap();
+        assert!(
+            written_requests(&server.seen())
+                .iter()
+                .any(|line| line
+                    == "DELETE /api/v4/projects/grp%2Fproj/issues/21/notes/9/award_emoji/7"),
+            "{:?}",
+            server.seen()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_comment_reaction_keeps_the_contract_error_and_never_its_raw_body() {
+        let server = Server::start(|req| {
+            if req.path() == "/api/v4/user" {
+                return Reply::json(&json!({ "username": "ann" }));
+            }
+            Reply::status(403)
+        })
+        .await;
+        let error = reader(&server)
+            .react("grp/proj", "21", Some("9"), IssueReaction::Heart, true)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        match error {
+            CoreError::TrackerForbidden(message) => assert!(
+                !message.contains("raw-tracker-text") && !message.contains("secret-detail"),
+                "{message}"
+            ),
+            other => panic!("a 403 is forbidden, got {other:?}"),
+        }
+    }
 }

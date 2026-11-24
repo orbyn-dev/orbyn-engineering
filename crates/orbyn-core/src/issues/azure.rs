@@ -813,9 +813,14 @@ fn reaction_type(reaction: IssueReaction) -> Option<&'static str> {
     }
 }
 
-/// An Azure DevOps comment id: the number its reaction path takes.
+/// An Azure DevOps comment id: a 64-bit numeric id, up to 19 digits, because that number is what its reaction
+/// path takes.
 fn comment_id_ok(comment: &str) -> Result<()> {
-    if comment.is_empty() || comment.len() > 9 || !comment.chars().all(|c| c.is_ascii_digit()) {
+    if comment.is_empty()
+        || comment.len() > 19
+        || !comment.chars().all(|c| c.is_ascii_digit())
+        || comment.parse::<u64>().is_err()
+    {
         return Err(CoreError::Invalid(
             "That comment id is not an Azure DevOps comment.".into(),
         ));

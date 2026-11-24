@@ -574,9 +574,14 @@ fn reaction_counts(rows: &Value) -> Option<Vec<IssueReactionCount>> {
     Some(counts)
 }
 
-/// A GitLab note id: a number, because an award is removed by the note's own award id path.
+/// A GitLab note id: a 64-bit numeric id, up to 19 digits (note ids are global and already ten digits today),
+/// because an award is removed by the note's own award id path.
 fn note_id_ok(comment: &str) -> Result<()> {
-    if comment.is_empty() || comment.len() > 9 || !comment.chars().all(|c| c.is_ascii_digit()) {
+    if comment.is_empty()
+        || comment.len() > 19
+        || !comment.chars().all(|c| c.is_ascii_digit())
+        || comment.parse::<u64>().is_err()
+    {
         return Err(CoreError::Invalid(
             "That comment id is not a GitLab note.".into(),
         ));
@@ -604,6 +609,12 @@ impl IssueSource for GitLab {
 
     async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
         let project = project_segment(scope)?;
+        // GitLab takes labels as one comma-separated value, so a name with a comma in it would silently become two.
+        if new.labels.iter().any(|label| label.contains(',')) {
+            return Err(CoreError::Invalid(
+                "A GitLab label cannot contain a comma.".into(),
+            ));
+        }
         let payload = json!({
             "title": new.title,
             "description": new.body,

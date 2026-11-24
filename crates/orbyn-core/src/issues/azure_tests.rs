@@ -1829,22 +1829,24 @@ mod writes {
             }
             other => panic!("a work item takes no reaction: {other:?}"),
         }
-        let lack = azure
-            .react("org/proj", "21", Some("9"), IssueReaction::Rocket, true)
-            .await
-            .map(|_| ());
-        match lack {
-            Err(CoreError::Invalid(message)) => {
-                assert!(
-                    message.contains("thumbs_up, thumbs_down, laugh, hooray, confused, heart"),
-                    "{message}"
-                );
-                assert!(
-                    !message.contains("rocket"),
-                    "the value it lacks is not named as one it has: {message}"
-                );
+        for lack in [IssueReaction::Rocket, IssueReaction::Eyes] {
+            let refused = azure
+                .react("org/proj", "21", Some("9"), lack, true)
+                .await
+                .map(|_| ());
+            match refused {
+                Err(CoreError::Invalid(message)) => {
+                    assert!(
+                        message.contains("thumbs_up, thumbs_down, laugh, hooray, confused, heart"),
+                        "{message}"
+                    );
+                    assert!(
+                        !message.contains("rocket") && !message.contains("eyes"),
+                        "a value it lacks is not named as one it has: {message}"
+                    );
+                }
+                other => panic!("Azure DevOps has no {lack:?} reaction: {other:?}"),
             }
-            other => panic!("Azure DevOps has no rocket reaction: {other:?}"),
         }
         assert!(server.seen().is_empty(), "{:?}", server.seen());
     }
@@ -1886,5 +1888,35 @@ mod writes {
         ] {
             assert_eq!(reaction_type(reaction), wanted);
         }
+    }
+
+    #[tokio::test]
+    async fn a_ten_digit_comment_id_is_accepted() {
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path.contains("/commentsReactions/") {
+                assert_eq!(
+                    req.line,
+                    "PUT /org/proj/_apis/wit/commentsReactions/21/1234567890/like?api-version=7.1-preview.1 HTTP/1.1"
+                );
+                return Reply::json(&json!({ "type": "like", "count": 1 }));
+            }
+            if path.ends_with("/comments") {
+                return Reply::json(&json!({ "comments": [] }));
+            }
+            Reply::json(&item(&base, 21, "Active"))
+        })
+        .await;
+        reader(&server)
+            .react(
+                "org/proj",
+                "21",
+                Some("1234567890"),
+                IssueReaction::ThumbsUp,
+                true,
+            )
+            .await
+            .expect("a ten-digit comment id is a valid Azure DevOps comment id");
     }
 }

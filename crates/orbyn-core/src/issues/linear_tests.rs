@@ -1739,4 +1739,36 @@ mod writes {
             assert_eq!(reaction_emoji(reaction), emoji);
         }
     }
+
+    #[tokio::test]
+    async fn a_removal_that_finds_no_reaction_writes_nothing_and_is_still_success() {
+        let server = Server::start(|req| {
+            let query = query_of(req);
+            if query.contains("query OrbynIssueRef") {
+                return Reply::json(&json!({
+                    "data": { "issue": { "id": "issue-1", "identifier": "ENG-7", "team": { "key": "ENG" } } }
+                }));
+            }
+            if query.contains("query OrbynViewer") {
+                return Reply::json(&json!({ "data": { "viewer": { "id": "u1" } } }));
+            }
+            if query.contains("query OrbynIssueReactions") {
+                return Reply::json(&json!({ "data": { "issue": { "reactions": [] } } }));
+            }
+            detail_reply(row("ENG-7"), vec![])
+        })
+        .await;
+        let detail = reader(&server)
+            .react("ENG", "ENG-7", None, IssueReaction::Heart, false)
+            .await
+            .expect("taking back a reaction nobody left is a success");
+        assert_eq!(detail.reactions, Some(vec![]));
+        assert!(
+            !server
+                .seen()
+                .iter()
+                .any(|req| query_of(req).contains("mutation OrbynReactionDelete")),
+            "nothing is deleted when there is no own reaction"
+        );
+    }
 }

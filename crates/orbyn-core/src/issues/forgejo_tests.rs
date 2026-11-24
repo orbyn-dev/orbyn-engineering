@@ -1225,12 +1225,15 @@ mod writes {
     }
 
     #[tokio::test]
-    async fn a_reaction_is_written_with_its_content_word_and_answered_with_counts() {
-        let present = Arc::new(Mutex::new(true));
+    async fn a_reaction_is_added_once_taken_back_once_and_answered_with_counts() {
+        let present = Arc::new(Mutex::new(false));
         let state = present.clone();
         let server = Server::start(move |req| {
             let base = base_of(req);
             let path = req.path();
+            if path == "/api/v1/user" {
+                return Reply::json(&json!({ "login": "ann" }));
+            }
             if path.ends_with("/reactions") && req.line.starts_with("POST") {
                 assert_eq!(req.json(), Some(json!({ "content": "+1" })));
                 *state.lock().unwrap() = true;
@@ -1238,13 +1241,8 @@ mod writes {
             }
             if path.ends_with("/reactions") && req.line.starts_with("DELETE") {
                 assert_eq!(req.json(), Some(json!({ "content": "+1" })));
-                let was = *state.lock().unwrap();
                 *state.lock().unwrap() = false;
-                return if was {
-                    Reply::raw(204, Vec::new())
-                } else {
-                    Reply::status(404)
-                };
+                return Reply::raw(204, Vec::new());
             }
             if path.ends_with("/reactions") && req.line.starts_with("GET") {
                 return Reply::json(&if *state.lock().unwrap() {
@@ -1272,6 +1270,18 @@ mod writes {
             }]),
             "the answer keeps Forgejo's own content word and its count"
         );
+        // A second add writes nothing: the reader's own reaction is already there.
+        let again = forgejo
+            .react("grp/proj", "21", None, IssueReaction::ThumbsUp, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            again.reactions,
+            Some(vec![IssueReactionCount {
+                content: "+1".into(),
+                count: 1,
+            }])
+        );
         let removed = forgejo
             .react("grp/proj", "21", None, IssueReaction::ThumbsUp, false)
             .await
@@ -1290,9 +1300,8 @@ mod writes {
             vec![
                 "POST /api/v1/repos/grp/proj/issues/21/reactions".to_owned(),
                 "DELETE /api/v1/repos/grp/proj/issues/21/reactions".to_owned(),
-                "DELETE /api/v1/repos/grp/proj/issues/21/reactions".to_owned(),
             ],
-            "{seen:?}"
+            "both directions are idempotent: one POST and one DELETE, {seen:?}"
         );
     }
 
@@ -1301,6 +1310,9 @@ mod writes {
         let server = Server::start(move |req| {
             let base = base_of(req);
             let path = req.path();
+            if path == "/api/v1/user" {
+                return Reply::json(&json!({ "login": "ann" }));
+            }
             if path == "/api/v1/repos/grp/proj/issues/comments/9/reactions"
                 && req.line.starts_with("POST")
             {
@@ -1383,5 +1395,92 @@ mod writes {
         ] {
             assert_eq!(content_word(reaction), word);
         }
+    }
+
+    #[tokio::test]
+    async fn a_ten_digit_comment_id_is_accepted() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v1/user" {
+                return Reply::json(&json!({ "login": "ann" }));
+            }
+            if path == "/api/v1/repos/grp/proj/issues/comments/1234567890/reactions"
+                && req.line.starts_with("POST")
+            {
+                assert_eq!(req.json(), Some(json!({ "content": "heart" })));
+                return Reply::raw(200, b"{}".to_vec());
+            }
+            if path.ends_with("/comments") {
+                return Reply::json(&json!([]));
+            }
+            if path.ends_with("/reactions") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        reader(&server)
+            .react(
+                "grp/proj",
+                "21",
+                Some("1234567890"),
+                IssueReaction::Heart,
+                true,
+            )
+            .await
+            .expect("a ten-digit comment id is a valid Forgejo comment id");
+        assert!(
+            written_requests(&server.seen())
+                .iter()
+                .any(|line| line
+                    == "POST /api/v1/repos/grp/proj/issues/comments/1234567890/reactions"),
+            "{:?}",
+            server.seen()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_comment_reaction_removal_deletes_the_readers_own_reaction() {
+        let present = Arc::new(Mutex::new(true));
+        let state = present.clone();
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v1/user" {
+                return Reply::json(&json!({ "login": "ann" }));
+            }
+            if path == "/api/v1/repos/grp/proj/issues/comments/9/reactions" {
+                if req.line.starts_with("GET") {
+                    return Reply::json(&if *state.lock().unwrap() {
+                        json!([{ "content": "eyes", "user": { "login": "ann" } }])
+                    } else {
+                        json!([])
+                    });
+                }
+                assert_eq!(req.json(), Some(json!({ "content": "eyes" })));
+                *state.lock().unwrap() = false;
+                return Reply::raw(204, Vec::new());
+            }
+            if path.ends_with("/comments") {
+                return Reply::json(&json!([]));
+            }
+            if path.ends_with("/reactions") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        reader(&server)
+            .react("grp/proj", "21", Some("9"), IssueReaction::Eyes, false)
+            .await
+            .unwrap();
+        assert!(
+            written_requests(&server.seen())
+                .iter()
+                .any(|line| line == "DELETE /api/v1/repos/grp/proj/issues/comments/9/reactions"),
+            "{:?}",
+            server.seen()
+        );
     }
 }
