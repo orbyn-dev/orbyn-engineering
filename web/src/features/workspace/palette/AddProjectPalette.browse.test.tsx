@@ -1,7 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../mock/api";
+import { api as client } from "../../../api/client";
+import { readShellStatus } from "../../../api/shell";
 import { installMockFetch } from "../../../test-support";
 import { AddProjectPalette } from "./AddProjectPalette";
 
@@ -66,4 +68,67 @@ it("says No results when the typed name matches no folder", async () => {
   await screen.findByRole("button", { name: /Documents/ });
   await user.type(field, "zzz");
   expect(await screen.findByText("No results")).toBeVisible();
+});
+
+type Win = { __TAURI_INTERNALS__?: { invoke: (command: string) => unknown } };
+/** The page inside the desktop app, whose shell answers `pick_folder` with `answer`. */
+async function inDesktop(answer: unknown) {
+  vi.spyOn(client, "shell").mockResolvedValue({ attached: true, windows: 1, facts: { cli: null, permissions: [] } });
+  const invoke = vi.fn(() => answer);
+  (window as unknown as Win).__TAURI_INTERNALS__ = { invoke };
+  await readShellStatus();
+  return invoke;
+}
+afterEach(async () => {
+  (window as unknown as Win).__TAURI_INTERNALS__ = undefined;
+  vi.spyOn(client, "shell").mockResolvedValue({ attached: false, windows: 0, facts: { cli: null, permissions: [] } });
+  await readShellStatus();
+  vi.restoreAllMocks();
+});
+
+it("in the desktop app Browse opens the native dialog and only fills the field with a folder on another drive", async () => {
+  given("C:\\Users\\me", { "C:\\Users\\me": ["Documents"], "D:\\work": ["app"] });
+  const invoke = await inDesktop("D:\\work");
+  const added = vi.spyOn(client, "addProject");
+  const { field, user } = await open();
+  await user.click(await screen.findByRole("button", { name: /Browse this computer/ }));
+  await waitFor(() => expect(field).toHaveValue("D:\\work\\"));
+  expect(invoke).toHaveBeenCalledWith("pick_folder");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(await screen.findByRole("button", { name: /D:\\work\\app/ })).toBeVisible();
+  // Picking never adds: that is the person's Enter on the field.
+  expect(added).not.toHaveBeenCalled();
+});
+
+it("cancelling the native dialog leaves the field and the folder where they were", async () => {
+  given("C:\\Users\\me", { "C:\\Users\\me": ["Documents"] });
+  const invoke = await inDesktop(null);
+  const { field, user } = await open();
+  await screen.findByRole("button", { name: /Documents/ });
+  await user.click(screen.getByRole("button", { name: /Browse this computer/ }));
+  await waitFor(() => expect(invoke).toHaveBeenCalled());
+  expect(field).toHaveValue("~\\");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("a dialog that fails says so and keeps the field", async () => {
+  given("C:\\Users\\me", { "C:\\Users\\me": ["Documents"] });
+  await inDesktop(42);
+  const { field, user } = await open();
+  await screen.findByRole("button", { name: /Documents/ });
+  await user.click(screen.getByRole("button", { name: /Browse this computer/ }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Type the path instead");
+  expect(field).toHaveValue("~\\");
+});
+
+it("in a plain browser tab Browse opens the in-app browser at the folder the field names", async () => {
+  given("C:\\Users\\me", { "C:\\Users\\me": ["Documents"], "D:\\work": ["app"], "D:\\work\\app": [] });
+  const { field, user } = await open();
+  await screen.findByRole("button", { name: /Documents/ });
+  await user.clear(field);
+  await user.type(field, "D:\\work\\");
+  await screen.findByRole("button", { name: /app/ });
+  await user.click(screen.getByRole("button", { name: /Browse this computer/ }));
+  const dialog = await screen.findByRole("dialog");
+  expect(await within(dialog).findByText("D:\\work")).toBeVisible();
 });
