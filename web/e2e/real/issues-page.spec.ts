@@ -49,8 +49,9 @@ test("the list shows the tracker's issues with counts, state tabs, the filters a
   await expect(retry.locator(".iss-state")).toHaveText("Open");
   await expect(retry.locator(".iss-avatar")).toHaveAttribute("title", "me");
   await expect(rows(page).filter({ hasText: "Tidy the docs" })).toContainText("#12 · GitHub · opened by ada");
-  // The Issue writes are not on this service. The client discovers them with a read of GET /api/issues/candidates, which this
-  // service answers through its SPA fallback as 404 `not_found` ("No such route."); the client does not read that code as
+  // The update and state writes are not on this service (create, comment and react are, but the client does not call them).
+  // The client discovers the edit controls with a read of GET /api/issues/candidates, which this service answers through its
+  // SPA fallback as 404 `not_found` ("No such route."); the client does not read that code as
   // "not offered", so Sort starts live. A chosen sort is sent as `sort` on GET /api/issues, which refuses an unknown filter
   // with 400 invalid; only then does the control go back to the disabled Planned form and the list is read again unsorted.
   const sort = page.getByRole("button", { name: "Sort: Updated", exact: true });

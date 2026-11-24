@@ -90,7 +90,7 @@ test("connect and disconnect are the real Person routes, and a stored scope come
   expect(refusal).toContain("GitHub reads through your own gh");
 });
 
-test("the project bind and the issue writes are not on this service", async () => {
+test("the project bind, candidates and the update and state writes are not on this service", async () => {
   const missing = async (method: string, path: string, body?: unknown) => {
     try {
       await service.api(method, path, body);
@@ -101,7 +101,8 @@ test("the project bind and the issue writes are not on this service", async () =
   };
   // docs/issues.md binds a tracker to a project through this route; the contract is written and the route is not built.
   expect(await missing("POST", `/api/projects/${projectId}/issue-tracker`, { tracker: "github", scope: "o/r" })).toContain("404");
-  // The Issue writes and candidates are in flight (PR #1521), not on this service: the page keeps them as Planned pills.
+  // The candidates read and the update and state writes are not on this service (PR #1521 served create, comment and react,
+  // which the web client does not call), so the edit controls have no route to use.
   expect(await missing("GET", "/api/issues/candidates?tracker=github&scope=o%2Fr")).toContain("404");
   expect(await missing("POST", "/api/issues/item/update", { tracker: "github", scope: "o/r", key: "7", title: "x" })).toContain("404");
   expect(await missing("POST", "/api/issues/item/state", { tracker: "github", scope: "o/r", key: "7", state: "Open" })).toContain("404");
