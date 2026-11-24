@@ -8,6 +8,7 @@ import { LiveEscapes } from "../../escape/live/LiveEscapes";
 import { AutonomyAreas } from "./AutonomyAreas";
 import { AutonomyThresholds } from "./AutonomyThresholds";
 import { AutopilotSettings } from "./AutopilotSettings";
+import { DeviceNotifications } from "../../notify/DeviceNotifications";
 import { DigestTime } from "./DigestTime";
 import { BacktestEntry, DashboardEntry, EscapesEntry, OracleEntry } from "./CrewEntries";
 import { PathClasses } from "./PathClasses";
@@ -68,6 +69,7 @@ export function CrewSettingsSection() {
           <>
             <ProfilesSettings />
             <AutopilotSettings />
+            <DeviceNotifications />
             <DigestTime />
             <CapacityEntry />
             <DashboardEntry />
