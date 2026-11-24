@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-macos",
-  "description": "macOS only: the unified title bar replaces the system one, so the web bar drags the window and a double click on it zooms it. Windows and Linux keep their native frame and are not granted these.",
+  "description": "macOS only: the unified title bar replaces the system one, so the web bar drags the window and a double click on it zooms it. Linux keeps its native frame; Windows has its own drawn-frame capability.",
   "windows": [
     "main"
   ],
