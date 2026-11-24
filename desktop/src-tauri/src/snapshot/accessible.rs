@@ -59,6 +59,12 @@ impl Budget {
     }
 }
 
+/// Whether a read may still spend AX calls: the title scan, the focus lookup and the tree walk
+/// check this before every step that would block on another app.
+pub fn may_read(budget: &Budget) -> bool {
+    !budget.expired() && !budget.stopped()
+}
+
 impl Default for Budget {
     fn default() -> Self {
         Self::new()
@@ -80,7 +86,7 @@ pub fn collect<T: Tree>(tree: &T, root: &T::Node, budget: &Budget) -> Option<Str
     let mut chars = 0_usize;
     let mut visited = 0_usize;
 
-    'walk: while let Some(visit) = stack.pop() {
+    while let Some(visit) = stack.pop() {
         let depth = match &visit {
             Visit::Borrowed(_, depth) | Visit::Owned(_, depth) => *depth,
         };
@@ -118,9 +124,10 @@ pub fn collect<T: Tree>(tree: &T, root: &T::Node, budget: &Budget) -> Option<Str
         let child_depth = depth + 1;
         for child in tree.children(node).into_iter().rev() {
             // Bound the queue too, not just the visits: a wide node would otherwise retain up to
-            // `MAX_CHILDREN` nodes per visit before the node cap stops the walk.
+            // `MAX_CHILDREN` nodes per visit before the node cap stops the walk. Stopping only
+            // further enqueues keeps the text the queued nodes still lead to.
             if stack.len() >= budget.max_queued {
-                break 'walk;
+                break;
             }
             stack.push(Visit::Owned(child, child_depth));
         }
@@ -149,20 +156,46 @@ pub fn pick_window_index(titles: &[String], wanted: &str) -> Option<usize> {
 pub enum WindowChoice {
     /// The window at this index in `AXWindows` has the captured window's exact title.
     Exact(usize),
-    /// No title matched, but the capture was of the app's focused window, so that window is it.
+    /// No title matched, but the app's focused window is positively the captured window.
     Focused,
-    /// No title matched and the capture was not of the focused window, so no window may be read:
-    /// another window of the same app holds different text.
+    /// No title matched and the focused window is not shown to be the captured one, so no window
+    /// may be read: another window of the same app holds different text.
     Skip,
 }
 
-/// Chooses the window to read: an exact title match always wins; with no match, only a capture of
-/// the focused window may fall back to it.
-pub fn window_choice(titles: &[String], wanted: &str, captured_is_focused: bool) -> WindowChoice {
-    if let Some(index) = pick_window_index(titles, wanted) {
+/// What one side knows about a window, for deciding whether the app's focused window is the one
+/// that was captured.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WindowIdentity {
+    /// The WindowServer window number, when that side exposes it. The screen-capture side always
+    /// has it; the AX side has it only through the non-standard AXWindowNumber attribute.
+    pub number: Option<i64>,
+    /// The window title, empty when unknown.
+    pub title: String,
+}
+
+/// Whether two identities are positively the same window. A number both sides expose is
+/// conclusive; otherwise a non-empty exact title is the evidence the security review allows.
+/// Unknown or empty values are never evidence, so the caller never falls back to another window
+/// without a match.
+pub fn same_window(captured: &WindowIdentity, focused: &WindowIdentity) -> bool {
+    match (captured.number, focused.number) {
+        (Some(captured), Some(focused)) => captured == focused,
+        _ => !captured.title.is_empty() && captured.title == focused.title,
+    }
+}
+
+/// Chooses the window to read: an exact title match always wins; with no match, the app's focused
+/// window may be read only when `same_window` proves it is the captured window.
+pub fn window_choice(
+    titles: &[String],
+    captured: &WindowIdentity,
+    focused: &WindowIdentity,
+) -> WindowChoice {
+    if let Some(index) = pick_window_index(titles, &captured.title) {
         return WindowChoice::Exact(index);
     }
-    if captured_is_focused {
+    if same_window(captured, focused) {
         WindowChoice::Focused
     } else {
         WindowChoice::Skip
@@ -502,22 +535,20 @@ mod tests {
     }
 
     #[test]
-    fn the_walk_stops_when_the_child_queue_is_full() {
+    fn the_queue_cap_stops_enqueues_but_not_the_walk() {
         struct Wide {
             fields: Cell<usize>,
-            children: Cell<usize>,
         }
 
         impl Tree for Wide {
             type Node = usize;
 
-            fn fields(&self, _node: &usize) -> Fields {
+            fn fields(&self, node: &usize) -> Fields {
                 self.fields.set(self.fields.get() + 1);
-                text("node", "", "")
+                text(&format!("node {node} {}", "x".repeat(1_000)), "", "")
             }
 
             fn children(&self, node: &usize) -> Vec<usize> {
-                self.children.set(self.children.get() + 1);
                 (1..=500)
                     .map(|index| node.wrapping_mul(1_000_003).wrapping_add(index))
                     .collect()
@@ -526,15 +557,18 @@ mod tests {
 
         let tree = Wide {
             fields: Cell::new(0),
-            children: Cell::new(0),
         };
-        let _ = collect(&tree, &0, &budget());
+        let capped = Budget {
+            max_queued: 10,
+            ..budget()
+        };
+        let text = collect(&tree, &0, &capped).expect("the walk still finds text");
+        assert_eq!(text.chars().count(), MAX_ACCESSIBLE_TEXT_CHARS);
         assert!(
-            tree.fields.get() < 100,
-            "visited {} nodes while the child queue grew past its cap",
+            tree.fields.get() >= 30,
+            "the walk stopped at the queue cap ({} nodes)",
             tree.fields.get()
         );
-        assert!(tree.children.get() < 100);
     }
 
     #[test]
@@ -564,19 +598,92 @@ mod tests {
         assert_eq!(collect(&arena, &root, &budget), None);
     }
 
+    fn identity(number: Option<i64>, title: &str) -> WindowIdentity {
+        WindowIdentity {
+            number,
+            title: title.to_owned(),
+        }
+    }
+
     #[test]
-    fn a_window_choice_needs_a_title_match_or_a_focused_capture() {
+    fn two_windows_are_the_same_only_on_positive_identity_evidence() {
+        // A WindowServer number both sides expose is conclusive, the title cannot override it.
+        assert!(same_window(
+            &identity(Some(42), "Notes"),
+            &identity(Some(42), "")
+        ));
+        assert!(!same_window(
+            &identity(Some(42), "Notes"),
+            &identity(Some(43), "Notes")
+        ));
+        // Without both numbers a non-empty exact title is the evidence the review allows.
+        assert!(same_window(
+            &identity(Some(42), "Notes"),
+            &identity(None, "Notes")
+        ));
+        assert!(same_window(
+            &identity(None, "Notes"),
+            &identity(None, "Notes")
+        ));
+        // Unknown or empty is never evidence, so the safe default is no fallback.
+        assert!(!same_window(&identity(None, ""), &identity(None, "")));
+        // An equal number is evidence on its own; only an absent number needs a used title.
+        assert!(same_window(
+            &identity(Some(42), ""),
+            &identity(Some(42), "")
+        ));
+        assert!(!same_window(
+            &identity(None, "Notes"),
+            &identity(None, "Mail")
+        ));
+        assert!(!same_window(&identity(None, "Notes"), &identity(None, "")));
+    }
+
+    #[test]
+    fn a_window_choice_needs_a_title_match_or_the_focused_identity() {
         let titles = vec!["Notes".to_owned(), "Mail".to_owned()];
+        let captured = identity(Some(42), "Notes");
 
         assert_eq!(
-            window_choice(&titles, "Notes", false),
+            window_choice(&titles, &captured, &identity(Some(42), "")),
             WindowChoice::Exact(0)
         );
-        assert_eq!(window_choice(&titles, "Mail", true), WindowChoice::Exact(1));
-        assert_eq!(window_choice(&titles, "notes", true), WindowChoice::Focused);
-        assert_eq!(window_choice(&titles, "notes", false), WindowChoice::Skip);
-        assert_eq!(window_choice(&titles, "", true), WindowChoice::Focused);
-        assert_eq!(window_choice(&titles, "", false), WindowChoice::Skip);
-        assert_eq!(window_choice(&[], "Notes", false), WindowChoice::Skip);
+        let plan = identity(Some(42), "Plan");
+        assert_eq!(
+            window_choice(&titles, &plan, &identity(Some(42), "Plan")),
+            WindowChoice::Focused
+        );
+        assert_eq!(
+            window_choice(&titles, &plan, &identity(None, "")),
+            WindowChoice::Skip
+        );
+        assert_eq!(
+            window_choice(&titles, &plan, &identity(Some(7), "Other")),
+            WindowChoice::Skip
+        );
+        assert_eq!(
+            window_choice(&titles, &identity(None, ""), &identity(None, "")),
+            WindowChoice::Skip
+        );
+        assert_eq!(
+            window_choice(&[], &plan, &identity(None, "Plan")),
+            WindowChoice::Focused
+        );
+    }
+
+    #[test]
+    fn the_budget_decides_whether_a_read_may_continue() {
+        let budget = Budget::new();
+        assert!(may_read(&budget));
+        let expired = Budget {
+            deadline: Instant::now(),
+            ..Budget::new()
+        };
+        assert!(!may_read(&expired));
+        let stopped = Budget::new();
+        stopped
+            .stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(!may_read(&stopped));
     }
 }

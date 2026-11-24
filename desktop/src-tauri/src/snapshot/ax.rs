@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once};
 
 use super::accessible::{
-    Budget, Fields, Tree, WindowChoice, collect, utf8_buffer_len, window_choice,
+    Budget, Fields, Tree, WindowChoice, WindowIdentity, collect, may_read, utf8_buffer_len,
+    window_choice,
 };
 
 type CFTypeRef = *const c_void;
@@ -31,6 +32,10 @@ const MAX_FIELD_UTF16: usize = 20_000;
 const MAX_WINDOWS: usize = 50;
 const MAX_CHILDREN: usize = 500;
 const MESSAGING_TIMEOUT_SECONDS: f32 = 0.25;
+/// Not a public AX attribute, but most apps expose their WindowServer number through it.
+const AX_WINDOW_NUMBER: &str = "AXWindowNumber";
+/// The CFNumber type for a signed 64-bit integer (CFNumber.h: kCFNumberSInt64Type).
+const CF_NUMBER_SINT64: i32 = 4;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
@@ -50,6 +55,8 @@ unsafe extern "C" {
     fn CFRelease(value: CFTypeRef);
     fn CFRetain(value: CFTypeRef) -> CFTypeRef;
     fn CFGetTypeID(value: CFTypeRef) -> CFTypeID;
+    fn CFNumberGetTypeID() -> CFTypeID;
+    fn CFNumberGetValue(number: CFTypeRef, number_type: i32, value: *mut c_void) -> Boolean;
     fn CFStringGetTypeID() -> CFTypeID;
     fn CFArrayGetTypeID() -> CFTypeID;
     fn CFArrayGetCount(array: CFArrayRef) -> CFIndex;
@@ -321,66 +328,82 @@ fn windows(app: &Cf) -> Vec<Cf> {
     array_values(&array, MAX_WINDOWS)
 }
 
-/// Picks the window named by the capture: the exact title among `AXWindows`, or the app's
-/// focused window only when the capture itself was of that focused window. It never reads a
-/// different window of the same app, and it checks the budget while reading titles so the
-/// selection stays inside the read's wall clock.
-fn pick_window(
-    app: &Cf,
-    window_title: &str,
-    captured_is_focused: bool,
-    budget: &Budget,
-) -> Option<Cf> {
-    if !window_title.is_empty() && !budget.expired() && !budget.stopped() {
-        let windows = windows(app);
-        let mut titles = Vec::with_capacity(windows.len());
-        for window in &windows {
-            if budget.expired() || budget.stopped() {
-                return None;
-            }
-            titles.push(named_string(window, "AXTitle"));
-        }
-        match window_choice(&titles, window_title, captured_is_focused) {
-            WindowChoice::Exact(index) => return windows.into_iter().nth(index),
-            WindowChoice::Focused => return focused_window(app, budget),
-            WindowChoice::Skip => return None,
-        }
+/// Picks the window to read. An exact title among `AXWindows` wins; with no match, the app's
+/// focused window is used only when its identity proves it is the captured window (see
+/// `same_window`). An empty or unknown identity reads nothing rather than another window of the
+/// same app. The identity is best effort: a WindowServer number when the app exposes the
+/// non-standard AXWindowNumber attribute, else its title.
+fn pick_window(app: &Cf, captured: &WindowIdentity, budget: &Budget) -> Option<Cf> {
+    if !may_read(budget) {
+        return None;
     }
-    // An empty title names no window in `AXWindows`; only a capture of the focused window may
-    // fall back to it.
-    if captured_is_focused {
-        focused_window(app, budget)
-    } else {
-        None
+    let focused = focused_window(app, budget);
+    let focused_identity = focused.as_ref().map(window_identity).unwrap_or_default();
+    if captured.title.is_empty() {
+        return match window_choice(&[], captured, &focused_identity) {
+            WindowChoice::Focused => focused,
+            WindowChoice::Exact(_) | WindowChoice::Skip => None,
+        };
     }
-}
-
-/// The app's focused window, then its main window, while the budget lasts.
-fn focused_window(app: &Cf, budget: &Budget) -> Option<Cf> {
-    for name in ["AXFocusedWindow", "AXMainWindow"] {
-        if budget.expired() || budget.stopped() {
+    let windows = windows(app);
+    let mut titles = Vec::with_capacity(windows.len());
+    for window in &windows {
+        if !may_read(budget) {
             return None;
         }
-        let Some(name) = cf_string(name) else {
-            continue;
-        };
-        if let Some(window) = attribute(app, &name) {
-            return Some(window);
-        }
+        titles.push(named_string(window, "AXTitle"));
     }
-    None
+    match window_choice(&titles, captured, &focused_identity) {
+        WindowChoice::Exact(index) => windows.into_iter().nth(index),
+        WindowChoice::Focused => focused,
+        WindowChoice::Skip => None,
+    }
 }
 
-/// Reads the accessible text of one window of `pid`, or answers `None` when this process is not
-/// trusted, the process id is invalid, or no window can be read. It never prompts or acts.
+/// The app's focused window, while the budget lasts. Only `AXFocusedWindow` is evidence of focus;
+/// `AXMainWindow` is not, so it never justifies reading a window.
+fn focused_window(app: &Cf, budget: &Budget) -> Option<Cf> {
+    if !may_read(budget) {
+        return None;
+    }
+    let name = cf_string("AXFocusedWindow")?;
+    attribute(app, &name)
+}
+
+/// The app's identity for one AX window: its WindowServer number when exposed, else only a title.
+fn window_identity(window: &Cf) -> WindowIdentity {
+    WindowIdentity {
+        number: window_number(window),
+        title: named_string(window, "AXTitle"),
+    }
+}
+
+/// The non-standard AXWindowNumber attribute when the app exposes it as a CFNumber.
+fn window_number(window: &Cf) -> Option<i64> {
+    let name = cf_string(AX_WINDOW_NUMBER)?;
+    let value = attribute(window, &name)?;
+    // SAFETY: `value` is live and non-null; the type id check only reads it.
+    if unsafe { CFGetTypeID(value.0) } != unsafe { CFNumberGetTypeID() } {
+        return None;
+    }
+    let mut number: i64 = 0;
+    // SAFETY: the type id check says this is a CFNumber and `number` is a live i64 out-pointer
+    // for the SInt64 request.
+    let stored =
+        unsafe { CFNumberGetValue(value.0, CF_NUMBER_SINT64, (&mut number as *mut i64).cast()) };
+    (stored != 0).then_some(number)
+}
+
+/// Reads the accessible text of the window that was captured, or answers `None` when this process
+/// is not trusted, the process id is invalid, or no window can be identified positively. It never
+/// prompts or acts on another app.
 ///
-/// `captured_is_focused` says whether the captured window was the app's focused window (it is the
-/// only case where reading the focused window is the same window). `stop` is set when the capture
-/// flow gives up, so the read ends instead of outliving the capture.
+/// `captured` is the screen-capture side's identity of the window it captured; the AX side uses
+/// it only to confirm that the app's focused window is that same window. `stop` is set when the
+/// capture flow gives up, so the read ends instead of outliving the capture.
 pub fn read_window_text(
     pid: i32,
-    window_title: &str,
-    captured_is_focused: bool,
+    captured: &WindowIdentity,
     stop: &Arc<AtomicBool>,
 ) -> Option<String> {
     if pid <= 0 || stop.load(Ordering::Relaxed) {
@@ -405,9 +428,9 @@ pub fn read_window_text(
     // SAFETY: the call takes a pid and returns a new +1 application element or null, which `Cf`
     // owns and releases.
     let app = Cf::owned(unsafe { AXUIElementCreateApplication(pid) })?;
-    if budget.expired() || budget.stopped() {
+    if !may_read(&budget) {
         return None;
     }
-    let window = pick_window(&app, window_title, captured_is_focused, &budget)?;
+    let window = pick_window(&app, captured, &budget)?;
     collect(&Ax::new()?, &window, &budget)
 }

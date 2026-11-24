@@ -214,8 +214,6 @@ impl Capturer for MacCapturer {
                 window.window_id,
                 window.title.clone().unwrap_or_default(),
                 application.application_name.clone(),
-                // Whether this is the app's focused window is what lets the reader fall back to it.
-                window.is_active,
             );
             if window.is_active {
                 active = Some(candidate);
@@ -225,9 +223,7 @@ impl Capturer for MacCapturer {
                 first = Some(candidate);
             }
         }
-        let Some((window_id, snapshot_title, snapshot_app_name, captured_is_focused)) =
-            active.or(first)
-        else {
+        let Some((window_id, snapshot_title, snapshot_app_name)) = active.or(first) else {
             return Err(Failure::NoWindow);
         };
         let live = content
@@ -274,12 +270,15 @@ impl Capturer for MacCapturer {
             .map_err(|_| Failure::CaptureError)?;
         let png = png_bytes(&image)?;
         let accessible_text = if self.include_accessibility && !self.stop.load(Ordering::SeqCst) {
-            super::ax::read_window_text(
-                application.process_id(),
-                &window_title,
-                captured_is_focused,
-                &self.stop,
-            )
+            // The capture identity the AX reader may use to confirm the app's focused window.
+            // is_active is not a focus signal (Apple documents it as whether the window is
+            // streaming), so the reader starts from the window id and title and falls back to
+            // the focused window only on positive identity evidence.
+            let captured = super::accessible::WindowIdentity {
+                number: Some(i64::from(window_id)),
+                title: window_title.clone(),
+            };
+            super::ax::read_window_text(application.process_id(), &captured, &self.stop)
         } else {
             None
         };
