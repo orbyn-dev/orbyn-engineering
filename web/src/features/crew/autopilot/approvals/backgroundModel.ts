@@ -12,7 +12,8 @@ import { TEMPLATE_ID_OF } from "./copy";
 import type { Mode, TemplateId, TriggerId } from "./model";
 import { whenLong, whenShort } from "./when";
 import { watchRow, watchStartsWhen, type WatchListRow } from "./watchModel";
-import type { BackgroundWatchChange, BackgroundWatchStatus } from "./watchTypes";
+import type { BackgroundWatchChange } from "../../../../generated/BackgroundWatchChange";
+import type { BackgroundWatchStatus } from "../../../../generated/BackgroundWatchStatus";
 
 // Background crews are kept on this device, in the service's data folder. The route serves the crews, their runs and the on/off
 // switch; no trigger fires yet, so the screens say so wherever the designs do.

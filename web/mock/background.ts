@@ -10,7 +10,8 @@ import type { BackgroundCrew } from "../src/generated/BackgroundCrew.ts";
 import type { BackgroundCrewCreate } from "../src/generated/BackgroundCrewCreate.ts";
 import type { BackgroundCrewUpdate } from "../src/generated/BackgroundCrewUpdate.ts";
 import type { BackgroundRun } from "../src/generated/BackgroundRun.ts";
-import type { BackgroundWatchChange, BackgroundWatchStatus } from "../src/features/crew/autopilot/approvals/watchTypes.ts";
+import type { BackgroundWatchChange } from "../src/generated/BackgroundWatchChange.ts";
+import type { BackgroundWatchStatus } from "../src/generated/BackgroundWatchStatus.ts";
 import type { MockResponse } from "./api.ts";
 
 const budget = { turns: 40, minutes: 60 };
@@ -213,7 +214,7 @@ function seedFor(scenario: string): Seed {
       },
     };
   }
-  if (scenario === "crew-background-watch-needsyou") {
+  if (scenario === "crew-background-watch-needsyou" || scenario === "crew-background-watch-needsyou-p-two") {
     const redirect = watch("bg-watch-redirect", "Redirect tests", "npm test web/nav/redirect", 1, "needs_you", true);
     const lock = watch("bg-watch-lock", "Lockfile check", "npm run lockfile:check", 6, "needs_you", true);
     return {

@@ -68,6 +68,8 @@ export interface NeedsItem {
   engine?: string;
   /** The source's own id the screen's handlers act on (a held command's id, a task id, a crew id). */
   ref: string;
+  /** The project the item belongs to, when the source names one (a watch row opens its page on that project). */
+  project?: string;
 }
 
 /** The inbox as a filter and a list. */

@@ -1,12 +1,13 @@
 // What a watch's reads mean, as the words and rows the Background screens draw. Crew designs: watch-list, watch-passing,
 // watch-failing, watch-failing-template, watch-still-failing, watch-recovered, watch-paused, watch-command-error and
 // watch-history. Pure: the same reads give the same words. The contract is the open service pull request (KC6), read
-// through ./watchTypes; nothing here invents a field it does not carry.
+// through the generated types; nothing here invents a field it does not carry.
 import type { BackgroundCrew as WireCrew } from "../../../../generated/BackgroundCrew";
 import type { BackgroundTrigger } from "../../../../generated/BackgroundTrigger";
 import { templateNameOf } from "./copy";
 import type { ChipTone } from "./parts";
-import type { BackgroundWatchChange, BackgroundWatchStatus } from "./watchTypes";
+import type { BackgroundWatchChange } from "../../../../generated/BackgroundWatchChange";
+import type { BackgroundWatchStatus } from "../../../../generated/BackgroundWatchStatus";
 import { clockOf, dayOfIso, plusHours, sameMoment, whenLong, whenMoment, whenShort } from "./when";
 
 /** The crew fields a watch draws: its name, its template, its trigger (the command and the schedule) and the switch. */

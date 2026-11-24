@@ -11,7 +11,8 @@ import type { BackgroundRunList } from "../../../generated/BackgroundRunList";
 import type { FlowBoard } from "../../../generated/FlowBoard";
 import type { FlowCard } from "../../../generated/FlowCard";
 import type { FlowCrewList } from "../../../generated/FlowCrewList";
-import type { WatchNeedsItem, WatchNeedsList } from "../autopilot/approvals/watchTypes";
+import type { NeedsYouItem } from "../../../generated/NeedsYouItem";
+import type { NeedsYouList } from "../../../generated/NeedsYouList";
 
 const PAGE = 200;
 /** The most pages one read follows, so a very long queue cannot hold the inbox open. */
@@ -47,10 +48,10 @@ export const needsApi = {
    * names its crate through the background crew list, read here for the name only. A service without the read answers 404
    * and the rows are not drawn at all, which is not an error: an older service simply has no watches to tell.
    */
-  async watchWaiting(signal?: AbortSignal): Promise<{ items: WatchNeedsItem[]; names: Record<string, string> }> {
-    let items: WatchNeedsItem[];
+  async watchWaiting(signal?: AbortSignal): Promise<{ items: NeedsYouItem[]; names: Record<string, string> }> {
+    let items: NeedsYouItem[];
     try {
-      const answer = await get<WatchNeedsList>("/api/crew/needs-you", signal);
+      const answer = await get<NeedsYouList>("/api/crew/needs-you", signal);
       items = answer.items.filter((one) => one.kind === "watch_failing" || one.kind === "watch_could_not_run");
     } catch (failure) {
       if (failure instanceof ApiFailure && failure.status === 404) return { items: [], names: {} };

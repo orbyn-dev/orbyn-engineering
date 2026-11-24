@@ -6,7 +6,8 @@ import type { BackgroundCrewCreate } from "../../../../generated/BackgroundCrewC
 import type { BackgroundCrewList } from "../../../../generated/BackgroundCrewList";
 import type { BackgroundCrewUpdate } from "../../../../generated/BackgroundCrewUpdate";
 import type { BackgroundRunList } from "../../../../generated/BackgroundRunList";
-import type { BackgroundWatchChanges, BackgroundWatchStatus } from "./watchTypes";
+import type { BackgroundWatchChanges } from "../../../../generated/BackgroundWatchChanges";
+import type { BackgroundWatchStatus } from "../../../../generated/BackgroundWatchStatus";
 import type { AutopilotDigestSchedule } from "../../../../generated/AutopilotDigestSchedule";
 import type { AutopilotDigestScheduleInput } from "../../../../generated/AutopilotDigestScheduleInput";
 import type { AutopilotHeld } from "../../../../generated/AutopilotHeld";

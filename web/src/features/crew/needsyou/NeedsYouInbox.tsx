@@ -63,7 +63,7 @@ function Inbox() {
       else if (action.key === "deny") state.hold(item.ref)?.deny();
       else if (action.key === "approve" || action.key === "open") {
         // A watch row opens that watch's own page on the Background tab; a background run opens the list it waits on.
-        if (item.id.startsWith("watch:")) useWatchFocus.getState().ask(item.ref);
+        if (item.id.startsWith("watch:")) useWatchFocus.getState().ask(item.ref, item.project);
         navigate({ name: "crew", tab: item.kind === "background" ? "background" : "approvals" });
       }
     },

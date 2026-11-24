@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { BackgroundCrew } from "../../../../generated/BackgroundCrew";
 import { watchBanner, watchChangesView, watchChip, watchFacts, watchLastLine, watchRow, watchStartsWhen, watchTail, watchView, everyHours } from "./watchModel";
 import { clockOf, dayOfIso, plusHours, whenLong, whenMoment, whenShort } from "./when";
-import type { BackgroundWatchChange, BackgroundWatchStatus } from "./watchTypes";
+import type { BackgroundWatchChange } from "../../../../generated/BackgroundWatchChange";
+import type { BackgroundWatchStatus } from "../../../../generated/BackgroundWatchStatus";
 
 const NOW = new Date("2026-11-07T18:00:00Z");
 const crew = (over: Partial<BackgroundCrew> = {}): BackgroundCrew => ({
@@ -62,7 +63,7 @@ describe("a watch's words", () => {
   it("draws one list row from the two reads", () => {
     const row = watchRow(crew(), status({ state: "failing", last_checked_at: "2026-11-07T14:02:00Z", last_exit_code: 1 }), CHANGES, NOW);
     expect(row).toMatchObject({ chip: { text: "Failing", tone: "no" }, subLine: "Watch · no model · npm test web/nav/redirect", startsWhen: "Every 1 hour · raises Needs you" });
-    expect(row.lastLine).toBe(`Checked ${clockOf("2026-11-07T14:02:00Z")} · exit 1`);
+    expect(row.lastLine).toBe(`Checked ${whenShort("2026-11-07T14:02:00Z", NOW)} · exit 1`);
   });
 });
 

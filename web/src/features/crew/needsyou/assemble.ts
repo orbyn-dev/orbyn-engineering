@@ -10,7 +10,7 @@ import type { FlowCard } from "../../../generated/FlowCard";
 import { modeName, plural } from "../autopilot/approvals/areas";
 import { stopOf } from "../autopilot/approvals/ledger";
 import type { ApprovalRow, Risk } from "../autopilot/approvals/model";
-import type { WatchNeedsItem } from "../autopilot/approvals/watchTypes";
+import type { NeedsYouItem } from "../../../generated/NeedsYouItem";
 import { whenLong } from "../autopilot/approvals/when";
 import { diskLowOf, diskSentence, NO_WORKER_RAN } from "../tool";
 import { KIND_FILTER, NEEDS_KINDS, type NeedsItem, type NeedsKind, type NeedsView } from "./model";
@@ -205,7 +205,7 @@ const STREAK = /^(\d+) checks? in a row/;
  * neither is dismissible; each action opens the watch itself. The core's one redacted line is the reason, and the design's
  * sentence says how it settles. A watch whose crew is not in the list keeps its id's row without a name it cannot learn.
  */
-export function watchItems(read: { items: WatchNeedsItem[]; names: Record<string, string> }): NeedsItem[] {
+export function watchItems(read: { items: NeedsYouItem[]; names: Record<string, string> }): NeedsItem[] {
   return read.items.map((item) => {
     const name = read.names[item.crew_id ?? item.id] ?? item.id;
     const reason = item.reason?.trim() || (item.kind === "watch_failing" ? "The watch’s command is failing." : "Checks in a row could not run.");
@@ -227,6 +227,7 @@ export function watchItems(read: { items: WatchNeedsItem[]; names: Record<string
       since: time(item.since),
       actions: [{ key: "open" as const, label: "Open", primary: true }],
       ref: item.crew_id ?? item.id,
+      ...(item.project_id ? { project: item.project_id } : {}),
     };
   });
 }

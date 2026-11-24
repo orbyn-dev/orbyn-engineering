@@ -153,4 +153,12 @@ describe("the watch history frame", () => {
     // The page test above shows the same read on the watch's page: one Latest output box and no change detail there.
     expect(screen.queryByText(/Latest output/)).toBeNull();
   });
+
+  it("a passing watch carries no note about checks that found the same result: that sentence is the history's, and only a failing watch's last check is not listed", async () => {
+    mock.reset("crew-background-watch-passing");
+    const Screen = WATCH_SCREENS["watch-history"];
+    render(<Screen />);
+    await screen.findByLabelText("Redirect tests watch changes");
+    expect(screen.queryByText(/Checks that found the same result as the one before are not listed/)).toBeNull();
+  });
 });

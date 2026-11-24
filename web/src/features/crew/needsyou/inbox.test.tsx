@@ -6,6 +6,7 @@ import type { Project } from "../../../generated/Project";
 import { useConnection } from "../../../product/state/connection";
 import { useWorkspace } from "../../../product/state/workspace";
 import { installMockFetch } from "../../../test-support";
+import { BackgroundTab } from "../autopilot/approvals/Background";
 import { NeedsYouInbox } from "./NeedsYouInbox";
 import { NEEDS_REFRESH_MS } from "./useNeedsYou";
 
@@ -414,6 +415,20 @@ describe("the watch rows (KC6)", () => {
     useWatchFocus.setState({ id: null });
     await user.click(within(failing).getByRole("button", { name: "Open: Watch failing: Redirect tests" }));
     expect(useWatchFocus.getState().id).toBe("bg-watch-redirect");
+  });
+
+  it("Open on a watch of the second project opens the Background tab on that project, not the first git project", async () => {
+    twoGitProjects();
+    const { user, view } = await open("crew-background-watch-needsyou-p-two");
+    const failing = within(await list()).getAllByRole("listitem").find((one) => one.textContent?.includes("Watch failing: Redirect tests"))!;
+    await user.click(within(failing).getByRole("button", { name: "Open: Watch failing: Redirect tests" }));
+    view.unmount();
+    vi.mocked(fetch).mockClear();
+    render(<BackgroundTab />);
+    expect(await screen.findByRole("region", { name: "Redirect tests watch" })).toBeVisible();
+    const reads = calls("/api/crew/background?").map(([url]) => String(url));
+    expect(reads.length).toBeGreaterThan(0);
+    for (const url of reads) expect(url).toContain("project=p-two");
   });
 
   it("draws no watch row when the shared Needs you read is not served: a 404 is a service without watches, not an error", async () => {

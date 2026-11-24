@@ -4,6 +4,7 @@ import { toFailure } from "../../../../lib/useAsync";
 import { Button } from "../../../../ui/controls";
 import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
 import { navigate } from "../../../../product/state/route";
+import { useVisibleProjects } from "../../../../product/state/workspace";
 import { useRepo } from "./AutonomyAreas";
 import { BackgroundCreate } from "./BackgroundCreate";
 import { backgroundView, type BackgroundCrew, type BackgroundRun, type BackgroundView } from "./backgroundModel";
@@ -221,9 +222,15 @@ export function BackgroundPageView({ view, onToggle, busy, repo, noRepo, notice,
 /** Background crews of the repo the page is about, read from the Crew routes. Without a git project nothing is read or listed. */
 export function BackgroundTab() {
   const repo = useRepo();
+  const visible = useVisibleProjects();
+  // A watch asked for from another project (a Needs you row) opens on that project; the pick outlives the one-shot ask.
+  const asked = useWatchFocus((state) => state.project);
+  const [picked, setPicked] = useState<string | null>(asked);
+  if (asked && asked !== picked) setPicked(asked);
   if (repo === "loading") return <Loading label="Reading background crews" rows={4} />;
   if (!repo) return <BackgroundPageView view={{ crews: [], runs: [] }} noRepo />;
-  return <Background project={repo.id} repo={repo.name} />;
+  const chosen = picked ? visible?.find((one) => one.id === picked && one.is_git) : undefined;
+  return <Background project={chosen?.id ?? repo.id} repo={chosen?.name ?? repo.name} />;
 }
 
 function Background({ project, repo }: { project: string; repo: string }) {

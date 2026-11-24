@@ -68,11 +68,11 @@ const run = (): BackgroundRun => ({
  * latest check of each watch in `mock/background.ts` (Redirect tests 14:02, Lockfile check 12:02), which is what the
  * service's item time means; the could-not-run row is not claiming that stretch began then, only that it is one row since.
  */
-const watchRows = () => [
+const watchRows = (project: string) => [
   {
     id: "bg-watch-redirect",
     kind: "watch_failing" as const,
-    project_id: "p-app",
+    project_id: project,
     crew_id: "bg-watch-redirect",
     since: "2026-11-07T14:02:00Z",
     dismissible: false,
@@ -81,7 +81,7 @@ const watchRows = () => [
   {
     id: "bg-watch-lock",
     kind: "watch_could_not_run" as const,
-    project_id: "p-app",
+    project_id: project,
     crew_id: "bg-watch-lock",
     since: "2026-11-07T12:02:00Z",
     dismissible: false,
@@ -94,7 +94,7 @@ export function needsYouMock(scenario: string, method: string, path: string): Mo
   if (method !== "GET" || !(scenario === "crew" || scenario.startsWith("crew-"))) return null;
   const empty = scenario === "crew-empty" || scenario.startsWith("crew-background-watch");
   if (path === "/api/crew/needs-you") {
-    const items = scenario === "crew-background-watch-needsyou" ? watchRows() : [];
+    const items = scenario === "crew-background-watch-needsyou" ? watchRows("p-app") : scenario === "crew-background-watch-needsyou-p-two" ? watchRows("p-two") : [];
     return { status: 200, body: { items, count: items.length } };
   }
   if (path === "/api/crew/autopilot/review") {

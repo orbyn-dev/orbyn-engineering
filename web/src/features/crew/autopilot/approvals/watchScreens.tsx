@@ -56,7 +56,6 @@ function WatchHistoryRead({ project }: { project: string }) {
         <Chip tone="plain">Preview</Chip>
       </header>
       <WatchChanges view={view} />
-      {view.note ? null : <p className="ap-bg-note">Checks that found the same result as the one before are not listed.</p>}
     </div>
   );
 }
