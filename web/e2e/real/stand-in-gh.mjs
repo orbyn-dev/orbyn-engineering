@@ -25,6 +25,9 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
 
 const state = JSON.parse(readFileSync(statePath, "utf8"));
 appendFileSync(process.env.ORBYN_GH_LOG, `${JSON.stringify(args)}\n`);
+// A spec can make the forge slow, as a real one is: the app's reading state then stays observable for a moment.
+// Off by default; `{ delayMs }` is set through the service's `ghEdit(0, …)` test helper.
+if (typeof state.delayMs === "number" && state.delayMs > 0) await new Promise((done) => globalThis.setTimeout(done, state.delayMs));
 
 const save = () => {
   // A rename, so the spec's own reads never catch it half done.
