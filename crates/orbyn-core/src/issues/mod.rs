@@ -80,6 +80,27 @@ pub(crate) enum DependencyFeed {
     Updates(Vec<DependencyUpdate>),
 }
 
+/// One label event a tracker reports for one issue.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LabelEvent {
+    /// A stable identity the tracker gives the event: the listener claims it first write wins, so a label removed
+    /// and added again starts one run even though the issue's label set looks the same.
+    pub id: String,
+    /// The issue key the event belongs to.
+    pub issue: String,
+}
+
+/// What a tracker can report about label events for one scope.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LabelFeed {
+    /// The tracker has no label event feed Orbyn reads for this scope. Nothing is claimed and no refusal is written:
+    /// a tracker that cannot answer is not a refusal.
+    Cannot,
+    /// The label events the tracker reports for the scope, newest first. GitHub answers it from the repository's
+    /// issue events; every other reader takes the trait's default.
+    Events(Vec<LabelEvent>),
+}
+
 /// What a tracker offers. A scope and a key are checked by the source before anything is sent.
 #[async_trait]
 pub(crate) trait IssueSource: Send + Sync {
@@ -95,6 +116,12 @@ pub(crate) trait IssueSource: Send + Sync {
     /// and a tracker that cannot answer spends no event.
     async fn dependency_updates(&self, _scope: &str) -> Result<DependencyFeed> {
         Ok(DependencyFeed::Cannot)
+    }
+    /// What this tracker can report about label events for one scope. The default is [`LabelFeed::Cannot`] and
+    /// every reader but GitHub takes it: GitHub answers the repository's issue events feed, and a tracker that
+    /// cannot answer spends no event.
+    async fn label_events(&self, _scope: &str, _label: &str) -> Result<LabelFeed> {
+        Ok(LabelFeed::Cannot)
     }
 }
 
@@ -395,6 +422,17 @@ impl Core {
         scope: &str,
     ) -> Result<DependencyFeed> {
         self.issue_source(tracker)?.dependency_updates(scope).await
+    }
+
+    /// What the project's tracker reports about label events for one stored label. GitHub answers from the
+    /// repository's issue events; every other tracker answers [`LabelFeed::Cannot`], and the listener spends no event.
+    pub(crate) async fn tracker_label_events(
+        &self,
+        tracker: TrackerKind,
+        scope: &str,
+        label: &str,
+    ) -> Result<LabelFeed> {
+        self.issue_source(tracker)?.label_events(scope, label).await
     }
 
     fn issue_source(&self, kind: TrackerKind) -> Result<Arc<dyn IssueSource>> {

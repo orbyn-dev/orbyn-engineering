@@ -3,7 +3,7 @@
 //! becomes empty, never an error that hides the other issues.
 
 use super::query::{AssigneeFilter, IssueQuery, StateFilter};
-use super::{DependencyFeed, DependencyUpdate, IssueSource, ScopeList};
+use super::{DependencyFeed, DependencyUpdate, IssueSource, LabelEvent, LabelFeed, ScopeList};
 use crate::error::{CoreError, Result};
 use crate::source_control::forge::{Forge, call};
 use async_trait::async_trait;
@@ -135,6 +135,42 @@ pub(crate) fn dependabot_updates(value: &Value) -> Vec<DependencyUpdate> {
             Some(DependencyUpdate {
                 key: number.to_string(),
                 ecosystem,
+            })
+        })
+        .collect()
+}
+
+/// The label events for one stored label in `gh api`'s answer: one event per issue whose label was added, newest
+/// first as GitHub answers it. Only the event id and the issue number are read; no actor, title or url is kept, so no
+/// event text can reach a prompt. A missing or wrong-typed field is skipped.
+pub(crate) fn label_events_of(value: &Value, label: &str) -> Vec<LabelEvent> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|event| {
+            if event.get("event").and_then(Value::as_str) != Some("labeled") {
+                return None;
+            }
+            let named = event
+                .get("label")
+                .and_then(|label| label.get("name"))
+                .and_then(Value::as_str)?;
+            if !named.eq_ignore_ascii_case(label) {
+                return None;
+            }
+            let id = event.get("id").and_then(Value::as_u64)?;
+            let issue = event.get("issue")?;
+            // The feed also carries pull requests' events, and an issue that is already closed is no new work.
+            if issue.get("pull_request").is_some()
+                || issue.get("state").and_then(Value::as_str) == Some("closed")
+            {
+                return None;
+            }
+            let number = issue.get("number").and_then(Value::as_u64)?;
+            Some(LabelEvent {
+                id: id.to_string(),
+                issue: number.to_string(),
             })
         })
         .collect()
@@ -384,6 +420,33 @@ impl IssueSource for GitHub {
             }
         }
         Ok(DependencyFeed::Cannot)
+    }
+
+    async fn label_events(&self, scope: &str, label: &str) -> Result<LabelFeed> {
+        scope_ok(scope)?;
+        // One page of the repository's issue events, newest first, through the person's own gh. Any failure (no
+        // access, signed out, gh missing) means the tracker cannot answer, never a refusal, so no event is spent.
+        let args: Vec<String> = [
+            "api",
+            "-X",
+            "GET",
+            &format!("repos/{scope}/issues/events"),
+            "-f",
+            "per_page=100",
+        ]
+        .map(str::to_owned)
+        .into();
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let Ok(out) = call(Forge::GitHub, &self.cwd, &refs).await else {
+            return Ok(LabelFeed::Cannot);
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&out) else {
+            return Ok(LabelFeed::Cannot);
+        };
+        if !value.is_array() {
+            return Ok(LabelFeed::Cannot);
+        }
+        Ok(LabelFeed::Events(label_events_of(&value, label)))
     }
 
     async fn get(&self, scope: &str, key: &str) -> Result<IssueDetail> {
@@ -640,6 +703,68 @@ mod tests {
         assert!(
             dependabot_updates(&json!({ "not": "an array" })).is_empty(),
             "a non-array answer reports no updates"
+        );
+    }
+
+    #[test]
+    fn labeled_issue_events_keep_only_the_id_and_issue_of_the_stored_label() {
+        let events = json!([
+            {
+                "id": 101,
+                "event": "labeled",
+                "label": { "name": "bug" },
+                "issue": { "number": 7, "title": "never read" },
+                "actor": { "login": "never read" }
+            },
+            {
+                "id": 102,
+                "event": "labeled",
+                "label": { "name": "ui" },
+                "issue": { "number": 8 }
+            },
+            {
+                "id": 103,
+                "event": "unlabeled",
+                "label": { "name": "bug" },
+                "issue": { "number": 9 }
+            },
+            {
+                "event": "labeled",
+                "label": { "name": "bug" },
+                "issue": { "number": 10 }
+            },
+            {
+                "id": 105,
+                "event": "labeled",
+                "label": { "name": "BUG" },
+                "issue": { "number": 11, "state": "open" }
+            },
+            {
+                "id": 106,
+                "event": "labeled",
+                "label": { "name": "bug" },
+                "issue": { "number": 12, "pull_request": { "url": "never read" } }
+            },
+            {
+                "id": 107,
+                "event": "labeled",
+                "label": { "name": "bug" },
+                "issue": { "number": 13, "state": "closed" }
+            }
+        ]);
+        assert_eq!(
+            label_events_of(&events, "bug"),
+            vec![
+                LabelEvent {
+                    id: "101".into(),
+                    issue: "7".into(),
+                },
+                LabelEvent {
+                    id: "105".into(),
+                    issue: "11".into(),
+                },
+            ],
+            "only a labeled event of the stored label on an open issue (not a pull request), with an id and a number, is kept"
         );
     }
 }

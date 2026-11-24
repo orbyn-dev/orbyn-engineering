@@ -13,11 +13,13 @@
 //! the CI watch reads each `ci_failure` crew's branch (its setting, else the project's default) and its optional
 //! workflow filter, the watch timer reads each `watch` crew's `every_hours` and runs its stored command (`crew::watch`),
 //! and the issue-label listener reads the open issues in the project's tracker scope that carry the
-//! crew's stored `label`. An issue-label crew starts with a baseline per stored label: its first pass claims the
-//! matching issues (every page, up to ten pages of 100) and starts nothing; a baseline that could not read every page is not
-//! kept and starts again on the next pass. Only a later label-set change (while the crew's label is present) is a new
-//! event, and a removal and re-add that returns the issue to a label set already claimed is not (the readers give no
-//! per-label event time; a label feed is a reader follow-up). Re-enabling a crew does not baseline again, so labels added
+//! crew's stored `label`. GitHub answers a label event feed, so a label removed and added again fires once: an
+//! issue-label crew starts with a baseline there too, claiming every event on its first pass and starting nothing.
+//! Every other tracker keeps the label-set proxy: its first pass claims the matching issues (every page, up to ten
+//! pages of 100) and starts nothing; a baseline that could not read every page is not kept and starts again on the next
+//! pass. Only a later label-set change (while the crew's label is present) is a new event there, and a removal and
+//! re-add that returns the issue to a label set already claimed is not (those readers give no per-label event time).
+//! Re-enabling a crew does not baseline again, so labels added
 //! while it was off fire once per pass, unless the issue's label set was already claimed. A project is read only through the one tracker reader that can answer for it (the connected
 //! tracker its origin remote names; Linear names no project and answers none), so a project with no reader, an
 //! untrusted folder and a crew that is off spend no event and start nothing. A `dependency_update` crew reads its
@@ -30,11 +32,11 @@
 //! a diagnostic line ("found in .orbyn/crew.json, no matching crew") that no screen shows.
 //!
 //! **Event text never reaches a prompt (decision 6).** The only fields read from outside are: a check's name and state
-//! at a head commit, the head commit's sha, a tracker issue's scope and key, its labels, the key of a dependency update,
-//! and a `.orbyn/crew.json` trigger's name and kind. Each of them only *selects* what to
+//! at a head commit, the head commit's sha, a tracker issue's scope and key, its labels, a label event's id, the key of
+//! a dependency update, and a `.orbyn/crew.json` trigger's name and kind. Each of them only *selects* what to
 //! start: a name is compared with the crew's stored workflow filter, a sha decides which head is watched, a label
 //! decides which issue a crew watches, a file trigger's name decides only whether a diagnostic line is worth writing.
-//! They appear in the claim identity (the issue's raw scope and key, and hashes of its label and label set), the
+//! They appear in the claim identity (the issue's raw scope and key, and hashes of its label, label set or event id), the
 //! `PausedTrigger` key (hashes only, one event per issue, label and label set, or per head and failing check) and a
 //! diagnostic log, and never in the brief, the worker's
 //! prompt or any other text a model reads, which `crew_background_start` keeps code-owned. A check's output, an
@@ -53,7 +55,7 @@ use super::triggers::{self, TriggerDef, TriggerKind};
 use super::watch::{CouldNotRun, WatchCheck};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
-use crate::issues::{DependencyFeed, IssueQuery, MAX_LIMIT, ProjectReader};
+use crate::issues::{DependencyFeed, IssueQuery, LabelFeed, MAX_LIMIT, ProjectReader};
 use crate::source_control::forge::crew::{
     CrewCheckState, CrewRepository, crew_base, crew_head_checks,
 };
@@ -333,16 +335,19 @@ impl Core {
     }
 
     /// The issue-label listener: an enabled `issue_label` crew fires on an open issue in its project's tracker scope
-    /// that carries the crew's stored `label` and that it has not seen before. On its first pass for a stored label
+    /// that carries the crew's stored `label` and that it has not seen before. GitHub answers a label event feed, so
+    /// each new event (a label removed and added again included) is its own claim; every other tracker answers
+    /// [`LabelFeed::Cannot`] and keeps the label-set proxy. On the proxy's first pass for a stored label
     /// (no `issue_label:<crew>:baseline:<hash of label>` claim yet) it claims every matching issue on every page it reads
     /// (up to ten pages of 100) and starts nothing, so the labels already there are never replayed; it then keeps the
     /// baseline claim, but only when every page was read, so a listing cut short baselines again next pass. Re-enabling a
     /// crew does not baseline again, so labels added while it was off fire once per pass unless the issue's label set
-    /// was already claimed. A later pass fires only on an issue whose claim it does not have. The claim keeps
-    /// a hash of the issue's whole label set, because the readers give no per-label event time: an edit that leaves the
+    /// was already claimed. A later pass fires only on an issue whose claim it does not have. The proxy claim keeps
+    /// a hash of the issue's whole label set, because those readers give no per-label event time: an edit that leaves the
     /// labels alone is inert, adding the label or changing the set while it is present is a new event, and a label
-    /// removed and added again that returns the issue to a set already claimed does not fire (a reader-side label feed is the
-    /// follow-up). Only a
+    /// removed and added again that returns the issue to a set already claimed does not fire. The event feed has its
+    /// own baseline marker: its first pass claims every event and starts nothing, and a later unclaimed event fires once.
+    /// Only a
     /// project with a reader is read at all (see [`Core::project_issue_reader`]); a tracker that cannot answer spends
     /// no event. The newest unseen issue wins, so one pass attempts at most one start per crew and the rest wait for a
     /// later pass. The issue's key only selects: the claim keeps it, the shorter start key keeps hashes, and the
@@ -388,9 +393,82 @@ impl Core {
                 tracing::warn!(crew = %crew.id, "an issue label crew has no usable label; nothing fired");
                 continue;
             };
-            // The first sight of a (crew, label) is a baseline: the labels already on its issues are not events. The
-            // marker is per stored label, so changing a crew's label baselines the issues that already carry the new one,
-            // and it is kept after every matching issue is claimed, so a pass cut short is a baseline again next time.
+            // GitHub reports each label event with a stable id, so a label removed and added again is another event
+            // even when the issue's label set looks the same. A tracker with no event feed answers "cannot" (or
+            // fails), and the label-set proxy below keeps working unchanged.
+            let feed = tokio::select! {
+                biased;
+                _ = stop.cancelled() => return,
+                feed = self.tracker_label_events(reader.tracker, &reader.scope, label) => feed,
+            };
+            let feed = match feed {
+                Ok(feed) => feed,
+                Err(error) => {
+                    tracing::debug!(%error, crew = %crew.id, "the project's label event feed could not be read; the label-set path answers");
+                    LabelFeed::Cannot
+                }
+            };
+            if let LabelFeed::Events(mut events) = feed {
+                // The event feed's own baseline: the events already in the repository are claimed and not replayed.
+                let marker = issue_label_events_baseline(
+                    &crew.id,
+                    tracker_name(reader.tracker),
+                    &reader.scope,
+                    label,
+                );
+                let baseline = match self.store.background_event_claimed(&marker) {
+                    Ok(kept) => !kept,
+                    Err(error) => {
+                        tracing::warn!(%error, crew = %crew.id, "an issue label crew's event baseline could not be read");
+                        continue;
+                    }
+                };
+                // Oldest event first, so the first unclaimed event is the oldest one nobody has seen.
+                events.sort_by_key(|event| event.id.parse::<u64>().unwrap_or(u64::MAX));
+                let mut baseline_failed = false;
+                for event in events {
+                    if stop.is_cancelled() {
+                        return;
+                    }
+                    let identity = issue_label_event_claim(
+                        &crew.id,
+                        tracker_name(reader.tracker),
+                        &reader.scope,
+                        &event.id,
+                    );
+                    match self.store.claim_background_event(&identity) {
+                        Ok(true) => {}
+                        Ok(false) => continue,
+                        Err(error) => {
+                            tracing::warn!(%error, crew = %crew.id, "an issue label event firing could not be claimed");
+                            baseline_failed = true;
+                            continue;
+                        }
+                    }
+                    if baseline {
+                        // First sight of the feed: the event is claimed so it can never fire, and nothing starts.
+                        continue;
+                    }
+                    self.fire_background_event(
+                        &crew.id,
+                        "issue_label",
+                        &issue_label_event(&reader.scope, &event.issue, label),
+                    )
+                    .await;
+                    // One start attempt per crew per pass.
+                    break;
+                }
+                if baseline && !baseline_failed {
+                    // The marker comes last: a pass that could not claim every event is a baseline again next time.
+                    if let Err(error) = self.store.claim_background_event(&marker) {
+                        tracing::warn!(%error, crew = %crew.id, "an issue label crew's event baseline could not be kept");
+                    }
+                }
+                continue;
+            }
+            // The proxy's first sight of a (crew, label) is a baseline too: the labels already on its issues are not
+            // events. Its marker is per stored label, so changing a crew's label baselines the issues that already carry
+            // the new one, and it is kept after every matching issue is claimed, so a pass cut short baselines again.
             let marker = format!("issue_label:{}:baseline:{}", crew.id, event_tag(label));
             let baseline = match self.store.background_event_claimed(&marker) {
                 Ok(kept) => !kept,
@@ -884,12 +962,31 @@ pub(super) fn event_tag(name: &str) -> String {
     crate::util::sha256_hex(name.as_bytes())[..16].to_owned()
 }
 
-/// The claim of one issue label event: the crew, the tracker and scope, the issue's key, a short hash of the label
-/// and a short hash of the issue's whole label set. The readers give no per-label event time, so the label set is the
-/// event: an edit that leaves the labels alone is inert, adding the label (or any label-set change while it is
-/// present) is a new claim, and a removal and re-add returns to a set already claimed and is not a new event. A claim
-/// row has no length limit, so the scope and key are kept whole here; the shorter start key below hashes them. The key
-/// and label set are untrusted outside text and are only an identity: neither reaches a prompt.
+/// The baseline marker of an issue-label crew on a tracker's label event feed: the crew, the tracker and scope, and a
+/// hash of the stored label. The scope comes from the project's current remote, so a crew pointed at another
+/// repository baselines that repository's events instead of replaying them.
+fn issue_label_events_baseline(crew: &str, tracker: &str, scope: &str, label: &str) -> String {
+    format!(
+        "issue_label:{crew}:{tracker}:{scope}:baseline-events:{}",
+        event_tag(label)
+    )
+}
+
+/// The claim of one label event from a tracker's feed: the crew, the tracker and scope, and a short hash of the
+/// event's stable id, so the same issue relabeled again is another event and another repository another claim.
+fn issue_label_event_claim(crew: &str, tracker: &str, scope: &str, id: &str) -> String {
+    format!(
+        "issue_label:{crew}:{tracker}:{scope}:event:{}",
+        event_tag(id)
+    )
+}
+
+/// The label-set proxy's claim of one issue label event: the crew, the tracker and scope, the issue's key, a short
+/// hash of the label and a short hash of the issue's whole label set. Those readers give no per-label event time, so
+/// the label set is the event: an edit that leaves the labels alone is inert, adding the label (or any label-set
+/// change while it is present) is a new claim, and a removal and re-add returns to a set already claimed and is not a
+/// new event. A claim row has no length limit, so the scope and key are kept whole here; the shorter start key below
+/// hashes them. The key and label set are untrusted outside text and are only an identity: neither reaches a prompt.
 fn issue_label_claim(
     crew: &str,
     tracker: &str,
