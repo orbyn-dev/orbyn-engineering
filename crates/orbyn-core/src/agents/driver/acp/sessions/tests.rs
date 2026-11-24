@@ -492,6 +492,58 @@ async fn an_agent_that_exits_at_once_records_a_failed_start() {
     clear_start_issue(id);
 }
 
+#[tokio::test]
+async fn a_kiro_session_is_opened_supervised_and_a_later_autopilot_on_advert_is_corrected() {
+    let f = Fixture::with_id("kiro", "kiro-autopilot");
+    let events = f.run(None).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(EngineEvent::Finished(EngineOutcome::Completed))
+        ),
+        "{events:?}"
+    );
+    let calls = f.calls();
+    let writes: Vec<Value> = calls
+        .iter()
+        .filter(|call| {
+            call.get("method").and_then(Value::as_str) == Some("session/set_config_option")
+        })
+        .cloned()
+        .collect();
+    // One write at session setup, and one after the agent re-advertised autopilot on mid-prompt.
+    assert!(writes.len() >= 2, "expected both writes: {writes:?}");
+    for write in &writes {
+        assert_eq!(write["params"]["configId"], json!("autopilot"), "{write}");
+        assert_eq!(write["params"]["value"], json!("off"), "{write}");
+    }
+    assert!(
+        !calls
+            .iter()
+            .any(|call| call["params"]["value"] == json!("on")),
+        "the supervised value is the only one ever written"
+    );
+}
+
+#[tokio::test]
+async fn a_kiro_agent_that_offers_no_supervised_value_is_refused_before_the_prompt() {
+    let f = Fixture::with_id("kiro", "kiro-autopilot-no-off");
+    let events = f.run(None).await;
+    let Some(EngineEvent::Finished(EngineOutcome::Failed(reason))) = events.last() else {
+        panic!("the session must fail: {events:?}");
+    };
+    assert!(
+        reason.contains("Kiro offers autopilot without its supervised value."),
+        "{reason}"
+    );
+    assert!(
+        !f.methods().contains(&"session/prompt".to_owned()),
+        "the agent was never prompted: {:?}",
+        f.methods()
+    );
+    clear_start_issue("kiro");
+}
+
 #[test]
 fn version_one_runs_a_v1_shaped_two_falls_back_and_a_v2_reply_is_refused() {
     assert!(check_version(&json!({"protocolVersion": 1, "agentCapabilities": {}})).is_ok());

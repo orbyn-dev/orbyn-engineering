@@ -89,6 +89,51 @@ fn config_values(option: &Value) -> Vec<&Value> {
         .collect()
 }
 
+/// Kiro starts a session with autopilot `on`, so its tools run without asking. Policy stays in the core,
+/// so the session is opened with Kiro's supervised value whenever the agent offers it; an agent that starts
+/// on and offers no supervised value cannot be made safe, so the session is refused.
+pub(super) async fn enforce_kiro_autopilot(
+    rpc: &RpcClient,
+    session_id: &str,
+    session: &Value,
+    engine: &str,
+) -> Result<()> {
+    if engine != super::KIRO_ENGINE_ID {
+        return Ok(());
+    }
+    let Some(option) = config_options(session).find(|option| {
+        option.get("id").and_then(Value::as_str) == Some(super::KIRO_AUTOPILOT_CONFIG_ID)
+    }) else {
+        return Ok(());
+    };
+    let current = option.get("currentValue").and_then(Value::as_str);
+    if option.get("type").and_then(Value::as_str) != Some("select")
+        || current == Some(super::KIRO_AUTOPILOT_OFF)
+    {
+        return Ok(());
+    }
+    let supervised = config_values(option)
+        .into_iter()
+        .filter_map(|value| value.get("value").and_then(Value::as_str))
+        .any(|value| value == super::KIRO_AUTOPILOT_OFF);
+    if !supervised {
+        if current == Some("on") {
+            return Err(CoreError::EngineUnavailable(
+                "Kiro offers autopilot without its supervised value.".into(),
+            ));
+        }
+        return Ok(());
+    }
+    let params = json!({
+        "sessionId": session_id,
+        "configId": super::KIRO_AUTOPILOT_CONFIG_ID,
+        "value": super::KIRO_AUTOPILOT_OFF,
+    });
+    rpc.call("session/set_config_option", params, CALL_TIMEOUT)
+        .await?;
+    Ok(())
+}
+
 /// What a session offers beyond the model: its modes and its other config options.
 pub(super) fn parse_session_options(session: &Value) -> Vec<ModelOption> {
     let mut options = Vec::new();

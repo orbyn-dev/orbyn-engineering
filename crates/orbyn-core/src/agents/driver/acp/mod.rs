@@ -34,8 +34,8 @@ use crate::agents::selection::MODE;
 use crate::error::{CoreError, Result};
 pub(crate) use events::UpdateMapper;
 use models::{
-    delete_probe_session, parse_models, parse_session_options, probe_model_options,
-    require_offered, select_model,
+    delete_probe_session, enforce_kiro_autopilot, parse_models, parse_session_options,
+    probe_model_options, require_offered, select_model,
 };
 use permissions::{answer_request, stop_outcome_after};
 use replay::{RestoreFailure, resume_without_replay};
@@ -54,6 +54,10 @@ const CANCEL_GRACE: Duration = Duration::from_secs(5);
 const METHOD_NOT_FOUND: i64 = -32601;
 /// Prefix of a `ModelOption` id that names one of the agent's config options.
 const CONFIG_PREFIX: &str = "config:";
+/// Kiro's built-in engine id, and the session option that keeps its tools from running without asking.
+const KIRO_ENGINE_ID: &str = "kiro";
+const KIRO_AUTOPILOT_CONFIG_ID: &str = "autopilot";
+const KIRO_AUTOPILOT_OFF: &str = "off";
 /// The longest reason the core puts in a failed-start message.
 const MAX_REASON_CHARS: usize = 160;
 
@@ -474,7 +478,7 @@ async fn run_protocol(
     let opened = tokio::select! {
         biased;
         () = cancel.cancelled() => Err(StartFailure::core(CoreError::RunClosed)),
-        result = open_session(&rpc, &mut inbound, &spec, &slot) => result,
+        result = open_session(&rpc, &mut inbound, &spec, &slot, &notes.id) => result,
     };
     let session = match opened {
         Ok((session, persistent, agent)) => {
@@ -530,7 +534,9 @@ async fn run_protocol(
                 match message {
                     Some(Inbound::Notification { method, params }) => {
                         if method == "session/update" && about_session(&params, &session) {
-                            for event in mapper.on_update(params.get("update").unwrap_or(&Value::Null)) {
+                            let update = params.get("update").unwrap_or(&Value::Null);
+                            correct_kiro_autopilot(&rpc, &session, &notes.id, update).await;
+                            for event in mapper.on_update(update) {
                                 if events.send(event).await.is_err() {
                                     return;
                                 }
@@ -558,7 +564,9 @@ async fn run_protocol(
                         && method == "session/update"
                         && about_session(&params, &session)
                     {
-                        for event in mapper.on_update(params.get("update").unwrap_or(&Value::Null)) {
+                        let update = params.get("update").unwrap_or(&Value::Null);
+                        correct_kiro_autopilot(&rpc, &session, &notes.id, update).await;
+                        for event in mapper.on_update(update) {
                             let _ = events.send(event).await;
                             sent += 1;
                         }
@@ -592,11 +600,42 @@ fn about_session(params: &Value, session: &str) -> bool {
         .is_none_or(|id| id == session)
 }
 
+/// True when an agent update re-advertises Kiro's autopilot on.
+fn advertises_kiro_autopilot_on(update: &Value) -> bool {
+    update.get("sessionUpdate").and_then(Value::as_str) == Some("config_option_update")
+        && update
+            .get("configOptions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|option| {
+                option.get("id").and_then(Value::as_str) == Some(KIRO_AUTOPILOT_CONFIG_ID)
+                    && option.get("currentValue").and_then(Value::as_str) == Some("on")
+            })
+}
+
+/// A supervised session never keeps autopilot on, so a later advert that says on is corrected before the
+/// next prompt step. Only the supervised value is ever written.
+async fn correct_kiro_autopilot(rpc: &RpcClient, session: &str, engine: &str, update: &Value) {
+    if engine != KIRO_ENGINE_ID || !advertises_kiro_autopilot_on(update) {
+        return;
+    }
+    let params = json!({
+        "sessionId": session,
+        "configId": KIRO_AUTOPILOT_CONFIG_ID,
+        "value": KIRO_AUTOPILOT_OFF,
+    });
+    let _ = rpc
+        .call_detailed("session/set_config_option", params, CALL_TIMEOUT)
+        .await;
+}
+
 async fn open_session(
     rpc: &RpcClient,
     inbound: &mut mpsc::UnboundedReceiver<Inbound>,
     spec: &RunSpec,
     slot: &SignInSlot,
+    engine: &str,
 ) -> std::result::Result<(String, bool, (String, String)), StartFailure> {
     if spec
         .resume
@@ -677,6 +716,11 @@ async fn open_session(
             session = reply;
         }
     }
+    enforce_kiro_autopilot(rpc, &id, &session, engine)
+        .await
+        .map_err(|error| {
+            StartFailure::core_at(error, "the agent did not take the supervised setting")
+        })?;
     Ok((id, persistent, agent_info(&init)))
 }
 
