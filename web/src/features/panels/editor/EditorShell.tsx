@@ -1,6 +1,7 @@
 import { ChevronRight, Folder, Hash, Search } from "lucide-react";
 import type { ReactNode } from "react";
 import { useWaited } from "../../../lib/motion";
+import { formatShortcut } from "../../../product/shell/shortcuts";
 import { IconButton } from "../../../ui/controls";
 
 /** The folders and name of a file, with Find and Go to line (off, for a file that has no text to search). */
@@ -18,10 +19,10 @@ function EditorCrumb({ path, disabled }: { path: string; disabled?: boolean }) {
       ))}
       <b title={path}>{name}</b>
       <span className="ed-sp" />
-      <IconButton label="Find ⌘F" disabled={disabled}>
+      <IconButton label={`Find ${formatShortcut("mod+f")}`} disabled={disabled}>
         <Search size={14} aria-hidden />
       </IconButton>
-      <IconButton label="Go to line ⌘G" disabled={disabled}>
+      <IconButton label={`Go to line ${formatShortcut("mod+g")}`} disabled={disabled}>
         <Hash size={14} aria-hidden />
       </IconButton>
     </div>

@@ -1,4 +1,5 @@
 import { THEME_TOKENS } from "../../styles/themes";
+import { isMacClient } from "../../lib/platform";
 import type { SettingsSection } from "../../product/state/route";
 
 export interface SettingSearchItem {
@@ -8,6 +9,8 @@ export interface SettingSearchItem {
   desktopOnly?: boolean;
   /** The row is drawn only on macOS, where its behaviour exists. */
   macosOnly?: boolean;
+  /** The row is drawn only when the client itself is a Mac. */
+  macClientOnly?: boolean;
   availability?: "cli" | "accessibility" | "screen_recording";
 }
 
@@ -88,7 +91,7 @@ export const SETTINGS: readonly SettingSearchItem[] = [
   {"id": "appearance-theme", "title": "Theme", "section": "appearance"},
   {"id": "appearance-layout", "title": "Layout", "section": "appearance"},
   {"id": "appearance-contrast", "title": "Contrast", "section": "appearance"},
-  {"id": "appearance-font-smoothing", "title": "Font smoothing", "section": "appearance"},
+  {"id": "appearance-font-smoothing", "title": "Font smoothing", "section": "appearance", "macClientOnly": true},
   {"id": "appearance-environment-identification", "title": "Environment identification", "section": "appearance"},
   {"id": "appearance-default-theme", "title": "Default theme", "section": "appearance"},
   {"id": "appearance-environment-icon", "title": "Environment icon", "section": "appearance"},
@@ -141,6 +144,6 @@ export function settingSearchId(section: SettingsSection, title: string): string
 export function searchSettings(query: string, desktop: boolean, available?: ReadonlySet<SettingSearchItem["availability"]>, macos = false): readonly SettingSearchItem[] {
   const words = query.normalize("NFKC").toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
   if (!words.length) return [];
-  return SETTINGS.filter((item) => (!item.desktopOnly || desktop) && (!item.macosOnly || macos) && (!item.availability || !available || available.has(item.availability)) && words.every((word) =>
+  return SETTINGS.filter((item) => (!item.desktopOnly || desktop) && (!item.macosOnly || macos) && (!item.macClientOnly || isMacClient()) && (!item.availability || !available || available.has(item.availability)) && words.every((word) =>
     `${item.title} ${item.section}`.normalize("NFKC").toLocaleLowerCase().includes(word)));
 }

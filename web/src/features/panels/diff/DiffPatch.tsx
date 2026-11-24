@@ -3,6 +3,7 @@ import { Fragment, useEffect, useId, useMemo, useRef, useState, type KeyboardEve
 import { useWorkspace } from "../../../product/state/workspace";
 import { useUi } from "../../../product/state/ui";
 import { useComposerChips } from "../../../product/state/composerChipStore";
+import { formatShortcut } from "../../../product/shell/shortcuts";
 import { charactersOver, chipId, chipLabel, languageForPath, promptWithChips, type ComposerChip, type ReviewChip } from "../../../product/composer/composerContext";
 import { ConfirmDialog } from "../../../ui/Dialog";
 import { Button, IconButton } from "../../../ui/controls";
@@ -368,7 +369,7 @@ export function Patch({ lines, path, threadId, origin, needle, current, full, sp
       <>
         {editBar ? (
           <div className="pd-ebar">
-            Esc cancels · ⌘↵ saves to the file
+            Esc cancels · {formatShortcut("mod+↵")} saves to the file
             <span className="end">
               <Button small tone="quiet" onClick={() => setEditing(null)}>Cancel</Button>
               <Button small tone="primary" disabled={saving} onClick={() => void save(editBar)}>Save line</Button>
