@@ -64,6 +64,30 @@ pub enum IssueCloseReason {
 }
 }
 
+wire_enum! {
+/// The reaction a person adds or takes back (docs/issues.md, "Create, comment, react"). Every tracker that
+/// writes issues has this set or a smaller one; a smaller one refuses a value it lacks and names the ones it has.
+pub enum IssueReaction {
+    ThumbsUp,
+    ThumbsDown,
+    Laugh,
+    Hooray,
+    Confused,
+    Heart,
+    Rocket,
+    Eyes,
+}
+}
+
+wire! {
+/// One reaction the tracker reports on an issue, as a count. `content` is the tracker's own word for it
+/// (`HEART` on GitHub), so a reader that does not recognize one still shows the tracker's word and its count.
+pub struct IssueReactionCount {
+    pub content: String,
+    pub count: u32,
+}
+}
+
 wire! {
 /// The tracker's own word for where an issue stands, and the category it falls in.
 pub struct IssueState {
@@ -160,6 +184,11 @@ pub struct IssueDetail {
     pub linked_pull_requests: Vec<IssueLinkedPull>,
     /// Threads that link this issue.
     pub linked_threads: Vec<String>,
+    /// The reactions on the issue as the tracker reports them, in the tracker's own words. Absent when the
+    /// tracker does not report them; a write route answers them for a tracker that does (docs/issues.md).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub reactions: Option<Vec<IssueReactionCount>>,
 }
 }
 
@@ -218,4 +247,126 @@ pub struct StartIssueThread {
     pub message: String,
     pub project_id: String,
 }
+}
+
+wire! {
+/// A new issue (docs/issues.md, "Create, comment, react"). `title` is one line, 1 to 256 characters and `body`
+/// at most 64 KiB, both the person's own text; `labels` (at most 50) are names and `assignees` (at most 25) are
+/// the `id`s a tracker's candidates give, never a login typed by hand. `template` names a template from the
+/// templates read, which fills a missing body (R15 PR2); `title` and `body` are the new issue's text and are
+/// untrusted as every issue's text is.
+pub struct CreateIssue {
+    pub tracker: TrackerKind,
+    pub scope: String,
+    pub title: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub assignees: Vec<String>,
+    /// The id of one of the tracker's templates for this scope; an id the tracker does not report is `400 invalid`.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub template: Option<String>,
+}
+}
+
+wire! {
+/// One comment on one issue (docs/issues.md, "Create, comment, react"): `body` is 1 to 64 KiB and not blank.
+pub struct CommentIssue {
+    pub tracker: TrackerKind,
+    pub scope: String,
+    pub key: String,
+    pub body: String,
+}
+}
+
+wire! {
+/// Adds (`on: true`) or takes back (`on: false`) one reaction, on a comment when `comment_id` is present and on
+/// the issue itself when it is absent. Both directions are idempotent (docs/issues.md, "Create, comment, react").
+pub struct ReactIssue {
+    pub tracker: TrackerKind,
+    pub scope: String,
+    pub key: String,
+    /// A comment id as `IssueDetail.comments` carried it.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub comment_id: Option<String>,
+    pub reaction: IssueReaction,
+    pub on: bool,
+}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn react(body: &str) -> Result<ReactIssue, serde_json::Error> {
+        serde_json::from_str(body)
+    }
+
+    #[test]
+    fn an_unknown_reaction_is_refused_when_the_body_is_parsed() {
+        let error = react(
+            r#"{"tracker":"github","scope":"acme/app","key":"7","reaction":"facepalm","on":true}"#,
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("unknown variant"),
+            "{error}"
+        );
+        let accepted = react(
+            r#"{"tracker":"github","scope":"acme/app","key":"7","reaction":"thumbs_up","on":true}"#,
+        )
+        .unwrap();
+        assert_eq!(accepted.reaction, IssueReaction::ThumbsUp);
+        assert_eq!(accepted.comment_id, None);
+        let removed = react(
+            r#"{"tracker":"github","scope":"acme/app","key":"7","comment_id":"IC_1","reaction":"heart","on":false}"#,
+        )
+        .unwrap();
+        assert_eq!(removed.comment_id.as_deref(), Some("IC_1"));
+        assert!(!removed.on);
+    }
+
+    #[test]
+    fn a_create_body_may_leave_the_optional_fields_out() {
+        let input: CreateIssue = serde_json::from_str(
+            r#"{"tracker":"gitlab","scope":"group/app","title":"Crash on start"}"#,
+        )
+        .unwrap();
+        assert_eq!(input.title, "Crash on start");
+        assert_eq!(input.body, None);
+        assert!(input.labels.is_empty() && input.assignees.is_empty());
+        assert_eq!(input.template, None);
+    }
+
+    #[test]
+    fn an_issue_detail_reactions_are_absent_unless_they_are_reported() {
+        let plain: IssueDetail = serde_json::from_str(
+            r##"{"tracker":"github","scope":"acme/app","key":"7","display_key":"#7","title":"T",
+                "url":"u","author":null,"state":{"category":"open","name":"Open"},
+                "created_at":"c","updated_at":"u","assignees":[],"labels":[],"comment_count":0,
+                "body":"b","comments":[],"linked_pull_requests":[],"linked_threads":[]}"##,
+        )
+        .unwrap();
+        assert_eq!(plain.reactions, None);
+        let reported: IssueDetail = serde_json::from_str(
+            r##"{"tracker":"github","scope":"acme/app","key":"7","display_key":"#7","title":"T",
+                "url":"u","author":null,"state":{"category":"open","name":"Open"},
+                "created_at":"c","updated_at":"u","assignees":[],"labels":[],"comment_count":0,
+                "body":"b","comments":[],"linked_pull_requests":[],"linked_threads":[],
+                "reactions":[{"content":"HEART","count":2}]}"##,
+        )
+        .unwrap();
+        assert_eq!(
+            reported.reactions,
+            Some(vec![IssueReactionCount {
+                content: "HEART".into(),
+                count: 2,
+            }])
+        );
+    }
 }
