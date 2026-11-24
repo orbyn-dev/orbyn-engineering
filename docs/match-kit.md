@@ -79,6 +79,8 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **Crew, KC2 a task whose worker could not be stopped** (Crew Designs v125, `kc2-close-lead-could-not-stop` and `kc2-close-lead-could-not-stop-board`), on the live inbox and Board over the mock's `crew-could-not-stop` scenario. Both the Inbox row and the Board card draw. `kc2-close-lead-could-not-stop`, `kc2-close-lead-could-not-stop-board`
 
+**Crew, KC3 the Taskboard's words** (Crew Designs v147, `needs-one-source-working-board` and `needs-one-source-board`), on the live Board over the mock's `crew-board-working` and `crew-board-needs-kinds` scenarios: the Working line on each card whose worker owns live work, the empty Needs you column's sentence, and the amber sentence each needs-you kind draws. The dashboard, Map and Inbox frames are separate PRs; "A command needs your approval" and "The review waits for you" have no kind in the field yet, so the frame draws more than the build. `needs-one-source-working-board`, `needs-one-source-board`
+
 **Crew, KC8 the resumed task's inbox row** (Crew Designs v145, `kc8-resumed-inbox`), on the live inbox over the mock's `crew-worker-stopped-twice` scenario: the Stops row for a task whose worker stopped twice after its one resume, with Dismiss alone and the note under the list; the card, the zoom and the ledger frames are separate. `kc8-resumed-inbox`
 
 **Crew, KC4 a background start the disk guard refused** (Crew Designs, `kc4-low-disk-background-run`), on the live Background tab over the mock's `crew-background-disk-low` scenario: the newest row of Recent runs reads "Not started · Disk", and the crew's last-run cell says the same. `kc4-low-disk-background-run`
