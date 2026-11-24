@@ -28,13 +28,13 @@ pub use query::{AssigneeFilter, IssueQuery, StateFilter};
 use crate::app::Core;
 use crate::credentials::{CredentialError, Credentials};
 use crate::error::{CoreError, Result};
-use crate::store::{TrackerConnection, tracker_name};
+use crate::store::{AuditRecord, TrackerConnection, tracker_name, tracker_of};
 use async_trait::async_trait;
 use orbyn_contracts::{
     CommentIssue, ConnectTracker, CreateIssue, CreateThread, IssueComment, IssueCounts,
     IssueDetail, IssueDraft, IssueKey, IssueList, IssueListFailure, IssueReaction, IssueRef,
-    IssueSummary, IssueTemplate, Project, ReactIssue, StartIssueThread, Thread, TrackerKind,
-    TrackerRow,
+    IssueSummary, IssueTemplate, Project, ProjectIssueTracker, ReactIssue, SetProjectIssueTracker,
+    StartIssueThread, Thread, TrackerKind, TrackerRow,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -1078,6 +1078,104 @@ impl Core {
             template.body = frame::cut(&template.body, MAX_TEMPLATE_BODY_BYTES).to_owned();
         }
         Ok(templates)
+    }
+
+    /// Binds a project to the connected tracker and scope its issues come from, or unbinds it (docs/issues.md,
+    /// "Create, comment, react, templates and project binding"). `Ok(None)` is the unbind. A tracker that is not
+    /// connected and a scope outside the connection are `400 invalid`; nothing about the connection, the project or
+    /// any issue changes. A bind writes one audit row with ids and names only, never a token; unbinding writes none
+    /// and answers the same way when there was nothing bound (it is idempotent).
+    pub async fn bind_project_issue_tracker(
+        &self,
+        project_id: &str,
+        input: SetProjectIssueTracker,
+    ) -> Result<Option<ProjectIssueTracker>> {
+        self.store.project(project_id)?;
+        let Some(tracker) = input.tracker else {
+            if input.scope.is_some() {
+                return Err(CoreError::Invalid("An unbind names no scope.".into()));
+            }
+            self.store.clear_project_issue_tracker(project_id)?;
+            return Ok(None);
+        };
+        let scope = input
+            .scope
+            .as_deref()
+            .map(str::trim)
+            .filter(|scope| !scope.is_empty())
+            .ok_or_else(|| CoreError::Invalid("A binding needs a scope.".into()))?;
+        if scope.len() > MAX_SCOPE_BYTES || scope.chars().any(char::is_control) {
+            return Err(CoreError::Invalid(
+                "The scope is too long or has control characters.".into(),
+            ));
+        }
+        // A tracker that is not connected is the write route's 400, not the read routes' 409: the binding is refused
+        // before anything is stored.
+        let connected = self
+            .issue_trackers()
+            .await?
+            .into_iter()
+            .find(|row| row.tracker == tracker)
+            .is_some_and(|row| row.connected);
+        if !connected {
+            return Err(CoreError::Invalid(format!(
+                "{} is not connected.",
+                display_name(tracker)
+            )));
+        }
+        let connection = self
+            .store
+            .tracker_connections()?
+            .into_iter()
+            .find(|connection| connection.tracker == tracker)
+            .unwrap_or(TrackerConnection {
+                tracker,
+                host: None,
+                scopes: Vec::new(),
+            });
+        if !self
+            .issue_scopes(&connection)
+            .await?
+            .iter()
+            .any(|known| known == scope)
+        {
+            return Err(CoreError::Invalid(
+                "That scope is not part of this connection.".into(),
+            ));
+        }
+        // The audit row is written before the effect it describes (docs/architecture.md rule 6): an audit failure
+        // leaves no binding behind.
+        self.store.append_audit(&AuditRecord {
+            actor: "user".into(),
+            action: "issues.project.bind".into(),
+            target: project_id.to_owned(),
+            decision: None,
+            source: "user".into(),
+            thread_id: None,
+            run_id: None,
+            detail: serde_json::json!({
+                "project": project_id,
+                "tracker": tracker_name(tracker),
+                "scope": scope,
+            }),
+        })?;
+        self.store.set_project_issue_tracker(
+            project_id,
+            tracker_name(tracker),
+            scope,
+            &crate::util::now(),
+        )?;
+        // Answer from the row that was stored: the write is what the page reads back.
+        let stored = self
+            .store
+            .project_issue_tracker(project_id)?
+            .ok_or_else(|| CoreError::Internal("the issue tracker binding was not stored".into()))?;
+        let stored_tracker = tracker_of(&stored.tracker)
+            .ok_or_else(|| CoreError::Internal("the stored issue tracker is unknown".into()))?;
+        Ok(Some(ProjectIssueTracker {
+            tracker: stored_tracker,
+            scope: stored.scope,
+        }))
     }
 
     /// The source that may write for this tracker. A tracker whose own write is not built yet answers the API's
