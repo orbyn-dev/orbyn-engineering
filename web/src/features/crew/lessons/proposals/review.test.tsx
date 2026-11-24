@@ -3,9 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useUi } from "../../../../product/state/ui";
 import { useWorkspace } from "../../../../product/state/workspace";
+import { setViewportWidth } from "../../../../test-support";
 import { forgetSkillAdded, takeSkillAdded } from "./marks";
 import { SkillProposalPage } from "./SkillProposalPage";
-import { SKILL_TEXT, bodyOf, project, proposal, stubFetch, writes, type Answer, type Call, type Write } from "./support";
+import { SKILL_TEXT, bodyOf, lessons, project, proposal, stubFetch, writes, type Answer, type Call, type Write } from "./support";
 
 let calls: Call[] = [];
 let answers: { preview?: Answer; projects?: Answer; proposals?: Answer; lessons?: Answer; write?: (one: Write) => Answer | Promise<Answer> };
@@ -86,6 +87,24 @@ describe("the proposed skill's review page", () => {
     expect(writes(calls, "POST")).toHaveLength(0);
   });
 
+  it("stacks the facts and keeps Approve and Cancel on one row at a narrow width, and leaves the wide page unchanged", async () => {
+    setViewportWidth(640);
+    const narrow = open();
+    await loaded();
+    const facts = narrow.container.querySelector<HTMLElement>(".cx-ppfkv") as HTMLElement;
+    expect(facts.style.gridTemplateColumns).toBe("minmax(0, 1fr)");
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    const approve = screen.getByRole("button", { name: "Approve" });
+    expect(cancel.parentElement).toBe(approve.parentElement);
+    expect(cancel.parentElement).toHaveClass("cx-acts");
+    expect((cancel.parentElement as HTMLElement).style.flexWrap).toBe("nowrap");
+    narrow.unmount();
+    setViewportWidth(1200);
+    const wide = open();
+    await loaded();
+    expect((wide.container.querySelector(".cx-ppfkv") as HTMLElement).style.gridTemplateColumns).toBe("120px minmax(0, 1fr)");
+  });
+
   it("approves the text the person edited, then leaves for the Lessons page", async () => {
     answers.write = ({ method, url }) =>
       method === "POST" && url === "/api/crew/skill-proposals/prop-redirect-checks/approve"
@@ -127,19 +146,43 @@ describe("the proposed skill's review page", () => {
     expect(window.location.hash).toBe("");
   });
 
-  it("offers no Approve for a proposal whose pattern lost a lesson, and says why", async () => {
+  it("offers no Approve for a proposal whose pattern lost a lesson, and says why with the lessons it still rests on", async () => {
+    answers.lessons = {
+      status: 200,
+      body: lessons({
+        counts: { active: 2, disabled: 1, hidden: 0 },
+        lessons: lessons().lessons.map((one) => (one.id === "les-loginlink" ? { ...one, state: "disabled", in_next_brief: false } : one)),
+      }),
+    };
     answers.proposals = { status: 200, body: { proposals: [proposal({ can_approve: false })] } };
     open();
     const field = await loaded();
     expect(field).not.toHaveAttribute("readonly");
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
-    const note = screen.getByText(/^Approve is off:/).parentElement as HTMLElement;
-    expect(note).toHaveTextContent(
-      "Approve is off: a lesson it was based on was deleted or turned off. You can still read the text; go back to dismiss it.",
+    const note = screen.getByText(/^This proposal is stale:/).parentElement as HTMLElement;
+    await waitFor(() =>
+      expect(note).toHaveTextContent(
+        "This proposal is stale: it now rests on 2 lessons and needs 3. Go back to dismiss it.",
+      ),
     );
+    expect(screen.getByText("(2 lessons now, 3 when it was proposed)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
     expect(screen.queryByText(/Approve saves the skill in skills-local/)).toBeNull();
     expect(writes(calls, "POST")).toHaveLength(0);
+  });
+
+  it("says a lesson was deleted or turned off while the lessons read has not answered", async () => {
+    answers.lessons = "never";
+    answers.proposals = { status: 200, body: { proposals: [proposal({ can_approve: false })] } };
+    open();
+    await loaded();
+    await waitFor(() => expect(calls.some(({ url }) => url.includes("/api/crew/lessons?"))).toBe(true));
+    const note = screen.getByText(/^This proposal is stale:/).parentElement as HTMLElement;
+    expect(note).toHaveTextContent(
+      "This proposal is stale: a lesson it was based on was deleted or turned off. Go back to dismiss it.",
+    );
+    expect(note).not.toHaveTextContent(/now rests on/);
+    expect(screen.getByText("3 lessons")).toBeInTheDocument();
   });
   it("keeps the text when the write was refused, and Try again sends it again", async () => {
     answers.write = () => ({

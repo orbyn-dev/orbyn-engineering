@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLayoutWidth, type LayoutWidth } from "../../../../lib/useLayout";
 import { navigate, routeHref } from "../../../../product/state/route";
 import { useUi } from "../../../../product/state/ui";
 import { ConfirmDialog } from "../../../../ui/Dialog";
@@ -20,6 +21,7 @@ import {
   TEMPLATE_NOTE,
   activeLessons,
   basedOnWords,
+  cardStaleWords,
   firstLines,
   lessonsOnly,
   lessonsWord,
@@ -27,7 +29,6 @@ import {
   proposalName,
   skillText,
   sourceLessons,
-  staleWords,
 } from "./model";
 import type { SkillProposal } from "./types";
 import { openProposals, useProposals } from "./useProposals";
@@ -190,8 +191,8 @@ function SectionBody({
             >
               {added.name}
             </a>{" "}
-            is listed on the Skills page as Personal. {AVAILABLE} The {lessonsWord(added.lessons)} it came from stay here and
-            stop going into briefs while the skill exists.
+            is listed on the Skills page as Personal. {AVAILABLE} The lessons it came from stay here and stop going into
+            briefs while the skill exists.
           </span>
         </div>
       ) : null}
@@ -244,9 +245,14 @@ function SectionBody({
   );
 }
 
-/** The lines a card previews of the text, and the label that says so. */
-const previewOf = (lines: number): { shown: number; label: string } =>
-  lines > 8 ? { shown: 8, label: `first 8 of ${lines} lines` } : { shown: lines, label: `${lines} lines` };
+/** The narrow window the design draws at 640 px: the app's phone and small layouts. */
+const isNarrow = (layout: LayoutWidth): boolean => layout === "phone" || layout === "small";
+
+/** The lines a card previews of the text, and the label that says so: 8 when wide, 6 when narrow. */
+const previewOf = (lines: number, narrow: boolean): { shown: number; label: string } => {
+  const most = narrow ? 6 : 8;
+  return lines > most ? { shown: most, label: `first ${most} of ${lines} lines` } : { shown: lines, label: `${lines} lines` };
+};
 
 /** One proposal: its name and one line, what it is based on, the text as proposed, and the person's three acts. */
 function ProposalCard({
@@ -266,15 +272,18 @@ function ProposalCard({
 }) {
   const text = skillText(proposal.text);
   const title = text.name ?? "Proposed skill";
-  const [shown, setShown] = useState(true);
+  const layout = useLayoutWidth();
+  const narrow = isNarrow(layout);
+  // The design's narrow card starts folded; the wide card starts with the lessons open.
+  const [shown, setShown] = useState(!narrow);
   const count = proposal.lessons.length;
   const active = activeLessons(proposal, lessons);
   // A proposal whose pattern lost a lesson draws only the lessons still active: the others are gone from this pattern.
   const sources = sourceLessons(proposal, lessons).filter((one) => proposal.can_approve || one.state === "active");
   const shownCount = proposal.can_approve ? count : active;
-  const preview = previewOf(text.lines);
+  const preview = previewOf(text.lines, narrow);
   // The design bolds only the leading sentence of the stale line: "Based on 2 active lessons now: needs 3."
-  const stale = staleWords(proposal, lessons);
+  const stale = cardStaleWords(proposal, lessons);
   const stop = stale.indexOf(". ");
   const staleLead = stop < 0 ? stale : stale.slice(0, stop + 1);
   const staleRest = stop < 0 ? "" : stale.slice(stop + 1);
@@ -311,7 +320,7 @@ function ProposalCard({
           </b>
           {sources.length > 0 ? (
             <button type="button" className="cx-pptoggle" aria-expanded={shown} onClick={() => setShown((open) => !open)}>
-              <Ic n="down" sm />
+              <Ic n={shown ? "down" : "right"} sm />
               <span>
                 {shown ? "Hide" : "Show"} the {lessonsWord(shownCount)}
               </span>

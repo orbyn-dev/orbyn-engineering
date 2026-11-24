@@ -920,7 +920,7 @@ export const FRAMES = {
     ],
   },
 
-  /** Crew KC6 watches (Crew Designs v121, the watch-* frames), on the real Background routes over the mock's
+  /** Crew KC6 watches (Crew Designs v129, the watch-* frames), on the real Background routes over the mock's
    *  crew-background-watch* scenarios. The list mixes watches with the other crews; the create dialog gains Watch and
    *  its two actions; each watch's page is the state its scenario holds. watch-history is the one section frame and draws
    *  in the Preview chunk; watch-needsyou is the live inbox with the two watch rows beside a background run. */
@@ -1134,14 +1134,19 @@ export const FRAMES = {
   "transcript-import-error-key-missing": importRoute("nokey.orbyn.json", engineThread),
   "transcript-imported-thread": { route: "#/threads/t-imported", scenario: "transcript-imported" },
 
-  /** Crew, skill proposals (Crew Designs v121, KC9) on the real routes and the mock's crew-proposals scenarios: the proposal
-   *  waiting on the Lessons page, nothing proposed, the pattern that lost a lesson, the approve and dismiss confirms, the
-   *  review page, the refused edit, the write in flight, the refused write, the
-   *  Lessons page after an approve, the Proposed and Added from lessons groups on the Skills page (and the line while nothing
-   *  is added), and the skill added from lessons on its own page. */
+  /** Crew, skill proposals (Crew Designs v129, KC9) on the real routes and the mock's crew-proposals scenarios: the proposal
+   *  waiting on the Lessons page, its narrow card, nothing proposed, the pattern that lost a lesson and its stale review,
+   *  the approve and dismiss confirms, the review page and its narrow layout, the refused edit, the write in flight, the
+   *  refused write, the Lessons page after an approve, the Proposed and Added from lessons groups on the Skills page (and
+   *  the line while nothing is added), and the skill added from lessons on its own page. */
   "kc9-skill-proposal-card": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals" },
+  "kc9-skill-proposal-card-narrow": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals", width: 640 },
   "kc9-skill-proposal-none": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals-none" },
   "kc9-skill-proposal-stale": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals-stale" },
+  "kc9-skill-proposal-review-stale": {
+    route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
+    scenario: "crew-proposals-stale",
+  },
   "kc9-skill-proposal-confirm": {
     route: "#/settings/crew/lessons?repo=p-app",
     scenario: "crew-proposals",
@@ -1161,6 +1166,11 @@ export const FRAMES = {
   "kc9-skill-proposal-review": {
     route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
     scenario: "crew-proposals",
+  },
+  "kc9-skill-proposal-review-narrow": {
+    route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
+    scenario: "crew-proposals",
+    width: 640,
   },
   "kc9-skill-proposal-review-refused": {
     route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
