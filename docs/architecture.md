@@ -2911,7 +2911,11 @@ retries with the reason, the same failure twice changes approach once, and the s
 (`repeated_failure`). The worker is told the reason a check failed, never the check, its id or any other part of the key,
 and the text is proven free of the key and of secrets before it is queued (H1). `failed` and `needs_person` are interim;
 `final` is true only for `passed`, `stopped` and `cancelled`, and the lead is told through its queue when a run ends or
-needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`). A task whose
+needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`).
+The lead that leads a held task can resume it (`crew_resume`, the protocol's `crew.resume`): a `needs_person` task whose
+worker reported moves to `running` in one transaction and its worker is told to carry on with the same thread, key and budget;
+a task whose worker never ran, one waiting on a person's `manual` check, a review lane, a merge correction, a busy worker and a
+task past its minutes are refused. A task whose
 brief's minutes or turns are spent stops on its next failed attempt with the reason `budget`: the turns are the worker's runs and
 the approvals reserved against the same budget, and a result counts them. A crew's turns are the same tally summed over its tasks:
 a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; set in Settings › General) refuses a new task once its crew

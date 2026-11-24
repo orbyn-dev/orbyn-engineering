@@ -42,6 +42,7 @@ mod protect;
 mod recover;
 mod report;
 pub mod rerun;
+mod resume;
 mod retry_start;
 mod review;
 mod router;
@@ -96,7 +97,7 @@ pub use router::{RouteFailure, RouteInput, RouteRefusal, route};
 pub use score::{EvalHistory, SEED_PASS_PERMILLE};
 pub use stamp::Stamper;
 pub use tiers::{AcpTierAssignment, RouterConfig, TierWords, WorkerProvider, tier_model};
-pub use tool::{REPORT_TOOL, ROUTE_TOOL, START_TOOL, is_tool, tool_specs};
+pub use tool::{REPORT_TOOL, RESUME_TOOL, ROUTE_TOOL, START_TOOL, is_tool, tool_specs};
 pub use verify::Judgement;
 pub use view::EngineView;
 

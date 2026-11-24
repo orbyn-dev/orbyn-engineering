@@ -20,10 +20,11 @@ use crate::tools::mcp::McpBinding;
 pub const ROUTE_TOOL: &str = "crew_route";
 pub const START_TOOL: &str = "crew_start";
 pub const REPORT_TOOL: &str = "crew_report";
+pub const RESUME_TOOL: &str = "crew_resume";
 
 /// Whether `name` is a Crew tool.
 pub fn is_tool(name: &str) -> bool {
-    [ROUTE_TOOL, START_TOOL, REPORT_TOOL].contains(&name)
+    [ROUTE_TOOL, START_TOOL, REPORT_TOOL, RESUME_TOOL].contains(&name)
         || super::BUS_TOOLS.contains(&name)
         || super::REVIEW_TOOLS.contains(&name)
         || super::MERGE_TOOLS.contains(&name)
@@ -64,6 +65,22 @@ pub fn tool_specs() -> Vec<Value> {
                     "not_verified": { "type": "array" },
                 },
                 "required": ["summary"],
+            },
+        }),
+        json!({
+            "name": RESUME_TOOL,
+            "description": "Preview, lead only: resume a task this thread leads that is waiting for a person. The task \
+                returns to `running` and its worker is told to continue with the same thread, answer key and budget. A task \
+                whose worker never ran, one waiting on a check a person makes, a review lane, a merge correction, a busy worker, one past \
+                its time budget and one that already ended are refused; a refusal writes nothing. The person's cancel \
+                stays theirs.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "task": { "type": "string" },
+                },
+                "required": ["task"],
             },
         }),
     ];
@@ -145,6 +162,7 @@ impl Core {
         let answer = match tool {
             START_TOOL => self.crew_start_tool(binding, args).await,
             REPORT_TOOL => self.crew_report_tool(binding, args).await,
+            RESUME_TOOL => self.crew_resume_tool(binding, args).await,
             merge if super::MERGE_TOOLS.contains(&merge) => {
                 self.crew_merge_tool(binding, merge, args).await
             }

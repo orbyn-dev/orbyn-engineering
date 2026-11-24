@@ -2138,6 +2138,45 @@ the person key were merged first (#1342).
 - **Not run against a real service.** The routes, the agreement between the live read and the close, the failed-task path, the inbox
   item and the thread's own close are covered by fake-engine and route tests; the web half hides until the Preview flag is on.
 
+## As built (resume)
+
+The lead's resume of a held Crew task (Preview, `crew_resume`). Backend only: the lead calls it over MCP; no screen draws it.
+
+- **What exists.** Core `Core::crew_resume_tool` and the MCP tool `crew_resume` (protocol `crew.resume`), behind the Crew Preview
+  flag. Its argument is `{ "task": "<id>" }`; the answer is `{ task, run, state: "running", worker }`, the worker being its
+  still-recorded thread.
+- **What it resumes.** A builder or fix task waiting in `needs_person` after its worker reported and the checks could not be
+  run or could not decide it. The lead's resume takes the task back to `running` and sends its worker another turn through the same guarded path
+  every retry uses (the leak and secret checks of H1 and H2 applied, never a check or any part of the key), so the same worker
+  thread, answer key and budget carry on where the run stopped. The worker is told a lead resumed the task, to read the repository
+  state, finish what is still missing and call `crew_report` again.
+- **Who.** Only the lead thread that leads the task. A worker's token is refused `not_authorized` before anything is read, so a
+  worker cannot resume its own task; the task must be in this crew (`invalid_object` says "no such task in this crew" otherwise),
+  and the thread must be the one the run records as its lead (`not_authorized`; defence in depth, since the task's crew id and
+  its run's lead thread are written from the same thread).
+- **What it refuses, changing nothing.** An ended task is `run_ended`; any other state than `needs_person` is `invalid_transition`;
+  a task whose worker never ran (`could_not_start`: its start was refused) is `invalid_object` and is started again with
+  `crew_start` (or the person retries it on another engine); a task waiting on a `manual` check is `invalid_object` because the
+  person answers it, not the lead; a review lane is not resumed (KC8's rule: the review machinery asks for the lane again); a
+  merge correction finishes on its own; a task without a worker, a worker still running or with a prompt queued, and a task past
+  its time budget are all refused. A refused call writes no state and no prompt; the
+  `tool.call` row every Crew tool gets is the only row.
+- **How.** The state move is the claim: one transaction takes the task from `needs_person` to `running`, so two windows, a stop or
+  a cancel that lands first makes this one refuse instead of overwriting it. Then the worker's prompt is queued; if that queueing
+  fails, the task is moved back to `needs_person` rather than left `running` with no worker. The minutes keep counting through the
+  wait the way the live budget timer counts them, and a resumed task gets its timer again with what is left of the brief's
+  minutes, so a task held across a restart does not run with no timer at all.
+- **Audit.** The MCP call is recorded before it happens as the `tool.call` row every Crew tool gets; the state change, the
+  worker's next report and its result are the record. No table, migration or contract change: the lifecycle already allows
+  `needs_person` to `running` (SPEC.md section 6), and nothing new is stored.
+- **Not the person's action.** The person's cancel is unchanged, and a task that could not start keeps its own actions (Retry on
+  another engine, Dismiss). This adds no route and no UI: the person's own resume of a held task is still not built, and the
+  `needs_person` to `routed` edge (a start refused after it was stored) stays with those actions rather than being duplicated
+  here.
+- **Known limits.** A resume cannot undo work the worker already wrote; it asks the same worker to carry on from it. The worker's
+  next turn is an ordinary turn against the task's turns and minutes, so the loop guard and the budget still decide what follows.
+  A stopped or cancelled task cannot be resumed: those are final. Fake-engine tests only; no real engine run.
+
 ## Open risks
 
 - Steering differs by engine. A Claude message may land mid-tool-call. Test with real engines before claiming "live".
