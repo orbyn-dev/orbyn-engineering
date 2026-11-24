@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { NETWORK_ERROR } from "../../../../api/client";
+import { useLayoutWidth, type LayoutWidth } from "../../../../lib/useLayout";
 import { toFailure } from "../../../../lib/useAsync";
 import { navigate, routeHref } from "../../../../product/state/route";
 import { useVisibleProjects, useWorkspace } from "../../../../product/state/workspace";
@@ -9,6 +10,7 @@ import { useUi } from "../../../../product/state/ui";
 import { useCrewPreview } from "../../autopilot/approvals/useCrew";
 import { Frame } from "../../shared/Frame";
 import { Ic } from "../../shared/parts";
+import { useLessons } from "../useLessons";
 import { markSkillAdded } from "./marks";
 import {
   ALL_PROJECTS,
@@ -21,10 +23,12 @@ import {
   REVIEW_NOTE,
   REVIEW_NOTE_BUSY,
   SKILLS_LOCAL,
-  STALE_APPROVE_OFF,
+  STALE_APPROVE_OFF_WAITING,
+  activeLessons,
   lessonsWord,
   proposalName,
   skillText,
+  staleWords,
 } from "./model";
 import { skillProposalsApi } from "./api";
 import { useProposals } from "./useProposals";
@@ -37,6 +41,9 @@ function Card({ children }: { children: ReactNode }) {
 
 const back = (repo: string) =>
   routeHref({ name: "settings", section: "crew", crewPage: "lessons", repo });
+
+/** The narrow window the design draws at 640 px: the app's phone and small layouts. */
+const isNarrow = (layout: LayoutWidth): boolean => layout === "phone" || layout === "small";
 
 /**
  * One proposal's review page (KC9): the whole SKILL.md in an editable box, the facts around it, and Approve under it. It is
@@ -70,6 +77,10 @@ export function SkillProposalPage({ id, repo }: { id?: string; repo?: string }) 
 /** The review form, once the proposal read answered: the text, the two confirm states and the write's four answers. */
 function ProposalReview({ id, repo }: { id: string; repo: string }) {
   const proposals = useProposals(repo);
+  // The review's stale note and its Based on row say how many source lessons are still active, so the page reads them.
+  const lessons = useLessons(repo, "all");
+  const layout = useLayoutWidth();
+  const narrow = isNarrow(layout);
   const [text, setText] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // False once the person left this review: a write already sent finishes, but it no longer moves the page.
@@ -117,6 +128,7 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
   if (!proposal) return null;
   const parsed = skillText(proposal.text);
   const title = parsed.name ?? proposalName(proposal);
+  const active = lessons.status === "ready" ? activeLessons(proposal, lessons.list.lessons) : null;
   const padding = text ?? proposal.text;
   const lines = padding.split("\n").length;
   const send = async () => {
@@ -175,7 +187,7 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
           <div className="cx-fbx cx-amber" role="status" style={{ flexDirection: "row", gap: "8px", alignItems: "flex-start" }}>
             <Ic n="alert" sm />
             <span style={{ color: "var(--color-text)", fontSize: "12.5px" }}>
-              <Lead colon>{STALE_APPROVE_OFF}</Lead>
+              <Lead colon>{active === null ? STALE_APPROVE_OFF_WAITING : staleWords(active)}</Lead>
             </span>
           </div>
         ) : (
@@ -189,7 +201,7 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
         )}
         <div className="cx-fbx">
           <h6>The proposal</h6>
-          <div className="cx-ppfkv" style={{ gridTemplateColumns: "120px minmax(0, 1fr)" }}>
+          <div className="cx-ppfkv" style={{ gridTemplateColumns: narrow ? "minmax(0, 1fr)" : "120px minmax(0, 1fr)" }}>
             {parsed.name ? (
               <>
                 <span>Name</span>
@@ -203,7 +215,11 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
               </>
             ) : null}
             <span>Based on</span>
-            <b>{lessonsWord(proposal.lessons.length)}</b>
+            <b>
+              {!proposal.can_approve && active !== null
+                ? `(${lessonsWord(active)} now, ${proposal.lessons.length} when it was proposed)`
+                : lessonsWord(proposal.lessons.length)}
+            </b>
             <span>Applies to</span>
             <b>
               {ALL_PROJECTS} <span style={{ color: "var(--color-muted)" }}>· {DEFAULT_SELECTION_NOTE}</span>
@@ -245,7 +261,7 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
           ) : proposal.can_approve ? (
             <span className="cx-hint">{REVIEW_FOOT}</span>
           ) : null}
-          <span className="cx-acts">
+          <span className="cx-acts" style={{ flexWrap: "nowrap" }}>
             <button
               type="button"
               className="cx-ghost"
@@ -290,7 +306,7 @@ function BackToLessons({ repo }: { repo: string }) {
   );
 }
 
-/** The design bolds a sentence up to its colon ("Not saved:", "Approve is off:"); a sentence without one is drawn whole. */
+/** The design bolds a sentence up to its colon ("Not saved:", "This proposal is stale:"); a sentence without one is drawn whole. */
 function Lead({ colon, children }: { colon?: boolean; children: string }) {
   const at = colon ? children.indexOf(": ") : -1;
   if (at < 0) return <>{children}</>;

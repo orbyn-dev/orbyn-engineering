@@ -103,6 +103,8 @@ fn stored_lesson(id: &str, text: &str, state: &str, hidden: bool) -> CrewLesson 
         created_at: "t".to_owned(),
         updated_at: "t".to_owned(),
         last_used_at: None,
+        rev: 1,
+        deleted_at: None,
     }
 }
 

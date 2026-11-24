@@ -71,6 +71,7 @@ mod http_probe;
 mod issues;
 mod lessons;
 mod lessons_brief;
+mod lessons_person;
 mod lifecycle;
 mod merging_recovery;
 mod model_ids;

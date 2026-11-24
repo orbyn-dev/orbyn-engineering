@@ -70,6 +70,6 @@
 .cx-ppacts .cx-ppdismiss { margin-left: auto; }
 .cx-ppfoot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cx-ppfoot .cx-hint { color: var(--color-muted); font-size: 12px; flex: 1; min-width: 200px; }
-.cx-ppfoot .cx-acts { margin-left: auto; display: flex; gap: 8px; }
+.cx-ppfoot .cx-acts { margin-left: auto; display: flex; gap: 8px; flex-wrap: nowrap; }
 .cx-pplead { font-weight: 500; }
 .cx-ppfkv b.cx-ppbasedline { font-weight: 500; }

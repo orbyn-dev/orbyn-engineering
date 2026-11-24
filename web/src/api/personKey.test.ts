@@ -45,6 +45,17 @@ describe("which requests carry the person key", () => {
     expect(sendsPersonKey("POST", "/api/crew/escapes/esc_1/check/retry")).toBe(true);
     expect(sendsPersonKey("POST", "/api/crew/escapes/esc_1/check/withdraw")).toBe(true);
     expect(sendsPersonKey("GET", "/api/crew/escapes/esc_1")).toBe(false);
+    expect(sendsPersonKey("POST", "/api/crew/lessons")).toBe(true);
+    expect(sendsPersonKey("PATCH", "/api/crew/lessons/les_1")).toBe(true);
+    expect(sendsPersonKey("DELETE", "/api/crew/lessons/les_1")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/lessons/les_1/disable")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/lessons/les_1/enable")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/lessons/les_1/undo")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/lessons/les_1/promote")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/lessons/les_1/demote")).toBe(true);
+    expect(sendsPersonKey("PUT", "/api/crew/lessons/settings")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/crew/lessons?repo=p1")).toBe(false);
+    expect(sendsPersonKey("GET", "/api/crew/lessons/les_1?repo=p1")).toBe(false);
     expect(sendsPersonKey("GET", "/api/crew/projects/p1/worker-provider")).toBe(false);
     expect(sendsPersonKey("POST", "/api/threads/t1/runs")).toBe(true);
     // The routes that move a checkout (ruling F3).
@@ -72,6 +83,11 @@ describe("which requests carry the person key", () => {
     ] as const) {
       expect(sendsPersonKey(method, path), `${method} ${path}`).toBe(false);
     }
+  });
+
+  it("sends the key on the keybinding reset and not on the plain keybindings write", () => {
+    expect(sendsPersonKey("POST", "/api/keybindings/reset")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/keybindings")).toBe(false);
   });
 
   it("is exactly the service's person rows plus its field-level rows", () => {

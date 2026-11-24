@@ -102,6 +102,15 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/escapes/{id}/check/retry"),
     ("POST", "/api/crew/escapes/{id}/check/withdraw"),
     ("POST", "/api/crew/escapes/{id}/check/approve"),
+    ("POST", "/api/crew/lessons"),
+    ("PATCH", "/api/crew/lessons/{id}"),
+    ("DELETE", "/api/crew/lessons/{id}"),
+    ("POST", "/api/crew/lessons/{id}/disable"),
+    ("POST", "/api/crew/lessons/{id}/enable"),
+    ("POST", "/api/crew/lessons/{id}/undo"),
+    ("POST", "/api/crew/lessons/{id}/promote"),
+    ("POST", "/api/crew/lessons/{id}/demote"),
+    ("PUT", "/api/crew/lessons/settings"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
     ("POST", "/api/crew/projects/{id}/worker-provider/set"),
@@ -142,6 +151,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     // Browser profiles: a rename is the person's own action; the other profile routes stay Local.
     ("POST", "/api/browser-profiles/{id}/rename"),
     // Preferences, policy and redaction.
+    ("POST", "/api/keybindings/reset"),
     ("POST", "/api/policy/rules"),
     ("DELETE", "/api/policy/rules/{id}"),
     ("PUT", "/api/preferences"),
@@ -280,7 +290,10 @@ pub const FIELD_LEVEL: &[(&str, &str, &str)] = &[
 ];
 
 /// Whether a request for this method and matched route pattern needs the person key.
+/// A `HEAD` is answered by the route's `GET` handler (status and headers, no body), so it takes the `GET` row: otherwise a
+/// service-token agent could ask `HEAD` whether a protected pattern exists.
 fn needs_key(method: &str, pattern: &str) -> bool {
+    let method = if method == "HEAD" { "GET" } else { method };
     ENFORCED.iter().any(|(m, p)| (*m, *p) == (method, pattern))
         && PERSON.iter().any(|(m, p, _)| (*m, *p) == (method, pattern))
 }
@@ -616,6 +629,51 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/lessons",
+        "Crew write behind local_only: the person adds a lesson by hand, for one repository or every one",
+    ),
+    (
+        "PATCH",
+        "/api/crew/lessons/{id}",
+        "Crew write behind local_only: the person edits a lesson's text; the path scan and the version as seen apply",
+    ),
+    (
+        "DELETE",
+        "/api/crew/lessons/{id}",
+        "Crew write behind local_only: the person deletes a lesson, which stays undoable for 10 s",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/disable",
+        "Crew write behind local_only: the person turns one lesson off",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/enable",
+        "Crew write behind local_only: the person turns one lesson back on",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/undo",
+        "Crew write behind local_only: the person restores a lesson inside its 10 s Undo",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/promote",
+        "Crew write behind local_only: the person promotes a repository lesson to global; a path-naming one is refused",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/demote",
+        "Crew write behind local_only: the person moves a global lesson back to one repository",
+    ),
+    (
+        "PUT",
+        "/api/crew/lessons/settings",
+        "Crew write behind local_only: the person's per-repository use-lessons switch",
+    ),
+    (
+        "POST",
         "/api/crew/guard/targets/add",
         "Crew write behind local_only: adds a protected target to the guard",
     ),
@@ -733,6 +791,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/browser-profiles/{id}/rename",
         "the person renames their own browser profile; only the stored name changes, so a profile open in a tab can be renamed",
+    ),
+    (
+        "POST",
+        "/api/keybindings/reset",
+        "the person resets one of their own keybindings to its built-in default",
     ),
     (
         "POST",

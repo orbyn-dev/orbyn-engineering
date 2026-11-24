@@ -13,7 +13,8 @@
 //! global lesson names path classes, not paths), then `Store::write_crew_lesson`, which audits in the same
 //! transaction and hides over-cap lessons instead of deleting them. Slice 2 adds the brief: a start carries the
 //! repository's lessons then the device's global ones, newest first, capped and wrapped as data, and counts each
-//! one's use in the transaction that stores the brief. The routes are slice 3.
+//! one's use in the transaction that stores the brief. Slice 3 adds the person's views and writes
+//! (`lessons_person.rs` and `lessons_view.rs`); the routes come with part 2.
 
 use orbyn_contracts::{AnswerKey, EscapeSource, EscapeState};
 
@@ -498,7 +499,7 @@ fn escape(text: &str) -> String {
 
 /// A person's own words: trimmed, 1 to 300 characters, no character that hides text, secret-scanned before any
 /// redaction so a secret is refused rather than quietly masked.
-fn person_text(words: &str) -> Result<String> {
+pub(super) fn person_text(words: &str) -> Result<String> {
     refuse_secret_text(words)?;
     super::background::text("lesson", words, TEXT_MAX)
         .map_err(|error| CoreError::Invalid(error.public_message()))
@@ -519,7 +520,7 @@ fn refuse_secret_text(text: &str) -> Result<()> {
 
 /// Whether a lesson's text names a repository-relative path: a `/` path that `path_problem` accepts, or a file name
 /// with an alphabetic extension of at least two letters. A URL is not a path.
-fn names_path(text: &str) -> bool {
+pub(super) fn names_path(text: &str) -> bool {
     text.split_whitespace()
         .map(token)
         .filter(|token| !token.is_empty())

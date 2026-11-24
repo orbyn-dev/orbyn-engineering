@@ -151,7 +151,10 @@ impl Store {
                 params![task_id, crate::util::format_unix(now)],
             )?;
             let run = find_run(tx, task_id)?;
-            Ok(ResumeOutcome::Resumed { task, run: Box::new(run) })
+            Ok(ResumeOutcome::Resumed {
+                task,
+                run: Box::new(run),
+            })
         })
     }
 

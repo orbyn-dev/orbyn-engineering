@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useUi } from "../../../../product/state/ui";
+import { setViewportWidth } from "../../../../test-support";
 import { forgetSkillAdded, markSkillAdded, takeSkillAdded } from "./marks";
 import { moment } from "./model";
 import { ProposalsSection } from "./ProposalsSection";
@@ -164,13 +165,29 @@ describe("the Skill proposals section of the Lessons page", () => {
     expect(within(region).queryAllByRole("button", { name: "Open this lesson" })).toHaveLength(0);
   });
 
+  it("folds the lessons and previews 6 lines at a narrow width, while the wide card stays unfolded at 8", async () => {
+    setViewportWidth(640);
+    const narrow = open();
+    const folded = await card();
+    expect(within(folded).getByRole("button", { name: "Show the 3 lessons" })).toHaveAttribute("aria-expanded", "false");
+    expect(within(folded).getByText("Proposed text (SKILL.md), first 6 of 14 lines")).toBeInTheDocument();
+    expect(within(folded).queryAllByRole("button", { name: "Open this lesson" })).toHaveLength(0);
+    narrow.unmount();
+    setViewportWidth(1200);
+    open();
+    const wide = await card();
+    expect(within(wide).getByRole("button", { name: "Hide the 3 lessons" })).toHaveAttribute("aria-expanded", "true");
+    expect(within(wide).getByText("Proposed text (SKILL.md), first 8 of 14 lines")).toBeInTheDocument();
+    expect(within(wide).getAllByRole("button", { name: "Open this lesson" })).toHaveLength(3);
+  });
+
   it("draws the added line the review page hands over, once", async () => {
     answers.proposals = { status: 200, body: { proposals: [proposal({ state: "approved", skill: { name: "redirect-checks" }, rev: 2 })] } };
     markSkillAdded("redirect-checks", 3);
     open();
     expect(await screen.findByText("Added to skills-local.")).toBeInTheDocument();
     expect(screen.getByText("redirect-checks", { selector: "a" })).toHaveAttribute("href", "#/skills/redirect-checks");
-    expect(screen.getByText(/The 3 lessons it came from stay here and stop going into briefs while the skill exists\./)).toBeInTheDocument();
+    expect(screen.getByText(/The lessons it came from stay here and stop going into briefs while the skill exists\./)).toBeInTheDocument();
     // The line is drawn once: the mark is consumed, and a second mount does not draw it again.
     expect(takeSkillAdded()).toBeNull();
   });
@@ -211,7 +228,7 @@ describe("the Skill proposals section of the Lessons page", () => {
     expect(await screen.findByText("Added to skills-local.")).toBeInTheDocument();
     expect(screen.getByText("redirect-checks", { selector: "a" })).toHaveAttribute("href", "#/skills/redirect-checks");
     expect(screen.getByText(/is listed on the Skills page as Personal\./)).toBeInTheDocument();
-    expect(screen.getByText(/The 3 lessons it came from stay here and stop going into briefs while the skill exists\./)).toBeInTheDocument();
+    expect(screen.getByText(/The lessons it came from stay here and stop going into briefs while the skill exists\./)).toBeInTheDocument();
     expect(writes(calls, "POST")).toHaveLength(1);
     expect(bodyOf(writes(calls, "POST")[0]?.init)).toEqual({ text: proposal().text, rev: 1 });
     // The read is made again, and the answered proposal is no longer open.

@@ -383,7 +383,6 @@ async fn a_restart_picks_up_tasks_left_running_or_verifying() {
     let run = w.core.store.crew_run(&made[1]).unwrap().unwrap();
     assert_eq!(w.task(&made[1]).state, "running");
     assert_eq!(run.resume_count, 1);
-
 }
 
 /// An attachment tool takes any thread of the project; a worker may use only its own.

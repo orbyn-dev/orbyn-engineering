@@ -73,7 +73,9 @@ async fn a_hand_edited_keybindings_file_is_not_put_back() {
     peer(&api, future(), vec![rule_field(&synced)]);
     let _worker = start(&core, &api);
     until(&core, |core| {
-        core.keybindings().rules.contains(&synced) && online(core)
+        core.keybindings().rules.iter().any(|seen| {
+            seen.key == synced.key && seen.command == synced.command && seen.when == synced.when
+        }) && online(core)
     })
     .await;
     let mine = rule("mod+q", "sidebar.toggle");
@@ -92,7 +94,12 @@ async fn a_hand_edited_keybindings_file_is_not_put_back() {
     })
     .await;
     let rules = core.keybindings().rules;
-    assert!(rules.contains(&mine) && !rules.contains(&synced));
+    let has = |want: &KeybindingRule| {
+        rules.iter().any(|seen| {
+            seen.key == want.key && seen.command == want.command && seen.when == want.when
+        })
+    };
+    assert!(has(&mine) && !has(&synced));
 }
 
 #[tokio::test]

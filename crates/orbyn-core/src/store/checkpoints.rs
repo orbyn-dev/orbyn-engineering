@@ -4,7 +4,9 @@
 use orbyn_contracts::{AgUiEvent, Checkpoint, ModelSelection, Thread};
 use rusqlite::{OptionalExtension, Row, params};
 
-use super::{AuditRecord, NewThread, Store, insert_audit, insert_event, thread_row, with_run_state};
+use super::{
+    AuditRecord, NewThread, Store, insert_audit, insert_event, thread_row, with_run_state,
+};
 use crate::error::{CoreError, Result};
 use crate::util::{new_id, now};
 

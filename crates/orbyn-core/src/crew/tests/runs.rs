@@ -188,10 +188,7 @@ async fn a_pass_carries_its_evidence_and_what_was_not_verified() {
     assert!(result.r#final && result.stop_reason.is_none());
     assert_eq!(result.checks.len(), 3);
     let missing: Vec<&str> = result.not_verified.iter().map(|t| t.as_str()).collect();
-    assert!(
-        missing.iter().any(|t| t.contains("preview")),
-        "{missing:?}"
-    );
+    assert!(missing.iter().any(|t| t.contains("preview")), "{missing:?}");
     assert!(missing.contains(&"Windows paths"));
     assert!(result.report.is_some() && result.commit.is_some());
 
