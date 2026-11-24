@@ -131,12 +131,13 @@ function seedFor(scenario: string): Seed {
   // KC4 PR B (frame kc4-low-disk-background-run): a start the disk guard refused at 16:20 keeps one stopped run, newest first, with the
   // code, the service's sentence, no stop reason, no spend and nobody waiting. "crew-background-reason-unknown" carries a code this
   // page does not know: it must draw as the stopped run it is.
-  if (scenario === "crew-background-disk-low" || scenario === "crew-background-reason-unknown") {
+  if (scenario === "crew-background-disk-low" || scenario === "crew-background-disk-low-bare" || scenario === "crew-background-reason-unknown") {
     const seed = base();
-    const refused = scenario === "crew-background-disk-low";
+    const refused = scenario !== "crew-background-reason-unknown";
+    const bare = scenario === "crew-background-disk-low-bare";
     seed.runs.unshift(run("r-ci-2", "bg-ci", "stopped", "2026-11-07T16:20:00Z", "2026-11-07T16:20:00Z", {
       reason_code: refused ? "disk_low" : "future_code",
-      review_reason: refused ? "Not started: 3.1 GB free, Crew needs 5 GB. Free space and try again." : "Stopped for a reason this page does not know.",
+      review_reason: bare ? null : refused ? "Not started: 3.1 GB free, Crew needs 5 GB. Free space and try again." : "Stopped for a reason this page does not know.",
       turns_spent: 0, minutes_spent: 0, review_waiting: false,
     }));
     return { ...seed, watches: {} };

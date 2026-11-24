@@ -131,9 +131,24 @@ const reasonOf = (run: WireRun) => (run.stop_reason ? STOP_REASON[run.stop_reaso
 /** "12 turns, 9 min", or "running, 6 min" while it goes: what a run has spent, as the list draws it. */
 const spent = (run: WireRun) => `${run.turns_spent} ${run.turns_spent === 1 ? "turn" : "turns"}, ${run.minutes_spent} min`;
 
+/** The reason codes a run that never started can carry, and the one word each draws after "Not started · ". A code not listed is not
+ * drawn as a refusal: the run keeps the drawing of the stopped run it is. */
+const NOT_STARTED_WORD: Record<string, string> = { disk_low: "Disk" };
+/** Crew Designs kc4-low-disk-background-run: the line under the service's sentence. */
+const NOT_STARTED_NOTE = "No worker ran. Nothing was removed to make room.";
+
+/** The sentence of a refused start when the service sent none (a proposal without numbers: the service's own sentence carries them). */
+const NOT_STARTED_FALLBACK = "Not started: Crew needs more free disk space. Free space and try again.";
+/** The word a run that never started carries ("Disk"), or undefined for every other run. */
+const notStartedWordOf = (run: WireRun): string | undefined =>
+  run.state === "stopped" && !run.stop_reason && run.reason_code ? NOT_STARTED_WORD[run.reason_code] : undefined;
+
 /** "Sat 7 Nov, 15:11 · 12 turns, 9 min": the newest run of a crew, or "Never run". */
 export function lastRunLine(run: WireRun | undefined): string | null {
   if (!run) return null;
+  // A start the guard refused spent nothing: the cell says so with the chip's own words, not "0 turns, 0 min".
+  const refused = notStartedWordOf(run);
+  if (refused) return `Not started · ${refused}`;
   return `${whenLong(run.started_at)} · ${run.state === "running" ? `running, ${run.minutes_spent} min` : spent(run)}`;
 }
 
@@ -153,16 +168,10 @@ const STARTED_BY: Record<BackgroundTriggerKind, (trigger: BackgroundTrigger) => 
   watch: () => "Watch",
 };
 
-/** The reason codes a run that never started can carry, and the one word each draws after "Not started · ". A code not listed is not
- * drawn as a refusal: the run keeps the drawing of the stopped run it is. */
-const NOT_STARTED_WORD: Record<string, string> = { disk_low: "Disk" };
-/** Crew Designs kc4-low-disk-background-run: the line under the service's sentence. */
-const NOT_STARTED_NOTE = "No worker ran. Nothing was removed to make room.";
-
 /** One row of Recent runs: only what the route reports. */
 export function runRow(run: WireRun, crew: WireCrew, now: Date): BackgroundRun {
   const ended = run.ended_at ?? run.updated_at;
-  const notStartedWord = run.state === "stopped" && !run.stop_reason && run.reason_code ? NOT_STARTED_WORD[run.reason_code] : undefined;
+  const notStartedWord = notStartedWordOf(run);
   if (notStartedWord) {
     // The design's row: the service's refusal text word for word, the muted line, and no spend because nothing ran.
     return {
@@ -170,7 +179,7 @@ export function runRow(run: WireRun, crew: WireCrew, now: Date): BackgroundRun {
       name: crew.name,
       template: TEMPLATE_OF[crew.template],
       startedBy: `${STARTED_BY[crew.trigger.kind](crew.trigger)} · ${whenShort(run.started_at, now)}`,
-      result: run.review_reason ?? "",
+      result: run.review_reason?.trim() || NOT_STARTED_FALLBACK,
       note: NOT_STARTED_NOTE,
       state: "Not started",
       reason: notStartedWord,

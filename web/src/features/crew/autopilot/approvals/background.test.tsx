@@ -616,6 +616,24 @@ describe("A background start the disk guard refused (KC4, frame kc4-low-disk-bac
     expect(within(recentRuns()).getByText("Stopped · Budget")).toBeVisible();
   });
 
+  it("says Not started · Disk in the crew's last-run cell, not 0 turns, 0 min", async () => {
+    mock.reset("crew-background-disk-low");
+    render(<BackgroundTab />);
+    const crews = await screen.findByRole("table", { name: "Background crews" });
+    const row = within(crews).getAllByRole("row").find((one) => one.textContent?.includes("Fix failing CI")) as HTMLElement;
+    expect(row).toHaveTextContent("Not started · Disk");
+    expect(row).not.toHaveTextContent(/0 turns/);
+  });
+
+  it("draws the design's own sentence when the service sent none, above the muted line", async () => {
+    mock.reset("crew-background-disk-low-bare");
+    render(<BackgroundTab />);
+    await screen.findByRole("table", { name: "Recent runs" });
+    const row = newestRun();
+    expect(within(row).getByText("Not started: Crew needs more free disk space. Free space and try again.")).toBeVisible();
+    expect(within(row).getByText("No worker ran. Nothing was removed to make room.")).toBeVisible();
+  });
+
   it("keeps a stopped run with a reason code it does not know drawn as a stopped run", async () => {
     mock.reset("crew-background-reason-unknown");
     render(<BackgroundTab />);
