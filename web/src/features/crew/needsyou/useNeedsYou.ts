@@ -6,7 +6,7 @@ import { crewApi } from "../autopilot/approvals/api";
 import { useHeldCommands, type HoldControl } from "../autopilot/approvals/held";
 import type { AutopilotAreaRow } from "../../../generated/AutopilotAreaRow";
 import type { AutopilotAreas } from "../../../generated/AutopilotAreas";
-import { autonomyItems, backgroundItems, couldNotStartItems, couldNotStopItems, heldItems, mainItems, rank, secondEngineItems, stopItems, watchItems } from "./assemble";
+import { autonomyItems, backgroundItems, couldNotStartItems, couldNotStopItems, heldItems, mainItems, rank, secondEngineItems, stopItems, watchItems, workerStoppedTwiceItems } from "./assemble";
 import { useSecondEngineNotices } from "./secondEngines";
 import { needsApi } from "./api";
 import type { NeedsItem } from "./model";
@@ -126,6 +126,7 @@ export function useNeedsYou(project: string | null): NeedsState {
     return rank([
       ...heldItems(heldRows, now),
       ...(stops.data ? stopItems(stops.data.recent, { inARow: stops.data.in_a_row_limit, inARun: stops.data.in_a_run_limit }).filter((one) => !dismissed.has(dismissKey(one.id))) : []),
+      ...(shared.data ? workerStoppedTwiceItems(shared.data.twice).filter((one) => !dismissed.has(dismissKey(one.id))) : []),
       ...(refused.data ? couldNotStartItems(refused.data) : []),
       ...(shared.data ? couldNotStopItems(shared.data.stopped) : []),
       ...(review.data ? mainItems(review.data) : []),
@@ -135,20 +136,25 @@ export function useNeedsYou(project: string | null): NeedsState {
       ...(notices.data ? secondEngineItems(notices.data) : []),
     ]);
   }, [heldRows, stops.data, review.data, background.data, shared.data, refused.data, notices.data, areaRows, project, dismissed, dismissedAutonomy]);
-  // Keep only the dismissals whose row is still in the service's list, so the stored lists cannot grow without end.
+  // Keep only the dismissals whose row is still in the service's list, so the stored lists cannot grow without end. A source that has
+  // not answered yet keeps its own entries: the twice rows arrive with the shared read, apart from the stops read.
   const recent = stops.data?.recent;
+  const twice = shared.data?.twice;
   useEffect(() => {
-    if (!recent) return;
-    const present = new Set(
-      stopItems(recent, { inARow: 0, inARun: 0 }).map((one) => dismissKey(one.id)),
-    );
+    if (!recent && !twice) return;
+    const present = new Set([
+      ...(recent ? stopItems(recent, { inARow: 0, inARun: 0 }).map((one) => dismissKey(one.id)) : []),
+      ...(twice ? workerStoppedTwiceItems(twice).map((one) => dismissKey(one.id)) : []),
+    ]);
+    const stopPrefix = dismissKey("stop:");
+    const twicePrefix = dismissKey("twice:");
     setDismissed((now) => {
-      const kept = [...now].filter((key) => present.has(key));
+      const kept = [...now].filter((key) => present.has(key) || (!recent && key.startsWith(stopPrefix)) || (!twice && key.startsWith(twicePrefix)));
       if (kept.length === now.size) return now;
       writeDismissed(DISMISSED_KEY, new Set(kept));
       return new Set(kept);
     });
-  }, [recent]);
+  }, [recent, twice]);
   // A dismissed demotion returns only if the area trips again (a new trip time is a new row). Only this repository's own entries are
   // pruned: another repository's stay until it is shown again.
   useEffect(() => {

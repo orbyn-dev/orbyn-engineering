@@ -136,6 +136,33 @@ export function couldNotStopItems(read: { items: NeedsYouItem[] }): NeedsItem[] 
 /** Dismissing a stop is local to this device: nothing is sent to the service. */
 export const STOP_HINT = "Dismiss hides this stop on this device.";
 
+/** The sentence of the design when the service's worker-stopped-twice item carries no line of its own. */
+export const WORKER_STOPPED_TWICE = "The worker’s engine stopped with an error. It had already resumed once, so it did not resume again.";
+
+/**
+ * A task whose worker died again after its one resume (kc8-resumed-inbox). It is a Stops row: the service's own line, or the design's
+ * when it sends none, and Dismiss alone (dismissing a stop is local to this device). The time is part of the id, so a later second
+ * stop of another attempt is another row.
+ */
+export function workerStoppedTwiceItems(read: { items: NeedsYouItem[] }): NeedsItem[] {
+  return read.items
+    .filter((item) => item.kind === "worker_stopped_twice")
+    .map((item) => ({
+      id: `twice:${item.id}:${item.since}`,
+      kind: "stopped" as const,
+      title: "Stopped: its worker stopped twice",
+      risk: null,
+      undo: null,
+      from: `Task ${item.id}`,
+      cost: item.reason?.trim() || WORKER_STOPPED_TWICE,
+      since: time(item.since),
+      hint: STOP_HINT,
+      actions: [{ key: "dismiss" as const, label: "Dismiss" }],
+      ref: item.id,
+      ...(item.project_id ? { project: item.project_id } : {}),
+    }));
+}
+
 /** Tasks Crew stopped on a trip wire, from `GET /api/crew/stops`. The service lists the latest wires; none says it was answered. */
 export function stopItems(recent: AutopilotLogRow[], limits: { inARow: number; inARun: number }): NeedsItem[] {
   return recent
