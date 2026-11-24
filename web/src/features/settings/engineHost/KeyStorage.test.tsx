@@ -40,6 +40,15 @@ it("through the real client: shows the service's state, and Remove… shows how 
   expect(sent.filter((entry) => entry.startsWith("DELETE"))).toHaveLength(1);
 });
 
+it("draws the Behind a setting pill beside the API key title on the detail page, so the row says it as the group does", async () => {
+  setEngineHostApi(createEngineHostMock());
+  render(<KeyStorageRow engineId="cursor" />);
+  const title = await screen.findByText("API key", { selector: ".setting-line-title" });
+  const heading = title.closest(".setting-line-heading") as HTMLElement;
+  expect(heading).not.toBeNull();
+  expect(within(heading).getByText("Behind a setting")).toBeVisible();
+});
+
 it("lists each engine with its state and the one action that fits it", async () => {
   setEngineHostApi(createEngineHostMock());
   render(<KeyStorageGroup />);
