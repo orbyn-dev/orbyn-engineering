@@ -1271,3 +1271,42 @@ async fn commits_and_commit_diffs_read_the_repository_its_scope_names() {
         "{files:?}"
     );
 }
+
+#[tokio::test]
+async fn the_first_repository_is_the_primary_even_when_it_is_not_the_project() {
+    let dir = TempDir::new();
+    let (core, project, other_id, main, other) = two_trusted(&dir).await;
+    // A thread need not work in the project's own folder: its first stored repository is the primary one.
+    let thread = multi_thread(
+        &core,
+        &project,
+        &[(&other_id, "other", &other), (&project, "main", &main)],
+    );
+    assert_eq!(
+        core.diff_repo(&thread, None).unwrap().as_deref(),
+        Some(other_id.as_str()),
+        "the label names the repository the read uses"
+    );
+    assert_eq!(core.scoped_thread(&thread).unwrap().cwd, path_text(&other));
+    std::fs::write(other.join("second.txt"), "second\n").unwrap();
+    let files = core.thread_diff(&thread).await.unwrap();
+    assert_eq!(diff_paths(&files), ["second.txt"]);
+}
+
+#[tokio::test]
+async fn a_file_restore_stays_in_the_engine_folder_of_a_repository_thread() {
+    let dir = TempDir::new();
+    let (core, project, other_id, main, other) = two_trusted(&dir).await;
+    let (thread, folder) = repo_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&other_id, "other", &other)],
+    );
+    // The engine writes in the task folder, so a restore of its files is relative to it; only the reads
+    // resolve one repository's worktree.
+    assert_eq!(core.idle_thread(&thread).unwrap().cwd, path_text(&folder));
+    assert_eq!(
+        core.scoped_thread(&thread).unwrap().cwd,
+        path_text(&folder.join("main"))
+    );
+}

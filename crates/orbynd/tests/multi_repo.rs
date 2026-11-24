@@ -30,6 +30,39 @@ fn seed_repo(path: &Path, files: &[(&str, &str)]) -> PathBuf {
     support::canonical(path)
 }
 
+/// Adds a folder of `project` as a repository and trusts it, as the person's two calls do.
+async fn add_trusted(service: &Service, project: &str, repo: &Path) -> String {
+    let (status, added) = service
+        .send(
+            &format!("/api/projects/{project}/repos/add-folder"),
+            json!({ "path": repo.to_string_lossy() }),
+        )
+        .await;
+    assert_eq!(status, 200, "{added}");
+    let repo_id = added["id"].as_str().unwrap().to_owned();
+    let (status, trusted) = service
+        .send(
+            &format!("/api/projects/{project}/repos/{repo_id}/trust"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 200, "{trusted}");
+    repo_id
+}
+
+/// The worktree of one repository in a task folder, at `root/name`.
+fn worktree_of(task: &Value, repo_id: &str) -> PathBuf {
+    let name = task["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|repo| repo["repo_id"] == repo_id)
+        .unwrap()["name"]
+        .as_str()
+        .unwrap();
+    PathBuf::from(task["root"].as_str().unwrap()).join(name)
+}
+
 fn paths(diff: &Value) -> Vec<String> {
     diff.as_array()
         .unwrap()
@@ -113,19 +146,7 @@ async fn repository_reads_name_one_repository_and_never_the_task_folder() {
         !root.join(".git").exists(),
         "the task folder is not a repository"
     );
-    let worktree_of = |repo_id: &str| {
-        let name = task["repos"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|repo| repo["repo_id"] == repo_id)
-            .unwrap()["name"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        root.join(name)
-    };
-    let (primary_dir, other_dir) = (worktree_of(&project), worktree_of(&other_id));
+    let (primary_dir, other_dir) = (worktree_of(&task, &project), worktree_of(&task, &other_id));
     // The same path changed in both: the reads must not confuse the two files.
     std::fs::write(primary_dir.join("a.txt"), "from the primary\n").unwrap();
     std::fs::write(other_dir.join("a.txt"), "from the second\n").unwrap();
@@ -230,5 +251,74 @@ async fn repository_reads_name_one_repository_and_never_the_task_folder() {
     assert!(
         !paths(&primary_branch).contains(&"committed.txt".to_owned()),
         "{primary_branch}"
+    );
+}
+
+#[tokio::test]
+async fn a_thread_without_the_projects_folder_names_its_first_repository() {
+    let dir = TempDir::new();
+    let service = Service::start(&dir.path().join("data"), options());
+    let project = service.project(&dir.path().join("project"), true).await;
+    let first = seed_repo(&dir.path().join("first"), &[("a.txt", "one\n")]);
+    let second = seed_repo(&dir.path().join("second"), &[("a.txt", "two\n")]);
+    let first_id = add_trusted(&service, &project, &first).await;
+    let second_id = add_trusted(&service, &project, &second).await;
+    // The project's own folder is not chosen, so the first stored repository is the primary one.
+    let (status, thread) = service
+        .send(
+            &format!("/api/projects/{project}/repo-threads"),
+            json!({
+                "repos": [
+                    { "repo_id": first_id, "base_branch": "main" },
+                    { "repo_id": second_id, "base_branch": "main" },
+                ],
+                "engine": "codex",
+                "model": null,
+                "permission_mode": "supervised",
+                "message": null,
+                "branch_name": null,
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{thread}");
+    let thread_id = thread["id"].as_str().unwrap().to_owned();
+    let task = service
+        .json(&format!("/api/threads/{thread_id}/task-folder"))
+        .await;
+    let (first_dir, second_dir) = (
+        worktree_of(&task, &first_id),
+        worktree_of(&task, &second_id),
+    );
+    std::fs::write(first_dir.join("a.txt"), "from the first\n").unwrap();
+    std::fs::write(second_dir.join("a.txt"), "from the second\n").unwrap();
+    // With no repo_id the read is the first repository, and the files carry the same repository's id.
+    let primary = service
+        .json(&format!("/api/threads/{thread_id}/diff"))
+        .await;
+    assert_eq!(paths(&primary), ["a.txt"]);
+    assert_eq!(
+        primary[0]["repo_id"], first_id,
+        "the label names the repository the read used: {primary}"
+    );
+    assert!(
+        primary[0]["patch"]
+            .as_str()
+            .unwrap()
+            .contains("from the first"),
+        "{primary}"
+    );
+    // The second repository is only read when it is named.
+    let second_diff = service
+        .json(&format!(
+            "/api/threads/{thread_id}/diff?repo_id={second_id}"
+        ))
+        .await;
+    assert_eq!(second_diff[0]["repo_id"], second_id);
+    assert!(
+        second_diff[0]["patch"]
+            .as_str()
+            .unwrap()
+            .contains("from the second"),
+        "{second_diff}"
     );
 }
