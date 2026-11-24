@@ -12,10 +12,13 @@ import { startProject, type Service } from "./service";
  * watch reads answer it, and the watch's page draws it. No engine is installed, so the check running at all proves it
  * made no model call.
  *
- * What this cannot reach, and why (the parity row says so): a change row (and with it the refusals and the template
- * start) needs a pass→fail turn between two `every_hours` windows, which the listener buckets by the hour
- * (`watch:<crew>:<window start>`), so a second check is up to an hour away; and a template start on this Linux box
- * would be refused by the host confinement (Crew workers are macOS-only in the beta) before any model.
+ * The one change row a spec can reach here is the person's own switch: turning the watch off writes exactly one
+ * `turned_off` row in the same route, and the page draws it after the check it stopped.
+ *
+ * What this cannot reach, and why (the parity row says so): a result change row (pass->fail) needs a turn between two
+ * `every_hours` windows, where the second window is the next epoch-hour boundary (up to an hour away), and with it the
+ * refusals and the template start; a template start on this Linux box would also be refused by the host confinement
+ * (Crew workers are macOS-only in the beta) before any model.
  */
 
 const WINDOW = { width: 1280, height: 792 };
@@ -113,4 +116,30 @@ test("a watch's failing baseline runs its fixed command with no model call, and 
   expect(reads.filter((one) => one.status === 200).map((one) => one.path)).toEqual(
     expect.arrayContaining([`/api/crew/background/${crew.id}/watch`, `/api/crew/background/${crew.id}/watch/changes`]),
   );
+
+  // The person turns the watch off through the real route: one `turned_off` change row (action none) is written in
+  // the same switch, and the watch's own history serves it.
+  expect((await service.api<BackgroundCrew>("POST", `/api/crew/background/${crew.id}/disable`, {})).enabled).toBe(false);
+  const after = await service.api<BackgroundWatchChanges>("GET", `/api/crew/background/${crew.id}/watch/changes?offset=0&limit=20`);
+  expect(after.total).toBe(2);
+  expect(after.changes[0]).toMatchObject({ kind: "turned_off", action: "none", exit_code: null });
+  expect(after.changes[1]?.kind).toBe("baseline");
+
+  // And the page draws that change: the watch is Paused, with the row "Turned off by you" / "No more checks.".
+  await page.goto(`${service.page}#/crew/background`);
+  await expect(page.getByRole("table", { name: "Background crews" })).toBeVisible({ timeout: PAGE_READY });
+  const offRow = page.getByRole("table", { name: "Background crews" }).getByRole("row").filter({ hasText: "Main build" });
+  await expect(offRow).toContainText("Paused");
+  await offRow.getByRole("button", { name: "Open the Main build watch" }).click();
+  const paused = page.getByRole("region", { name: "Main build watch" });
+  await expect(paused.getByRole("heading", { name: "Paused: it is off" })).toBeVisible({ timeout: PAGE_READY });
+  const pausedTable = paused.getByRole("table", { name: "Watch changes" });
+  expect(await pausedTable.getByRole("row").count()).toBe(3);
+  const turnedOff = await pausedTable.getByRole("row").nth(1).locator('[role="cell"]').allTextContents();
+  expect(turnedOff.map((cell) => cell.trim())).toEqual([
+    expect.stringMatching(/^\w{3} \d{1,2} \w{3}, \d\d:\d\d$/),
+    "Turned off by you",
+    "—",
+    "No more checks.",
+  ]);
 });

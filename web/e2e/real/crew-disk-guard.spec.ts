@@ -11,9 +11,12 @@ import { startProject, type Service } from "./service";
  * the reason, and the refusal keeps one stopped history row (`reason_code` disk_low, no stop reason, nothing
  * spent) that the Background page draws as "Not started · Disk" with the service's own sentence.
  *
- * The guard reads the volume that holds the lead's folder. The fixture project must sit on a volume smaller than
- * the floor: the build box's `/tmp` is a 24 GB tmpfs and the floor here is its maximum 500 GB, so it refuses.
- * The spec checks the volume first and fails with its own message rather than pretending elsewhere.
+ * The guard reads the volume that holds the lead's folder, so the fixture project must sit on a volume smaller than
+ * the floor: the floor here is its maximum 500 GB, which no CI runner's disk exceeds, and the spec reads the volume's
+ * free space first and fails with its own message rather than letting a larger volume turn this into a false pass.
+ *
+ * The service is started with `fakeEngines` because a background start asks for a ready engine before it reaches the
+ * guard; the engine is never run, since the disk refusal comes first.
  */
 
 const FLOOR_GB = 500;
@@ -77,6 +80,7 @@ test("a person's disk floor refuses a background start with the free space in th
     },
     (error: Error) => error.message,
   );
+  expect(refusal).toContain(`POST /api/crew/background/${crew.id}/run-now: 403 `);
   expect(refusal).toContain('"code":"policy_denied"');
   expect(refusal).toMatch(SENTENCE);
 
