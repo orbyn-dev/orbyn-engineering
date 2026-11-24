@@ -275,7 +275,7 @@ function DetailRow({ row, replace }: { row: KeyStorage; replace(next: KeyStorage
         <StateChip chip={chipOf(entry.choice)} />{entry.actions("detail")}
       </SettingRow>
       {entry.notice ? <p className="setting-line-desc" role="status">{entry.notice}</p> : null}
-      <p className="setting-line-desc eh-caption"><SetupPill /> Built behind a setting, off until you turn it on.</p>
+      <p className="setting-line-desc eh-caption">Built behind a setting, off until you turn it on.</p>
       {entry.dialogs}
     </>
   );
