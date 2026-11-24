@@ -19,6 +19,7 @@ mod crew_capacity;
 mod crew_escapes;
 mod crew_lessons;
 mod crew_map;
+mod crew_skill_proposals;
 mod crew_tasks;
 mod devices;
 mod engine_credentials;
@@ -102,6 +103,8 @@ mod crew_notify_tests;
 mod crew_rerun_tests;
 #[cfg(test)]
 mod crew_retry_tests;
+#[cfg(test)]
+mod crew_skill_proposals_tests;
 #[cfg(test)]
 mod crew_tasks_tests;
 #[cfg(test)]

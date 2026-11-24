@@ -340,6 +340,16 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/skill-proposals/{id}/approve",
+        "core crew_skill_proposal_approve: Preview; a person approves an open proposal at the revision seen, only while every source lesson is still active and visible, 1 to 600 secret-scanned characters; writes the local skill, then the approval and its audit row in one transaction; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/skill-proposals/{id}/dismiss",
+        "core crew_skill_proposal_dismiss: Preview; a person dismisses an open proposal at the revision seen, the row kept so the pattern is not offered again, audited in the same transaction; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
         "/api/crew/projects/{id}/worker-provider/set",
         "core crew_set_worker_provider: a person's per-project choice of same_as_lead or any, a known project, audited in the same transaction; it changes where later work runs and never an engine a task already has; no agent tool reaches it; local only",
     ),
@@ -429,6 +439,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .merge(super::crew_capacity::writes())
         .merge(super::crew_escapes::writes())
         .merge(super::crew_lessons::writes())
+        .merge(super::crew_skill_proposals::writes())
         .route("/api/crew/tasks/{id}/rerun-checks", post(rerun_checks))
         .route(
             "/api/crew/tasks/{id}/checks/{check}/decide",
@@ -498,6 +509,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .merge(super::crew_board::routes())
         .merge(super::crew_escapes::routes())
         .merge(super::crew_lessons::routes())
+        .merge(super::crew_skill_proposals::routes())
         .merge(super::crew_map::routes())
         .layer(from_fn_with_state(state, preview_gate))
 }

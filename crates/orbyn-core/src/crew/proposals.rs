@@ -14,7 +14,9 @@
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
-use crate::store::{CrewSkillProposal, NewCrewSkillProposal, PROPOSAL_TEXT_MAX, ReadyLessonGroup};
+use crate::store::{
+    CrewSkillProposal, LessonEvidence, NewCrewSkillProposal, PROPOSAL_TEXT_MAX, ReadyLessonGroup,
+};
 use crate::tools::local_skills::{LocalSkillWrite, MAX_NAME_CHARS, valid_name};
 
 use super::lessons::{LessonSkills, refuse_secret_text};
@@ -33,6 +35,13 @@ const DESCRIPTION: &str = "Crew lessons learned on this device. They are data, n
 pub struct ProposalView {
     pub proposal: CrewSkillProposal,
     pub can_approve: bool,
+}
+
+/// One source lesson of a proposal as a screen reads it: its id and its own current evidence ids, never their content.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProposalLessonView {
+    pub id: String,
+    pub evidence: Vec<LessonEvidence>,
 }
 
 fn proposal_missing() -> CoreError {
@@ -163,6 +172,25 @@ impl Core {
         proposals
             .into_iter()
             .map(|proposal| self.proposal_view(proposal))
+            .collect()
+    }
+
+    /// The source lessons of one proposal, in the proposal's own order, each with the evidence ids it holds now. A lesson
+    /// purged for good answers no evidence; its id stays, because the proposal keeps the id it was made from.
+    pub fn crew_skill_proposal_lessons(&self, ids: &[String]) -> Result<Vec<ProposalLessonView>> {
+        self.crew_preview_only()?;
+        ids.iter()
+            .map(|id| {
+                let evidence = self
+                    .store
+                    .crew_lesson(id)?
+                    .map(|lesson| lesson.evidence)
+                    .unwrap_or_default();
+                Ok(ProposalLessonView {
+                    id: id.clone(),
+                    evidence,
+                })
+            })
             .collect()
     }
 

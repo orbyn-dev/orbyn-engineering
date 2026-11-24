@@ -1022,6 +1022,56 @@ async fn proposals_change_nothing_about_the_key_the_route_the_leases_or_the_chec
 }
 
 #[tokio::test]
+async fn a_proposal_answers_each_sources_own_evidence_and_a_purged_source_answers_none() {
+    let w = quiet().await;
+    let project = project_of(&w);
+    let view = make_proposal(&w, &project);
+    let source_lessons: Vec<CrewLesson> = sources(&w, &view);
+    let listed = w
+        .core
+        .crew_skill_proposal_lessons(&view.proposal.lessons)
+        .unwrap();
+    assert_eq!(listed.len(), source_lessons.len());
+    for (listed, source) in listed.iter().zip(&source_lessons) {
+        assert_eq!(listed.id, source.id);
+        assert_eq!(listed.evidence, source.evidence);
+    }
+    let with_evidence = source_lessons
+        .iter()
+        .find(|lesson| !lesson.evidence.is_empty())
+        .expect("the learned source carries evidence");
+    assert_eq!(
+        with_evidence
+            .evidence
+            .first()
+            .map(|evidence| evidence.kind.as_str()),
+        Some("escape")
+    );
+
+    w.core
+        .crew_lesson_delete(&with_evidence.id, with_evidence.rev)
+        .unwrap();
+    w.core
+        .store
+        .purge_deleted_lessons("9999-01-01T00:00:00Z")
+        .unwrap();
+    let after = w
+        .core
+        .crew_skill_proposal_lessons(&view.proposal.lessons)
+        .unwrap();
+    let purged = after
+        .iter()
+        .find(|lesson| lesson.id == with_evidence.id)
+        .expect("the proposal keeps the id");
+    assert!(purged.evidence.is_empty());
+    for (before, after) in listed.iter().zip(&after) {
+        if before.id != with_evidence.id {
+            assert_eq!(before, after);
+        }
+    }
+}
+
+#[tokio::test]
 async fn an_unknown_repository_is_not_found() {
     let w = quiet().await;
     let missing = w
@@ -1039,6 +1089,7 @@ async fn preview_off_refuses_every_proposal_method() {
     let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
     let project = project_of(&w);
     assert_preview_off(w.core.crew_skill_proposals(&project));
+    assert_preview_off(w.core.crew_skill_proposal_lessons(&[]));
     assert_preview_off(w.core.crew_skill_proposal_approve("prop_x", "Text.", 1));
     assert_preview_off(w.core.crew_skill_proposal_dismiss("prop_x", 1));
     assert!(

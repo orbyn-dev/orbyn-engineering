@@ -111,6 +111,8 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/lessons/{id}/promote"),
     ("POST", "/api/crew/lessons/{id}/demote"),
     ("PUT", "/api/crew/lessons/settings"),
+    ("POST", "/api/crew/skill-proposals/{id}/approve"),
+    ("POST", "/api/crew/skill-proposals/{id}/dismiss"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
     ("POST", "/api/crew/projects/{id}/worker-provider/set"),
@@ -671,6 +673,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "PUT",
         "/api/crew/lessons/settings",
         "Crew write behind local_only: the person's per-repository use-lessons switch",
+    ),
+    (
+        "POST",
+        "/api/crew/skill-proposals/{id}/approve",
+        "Crew write behind local_only: the person approves an open skill proposal and writes the local skill",
+    ),
+    (
+        "POST",
+        "/api/crew/skill-proposals/{id}/dismiss",
+        "Crew write behind local_only: the person dismisses an open skill proposal",
     ),
     (
         "POST",
@@ -1504,12 +1516,10 @@ mod tests {
         use axum::response::IntoResponse;
         let response = result.expect_err("the call is refused").into_response();
         let status = response.status().as_u16();
-        let body = futures_util::FutureExt::now_or_never(axum::body::to_bytes(
-            response.into_body(),
-            4096,
-        ))
-        .expect("body is ready")
-        .expect("body reads");
+        let body =
+            futures_util::FutureExt::now_or_never(axum::body::to_bytes(response.into_body(), 4096))
+                .expect("body is ready")
+                .expect("body reads");
         let json: serde_json::Value = serde_json::from_slice(&body).expect("json body");
         (status, json["code"].as_str().expect("code").to_owned())
     }
