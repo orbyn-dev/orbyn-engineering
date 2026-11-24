@@ -11,11 +11,12 @@
 //! **No model call while nothing changes.** The runner runs the command only; a start happens only through
 //! `crew_background_start`, the same seam Run now and the other listeners take, and only when a result turns failing with the
 //! trigger's `on_failing` set to `template`. A start that is refused (the crew already running, the daily budget, an untrusted
-//! folder, no engine) leaves the Needs you row raised and writes the same `crew.background.listener.refused` audit row the other
-//! listeners write; the refusal's sentence is not stored.
+//! folder, no engine) leaves the Needs you row raised, writes the same `crew.background.listener.refused` audit row the other
+//! listeners write, and records why on the change row as one of the seven fixed codes below; the wire turns the code into the
+//! fixed sentence a person reads.
 //!
 //! The state machine is the pure `plan` function below, applied by the watch tick in `background_listeners`; the reads are
-//! views of the two tables migration 77 made.
+//! views of the two tables migration 77 made, and migration 87 gave a change row its refusal code.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -252,11 +253,30 @@ fn kept_tail(log: &str) -> Option<String> {
     (!tail.is_empty()).then_some(tail)
 }
 
+/// The fixed sentence of a refused template start, by the code a change row kept. Core owns these words: no repository
+/// text, crew name or command is ever part of them.
+pub(crate) fn refusal_sentence(code: &str) -> &'static str {
+    match code {
+        "disk_low" => "Not started: not enough free space. Free space and try again.",
+        "no_engine" => "No engine is set up for this template. Choose one in Settings.",
+        "folder_untrusted" => "This folder is not trusted yet. Trust it in Settings.",
+        "run_in_progress" => "A run of this crew is already running.",
+        "not_allowed" => "Your settings do not allow this start.",
+        "crew_gone" => "This watch no longer exists.",
+        _ => "The start was refused. Open the run list for details.",
+    }
+}
+
 fn change_wire(row: WatchChangeRow) -> Result<wire::BackgroundWatchChange> {
     Ok(wire::BackgroundWatchChange {
         id: row.id,
         kind: parse_wire(&row.kind)?,
         action: parse_wire(&row.action)?,
+        reason: row
+            .reason_code
+            .as_deref()
+            .map(|code| refusal_sentence(code).to_owned()),
+        reason_code: row.reason_code,
         at: format_unix(row.at_unix),
         exit_code: row.exit_code.and_then(|code| i32::try_from(code).ok()),
         tail: row.tail,
@@ -362,8 +382,13 @@ impl Core {
             .is_some_and(|row| row.kind == "failing" && row.action == "needs_you");
         let planned = plan(&previous, &check, on_failing_template, raised, at);
         let mut action = planned.action;
-        if planned.start_template && !self.fire_background_event(&crew.id, "watch", event).await {
-            action = "needs_you";
+        let mut reason_code = None;
+        if planned.start_template {
+            let fired = self.fire_background_event(&crew.id, "watch", event).await;
+            if !fired.is_started() {
+                action = "needs_you";
+                reason_code = fired.refusal_code();
+            }
         }
         let change = planned.change;
         let change = change
@@ -371,6 +396,7 @@ impl Core {
             .map(|(kind, exit_code, tail)| NewWatchChange {
                 kind,
                 action,
+                reason_code,
                 at_unix: at,
                 exit_code: *exit_code,
                 tail: tail.as_deref(),

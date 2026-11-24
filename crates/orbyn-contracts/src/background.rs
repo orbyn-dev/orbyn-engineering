@@ -232,6 +232,18 @@ pub struct BackgroundRunList {
 }
 }
 
+wire! {
+/// One run with the crew it belongs to, for "Open the run": the run's own state, times, reason and spend, and the crew's
+/// name and template. The run read is one run, never a page.
+pub struct BackgroundRunDetail {
+    pub run: BackgroundRun,
+    pub crew_id: String,
+    /// The crew's name, shown the way every crew read shows it.
+    pub name: String,
+    pub template: BackgroundTemplate,
+}
+}
+
 wire_enum! {
 /// Where a watch's last check stands. The first check that runs is a baseline and raises nothing; after it, only a turn between
 /// passing and failing is a change. Three checks in a row that could not run raise one Needs you row, and a check that runs
@@ -301,6 +313,15 @@ pub struct BackgroundWatchChange {
     pub id: i64,
     pub kind: BackgroundWatchChangeKind,
     pub action: BackgroundWatchChangeAction,
+    /// Why a template start was refused, as the fixed sentence core owns; absent when nothing was refused.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub reason: Option<String>,
+    /// The fixed code behind `reason` (`disk_low`, `no_engine`, `folder_untrusted`, `run_in_progress`, `not_allowed`,
+    /// `crew_gone` or `refused`); absent when nothing was refused.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub reason_code: Option<String>,
     /// When the change happened, as RFC 3339.
     pub at: String,
     #[serde(default)]

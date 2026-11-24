@@ -891,3 +891,77 @@ fn a_crew_run_with_no_worker_and_an_unknown_member_reads_without_panicking() {
         "an unknown member is refused without a write"
     );
 }
+
+#[test]
+fn migration_87_adds_a_refusal_code_to_watch_changes() {
+    let dir = TempDir::new();
+    // A database an older install left at 86, with a watch change row written before the reason column existed.
+    let (path, conn) = database(&dir, 86);
+    conn.execute(
+        "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+         budget_turns, budget_minutes, enabled, created_at, updated_at, daily_runs, daily_turns, utc_offset_minutes)
+         VALUES ('old', 'project-1', 'Old', 'fix_failing_ci', 'watch',
+                 '{\"command\":\"git diff --exit-code\",\"every_hours\":6,\"on_failing\":\"template\"}',
+                 10, 30, 1, 'created', 'updated', 2, 40, 600)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO crew_watch_changes (background_id, kind, at_unix, exit_code, action, tail)
+         VALUES ('old', 'failing', 10, 1, 'needs_you', 'boom')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let store = upgraded(&path, 86, "crew-watch-reason");
+    let (rows, total) = store.watch_changes_page("old", 10, 0).unwrap();
+    assert_eq!(total, 1);
+    let old = &rows[0];
+    assert_eq!(
+        (
+            old.kind.as_str(),
+            old.action.as_str(),
+            old.exit_code,
+            old.tail.as_deref(),
+            old.reason_code.as_deref(),
+        ),
+        ("failing", "needs_you", Some(1), Some("boom"), None),
+        "an old row survives and has no code"
+    );
+    let old_id = old.id;
+
+    // A new row takes a code.
+    store
+        .writer()
+        .execute(
+            "INSERT INTO crew_watch_changes (background_id, kind, at_unix, exit_code, action, tail, reason_code)
+             VALUES ('old', 'failing', 20, 2, 'needs_you', 'boom', 'disk_low')",
+            [],
+        )
+        .unwrap();
+    let (rows, total) = store.watch_changes_page("old", 10, 0).unwrap();
+    assert_eq!(total, 2);
+    assert_eq!(rows[0].exit_code, Some(2));
+    assert_eq!(rows[0].reason_code.as_deref(), Some("disk_low"));
+    assert_eq!(rows[1].reason_code, None);
+
+    // Any other value is refused by the column's CHECK, with the exact SQLite error.
+    let error = store
+        .writer()
+        .execute(
+            "UPDATE crew_watch_changes SET reason_code = 'other' WHERE id = ?1",
+            [old_id],
+        )
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "CHECK constraint failed: reason_code IS NULL OR reason_code IN ('disk_low','no_engine','folder_untrusted','run_in_progress','not_allowed','crew_gone','refused')"
+    );
+    drop(store);
+
+    let again = reopened(&path, "crew-watch-reason-reopen");
+    let (rows, _) = again.watch_changes_page("old", 10, 0).unwrap();
+    assert_eq!(rows[0].reason_code.as_deref(), Some("disk_low"));
+    assert_eq!(rows[1].reason_code, None);
+}

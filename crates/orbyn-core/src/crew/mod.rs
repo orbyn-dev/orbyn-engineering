@@ -17,6 +17,8 @@ mod classes;
 mod close_lead;
 mod codex_homes;
 mod dashboard;
+#[cfg(debug_assertions)]
+pub mod dev_seed;
 mod draft;
 pub mod escapes;
 mod filters;

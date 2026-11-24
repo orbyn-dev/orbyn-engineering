@@ -501,6 +501,27 @@ impl Core {
         })
     }
 
+    /// One background run with the crew it belongs to, for "Open the run": the run's own state, times, reason and spend, and
+    /// the crew's name and template. Behind the Crew Preview flag. An unknown run, or a run whose crew is not stored, is NotFound.
+    pub fn background_run_detail(&self, run_id: &str) -> Result<wire::BackgroundRunDetail> {
+        self.crew_preview_only()?;
+        valid_id(run_id)?;
+        let run = self
+            .store
+            .background_run(run_id)?
+            .ok_or_else(|| CoreError::NotFound("background run".into()))?;
+        let crew = self
+            .store
+            .background_crew(&run.background_id)?
+            .ok_or_else(|| CoreError::NotFound("background crew".into()))?;
+        Ok(wire::BackgroundRunDetail {
+            crew_id: crew.id,
+            name: redact(&crew.name),
+            template: parse_wire(&crew.template)?,
+            run: run_wire(run)?,
+        })
+    }
+
     /// Opens a run of an enabled crew with the crew's budget. Not reachable over HTTP and fired by nothing yet: slice 4h's triggers
     /// call it.
     pub fn crew_background_start_run(&self, id: &str) -> Result<wire::BackgroundRun> {

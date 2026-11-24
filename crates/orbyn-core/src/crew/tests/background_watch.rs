@@ -3,6 +3,7 @@
 //! raises nothing, only a turn between passing and failing is a change, three checks in a row that could not run raise one
 //! Needs you row, and a check that runs again resolves it. Nothing calls a model while the result stays the same.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,10 +12,11 @@ use serde_json::json;
 
 use super::harness::{Script, Turn, World, report, world};
 use super::review_support::commit_all;
-use crate::crew::Page;
+use crate::crew::background_daily::local_day_and_reset;
 use crate::crew::checks::tail_lines_bytes;
 use crate::crew::fixtures::audit_actions;
-use crate::crew::watch::{CouldNotRun, WatchCheck, WatchFound, plan};
+use crate::crew::watch::{CouldNotRun, WatchCheck, WatchFound, plan, refusal_sentence};
+use crate::crew::{BackgroundEnd, Page};
 use crate::store::{NewBackground, WatchStateRow};
 use crate::testing::run_git;
 
@@ -474,6 +476,14 @@ async fn a_template_watch_starts_one_run_and_nothing_while_nothing_changes() {
         rows[0].action,
         wire::BackgroundWatchChangeAction::StartedTemplate
     );
+    assert_eq!(
+        rows[0].reason_code, None,
+        "a start that succeeds has no code"
+    );
+    assert_eq!(
+        rows[0].reason, None,
+        "a start that succeeds has no sentence"
+    );
     assert!(w.core.crew_needs_you().unwrap().items.is_empty());
     let tasks = w.core.store.crew_tasks_in_crew(&started[0].id).unwrap();
     assert_eq!(tasks.len(), 1, "one task per started run");
@@ -502,6 +512,11 @@ async fn a_template_watch_starts_one_run_and_nothing_while_nothing_changes() {
     tick(&w, NOW + 4 * BUCKET).await;
     let rows = changes(&w, &id);
     assert_eq!(rows[0].action, wire::BackgroundWatchChangeAction::NeedsYou);
+    assert_eq!(rows[0].reason_code.as_deref(), Some("run_in_progress"));
+    assert_eq!(
+        rows[0].reason.as_deref(),
+        Some("A run of this crew is already running.")
+    );
     assert_eq!(
         runs(&w, &id).len(),
         1,
@@ -1027,4 +1042,255 @@ async fn a_watch_changed_to_needs_you_during_a_check_does_not_start_its_template
         wire::BackgroundWatchChangeAction::NeedsYou
     );
     assert_eq!(w.core.crew_needs_you().unwrap().items.len(), 1);
+}
+
+/// A template watch whose baseline check has run and passed, so its next failing check is a change that tries a start.
+async fn prepared_template_watch(w: &World, name: &str) -> String {
+    let id = watch(w, name, "git diff --exit-code", "template").await;
+    tick(w, NOW).await;
+    assert_eq!(status(w, &id).state, wire::BackgroundWatchState::Passing);
+    id
+}
+
+/// The crew row as it stands, for a direct check the tick would otherwise not let us stage.
+fn crew_row(w: &World, id: &str) -> crate::store::BackgroundRow {
+    w.core.store.background_crew(id).unwrap().unwrap()
+}
+
+/// Records one failing check on a prepared watch and returns the row it wrote.
+async fn refused_failing_check(w: &World, id: &str, at: i64) -> wire::BackgroundWatchChange {
+    w.core
+        .record_watch_check(
+            &crew_row(w, id),
+            "watch:1",
+            ran(false, Some(1), Some("boom")),
+            at,
+        )
+        .await
+        .unwrap();
+    let rows = changes(w, id);
+    assert_eq!(rows.len(), 2, "a baseline and the failing change: {rows:?}");
+    rows[0].clone()
+}
+
+/// One refused start: its change row, its sentence and the Needs you row it keeps raised. The words are code-owned,
+/// so they never carry a path, the crew's name or the command.
+fn assert_refused_start(
+    w: &World,
+    id: &str,
+    crew_name: &str,
+    row: &wire::BackgroundWatchChange,
+    code: &str,
+    sentence: &str,
+) {
+    assert_eq!(row.kind, wire::BackgroundWatchChangeKind::Failing);
+    assert_eq!(row.action, wire::BackgroundWatchChangeAction::NeedsYou);
+    assert_eq!(row.reason_code.as_deref(), Some(code));
+    assert_eq!(row.reason.as_deref(), Some(sentence));
+    let why = row.reason.as_deref().unwrap();
+    assert!(!why.contains(crew_name), "{why}");
+    assert!(
+        !why.contains(&w.repo.to_string_lossy().to_string()),
+        "{why}"
+    );
+    assert!(!why.contains("git"), "{why}");
+    let items = w.core.crew_needs_you().unwrap().items;
+    assert_eq!(
+        items.len(),
+        1,
+        "the refused start keeps the Needs you row: {items:?}"
+    );
+    assert_eq!(items[0].kind, wire::NeedsYouKind::WatchFailing);
+    assert_eq!(items[0].crew_id.as_deref(), Some(id));
+}
+
+#[test]
+fn every_refusal_code_has_a_fixed_sentence_that_names_no_path_crew_or_command() {
+    for code in [
+        "disk_low",
+        "no_engine",
+        "folder_untrusted",
+        "run_in_progress",
+        "not_allowed",
+        "crew_gone",
+        "refused",
+    ] {
+        let sentence = refusal_sentence(code);
+        assert!(!sentence.is_empty(), "{code}");
+        assert!(!sentence.contains('/'), "{code}: {sentence}");
+        assert!(!sentence.contains("git"), "{code}: {sentence}");
+        assert!(!sentence.contains("Crew"), "{code}: {sentence}");
+    }
+    assert_eq!(
+        refusal_sentence("refused"),
+        "The start was refused. Open the run list for details."
+    );
+}
+
+#[tokio::test]
+async fn a_refused_start_for_low_disk_records_the_code_and_sentence() {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let w = world(true, hung()).await;
+    let id = prepared_template_watch(&w, "Low disk").await;
+    crate::host::disk::set_free_for_test(&w.repo, Some(7 * GIB / 2));
+
+    let row = refused_failing_check(&w, &id, NOW + BUCKET).await;
+    assert_refused_start(
+        &w,
+        &id,
+        "Low disk",
+        &row,
+        "disk_low",
+        "Not started: not enough free space. Free space and try again.",
+    );
+    // The disk refusal keeps its stopped not-started run beside the change row, with no stop reason.
+    let runs = runs(&w, &id);
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(runs[0].state, wire::BackgroundRunState::Stopped);
+    assert_eq!(runs[0].stop_reason, None);
+    assert_eq!(runs[0].reason_code.as_deref(), Some("disk_low"));
+    assert_eq!(
+        changes(&w, &id)[0].action,
+        wire::BackgroundWatchChangeAction::NeedsYou
+    );
+    crate::host::disk::set_free_for_test(&w.repo, None);
+}
+
+#[tokio::test]
+async fn a_refused_start_with_no_engine_records_the_code_and_sentence() {
+    let w = world(true, hung()).await;
+    let id = prepared_template_watch(&w, "Engine check").await;
+    w.core
+        .set_preferences(
+            Some(&project(&w)),
+            &BTreeMap::from([("disabled_engines".to_owned(), json!(["alpha"]))]),
+        )
+        .unwrap();
+
+    let row = refused_failing_check(&w, &id, NOW + BUCKET).await;
+    assert_refused_start(
+        &w,
+        &id,
+        "Engine check",
+        &row,
+        "no_engine",
+        "No engine is set up for this template. Choose one in Settings.",
+    );
+}
+
+#[tokio::test]
+async fn a_refused_start_in_an_untrusted_folder_records_the_code_and_sentence() {
+    let w = world(true, hung()).await;
+    let id = prepared_template_watch(&w, "Untrusted").await;
+    w.core
+        .store
+        .reader()
+        .execute_batch("UPDATE projects SET trusted = 0")
+        .unwrap();
+
+    let row = refused_failing_check(&w, &id, NOW + BUCKET).await;
+    assert_refused_start(
+        &w,
+        &id,
+        "Untrusted",
+        &row,
+        "folder_untrusted",
+        "This folder is not trusted yet. Trust it in Settings.",
+    );
+}
+
+#[tokio::test]
+async fn a_refused_start_when_the_project_is_gone_records_crew_gone() {
+    let w = world(true, hung()).await;
+    // A stored watch whose project row is gone: the crew table has no foreign key to the project, as the product says
+    // removing a project leaves its crews, so the start finds no project and is refused with `crew_gone`.
+    let crew = w
+        .core
+        .store
+        .create_background_crew(
+            &NewBackground {
+                project_id: "project-gone",
+                name: "Gone",
+                template: "fix_failing_ci",
+                trigger_kind: "watch",
+                trigger_settings: &json!({
+                    "command": "git diff --exit-code", "every_hours": HOURS, "on_failing": "template"
+                }),
+                budget_turns: 10,
+                budget_minutes: 30,
+                daily_runs: 100,
+                daily_turns: 1000,
+                utc_offset_minutes: 600,
+            },
+            "user",
+        )
+        .unwrap();
+    w.core.background_set_enabled(&crew.id, true).unwrap();
+    // A passing baseline needs no project; the failing check after it tries the start.
+    w.core
+        .record_watch_check(&crew, "watch:0", ran(true, Some(0), None), NOW)
+        .await
+        .unwrap();
+
+    let row = refused_failing_check(&w, &crew.id, NOW + BUCKET).await;
+    assert_refused_start(
+        &w,
+        &crew.id,
+        "Gone",
+        &row,
+        "crew_gone",
+        "This watch no longer exists.",
+    );
+}
+
+#[tokio::test]
+async fn a_refused_start_that_settings_do_not_allow_records_not_allowed() {
+    let w = world(true, hung()).await;
+    let mut body = watch_body(&w, "Daily cap", "git diff --exit-code", "template");
+    body.daily.runs = 1;
+    let crew = w.core.background_create(&body).await.unwrap();
+    w.core.background_set_enabled(&crew.id, true).unwrap();
+    tick(&w, NOW).await;
+
+    // One run of this crew is on the ledger for its one allowed run today, so the next start is refused.
+    let run = w.core.crew_background_start_run(&crew.id).unwrap();
+    let (day, _) = local_day_and_reset(600, crate::util::unix_now()).unwrap();
+    w.core
+        .store
+        .add_background_daily_turn(&crew.id, &run.id, &day, "alpha")
+        .unwrap();
+    w.core
+        .crew_background_end_run(
+            &run.id,
+            BackgroundEnd::Stopped(wire::BackgroundStopReason::Disabled),
+        )
+        .unwrap();
+
+    let row = refused_failing_check(&w, &crew.id, NOW + BUCKET).await;
+    assert_refused_start(
+        &w,
+        &crew.id,
+        "Daily cap",
+        &row,
+        "not_allowed",
+        "Your settings do not allow this start.",
+    );
+}
+
+#[tokio::test]
+async fn a_refused_start_for_any_other_reason_records_the_catch_all_code() {
+    let w = world(true, hung()).await;
+    let id = prepared_template_watch(&w, "No files").await;
+    // The project has no committed HEAD, so the start is refused before anything is stored.
+    run_git(&w.repo, &["checkout", "-q", "--orphan", "nothing"]);
+
+    let row = refused_failing_check(&w, &id, NOW + BUCKET).await;
+    assert_refused_start(
+        &w,
+        &id,
+        "No files",
+        &row,
+        "refused",
+        "The start was refused. Open the run list for details.",
+    );
 }

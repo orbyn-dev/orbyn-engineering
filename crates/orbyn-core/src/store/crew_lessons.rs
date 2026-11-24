@@ -317,6 +317,51 @@ impl Store {
         })
     }
 
+    /// Writes test and debug-seam escape lessons of one repository in one immediate transaction: each is active, source
+    /// `escape`, has `area` as its path class, no check kind and no fingerprint, and carries its own evidence. When
+    /// `audit` is given its row is written first in the same transaction, as architecture rule 6 asks. The callers are
+    /// `crew::fixtures` and the debug-only `Core::dev_seed_proposal`; no real learner, route or tool reads it.
+    #[cfg(any(test, feature = "test-support", debug_assertions))]
+    pub(crate) fn write_escape_lessons(
+        &self,
+        project_id: &str,
+        area: &str,
+        lessons: &[(String, Vec<LessonEvidence>)],
+        audit: Option<&AuditRecord>,
+    ) -> Result<Vec<CrewLesson>> {
+        self.commit(|tx, _| {
+            purge_deleted(tx, &purge_before())?;
+            if let Some(record) = audit {
+                insert_audit(tx, record)?;
+            }
+            lessons
+                .iter()
+                .map(|(text, evidence)| {
+                    write_lesson(
+                        tx,
+                        &NewCrewLesson {
+                            scope: "repo".to_owned(),
+                            project_id: Some(project_id.to_owned()),
+                            source: "escape".to_owned(),
+                            check_kind: None,
+                            path_class: Some(area.to_owned()),
+                            text: text.clone(),
+                            fingerprint: None,
+                            evidence: evidence.clone(),
+                            edited_by_person: false,
+                            names_path: false,
+                        },
+                    )?
+                    .ok_or_else(|| {
+                        CoreError::Internal(
+                            "a lesson with no fingerprint was not written".to_owned(),
+                        )
+                    })
+                })
+                .collect()
+        })
+    }
+
     /// A person's edit of one lesson: text and path flag, `edited_by_person`, a new `rev` and `updated_at`. Source and
     /// fingerprint stay as they were. The audit row comes first in the same transaction.
     pub fn edit_crew_lesson(

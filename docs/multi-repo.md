@@ -194,9 +194,10 @@ whatever the page checked.
 ## As built: project repositories
 
 Behind `CoreConfig::multi_repo` (`ORBYN_MULTI_REPO=1`): with it off every route below answers `404`. Built: the repository list,
-`add-folder`, `create`, `clone`, `cancel`, `trust`, `setup-git`, `remove` and the folder scan with `.code-workspace` import. **Not built
-yet** (the next slice): `repo-threads`, the thread's repository routes, the task folder, `repo_id` on the Git and file routes, and `publish`
-(it checks the repository is trusted and then answers `422 unsupported`: "Publishing a repository arrives in a later update.").
+`add-folder`, `create`, `clone`, `cancel`, `trust`, `setup-git`, `remove` and the folder scan with `.code-workspace` import. The
+repository threads, the thread's repository routes, the task folder and `repo_id` on the Git and file routes are built too (see the
+sections below). **Not built:** `publish` (it checks the repository is trusted and then answers `422 unsupported`: "Publishing a
+repository arrives in a later update.").
 
 - **Storage.** Table `project_repos` (migration 64): id, project, name, path (unique), trusted, is_git, managed, clone state and message.
   The project's own folder is not a row; it is the first row of the list (`primary`, `id` the project id), and `trust` and `setup-git` on it

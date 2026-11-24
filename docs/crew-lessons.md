@@ -93,6 +93,8 @@ A proposal is made by code when 3 or more active lessons of one repository share
 class. The text comes from a fixed template over those lessons' own text; no model, nothing leaves the device. A proposal blocks
 nothing and does not feed the needs-you field. Under `/api/crew/skill-proposals`:
 
+A debug build started with `ORBYN_DEV_SEED_PROPOSALS=1` also serves the dev-only seam `POST /api/crew/dev/seed-proposal`; release builds and debug runs without that flag have no such route.
+
 | Method and path | Class | Body | Answer |
 |---|---|---|---|
 | `GET /api/crew/skill-proposals?repo=<project id>` | Local | none | `200 { proposals: [SkillProposal] }` (every state, newest first) |

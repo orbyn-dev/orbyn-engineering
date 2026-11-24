@@ -1,6 +1,6 @@
 //! Crew (Preview) over HTTP: the Preview flag, background crews' state (`/api/crew/background`: list, read, create, update, on, off,
-//! delete, the runs, a watch's last check and change history, Run now, which starts one run by hand, and the acknowledgement that
-//! settles a run's waiting review; nothing fires a trigger on its own), Autopilot's modes, trust, risk, the Review queue, the
+//! delete, the runs, one run with its crew, a watch's last check and change history, Run now, which starts one run by hand, and the
+//! acknowledgement that settles a run's waiting review; nothing fires a trigger on its own), Autopilot's modes, trust, risk, the
 //! merge queue, the watch on
 //! main, the digest, the approval ledger, the trip wires and the guards, and three reads of the repository's data classes (`/api/crew/classes`,
 //! `/api/crew/classes/test`, `/api/crew/route/{task}`). Transport only: `orbyn_core::crew` builds every view and
@@ -452,8 +452,16 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/needs-you/dismiss", post(needs_you_dismiss))
         .route("/api/crew/needs-you/notify", post(needs_you_notify))
         .route("/api/crew/lead/{thread_id}/close", post(lead_close))
-        .route("/api/crew/tasks/{id}/merge", post(merge_request))
-        .route_layer(from_fn_with_state(state.clone(), local_only));
+        .route("/api/crew/tasks/{id}/merge", post(merge_request));
+    // Debug builds only, and only when the service started with `ORBYN_DEV_SEED_PROPOSALS` on: a release build has
+    // no module to merge, and an ordinary debug run registers nothing, so the route is absent from the table.
+    #[cfg(debug_assertions)]
+    let writes = if state.core.config.dev_seed_proposals {
+        writes.merge(super::crew_dev::routes())
+    } else {
+        writes
+    };
+    let writes = writes.route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
         .route("/api/crew/preview", get(preview))
         .route("/api/crew/autopilot", get(modes))
@@ -483,6 +491,12 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/needs-you", get(needs_you))
         .route("/api/crew/lead/{thread_id}/live", get(lead_live))
         .route("/api/crew/background", get(background_list))
+        // The literal `runs` segment wins over `{id}`: a run read never reaches the crew read. Ids are generated, so a crew
+        // can never be named `runs`.
+        .route(
+            "/api/crew/background/runs/{run_id}",
+            get(background_run_detail),
+        )
         .route("/api/crew/background/{id}", get(background_get))
         .route("/api/crew/background/{id}/runs", get(background_runs))
         .route("/api/crew/background/{id}/watch", get(background_watch))
@@ -1032,6 +1046,14 @@ async fn background_runs(
     query: QueryMap,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.background_runs(&id, page(&query)?)?))
+}
+
+/// One background run with its crew, so "Open the run" opens the run itself.
+async fn background_run_detail(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.background_run_detail(&run_id)?))
 }
 
 /// A watch's last check: its state, when it last checked, the exit code and reason, and the redacted tail it kept.
