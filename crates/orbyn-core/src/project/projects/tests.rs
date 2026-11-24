@@ -310,6 +310,85 @@ async fn a_clean_pushed_project_is_removed_with_its_files() {
     assert!(!Path::new(&project.path).exists());
 }
 
+/// A clean, pushed clone: the one case where `delete_files` removes the folder, so every extra thing it holds must stop that.
+async fn clean_clone(dir: &TempDir, core: &Core) -> Project {
+    let source = source_repo(&dir.path().join("upstream"));
+    core.clone_project(source.to_str().unwrap(), None, None)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn an_ignored_file_keeps_the_folder_without_asking() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let project = clean_clone(&dir, &core).await;
+    let path = PathBuf::from(&project.path);
+    // Ignored through the repository's own exclude file, so the tree is still clean and nothing is unpushed.
+    std::fs::write(path.join(".git/info/exclude"), "cache.bin\n").unwrap();
+    std::fs::write(path.join("cache.bin"), "built over an hour").unwrap();
+
+    let removal = core.remove_project(&project.id, false, true).await.unwrap();
+    assert!(!removal.files_removed);
+    assert_eq!(removal.kept_path.as_deref(), Some(project.path.as_str()));
+    assert!(path.join("cache.bin").exists(), "an ignored file is work");
+    assert!(core.store.list_projects().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_linked_worktree_keeps_the_folder_and_the_worktree() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let project = clean_clone(&dir, &core).await;
+    let path = PathBuf::from(&project.path);
+    let linked = dir.path().join("linked");
+    run_git(
+        &path,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            linked.to_str().unwrap(),
+            "-b",
+            "side",
+        ],
+    );
+    // The new branch sits on a pushed commit, so nothing else is unsaved.
+    let removal = core.remove_project(&project.id, false, true).await.unwrap();
+    assert!(!removal.files_removed);
+    assert!(path.join(".git").exists());
+    assert!(linked.join(".git").exists(), "the worktree is untouched");
+}
+
+#[tokio::test]
+async fn an_unpushed_branch_alone_needs_confirmation_and_the_folder_stays() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let project = clean_clone(&dir, &core).await;
+    let path = PathBuf::from(&project.path);
+    run_git(&path, &["config", "user.email", "t@example.com"]);
+    run_git(&path, &["config", "user.name", "T"]);
+    run_git(&path, &["checkout", "-q", "-b", "idea"]);
+    std::fs::write(path.join("idea.txt"), "x").unwrap();
+    commit_all(&path, "only here");
+    // The working tree is clean: the only thing at stake is the commit on `idea`.
+    match core.remove_project(&project.id, false, true).await {
+        Err(CoreError::ProjectHasWork { detail, .. }) => {
+            assert!(detail["dirty_files"].as_array().unwrap().is_empty());
+            assert_eq!(detail["unpushed_branches"][0], "idea");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(
+        core.store.project(&project.id).is_ok(),
+        "refused, not removed"
+    );
+
+    let removal = core.remove_project(&project.id, true, true).await.unwrap();
+    assert!(!removal.files_removed);
+    assert!(path.join("idea.txt").exists());
+}
+
 #[tokio::test]
 async fn nothing_is_added_to_a_target_by_being_a_project() {
     let dir = TempDir::new();
