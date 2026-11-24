@@ -765,3 +765,27 @@ fn a_skill_whose_revision_cannot_advance_is_not_edited() {
         "a refused edit changes nothing"
     );
 }
+
+/// Windows only, and not yet run on Windows (#1406): the area as a junction must be refused like a symbolic link, with nothing
+/// written through it. If this fails there, `root_is_link` needs a reparse-point check.
+#[cfg(windows)]
+#[test]
+fn an_area_that_is_a_junction_is_refused_and_nothing_is_written_through_it() {
+    let (dir, _store, local) = fixture();
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(local.root())
+        .arg(&elsewhere)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "could not make the junction");
+
+    let _ = local.write(LocalSkillWrite::create(SKILL), &[]);
+    assert!(
+        std::fs::read_dir(&elsewhere).unwrap().next().is_none(),
+        "the junction's target must stay empty"
+    );
+    assert!(local.list().unwrap().is_empty());
+}
