@@ -43,7 +43,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/threads/{id}/issue-links/remove", post(unlink))
 }
 
-fn on(state: &AppState) -> Result<(), CoreError> {
+pub(crate) fn on(state: &AppState) -> Result<(), CoreError> {
     if state.core.config.issues {
         Ok(())
     } else {

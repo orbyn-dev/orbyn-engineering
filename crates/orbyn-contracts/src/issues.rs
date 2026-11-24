@@ -2,7 +2,7 @@
 //! them, and a thread's links to them. Field names follow the T3 Code issue schema (MIT, 9168ca73d).
 //! Everything a tracker returns (titles, bodies, labels, names) is untrusted text.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 use ts_rs::TS;
 
@@ -399,6 +399,39 @@ pub struct IssueTemplate {
 }
 }
 
+/// A required field that may be `null`: a present `null` is `None`, a missing field is refused (serde would
+/// otherwise read a missing `Option` as `None`).
+fn required<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
+wire! {
+/// Binds a project to the connected tracker and scope its issues come from, or unbinds it (docs/issues.md,
+/// "Create, comment, react, templates and project binding"). `tracker: null` unbinds; a binding names one scope.
+pub struct SetProjectIssueTracker {
+    /// The tracker to bind; `null` unbinds. The field is required: a body without it is refused rather than read as
+    /// an unbind a client did not ask for.
+    #[serde(deserialize_with = "required")]
+    pub tracker: Option<TrackerKind>,
+    /// The one scope of the connection the project's issues come from; required when binding.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub scope: Option<String>,
+}
+}
+
+wire! {
+/// The tracker and scope a project's issues now come from.
+pub struct ProjectIssueTracker {
+    pub tracker: TrackerKind,
+    pub scope: String,
+}
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,6 +459,23 @@ mod tests {
         .unwrap();
         assert_eq!(removed.comment_id.as_deref(), Some("IC_1"));
         assert!(!removed.on);
+    }
+
+    #[test]
+    fn a_project_tracker_body_must_name_the_tracker_to_unbind_explicitly() {
+        let explicit: SetProjectIssueTracker =
+            serde_json::from_str(r#"{"tracker":null}"#).unwrap();
+        assert_eq!(explicit.tracker, None);
+        assert_eq!(explicit.scope, None);
+        let missing = serde_json::from_str::<SetProjectIssueTracker>(r#"{"scope":"o/r"}"#);
+        assert!(
+            missing.is_err(),
+            "a body that does not name the tracker is refused, not read as an unbind"
+        );
+        let bound: SetProjectIssueTracker =
+            serde_json::from_str(r#"{"tracker":"github","scope":"o/r"}"#).unwrap();
+        assert_eq!(bound.tracker, Some(TrackerKind::Github));
+        assert_eq!(bound.scope.as_deref(), Some("o/r"));
     }
 
     #[test]

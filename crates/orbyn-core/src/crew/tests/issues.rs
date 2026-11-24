@@ -2030,3 +2030,261 @@ mod writes {
         assert_eq!(source.writes(), 0);
     }
 }
+
+mod binding {
+    //! The project-to-tracker binding through a real core: two names stored, one audit row with ids and names only,
+    //! an idempotent unbind, and the connection and scope checks (docs/issues.md, "… bindProject").
+
+    use super::*;
+    use orbyn_contracts::{ProjectIssueTracker, SetProjectIssueTracker};
+
+    async fn project_world() -> (super::super::harness::World, String) {
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        let project = w
+            .core
+            .store
+            .list_projects()
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("the harness registers one project");
+        (w, project.id)
+    }
+
+    fn request(tracker: TrackerKind, scope: &str) -> SetProjectIssueTracker {
+        SetProjectIssueTracker {
+            tracker: Some(tracker),
+            scope: Some(scope.into()),
+        }
+    }
+
+    async fn connect(w: &super::super::harness::World) {
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        w.core
+            .connect_issue_tracker(
+                TrackerKind::Gitlab,
+                ConnectTracker {
+                    host: Some("https://gitlab.example.test".into()),
+                    scope: Some("team/app".into()),
+                    token: Some("glpat-test".into()),
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_connected_scope_is_stored_answered_and_unbound_idempotently() {
+        let (w, project) = project_world().await;
+        connect(&w).await;
+        let bound = w
+            .core
+            .bind_project_issue_tracker(&project, request(TrackerKind::Gitlab, "team/app"))
+            .await
+            .unwrap();
+        assert_eq!(
+            bound,
+            Some(ProjectIssueTracker {
+                tracker: TrackerKind::Gitlab,
+                scope: "team/app".into(),
+            })
+        );
+        let stored = w.core.store.project_issue_tracker(&project).unwrap();
+        assert_eq!(
+            stored.as_ref().map(|row| (row.tracker.as_str(), row.scope.as_str())),
+            Some(("gitlab", "team/app")),
+            "the two names are stored, nothing else"
+        );
+        let audit = w.core.audit_events(None, 50).unwrap();
+        let rows: Vec<_> = audit
+            .iter()
+            .filter(|event| event.action == "issues.project.bind")
+            .collect();
+        assert_eq!(rows.len(), 1, "one audit row");
+        assert_eq!(rows[0].target, project);
+        assert_eq!(
+            rows[0].detail,
+            serde_json::json!({ "project": project, "tracker": "gitlab", "scope": "team/app" })
+        );
+        // Unbinding is idempotent: the desired end state is "no binding".
+        let unbound = w
+            .core
+            .bind_project_issue_tracker(
+                &project,
+                SetProjectIssueTracker {
+                    tracker: None,
+                    scope: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(unbound, None);
+        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
+        let again = w
+            .core
+            .bind_project_issue_tracker(
+                &project,
+                SetProjectIssueTracker {
+                    tracker: None,
+                    scope: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(again, None, "a second unbind is the same end state");
+    }
+
+    #[tokio::test]
+    async fn an_unconnected_tracker_or_a_foreign_scope_is_invalid_and_stores_nothing() {
+        let (w, project) = project_world().await;
+        let unconnected = w
+            .core
+            .bind_project_issue_tracker(&project, request(TrackerKind::Forgejo, "grp/proj"))
+            .await;
+        assert!(
+            matches!(unconnected, Err(CoreError::Invalid(_))),
+            "{unconnected:?}"
+        );
+        connect(&w).await;
+        let foreign = w
+            .core
+            .bind_project_issue_tracker(&project, request(TrackerKind::Gitlab, "other/repo"))
+            .await;
+        assert!(
+            matches!(foreign, Err(CoreError::Invalid(_))),
+            "{foreign:?}"
+        );
+        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
+        assert!(
+            !w.core
+                .audit_events(None, 50)
+                .unwrap()
+                .iter()
+                .any(|event| event.action == "issues.project.bind"),
+            "a refused binding writes no audit row"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_scope_outside_the_size_and_control_character_rules_is_invalid_and_stores_nothing() {
+        let (w, project) = project_world().await;
+        connect(&w).await;
+        for scope in ["x".repeat(201), "team/app\u{7}".to_owned()] {
+            let refused = w
+                .core
+                .bind_project_issue_tracker(
+                    &project,
+                    SetProjectIssueTracker {
+                        tracker: Some(TrackerKind::Gitlab),
+                        scope: Some(scope),
+                    },
+                )
+                .await;
+            assert!(
+                matches!(refused, Err(CoreError::Invalid(_))),
+                "{refused:?}"
+            );
+        }
+        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
+        assert!(
+            !w.core
+                .audit_events(None, 50)
+                .unwrap()
+                .iter()
+                .any(|event| event.action == "issues.project.bind"),
+            "nothing was audited"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_tracker_whose_stored_scope_matches_is_still_refused_when_not_connected() {
+        let (w, project) = project_world().await;
+        // A connection with the right scope but no usable credential: the scope check would pass, so only the
+        // connected-tracker check can refuse this.
+        w.core
+            .store
+            .put_tracker(
+                &TrackerConnection {
+                    tracker: TrackerKind::Gitlab,
+                    host: Some("https://gitlab.example.test".into()),
+                    scopes: vec!["team/app".into()],
+                },
+                "2026-11-25T00:00:00Z",
+            )
+            .unwrap();
+        let refused = w
+            .core
+            .bind_project_issue_tracker(&project, request(TrackerKind::Gitlab, "team/app"))
+            .await
+            .map(|_| ());
+        match refused {
+            Err(CoreError::Invalid(message)) => {
+                assert!(message.contains("not connected"), "{message}")
+            }
+            other => panic!("an unconnected tracker is refused before its scope is read: {other:?}"),
+        }
+        // A forge whose scope no remote names is the same refusal, not a scope refusal.
+        let azure = w
+            .core
+            .bind_project_issue_tracker(&project, request(TrackerKind::AzureDevops, "org/proj"))
+            .await
+            .map(|_| ());
+        match azure {
+            Err(CoreError::Invalid(message)) => {
+                assert!(message.contains("Azure DevOps is not connected"), "{message}")
+            }
+            other => panic!("an unconnected forge is refused: {other:?}"),
+        }
+        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn an_audit_failure_leaves_no_binding() {
+        let (w, project) = project_world().await;
+        connect(&w).await;
+        rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3"))
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER refuse_binding_audit BEFORE INSERT ON audit_events
+                 WHEN NEW.action = 'issues.project.bind'
+                 BEGIN SELECT RAISE(ABORT, 'binding audit unavailable'); END;",
+            )
+            .unwrap();
+        let refused = w
+            .core
+            .bind_project_issue_tracker(&project, request(TrackerKind::Gitlab, "team/app"))
+            .await;
+        assert!(refused.is_err(), "the audit refusal fails the bind: {refused:?}");
+        assert!(
+            w.core.store.project_issue_tracker(&project).unwrap().is_none(),
+            "the audit row is written before the binding, so a failed audit leaves none"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_project_and_an_unbind_with_a_scope_are_refused() {
+        let (w, project) = project_world().await;
+        let missing = w
+            .core
+            .bind_project_issue_tracker("not-a-project", request(TrackerKind::Gitlab, "team/app"))
+            .await;
+        assert!(matches!(missing, Err(CoreError::NotFound(_))), "{missing:?}");
+        connect(&w).await;
+        let scoped_unbind = w
+            .core
+            .bind_project_issue_tracker(
+                &project,
+                SetProjectIssueTracker {
+                    tracker: None,
+                    scope: Some("team/app".into()),
+                },
+            )
+            .await;
+        assert!(
+            matches!(scoped_unbind, Err(CoreError::Invalid(_))),
+            "{scoped_unbind:?}"
+        );
+    }
+}

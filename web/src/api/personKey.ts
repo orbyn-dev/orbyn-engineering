@@ -139,6 +139,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   // Projects, approvals and questions.
   ["POST", "/api/approvals/{id}/decide"],
   ["POST", "/api/projects/{id}/git/init"],
+  ["POST", "/api/projects/{id}/issue-tracker"],
   ["POST", "/api/projects/{id}/publish"],
   ["POST", "/api/projects/{id}/pulls/close"],
   ["PATCH", "/api/projects/{id}/pulls/{number}"],
