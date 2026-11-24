@@ -486,6 +486,17 @@ impl Store {
                 "UPDATE crew_lessons SET deleted_at = NULL, rev = rev + 1, updated_at = ?2 WHERE id = ?1",
                 params![id, at],
             )?;
+            if visible_count(tx, &current.scope, current.project_id.as_deref())?
+                > i64::from(cap(&current.scope))
+            {
+                hide_one(
+                    tx,
+                    &current.scope,
+                    current.project_id.as_deref(),
+                    id,
+                    &at,
+                )?;
+            }
             require_live(tx, id)
         })
     }

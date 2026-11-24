@@ -9,6 +9,7 @@ use serde_json::Value;
 use crate::testing::TempDir;
 use crate::util::{format_unix, unix_now};
 
+use super::crew_lessons::REPO_CAP;
 use super::*;
 
 macro_rules! example {
@@ -891,6 +892,70 @@ fn undo_after_the_window_or_without_a_delete_is_not_found() {
         store.undo_delete_crew_lesson(&live.id),
         Err(CoreError::NotFound(_))
     ));
+}
+
+#[test]
+fn undo_into_a_refilled_repository_scope_hides_one_instead_of_exceeding_the_cap() {
+    let (_dir, store) = open();
+    let mut written = Vec::new();
+    for n in 0..REPO_CAP {
+        written.push(
+            store
+                .write_crew_lesson(lesson(
+                    "repo",
+                    Some("p1"),
+                    "person",
+                    &format!("Repository lesson {n}."),
+                    None,
+                ))
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    let undone = written[0].clone();
+    store.delete_crew_lesson(&undone.id, undone.rev).unwrap();
+    // The deleted lesson is not counted, so this write fills the scope back up to the cap.
+    store
+        .write_crew_lesson(lesson(
+            "repo",
+            Some("p1"),
+            "person",
+            "A replacement lesson.",
+            None,
+        ))
+        .unwrap()
+        .unwrap();
+
+    let restored = store.undo_delete_crew_lesson(&undone.id).unwrap();
+    assert_eq!(restored.deleted_at, None);
+    assert!(
+        !restored.hidden_by_cap,
+        "the undone lesson is never the one hidden"
+    );
+
+    let rows = store.crew_lessons("repo", Some("p1")).unwrap();
+    let visible: Vec<&CrewLesson> = rows.iter().filter(|lesson| !lesson.hidden_by_cap).collect();
+    assert_eq!(visible.len(), REPO_CAP as usize);
+    assert!(visible.iter().any(|lesson| lesson.id == undone.id));
+    let hidden: Vec<&CrewLesson> = rows.iter().filter(|lesson| lesson.hidden_by_cap).collect();
+    assert_eq!(hidden.len(), 1);
+    assert_ne!(hidden[0].id, undone.id);
+    assert_eq!(
+        store.crew_lessons_counts("p1").unwrap(),
+        (REPO_CAP, 0, 1),
+        "the scope is still full, and the overflow is hidden rather than deleted"
+    );
+
+    let hide_rows: i64 = store
+        .reader()
+        .query_row(
+            "SELECT COUNT(*) FROM audit_events
+             WHERE action = 'crew.lesson.hide' AND target = ?1",
+            [&hidden[0].id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(hide_rows, 1, "the hidden lesson has its cap audit row");
 }
 
 #[test]
