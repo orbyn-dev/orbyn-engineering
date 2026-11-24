@@ -1484,3 +1484,46 @@ mod writes {
         );
     }
 }
+
+mod limits {
+    //! Forgejo's reaction list has a page bound: when the last page read is full, the answer is no counts rather
+    //! than a partial list presented as the totals.
+
+    use super::*;
+    use orbyn_contracts::IssueReaction;
+
+    #[tokio::test]
+    async fn a_full_last_reaction_page_answers_no_counts() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v1/user" {
+                return Reply::json(&json!({ "login": "ann" }));
+            }
+            if path.ends_with("/reactions") {
+                let rows: Vec<Value> = (0..50)
+                    .map(|n| {
+                        json!({
+                            "content": if n == 0 { "+1" } else { "eyes" },
+                            "user": { "login": if n == 0 { "ann" } else { "bo" } },
+                        })
+                    })
+                    .collect();
+                return Reply::json(&Value::Array(rows));
+            }
+            if path.ends_with("/comments") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let detail = reader(&server)
+            .react("grp/proj", "21", None, IssueReaction::ThumbsUp, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            detail.reactions, None,
+            "a full last page may hide more: no counts rather than a partial list"
+        );
+    }
+}

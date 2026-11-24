@@ -303,7 +303,8 @@ impl Forgejo {
 
     /// Every reaction row the tracker reports for one reactions path, up to two pages of 50: the counts (and an
     /// idempotent add's lookup) are read from that first page only.
-    async fn reaction_rows(&self, path: &str) -> Result<Vec<Value>> {
+    /// The rows and whether they are the whole list: a full last page may have more behind it.
+    async fn reaction_rows(&self, path: &str) -> Result<(Vec<Value>, bool)> {
         let mut rows: Vec<Value> = Vec::new();
         for page in 1..=MAX_REACTION_PAGES {
             let got = self
@@ -318,16 +319,19 @@ impl Forgejo {
             let full = page_rows.len() >= 50;
             rows.extend(page_rows);
             if !full {
-                break;
+                return Ok((rows, true));
+            }
+            if page == MAX_REACTION_PAGES {
+                return Ok((rows, false));
             }
         }
-        Ok(rows)
+        Ok((rows, false))
     }
 
     /// Whether the reader's own reaction of one content word is on the subject. Both directions look it up first,
     /// so a repeated add or a removal with nothing left answers the same way twice.
     async fn own_reaction(&self, path: &str, word: &str, login: &str) -> Result<bool> {
-        let rows = self.reaction_rows(path).await?;
+        let (rows, _) = self.reaction_rows(path).await?;
         Ok(rows.iter().any(|row| {
             row.get("content").and_then(Value::as_str) == Some(word)
                 && row
@@ -346,7 +350,10 @@ impl Forgejo {
         key: &str,
     ) -> Option<Vec<IssueReactionCount>> {
         let path = format!("/api/v1/repos/{owner}/{repo}/issues/{key}/reactions");
-        reaction_counts(&self.reaction_rows(&path).await.ok()?)
+        let (rows, complete) = self.reaction_rows(&path).await.ok()?;
+        // A full last page may have more behind it: the answer is no counts, never a partial list presented as the
+        // totals.
+        complete.then(|| reaction_counts(&rows))?
     }
 }
 

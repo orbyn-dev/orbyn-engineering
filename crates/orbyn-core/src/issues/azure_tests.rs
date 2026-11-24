@@ -1662,7 +1662,10 @@ mod writes {
                 }));
             }
             assert_eq!(req.line.split(' ').next(), Some("POST"));
-            assert_eq!(path, "/org/proj/_apis/wit/workitems/Task");
+            assert_eq!(
+                path, "/org/proj/_apis/wit/workitems/$Task",
+                "Azure DevOps 7.1 names a create by the literal $ and the type"
+            );
             assert_eq!(
                 req.header("content-type"),
                 Some("application/json-patch+json")
@@ -1804,11 +1807,11 @@ mod writes {
         assert_eq!(
             written,
             vec![
-                "PUT /org/proj/_apis/wit/commentsReactions/21/9/like?api-version=7.1-preview.1"
+                "PUT /org/proj/_apis/wit/workItems/21/comments/9/reactions/like?api-version=7.1-preview.1"
                     .to_owned(),
-                "DELETE /org/proj/_apis/wit/commentsReactions/21/9/like?api-version=7.1-preview.1"
+                "DELETE /org/proj/_apis/wit/workItems/21/comments/9/reactions/like?api-version=7.1-preview.1"
                     .to_owned(),
-                "DELETE /org/proj/_apis/wit/commentsReactions/21/9/like?api-version=7.1-preview.1"
+                "DELETE /org/proj/_apis/wit/workItems/21/comments/9/reactions/like?api-version=7.1-preview.1"
                     .to_owned(),
             ],
             "{seen:?}"
@@ -1895,10 +1898,10 @@ mod writes {
         let server = Server::start(move |req| {
             let base = base_of(req);
             let path = req.path();
-            if path.contains("/commentsReactions/") {
+            if path.contains("/reactions/like") {
                 assert_eq!(
                     req.line,
-                    "PUT /org/proj/_apis/wit/commentsReactions/21/1234567890/like?api-version=7.1-preview.1 HTTP/1.1"
+                    "PUT /org/proj/_apis/wit/workItems/21/comments/1234567890/reactions/like?api-version=7.1-preview.1 HTTP/1.1"
                 );
                 return Reply::json(&json!({ "type": "like", "count": 1 }));
             }

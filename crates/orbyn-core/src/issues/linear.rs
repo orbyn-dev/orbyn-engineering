@@ -958,7 +958,7 @@ impl IssueSource for Linear {
         if on {
             let input = match comment {
                 Some(comment) => json!({ "commentId": comment, "emoji": emoji }),
-                None => json!({ "issueId": issue, "emoji": emoji }),
+                None => json!({ "issueId": issue.clone(), "emoji": emoji }),
             };
             let value = self
                 .graph(REACTION_CREATE_MUTATION, json!({ "input": input }), false)
@@ -986,8 +986,10 @@ impl IssueSource for Linear {
                 ));
             }
         }
-        let mut detail = self.get(scope, key).await?;
-        detail.reactions = self.issue_reactions(key).await;
+        // Refresh by the resolved internal id, not the key the caller sent: an issue that moved teams keeps its
+        // old identifier resolvable for the write but its current identifier no longer names the requested scope.
+        let mut detail = self.get(scope, &issue).await?;
+        detail.reactions = self.issue_reactions(&issue).await;
         Ok(detail)
     }
 

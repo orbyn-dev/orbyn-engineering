@@ -1198,7 +1198,8 @@ impl IssueSource for Azure {
         let got = self
             .send(
                 Method::POST,
-                &format!("{base}/_apis/wit/workitems/{}", encode_segment(&kind)),
+                // Azure DevOps 7.1 addresses a create by the literal `$` and the type: `/workitems/$Task`.
+                &format!("{base}/_apis/wit/workitems/${}", encode_segment(&kind)),
                 &[("api-version", "7.1".to_owned())],
                 Some(Value::Array(fields).to_string()),
                 "application/json-patch+json",
@@ -1272,7 +1273,8 @@ impl IssueSource for Azure {
                 "Azure DevOps has no such reaction. It has: {REACTION_SET}."
             )));
         };
-        let path = format!("{base}/_apis/wit/commentsReactions/{key}/{comment}/{kind}");
+        // Azure DevOps 7.1-preview.1 nests the reaction under the work item's own comment, not a flat resource.
+        let path = format!("{base}/_apis/wit/workItems/{key}/comments/{comment}/reactions/{kind}");
         let method = if on { Method::PUT } else { Method::DELETE };
         match self
             .send(

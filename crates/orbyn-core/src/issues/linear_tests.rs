@@ -1568,13 +1568,13 @@ mod writes {
             let query = query_of(req);
             if query.contains("query OrbynIssueRef") {
                 return Reply::json(&json!({
-                    "data": { "issue": { "id": "issue-1", "identifier": "ENG-7", "team": { "key": "ENG" } } }
+                    "data": { "issue": { "id": UUID, "identifier": "ENG-7", "team": { "key": "ENG" } } }
                 }));
             }
             if query.contains("mutation OrbynReactionCreate") {
                 assert_eq!(
                     variables_of(req),
-                    json!({ "input": { "issueId": "issue-1", "emoji": "👍" } }),
+                    json!({ "input": { "issueId": UUID, "emoji": "👍" } }),
                     "the reaction travels as a variable value"
                 );
                 return Reply::json(&json!({ "data": { "reactionCreate": { "success": true } } }));
@@ -1609,12 +1609,12 @@ mod writes {
             let query = query_of(req);
             if query.contains("query OrbynIssueRef") {
                 return Reply::json(&json!({
-                    "data": { "issue": { "id": "issue-1", "identifier": "ENG-7", "team": { "key": "ENG" } } }
+                    "data": { "issue": { "id": UUID, "identifier": "ENG-7", "team": { "key": "ENG" } } }
                 }));
             }
             if query.contains("query OrbynCommentRef") {
                 return Reply::json(&json!({
-                    "data": { "comment": { "id": "comment-1", "issue": { "id": "issue-1" } } }
+                    "data": { "comment": { "id": "comment-1", "issue": { "id": UUID } } }
                 }));
             }
             if query.contains("query OrbynViewer") {
@@ -1709,7 +1709,21 @@ mod writes {
 
     #[tokio::test]
     async fn a_refused_write_keeps_the_contract_error_and_never_its_raw_body() {
-        let server = Server::start(|_| Reply::status(403)).await;
+        let server = Server::start(|req| {
+            // The team read must answer, or the create never reaches the mutation this test is about.
+            if query_of(req).contains("query OrbynTeamId") {
+                return Reply::json(&json!({
+                    "data": { "teams": { "nodes": [{ "id": "team-1", "key": "ENG" }] } }
+                }));
+            }
+            assert!(
+                query_of(req).contains("mutation OrbynIssueCreate"),
+                "the refused call is the create mutation: {}",
+                query_of(req)
+            );
+            Reply::status(403)
+        })
+        .await;
         let error = reader(&server)
             .create("ENG", &new_issue("T", "", &[], &[]))
             .await
@@ -1746,7 +1760,7 @@ mod writes {
             let query = query_of(req);
             if query.contains("query OrbynIssueRef") {
                 return Reply::json(&json!({
-                    "data": { "issue": { "id": "issue-1", "identifier": "ENG-7", "team": { "key": "ENG" } } }
+                    "data": { "issue": { "id": UUID, "identifier": "ENG-7", "team": { "key": "ENG" } } }
                 }));
             }
             if query.contains("query OrbynViewer") {
@@ -1769,6 +1783,70 @@ mod writes {
                 .iter()
                 .any(|req| query_of(req).contains("mutation OrbynReactionDelete")),
             "nothing is deleted when there is no own reaction"
+        );
+    }
+}
+
+mod limits {
+    //! Linear's post-write refresh: an issue that moved to another team still takes the reaction under the scope
+    //! that now owns it, but the caller's old key no longer names that scope; the refresh uses the resolved internal
+    //! id instead.
+
+    use super::*;
+    use orbyn_contracts::{IssueReaction, IssueReactionCount};
+
+    #[tokio::test]
+    async fn a_moved_issue_is_refreshed_by_its_internal_id() {
+        let server = Server::start(|req| {
+            let query = query_of(req);
+            if query.contains("query OrbynIssueRef") {
+                return Reply::json(&json!({
+                    "data": { "issue": { "id": UUID, "identifier": "ENG-7", "team": { "key": "ENG" } } }
+                }));
+            }
+            if query.contains("mutation OrbynReactionCreate") {
+                assert_eq!(
+                    variables_of(req),
+                    json!({ "input": { "issueId": UUID, "emoji": "👍" } })
+                );
+                return Reply::json(&json!({ "data": { "reactionCreate": { "success": true } } }));
+            }
+            if query.contains("query OrbynIssueReactions") {
+                assert_eq!(
+                    variables_of(req),
+                    json!({ "id": UUID }),
+                    "the reactions read names the internal id, not the caller's old key"
+                );
+                return Reply::json(&json!({
+                    "data": { "issue": { "reactions": [
+                        { "id": "r1", "emoji": "👍", "user": { "id": "u1" } },
+                    ] } }
+                }));
+            }
+            assert_eq!(
+                variables_of(req),
+                json!({ "id": UUID }),
+                "the detail refresh names the internal id, not the caller's old key"
+            );
+            detail_reply(row("ENG-7"), vec![])
+        })
+        .await;
+        // The caller names the issue by the key it was handed (from another team's old prefix); the scope that now
+        // owns it answers the write, and the refresh must still answer the issue.
+        let detail = reader(&server)
+            .react("ENG", "OPS-7", None, IssueReaction::ThumbsUp, true)
+            .await
+            .expect("the write and its answer use the issue's current team and internal id");
+        assert_eq!(
+            detail.summary.key, "ENG-7",
+            "the answer is the issue as the tracker now has it"
+        );
+        assert_eq!(
+            detail.reactions,
+            Some(vec![IssueReactionCount {
+                content: "👍".into(),
+                count: 1,
+            }])
         );
     }
 }

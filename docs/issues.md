@@ -548,17 +548,22 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
     issue's notes and answers that note's numeric id. React is an `award_emoji` write whose `name=` is GitLab's own
     word (all eight map); both directions first read the reader's own award, so a repeated add or a removal with
     nothing left writes nothing, and a removal deletes by the award's id. The answer carries each award name and
-    count, read from the award list's first page of 100: a very busy issue can show partial counts.
+    count from the award list's first page of 100, and carries no counts (`null`) when that page is full, because
+    more may be behind it; a removal whose own-award lookup runs out of those pages answers `tracker_unavailable`
+    rather than pretending the award is gone.
   - **Forgejo**: create resolves each label name to the repository's label id first (a name the repository lacks is
     `400 invalid` before anything is sent) and writes the assignees as logins; comment answers the stored comment.
     React writes or deletes the `content` word on the issue's or a comment's reactions path (all eight map); both
     directions first read the reader's own reaction, so a repeated add writes one reaction and a removal with nothing
-    left writes nothing. The answer carries each content word and count, read from at most two pages of 50: a very
-    busy issue can show partial counts.
+    left writes nothing. The answer carries each content word and count from at most two pages of 50, and carries
+    no counts when the last page is full, because more may be behind it. Label names are resolved against the
+    repository's labels read up to five pages of 50, so a label beyond the first 250 is `400 invalid` even though it
+    exists.
   - **Azure DevOps**: create picks the project's first of `Issue`, `Task` and `Bug` and sends the fields as a JSON
     Patch document (title, description HTML-escaped, labels as the semicolon-joined `System.Tags`, one assignee; more
     than one is `400 invalid`, as is a label with a semicolon in it); comment writes markdown and answers the stored
-    comment. It reacts **on comments only** and has **six of the eight** reactions (`thumbs_up`, `thumbs_down`,
+    comment. Reaction writes target `{base}/_apis/wit/workItems/{id}/comments/{commentId}/reactions/{type}` with
+    `7.1-preview.1`. It reacts **on comments only** and has **six of the eight** reactions (`thumbs_up`, `thumbs_down`,
     `laugh`, `hooray`, `confused`, `heart`): `rocket` and `eyes` are `400 invalid` naming the six it has, never
     mapped to a near one, and a reaction with no `comment_id` is `400 invalid` too. The answer is the work item with
     no reactions: Azure DevOps reports them on comments, not on the work item.
@@ -579,7 +584,8 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
 - **Not verified.** No real GitHub, GitLab, Forgejo, Azure DevOps or Linear issue was created, commented on or
   reacted to; every writer is tested against its own local fake server, and the REST/GraphQL shapes (field names,
   GitLab's award names and its delete-by-id, Forgejo's reaction `content` words and delete body, Azure DevOps' JSON
-  Patch create, work item types, `commentsReactions` path and six reaction names, Linear's mutations, label/team
+  Patch create (a create path is `/workitems/$<type>`), work item types, the comment reaction path and six reaction
+  names, Linear's mutations, label/team
   reads and reaction ids) come from each API as understood. Both reaction directions are made idempotent as each
   tracker allows: GitHub's mutations are, GitLab and Forgejo look the reader's own reaction up first, Azure DevOps'
   PUT/DELETE are and an absent removal is treated as done, and Linear's add is sent as-is (its documented behaviour is

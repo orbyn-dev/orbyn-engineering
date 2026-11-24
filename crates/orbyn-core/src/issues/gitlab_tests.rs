@@ -1458,3 +1458,99 @@ mod writes {
         }
     }
 }
+
+mod limits {
+    //! The two honesty limits of GitLab's reaction reads: a list the reader cannot see whole answers no counts,
+    //! and a removal whose award lookup ran out pages is an error, never a quiet success.
+
+    use super::*;
+    use crate::issues::fake_http::Seen;
+    use orbyn_contracts::IssueReaction;
+
+    /// The method and address of every write the server saw, without the HTTP version.
+    fn written_requests(seen: &[Seen]) -> Vec<String> {
+        seen.iter()
+            .filter(|req| req.line.starts_with("POST ") || req.line.starts_with("DELETE "))
+            .map(|req| req.line.split(' ').take(2).collect::<Vec<_>>().join(" "))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_full_award_page_answers_no_counts() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v4/user" {
+                return Reply::json(&json!({ "username": "ann" }));
+            }
+            if path.ends_with("/award_emoji") && req.line.starts_with("GET") {
+                // The own-award lookup asks for page 1 and finds nothing; the counts read asks for no page and
+                // answers a full first page, so more may be behind it.
+                if req.param("page").is_some() {
+                    return Reply::json(&json!([]));
+                }
+                let rows: Vec<Value> = (0..100)
+                    .map(|n| json!({ "id": n + 1, "name": "eyes", "user": { "username": "bo" } }))
+                    .collect();
+                return Reply::json(&Value::Array(rows));
+            }
+            if path.ends_with("/award_emoji") && req.line.starts_with("POST") {
+                return Reply::json(&json!({ "id": 1, "name": "heart" }));
+            }
+            if path.ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let detail = reader(&server)
+            .react("grp/proj", "21", None, IssueReaction::Heart, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            detail.reactions, None,
+            "a full first page may hide more: no counts rather than a partial list"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_own_award_lookup_that_runs_out_of_pages_is_an_error_not_a_removal() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v4/user" {
+                return Reply::json(&json!({ "username": "ann" }));
+            }
+            if path.ends_with("/notes/9/award_emoji") {
+                let rows: Vec<Value> = (0..100)
+                    .map(|n| json!({ "id": n + 1, "name": "eyes", "user": { "username": "bo" } }))
+                    .collect();
+                return Reply::json(&Value::Array(rows));
+            }
+            // The reads after a successful removal answer normally, so the only way this errors is the bound.
+            if path.ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            if path.ends_with("/award_emoji") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let error = reader(&server)
+            .react("grp/proj", "21", Some("9"), IssueReaction::Eyes, false)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            matches!(error, CoreError::TrackerUnavailable(_)),
+            "an award the reader cannot see is not a successful removal: {error:?}"
+        );
+        assert!(
+            !written_requests(&server.seen())
+                .iter()
+                .any(|line| line.starts_with("DELETE ")),
+            "no removal is sent"
+        );
+    }
+}

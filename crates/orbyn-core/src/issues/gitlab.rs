@@ -250,6 +250,13 @@ impl GitLab {
             if rows.len() < MAX_AWARDS_PER_PAGE {
                 return Ok(None);
             }
+            if page == MAX_AWARD_PAGES {
+                // The reader's own award may be on a page this reader does not read: a removal must not answer
+                // success while it could not see it.
+                return Err(CoreError::TrackerUnavailable(
+                    "GitLab's award list is longer than Orbyn reads.".into(),
+                ));
+            }
         }
         Ok(None)
     }
@@ -262,7 +269,13 @@ impl GitLab {
             .fetch(&path, &[("per_page", "100".to_owned())], "issue")
             .await
             .ok()?;
-        reaction_counts(&parse(&got.body).ok()?)
+        let rows = parse(&got.body).ok()?;
+        // A full first page may have more behind it: the answer is no counts, never a partial list presented as
+        // the totals.
+        if rows.as_array()?.len() >= MAX_AWARDS_PER_PAGE {
+            return None;
+        }
+        reaction_counts(&rows)
     }
 }
 
