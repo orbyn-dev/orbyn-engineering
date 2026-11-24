@@ -141,7 +141,7 @@ const NOT_STARTED_NOTE = "No worker ran. Nothing was removed to make room.";
 const NOT_STARTED_FALLBACK = "Not started: Crew needs more free disk space. Free space and try again.";
 /** The word a run that never started carries ("Disk"), or undefined for every other run. */
 const notStartedWordOf = (run: WireRun): string | undefined =>
-  run.state === "stopped" && !run.stop_reason && run.reason_code ? NOT_STARTED_WORD[run.reason_code] : undefined;
+  run.state === "stopped" && !run.stop_reason && run.reason_code && Object.hasOwn(NOT_STARTED_WORD, run.reason_code) ? NOT_STARTED_WORD[run.reason_code] : undefined;
 
 /** "Sat 7 Nov, 15:11 · 12 turns, 9 min": the newest run of a crew, or "Never run". */
 export function lastRunLine(run: WireRun | undefined): string | null {

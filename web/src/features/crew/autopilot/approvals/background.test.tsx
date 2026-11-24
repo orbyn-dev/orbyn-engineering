@@ -644,6 +644,15 @@ describe("A background start the disk guard refused (KC4, frame kc4-low-disk-bac
     expect(row).not.toHaveTextContent(/Not started|Disk|No worker ran/);
   });
 
+  it("keeps a run whose reason code is an inherited property name drawn as a stopped run", async () => {
+    mock.reset("crew-background-reason-inherited");
+    render(<BackgroundTab />);
+    await screen.findByRole("table", { name: "Recent runs" });
+    const row = newestRun();
+    expect(within(row).getByText("Stopped", { selector: ".ap-chip" })).toBeVisible();
+    expect(row).not.toHaveTextContent(/Not started|function|No worker ran/);
+  });
+
   it("draws nothing of it until a run carries the code", async () => {
     mock.reset("crew-background");
     render(<BackgroundTab />);
