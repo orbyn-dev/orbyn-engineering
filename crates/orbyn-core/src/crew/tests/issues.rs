@@ -9,7 +9,7 @@ use crate::store::TrackerConnection;
 use async_trait::async_trait;
 use orbyn_contracts::{
     ConnectTracker, IssueCounts, IssueDetail, IssueKey, IssueState, IssueStateCategory,
-    IssueSummary, StartIssueThread, TrackerKind,
+    IssueSummary, IssueTemplate, StartIssueThread, TrackerKind,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1553,15 +1553,24 @@ mod writes {
         creates: AtomicUsize,
         comments: AtomicUsize,
         reactions: AtomicUsize,
+        templates: Vec<IssueTemplate>,
+        /// The labels each create sent, in order: a template's labels must never appear here unrequested.
+        sent_labels: Mutex<Vec<Vec<String>>>,
     }
 
     impl Writes {
         fn new(can_write: bool) -> Arc<Self> {
+            Self::with_templates(can_write, Vec::new())
+        }
+
+        fn with_templates(can_write: bool, templates: Vec<IssueTemplate>) -> Arc<Self> {
             Arc::new(Self {
                 can_write,
                 creates: AtomicUsize::new(0),
                 comments: AtomicUsize::new(0),
                 reactions: AtomicUsize::new(0),
+                templates,
+                sent_labels: Mutex::new(Vec::new()),
             })
         }
 
@@ -1592,6 +1601,10 @@ mod writes {
 
         async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
             self.creates.fetch_add(1, Ordering::SeqCst);
+            self.sent_labels
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(new.labels.to_vec());
             let mut summary = issue(TrackerKind::Github, "7", "2026-11-24T00:00:00Z");
             summary.scope = scope.to_owned();
             summary.title = new.title.to_owned();
@@ -1613,6 +1626,10 @@ mod writes {
                 body: body.to_owned(),
                 created_at: "2026-11-24T00:00:00Z".into(),
             })
+        }
+
+        async fn templates(&self, _scope: &str) -> Result<Vec<IssueTemplate>> {
+            Ok(self.templates.clone())
         }
 
         async fn react(
@@ -1907,5 +1924,106 @@ mod writes {
             0,
             "nothing was written outside the connection"
         );
+    }
+
+    fn template(id: &str, body: &str) -> IssueTemplate {
+        IssueTemplate {
+            id: id.into(),
+            name: format!("Template {id}"),
+            description: None,
+            body: body.into(),
+            labels: vec![],
+        }
+    }
+
+    fn labeled_template(id: &str, body: &str, labels: &[&str]) -> IssueTemplate {
+        IssueTemplate {
+            id: id.into(),
+            name: format!("Template {id}"),
+            description: None,
+            body: body.into(),
+            labels: labels.iter().map(|label| (*label).to_owned()).collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_template_fills_a_missing_body_and_a_given_body_wins() {
+        let (w, _source) = connected(TrackerKind::Gitlab, "team/app", true).await;
+        let source = Writes::with_templates(
+            true,
+            vec![labeled_template("bug", "Steps: one.", &["template-label"])],
+        );
+        w.core
+            .issues
+            .set_source(TrackerKind::Gitlab, source.clone());
+        let filled = w
+            .core
+            .create_issue(CreateIssue {
+                template: Some("bug".into()),
+                body: None,
+                ..create(TrackerKind::Gitlab, "team/app")
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            filled.body, "Steps: one.",
+            "a missing body is the template's"
+        );
+        let given = w
+            .core
+            .create_issue(CreateIssue {
+                template: Some("bug".into()),
+                body: Some("Mine.".into()),
+                ..create(TrackerKind::Gitlab, "team/app")
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            given.body, "Mine.",
+            "a body the person sent wins over the template"
+        );
+        assert_eq!(source.writes(), 2);
+        assert_eq!(
+            source.sent_labels.lock().unwrap().clone(),
+            vec![vec!["bug".to_owned()], vec!["bug".to_owned()]],
+            "a template fills only a missing body: its labels are never merged into the create's"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_template_id_is_invalid_and_creates_nothing() {
+        let (w, _source) = connected(TrackerKind::Gitlab, "team/app", true).await;
+        let source = Writes::with_templates(true, vec![template("bug", "Body")]);
+        w.core
+            .issues
+            .set_source(TrackerKind::Gitlab, source.clone());
+        let refused = w
+            .core
+            .create_issue(CreateIssue {
+                template: Some("missing".into()),
+                ..create(TrackerKind::Gitlab, "team/app")
+            })
+            .await
+            .map(|_| ());
+        assert!(
+            matches!(&refused, Err(CoreError::Invalid(message)) if message == "Unknown issue template."),
+            "{refused:?}"
+        );
+        assert_eq!(source.writes(), 0, "an unknown template creates nothing");
+        // A tracker with no templates is the same: every id is unknown.
+        let source = Writes::new(true);
+        w.core
+            .issues
+            .set_source(TrackerKind::Gitlab, source.clone());
+        let refused = w
+            .core
+            .create_issue(CreateIssue {
+                template: Some("bug".into()),
+                ..create(TrackerKind::Gitlab, "team/app")
+            })
+            .await
+            .map(|_| ());
+        assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
+        assert_eq!(source.writes(), 0);
     }
 }
