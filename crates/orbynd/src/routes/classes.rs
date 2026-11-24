@@ -142,6 +142,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     // Browser profiles: a rename is the person's own action; the other profile routes stay Local.
     ("POST", "/api/browser-profiles/{id}/rename"),
     // Preferences, policy and redaction.
+    ("POST", "/api/keybindings/reset"),
     ("POST", "/api/policy/rules"),
     ("DELETE", "/api/policy/rules/{id}"),
     ("PUT", "/api/preferences"),
@@ -733,6 +734,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/browser-profiles/{id}/rename",
         "the person renames their own browser profile; only the stored name changes, so a profile open in a tab can be renamed",
+    ),
+    (
+        "POST",
+        "/api/keybindings/reset",
+        "the person resets one of their own keybindings to its built-in default",
     ),
     (
         "POST",

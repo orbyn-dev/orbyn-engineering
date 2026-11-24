@@ -3838,6 +3838,7 @@ every method, path and which routes need a credential.
 | `PUT /api/projects/:id/preferences` | Project overrides |
 | `POST /api/projects/:id/pull` | Fast-forward a clean checkout |
 | `GET, POST /api/keybindings` | `KeybindingsView`; add or change a `KeybindingRule` |
+| `POST /api/keybindings/reset` | Person route; drops the person's own rule for a command and context (a hidden default stays hidden) and returns the `KeybindingsView`; each rule carries `custom` and `default_keys` |
 | `GET /api/diagnostics`, `POST /api/diagnostics/repair` | `Diagnostics`; `409 runs_active` |
 | `POST /api/diagnostics/otlp` | `OtlpCheck` to `OtlpResult` |
 | `GET, POST /api/storage/cleanup?dry_run=` | Last `CleanupReport`; apply the retention rules |
