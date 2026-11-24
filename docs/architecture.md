@@ -3173,7 +3173,11 @@ request, and `head_sha` is the agent's own claim.
 caller's own project's pull requests without an effect, showing only the agent-facing
 fields, cutting the read's body at 16 KiB with the issue framing markers removed, keeping
 no raw comment or check blobs and dropping the forge's check `description`, so forge text
-is only ever a JSON string value.
+is only ever a JSON string value. `orbyn_pull_request_comment` and
+`orbyn_pull_request_update` are the two write tools: each carries an effect, so the gate
+asks as for every effect tool, and both approval prompts name the action and the pull
+request number. The update tool takes only title, body and draft (never a base change),
+and a crew worker cannot call either.
 
 ## Computer gateway
 
