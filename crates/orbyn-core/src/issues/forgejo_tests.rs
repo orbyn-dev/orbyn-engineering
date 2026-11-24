@@ -1084,3 +1084,304 @@ fn a_remote_gives_owner_and_repo_only_on_the_connections_host() {
         );
     }
 }
+
+mod writes {
+    //! Forgejo's issue writes against the same local fake server: the exact method, address and JSON body they send,
+    //! the label ids a create resolves, and the reactions a react writes and reads back.
+
+    use super::*;
+    use crate::issues::NewIssue;
+    use orbyn_contracts::{IssueReaction, IssueReactionCount};
+    use std::sync::{Arc, Mutex};
+
+    /// The method and address of every write the server saw, without the HTTP version.
+    fn written_requests(seen: &[Seen]) -> Vec<String> {
+        seen.iter()
+            .filter(|req| req.line.starts_with("POST ") || req.line.starts_with("DELETE "))
+            .map(|req| req.line.split(' ').take(2).collect::<Vec<_>>().join(" "))
+            .collect()
+    }
+
+    fn new_issue<'a>(
+        title: &'a str,
+        body: &'a str,
+        labels: &'a [String],
+        assignees: &'a [String],
+    ) -> NewIssue<'a> {
+        NewIssue {
+            title,
+            body,
+            labels,
+            assignees,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_create_resolves_label_ids_and_answers_the_new_issue() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path.ends_with("/labels") {
+                return Reply::json(&json!([
+                    { "id": 2, "name": "bug" },
+                    { "id": 3, "name": "ui" },
+                ]));
+            }
+            assert_eq!(req.line.split(' ').next(), Some("POST"));
+            assert_eq!(path, "/api/v1/repos/grp/proj/issues");
+            assert_eq!(
+                req.header("authorization"),
+                Some("token fj-SECRET-token-123")
+            );
+            assert_eq!(
+                req.json(),
+                Some(json!({
+                    "title": "Crash on start",
+                    "body": "It breaks.",
+                    "labels": [2],
+                    "assignees": ["ann"],
+                })),
+                "the person's text travels as body fields and labels as ids"
+            );
+            let mut row = issue(&base, 21);
+            row["title"] = json!("Crash on start");
+            row["body"] = json!("It breaks.");
+            Reply::json(&row)
+        })
+        .await;
+        assert!(reader(&server).can_write(), "Forgejo writes in this build");
+        let labels = vec!["bug".to_owned()];
+        let assignees = vec!["ann".to_owned()];
+        let detail = reader(&server)
+            .create(
+                "grp/proj",
+                &new_issue("Crash on start", "It breaks.", &labels, &assignees),
+            )
+            .await
+            .unwrap();
+        assert_eq!(detail.summary.key, "21");
+        assert_eq!(detail.summary.title, "Crash on start");
+        assert_eq!(detail.body, "It breaks.");
+        assert!(detail.comments.is_empty());
+        assert_eq!(detail.reactions, None);
+    }
+
+    #[tokio::test]
+    async fn a_label_the_repository_does_not_have_refuses_the_write_before_it_is_sent() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/labels") {
+                return Reply::json(&json!([{ "id": 2, "name": "bug" }]));
+            }
+            Reply::json(&json!({}))
+        })
+        .await;
+        let labels = vec!["missing".to_owned()];
+        let refused = reader(&server)
+            .create("grp/proj", &new_issue("T", "", &labels, &[]))
+            .await
+            .map(|_| ());
+        assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
+        assert!(
+            server
+                .seen()
+                .iter()
+                .all(|req| req.path().ends_with("/labels")),
+            "only the label read ran: {:?}",
+            server.seen()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_comment_sends_the_body_and_answers_the_stored_comment() {
+        let server = Server::start(|req| {
+            assert_eq!(req.line.split(' ').next(), Some("POST"));
+            assert_eq!(req.path(), "/api/v1/repos/grp/proj/issues/21/comments");
+            assert_eq!(
+                req.header("authorization"),
+                Some("token fj-SECRET-token-123")
+            );
+            assert_eq!(req.json(), Some(json!({ "body": "Looks good." })));
+            Reply::json(&json!({
+                "id": 9,
+                "user": { "login": "ann" },
+                "body": "Looks good.",
+                "created_at": "2026-11-25T00:00:00Z",
+            }))
+        })
+        .await;
+        let comment = reader(&server)
+            .comment("grp/proj", "21", "Looks good.")
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                comment.id.as_str(),
+                comment.body.as_str(),
+                comment.created_at.as_str()
+            ),
+            ("9", "Looks good.", "2026-11-25T00:00:00Z")
+        );
+        assert_eq!(comment.author.unwrap().login, "ann");
+    }
+
+    #[tokio::test]
+    async fn a_reaction_is_written_with_its_content_word_and_answered_with_counts() {
+        let present = Arc::new(Mutex::new(true));
+        let state = present.clone();
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path.ends_with("/reactions") && req.line.starts_with("POST") {
+                assert_eq!(req.json(), Some(json!({ "content": "+1" })));
+                *state.lock().unwrap() = true;
+                return Reply::raw(200, b"{}".to_vec());
+            }
+            if path.ends_with("/reactions") && req.line.starts_with("DELETE") {
+                assert_eq!(req.json(), Some(json!({ "content": "+1" })));
+                let was = *state.lock().unwrap();
+                *state.lock().unwrap() = false;
+                return if was {
+                    Reply::raw(204, Vec::new())
+                } else {
+                    Reply::status(404)
+                };
+            }
+            if path.ends_with("/reactions") && req.line.starts_with("GET") {
+                return Reply::json(&if *state.lock().unwrap() {
+                    json!([{ "content": "+1", "user": { "login": "ann" } }])
+                } else {
+                    json!([])
+                });
+            }
+            if path.ends_with("/comments") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let forgejo = reader(&server);
+        let added = forgejo
+            .react("grp/proj", "21", None, IssueReaction::ThumbsUp, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            added.reactions,
+            Some(vec![IssueReactionCount {
+                content: "+1".into(),
+                count: 1,
+            }]),
+            "the answer keeps Forgejo's own content word and its count"
+        );
+        let removed = forgejo
+            .react("grp/proj", "21", None, IssueReaction::ThumbsUp, false)
+            .await
+            .unwrap();
+        assert_eq!(removed.reactions, Some(vec![]));
+        // The same removal again finds nothing to delete and is still a success.
+        let again = forgejo
+            .react("grp/proj", "21", None, IssueReaction::ThumbsUp, false)
+            .await
+            .unwrap();
+        assert_eq!(again.reactions, Some(vec![]));
+        let seen = server.seen();
+        let written = written_requests(&seen);
+        assert_eq!(
+            written,
+            vec![
+                "POST /api/v1/repos/grp/proj/issues/21/reactions".to_owned(),
+                "DELETE /api/v1/repos/grp/proj/issues/21/reactions".to_owned(),
+                "DELETE /api/v1/repos/grp/proj/issues/21/reactions".to_owned(),
+            ],
+            "{seen:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_comment_reaction_uses_the_comments_reaction_path() {
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v1/repos/grp/proj/issues/comments/9/reactions"
+                && req.line.starts_with("POST")
+            {
+                assert_eq!(req.json(), Some(json!({ "content": "eyes" })));
+                return Reply::raw(200, b"{}".to_vec());
+            }
+            if path.ends_with("/comments") {
+                return Reply::json(&json!([]));
+            }
+            if path.ends_with("/reactions") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        reader(&server)
+            .react("grp/proj", "21", Some("9"), IssueReaction::Eyes, true)
+            .await
+            .unwrap();
+        assert!(
+            written_requests(&server.seen())
+                .iter()
+                .any(|line| line == "POST /api/v1/repos/grp/proj/issues/comments/9/reactions"),
+            "{:?}",
+            server.seen()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_write_keeps_the_contract_error_and_never_its_raw_body() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/labels") {
+                return Reply::json(&json!([]));
+            }
+            Reply::status(403)
+        })
+        .await;
+        let error = reader(&server)
+            .create("grp/proj", &new_issue("T", "", &[], &[]))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        match error {
+            CoreError::TrackerForbidden(message) => assert!(
+                !message.contains("raw-tracker-text") && !message.contains("secret-detail"),
+                "{message}"
+            ),
+            other => panic!("a 403 is forbidden, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_comment_id_that_is_not_numeric_is_refused_before_a_request() {
+        let server = Server::start(|_| Reply::json(&json!({}))).await;
+        let refused = reader(&server)
+            .react(
+                "grp/proj",
+                "21",
+                Some("not-a-comment"),
+                IssueReaction::Heart,
+                true,
+            )
+            .await
+            .map(|_| ());
+        assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
+        assert!(server.seen().is_empty(), "{:?}", server.seen());
+    }
+
+    #[test]
+    fn every_contract_reaction_has_one_content_word() {
+        for (reaction, word) in [
+            (IssueReaction::ThumbsUp, "+1"),
+            (IssueReaction::ThumbsDown, "-1"),
+            (IssueReaction::Laugh, "laugh"),
+            (IssueReaction::Hooray, "hooray"),
+            (IssueReaction::Confused, "confused"),
+            (IssueReaction::Heart, "heart"),
+            (IssueReaction::Rocket, "rocket"),
+            (IssueReaction::Eyes, "eyes"),
+        ] {
+            assert_eq!(content_word(reaction), word);
+        }
+    }
+}

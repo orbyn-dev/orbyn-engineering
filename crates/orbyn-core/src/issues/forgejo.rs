@@ -12,16 +12,16 @@
 use super::frame::cut;
 use super::host::validate_host;
 use super::query::{AssigneeFilter, IssueQuery, StateFilter};
-use super::{IssueSource, MAX_SCOPE_BYTES, ScopeList};
+use super::{IssueSource, MAX_SCOPE_BYTES, NewIssue, ScopeList};
 use crate::error::{CoreError, Result};
 use async_trait::async_trait;
 use orbyn_contracts::{
-    IssueActor, IssueComment, IssueCounts, IssueDetail, IssueLabel, IssueState, IssueStateCategory,
-    IssueSummary, TrackerKind,
+    IssueActor, IssueComment, IssueCounts, IssueDetail, IssueLabel, IssueReaction,
+    IssueReactionCount, IssueState, IssueStateCategory, IssueSummary, TrackerKind,
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use reqwest::{Client, StatusCode, Url, redirect};
-use serde_json::Value;
+use reqwest::{Client, Method, StatusCode, Url, redirect};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -43,6 +43,10 @@ const MAX_ASSIGNEES: usize = 50;
 /// The issue body kept (the same as a body the person may write, docs/issues.md). Comments keep the draft's 16 KiB.
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const MAX_COMMENTS: usize = 50;
+/// Labels are resolved by name against the repository's own, a page at a time.
+const LABEL_PAGE: usize = 50;
+const MAX_LABEL_PAGES: u32 = 5;
+const MAX_REACTION_PAGES: u32 = 2;
 
 pub(crate) struct Forgejo {
     /// `https://host[/prefix]`, validated, no trailing slash.
@@ -137,6 +141,19 @@ impl Forgejo {
 
     /// One read of the API. `what` names the thing a 404 means is missing.
     async fn fetch(&self, path: &str, query: &[(&str, String)], what: &str) -> Result<Fetched> {
+        self.send(Method::GET, path, query, None, what).await
+    }
+
+    /// One request of the API, read or write. The token, host, redirect, timeout and size rules are the read's; a
+    /// JSON body travels in the body, never in the address, and never as an argument.
+    async fn send(
+        &self,
+        method: Method,
+        path: &str,
+        query: &[(&str, String)],
+        body: Option<&Value>,
+        what: &str,
+    ) -> Result<Fetched> {
         let mut token =
             HeaderValue::from_str(&format!("token {}", self.token.as_str())).map_err(|_| {
                 CoreError::TrackerNotConnected(
@@ -144,16 +161,19 @@ impl Forgejo {
                 )
             })?;
         token.set_sensitive(true);
-        let mut response = self
+        let mut request = self
             .client
-            .get(format!("{}{path}", self.host))
+            .request(method, format!("{}{path}", self.host))
             .query(query)
             .header(token_header(), token)
             .header(reqwest::header::ACCEPT, "application/json")
-            .timeout(self.timeout)
-            .send()
-            .await
-            .map_err(|_| unavailable())?;
+            .timeout(self.timeout);
+        if let Some(body) = body {
+            request = request
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body.to_string());
+        }
+        let mut response = request.send().await.map_err(|_| unavailable())?;
         let status = response.status();
         if !status.is_success() {
             return Err(failure(status, response.headers(), what));
@@ -228,6 +248,86 @@ impl Forgejo {
                 "Forgejo cannot filter for unassigned issues.".into(),
             )),
         }
+    }
+
+    /// The ids of these label names in the repository: Forgejo writes labels by id, so a name the repository does
+    /// not carry refuses the write rather than being dropped.
+    async fn label_ids(&self, owner: &str, repo: &str, names: &[String]) -> Result<Vec<u64>> {
+        let mut found: Vec<(String, u64)> = Vec::new();
+        for page in 1..=MAX_LABEL_PAGES {
+            if names
+                .iter()
+                .all(|name| found.iter().any(|(seen, _)| seen == name))
+            {
+                break;
+            }
+            let got = self
+                .fetch(
+                    &format!("/api/v1/repos/{owner}/{repo}/labels"),
+                    &[
+                        ("page", page.to_string()),
+                        ("limit", LABEL_PAGE.to_string()),
+                    ],
+                    "repository",
+                )
+                .await?;
+            let value = parse(&got.body)?;
+            let rows = value.as_array().ok_or_else(unreadable)?;
+            for row in rows {
+                if let (Some(name), Some(id)) = (
+                    row.get("name").and_then(Value::as_str),
+                    row.get("id").and_then(Value::as_u64),
+                ) && names.iter().any(|wanted| wanted == name)
+                    && !found.iter().any(|(seen, _)| seen == name)
+                {
+                    found.push((name.to_owned(), id));
+                }
+            }
+            if rows.len() < LABEL_PAGE {
+                break;
+            }
+        }
+        names
+            .iter()
+            .map(|name| {
+                found
+                    .iter()
+                    .find(|(seen, _)| seen == name)
+                    .map(|(_, id)| *id)
+                    .ok_or_else(|| {
+                        CoreError::Invalid("Forgejo has no label by one of the names given.".into())
+                    })
+            })
+            .collect()
+    }
+
+    /// The issue's reactions as Forgejo reports them, each under its own content word. `None` when the read fails:
+    /// the reaction is already written, so its answer is the issue without counts rather than an error.
+    async fn issue_reactions(
+        &self,
+        owner: &str,
+        repo: &str,
+        key: &str,
+    ) -> Option<Vec<IssueReactionCount>> {
+        let mut rows: Vec<Value> = Vec::new();
+        for page in 1..=MAX_REACTION_PAGES {
+            let got = self
+                .fetch(
+                    &format!("/api/v1/repos/{owner}/{repo}/issues/{key}/reactions"),
+                    &[("page", page.to_string()), ("limit", "50".to_owned())],
+                    "issue",
+                )
+                .await
+                .ok()?;
+            let value = parse(&got.body).ok()?;
+            let page_rows = value.as_array()?.clone();
+            let full = page_rows.len() >= 50;
+            rows.extend(page_rows);
+            if !full {
+                break;
+            }
+        }
+        reaction_counts(&rows)
     }
 }
 
@@ -588,8 +688,158 @@ fn parse(body: &[u8]) -> Result<Value> {
     serde_json::from_slice(body).map_err(|_| unreadable())
 }
 
+/// Forgejo's own content word for one reaction, sent as `content` and returned as the reaction's word.
+fn content_word(reaction: IssueReaction) -> &'static str {
+    match reaction {
+        IssueReaction::ThumbsUp => "+1",
+        IssueReaction::ThumbsDown => "-1",
+        IssueReaction::Laugh => "laugh",
+        IssueReaction::Hooray => "hooray",
+        IssueReaction::Confused => "confused",
+        IssueReaction::Heart => "heart",
+        IssueReaction::Rocket => "rocket",
+        IssueReaction::Eyes => "eyes",
+    }
+}
+
+/// The reactions in these rows, grouped by Forgejo's own content word as counts. Only the people who reacted are
+/// listed, so a word with nobody behind it is never reported.
+fn reaction_counts(rows: &[Value]) -> Option<Vec<IssueReactionCount>> {
+    let mut counts: Vec<IssueReactionCount> = Vec::new();
+    for row in rows {
+        let Some(word) = row
+            .get("content")
+            .and_then(Value::as_str)
+            .filter(|word| !word.is_empty())
+        else {
+            continue;
+        };
+        if let Some(count) = counts.iter_mut().find(|count| count.content == word) {
+            count.count = count.count.saturating_add(1);
+        } else {
+            counts.push(IssueReactionCount {
+                content: word.to_owned(),
+                count: 1,
+            });
+        }
+    }
+    Some(counts)
+}
+
+/// A Forgejo comment id: the number its reaction path takes.
+fn comment_id_ok(comment: &str) -> Result<()> {
+    if comment.is_empty() || comment.len() > 9 || !comment.chars().all(|c| c.is_ascii_digit()) {
+        return Err(CoreError::Invalid(
+            "That comment id is not a Forgejo comment.".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl IssueSource for Forgejo {
+    fn can_write(&self) -> bool {
+        true
+    }
+
+    async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
+        let (owner, repo) = repository(scope)?;
+        let labels = self.label_ids(&owner, &repo, new.labels).await?;
+        let payload = json!({
+            "title": new.title,
+            "body": new.body,
+            "labels": labels,
+            "assignees": new.assignees,
+        });
+        let got = self
+            .send(
+                Method::POST,
+                &format!("/api/v1/repos/{owner}/{repo}/issues"),
+                &[],
+                Some(&payload),
+                "repository",
+            )
+            .await?;
+        let value = parse(&got.body)?;
+        let summary = summary(&self.host, scope, &value)
+            .ok_or_else(|| CoreError::NotFound("issue".into()))?;
+        // A new issue has no comments: its own reply is the whole answer, so a successful create is never reported
+        // as a failure by a second read.
+        Ok(IssueDetail {
+            summary,
+            body: cut(&text(&value, "body"), MAX_BODY_BYTES).to_owned(),
+            comments: Vec::new(),
+            linked_pull_requests: Vec::new(),
+            linked_threads: Vec::new(),
+            reactions: None,
+        })
+    }
+
+    async fn comment(&self, scope: &str, key: &str, body: &str) -> Result<IssueComment> {
+        let (owner, repo) = repository(scope)?;
+        key_ok(key)?;
+        let got = self
+            .send(
+                Method::POST,
+                &format!("/api/v1/repos/{owner}/{repo}/issues/{key}/comments"),
+                &[],
+                Some(&json!({ "body": body })),
+                "issue",
+            )
+            .await?;
+        let value = parse(&got.body)?;
+        Ok(IssueComment {
+            id: value
+                .get("id")
+                .and_then(Value::as_u64)
+                .map(|id| id.to_string())
+                .ok_or_else(unreadable)?,
+            author: value.get("user").and_then(actor),
+            body: cut(&text(&value, "body"), MAX_BODY_BYTES).to_owned(),
+            created_at: text(&value, "created_at"),
+        })
+    }
+
+    async fn react(
+        &self,
+        scope: &str,
+        key: &str,
+        comment: Option<&str>,
+        reaction: IssueReaction,
+        on: bool,
+    ) -> Result<IssueDetail> {
+        let (owner, repo) = repository(scope)?;
+        key_ok(key)?;
+        if let Some(comment) = comment {
+            comment_id_ok(comment)?;
+        }
+        let subject = match comment {
+            Some(comment) => {
+                format!("/api/v1/repos/{owner}/{repo}/issues/comments/{comment}/reactions")
+            }
+            None => format!("/api/v1/repos/{owner}/{repo}/issues/{key}/reactions"),
+        };
+        let method = if on { Method::POST } else { Method::DELETE };
+        let sent = self
+            .send(
+                method,
+                &subject,
+                &[],
+                Some(&json!({ "content": content_word(reaction) })),
+                "issue",
+            )
+            .await;
+        match sent {
+            Ok(_) => {}
+            // Forgejo has no reaction of that word to take back: a removal is idempotent at the answer.
+            Err(CoreError::NotFound(_)) if !on => {}
+            Err(error) => return Err(error),
+        }
+        let mut detail = self.get(scope, key).await?;
+        detail.reactions = self.issue_reactions(&owner, &repo, key).await;
+        Ok(detail)
+    }
+
     async fn list(&self, scope: &str, query: &IssueQuery) -> Result<ScopeList> {
         let (owner, repo) = repository(scope)?;
         let page = page_of(scope, query)?;
