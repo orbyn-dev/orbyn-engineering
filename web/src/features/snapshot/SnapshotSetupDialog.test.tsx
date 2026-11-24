@@ -63,6 +63,15 @@ describe("the setup dialog", () => {
     expect(within(dialog).queryByRole("button", { name: "Allow Accessibility" })).toBeNull();
     expect(within(dialog).queryByText("Accessibility")).toBeNull();
     expect(mock.calls).not.toContainEqual({ command: "snapshot_setup", args: { action: "allow_accessibility" } });
+    // The switch stays (the merged snapshot-settings-accessibility frame draws it) and the help text
+    // says honestly what the person has to do. Nothing re-reads the grant when the page regains
+    // focus with the dialog dismissed, so the copy must not claim that it does.
+    expect(
+      await screen.findByText(
+        /Turn Orbyn on under System Settings › Privacy & Security › Accessibility; Orbyn never grants it itself\./,
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/reads the answer again/)).toBeNull();
   });
 
   it("shows the restart note until Screen Recording is granted", async () => {
