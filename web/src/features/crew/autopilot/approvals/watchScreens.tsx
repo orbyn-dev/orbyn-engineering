@@ -13,9 +13,10 @@ import { watchChangesView } from "./watchModel";
 
 /**
  * The watch frames that are one section of a page, drawn on the real watch routes over the dev mock: `watch-history`
- * is the change table alone, as its frame draws it. Everything else of KC6 draws on the app's own route
- * (`#/crew/background`), so the list, the create dialog and a watch's page need no frame here. Nothing is drawn while
- * Crew Preview is off, and a service whose watch route answers 404 draws nothing either (the read's own answer is used).
+ * is the change table alone, as its frame draws it, and `watch-could-not-start-reasons` is the same table over the seven
+ * fixed refusal sentences. Everything else of KC6 draws on the app's own route (`#/crew/background`), so the list, the
+ * create dialog and a watch's page need no frame here. Nothing is drawn while Crew Preview is off, and a service whose
+ * watch route answers 404 draws nothing either (the read's own answer is used).
  */
 
 /** The page card these screens draw in, so a state before a project is known is not flush to the corner. */
@@ -79,4 +80,5 @@ function WatchHistory() {
 /** The watch frames drawn in the Preview chunk. Loaded only through the Preview route. */
 export const WATCH_SCREENS: Record<WatchFrameId, () => ReactNode> = {
   "watch-history": () => <WatchHistory />,
+  "watch-could-not-start-reasons": () => <WatchHistory />,
 };

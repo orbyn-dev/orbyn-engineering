@@ -1032,6 +1032,14 @@ export const FRAMES = {
   "watch-failing-template": { route: "#/crew/background", scenario: "crew-background-watch-template", steps: [click("button", "Open the Main build watch")] },
   /** The change table alone, the one KC6 frame that is a section of a page (watch-history). */
   "watch-history": { route: "#/preview/crew/watch-history", scenario: "crew-background-watch-failing" },
+  /** The same table over a watch's seven refused starts (watch-could-not-start-reasons), each row the fixed sentence core owns. */
+  "watch-could-not-start-reasons": { route: "#/preview/crew/watch-could-not-start-reasons", scenario: "crew-background-watch-refused" },
+  /** A run's own page (background-run-detail), reached by "Open the run" on the watch's banner. */
+  "background-run-detail": {
+    route: "#/crew/background",
+    scenario: "crew-background-run-detail",
+    steps: [click("button", "Open the Main build watch"), click("button", "Open the run")],
+  },
   /** The inbox with the two watch rows (watch-needsyou), on the app's own Inbox tab. */
   "watch-needsyou": { route: "#/crew/inbox", scenario: "crew-background-watch-needsyou" },
 
