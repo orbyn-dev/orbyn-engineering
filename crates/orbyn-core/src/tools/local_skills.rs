@@ -43,6 +43,8 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// The front-matter key that carries the skill's own revision. The library's revision
 /// and dirty flag never include a local skill; this number is how a stale edit is refused.
 pub const REVISION_KEY: &str = "local_revision";
+/// The area's folder name under the data folder. A worker's confinement refuses any allowance that overlaps it.
+pub const AREA_DIR: &str = "skills-local";
 const SKILL_FILE: &str = "SKILL.md";
 /// The contract's exact sentence for a scan refusal (docs/crew-lessons.md, KC9).
 const SECRET_MESSAGE: &str =
@@ -134,7 +136,7 @@ pub struct LocalSkills {
 impl LocalSkills {
     pub fn new(data_dir: &Path, store: Arc<Store>) -> Self {
         Self {
-            root: data_dir.join("skills-local"),
+            root: data_dir.join(AREA_DIR),
             store,
             writing: Mutex::new(()),
             #[cfg(test)]

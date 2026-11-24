@@ -740,6 +740,21 @@ fn an_area_that_is_a_link_is_refused_and_nothing_is_written_through_it() {
     assert!(local.list().unwrap().is_empty());
 }
 
+#[cfg(unix)]
+#[test]
+fn an_area_that_is_a_link_is_not_read_through() {
+    let (dir, _store, local) = fixture();
+    let elsewhere = dir.path().join("elsewhere");
+    let skill = elsewhere.join("redirect-checks");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"), SKILL).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, local.root()).unwrap();
+
+    assert!(local.read("redirect-checks", None).is_err());
+    assert!(!local.contains("redirect-checks"));
+    assert!(local.list().unwrap().is_empty());
+}
+
 #[test]
 fn a_skill_whose_revision_cannot_advance_is_not_edited() {
     let (_dir, _store, local) = fixture();
@@ -764,4 +779,35 @@ fn a_skill_whose_revision_cannot_advance_is_not_edited() {
         before,
         "a refused edit changes nothing"
     );
+}
+
+/// Windows only, and not yet run on Windows (#1406): the area as a junction must be refused like a symbolic link, with nothing
+/// written through it. If this fails there, `root_is_link` needs a reparse-point check.
+#[cfg(windows)]
+#[test]
+fn an_area_that_is_a_junction_is_refused_and_nothing_is_written_through_it() {
+    let (dir, _store, local) = fixture();
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(local.root())
+        .arg(&elsewhere)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "could not make the junction");
+
+    let _ = local.write(LocalSkillWrite::create(SKILL), &[]);
+    assert!(
+        std::fs::read_dir(&elsewhere).unwrap().next().is_none(),
+        "the junction's target must stay empty"
+    );
+    assert!(local.list().unwrap().is_empty());
+
+    // Reads too: a valid skill sitting in the junction's target is not served.
+    let skill = elsewhere.join("redirect-checks");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"), SKILL).unwrap();
+    assert!(local.read("redirect-checks", None).is_err());
+    assert!(!local.contains("redirect-checks"));
 }
