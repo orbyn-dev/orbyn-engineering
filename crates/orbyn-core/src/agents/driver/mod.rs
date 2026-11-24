@@ -93,6 +93,9 @@ pub struct RunSpec {
     /// The shared skills library. An engine that does not start there may add it as an
     /// extra folder, for its skills and reference only.
     pub library: PathBuf,
+    /// A per-run read-only copy of the device-local skills, laid out as a
+    /// `.claude/skills` root, for an engine that discovers skills natively.
+    pub local_skills: Option<PathBuf>,
     /// The prompt, with its workspace context already in front of it.
     pub prompt: String,
     /// The prompt alone, for engines that cannot take context.

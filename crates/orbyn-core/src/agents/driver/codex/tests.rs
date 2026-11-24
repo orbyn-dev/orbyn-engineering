@@ -505,6 +505,7 @@ fn turn_spec() -> RunSpec {
         cwd: "/workspace".into(),
         checkout: "/workspace/repo/app".into(),
         library: "/workspace".into(),
+        local_skills: None,
         prompt: "p".into(),
         user_prompt: "p".into(),
         context: "<orbyn_context>c</orbyn_context>".into(),

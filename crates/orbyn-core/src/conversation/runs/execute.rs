@@ -244,6 +244,9 @@ impl RunManager {
             thread_id: thread.id.clone(),
             cwd: warm_start.0,
             library: root,
+            // A warm process's folder is made when it starts, so it cannot hold this
+            // run's copy; a run that needs the device-local skills starts fresh.
+            local_skills: None,
             checkout,
             prompt: String::new(),
             user_prompt: String::new(),

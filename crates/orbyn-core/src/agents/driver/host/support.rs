@@ -14,6 +14,7 @@ pub fn run_spec() -> RunSpec {
         cwd: PathBuf::from("/workspace/repo/app"),
         checkout: PathBuf::from("/workspace/repo/app"),
         library: PathBuf::from("/workspace"),
+        local_skills: None,
         prompt: "context\n\nhello".into(),
         user_prompt: "hello".into(),
         context: "context".into(),

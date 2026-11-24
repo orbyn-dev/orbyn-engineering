@@ -46,6 +46,12 @@ pub fn run_args(spec: &RunSpec, mcp_config: &Path) -> Vec<OsString> {
             args.push(extra.clone().into());
         }
     }
+    // The run's own copy of the device-local skills, laid out as a `.claude/skills`
+    // root, so the CLI's native discovery sees them too. It is private to this run.
+    if let Some(local_skills) = &spec.local_skills {
+        args.push("--add-dir".into());
+        args.push(local_skills.clone().into());
+    }
     args.push("--permission-prompt-tool".into());
     args.push(CLAUDE_APPROVE_TOOL.into());
     if let Some(model) = &spec.model {
