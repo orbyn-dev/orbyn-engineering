@@ -1477,6 +1477,72 @@ fn the_permission_prompt_waits_as_long_as_the_approval_timeout() {
     );
 }
 
+/// The login probe (I56): the engine's own status command, run from a neutral folder with no settings-source argument,
+/// and its two streams read into the signed-in state and account. The captured text is handed to the parsers and nothing
+/// else: the probe's answer is the state, never the output.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_login_probe_runs_the_status_command_from_a_neutral_folder_without_settings_sources() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::testing::TempDir::new();
+    let record = dir.path().join("record.txt");
+    let script = dir.path().join("claude-status");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{record}'\npwd >> '{record}'\nprintf '%s\\n' '{{\"loggedIn\":true,\"email\":\"probe@example.test\"}}'\n",
+            record = record.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let program = script.to_string_lossy().into_owned();
+    let (auth, account) = crate::agents::engines::probe::read_login(
+        &program,
+        &["auth", "status"],
+        parse_auth_status,
+        parse_auth_account,
+    )
+    .await;
+    assert_eq!(auth, orbyn_contracts::AuthState::LoggedIn);
+    assert_eq!(account.as_deref(), Some("probe@example.test"));
+    let recorded = std::fs::read_to_string(&record).unwrap();
+    let mut lines = recorded.lines();
+    assert_eq!(lines.next(), Some("auth"));
+    assert_eq!(lines.next(), Some("status"));
+    // No settings-source argument: the probe wants the login, not a checkout's or the person's settings.
+    assert!(!recorded.contains("--setting-sources") && !recorded.contains("--bare"));
+    // It runs from a neutral folder, not a checkout.
+    let cwd = std::fs::canonicalize(lines.next().unwrap()).unwrap();
+    assert_eq!(cwd, std::fs::canonicalize(std::env::temp_dir()).unwrap());
+}
+
+/// The probe is bounded: a status command that never answers is given up on, and the person reads "unknown" rather than a
+/// wait. Its output is never stored; only the parsers see it (the test above reads the state, not the text).
+#[cfg(unix)]
+#[tokio::test]
+async fn the_login_probe_gives_up_on_a_hanging_status_command() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::testing::TempDir::new();
+    let script = dir.path().join("claude-hangs");
+    std::fs::write(&script, "#!/bin/sh\nsleep 60\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let program = script.to_string_lossy().into_owned();
+    let started = std::time::Instant::now();
+    let answer = crate::agents::engines::probe::read_login(
+        &program,
+        &["auth", "status"],
+        parse_auth_status,
+        parse_auth_account,
+    )
+    .await;
+    assert_eq!(answer, (orbyn_contracts::AuthState::Unknown, None));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "the probe's own timeout ends a hanging status command"
+    );
+}
+
 /// The task-tool flag is a person's opt-in: off sets nothing, a confined run gets
 /// nothing, and a value the person already set is left alone, `0` included.
 #[test]
