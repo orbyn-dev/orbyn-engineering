@@ -452,8 +452,16 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/needs-you/dismiss", post(needs_you_dismiss))
         .route("/api/crew/needs-you/notify", post(needs_you_notify))
         .route("/api/crew/lead/{thread_id}/close", post(lead_close))
-        .route("/api/crew/tasks/{id}/merge", post(merge_request))
-        .route_layer(from_fn_with_state(state.clone(), local_only));
+        .route("/api/crew/tasks/{id}/merge", post(merge_request));
+    // Debug builds only, and only when the service started with `ORBYN_DEV_SEED_PROPOSALS` on: a release build has
+    // no module to merge, and an ordinary debug run registers nothing, so the route is absent from the table.
+    #[cfg(debug_assertions)]
+    let writes = if state.core.config.dev_seed_proposals {
+        writes.merge(super::crew_dev::routes())
+    } else {
+        writes
+    };
+    let writes = writes.route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
         .route("/api/crew/preview", get(preview))
         .route("/api/crew/autopilot", get(modes))

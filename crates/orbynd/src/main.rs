@@ -208,6 +208,12 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
     development_account(&mut config);
     // Crew is Preview and has no screen yet: a developer turns its tools on here.
     config.crew_preview = env_flag("ORBYN_CREW_PREVIEW");
+    // Debug builds only: the web real-service specs seed a skill proposal through this test seam. A release build
+    // has neither the flag nor the route.
+    #[cfg(debug_assertions)]
+    {
+        config.dev_seed_proposals = env_flag("ORBYN_DEV_SEED_PROPOSALS");
+    }
     config.code_mode = env_flag("ORBYN_CODE_MODE");
     config.issues = env_flag("ORBYN_ISSUES");
     config.multi_repo = env_flag("ORBYN_MULTI_REPO");
