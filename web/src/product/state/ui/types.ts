@@ -163,6 +163,8 @@ export interface Prefs {
   inAppNotifications: boolean;
   /** Tells you when a scheduled task's run finishes or fails. The service keeps no such setting, so it lives here. */
   taskRunNotifications: boolean;
+  /** Tells you when a Crew item first needs you, once per wait (KC10). Client-only, like the row above. */
+  crewNotifications: boolean;
   confirmUnpin: boolean;
   confirmArchive: boolean;
   confirmDelete: boolean;

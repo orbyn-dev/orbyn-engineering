@@ -67,6 +67,7 @@ export const defaults: Prefs = {
   threadSound: false,
   inAppNotifications: false,
   taskRunNotifications: true,
+  crewNotifications: true,
   confirmUnpin: false,
   confirmArchive: false,
   confirmDelete: true,
