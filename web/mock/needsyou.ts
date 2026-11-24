@@ -11,6 +11,7 @@ import type { BackgroundCrewList } from "../src/generated/BackgroundCrewList.ts"
 import type { BackgroundRun } from "../src/generated/BackgroundRun.ts";
 import type { BackgroundRunList } from "../src/generated/BackgroundRunList.ts";
 import type { MockResponse } from "./api.ts";
+import { MOCK_CREW } from "./flow.ts";
 
 const NOW = Date.parse("2026-11-07T15:00:00Z") / 1000;
 
@@ -89,12 +90,28 @@ const watchRows = (project: string) => [
   },
 ];
 
+/**
+ * The one item of `crew-could-not-stop` (kc2-close-lead-could-not-stop): the verifying task of the board's sample, whose worker the
+ * close of its lead thread could not stop. The service's own line, the task's id and its crew; the name comes from the board.
+ */
+const couldNotStopRows = () => [
+  {
+    id: "b-verifying",
+    kind: "could_not_stop" as const,
+    project_id: "p-app",
+    crew_id: MOCK_CREW,
+    since: "2026-11-07T14:40:00Z",
+    dismissible: false,
+    reason: "The worker could not be stopped. Stop it again.",
+  },
+];
+
 /** The answer for a Needs you read, or null when the route is not one of these (or Crew is off) and the Crew mock answers. */
 export function needsYouMock(scenario: string, method: string, path: string): MockResponse | null {
   if (method !== "GET" || !(scenario === "crew" || scenario.startsWith("crew-"))) return null;
-  const empty = scenario === "crew-empty" || scenario.startsWith("crew-background-watch");
+  const empty = scenario === "crew-empty" || scenario.startsWith("crew-background-watch") || scenario === "crew-could-not-stop";
   if (path === "/api/crew/needs-you") {
-    const items = scenario === "crew-background-watch-needsyou" ? watchRows("p-app") : scenario === "crew-background-watch-needsyou-p-two" ? watchRows("p-two") : [];
+    const items = scenario === "crew-background-watch-needsyou" ? watchRows("p-app") : scenario === "crew-background-watch-needsyou-p-two" ? watchRows("p-two") : scenario === "crew-could-not-stop" ? couldNotStopRows() : [];
     return { status: 200, body: { items, count: items.length } };
   }
   if (path === "/api/crew/autopilot/review") {
