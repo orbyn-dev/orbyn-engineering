@@ -42,6 +42,7 @@ const stuckItem = (over: Partial<NeedsYouItem> = {}): NeedsYouItem => ({
   engine: "codex",
   model: "GPT-5.5",
   task_kind: "test",
+  question_hidden: false,
   ...over,
 });
 
@@ -85,8 +86,8 @@ describe("each source becomes one inbox row", () => {
   it("a watch that turned failing and one whose checks could not run are two rows, each opened at its own watch", () => {
     const items = watchItems({
       items: [
-        { id: "bg-watch-redirect", kind: "watch_failing", project_id: "p", crew_id: "bg-watch-redirect", since: "2026-11-07T14:02:00Z", dismissible: false, reason: "The watch’s command is failing." },
-        { id: "bg-watch-lock", kind: "watch_could_not_run", project_id: "p", crew_id: "bg-watch-lock", since: "2026-11-07T12:02:00Z", dismissible: false, reason: "3 checks in a row could not run: timed out." },
+        { id: "bg-watch-redirect", kind: "watch_failing", project_id: "p", crew_id: "bg-watch-redirect", since: "2026-11-07T14:02:00Z", dismissible: false, reason: "The watch’s command is failing.", question_hidden: false },
+        { id: "bg-watch-lock", kind: "watch_could_not_run", project_id: "p", crew_id: "bg-watch-lock", since: "2026-11-07T12:02:00Z", dismissible: false, reason: "3 checks in a row could not run: timed out.", question_hidden: false },
       ],
       names: { "bg-watch-redirect": "Redirect tests", "bg-watch-lock": "Lockfile check" },
     });

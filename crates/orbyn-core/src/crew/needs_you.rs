@@ -40,6 +40,8 @@ pub const WORKER_STOPPED_TWICE: &str = "worker_stopped_twice";
 const CAP: usize = 200;
 /// The longest reason, in characters.
 const REASON_MAX: usize = 160;
+/// The longest question, in characters.
+const QUESTION_MAX: usize = 600;
 
 /// The fixed reason of a kind, used when the task behind it has no scrubbed reason of its own.
 fn fixed_reason(kind: wire::NeedsYouKind) -> Option<&'static str> {
@@ -86,15 +88,32 @@ fn line(text: String) -> Option<String> {
 impl Core {
     /// A task's own scrubbed reason: its latest `needs_person` result. A task that could not start has the refusal there, a
     /// manual check has its own words, and a question has the briefer's sentence; the kind's fixed words stand in when this is
-    /// empty, so the CouldNotStart item carries the task's refusal rather than "The worker never ran." alone.
-    fn needs_you_reason(&self, facts: &Facts, scrub: &Scrub) -> Result<Option<String>> {
-        Ok(self
+    /// empty, so the CouldNotStart item carries the task's refusal rather than "The worker never ran." alone. The second part
+    /// is the question for the item, and whether the scan hid it: when it did, the reason is not given either, because the
+    /// text around a hidden secret is still part of it.
+    fn needs_you_reason(
+        &self,
+        facts: &Facts,
+        scrub: &Scrub,
+    ) -> Result<(Option<String>, Option<String>, bool)> {
+        let Some(result) = self
             .store
             .crew_results(&facts.task.id)?
             .into_iter()
             .rev()
             .find(|result| result.state == ResultState::NeedsPerson)
-            .and_then(|result| line(scrub.text(&result.summary, REASON_MAX))))
+        else {
+            return Ok((None, None, false));
+        };
+        let (question, hidden) = scrub.marked(&result.summary, QUESTION_MAX);
+        if hidden {
+            return Ok((None, None, true));
+        }
+        Ok((
+            line(scrub.text(&result.summary, REASON_MAX)),
+            line(question),
+            false,
+        ))
     }
 
     /// Every item, dismissed or not, before the cap and the order. The first rule for an id wins. `keep` says, from an item's
@@ -146,6 +165,8 @@ impl Core {
                 engine,
                 model,
                 task_kind,
+                question: None,
+                question_hidden: false,
             });
         }
 
@@ -174,17 +195,20 @@ impl Core {
             };
             // The task's own scrubbed result first: for a task that could not start, that result is the refusal the person
             // acts on, and taking a kind's fixed words instead was hiding it from the Board card and the Inbox row.
-            let reason = {
+            let (reason, question, question_hidden) = {
                 let scrub = match scrubs.entry(place.task.crew_id.clone()) {
                     Entry::Occupied(entry) => entry.into_mut(),
                     Entry::Vacant(entry) => {
                         entry.insert(Scrub::of_crew(self, &person, &place.task.crew_id)?)
                     }
                 };
-                match self.needs_you_reason(&facts, scrub)? {
+                let (reason, question, hidden) = self.needs_you_reason(&facts, scrub)?;
+                let reason = match reason {
                     Some(reason) => Some(reason),
                     None => fixed_reason(kind).map(str::to_owned),
-                }
+                };
+                let asked = (kind == wire::NeedsYouKind::TaskNeedsPerson).then_some(question);
+                (reason, asked.flatten(), hidden)
             };
             if seen.insert(place.task.id.clone()) {
                 items.push(wire::NeedsYouItem {
@@ -199,6 +223,8 @@ impl Core {
                     engine: None,
                     model: None,
                     task_kind: None,
+                    question,
+                    question_hidden,
                 });
             }
         }
@@ -226,6 +252,8 @@ impl Core {
                 engine: None,
                 model: None,
                 task_kind: None,
+                question: None,
+                question_hidden: false,
             });
         }
 
@@ -253,6 +281,8 @@ impl Core {
                 engine: None,
                 model: None,
                 task_kind: None,
+                question: None,
+                question_hidden: false,
             });
         }
 
@@ -302,6 +332,8 @@ impl Core {
                 engine: None,
                 model: None,
                 task_kind: None,
+                question: None,
+                question_hidden: false,
             });
         }
 
@@ -322,6 +354,8 @@ impl Core {
                 engine: None,
                 model: None,
                 task_kind: None,
+                question: None,
+                question_hidden: false,
             });
         }
         for place in &stopped {
@@ -342,6 +376,8 @@ impl Core {
                 engine: None,
                 model: None,
                 task_kind: None,
+                question: None,
+                question_hidden: false,
             });
         }
 
