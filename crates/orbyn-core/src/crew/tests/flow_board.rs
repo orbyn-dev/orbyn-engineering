@@ -360,7 +360,7 @@ async fn a_cancelled_task_whose_worker_could_not_be_stopped_is_a_needs_you_card_
 #[tokio::test]
 async fn a_reason_that_quotes_another_tasks_check_is_withheld() {
     // A real TaskNeedsPerson task, not a could-not-start one: the reason under test is the task's own scrubbed
-    // `needs_person` result, which is the path a held question takes.
+    // `needs_person` result, which is the path a held question takes. Quoting another task's check hides it whole.
     let w = crew(arc(|n, root| match n {
         0 => built(root),
         _ => Turn::Hang,
@@ -404,13 +404,29 @@ async fn a_reason_that_quotes_another_tasks_check_is_withheld() {
     let view = board(&w, &crew_id);
     let card = &column(&view, Column::NeedsYou).cards[0];
     assert_eq!(card.needs_you, Some(NeedsYouKind::TaskNeedsPerson));
+    // The reason is withheld whole, so it falls back to the kind's fixed words: none for TaskNeedsPerson.
+    assert!(
+        card.reason.as_deref().is_none_or(str::is_empty),
+        "the reason is withheld whole: {:?}",
+        card.reason
+    );
     let reason = card.reason.clone().unwrap_or_default();
-    assert!(reason.contains("ran"), "the reason is read");
     assert!(
         !reason.contains(&other_check),
         "the reason holds another task's check"
     );
     assert!(!serde_json::to_string(&view).unwrap().contains(&other_check));
+
+    // The same crew's needs-you read holds the whole question back, not just the check it quotes.
+    let held_item = w
+        .core
+        .crew_needs_you()
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|item| item.id == held && item.crew_id.as_deref() == Some(crew_id.as_str()))
+        .expect("the held task is in the needs-you read");
+    assert!(held_item.question_hidden, "the question is hidden whole");
 }
 
 #[tokio::test]
