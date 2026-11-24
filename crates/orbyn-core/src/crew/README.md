@@ -92,7 +92,7 @@ Tokio worker and test threads have 2 MiB stacks, and the check chain runs deep: 
 `prepare_and_verify_forge_correction` -> `verify_forge_correction` -> `crew_verify` -> `run_check`
 -> `run_line`. Futures over 16 KiB are `Box::pin`ed at their await sites, and `tests/future_sizes.rs`
 measures each and guards a budget with 25% headroom. Re-measure with
-`cargo test -p orbyn-core --lib -- crew::tests::future_sizes -- --nocapture`.
+`cargo test -p orbyn-core --lib -- crew::tests::future_sizes --nocapture`.
 
 ## Known limits of Preview
 
