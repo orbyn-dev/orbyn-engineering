@@ -220,14 +220,15 @@ fn merged(own: &[KeybindingRule]) -> Vec<KeybindingRule> {
 fn conflicts(rules: &[KeybindingRule]) -> Vec<KeybindingConflict> {
     let mut found: Vec<KeybindingConflict> = Vec::new();
     for rule in rules {
+        let key = crate::account::settings_record::normalize_key(&rule.key);
         let when = rule.when.as_ref().filter(|when| !when.trim().is_empty());
         match found
             .iter_mut()
-            .find(|known| known.key == rule.key && known.when.as_ref() == when)
+            .find(|known| known.key == key && known.when.as_ref() == when)
         {
             Some(known) => known.commands.push(rule.command.clone()),
             None => found.push(KeybindingConflict {
-                key: rule.key.clone(),
+                key,
                 when: when.cloned(),
                 commands: vec![rule.command.clone()],
             }),
@@ -242,7 +243,7 @@ fn conflicts(rules: &[KeybindingRule]) -> Vec<KeybindingConflict> {
             let mut unconditional: Vec<String> = rules
                 .iter()
                 .filter(|rule| {
-                    rule.key == conflict.key
+                    crate::account::settings_record::normalize_key(&rule.key) == conflict.key
                         && rule
                             .when
                             .as_deref()
@@ -537,6 +538,24 @@ mod tests {
             .expect("unconditional rules overlap");
         assert_eq!(clash.when, None);
         assert_eq!(clash.commands, ["one", "two", "three"]);
+    }
+
+    #[test]
+    fn differently_spelled_keys_conflict_under_the_normalised_key() {
+        let rules = [rule("Mod+K", "a.one", None), rule("mod+k ", "a.two", None)];
+        let clashes = conflicts(&rules);
+        assert_eq!(clashes.len(), 1);
+        assert_eq!(clashes[0].key, "mod+k");
+        assert_eq!(clashes[0].commands, ["a.one", "a.two"]);
+        let mixed = [
+            rule("mod+k", "a.one", None),
+            rule("MOD+K", "a.two", Some("!terminalFocus")),
+        ];
+        let clashes = conflicts(&mixed);
+        assert_eq!(clashes.len(), 1);
+        assert_eq!(clashes[0].key, "mod+k");
+        assert_eq!(clashes[0].when.as_deref(), Some("!terminalFocus"));
+        assert_eq!(clashes[0].commands, ["a.one", "a.two"]);
     }
 
     #[test]

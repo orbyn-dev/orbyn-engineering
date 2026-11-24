@@ -83,11 +83,12 @@ it("names a clash in plain words, with the context as a phrase", async () => {
 });
 
 it.each([null, "  "])("highlights both unconditional and conditional rules with context %s", async (when) => {
-  vi.mocked(request).mockReset().mockResolvedValue({
+  mock.setKeybindings({
     ...initial,
     rules: [
       { key: "mod+k", command: "sidebar.toggle", when, remove: false },
       { key: "mod+k", command: "commandPalette.toggle", when: "!terminalFocus", remove: false },
+      { key: "mod+j", command: "thread.archive", when: null, remove: false },
     ],
     conflicts: [{ key: "mod+k", when: "!terminalFocus", commands: ["sidebar.toggle", "commandPalette.toggle"] }],
   });
@@ -96,6 +97,22 @@ it.each([null, "  "])("highlights both unconditional and conditional rules with 
     const row = (await screen.findByText(name)).closest('[role="row"]');
     expect(row?.querySelector(".kc.warn")).not.toBeNull();
   }
+  const unrelated = (await screen.findByText("Archive thread")).closest('[role="row"]');
+  expect(unrelated?.querySelector(".kc.warn")).toBeNull();
+});
+
+it("highlights a rule whose key is spelled differently from the clash the service reports", async () => {
+  mock.setKeybindings({
+    ...initial,
+    rules: [
+      { key: "Mod+K", command: "sidebar.toggle", when: null, remove: false },
+      { key: "mod+k", command: "commandPalette.toggle", when: "!terminalFocus", remove: false },
+    ],
+    conflicts: [{ key: "mod+k", when: "!terminalFocus", commands: ["sidebar.toggle", "commandPalette.toggle"] }],
+  });
+  render(<KeybindingsSection />);
+  const row = (await screen.findByText("Toggle sidebar")).closest('[role="row"]');
+  expect(row?.querySelector(".kc.warn")).not.toBeNull();
 });
 
 it("shows arrow keys as arrows", async () => {
