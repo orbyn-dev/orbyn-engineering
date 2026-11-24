@@ -80,8 +80,13 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/i,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\b[0-9a-f]{32,}\b/i,
-  // An assignment to a name that says it holds a secret, unless it only copies another variable.
-  /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Z0-9_]*=(?!\$|\s|$)\S+/i,
+  // An assignment to a name that says it holds a secret, unless it only copies another variable. `PASS` names a secret only
+  // as a whole word, so `DB_PASS` counts and `BYPASS` does not.
+  /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=(?!\$|\s|$)\S+/i,
+  // An assignment that copies a variable but falls back to a literal after `:-` or `:=` (`API_TOKEN=${TOKEN:-hunter2}`):
+  // the literal is what the person typed, so it is the secret. A bare copy (`TOKEN=${VAR}`), a command substitution
+  // (`TOKEN=$(gh auth token)`) and a fallback that is itself only a variable (`TOKEN=${VAR:-$OTHER}`) carry no typed secret.
+  /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=["']?\$\{[A-Za-z_][A-Za-z0-9_]*(?::-|:=)["']?(?![$}\s"'])\S/i,
   // A flag that names a secret and carries its value (`--password hunter2`, `--token=abc`); `--password-file x` names a file, not a value; a bare `$VAR` or `"${VAR}"` copies another variable, but `$'text'` and `${VAR:-text}` carry a literal.
   /(?<![\w-])--?(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)(?!"?\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})"?(?:\s|$)|-)\S+/i,
   // The database clients take the password glued to `-p` (`mysql -u root -pSecret`); `-p` alone or on other tools is a port or a path flag.
