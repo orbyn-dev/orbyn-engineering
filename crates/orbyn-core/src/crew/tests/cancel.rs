@@ -29,7 +29,11 @@ fn actions(w: &World) -> Vec<String> {
     rows.reverse();
     rows.into_iter()
         .map(|row| row.action)
-        .filter(|a| a.starts_with("crew.task.cancel") || a.starts_with("crew.task.stop_") || a == "run.force_stop")
+        .filter(|a| {
+            a.starts_with("crew.task.cancel")
+                || a.starts_with("crew.task.stop_")
+                || a == "run.force_stop"
+        })
         .collect()
 }
 
@@ -702,6 +706,43 @@ async fn a_second_pass_that_fails_leaves_the_task_cancelled_and_flags_it() {
             .already
     );
     assert_eq!(actions(&w), before);
+}
+
+/// A worker record that cannot be read is not "no worker": the retry must fail and keep the flag, never write `stop_retried`.
+#[tokio::test]
+async fn a_worker_record_that_cannot_be_read_does_not_clear_a_failed_stop() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = routed(&w, "c");
+    let hook = late_worker(&w, &id);
+    w.core
+        .crew_cancel_with(
+            &id,
+            None,
+            "user",
+            |_: String| async { Err(CoreError::Internal("stuck".into())) },
+            hook,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(w.core.store.crew_could_not_stop().unwrap().len(), 1);
+
+    // Damage the task's worker row so that reading it fails (text where a count belongs).
+    let db = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    db.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+    db.execute(
+        "UPDATE crew_runs SET attempts = 'not a number' WHERE task_id = ?1",
+        [&id],
+    )
+    .unwrap();
+
+    let error = w
+        .core
+        .crew_cancel_task(&id, None, "user")
+        .await
+        .unwrap_err();
+    assert!(!matches!(error, CoreError::NotFound(_)), "{error}");
+    assert_eq!(count(&w, "crew.task.stop_retried"), 0);
+    assert_eq!(w.core.store.crew_could_not_stop().unwrap().len(), 1);
 }
 
 /// The move to `running` fails after the worker was recorded and started (the task was not routed): the worker is stopped.
