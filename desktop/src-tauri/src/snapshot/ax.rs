@@ -4,14 +4,20 @@
 #![cfg(target_os = "macos")]
 
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Once};
 
-use super::accessible::{Budget, Fields, Tree, collect, pick_window_index, utf8_buffer_len};
+use super::accessible::{
+    Budget, Fields, Tree, WindowChoice, collect, utf8_buffer_len, window_choice,
+};
 
 type CFTypeRef = *const c_void;
 type CFIndex = isize;
 type CFTypeID = usize;
 type CFStringRef = *const c_void;
 type CFArrayRef = *const c_void;
+/// The C `Boolean` type is an `unsigned char`, not Rust's `bool`.
+type Boolean = u8;
 
 #[repr(C)]
 struct CFRange {
@@ -35,7 +41,8 @@ unsafe extern "C" {
         value: *mut CFTypeRef,
     ) -> i32;
     fn AXUIElementSetMessagingTimeout(element: CFTypeRef, seconds: f32) -> i32;
-    fn AXIsProcessTrusted() -> bool;
+    fn AXUIElementCreateSystemWide() -> CFTypeRef;
+    fn AXIsProcessTrusted() -> Boolean;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -121,6 +128,29 @@ fn cf_string(text: &str) -> Option<Cf> {
     Cf::owned(created)
 }
 
+/// Bounds every AX message this process sends.
+///
+/// Apple's `AXUIElement.h` says a timeout set on one object applies only to that object and that
+/// the system-wide object is the documented way to set it for the whole process. Setting it on the
+/// application element alone therefore leaves the window and child reads (the titles and the tree)
+/// on the process default, where a slow app can hold the capture thread well past its budget.
+/// Read-only for other apps: this changes our client timeout, not any attribute of theirs.
+fn bound_messaging_timeout() {
+    static BOUND: Once = Once::new();
+    BOUND.call_once(|| {
+        // SAFETY: the call takes nothing and returns a new +1 system-wide element or null, which
+        // `Cf` owns and releases; the timeout is this process's client setting only.
+        let Some(system) = Cf::owned(unsafe { AXUIElementCreateSystemWide() }) else {
+            return;
+        };
+        // SAFETY: `system` is a live AX element. The result only reports whether the client timeout
+        // was stored; a failure leaves the default and is deliberately ignored.
+        unsafe {
+            AXUIElementSetMessagingTimeout(system.0, MESSAGING_TIMEOUT_SECONDS);
+        }
+    });
+}
+
 /// Copies one AX attribute of `element`, which is +1 on success and owned by the returned `Cf`.
 fn attribute(element: &Cf, name: &Cf) -> Option<Cf> {
     let mut value: CFTypeRef = std::ptr::null();
@@ -128,6 +158,15 @@ fn attribute(element: &Cf, name: &Cf) -> Option<Cf> {
     // local out-pointer. Only a zero (success) result is read; it holds a +1 reference.
     let error = unsafe { AXUIElementCopyAttributeValue(element.0, name.0, &mut value) };
     if error != 0 {
+        // A copy call hands back a +1 value only on success. If a framework fills the out-pointer
+        // on a failure anyway, release it so the ownership rule stays total.
+        if !value.is_null() {
+            // SAFETY: `value` is non-null and was returned by a copy call, so it carries a +1
+            // reference this branch owns; nothing else releases it.
+            unsafe {
+                CFRelease(value);
+            }
+        }
         return None;
     }
     Cf::owned(value)
@@ -156,7 +195,7 @@ fn string_of(value: &Cf) -> Option<String> {
     // SAFETY: `value` is a CFString, `range` covers its first `length` UTF-16 units, and
     // `buffer` has `length * 3 + 4` bytes, the UTF-8 worst case for those units. The call writes
     // at most `max_len` bytes and records how many it wrote in `used`.
-    unsafe {
+    let converted = unsafe {
         CFStringGetBytes(
             value.0,
             range,
@@ -166,9 +205,11 @@ fn string_of(value: &Cf) -> Option<String> {
             buffer.as_mut_ptr(),
             max_len,
             &mut used,
-        );
-    }
-    if used < 0 {
+        )
+    };
+    // The return is the number of characters converted: 0 when the range is empty or a character
+    // cannot be converted, which is no text rather than an empty value.
+    if converted <= 0 || used < 0 {
         return None;
     }
     let used = usize::try_from(used).ok()?;
@@ -280,20 +321,46 @@ fn windows(app: &Cf) -> Vec<Cf> {
     array_values(&array, MAX_WINDOWS)
 }
 
-/// Picks the window named by the capture: the exact title among `AXWindows` when one is asked
-/// for, then the focused window, then the main window.
-fn pick_window(app: &Cf, window_title: &str) -> Option<Cf> {
-    if !window_title.is_empty() {
+/// Picks the window named by the capture: the exact title among `AXWindows`, or the app's
+/// focused window only when the capture itself was of that focused window. It never reads a
+/// different window of the same app, and it checks the budget while reading titles so the
+/// selection stays inside the read's wall clock.
+fn pick_window(
+    app: &Cf,
+    window_title: &str,
+    captured_is_focused: bool,
+    budget: &Budget,
+) -> Option<Cf> {
+    if !window_title.is_empty() && !budget.expired() && !budget.stopped() {
         let windows = windows(app);
-        let titles: Vec<String> = windows
-            .iter()
-            .map(|window| named_string(window, "AXTitle"))
-            .collect();
-        if let Some(index) = pick_window_index(&titles, window_title) {
-            return windows.into_iter().nth(index);
+        let mut titles = Vec::with_capacity(windows.len());
+        for window in &windows {
+            if budget.expired() || budget.stopped() {
+                return None;
+            }
+            titles.push(named_string(window, "AXTitle"));
+        }
+        match window_choice(&titles, window_title, captured_is_focused) {
+            WindowChoice::Exact(index) => return windows.into_iter().nth(index),
+            WindowChoice::Focused => return focused_window(app, budget),
+            WindowChoice::Skip => return None,
         }
     }
+    // An empty title names no window in `AXWindows`; only a capture of the focused window may
+    // fall back to it.
+    if captured_is_focused {
+        focused_window(app, budget)
+    } else {
+        None
+    }
+}
+
+/// The app's focused window, then its main window, while the budget lasts.
+fn focused_window(app: &Cf, budget: &Budget) -> Option<Cf> {
     for name in ["AXFocusedWindow", "AXMainWindow"] {
+        if budget.expired() || budget.stopped() {
+            return None;
+        }
         let Some(name) = cf_string(name) else {
             continue;
         };
@@ -306,23 +373,41 @@ fn pick_window(app: &Cf, window_title: &str) -> Option<Cf> {
 
 /// Reads the accessible text of one window of `pid`, or answers `None` when this process is not
 /// trusted, the process id is invalid, or no window can be read. It never prompts or acts.
-pub fn read_window_text(pid: i32, window_title: &str) -> Option<String> {
-    if pid <= 0 {
+///
+/// `captured_is_focused` says whether the captured window was the app's focused window (it is the
+/// only case where reading the focused window is the same window). `stop` is set when the capture
+/// flow gives up, so the read ends instead of outliving the capture.
+pub fn read_window_text(
+    pid: i32,
+    window_title: &str,
+    captured_is_focused: bool,
+    stop: &Arc<AtomicBool>,
+) -> Option<String> {
+    if pid <= 0 || stop.load(Ordering::Relaxed) {
         return None;
     }
     // SAFETY: the call takes nothing, touches no memory, and only reads this process's
     // Accessibility grant without prompting.
-    if !unsafe { AXIsProcessTrusted() } {
+    if unsafe { AXIsProcessTrusted() } == 0 {
         return None;
     }
+    // Bound every AX message before the first read of any element; the memoized call is a no-op
+    // after the first read in this process.
+    bound_messaging_timeout();
+    if stop.load(Ordering::Relaxed) {
+        return None;
+    }
+    // The budget starts before the window is chosen, so title matching counts against it too.
+    let budget = Budget {
+        stop: Arc::clone(stop),
+        ..Budget::new()
+    };
     // SAFETY: the call takes a pid and returns a new +1 application element or null, which `Cf`
     // owns and releases.
     let app = Cf::owned(unsafe { AXUIElementCreateApplication(pid) })?;
-    // SAFETY: `app` is a live AX application element; the call only bounds the time later AX
-    // reads may take, and the result is deliberately ignored.
-    unsafe {
-        AXUIElementSetMessagingTimeout(app.0, MESSAGING_TIMEOUT_SECONDS);
+    if budget.expired() || budget.stopped() {
+        return None;
     }
-    let window = pick_window(&app, window_title)?;
-    collect(&Ax::new()?, &window, &Budget::new())
+    let window = pick_window(&app, window_title, captured_is_focused, &budget)?;
+    collect(&Ax::new()?, &window, &budget)
 }

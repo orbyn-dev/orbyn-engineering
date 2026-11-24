@@ -1,6 +1,8 @@
 //! Reads accessible text through a pure tree interface. No OS calls live here, so every target compiles
 //! and tests the collector; the macOS reader in `ax` supplies the nodes.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 pub const MAX_ACCESSIBLE_TEXT_CHARS: usize = 32_000;
@@ -26,7 +28,13 @@ pub trait Tree {
 pub struct Budget {
     pub max_nodes: usize,
     pub max_depth: usize,
+    /// The most nodes one walk may queue while it is still visiting; a wide node would otherwise
+    /// hold up to `MAX_CHILDREN` nodes per visit before the node cap stops it.
+    pub max_queued: usize,
     pub deadline: Instant,
+    /// Set by the capture flow when it gives up, so a read already running stops early instead of
+    /// outliving the capture that started it.
+    pub stop: Arc<AtomicBool>,
 }
 
 impl Budget {
@@ -34,8 +42,20 @@ impl Budget {
         Self {
             max_nodes: 5_000,
             max_depth: 40,
+            max_queued: 5_000,
             deadline: Instant::now() + Duration::from_secs(2),
+            stop: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Whether the wall-clock budget has run out.
+    pub fn expired(&self) -> bool {
+        Instant::now() >= self.deadline
+    }
+
+    /// Whether the capture flow that started this read has given up.
+    pub fn stopped(&self) -> bool {
+        self.stop.load(Ordering::Relaxed)
     }
 }
 
@@ -51,23 +71,23 @@ enum Visit<'a, N> {
 }
 
 /// Walks the tree depth first, in order, and returns at most [`MAX_ACCESSIBLE_TEXT_CHARS`] characters.
-/// A secure field contributes nothing and hides its whole subtree.
+/// A secure field contributes nothing and hides its whole subtree. The walk stops early once the
+/// text budget is spent, the child queue would pass its own cap, the deadline passes or the
+/// capture flow asks it to stop.
 pub fn collect<T: Tree>(tree: &T, root: &T::Node, budget: &Budget) -> Option<String> {
     let mut stack = vec![Visit::Borrowed(root, 0)];
     let mut lines: Vec<String> = Vec::new();
+    let mut chars = 0_usize;
     let mut visited = 0_usize;
 
-    while let Some(visit) = stack.pop() {
+    'walk: while let Some(visit) = stack.pop() {
         let depth = match &visit {
             Visit::Borrowed(_, depth) | Visit::Owned(_, depth) => *depth,
         };
         if depth > budget.max_depth {
             continue;
         }
-        if visited >= budget.max_nodes {
-            break;
-        }
-        if Instant::now() >= budget.deadline {
+        if visited >= budget.max_nodes || budget.expired() || budget.stopped() {
             break;
         }
         visited += 1;
@@ -83,13 +103,25 @@ pub fn collect<T: Tree>(tree: &T, root: &T::Node, budget: &Budget) -> Option<Str
         if let Some(line) = line(&fields)
             && lines.last().map(String::as_str) != Some(line.as_str())
         {
+            // The cap is enforced while walking, so a window with many long lines cannot fill the
+            // process with text that would only be cut away at the end.
+            let width = line.chars().count() + usize::from(!lines.is_empty());
             lines.push(line);
+            chars += width;
+            if chars >= MAX_ACCESSIBLE_TEXT_CHARS {
+                break;
+            }
         }
         if depth >= budget.max_depth {
             continue;
         }
         let child_depth = depth + 1;
         for child in tree.children(node).into_iter().rev() {
+            // Bound the queue too, not just the visits: a wide node would otherwise retain up to
+            // `MAX_CHILDREN` nodes per visit before the node cap stops the walk.
+            if stack.len() >= budget.max_queued {
+                break 'walk;
+            }
             stack.push(Visit::Owned(child, child_depth));
         }
     }
@@ -104,13 +136,37 @@ pub fn collect<T: Tree>(tree: &T, root: &T::Node, budget: &Budget) -> Option<Str
     Some(text)
 }
 
-/// The first title that matches `wanted` exactly. An empty `wanted` never matches, so the caller
-/// falls back to the focused window.
+/// The first title that matches `wanted` exactly. An empty `wanted` never matches.
 pub fn pick_window_index(titles: &[String], wanted: &str) -> Option<usize> {
     if wanted.is_empty() {
         return None;
     }
     titles.iter().position(|title| title == wanted)
+}
+
+/// What window of the captured app the reader should use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowChoice {
+    /// The window at this index in `AXWindows` has the captured window's exact title.
+    Exact(usize),
+    /// No title matched, but the capture was of the app's focused window, so that window is it.
+    Focused,
+    /// No title matched and the capture was not of the focused window, so no window may be read:
+    /// another window of the same app holds different text.
+    Skip,
+}
+
+/// Chooses the window to read: an exact title match always wins; with no match, only a capture of
+/// the focused window may fall back to it.
+pub fn window_choice(titles: &[String], wanted: &str, captured_is_focused: bool) -> WindowChoice {
+    if let Some(index) = pick_window_index(titles, wanted) {
+        return WindowChoice::Exact(index);
+    }
+    if captured_is_focused {
+        WindowChoice::Focused
+    } else {
+        WindowChoice::Skip
+    }
 }
 
 /// The UTF-8 buffer bound for `utf16_units` UTF-16 units: three bytes per unit is the worst case,
@@ -143,6 +199,7 @@ fn normalized(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     #[derive(Default)]
     struct Arena {
@@ -188,11 +245,7 @@ mod tests {
     }
 
     fn budget() -> Budget {
-        Budget {
-            max_nodes: 5_000,
-            max_depth: 40,
-            deadline: Instant::now() + Duration::from_secs(2),
-        }
+        Budget::new()
     }
 
     #[test]
@@ -200,7 +253,9 @@ mod tests {
         let budget = Budget::default();
         assert_eq!(budget.max_nodes, 5_000);
         assert_eq!(budget.max_depth, 40);
+        assert_eq!(budget.max_queued, 5_000);
         assert!(budget.deadline > Instant::now());
+        assert!(!budget.stopped());
     }
 
     #[test]
@@ -400,5 +455,128 @@ mod tests {
         assert_eq!(utf8_buffer_len(20_000), 60_004);
         assert_eq!(utf8_buffer_len(usize::MAX), usize::MAX);
         assert_eq!(utf8_buffer_len(usize::MAX / 3 + 1), usize::MAX);
+    }
+
+    /// A tree that counts what the collector asks it for, so a bound can be asserted from outside.
+    struct Counted<'a> {
+        arena: &'a Arena,
+        fields: Cell<usize>,
+        children: Cell<usize>,
+    }
+
+    impl Tree for Counted<'_> {
+        type Node = usize;
+
+        fn fields(&self, node: &usize) -> Fields {
+            self.fields.set(self.fields.get() + 1);
+            self.arena.nodes[*node].fields.clone()
+        }
+
+        fn children(&self, node: &usize) -> Vec<usize> {
+            self.children.set(self.children.get() + 1);
+            self.arena.nodes[*node].children.clone()
+        }
+    }
+
+    #[test]
+    fn the_walk_stops_at_the_character_cap_instead_of_reading_every_node() {
+        let mut arena = Arena::default();
+        let mut root = arena.add(text(&format!("root {}", "x".repeat(5_000)), "", ""), &[]);
+        for index in 0..39 {
+            let value = format!("node {index} {}", "y".repeat(5_000));
+            root = arena.add(text(&value, "", ""), &[root]);
+        }
+        let tree = Counted {
+            arena: &arena,
+            fields: Cell::new(0),
+            children: Cell::new(0),
+        };
+        let text = collect(&tree, &root, &budget()).expect("the first nodes are kept");
+        assert_eq!(text.chars().count(), MAX_ACCESSIBLE_TEXT_CHARS);
+        assert!(
+            tree.fields.get() <= 10,
+            "read {} nodes before the 32,000-character cap",
+            tree.fields.get()
+        );
+        assert!(tree.children.get() <= 10);
+    }
+
+    #[test]
+    fn the_walk_stops_when_the_child_queue_is_full() {
+        struct Wide {
+            fields: Cell<usize>,
+            children: Cell<usize>,
+        }
+
+        impl Tree for Wide {
+            type Node = usize;
+
+            fn fields(&self, _node: &usize) -> Fields {
+                self.fields.set(self.fields.get() + 1);
+                text("node", "", "")
+            }
+
+            fn children(&self, node: &usize) -> Vec<usize> {
+                self.children.set(self.children.get() + 1);
+                (1..=500)
+                    .map(|index| node.wrapping_mul(1_000_003).wrapping_add(index))
+                    .collect()
+            }
+        }
+
+        let tree = Wide {
+            fields: Cell::new(0),
+            children: Cell::new(0),
+        };
+        let _ = collect(&tree, &0, &budget());
+        assert!(
+            tree.fields.get() < 100,
+            "visited {} nodes while the child queue grew past its cap",
+            tree.fields.get()
+        );
+        assert!(tree.children.get() < 100);
+    }
+
+    #[test]
+    fn the_budget_reports_expiry_and_stop() {
+        let budget = Budget::new();
+        assert!(!budget.expired());
+        assert!(!budget.stopped());
+        budget
+            .stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(budget.stopped());
+        let expired = Budget {
+            deadline: Instant::now(),
+            ..Budget::new()
+        };
+        assert!(expired.expired());
+    }
+
+    #[test]
+    fn a_stopped_budget_returns_none() {
+        let mut arena = Arena::default();
+        let root = arena.add(text("text", "", ""), &[]);
+        let budget = budget();
+        budget
+            .stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(collect(&arena, &root, &budget), None);
+    }
+
+    #[test]
+    fn a_window_choice_needs_a_title_match_or_a_focused_capture() {
+        let titles = vec!["Notes".to_owned(), "Mail".to_owned()];
+
+        assert_eq!(
+            window_choice(&titles, "Notes", false),
+            WindowChoice::Exact(0)
+        );
+        assert_eq!(window_choice(&titles, "Mail", true), WindowChoice::Exact(1));
+        assert_eq!(window_choice(&titles, "notes", true), WindowChoice::Focused);
+        assert_eq!(window_choice(&titles, "notes", false), WindowChoice::Skip);
+        assert_eq!(window_choice(&titles, "", true), WindowChoice::Focused);
+        assert_eq!(window_choice(&titles, "", false), WindowChoice::Skip);
+        assert_eq!(window_choice(&[], "Notes", false), WindowChoice::Skip);
     }
 }

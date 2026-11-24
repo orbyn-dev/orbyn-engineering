@@ -63,6 +63,11 @@ describe("the setup dialog", () => {
     expect(within(dialog).queryByRole("button", { name: "Allow Accessibility" })).toBeNull();
     expect(within(dialog).queryByText("Accessibility")).toBeNull();
     expect(mock.calls).not.toContainEqual({ command: "snapshot_setup", args: { action: "allow_accessibility" } });
+    // The switch stays (the merged snapshot-settings-accessibility frame draws it) and the help text
+    // says honestly that this build cannot ask for the grant itself.
+    expect(
+      await screen.findByText(/Turn Orbyn on under System Settings › Privacy & Security › Accessibility/),
+    ).toBeVisible();
   });
 
   it("shows the restart note until Screen Recording is granted", async () => {
