@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { readKeybindings, saveKeybinding } from "../api";
+import { readKeybindings, resetKeybinding, saveKeybinding } from "../api";
 import { inDesktopApp } from "../api";
+import type { KeybindingViewRule } from "../../../generated/KeybindingViewRule";
 import { commandLabel, whenClause, whenPhrase } from "./commandLabels";
 import { formatShortcut, runHandlers, shortcutForEvent } from "../../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -40,8 +41,32 @@ export function KeybindingsSection() {
   const [filter, setFilter] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; command: string } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; rule: KeybindingViewRule } | null>(null);
   const pushToast = useUi((state) => state.pushToast);
+  const menuReset = menu?.rule.custom === true ? menu.rule.default_keys?.[0] || undefined : undefined;
+
+  const resetToDefault = (rule: KeybindingViewRule) => {
+    const previous = rule.key;
+    resetKeybinding({ command: rule.command, when: rule.when }).then(
+      (next) => {
+        view.setData(next);
+        runHandlers("keybindings.reload");
+        pushToast("Reset to default", undefined, {
+          label: "Undo",
+          run: () => {
+            saveKeybinding({ key: previous, command: rule.command, when: rule.when, remove: false }).then(
+              (back) => {
+                view.setData(back);
+                runHandlers("keybindings.reload");
+              },
+              (failure: unknown) => setError(toFailure(failure).message),
+            );
+          },
+        });
+      },
+      (failure: unknown) => setError(toFailure(failure).message),
+    );
+  };
 
   const capture = (event: React.KeyboardEvent, command: string, when: string | null) => {
     const key = shortcutForEvent(event);
@@ -116,7 +141,10 @@ export function KeybindingsSection() {
                       <span role="cell" className="t3" title={rule.when ?? undefined}>{whenPhrase(rule.when)}</span>
                       <span role="cell">
                         {editing === id ? <button type="button" className="btn btn-small" onKeyDown={(event) => capture(event, rule.command, rule.when)} ref={(element) => element?.focus()}>Press keys…</button>
-                          : <span className="keycaps" aria-label={formatShortcut(rule.key)}>{keyCaps(rule.key).map((cap, at) => <span key={at} className={clash ? "kc warn" : "kc"} aria-hidden>{cap}</span>)}</span>}
+                          : <span className="kb-shortcut">
+                              <span className="keycaps" aria-label={formatShortcut(rule.key)}>{keyCaps(rule.key).map((cap, at) => <span key={at} className={clash ? "kc warn" : "kc"} aria-hidden>{cap}</span>)}</span>
+                              {rule.custom === true ? <span className="set-pill">Custom</span> : null}
+                            </span>}
                       </span>
                       <span role="cell">
                         <IconButton label={`Change shortcut for ${commandLabel(rule.command)}`} onClick={() => setEditing(id)}><Pencil size={13} aria-hidden /></IconButton>
@@ -125,7 +153,7 @@ export function KeybindingsSection() {
                           aria-haspopup="menu"
                           onClick={(event) => {
                             const box = event.currentTarget.getBoundingClientRect();
-                            setMenu({ x: box.left, y: box.bottom + 4, command: rule.command });
+                            setMenu({ x: box.left, y: box.bottom + 4, rule });
                           }}
                         >
                           <MoreHorizontal size={13} aria-hidden />
@@ -144,7 +172,15 @@ export function KeybindingsSection() {
               onClose={() => setMenu(null)}
               items={[{
                 label: "Copy id",
-                onSelect: () => void navigator.clipboard?.writeText(menu.command).then(() => pushToast(`Copied ${menu.command}`)),
+                onSelect: () => void navigator.clipboard?.writeText(menu.rule.command).then(() => pushToast(`Copied ${menu.rule.command}`)),
+              }, {
+                label: "Reset to default",
+                disabled: menuReset === undefined,
+                title: menuReset === undefined ? "Already the default" : undefined,
+                shortcut: menuReset === undefined ? undefined : formatShortcut(menuReset),
+                onSelect: () => {
+                  if (menuReset !== undefined) resetToDefault(menu.rule);
+                },
               }]}
             />
           ) : null}

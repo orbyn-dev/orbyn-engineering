@@ -4,6 +4,7 @@ import type { ScopedPreferencesResult } from "../src/generated/ScopedPreferences
 import type { ScopedPreferencesChange } from "../src/generated/ScopedPreferencesChange.ts";
 import type { JsonValue } from "../src/api/types.ts";
 import type { InstallOutcome } from "../src/generated/InstallOutcome.ts";
+import type { KeybindingReset } from "../src/generated/KeybindingReset.ts";
 import type { KeybindingRule } from "../src/generated/KeybindingRule.ts";
 import type { KeybindingsView } from "../src/generated/KeybindingsView.ts";
 import type { ModelInfo } from "../src/generated/ModelInfo.ts";
@@ -80,6 +81,9 @@ export type Scenario =
   | `platform-${"windows" | "linux"}`
   /** Two checkouts of one repository (the app and a worktree of it) beside the other projects, so Settings can scope to the project or to one checkout. */
   | "settings-checkouts"
+  /** Settings › Keybindings reset frames: "keybindings-reset-moved" has Command palette moved to mod+shift+p, and "keybindings-reset-clash" adds Toggle sidebar moved onto mod+k so a reset clashes. */
+  | "keybindings-reset-moved"
+  | "keybindings-reset-clash"
   /** The sign-in gate is on, signed out; see `mock/account.ts` for the throwaway accounts. */
   | "account"
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
@@ -320,7 +324,9 @@ export function createMockApi(options: MockOptions = {}) {
     terminalsMock.reset();
     questionsMock.reset();
     foldersMock.reset();
-    keybindingsMock.reset();
+    keybindingsMock.resetView(
+      next === "keybindings-reset-moved" ? "moved" : next === "keybindings-reset-clash" ? "clash" : "default",
+    );
     cleanupPreviewOverride = null;
     signedIn = false;
     infoPatch = {};
@@ -1152,6 +1158,7 @@ export function createMockApi(options: MockOptions = {}) {
       case "GET /api/keybindings":
         return { status: 200, body: keybindingsMock.get() };
       case "POST /api/keybindings":
+        if (seg[2] === "reset") return keybindingsMock.reset(data as unknown as KeybindingReset);
         return keybindingsMock.save(data as unknown as KeybindingRule);
       // No engine host is reported: the real client reads a 404 as "nothing reported".
       case "GET /api/engine-host":

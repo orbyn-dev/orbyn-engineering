@@ -5,12 +5,15 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../mock/api";
 import type { KeybindingRule, KeybindingsView } from "../../../api/types";
 import { matchesKey } from "../../../product/shell/shortcuts";
+import { useUi } from "../../../product/state/ui";
+import { Toasts } from "../../../product/ui/Toasts";
 import { installMockFetch } from "../../../test-support";
 import { KeybindingsSection } from "./Keybindings";
 
 let mock: MockApi;
 beforeEach(() => {
   mock = installMockFetch();
+  useUi.setState({ toasts: [] });
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -18,6 +21,35 @@ afterEach(() => vi.restoreAllMocks());
 const keybindingSaves = () => vi.mocked(fetch).mock.calls
   .filter(([url, init]) => String(url) === "/api/keybindings" && init?.method === "POST")
   .map(([, init]) => JSON.parse(String(init?.body)) as KeybindingRule);
+
+/** The resets sent to the service, as it received them. */
+const keybindingResets = () => vi.mocked(fetch).mock.calls
+  .filter(([url, init]) => String(url) === "/api/keybindings/reset" && init?.method === "POST")
+  .map(([, init]) => JSON.parse(String(init?.body)) as { command: string; when: string | null });
+
+type ViewRule = KeybindingsView["rules"][number];
+
+/** A view rule with the service's own defaults filled in unless the case wants another. */
+const viewRule = (key: string, command: string, patch: Partial<ViewRule> = {}): ViewRule => ({
+  key, command, when: null, remove: false, custom: false, default_keys: [key], ...patch,
+});
+
+const rowOf = async (label: string) => (await screen.findByText(label)).closest('[role="row"]') as HTMLElement;
+
+const openMenu = async (label: string) => {
+  fireEvent.click(await screen.findByRole("button", { name: `More for ${label}` }));
+  return screen.findByRole("menu", { name: "Keybinding actions" });
+};
+
+const closeMenu = async (menu: HTMLElement) => {
+  fireEvent.keyDown(menu, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu", { name: "Keybinding actions" })).toBeNull());
+};
+
+const resetToDefault = async (label: string) => {
+  const menu = await openMenu(label);
+  fireEvent.click(within(menu).getByRole("menuitem", { name: /Reset to default/ }));
+};
 
 const initial: KeybindingsView = {
   path: "keys.json", issues: [], conflicts: [],
@@ -130,6 +162,148 @@ it("keeps the raw text for a context it has no phrase for", async () => {
   });
   render(<KeybindingsSection />);
   expect((await screen.findByText(/Toggle sidebar and Toggle Changes both use/)).textContent).toContain("when a || b.");
+});
+
+it("marks only a rule that differs from its built-in with a Custom chip", async () => {
+  mock.setKeybindings({
+    path: "keys.json", issues: [], conflicts: [],
+    rules: [
+      viewRule("mod+b", "sidebar.toggle"),
+      viewRule("mod+shift+p", "commandPalette.toggle", { when: "!terminalFocus", custom: true, default_keys: ["mod+k"] }),
+    ],
+  });
+  render(<KeybindingsSection />);
+  expect(within(await rowOf("Command palette")).getByText("Custom")).toBeVisible();
+  expect(within(await rowOf("Toggle sidebar")).queryByText("Custom")).toBeNull();
+});
+
+it("offers Reset to default with the built-in key only on a changed rule", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  mock.setKeybindings({
+    path: "keys.json", issues: [], conflicts: [],
+    rules: [
+      viewRule("mod+b", "sidebar.toggle"),
+      viewRule("mod+shift+p", "commandPalette.toggle", { when: "!terminalFocus", custom: true, default_keys: ["mod+k"] }),
+    ],
+  });
+  render(<KeybindingsSection />);
+
+  const changed = await openMenu("Command palette");
+  const reset = within(changed).getByRole("menuitem", { name: /Reset to default/ });
+  expect(reset).toBeEnabled();
+  expect(within(reset).getByText("⌘K")).toBeVisible();
+  await closeMenu(changed);
+
+  const untouched = await openMenu("Toggle sidebar");
+  const off = within(untouched).getByRole("menuitem", { name: /Reset to default/ });
+  expect(off).toBeDisabled();
+  expect(off).toHaveAttribute("title", "Already the default");
+  expect(off.querySelector(".menu-shortcut")).toBeNull();
+});
+
+it("leaves Reset to default off for the person's own rule with no built-in default", async () => {
+  mock.setKeybindings({
+    path: "keys.json", issues: [], conflicts: [],
+    rules: [viewRule("mod+shift+s", "composer.stash", { when: "!terminalFocus", custom: true, default_keys: [] })],
+  });
+  render(<KeybindingsSection />);
+  const menu = await openMenu("Stash the draft");
+  const reset = within(menu).getByRole("menuitem", { name: /Reset to default/ });
+  expect(reset).toBeDisabled();
+  expect(reset).toHaveAttribute("title", "Already the default");
+  expect(reset.querySelector(".menu-shortcut")).toBeNull();
+});
+
+it("resets a changed rule to its built-in key at once and offers Undo in a toast", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  mock.setKeybindings({
+    path: "keys.json", issues: [], conflicts: [],
+    rules: [
+      viewRule("mod+b", "sidebar.toggle"),
+      viewRule("mod+shift+p", "commandPalette.toggle", { when: "!terminalFocus", custom: true, default_keys: ["mod+k"] }),
+    ],
+  });
+  render(<><KeybindingsSection /><Toasts /></>);
+
+  await resetToDefault("Command palette");
+
+  await waitFor(() => expect(keybindingResets()).toEqual([{ command: "commandPalette.toggle", when: "!terminalFocus" }]));
+  expect(keybindingSaves()).toEqual([]);
+  await waitFor(() => {
+    const row = (screen.getByText("Command palette")).closest('[role="row"]') as HTMLElement;
+    expect(within(row).queryByText("Custom")).toBeNull();
+    expect(within(row).getByLabelText("⌘K")).toBeVisible();
+  });
+  expect(await screen.findByText("Reset to default")).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Undo" })).toBeVisible();
+});
+
+it("undoes a reset with one save of the rule's previous key", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  mock.setKeybindings({
+    path: "keys.json", issues: [], conflicts: [],
+    rules: [
+      viewRule("mod+b", "sidebar.toggle"),
+      viewRule("mod+shift+p", "commandPalette.toggle", { when: "!terminalFocus", custom: true, default_keys: ["mod+k"] }),
+    ],
+  });
+  render(<><KeybindingsSection /><Toasts /></>);
+
+  await resetToDefault("Command palette");
+  fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+
+  await waitFor(() => expect(keybindingSaves()).toEqual([{
+    key: "mod+shift+p", command: "commandPalette.toggle", when: "!terminalFocus", remove: false,
+  }]));
+  await waitFor(() => {
+    const row = (screen.getByText("Command palette")).closest('[role="row"]') as HTMLElement;
+    expect(within(row).getByText("Custom")).toBeVisible();
+    expect(within(row).getByLabelText("⌘⇧P")).toBeVisible();
+    expect(screen.queryByText("Reset to default")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+  expect(keybindingResets()).toHaveLength(1);
+});
+
+it("shows a reset's clash in the amber banner and caps, and Undo clears it", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  mock.setKeybindings({
+    path: "keys.json", issues: [], conflicts: [],
+    rules: [
+      viewRule("mod+k", "sidebar.toggle", { custom: true, default_keys: ["mod+b"] }),
+      viewRule("mod+shift+p", "commandPalette.toggle", { when: "!terminalFocus", custom: true, default_keys: ["mod+k"] }),
+    ],
+  });
+  render(<><KeybindingsSection /><Toasts /></>);
+
+  await resetToDefault("Command palette");
+  expect(await screen.findByText(/Toggle sidebar and Command palette both use/)).toBeVisible();
+  for (const label of ["Toggle sidebar", "Command palette"]) {
+    expect((await rowOf(label)).querySelector(".kc.warn")).not.toBeNull();
+  }
+
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  await waitFor(() => expect(screen.queryByText(/both use/)).toBeNull());
+  for (const label of ["Toggle sidebar", "Command palette"]) {
+    expect((await rowOf(label)).querySelector(".kc.warn")).toBeNull();
+  }
+});
+
+it("shows the field error and leaves the rule when a reset fails", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  mock.setKeybindings({
+    path: "keys.json", issues: [], conflicts: [],
+    rules: [viewRule("mod+shift+p", "commandPalette.toggle", { when: "!terminalFocus", custom: true, default_keys: ["mod+k"] })],
+  });
+  mock.fail("/api/keybindings/reset", 1, 400, "invalid_input", "A reset needs a command.", "POST");
+  render(<><KeybindingsSection /><Toasts /></>);
+
+  await resetToDefault("Command palette");
+  expect(await screen.findByRole("alert")).toHaveTextContent("A reset needs a command.");
+  const row = await rowOf("Command palette");
+  expect(within(row).getByText("Custom")).toBeVisible();
+  expect(within(row).getByLabelText("⌘⇧P")).toBeVisible();
+  expect(screen.queryByText("Reset to default")).toBeNull();
 });
 
 /** The minimum width of each track of a grid template, in order. */
