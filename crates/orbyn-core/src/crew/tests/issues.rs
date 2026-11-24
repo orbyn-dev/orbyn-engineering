@@ -1715,7 +1715,10 @@ mod writes {
             (TrackerKind::Linear, "ENG"),
         ] {
             let (w, source) = connected(kind, scope, false).await;
-            let wanted = format!("{} issue writes arrive in a later update.", display_name(kind));
+            let wanted = format!(
+                "{} issue writes arrive in a later update.",
+                display_name(kind)
+            );
             let create = w.core.create_issue(create(kind, scope)).await.map(|_| ());
             let comment = w.core.comment_issue(comment(kind, scope)).await.map(|_| ());
             let react = w.core.react_issue(react(kind, scope)).await.map(|_| ());
@@ -1863,10 +1866,7 @@ mod writes {
                 })
                 .await
                 .map(|_| ());
-            assert!(
-                matches!(refused, Err(CoreError::Invalid(_))),
-                "{refused:?}"
-            );
+            assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
             assert_eq!(source.writes(), 1, "a refused id wrote nothing");
         }
     }

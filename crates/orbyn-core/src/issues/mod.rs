@@ -1011,7 +1011,7 @@ impl Core {
         self.check_issue_scope(input.tracker, &input.scope).await?;
         let body = checked_comment(&input.body)?;
         self.writing_source(input.tracker)?
-            .comment(&input.scope, &input.key, &body)
+            .comment(&input.scope, &input.key, body)
             .await
     }
 
@@ -1093,7 +1093,12 @@ impl Core {
                 host: None,
                 scopes: Vec::new(),
             });
-        if self.issue_scopes(&connection).await?.iter().any(|s| s == scope) {
+        if self
+            .issue_scopes(&connection)
+            .await?
+            .iter()
+            .any(|s| s == scope)
+        {
             Ok(())
         } else {
             Err(CoreError::Invalid(
@@ -1310,9 +1315,7 @@ fn checked_comment(input: &str) -> Result<&str> {
 /// Label names, at most 50: each 1 to 200 characters and no control characters.
 fn checked_labels(labels: &[String]) -> Result<()> {
     if labels.len() > MAX_LABELS {
-        return Err(CoreError::Invalid(
-            "You can set at most 50 labels.".into(),
-        ));
+        return Err(CoreError::Invalid("You can set at most 50 labels.".into()));
     }
     if labels.iter().any(|label| {
         label.is_empty()
@@ -1330,7 +1333,9 @@ fn checked_labels(labels: &[String]) -> Result<()> {
 /// addresses a person on a write, and the tracker refuses one it does not know.
 fn checked_assignees(assignees: &[String]) -> Result<()> {
     if assignees.len() > MAX_ASSIGNEES {
-        return Err(CoreError::Invalid("You can assign at most 25 people.".into()));
+        return Err(CoreError::Invalid(
+            "You can assign at most 25 people.".into(),
+        ));
     }
     for assignee in assignees {
         checked_id(assignee, "assignee")?;

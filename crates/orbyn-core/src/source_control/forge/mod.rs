@@ -34,12 +34,12 @@ pub use merge::{
     strip_agent_credits, update_pull,
 };
 pub use parse::parse_pull;
+pub(crate) use process::call_input;
 #[cfg(test)]
 pub(crate) use process::with_crew_fixture;
 #[cfg(test)]
 pub(crate) use process::with_crew_input_fixture;
 pub use process::{call, no_such_pull};
-pub(crate) use process::call_input;
 pub use pulls::{
     PullFilter, approve_workflow, check_log, conversation, fetch_pull, list_pulls, pull_checks,
     pull_detail, pull_files, pull_revisions, rerun_failed, revision_files, run_id_of, timeline,

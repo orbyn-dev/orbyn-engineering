@@ -9,6 +9,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 type Calls = Arc<Mutex<Vec<(Vec<String>, Option<String>)>>>;
+/// One scripted `gh` call: its arguments and, when it reads one, the JSON body it sent.
+type GhAnswer = Arc<dyn Fn(Forge, &Path, &[&str], Option<&str>) -> Result<String> + Send + Sync>;
 
 fn calls() -> Calls {
     Arc::new(Mutex::new(Vec::new()))
@@ -78,14 +80,7 @@ async fn a_create_sends_the_persons_text_as_json_values_and_answers_the_new_issu
                 .push((args.clone(), input.map(str::to_owned)));
             assert_eq!(
                 args,
-                strings(&[
-                    "api",
-                    "-X",
-                    "POST",
-                    "repos/acme/app/issues",
-                    "--input",
-                    "-"
-                ]),
+                strings(&["api", "-X", "POST", "repos/acme/app/issues", "--input", "-"]),
                 "the create is one REST call with a JSON body on stdin"
             );
             let body: Value = serde_json::from_str(input.expect("a JSON body on stdin")).unwrap();
@@ -110,9 +105,10 @@ async fn a_create_sends_the_persons_text_as_json_values_and_answers_the_new_issu
         labels: &labels,
         assignees: &assignees,
     };
-    let detail = with_crew_input_fixture(fixture, async { github().create("acme/app", &new).await })
-        .await
-        .unwrap();
+    let detail =
+        with_crew_input_fixture(fixture, async { github().create("acme/app", &new).await })
+            .await
+            .unwrap();
     assert_eq!(
         detail.summary.key, "42",
         "the answer is built from the create's own reply"
@@ -250,7 +246,7 @@ fn react_fixture(
     content: &'static str,
     subject: &'static str,
     reactions: Value,
-) -> Arc<dyn Fn(Forge, &Path, &[&str], Option<&str>) -> Result<String> + Send + Sync> {
+) -> GhAnswer {
     let record = calls;
     Arc::new(
         move |_forge: Forge, _cwd: &Path, args: &[&str], input: Option<&str>| -> Result<String> {
@@ -267,7 +263,10 @@ fn react_fixture(
                     .unwrap_or_default();
                 if query.contains("OrbynIssueNode") {
                     assert!(query.contains("query OrbynIssueNode"), "{query}");
-                    return Ok(json!({ "data": { "repository": { "issue": { "id": "I_issue_7" } } } }).to_string());
+                    return Ok(
+                        json!({ "data": { "repository": { "issue": { "id": "I_issue_7" } } } })
+                            .to_string(),
+                    );
                 }
                 let wanted = if on {
                     "OrbynAddReaction"
@@ -288,7 +287,10 @@ fn react_fixture(
                         .to_string(),
                 );
             }
-            if args.iter().any(|arg| arg == "closedByPullRequestsReferences") {
+            if args
+                .iter()
+                .any(|arg| arg == "closedByPullRequestsReferences")
+            {
                 return Ok(json!({ "closedByPullRequestsReferences": [] }).to_string());
             }
             assert_eq!(args[0], "issue", "{args:?}");

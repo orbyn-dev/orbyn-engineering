@@ -313,10 +313,7 @@ mod tests {
             r#"{"tracker":"github","scope":"acme/app","key":"7","reaction":"facepalm","on":true}"#,
         )
         .unwrap_err();
-        assert!(
-            error.to_string().contains("unknown variant"),
-            "{error}"
-        );
+        assert!(error.to_string().contains("unknown variant"), "{error}");
         let accepted = react(
             r#"{"tracker":"github","scope":"acme/app","key":"7","reaction":"thumbs_up","on":true}"#,
         )
