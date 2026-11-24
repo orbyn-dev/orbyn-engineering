@@ -406,6 +406,21 @@ result is fetched on its own.
 The tests named in this document cover the worker, replay and search/describe claims; the sandbox crate's
 tests cover the capability limits.
 
+### Real-service tests and what stays core-only
+
+`crates/orbynd/tests/code_mode_runs.rs` starts a real `orbynd` with the real Person gate and drives
+runs the way an engine does (the fake engine calls `orbyn_code_run` on the run's own `/mcp/{token}`
+endpoint, the service runs the script in QuickJS, and each run is read back from
+`GET /api/code-runs/{id}`). It covers an Allow and a Deny on a held effect call, the syntax, runtime,
+call-limit and heap-limit endings, the 64 KiB source refusal (no record), 500-line log truncation
+keeping the newest, and a restart that leaves a held run `lost` with its running call kept.
+
+These stay core-only, because the service gives no way to set them or to reach them from an engine:
+the 10 s CPU limit (`Limits::default()` is fixed in the service; the sandbox crate tests a small
+`Limits`), Crew worker allow-lists and nesting refusals, replay from a stored record, search and
+describe filtering, the per-thread and core run caps, nested-string redaction, and the Person cancel
+path. Their tests are the ones named above under `crew/tests/code_mode.rs` and `tools/mcp/code/tests.rs`.
+
 ## Build order
 
 1. This document.
