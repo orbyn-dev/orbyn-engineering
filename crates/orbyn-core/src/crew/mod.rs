@@ -49,6 +49,7 @@ mod tool;
 pub mod triggers;
 mod verify;
 mod view;
+mod watch;
 mod workers;
 mod working;
 

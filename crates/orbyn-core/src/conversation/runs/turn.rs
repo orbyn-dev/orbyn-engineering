@@ -87,7 +87,7 @@ impl RunManager {
             let binding = McpBinding {
                 scope: scope.clone(),
                 permission_prompt: driver.family() == "claude",
-                skills: route.selection.clone(),
+                skills: self.skills.tool_selection(&route)?,
             };
             // A warm process already holds its token, which now answers for this run.
             let reused = warm

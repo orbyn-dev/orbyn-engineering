@@ -2,11 +2,12 @@
 import type { NeedsYouKind } from "./NeedsYouKind";
 
 /**
- * One thing that waits for the person. `id` is the task's id, or a background run's id; `since` is when it began to wait.
+ * One thing that waits for the person. `id` is the task's id, a background run's id or a watch crew's id; `since` is when it
+ * began to wait.
  */
 export type NeedsYouItem = { 
 /**
- * The task's id, or a background run's id.
+ * The task's id, a background run's id, or a watch crew's id.
  */
 id: string, kind: NeedsYouKind, 
 /**
@@ -14,7 +15,7 @@ id: string, kind: NeedsYouKind,
  */
 project_id?: string | null, 
 /**
- * The crew the item belongs to: a task's crew, a merge's crew, or a background crew.
+ * The crew the item belongs to: a task's crew, a merge's crew, a background crew, or a watch crew.
  */
 crew_id?: string | null, 
 /**

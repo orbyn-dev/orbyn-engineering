@@ -1,13 +1,13 @@
-import type { Lesson, LessonDeleted, LessonDetail, LessonFilter, LessonList, LessonScope, LessonSource } from "../src/features/crew/lessons/types.ts";
+import type { Evidence, Lesson, LessonDeleted, LessonDetail, LessonFilter, LessonList, LessonScope, LessonSource } from "../src/features/crew/lessons/types.ts";
 import type { MockResponse, Scenario } from "./api.ts";
 
 /**
- * The lessons mock (KC5): the routes the web client reads and the writes a person may send, over the design's sample
- * lessons. It stands in for the service and ships nowhere: `mock/plugin.ts` loads it in the dev server only, and the
- * production build assertions check that no mock reached the output. Scenarios: "crew-lessons" (five lessons: three in
- * the repository and two for all of them, one disabled and one hidden), "crew-lessons-empty" (nothing learned yet),
- * "crew-lessons-unreadable" (every read answers 500, as a damaged store does) and "crew-lessons-off" (the repository's
- * switch is off, every lesson still readable). Every other scenario answers an empty list.
+ * The lessons mock (KC5): the routes the web client reads and the writes a person may send, over five sample lessons
+ * that follow the design's states. It stands in for the service and ships nowhere: `mock/plugin.ts` loads it in the dev
+ * server only, and the production build assertions check that no mock reached the output. Scenarios: "crew-lessons" (five
+ * lessons: three in the repository and two for all of them, one disabled and one hidden), "crew-lessons-empty" (nothing
+ * learned yet), "crew-lessons-unreadable" (every read answers 500, as a damaged store does) and "crew-lessons-off" (the
+ * repository's switch is off, every lesson still readable). Every other scenario answers an empty list.
  */
 
 const T = "2026-11-07T17:00:00Z";
@@ -48,6 +48,7 @@ const seeds = (): Lesson[] => [
     source: "person",
     text: "Keep the auth cookie tests in tests/auth, not beside the route.",
     edited_by_person: true,
+    names_path: true,
     hidden_by_cap: true,
     in_next_brief: false,
     created_at: "2026-11-06T10:15:00Z",
@@ -83,6 +84,38 @@ const seeds = (): Lesson[] => [
   }),
 ];
 
+/** The design's three repeated-failure lessons (same source, check kind and path class), for the KC9 proposal frames. */
+const proposalSeeds = (): Lesson[] => [
+  lesson({
+    id: "les-returnto",
+    source: "fingerprint",
+    text: "Checks like a unit test failed on web/nav before: a redirect followed a target outside the app.",
+    names_path: true,
+    uses: 2,
+    last_used_at: "2026-11-07T16:05:00Z",
+    created_at: "2026-11-07T14:20:00Z",
+  }),
+  lesson({
+    id: "les-navcleanup",
+    source: "fingerprint",
+    text: "Checks like a unit test failed on web/nav before: old returnTo links stopped redirecting after a helper was renamed.",
+    names_path: true,
+    uses: 1,
+    last_used_at: "2026-11-07T16:05:00Z",
+    created_at: "2026-11-07T15:40:00Z",
+  }),
+  lesson({
+    id: "les-loginlink",
+    source: "fingerprint",
+    text: "Checks like a unit test failed on web/nav before: a login link kept a returnTo from another host.",
+    names_path: true,
+    created_at: "2026-11-07T16:30:00Z",
+  }),
+];
+
+/** The lessons the sample proposal is based on. */
+export const PROPOSAL_LESSONS = ["les-returnto", "les-navcleanup", "les-loginlink"] as const;
+
 export function createLessonsMock() {
   let rows: Lesson[] = [];
   let useLessons = true;
@@ -91,7 +124,19 @@ export function createLessonsMock() {
   const deleted = new Map<string, { lesson: Lesson; until: string }>();
 
   function reset(scenario: Scenario) {
-    rows = scenario === "crew-lessons-empty" ? [] : scenario.startsWith("crew-lessons") ? seeds() : [];
+    rows =
+      scenario === "crew-lessons-empty"
+        ? []
+        : scenario.startsWith("crew-lessons")
+          ? seeds()
+          : scenario.startsWith("crew-proposals")
+            ? proposalSeeds()
+            : [];
+    // The proposal frames draw one of the three lessons turned off (the stale card), or all three marked as a skill.
+    if (scenario === "crew-proposals-stale")
+      rows = rows.map((one) => (one.id === "les-loginlink" ? { ...one, state: "disabled", in_next_brief: false } : one));
+    if (scenario === "crew-proposals-approved")
+      rows = rows.map((one) => ({ ...one, skill: { name: "redirect-checks" }, in_next_brief: false }));
     useLessons = scenario !== "crew-lessons-off";
     // With the repository switch off, in_next_brief is false for every lesson of it, as the service says.
     if (!useLessons) rows = rows.map((one) => ({ ...one, in_next_brief: false }));
@@ -124,15 +169,26 @@ export function createLessonsMock() {
     lessons: filtered(filter),
   });
 
+  // Evidence is ids only, and the ids are the design's own. A repeated failure carries the two tasks behind it, the other
+  // sources their escape or merge, and a seeded correction the task it was made on. A lesson added by hand has no task
+  // behind it, so it carries none: its id is not in this map.
+  const personTask: Record<string, Evidence[]> = {
+    "les-cookies": [{ kind: "task", id: "91c4e07" }],
+    "les-dates": [{ kind: "task", id: "5d1c8e0" }],
+  };
   const detail = (one: Lesson): LessonDetail => ({
     lesson: one,
     evidence:
       one.source === "person"
-        ? []
-        : [
-            { kind: "task", id: "task-1" },
-            { kind: one.source === "revert" ? "merge" : "escape", id: one.source === "revert" ? "esc-1" : "esc-2" },
-          ],
+        ? (personTask[one.id] ?? [])
+        : one.source === "fingerprint"
+          ? [
+              { kind: "task", id: "5b2d8a3" },
+              { kind: "task", id: "91c4e07" },
+            ]
+          : one.source === "escape"
+            ? [{ kind: "escape", id: "9be4410" }]
+            : [{ kind: "merge", id: "3b9f2c1" }],
   });
 
   /** The service refuses a write made against another revision. */
@@ -244,5 +300,12 @@ export function createLessonsMock() {
     return { status: 200, body: one };
   }
 
-  return { reset, handle };
+  /** The lessons a proposal was approved from carry its skill and stop going into briefs (KC9). */
+  function approveSkill(name: string, lessonIds: readonly string[]) {
+    rows = rows.map((one) => (lessonIds.includes(one.id) ? { ...one, skill: { name }, in_next_brief: false } : one));
+  }
+
+  const lessonNow = (id: string): Lesson | undefined => rows.find((one) => one.id === id);
+
+  return { reset, handle, approveSkill, lessonNow };
 }
