@@ -52,13 +52,13 @@ beforeEach(async () => {
 
 it("commits one version-fenced provider/model tuple and leaves opening the control read-only", async () => {
   const user = userEvent.setup(); render(<ProjectModelDefaults query={checkout} />);
-  const choose = await screen.findByRole("button", { name: "old" });
+  await screen.findByRole("button", { name: "old" });
   expect(saves()).toHaveLength(0);
   const held = holds(checkout);
   await pick(user, "old", "chosen");
   await waitFor(() => expect(saves()).toHaveLength(1));
   expect(saves()[0]).toEqual({ scope: checkout, membership_version: held.version, if_match: held.revisions, edits: tuple("codex", "chosen") });
-  expect(choose).toBeDefined();
+  expect(await screen.findByRole("button", { name: "chosen" })).toBeVisible();
 });
 
 it("retains a conflicting model draft and requires explicit reload before retry with fresh revisions", async () => {

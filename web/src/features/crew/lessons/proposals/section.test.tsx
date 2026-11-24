@@ -43,6 +43,32 @@ describe("the Skill proposals section of the Lessons page", () => {
     expect(screen.queryByText("Skill proposals")).toBeNull();
   });
 
+  it("says the proposals could not be read, with Try again that reads them again, and never an empty box", async () => {
+    answers.proposals = { status: 500, body: { code: "unreadable", message: "The proposals on this device can’t be read." } };
+    const user = userEvent.setup();
+    open();
+    const banner = await screen.findByRole("alert");
+    expect(within(banner).getByText("Can’t read the skill proposals")).toBeInTheDocument();
+    expect(within(banner).getByText(/unreadable: The proposals on this device can’t be read\./)).toBeInTheDocument();
+    expect(screen.queryByText(/No proposals/)).toBeNull();
+    answers.proposals = { status: 200, body: { proposals: [proposal()] } };
+    await user.click(within(banner).getByRole("button", { name: "Try again" }));
+    expect(await card()).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("says so when only the lessons read failed, and Try again reads it again", async () => {
+    answers.lessons = { status: 500, body: { code: "unreadable", message: "The lessons on this device can’t be read." } };
+    const user = userEvent.setup();
+    open();
+    const banner = await screen.findByRole("alert");
+    expect(within(banner).getByText("Can’t read the lessons")).toBeInTheDocument();
+    answers.lessons = { status: 200, body: lessons() };
+    await user.click(within(banner).getByRole("button", { name: "Try again" }));
+    expect(await card()).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("draws one proposal: its name and line, what it is based on, its text and the person's three acts", async () => {
     open();
     const region = await card();

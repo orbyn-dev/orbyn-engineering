@@ -194,7 +194,8 @@ describe("Issue trackers section", () => {
   it("is not drawn while the service answers 404 to the trackers", async () => {
     load([engine({})]);
     render(<WelcomePage />);
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await waitFor(() => expect(wire().some((call) => call.method === "GET" && call.path === "/api/issues/trackers")).toBe(true));
+    await act(async () => undefined); // let the 404 answer reach the page
     expect(screen.queryByRole("heading", { name: /Issue trackers/ })).toBeNull();
     expect(screen.getByText(/pick the engine/)).not.toHaveTextContent(/tracker/);
   });
