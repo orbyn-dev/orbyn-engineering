@@ -1,4 +1,5 @@
 import { Check, Lock } from "lucide-react";
+import { formatShortcut } from "../../../product/shell/shortcuts";
 import { Button } from "../../../ui/controls";
 import { useWorkspace } from "../../../product/state/workspace";
 import { isDirty, isLocked, sessionOfTab, useEditorSessions } from "./editorSessions";
@@ -10,7 +11,7 @@ const backToCode = () => {
 
 /**
  * What the line under the tab strip adds for an open file: Read-only when the file cannot be written here, and for an
- * editable one Unsaved and Save (⌘S). Save is a check beside the menu in a narrow panel.
+ * editable one Unsaved and Save (with its shortcut). Save is a check beside the menu in a narrow panel.
  */
 export function EditorTitleExtras({ threadId, tabId, onSave }: { /** Null with no thread open: files only read there, so there is no Save. */ threadId: string | null; tabId: string; onSave(): Promise<unknown> | void }) {
   const cwd = useWorkspace((state) => (threadId ? (state.threads[threadId]?.cwd ?? "") : ""));
@@ -29,7 +30,7 @@ export function EditorTitleExtras({ threadId, tabId, onSave }: { /** Null with n
   return (
     <span className="ed-title-end">
       {dirty ? <span className="ed-unsaved">Unsaved</span> : null}
-      <Button className="ed-save" small tone={dirty ? "primary" : "quiet"} disabled={!dirty || session.saving} title="Save ⌘S" aria-label="Save" onClick={() => void Promise.resolve(onSave()).then(backToCode)}>
+      <Button className="ed-save" small tone={dirty ? "primary" : "quiet"} disabled={!dirty || session.saving} title={`Save ${formatShortcut("mod+s")}`} aria-label="Save" onClick={() => void Promise.resolve(onSave()).then(backToCode)}>
         <span className="ed-save-text">Save</span>
         <Check className="ed-save-check" size={14} aria-hidden />
       </Button>

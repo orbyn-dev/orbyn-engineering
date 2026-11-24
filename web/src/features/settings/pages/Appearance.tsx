@@ -2,6 +2,7 @@ import { settingsLabel } from "../settingsSearch";
 import { AlertTriangle, Info } from "lucide-react";
 import { useContext, useEffect, useRef, useState } from "react";
 import { navigate } from "../../../product/state/route";
+import { isMacClient } from "../../../lib/platform";
 import { SettingsSubPageContext } from "../subPage";
 import { MAX_PANEL_ANIMATION_MS } from "../../../product/panels/panelAnimations";
 import { applyTheme, useUi, type LayoutChoice, type ThemeChoice, type Typography } from "../../../product/state/ui";
@@ -427,18 +428,20 @@ export function AppearanceSection() {
             }}
           />
         </SettingRow>
-        <SettingRow title={settingsLabel("appearance-font-smoothing")} description="Smooth text on macOS">
-          <input
-            type="checkbox"
-            role="switch"
-            aria-label="Font smoothing"
-            checked={smoothing}
-            onChange={(event) => {
-              setPrefs({ fontSmoothing: event.target.checked });
-              applyTheme(theme);
-            }}
-          />
-        </SettingRow>
+        {isMacClient() ? (
+          <SettingRow title={settingsLabel("appearance-font-smoothing")} description="Smooth text on macOS">
+            <input
+              type="checkbox"
+              role="switch"
+              aria-label="Font smoothing"
+              checked={smoothing}
+              onChange={(event) => {
+                setPrefs({ fontSmoothing: event.target.checked });
+                applyTheme(theme);
+              }}
+            />
+          </SettingRow>
+        ) : null}
         <SettingRow title={settingsLabel("appearance-effort-display")} description="How effort shows in the composer">
           <Segmented
             label="Effort display"

@@ -1,10 +1,12 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { useRoute } from "../../product/state/route";
 import { installMockFetch } from "../../test-support";
 import { SettingsPage } from "./SettingsPage";
 import { SETTINGS, searchSettings } from "./settingsSearch";
+
+afterEach(() => vi.restoreAllMocks());
 
 it("finds a specific label regardless of word order and excludes desktop controls on web", () => {
   expect(searchSettings("prefix BRANCH", false).map((item) => item.title)).toEqual(["Branch prefix"]);
@@ -24,6 +26,22 @@ it("finds the macOS-only quit confirmation on macOS and nowhere else", () => {
   expect(searchSettings("quit confirmation", true, undefined, true).map((item) => item.id)).toEqual(["general-quit-confirmation"]);
   expect(searchSettings("quit confirmation", true, undefined, false)).toEqual([]);
   expect(searchSettings("quit confirmation", true)).toEqual([]);
+});
+
+it("finds Font smoothing on a Mac client", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  expect(searchSettings("font smoothing", true).map((item) => item.title)).toEqual(["Font smoothing"]);
+});
+
+it("leaves Font smoothing out on a Windows client", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  expect(searchSettings("font smoothing", true)).toEqual([]);
+});
+
+it("finds Font smoothing through the Mac user agent when navigator.platform is empty", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("");
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X)");
+  expect(searchSettings("font smoothing", true).map((item) => item.title)).toEqual(["Font smoothing"]);
 });
 
 it("navigates from an exact result to an asynchronously loaded row", async () => {

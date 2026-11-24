@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../mock/api";
 import type { EngineStatus } from "../../../api/types";
 import { useWorkspace } from "../../../product/state/workspace";
@@ -18,6 +18,7 @@ beforeEach(() => {
   mock = installMockFetch();
   window.location.hash = "";
 });
+afterEach(() => vi.restoreAllMocks());
 
 const store = { raw: [], instances: [{ id: "codex", driver: "codex", enabled: true }], disabled: false, error: null, conflict: false,
   save: vi.fn(), reload: vi.fn() };
@@ -119,6 +120,18 @@ it("turns whitespace-only changes out of the diff from Settings, the same switch
   await user.click(toggle);
   expect(useUi.getState().diffIgnoreWhitespace).toBe(true);
   useUi.getState().setPrefs({ diffIgnoreWhitespace: false });
+});
+
+it("shows Font smoothing on a Mac client", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  render(<AppearanceSection />);
+  expect(screen.getByRole("switch", { name: "Font smoothing" })).toBeInTheDocument();
+});
+
+it("leaves Font smoothing out on a Windows client", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  render(<AppearanceSection />);
+  expect(screen.queryByRole("switch", { name: "Font smoothing" })).toBeNull();
 });
 
 it("describes the Ledger layout and the two font fields in the design's words", async () => {

@@ -1,12 +1,12 @@
 import { ChevronDown, ChevronRight, ChevronUp, Folder, Hash, Lock, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Button, IconButton } from "../../../ui/controls";
+import { isMacClient } from "../../../lib/platform";
+import { formatShortcut } from "../../../product/shell/shortcuts";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { CommentForm, CommentList, type LineSelection } from "../files/FileComments";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 import { endingLabel, endingsOf, toLF, findMatches, indentOf, languageOf, lineCount, lineStart } from "./editorModel";
-
-const isMac = () => /mac/i.test(navigator.platform || navigator.userAgent);
 
 export type Standing = "saved" | "unsaved" | "read-only";
 
@@ -113,7 +113,7 @@ export function EditorSurface({
     if (which === "goto" && lineText === "") setLineText(String(position.line));
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const accel = isMac() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+    const accel = isMacClient() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
     if (!accel || event.altKey || event.shiftKey) return;
     const key = event.key.toLowerCase();
     if (key === "f" || key === "g") {
@@ -140,10 +140,10 @@ export function EditorSurface({
         ))}
         <b title={path}>{name}</b>
         <span className="ed-sp" />
-        <IconButton label="Find ⌘F" pressed={bar === "find"} onClick={() => (bar === "find" ? closeBar() : open("find"))}>
+        <IconButton label={`Find ${formatShortcut("mod+f")}`} pressed={bar === "find"} onClick={() => (bar === "find" ? closeBar() : open("find"))}>
           <Search size={14} aria-hidden />
         </IconButton>
-        <IconButton label="Go to line ⌘G" pressed={bar === "goto"} onClick={() => (bar === "goto" ? closeBar() : open("goto"))}>
+        <IconButton label={`Go to line ${formatShortcut("mod+g")}`} pressed={bar === "goto"} onClick={() => (bar === "goto" ? closeBar() : open("goto"))}>
           <Hash size={14} aria-hidden />
         </IconButton>
       </div>
