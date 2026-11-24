@@ -10,7 +10,8 @@ test.describe.configure({ mode: "serial" });
  * keychain is touched. Also F3's observation of Settings › Source control: the Hosts table and its Rescan button, the rows it
  * draws, and no local control to turn a source-control host on or off.
  *
- * The project bind route and the issue-write routes are not on this service; the last test records them as absent.
+ * The project bind route exists and is Person-class; the last tests bind and unbind a stored connection's scope and record
+ * that the issue-write routes, the candidates read and the update/state writes are still absent.
  */
 
 const WINDOW = { width: 1500, height: 1000 };
@@ -95,20 +96,33 @@ test("connect and disconnect are the real Person routes, and a stored scope come
   expect(refusal).toContain("GitHub reads through your own gh");
 });
 
-test("the project bind, candidates and the update and state writes are not on this service", async () => {
-  const missing = async (method: string, path: string, body?: unknown) => {
+test("the project bind route binds and unbinds a stored scope, and the issue writes stay absent", async () => {
+  const failure = async (method: string, path: string, body?: unknown) => {
     try {
       await service.api(method, path, body);
       return "";
-    } catch (failure) {
-      return (failure as Error).message;
+    } catch (error) {
+      return (error as Error).message;
     }
   };
-  // docs/issues.md binds a tracker to a project through this route; the contract is written and the route is not built.
-  expect(await missing("POST", `/api/projects/${projectId}/issue-tracker`, { tracker: "github", scope: "o/r" })).toContain("404");
+  // The bind route exists (docs/issues.md). GitHub is connected through the stand-in gh, but its connection does not name
+  // this scope yet, so the bind is refused 400 invalid before anything is stored.
+  const refused = await failure("POST", `/api/projects/${projectId}/issue-tracker`, { tracker: "github", scope: "o/r" });
+  expect(refused).toContain("400");
+  expect(refused).toContain("invalid");
+  // With the connection's own scope stored, the real Person route binds (200) and unbinds (204), idempotently.
+  await service.api("POST", "/api/issues/trackers/github/connect", { scope: "o/r" });
+  const bound = await service.api<{ tracker: string; scope: string }>(
+    "POST",
+    `/api/projects/${projectId}/issue-tracker`,
+    { tracker: "github", scope: "o/r" },
+  );
+  expect(bound).toEqual({ tracker: "github", scope: "o/r" });
+  expect(await service.api("POST", `/api/projects/${projectId}/issue-tracker`, { tracker: null })).toBeUndefined();
+  expect(await service.api("POST", `/api/projects/${projectId}/issue-tracker`, { tracker: null })).toBeUndefined();
   // The candidates read and the update and state writes are not on this service (PR #1521 served create, comment and react,
   // which the web client does not call), so the edit controls have no route to use.
-  expect(await missing("GET", "/api/issues/candidates?tracker=github&scope=o%2Fr")).toContain("404");
-  expect(await missing("POST", "/api/issues/item/update", { tracker: "github", scope: "o/r", key: "7", title: "x" })).toContain("404");
-  expect(await missing("POST", "/api/issues/item/state", { tracker: "github", scope: "o/r", key: "7", state: "Open" })).toContain("404");
+  expect(await failure("GET", "/api/issues/candidates?tracker=github&scope=o%2Fr")).toContain("404");
+  expect(await failure("POST", "/api/issues/item/update", { tracker: "github", scope: "o/r", key: "7", title: "x" })).toContain("404");
+  expect(await failure("POST", "/api/issues/item/state", { tracker: "github", scope: "o/r", key: "7", state: "Open" })).toContain("404");
 });
