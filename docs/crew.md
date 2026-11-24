@@ -1248,7 +1248,9 @@ uses it as a hard filter. Preview only; Orbyn reads the file and never writes it
   machine does not have is kept and shown as "not on this machine". Unknown keys at the top of the file belong to other slices: they are noted
   and ignored. A file holding a secret (the shared detector) is refused.
 - **An invalid file fails closed.** If the file cannot be read, does not parse or breaks a rule above, every engine is blocked by the rule
-  "crew.json invalid" with the problem in plain words, and the task waits in Needs you. It is never read as "no rules". The same file also holds
+  "crew.json invalid" with the problem in plain words, and the task waits in Needs you; a file that cannot be read
+  only on the default branch is refused this way. A write task whose key does not already declare a `repo_required` check also reads the same file at the commit it starts from for the repository's own checks, so a file that cannot be read there
+  refuses the start before routing, with the reader's problem and nothing stored. It is never read as "no rules". The same file also holds
   review `lanes` and `allowed_hosts`, so a file that is not JSON at all blocks every start now, not only the review; a file whose `lanes` are wrong
   but which is valid JSON still starts and fails at the review as before. The dry run (`crew_route`) says nothing about classes for a thread with no
   commit to read, and a start there is refused on its own terms.
@@ -1290,7 +1292,7 @@ until #441's sandbox covers it, and a symlink a worker adds during the task is n
 (ruling pending). Known limits: **the rules are read at two places and the stricter applies: the checkout's HEAD at task start, and the project's default
 branch as of the last fetch** (`refs/remotes/origin/HEAD`, else `origin/main`, `origin/master` or `origin/trunk`, else a local `init.defaultBranch`, `main`,
 `master` or `trunk`; with none of them the rules are read at HEAD alone, as before). An engine must be allowed by both, a file that cannot be read on either
-side blocks every engine, and the route card says in words when the two files differ. So an agent that moves HEAD to a commit without the file, or commits a
+side blocks every engine (a write start that inherits the repository's checks, and whose starting commit cannot be read, is refused at start instead, as above), and the route card says in words when the two files differ. So an agent that moves HEAD to a commit without the file, or commits a
 looser one, does not loosen the next task. A remote-tracking ref is moved by `git fetch` and `git pull`, not by `checkout`, `switch`, `reset` or a commit in any
 worktree; a local branch is moved by a commit or `git branch -f` on it, so it is the weaker fallback. **Neither is out of an agent's reach:** a worker runs as the person, the
 macOS confinement of #441 closes the data folder and not the repository's `.git`, and Windows and Linux workers are refused, so an agent that runs git plumbing
