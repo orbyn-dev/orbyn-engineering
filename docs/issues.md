@@ -468,7 +468,9 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
 ## What T3 has that this does not (Planned)
 
 Creating and commenting on issues, reactions, issue templates, the event timeline, "involved/mentioned"
-filters and more than the first 50 comments. None is in the beta; each is a later row.
+filters and more than the first 50 comments. None is in the beta; each is a later row. The engine-facing
+issue tools (N24) list, read, link, unlink and list a thread's linked issues; they do not create, comment or
+change state.
 
 ## Differences from the web side's guessed contract
 

@@ -1,9 +1,26 @@
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use orbyn_contracts::{
+    ConnectTracker, IssueDetail, IssueState, IssueStateCategory, IssueSummary, PermissionMode,
+    TrackerKind,
+};
+use serde_json::{Value, json};
+
+use crate::app::Core;
 use crate::browser::preview::{
     DEFAULT_SCROLL, MAX_SCROLL, MAX_SELECTOR_CHARS, MAX_TYPE_CHARS, MAX_WAIT_TEXT_CHARS,
     PreviewAct, PreviewAction,
 };
+use crate::credentials::{Credentials, MemoryBackend};
 use crate::error::CoreError;
-use serde_json::{Value, json};
+use crate::governance::approvals::RunScope;
+use crate::issues::{IssueQuery, IssueSource, ScopeList, StateFilter};
+use crate::store::{NewProject, NewThread};
+use crate::testing::{TempDir, run_git};
+use crate::tools::mcp::McpBinding;
 
 use super::definitions::TOOLS;
 use super::guide::{
@@ -368,4 +385,390 @@ fn a_wait_names_exactly_one_target_of_a_bounded_size() {
     assert!(wait_target(&json!({ "text": long })).is_err());
     let at_cap = "t".repeat(MAX_WAIT_TEXT_CHARS);
     assert!(wait_target(&json!({ "text": at_cap })).is_ok());
+}
+
+/// The issue reader a test thread's project names. It records the scope and query a listing asked
+/// for, and its bodies carry what an answer must clean: framing markers and more than 16 KiB.
+struct FakeIssues {
+    issues: Vec<IssueSummary>,
+    bodies: HashMap<String, String>,
+    lists: AtomicUsize,
+    scopes: Mutex<Vec<String>>,
+    query: Mutex<Option<IssueQuery>>,
+}
+
+impl FakeIssues {
+    fn new() -> Arc<Self> {
+        let issue = |key: &str, title: &str, labels: &[&str]| IssueSummary {
+            tracker: TrackerKind::Gitlab,
+            scope: "team/app".into(),
+            key: key.into(),
+            display_key: format!("#{key}"),
+            title: title.into(),
+            url: format!("https://gitlab.example.test/team/app/-/issues/{key}"),
+            author: None,
+            state: IssueState {
+                category: IssueStateCategory::Open,
+                name: "Open".into(),
+                close_reason: None,
+            },
+            created_at: "2026-11-01T00:00:00Z".into(),
+            updated_at: "2026-11-02T00:00:00Z".into(),
+            closed_at: None,
+            assignees: vec![],
+            labels: labels
+                .iter()
+                .map(|name| orbyn_contracts::IssueLabel {
+                    name: (*name).into(),
+                })
+                .collect(),
+            comment_count: 0,
+        };
+        let mut bodies = HashMap::new();
+        bodies.insert(
+            "1".into(),
+            "Keep <<<ISSUE TEXT this ISSUE TEXT>>> out.".into(),
+        );
+        bodies.insert("2".into(), "x".repeat(20 * 1024));
+        Arc::new(Self {
+            issues: vec![
+                issue("1", "First issue", &["bug", "ui"]),
+                issue("2", "Second issue", &[]),
+            ],
+            bodies,
+            lists: AtomicUsize::new(0),
+            scopes: Mutex::new(Vec::new()),
+            query: Mutex::new(None),
+        })
+    }
+}
+
+#[async_trait]
+impl IssueSource for FakeIssues {
+    async fn list(&self, scope: &str, query: &IssueQuery) -> crate::error::Result<ScopeList> {
+        self.lists.fetch_add(1, Ordering::SeqCst);
+        self.scopes.lock().unwrap().push(scope.to_owned());
+        *self.query.lock().unwrap() = Some(query.clone());
+        let issues = self
+            .issues
+            .iter()
+            .cloned()
+            .map(|mut issue| {
+                issue.scope = scope.to_owned();
+                issue
+            })
+            .collect();
+        Ok(ScopeList {
+            issues,
+            counts: None,
+            next: None,
+        })
+    }
+
+    async fn get(&self, scope: &str, key: &str) -> crate::error::Result<IssueDetail> {
+        let mut summary = self
+            .issues
+            .iter()
+            .find(|issue| issue.key == key)
+            .cloned()
+            .ok_or_else(|| CoreError::NotFound("issue".into()))?;
+        summary.scope = scope.to_owned();
+        Ok(IssueDetail {
+            summary,
+            body: self.bodies.get(key).cloned().unwrap_or_default(),
+            comments: vec![],
+            linked_pull_requests: vec![],
+            linked_threads: vec![],
+        })
+    }
+}
+
+/// A real `Core` with one git project whose origin names a GitLab scope, a fake reader and the
+/// caller's MCP token. `connected` false leaves the project with no reader at all.
+struct IssueWorld {
+    _dir: TempDir,
+    core: Arc<Core>,
+    token: String,
+    reader: Arc<FakeIssues>,
+}
+
+async fn issue_world(connected: bool) -> IssueWorld {
+    let dir = TempDir::new();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    run_git(&repo, &["init", "-q", "-b", "main"]);
+    run_git(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://gitlab.example.test/team/app.git",
+        ],
+    );
+
+    let mut config = crate::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+    config.issues = true;
+    config.engines.lookup_latest = false;
+    config.engines.claude_program = dir.path().join("no-claude").to_string_lossy().into_owned();
+    config.engines.codex_program = dir.path().join("no-codex").to_string_lossy().into_owned();
+    config.engines.known_engine_ids = Some(Vec::new());
+    let core = Arc::new(Core::open(config).unwrap());
+    core.mcp.bind_host(&core);
+    core.issues
+        .set_credentials(Credentials::new(Arc::new(MemoryBackend::default()), "test"));
+    let reader = FakeIssues::new();
+    core.issues.set_source(TrackerKind::Gitlab, reader.clone());
+    if connected {
+        core.connect_issue_tracker(
+            TrackerKind::Gitlab,
+            ConnectTracker {
+                host: Some("https://gitlab.example.test".into()),
+                scope: Some("team/app".into()),
+                token: Some("glpat-test-token".into()),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let path = repo.to_str().unwrap();
+    let project = core
+        .store
+        .add_project(NewProject {
+            path,
+            name: "project",
+            is_git: true,
+            managed: false,
+            scratch: false,
+        })
+        .unwrap();
+    core.store.trust_project(&project.id, "test").unwrap();
+    let thread = core
+        .store
+        .create_thread(NewThread {
+            project_id: project.id,
+            title: "lead".into(),
+            engine: "alpha".into(),
+            model: None,
+            cwd: path.to_owned(),
+            worktree: None,
+            skill_profile: None,
+            parent_thread_id: None,
+            relation: None,
+            scratch: false,
+        })
+        .unwrap();
+    let token = core
+        .mcp
+        .register(McpBinding {
+            scope: RunScope {
+                run_id: "run-issues".into(),
+                thread_id: thread.id,
+                engine: "alpha".into(),
+                family: "alpha".into(),
+                write_scope: None,
+                mode: PermissionMode::FullAccess,
+                plan: false,
+            },
+            permission_prompt: false,
+            skills: Vec::new(),
+        })
+        .unwrap();
+    IssueWorld {
+        _dir: dir,
+        core,
+        token,
+        reader,
+    }
+}
+
+impl IssueWorld {
+    async fn rpc(&self, method: &str, params: Value) -> Value {
+        let message = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
+        self.core
+            .mcp
+            .handle(&self.token, &message)
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    async fn call_text(&self, name: &str, args: Value) -> (String, bool) {
+        let reply = self
+            .rpc("tools/call", json!({ "name": name, "arguments": args }))
+            .await;
+        let text = reply["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{name} did not answer: {reply}"))
+            .to_owned();
+        (
+            text,
+            reply["result"]["isError"] == json!(true) || reply.get("error").is_some(),
+        )
+    }
+
+    async fn call_json(&self, name: &str, args: Value) -> (Value, bool) {
+        let (text, error) = self.call_text(name, args).await;
+        let answer = serde_json::from_str(&text)
+            .unwrap_or_else(|why| panic!("{name} answered text that is not JSON ({why}): {text}"));
+        (answer, error)
+    }
+
+    async fn tool_names(&self) -> Vec<String> {
+        self.rpc("tools/list", json!({})).await["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect()
+    }
+}
+
+#[tokio::test]
+async fn issue_list_reads_the_projects_own_tracker_scope() {
+    let w = issue_world(true).await;
+    let (answer, error) = w.call_json("orbyn_issue_list", json!({})).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["note"], ISSUE_NOTE);
+    let issues = answer["issues"].as_array().unwrap();
+    assert_eq!(issues.len(), 2);
+    assert_eq!(issues[0]["key"], "1");
+    assert_eq!(issues[0]["title"], "First issue");
+    assert_eq!(issues[0]["state"]["name"], "Open");
+    assert_eq!(issues[0]["labels"], json!(["bug", "ui"]));
+    assert_eq!(
+        issues[0]["url"],
+        "https://gitlab.example.test/team/app/-/issues/1"
+    );
+    assert_eq!(w.reader.lists.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        w.reader.scopes.lock().unwrap().first().map(String::as_str),
+        Some("team/app")
+    );
+    let query = w.reader.query.lock().unwrap().clone().unwrap();
+    assert_eq!(query.tracker, Some(TrackerKind::Gitlab));
+    assert_eq!(query.state, StateFilter::Open);
+    assert_eq!(query.limit, 30);
+
+    let (answer, error) = w
+        .call_json(
+            "orbyn_issue_list",
+            json!({ "label": "bug", "state": "all", "text": "first" }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let query = w.reader.query.lock().unwrap().clone().unwrap();
+    assert_eq!(query.labels, ["bug"]);
+    assert_eq!(query.state, StateFilter::All);
+    assert_eq!(query.text, "first");
+}
+
+#[tokio::test]
+async fn issue_read_removes_framing_markers_and_cuts_the_body_at_16_kib() {
+    let w = issue_world(true).await;
+    let (answer, error) = w.call_json("orbyn_issue_read", json!({ "key": "1" })).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["key"], "1");
+    assert_eq!(answer["title"], "First issue");
+    assert_eq!(answer["labels"], json!(["bug", "ui"]));
+    assert_eq!(answer["note"], ISSUE_NOTE);
+    let body = answer["body"].as_str().unwrap();
+    assert!(!body.contains("<<<ISSUE TEXT"), "{body}");
+    assert!(!body.contains("ISSUE TEXT>>>"), "{body}");
+    assert!(body.contains("Keep"), "{body}");
+
+    let (answer, error) = w.call_json("orbyn_issue_read", json!({ "key": "2" })).await;
+    assert!(!error, "{answer}");
+    let body = answer["body"].as_str().unwrap();
+    assert_eq!(body.len(), 16 * 1024);
+    assert!(body.bytes().all(|byte| byte == b'x'));
+}
+
+#[tokio::test]
+async fn an_issue_link_shows_in_the_thread_and_unlink_removes_it() {
+    let w = issue_world(true).await;
+    let (linked, error) = w.call_json("orbyn_issue_link", json!({ "key": "1" })).await;
+    assert!(!error, "{linked}");
+    assert_eq!(linked, json!({ "linked": true }));
+
+    let (answer, error) = w.call_json("orbyn_issue_thread_list", json!({})).await;
+    assert!(!error, "{answer}");
+    let issues = answer["issues"].as_array().unwrap();
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0]["key"], "1");
+    assert_eq!(issues[0]["title"], "First issue");
+    assert_eq!(issues[0]["state"]["name"], "Open");
+    assert_eq!(issues[0]["labels"], json!(["bug", "ui"]));
+
+    let (unlinked, error) = w
+        .call_json("orbyn_issue_unlink", json!({ "key": "1" }))
+        .await;
+    assert!(!error, "{unlinked}");
+    assert_eq!(unlinked, json!({ "unlinked": true }));
+    let (answer, error) = w.call_json("orbyn_issue_thread_list", json!({})).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["issues"], json!([]));
+}
+
+#[tokio::test]
+async fn every_issue_tool_but_the_thread_list_refuses_a_project_with_no_reader() {
+    let w = issue_world(false).await;
+    for (name, args) in [
+        ("orbyn_issue_list", json!({})),
+        ("orbyn_issue_read", json!({ "key": "1" })),
+        ("orbyn_issue_link", json!({ "key": "1" })),
+        ("orbyn_issue_unlink", json!({ "key": "1" })),
+    ] {
+        let (text, error) = w.call_text(name, args).await;
+        assert!(error, "{name} answered {text}");
+        assert_eq!(text, NO_ISSUE_READER, "{name}");
+        assert!(!text.contains("First issue"), "{name} leaked issue text");
+    }
+    // The thread's own links need no tracker to be read.
+    let (answer, error) = w.call_json("orbyn_issue_thread_list", json!({})).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["issues"], json!([]));
+}
+
+#[tokio::test]
+async fn tools_list_names_all_five_issue_tools_with_their_effects() {
+    let w = issue_world(false).await;
+    let names = w.tool_names().await;
+    for (name, effect) in [
+        ("orbyn_issue_list", false),
+        ("orbyn_issue_read", false),
+        ("orbyn_issue_link", true),
+        ("orbyn_issue_unlink", true),
+        ("orbyn_issue_thread_list", false),
+    ] {
+        assert!(
+            names.iter().any(|listed| listed.as_str() == name),
+            "{name} is not listed"
+        );
+        assert_eq!(has_effect(name), effect, "{name}");
+        let tool = TOOLS.iter().find(|tool| tool.name == name).expect(name);
+        assert_eq!(tool.effect, effect, "{name}");
+    }
+    let read = TOOLS
+        .iter()
+        .find(|tool| tool.name == "orbyn_issue_read")
+        .unwrap();
+    assert_eq!(read.args, &[("key", "string")]);
+    assert_eq!(read.required, &["key"]);
+    let list = TOOLS
+        .iter()
+        .find(|tool| tool.name == "orbyn_issue_list")
+        .unwrap();
+    assert_eq!(
+        list.args,
+        &[("label", "string"), ("state", "string"), ("text", "string")]
+    );
+    assert!(list.required.is_empty());
+    let thread_list = TOOLS
+        .iter()
+        .find(|tool| tool.name == "orbyn_issue_thread_list")
+        .unwrap();
+    assert!(thread_list.args.is_empty());
+    assert!(thread_list.required.is_empty());
 }

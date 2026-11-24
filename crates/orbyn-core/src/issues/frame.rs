@@ -8,6 +8,14 @@ const CLOSE: &str = "ISSUE TEXT>>>";
 /// The body kept in the draft.
 pub const MAX_BODY_BYTES: usize = 16 * 1024;
 
+impl crate::app::Core {
+    /// An issue body for an agent tool: the framing markers are removed and the text is cut at
+    /// [`MAX_BODY_BYTES`], so the tracker's text can only ever be a JSON string value.
+    pub(crate) fn issue_body_for_tool(&self, body: &str) -> String {
+        cut(&without_markers(body), MAX_BODY_BYTES).to_owned()
+    }
+}
+
 fn without_markers(text: &str) -> String {
     let mut out = text.to_owned();
     // Removing one marker can join the halves of another, so repeat until none is left.

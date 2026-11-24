@@ -5,21 +5,42 @@ use super::guide::{guide_head, guide_stops};
 use super::preview::{page_act, wait_target};
 use super::render::{render_height, render_title};
 use super::{
-    MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, matches_words, number, pull_number, text, wait_seconds,
+    ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, issue_query,
+    issue_ref_value, issue_summary_value, matches_words, number, pull_number, text, wait_seconds,
 };
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::governance::approvals::{ActionAsk, Verdict};
+use crate::issues::ProjectReader;
 use crate::store::AuditRecord;
 use crate::tools::mcp::McpBinding;
 use orbyn_contracts::{
-    ActionKind, CreateThread, DelegateTask, PermissionMode, TaskSchedule, Thread, UpdateThread,
-    UpsertTask,
+    ActionKind, CreateThread, DelegateTask, IssueKey, PermissionMode, TaskSchedule, Thread,
+    UpdateThread, UpsertTask,
 };
 use serde_json::{Value, json};
 use std::path::Path;
 
+/// The key an issue tool asks for, in the tracker and scope its project's own reader named.
+/// The request cannot supply either, so a key outside this project's scope is impossible by
+/// construction.
+fn issue_key(args: &Value, reader: &ProjectReader) -> Result<IssueKey> {
+    Ok(IssueKey {
+        tracker: reader.tracker,
+        scope: reader.scope.clone(),
+        key: text(args, "key")?.to_owned(),
+    })
+}
+
 impl Core {
+    /// The caller project's issue reader, or the one refusal every issue tool shares.
+    async fn issue_reader(&self, own: &Thread) -> Result<ProjectReader> {
+        let project = self.store.project(&own.project_id)?;
+        self.project_issue_reader(&project)
+            .await?
+            .ok_or_else(|| CoreError::Invalid(NO_ISSUE_READER.into()))
+    }
+
     /// Runs one of Orbyn's tools for `binding`'s run. A tool with an effect is
     /// refused unless the gate allows it, and the gate's reason comes back.
     pub async fn call_orbyn_tool(
@@ -618,6 +639,50 @@ impl Core {
                     "stops": count,
                     "written_at": written_at,
                 })
+            }
+            "orbyn_issue_list" => {
+                let reader = self.issue_reader(&own).await?;
+                let query = issue_query(args, reader.tracker)?;
+                let page = self
+                    .scope_issues(reader.tracker, &reader.scope, &query)
+                    .await?;
+                json!({
+                    "issues": page.issues.iter().map(issue_summary_value).collect::<Vec<_>>(),
+                    "note": ISSUE_NOTE,
+                })
+            }
+            "orbyn_issue_read" => {
+                let reader = self.issue_reader(&own).await?;
+                let key = issue_key(args, &reader)?;
+                let detail = self.issue(&key).await?;
+                let mut issue = issue_summary_value(&detail.summary);
+                issue["body"] = json!(self.issue_body_for_tool(&detail.body));
+                issue["note"] = json!(ISSUE_NOTE);
+                issue
+            }
+            "orbyn_issue_link" => {
+                let reader = self.issue_reader(&own).await?;
+                let key = issue_key(args, &reader)?;
+                self.link_issue(&own.id, &key).await?;
+                json!({ "linked": true })
+            }
+            "orbyn_issue_unlink" => {
+                let reader = self.issue_reader(&own).await?;
+                let key = issue_key(args, &reader)?;
+                self.unlink_issue(&own.id, &key)?;
+                json!({ "unlinked": true })
+            }
+            "orbyn_issue_thread_list" => {
+                // Stored links only: a tracker that was disconnected later does not hide what this thread linked.
+                let issues = self
+                    .store
+                    .issue_links()?
+                    .get(&own.id)
+                    .into_iter()
+                    .flatten()
+                    .map(issue_ref_value)
+                    .collect::<Vec<_>>();
+                json!({ "issues": issues })
             }
             "orbyn_delegate_task" => {
                 let nested =
