@@ -64,3 +64,13 @@ pub struct BlockOutputPage {
     pub dropped_lines: usize,
 }
 }
+
+wire! {
+/// The answer to clearing one terminal's finished blocks.
+pub struct BlockClear {
+    /// Finished blocks dropped.
+    pub cleared: usize,
+    /// 1 when a running block was kept, 0 when none was running.
+    pub kept_running: u8,
+}
+}

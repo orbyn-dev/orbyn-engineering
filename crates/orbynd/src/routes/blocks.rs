@@ -1,5 +1,5 @@
-//! Command blocks in a terminal (`docs/command-blocks.md`): two local reads. Neither
-//! writes, and a thread, terminal or block that is gone answers `404`.
+//! Command blocks in a terminal (`docs/command-blocks.md`): two local reads and the
+//! Person-class clear. A thread, terminal or block that is gone answers `404`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -9,17 +9,21 @@ use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use orbyn_contracts::BlockList;
+use orbyn_contracts::{BlockClear, BlockList};
 use orbyn_core::CoreError;
 use orbyn_core::host::blocks::{
     DEFAULT_OUTPUT_BYTES, DEFAULT_PAGE, MAX_OUTPUT_BYTES, MAX_PAGE, TerminalBlocks, limits,
 };
+use serde_json::json;
 
-use crate::http::{ApiResult, AppState};
+use crate::http::{ApiResult, AppState, LOCAL_USER};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/api/threads/{id}/terminals/{terminal}/blocks", get(list))
+        .route(
+            "/api/threads/{id}/terminals/{terminal}/blocks",
+            get(list).delete(clear),
+        )
         .route(
             "/api/threads/{id}/terminals/{terminal}/blocks/{block_id}/output",
             get(output),
@@ -67,6 +71,37 @@ pub async fn list(
     Ok(Json(
         blocks.list(query.get("before").map(String::as_str), limit)?,
     ))
+}
+
+/// `DELETE /api/threads/{id}/terminals/{terminal}/blocks`: drops this terminal's finished
+/// blocks and their kept output, keeping a running block. The audit row is written first.
+pub async fn clear(
+    State(state): State<AppState>,
+    Path((thread_id, terminal_id)): Path<(String, String)>,
+) -> ApiResult<impl IntoResponse> {
+    let Some(blocks) = recorder(&state, &thread_id, &terminal_id)? else {
+        return Ok(Json(BlockClear {
+            cleared: 0,
+            kept_running: 0,
+        }));
+    };
+    let kept_running = blocks.running();
+    let outcome = blocks.clear_with_audit(|counts| {
+        state
+            .core
+            .record_user_audit(
+                LOCAL_USER,
+                "terminal.blocks.clear",
+                &terminal_id,
+                &thread_id,
+                json!({ "blocks": counts.blocks, "bytes": counts.bytes }),
+            )
+            .map(|_| ())
+    })?;
+    Ok(Json(BlockClear {
+        cleared: outcome.blocks,
+        kept_running: u8::from(kept_running),
+    }))
 }
 
 /// `GET /api/threads/{id}/terminals/{terminal}/blocks/{block_id}/output?after=&limit=`.

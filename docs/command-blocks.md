@@ -1,7 +1,7 @@
 # Command blocks (W1)
 
 What the terminal drawer needs from the service to show one block per command. **Service built, web client wired**: the service keeps,
-redacts and serves blocks through the two routes below, and `blocksClient.ts` reads them in production. A shell that emits no marks
+redacts and serves blocks through the two reads below, and `blocksClient.ts` reads them in production. A shell that emits no marks
 answers an empty list, and the drawer then draws the terminal exactly as it does without blocks. A dev-only preview
 (`#/preview/command-blocks`) installs the mock in `web/mock/commandBlocks.ts`. Names here change only if the service pull request says
 so. Row: G17 in [parity](parity.md). Frames: `block-*` in Engineer Designs.
@@ -52,16 +52,20 @@ not hard-code them.
 
 ## Routes
 
-Both are under the thread, like the terminal routes that exist (`GET, POST /api/threads/:id/terminals`). `main` names the thread's
+All three are under the thread, like the terminal routes that exist (`GET, POST /api/threads/:id/terminals`). `main` names the thread's
 main shell. The id in the path is a thread the person can open and a terminal that belongs to it; anything else is `404`.
 
 | Route | Class | Answer |
 | --- | --- | --- |
 | `GET /api/threads/{id}/terminals/{terminal}/blocks?before=<cursor>&limit=<n>` | Local read | `{ blocks, next_before, limits }` |
 | `GET /api/threads/{id}/terminals/{terminal}/blocks/{block_id}/output?after=<cursor>&limit=<bytes>` | Local read | `{ text, next, total_lines, dropped_lines }` |
+| `DELETE /api/threads/{id}/terminals/{terminal}/blocks` | Person write | `{ cleared, kept_running }` |
 
-Neither is Person-class: each reads output the person's own shell already showed in the drawer, over the local connection, the way the
-terminal output stream does. Neither writes. There is **no** service-side run, rerun or delete route in this design.
+The two reads are Local: each reads output the person's own shell already showed in the drawer, over the local connection, the way
+the terminal output stream does. Neither writes. The clear is Person: it acts on the person's own shell, so it needs the desktop
+shell's person key, and browser mode and the CLI get `403 desktop_required`. It writes only the service's in-memory blocks, and only
+that terminal's finished ones. There is **no** service-side run or rerun route, and no route deletes a command, a terminal, its
+scrollback or another terminal's blocks.
 
 - **List.** Newest page first when `before` is absent: the last `limit` blocks (default 50, at most 200), returned oldest first.
   `next_before` is an opaque cursor for the page before, or null at the start. `limits` carries `max_blocks`, `max_block_bytes` and
@@ -70,6 +74,11 @@ terminal output stream does. Neither writes. There is **no** service-side run, r
   at most 256 KiB), and a page never cuts a UTF-8 character or a line in two when a newline is near. `next` is null on the last page.
   `total_lines` is the line count of all kept text, or null for a running block whose end is not known. `dropped_lines` repeats the
   block's count so one answer is enough to say "Showing the last 6 of 1,248 lines".
+- **Clear.** Drops that terminal's finished blocks and their kept output; nothing else changes. A block still running is kept, and
+  its output goes on growing. The answer is `{ cleared, kept_running }`: how many finished blocks were dropped, and `1` when a
+  running block stayed (`0` when none was running). The drop is audited as `terminal.blocks.clear` (actor `user`, target the terminal
+  id, detail the block and byte counts only, never a command or output text). A thread or terminal that is gone is `404`; a terminal
+  that recorded nothing answers zeroes.
 - A running block's output grows. The web asks again about every 2 s while a block runs, and the service may answer from its memory
   without waiting. A cursor from before the growth stays valid: it is an offset into the kept text, and dropping the top of a block
   moves the offset, so the service answers `410 cursor_expired` for a cursor into dropped text and the web starts again from the top.
@@ -89,9 +98,10 @@ terminal output stream does. Neither writes. There is **no** service-side run, r
 
 The service cannot tell a rerun from typing, which is the point: the line is the person's to run.
 
-Not in this version (listed in the [parity row](parity.md)): Send to agent, Ask Crew to fix, Run again in a new tab, Clear all
-blocks, and the full-screen frame while the program runs. Clear all would need a delete route; that is a decision for Eng 2 and
-Products Research, not something the web invents.
+Not in this version (listed in the [parity row](parity.md)): Send to agent, Ask Crew to fix, Run again in a new tab, and the
+full-screen frame while the program runs. Clear all blocks is a Person write the web may call
+(`DELETE /api/threads/{id}/terminals/{terminal}/blocks`, above): it drops that terminal's finished blocks and their kept output,
+never the terminal, its scrollback or another terminal's blocks, and a running block stays. The web button is a separate web change.
 
 ## Security
 
@@ -143,8 +153,9 @@ The service side of #974 is built in `crates/orbyn-core/src/host/blocks/` (parse
 them through the production client above.
 
 1. **Routes stay as written.** `GET /api/threads/{id}/terminals/{terminal}/blocks?before=&limit=` and
-   `GET .../blocks/{block_id}/output?after=&limit=` are both Local reads, like the neighbouring terminal reads. Neither writes. There
-   is no service-side run, rerun or delete route.
+   `GET .../blocks/{block_id}/output?after=&limit=` are both Local reads, like the neighbouring terminal reads. The clear,
+   `DELETE .../blocks`, is the one Person write: it drops the service's in-memory finished blocks for that terminal and nothing
+   else. There is no service-side run, rerun or command-delete route.
 2. **Limits stay as written.** 500 blocks per terminal, 1 MiB of text per block, 8 MiB per terminal; the oldest is dropped whole and a
    running block is never dropped. The list returns `limits`. Blocks are in memory only: an `orbynd` restart clears them and closing,
    settling or archiving a terminal drops them with it. A running block ends there with no exit code.

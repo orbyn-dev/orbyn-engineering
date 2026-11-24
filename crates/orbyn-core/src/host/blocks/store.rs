@@ -31,6 +31,15 @@ pub const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const LIST_CURSOR: &str = "v1:";
 const OUTPUT_CURSOR: &str = "v1:";
 
+/// The finished blocks and kept output one clear dropped.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ClearOutcome {
+    /// Finished blocks dropped.
+    pub blocks: usize,
+    /// Bytes of kept output dropped with them.
+    pub bytes: usize,
+}
+
 /// The block limits as the wire type reports them.
 pub fn limits() -> BlockLimits {
     BlockLimits {
@@ -190,6 +199,31 @@ impl TerminalBlocks {
         // The parser emits the end when it saw a C; this covers a running block
         // whose mark arrived in an incomplete sequence.
         inner.end_running(None, &redactor);
+    }
+
+    /// Drops the finished blocks and their kept output. A running block stays with its
+    /// counters, and its output goes on growing.
+    pub fn clear(&self) -> ClearOutcome {
+        lock(&self.inner).drop_finished()
+    }
+
+    /// Clears after `audit` has accepted the counts, under the same lock as the drop:
+    /// the counts in the row are the ones dropped, and a failed audit drops nothing.
+    pub fn clear_with_audit<F>(&self, audit: F) -> Result<ClearOutcome>
+    where
+        F: FnOnce(ClearOutcome) -> Result<()>,
+    {
+        let mut inner = lock(&self.inner);
+        let outcome = inner.clear_outcome();
+        audit(outcome)?;
+        let dropped = inner.drop_finished();
+        debug_assert_eq!(dropped, outcome);
+        Ok(dropped)
+    }
+
+    /// Whether a block is running now. A clear keeps it.
+    pub fn running(&self) -> bool {
+        lock(&self.inner).blocks.iter().any(|block| !block.ended())
     }
 
     /// The newest page, or the page before `before`, oldest first.
@@ -416,6 +450,25 @@ impl Inner {
             "terminal command block ended"
         );
         enforce_total(&mut self.blocks, &mut self.total_bytes);
+    }
+
+    /// What a clear would drop: the finished blocks and the bytes of their kept output.
+    fn clear_outcome(&self) -> ClearOutcome {
+        let mut outcome = ClearOutcome::default();
+        for block in self.blocks.iter().filter(|block| block.ended()) {
+            outcome.blocks += 1;
+            outcome.bytes += block.text.len();
+        }
+        outcome
+    }
+
+    /// Drops the finished blocks and takes their bytes off the terminal's total, as
+    /// eviction does. A running block and its counters stay.
+    fn drop_finished(&mut self) -> ClearOutcome {
+        let outcome = self.clear_outcome();
+        self.blocks.retain(|block| !block.ended());
+        self.total_bytes = self.total_bytes.saturating_sub(outcome.bytes);
+        outcome
     }
 
     fn fullscreen(&mut self, on: bool) {
@@ -920,5 +973,132 @@ mod tests {
         let second = blocks.output(&id, Some(&cursor), 4).unwrap();
         assert_eq!(second.text, "two\n");
         assert_eq!(second.total_lines, None);
+    }
+
+    #[test]
+    fn clearing_an_empty_terminal_drops_nothing() {
+        let blocks = plain();
+        assert_eq!(blocks.clear(), ClearOutcome::default());
+        assert_eq!(blocks.count(), 0);
+        assert_eq!(lock(&blocks.inner).total_bytes, 0);
+        assert!(!blocks.running());
+    }
+
+    #[test]
+    fn a_clear_keeps_the_running_block_and_its_counters() {
+        let blocks = plain();
+        blocks.push(b"\x1b]133;C\x07running\n");
+        let (id, total) = {
+            let inner = lock(&blocks.inner);
+            (inner.blocks.back().unwrap().id.clone(), inner.total_bytes)
+        };
+        assert!(blocks.running());
+        assert_eq!(blocks.clear(), ClearOutcome::default());
+        assert_eq!(blocks.count(), 1);
+        {
+            let inner = lock(&blocks.inner);
+            assert_eq!(inner.total_bytes, total);
+            let block = inner.blocks.back().unwrap();
+            assert_eq!(block.id, id);
+            assert!(!block.ended());
+        }
+        assert!(blocks.running());
+        blocks.push(b"more\n");
+        assert_eq!(text_of(&blocks, &id), "running\nmore\n");
+        assert_eq!(lock(&blocks.inner).total_bytes, 13);
+    }
+
+    #[test]
+    fn a_clear_drops_finished_blocks_and_their_bytes() {
+        let blocks = plain();
+        push_command(&blocks, None, "one\n", Some(0));
+        push_command(&blocks, None, "two\n", Some(1));
+        let dropped = ids(&blocks);
+        assert_eq!(lock(&blocks.inner).total_bytes, 8);
+        assert_eq!(
+            blocks.clear(),
+            ClearOutcome {
+                blocks: 2,
+                bytes: 8
+            }
+        );
+        {
+            let inner = lock(&blocks.inner);
+            assert!(inner.blocks.is_empty());
+            assert_eq!(inner.total_bytes, 0);
+        }
+        for id in dropped {
+            let gone = blocks.output(&id, None, 10).unwrap_err();
+            assert_eq!((gone.status(), gone.code()), (404, "not_found"));
+        }
+    }
+
+    #[test]
+    fn a_block_finished_after_a_clear_is_recorded_normally() {
+        let blocks = plain();
+        push_command(&blocks, None, "before\n", Some(0));
+        assert_eq!(
+            blocks.clear(),
+            ClearOutcome {
+                blocks: 1,
+                bytes: 7
+            }
+        );
+        push_command(&blocks, None, "after\n", Some(0));
+        let list = blocks.list(None, 10).unwrap();
+        assert_eq!(list.blocks.len(), 1);
+        assert_eq!(list.blocks[0].output_bytes, 6);
+        assert_eq!(list.blocks[0].exit_code, Some(0));
+        assert_eq!(lock(&blocks.inner).total_bytes, 6);
+    }
+
+    #[test]
+    fn cursors_from_before_a_clear_answer_as_after_eviction() {
+        let blocks = plain();
+        for index in 0..3 {
+            push_command(&blocks, None, &format!("out-{index}\n"), Some(index));
+        }
+        let page = blocks.list(None, 1).unwrap();
+        let cursor = page.next_before.expect("a page before the newest");
+        let dropped = ids(&blocks).remove(0);
+        blocks.clear();
+        let expired = blocks.list(Some(&cursor), 10).unwrap_err();
+        assert_eq!((expired.status(), expired.code()), (410, "cursor_expired"));
+        let gone = blocks.output(&dropped, None, 10).unwrap_err();
+        assert_eq!((gone.status(), gone.code()), (404, "not_found"));
+        assert!(blocks.list(None, 10).unwrap().blocks.is_empty());
+    }
+
+    #[test]
+    fn a_clear_audits_the_counts_before_it_drops() {
+        let blocks = plain();
+        push_command(&blocks, None, "one\n", Some(0));
+        push_command(&blocks, None, "two\n", Some(1));
+        let mut audited = None;
+        let outcome = blocks
+            .clear_with_audit(|counts| {
+                audited = Some(counts);
+                Ok(())
+            })
+            .unwrap();
+        let counts = ClearOutcome {
+            blocks: 2,
+            bytes: 8,
+        };
+        assert_eq!(audited, Some(counts));
+        assert_eq!(outcome, counts);
+        assert_eq!(blocks.count(), 0);
+    }
+
+    #[test]
+    fn a_failed_audit_drops_nothing() {
+        let blocks = plain();
+        push_command(&blocks, None, "one\n", Some(0));
+        let failed = blocks
+            .clear_with_audit(|_| Err(CoreError::Internal("the audit write failed".into())))
+            .unwrap_err();
+        assert_eq!((failed.status(), failed.code()), (500, "internal"));
+        assert_eq!(blocks.count(), 1);
+        assert_eq!(lock(&blocks.inner).total_bytes, 4);
     }
 }

@@ -68,6 +68,9 @@ describe("which requests carry the person key", () => {
     expect(sendsPersonKey("POST", "/api/threads/t1/branches/switch")).toBe(true);
     expect(sendsPersonKey("POST", "/api/threads/t1/vcs/refs")).toBe(true);
     expect(sendsPersonKey("POST", "/api/threads/t1/vcs/refs/switch")).toBe(true);
+    expect(sendsPersonKey("DELETE", "/api/threads/t1/terminals/main/blocks")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/threads/t1/terminals/main/blocks")).toBe(false);
+    expect(sendsPersonKey("DELETE", "/api/threads/t1/terminals/main/blocks/extra")).toBe(false);
     expect(sendsPersonKey("GET", "/api/threads/t1/branches")).toBe(false);
     // A pull checkout carries the key for both modes; the service reads it only for `worktree: false`.
     expect(sendsPersonKey("POST", "/api/projects/p1/pulls/12/checkout")).toBe(true);
