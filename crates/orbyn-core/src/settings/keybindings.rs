@@ -216,6 +216,17 @@ fn merged(own: &[KeybindingRule]) -> Vec<(KeybindingRule, bool)> {
     rules
 }
 
+/// True when the rule is a built-in one: the same key (however spelled), command and context.
+fn is_built_in(rule: &KeybindingRule) -> bool {
+    let key = crate::account::settings_record::normalize_key(&rule.key);
+    let when = rule.when.as_deref().filter(|when| !when.trim().is_empty());
+    DEFAULTS.iter().any(|(known_key, command, known_when)| {
+        *command == rule.command
+            && crate::account::settings_record::normalize_key(known_key) == key
+            && (!known_when.trim().is_empty()).then_some(*known_when) == when
+    })
+}
+
 /// The built-in keys of a command in a context, in table order.
 fn default_keys(command: &str, when: Option<&str>) -> Vec<String> {
     let when = when.filter(|when| !when.trim().is_empty());
@@ -411,8 +422,11 @@ impl Core {
         write_rules(&path, &own)?;
         // Queued for sync when the account is on; the file is already saved, so a
         // failure here never fails the person's reset.
+        // A dropped rule that is the same chord as a built-in one stages nothing: its removal marker would hide that
+        // built-in binding on every other device, and the rule there already reads as the default.
         let staged: Vec<_> = dropped
             .iter()
+            .filter(|rule| !is_built_in(rule))
             .map(crate::account::settings_record::stage_keybinding)
             .collect();
         if let Err(error) = self
@@ -609,6 +623,27 @@ mod tests {
         let removed = &record[&keybinding_name("mod+y", None)].value;
         assert_eq!(removed["remove"], true);
         assert_eq!(removed["command"], "sidebar.toggle");
+    }
+
+    #[test]
+    fn resetting_a_rule_equal_to_a_built_in_one_never_stages_a_removal_that_hides_it() {
+        use crate::account::settings_record::{ZONE, keybinding_name};
+        let (_dir, core) = core_with_account();
+        core.save_keybinding(&rule("mod+b", "sidebar.toggle", None))
+            .unwrap();
+        let view = core.reset_keybinding("sidebar.toggle", None).unwrap();
+        let back = view
+            .rules
+            .iter()
+            .find(|r| r.key == "mod+b" && r.command == "sidebar.toggle")
+            .expect("the built-in binding shows");
+        assert_eq!(back.custom, Some(false));
+        let record = core.store.account_record(ZONE).unwrap();
+        let staged = &record[&keybinding_name("mod+b", None)].value;
+        assert_eq!(
+            staged["remove"], false,
+            "a removal of mod+b would hide the built-in binding on another device"
+        );
     }
 
     #[test]
