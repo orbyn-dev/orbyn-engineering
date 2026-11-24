@@ -822,6 +822,8 @@ export const FRAMES = {
   // Crew, the background create form and its daily budget (Crew Designs frames background-new, background-new-label,
   // background-new-schedule and background-create-daily-*). The mock's crew-background scenario lists crews, so the
   // header's New background crew opens the form with the default template, budget and daily budget.
+  // Crew KC4 PR B: a background start the disk guard refused, as the newest row of Recent runs (frame kc4-low-disk-background-run).
+  "kc4-low-disk-background-run": { route: "#/crew/background", scenario: "crew-background-disk-low" },
   "background-new": { route: "#/crew/background", scenario: "crew-background", steps: [click("button", "New background crew")] },
   "background-new-label": {
     route: "#/crew/background",
