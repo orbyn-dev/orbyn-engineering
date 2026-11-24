@@ -395,6 +395,7 @@
     ["POST","/api/projects/clone","local"],
     ["POST","/api/projects/create","local"],
     ["POST","/api/projects/{id}/git/init","person"],
+    ["POST","/api/projects/{id}/issue-tracker","person"],
     ["POST","/api/projects/{id}/library/suggestions/copy","person"],
     ["POST","/api/projects/{id}/publish","person"],
     ["POST","/api/projects/{id}/pull","local"],
