@@ -6,6 +6,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use super::accessible::MAX_ACCESSIBLE_TEXT_CHARS;
+
 pub const MAX_PENDING: usize = 5;
 pub const PENDING_TTL: Duration = Duration::from_secs(5 * 60);
 pub const MAX_APP_NAME_CHARS: usize = 255;
@@ -26,6 +28,14 @@ fn clipped(value: String, max_units: usize) -> String {
     value
 }
 
+/// Cuts at a character boundary, never inside one, to a character count.
+fn clipped_chars(mut value: String, max_chars: usize) -> String {
+    if let Some((index, _)) = value.char_indices().nth(max_chars) {
+        value.truncate(index);
+    }
+    value
+}
+
 pub(crate) type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
 
 pub struct Capture {
@@ -34,6 +44,7 @@ pub struct Capture {
     window_title: String,
     app_id: String,
     captured_at: String,
+    accessible_text: Option<String>,
 }
 
 impl Capture {
@@ -50,7 +61,20 @@ impl Capture {
             window_title: clipped(window_title, MAX_WINDOW_TITLE_CHARS),
             app_id: clipped(app_id, MAX_APP_ID_CHARS),
             captured_at,
+            accessible_text: None,
         }
+    }
+
+    pub fn with_accessible_text(mut self, text: Option<String>) -> Self {
+        self.accessible_text = text.and_then(|text| {
+            let text = clipped_chars(text, MAX_ACCESSIBLE_TEXT_CHARS);
+            (!text.trim().is_empty()).then_some(text)
+        });
+        self
+    }
+
+    pub fn accessible_text(&self) -> Option<&str> {
+        self.accessible_text.as_deref()
     }
 
     pub fn png(&self) -> &[u8] {
@@ -83,6 +107,10 @@ impl fmt::Debug for Capture {
             .field("window_title_bytes", &self.window_title.len())
             .field("app_id_bytes", &self.app_id.len())
             .field("captured_at_bytes", &self.captured_at.len())
+            .field(
+                "accessible_text_bytes",
+                &self.accessible_text.as_ref().map_or(0, |text| text.len()),
+            )
             .finish()
     }
 }
@@ -394,6 +422,19 @@ mod tests {
     }
 
     #[test]
+    fn accessible_text_is_clipped_by_character_and_blank_text_is_dropped() {
+        let text = "é".repeat(MAX_ACCESSIBLE_TEXT_CHARS + 10);
+        let item = capture(b"png", "Notes").with_accessible_text(Some(text));
+        let stored = item.accessible_text().expect("text is kept");
+        assert_eq!(stored.chars().count(), MAX_ACCESSIBLE_TEXT_CHARS);
+        assert!(stored.chars().all(|character| character == 'é'));
+
+        let blank = capture(b"png", "Notes").with_accessible_text(Some(" \n\t ".to_owned()));
+        assert!(blank.accessible_text().is_none());
+        assert!(capture(b"png", "Notes").accessible_text().is_none());
+    }
+
+    #[test]
     fn debug_prints_sizes_only() {
         let mut png = vec![b'X'; 64];
         png[0] = 0xff;
@@ -403,11 +444,14 @@ mod tests {
             "Private title".to_owned(),
             "com.private.app".to_owned(),
             "2026-11-22T10:00:00Z".to_owned(),
-        );
+        )
+        .with_accessible_text(Some("Private accessible text".to_owned()));
         let debug = format!("{item:?}");
         assert!(debug.contains("png_bytes"));
+        assert!(debug.contains("accessible_text_bytes"));
         assert!(!debug.contains("Private app"));
         assert!(!debug.contains("Private title"));
+        assert!(!debug.contains("Private accessible text"));
         assert!(!debug.contains("XXXX"));
         assert!(!format!("{:?}", Pending::default()).contains("Private"));
     }

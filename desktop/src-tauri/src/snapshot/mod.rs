@@ -1,5 +1,8 @@
 //! Snap Shot's desktop shell: settings, the pending in-memory captures, one global shortcut and the six commands.
 
+// The collector is pure and tested on every OS; a later task wires it to the platform reader.
+#[cfg_attr(not(test), allow(dead_code))]
+mod accessible;
 mod commands;
 mod exclusion;
 mod flow;
