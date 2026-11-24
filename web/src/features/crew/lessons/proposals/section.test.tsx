@@ -141,6 +141,36 @@ describe("the Skill proposals section of the Lessons page", () => {
     expect(within(region).queryByText(/a login link kept a returnTo from another host/)).toBeNull();
   });
 
+  it("shows each unfolded row's evidence ids: task links, an escape link and a revert as plain text", async () => {
+    answers.lessons = {
+      status: 200,
+      body: lessons({
+        lessons: [
+          lesson({
+            id: "les-returnto",
+            evidence: [{ kind: "task", id: "5b2d8a3" }, { kind: "task", id: "8c1d4f6" }],
+          }),
+          lesson({ id: "les-navcleanup", source: "escape", evidence: [{ kind: "escape", id: "9be4410" }] }),
+          lesson({ id: "les-loginlink", source: "revert", evidence: [{ kind: "merge", id: "3b9f2c1" }] }),
+        ],
+      }),
+    };
+    open();
+    const region = await card();
+    const task = within(region).getByRole("link", { name: "Task 5b2d8a3" });
+    expect(task).toHaveAttribute("href", "#/threads/5b2d8a3");
+    expect(within(region).getByRole("link", { name: "Task 8c1d4f6" })).toHaveAttribute("href", "#/threads/8c1d4f6");
+    expect(within(region).getByRole("link", { name: "Escape 9be4410" })).toHaveAttribute(
+      "href",
+      "#/settings/crew/escapes",
+    );
+    expect(within(region).getByText("Revert 3b9f2c1")).toBeInTheDocument();
+    expect(within(region).queryByRole("link", { name: "Revert 3b9f2c1" })).toBeNull();
+    // The ids come first, then the middot and the moment the lesson was learned.
+    const row = within(region).getByRole("link", { name: "Task 5b2d8a3" }).closest(".cx-pprow") as HTMLElement;
+    expect(row.querySelector("small")).toHaveTextContent(/^Task 5b2d8a3, Task 8c1d4f6 · Learned /);
+  });
+
   it("names a lesson's source as the design draws it: a confirmed escape", async () => {
     answers.lessons = {
       status: 200,
@@ -292,7 +322,7 @@ describe("the Skill proposals section of the Lessons page", () => {
     };
     answers.proposals = {
       status: 200,
-      body: { proposals: [proposal({ can_approve: false, lessons: ["les-returnto", "les-navcleanup", "les-loginlink", "les-fourth"] })] },
+      body: { proposals: [proposal({ can_approve: false, lessons: [...proposal().lessons, { id: "les-fourth", evidence: [] }] })] },
     };
     open();
     const region = await card();

@@ -1,4 +1,5 @@
 import type { Lesson, LessonDeleted, LessonDetail, LessonEvidence, LessonFilter, LessonList, LessonScope } from "../src/features/crew/lessons/types.ts";
+import type { SkillProposalLesson } from "../src/features/crew/lessons/proposals/types.ts";
 import type { MockResponse, Scenario } from "./api.ts";
 
 /**
@@ -14,6 +15,22 @@ import type { MockResponse, Scenario } from "./api.ts";
 
 const T = "2026-11-07T17:00:00Z";
 
+const task = (id: string): LessonEvidence => ({ kind: "task", id });
+const escape = (id: string): LessonEvidence => ({ kind: "escape", id });
+const merge = (id: string): LessonEvidence => ({ kind: "merge", id });
+
+/** The design's evidence ids: a repeated failure carries its two tasks, an escape its escape, a revert its merge, and a
+ *  correction the task it was made on. */
+const EVIDENCE = {
+  returnto: [task("5b2d8a3"), task("91c4e07")],
+  navcleanup: [task("8c1d4f6")],
+  loginlink: [task("3e6a9b0"), task("6d2f8a1")],
+  cookies: [task("91c4e07")],
+  session: [escape("9be4410")],
+  return: [merge("3b9f2c1")],
+  dates: [task("5d1c8e0")],
+} satisfies Record<string, LessonEvidence[]>;
+
 const lesson = (over: Partial<Lesson> = {}): Lesson => ({
   id: "les-1",
   scope: "repo",
@@ -28,6 +45,7 @@ const lesson = (over: Partial<Lesson> = {}): Lesson => ({
   uses: 0,
   left_out_of: 0,
   skill: null,
+  evidence: [],
   created_at: "2026-11-07T15:30:00Z",
   updated_at: "2026-11-07T15:30:00Z",
   last_used_at: null,
@@ -43,6 +61,7 @@ const seeds = (): Lesson[] => [
     names_path: true,
     uses: 3,
     last_used_at: "2026-11-07T16:10:00Z",
+    evidence: EVIDENCE.returnto,
     created_at: "2026-11-07T15:30:00Z",
   }),
   lesson({
@@ -53,6 +72,7 @@ const seeds = (): Lesson[] => [
     names_path: true,
     hidden_by_cap: true,
     in_next_brief: false,
+    evidence: EVIDENCE.cookies,
     created_at: "2026-11-06T10:15:00Z",
   }),
   lesson({
@@ -63,6 +83,7 @@ const seeds = (): Lesson[] => [
     in_next_brief: false,
     uses: 2,
     last_used_at: "2026-11-06T08:01:00Z",
+    evidence: EVIDENCE.session,
     created_at: "2026-11-05T09:40:00Z",
   }),
   lesson({
@@ -73,6 +94,7 @@ const seeds = (): Lesson[] => [
     text: "A route that reads a query parameter needs a test for a link that still points at its old path.",
     uses: 1,
     last_used_at: "2026-11-05T11:12:00Z",
+    evidence: EVIDENCE.return,
     created_at: "2026-11-04T18:05:00Z",
   }),
   lesson({
@@ -82,6 +104,7 @@ const seeds = (): Lesson[] => [
     source: "person",
     text: "Date formatting goes through the one formatter, never through a second date library.",
     edited_by_person: true,
+    evidence: EVIDENCE.dates,
     created_at: "2026-11-03T12:20:00Z",
   }),
 ];
@@ -95,6 +118,7 @@ const proposalSeeds = (): Lesson[] => [
     names_path: true,
     uses: 2,
     last_used_at: "2026-11-07T16:05:00Z",
+    evidence: EVIDENCE.returnto,
     created_at: "2026-11-07T14:20:00Z",
   }),
   lesson({
@@ -104,6 +128,7 @@ const proposalSeeds = (): Lesson[] => [
     names_path: true,
     uses: 1,
     last_used_at: "2026-11-07T16:05:00Z",
+    evidence: EVIDENCE.navcleanup,
     created_at: "2026-11-07T15:40:00Z",
   }),
   lesson({
@@ -111,12 +136,17 @@ const proposalSeeds = (): Lesson[] => [
     source: "fingerprint",
     text: "Checks like a unit test failed on web/nav before: a login link kept a returnTo from another host.",
     names_path: true,
+    evidence: EVIDENCE.loginlink,
     created_at: "2026-11-07T16:30:00Z",
   }),
 ];
 
-/** The lessons the sample proposal is based on. */
-export const PROPOSAL_LESSONS = ["les-returnto", "les-navcleanup", "les-loginlink"] as const;
+/** The lessons the sample proposal is based on, with the evidence each lesson's own read carries. */
+export const PROPOSAL_LESSONS: SkillProposalLesson[] = [
+  { id: "les-returnto", evidence: EVIDENCE.returnto },
+  { id: "les-navcleanup", evidence: EVIDENCE.navcleanup },
+  { id: "les-loginlink", evidence: EVIDENCE.loginlink },
+];
 
 export function createLessonsMock() {
   let rows: Lesson[] = [];
@@ -138,7 +168,7 @@ export function createLessonsMock() {
     if (scenario === "crew-proposals-stale")
       rows = rows.map((one) => (one.id === "les-loginlink" ? { ...one, state: "disabled", in_next_brief: false } : one));
     if (scenario === "crew-proposals-approved")
-      rows = rows.map((one) => ({ ...one, skill: { name: "redirect-checks" }, in_next_brief: false }));
+      rows = rows.map((one) => ({ ...one, skill: "redirect-checks", in_next_brief: false }));
     // The remaining KC5 card states: one lesson left out of a brief, one over the five-lesson brief limit, one active
     // confirmed escape and one revert on a repository lesson.
     if (scenario === "crew-lessons-states")
@@ -181,27 +211,8 @@ export function createLessonsMock() {
     lessons: filtered(filter),
   });
 
-  // Evidence is ids only, and the ids are the design's own. A repeated failure carries the two tasks behind it, the other
-  // sources their escape or merge, and a seeded correction the task it was made on. A lesson added by hand has no task
-  // behind it, so it carries none: its id is not in this map.
-  const personTask: Record<string, LessonEvidence[]> = {
-    "les-cookies": [{ kind: "task", id: "91c4e07" }],
-    "les-dates": [{ kind: "task", id: "5d1c8e0" }],
-  };
-  const detail = (one: Lesson): LessonDetail => ({
-    lesson: one,
-    evidence:
-      one.source === "person"
-        ? (personTask[one.id] ?? [])
-        : one.source === "fingerprint"
-          ? [
-              { kind: "task", id: "5b2d8a3" },
-              { kind: "task", id: "91c4e07" },
-            ]
-          : one.source === "escape"
-            ? [{ kind: "escape", id: "9be4410" }]
-            : [{ kind: "merge", id: "3b9f2c1" }],
-  });
+  // The detail read carries the same evidence ids as the lesson's own read; a lesson added by hand carries none.
+  const detail = (one: Lesson): LessonDetail => ({ lesson: one, evidence: one.evidence });
 
   /** The service refuses a write made against another revision. */
   const stale = (one: Lesson | undefined, rev: unknown): MockResponse | null =>
@@ -314,7 +325,7 @@ export function createLessonsMock() {
 
   /** The lessons a proposal was approved from carry its skill and stop going into briefs (KC9). */
   function approveSkill(name: string, lessonIds: readonly string[]) {
-    rows = rows.map((one) => (lessonIds.includes(one.id) ? { ...one, skill: { name }, in_next_brief: false } : one));
+    rows = rows.map((one) => (lessonIds.includes(one.id) ? { ...one, skill: name, in_next_brief: false } : one));
   }
 
   const lessonNow = (id: string): Lesson | undefined => rows.find((one) => one.id === id);

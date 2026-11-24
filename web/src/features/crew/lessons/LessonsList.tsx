@@ -152,8 +152,8 @@ function LessonRow({ lesson, project, hidden }: { lesson: Lesson; project: strin
         {lesson.skill ? (
           <span className="cx-lsskill">
             <span className="cx-apchip cx-skill">Now a skill</span>{" "}
-            <a className="cx-lsskillname" href={routeHref({ name: "skills", skill: lesson.skill.name })}>
-              {lesson.skill.name}
+            <a className="cx-lsskillname" href={routeHref({ name: "skills", skill: lesson.skill })}>
+              {lesson.skill}
             </a>
           </span>
         ) : null}

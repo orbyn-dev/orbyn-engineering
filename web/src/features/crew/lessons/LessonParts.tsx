@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import type { ApiFailure } from "../../../api/client";
 import { NETWORK_ERROR } from "../../../api/client";
 import { routeHref } from "../../../product/state/route";
 import { Ic } from "../shared/parts";
-import { MAX_TEXT, PERMISSIONS_NOTE, SECRET_REFUSED, leftOutWords } from "./model";
+import { MAX_TEXT, PERMISSIONS_NOTE, SECRET_REFUSED, evidenceWord, leftOutWords } from "./model";
+import type { LessonEvidence } from "./types";
 import "./lessons.css";
 
 /** The way back above the title, as every Crew settings page draws it. */
@@ -246,6 +247,46 @@ function FragmentRow({ label, value }: { label: string; value: ReactNode }) {
     <>
       <span>{label}</span>
       <b>{value}</b>
+    </>
+  );
+}
+
+/**
+ * One evidence id as its own element: a task opens its thread, an escape the Escapes page, and a revert or merge is plain
+ * text. Shared by a lesson's card and the proposal screens, so every place that names evidence links it the same way.
+ */
+export function EvidenceId({ one }: { one: LessonEvidence }) {
+  if (one.kind === "task")
+    return (
+      <a href={routeHref({ name: "thread", id: one.id })} style={{ color: "var(--color-text)" }}>
+        {evidenceWord(one)}
+      </a>
+    );
+  if (one.kind === "escape")
+    return (
+      <a
+        href={routeHref({ name: "settings", section: "crew", crewPage: "escapes" })}
+        style={{ color: "var(--color-text)" }}
+      >
+        {evidenceWord(one)}
+      </a>
+    );
+  return <>{evidenceWord(one)}</>;
+}
+
+/** The evidence ids as their own elements, joined by ", ": a task opens its thread, an escape the Escapes page, and a
+ *  revert is plain text. */
+export function EvidenceIds({ evidence }: { evidence: readonly LessonEvidence[] }) {
+  return (
+    <>
+      {evidence.map((one, index) => (
+        <Fragment key={`${one.kind}:${one.id}`}>
+          {index > 0 ? ", " : null}
+          <span>
+            <EvidenceId one={one} />
+          </span>
+        </Fragment>
+      ))}
     </>
   );
 }

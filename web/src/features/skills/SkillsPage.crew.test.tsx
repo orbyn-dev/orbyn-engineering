@@ -28,18 +28,28 @@ const SKILL_TEXT = [
 
 const project = { id: "p-app", name: "orbyn-engineering", trusted: true, is_git: true, path: "/fixture/app" } as Project;
 
-const proposal = (over: Record<string, unknown> = {}) => ({
-  id: "prop-redirect-checks",
-  repo: "p-app",
-  state: "open",
-  text: SKILL_TEXT,
-  lessons: ["les-returnto", "les-navcleanup", "les-loginlink"],
-  can_approve: true,
-  skill: null,
-  rev: 1,
-  created_at: "2026-11-07T16:31:00Z",
-  ...over,
-});
+const proposal = (over: Record<string, unknown> = {}) => {
+  const one = {
+    id: "prop-redirect-checks",
+    repo: "p-app",
+    state: "open",
+    text: SKILL_TEXT,
+    lessons: [
+      { id: "les-returnto", evidence: [{ kind: "task", id: "5b2d8a3" }, { kind: "task", id: "91c4e07" }] },
+      { id: "les-navcleanup", evidence: [{ kind: "task", id: "8c1d4f6" }] },
+      { id: "les-loginlink", evidence: [{ kind: "task", id: "3e6a9b0" }, { kind: "task", id: "6d2f8a1" }] },
+    ],
+    can_approve: true,
+    skill: null,
+    rev: 1,
+    created_at: "2026-11-07T16:31:00Z",
+    approved_at: null,
+    ...over,
+  };
+  return one.state === "approved" && one.approved_at === null
+    ? { ...one, approved_at: "2026-11-07T16:33:00Z" }
+    : one;
+};
 
 const catalog: SkillPackStatus = {
   version: "123",

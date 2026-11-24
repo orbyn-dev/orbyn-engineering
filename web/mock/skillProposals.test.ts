@@ -20,7 +20,11 @@ describe("the skill-proposals mock", () => {
     const [one] = proposalsOf("crew-proposals");
     expect(one?.state).toBe("open");
     expect(one?.can_approve).toBe(true);
-    expect(one?.lessons).toEqual(["les-returnto", "les-navcleanup", "les-loginlink"]);
+    expect(one?.lessons).toEqual([
+      { id: "les-returnto", evidence: [{ kind: "task", id: "5b2d8a3" }, { kind: "task", id: "91c4e07" }] },
+      { id: "les-navcleanup", evidence: [{ kind: "task", id: "8c1d4f6" }] },
+      { id: "les-loginlink", evidence: [{ kind: "task", id: "3e6a9b0" }, { kind: "task", id: "6d2f8a1" }] },
+    ]);
     expect(one?.text.split("\n")[1]).toBe("name: redirect-checks");
     expect(one?.text.split("\n").length).toBe(14);
   });
@@ -41,10 +45,12 @@ describe("the skill-proposals mock", () => {
     const [one] = proposalsOf("crew-proposals-approved");
     expect(one?.state).toBe("approved");
     expect(one?.skill).toEqual({ name: "redirect-checks" });
+    expect(one?.approved_at).not.toBeNull();
     const lessons = api("crew-proposals-approved").handle("GET", "/api/crew/lessons?repo=p-app&filter=all").body as LessonList;
-    const sources = lessons.lessons.filter((lesson) => one?.lessons.includes(lesson.id));
+    const ids = one?.lessons.map((entry) => entry.id) ?? [];
+    const sources = lessons.lessons.filter((lesson) => ids.includes(lesson.id));
     expect(sources.map((lesson) => lesson.id).sort()).toEqual(["les-loginlink", "les-navcleanup", "les-returnto"]);
-    expect(sources.every((lesson) => lesson.skill?.name === "redirect-checks")).toBe(true);
+    expect(sources.every((lesson) => lesson.skill === "redirect-checks")).toBe(true);
     expect(sources.every((lesson) => lesson.in_next_brief === false)).toBe(true);
   });
 
@@ -57,6 +63,7 @@ describe("the skill-proposals mock", () => {
     expect(first.status).toBe(200);
     expect((first.body as SkillProposal).state).toBe("approved");
     expect((first.body as SkillProposal).skill).toEqual({ name: "redirect-checks" });
+    expect((first.body as SkillProposal).approved_at).not.toBeNull();
     const lessons = mock.handle("GET", "/api/crew/lessons?repo=p-app&filter=all").body as LessonList;
     expect(lessons.lessons.filter((lesson) => lesson.skill !== null)).toHaveLength(3);
     expect(mock.handle("POST", "/api/crew/skill-proposals/prop-redirect-checks/approve", { text: "x", rev: 2 }).status).toBe(409);

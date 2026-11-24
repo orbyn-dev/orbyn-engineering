@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { toFailure } from "../../../lib/useAsync";
-import { navigate, routeHref } from "../../../product/state/route";
+import { navigate } from "../../../product/state/route";
 import { ErrorState, Loading } from "../../../product/ui/states";
 import { ConfirmDialog } from "../../../ui/Dialog";
 import { Frame } from "../shared/Frame";
@@ -12,20 +12,20 @@ import {
   SCOPE_WORD,
   sourceChip,
   briefsWord,
-  evidenceWord,
   happenedWords,
   moment,
   sourceWordOf,
   usedWords,
 } from "./model";
 import { takeAdded } from "./saved";
-import type { Lesson, LessonDetail, LessonEvidence } from "./types";
+import type { Lesson, LessonDetail } from "./types";
 import { UNDO_MS, showLessonUndo } from "./undo";
 import type { LessonReader } from "./useLesson";
 import { useLesson } from "./useLesson";
 import { useLessons } from "./useLessons";
 import {
   BackToLessons,
+  EvidenceIds,
   FactsBox,
   FormFoot,
   Intro,
@@ -275,35 +275,6 @@ function WhereItCameFrom({ detail, repo, name }: { detail: LessonDetail; repo: s
   rows.push(["Applies to", <AppliesTo lesson={lesson} repo={repo} name={name} />]);
   rows.push(["Updated", moment(lesson.updated_at)]);
   return <FactsBox title="Where it came from" rows={rows} column={112} />;
-}
-
-/** The evidence ids as their own elements: a task opens its thread, an escape the Escapes page, and a revert is plain text. */
-function EvidenceIds({ evidence }: { evidence: readonly LessonEvidence[] }) {
-  return (
-    <>
-      {evidence.map((one, index) => (
-        <Fragment key={`${one.kind}:${one.id}`}>
-          {index > 0 ? ", " : null}
-          <span>
-            {one.kind === "task" ? (
-              <a href={routeHref({ name: "thread", id: one.id })} style={{ color: "var(--color-text)" }}>
-                {evidenceWord(one)}
-              </a>
-            ) : one.kind === "escape" ? (
-              <a
-                href={routeHref({ name: "settings", section: "crew", crewPage: "escapes" })}
-                style={{ color: "var(--color-text)" }}
-              >
-                {evidenceWord(one)}
-              </a>
-            ) : (
-              evidenceWord(one)
-            )}
-          </span>
-        </Fragment>
-      ))}
-    </>
-  );
 }
 
 /**
