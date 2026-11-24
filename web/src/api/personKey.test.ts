@@ -56,6 +56,10 @@ describe("which requests carry the person key", () => {
     expect(sendsPersonKey("PUT", "/api/crew/lessons/settings")).toBe(true);
     expect(sendsPersonKey("GET", "/api/crew/lessons?repo=p1")).toBe(false);
     expect(sendsPersonKey("GET", "/api/crew/lessons/les_1?repo=p1")).toBe(false);
+    expect(sendsPersonKey("POST", "/api/crew/skill-proposals/prop_1/approve")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/skill-proposals/prop_1/dismiss")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/crew/skill-proposals?repo=p1")).toBe(false);
+    expect(sendsPersonKey("POST", "/api/crew/skill-proposals/prop_1")).toBe(false);
     expect(sendsPersonKey("GET", "/api/crew/projects/p1/worker-provider")).toBe(false);
     expect(sendsPersonKey("POST", "/api/threads/t1/runs")).toBe(true);
     // The routes that move a checkout (ruling F3).

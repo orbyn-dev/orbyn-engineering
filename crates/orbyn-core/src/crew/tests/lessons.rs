@@ -133,6 +133,11 @@ async fn two_tasks_of_one_repository_with_the_same_failure_write_one_lesson() {
     assert!(lesson.text.chars().count() <= TEXT_MAX, "{}", lesson.text);
     assert!(lesson.names_path, "{}", lesson.text);
     assert_eq!(
+        (lesson.check_kind.as_deref(), lesson.path_class.as_deref()),
+        (Some("file_scope"), Some("docs")),
+        "the group key comes from the failing kind and path area"
+    );
+    assert_eq!(
         (lesson.uses, lesson.hidden_by_cap),
         (0, false),
         "a learned lesson starts unused and visible"
@@ -177,6 +182,14 @@ async fn a_possible_escape_writes_nothing_and_a_confirmed_one_writes_one_lesson(
         lessons[0].text
     );
     assert!(lessons[0].names_path);
+    assert_eq!(
+        (
+            lessons[0].check_kind.as_deref(),
+            lessons[0].path_class.as_deref()
+        ),
+        (None, Some("src/a")),
+        "an escape lesson groups by its first area"
+    );
     assert_eq!(
         lessons[0].evidence,
         [evidence("escape", &escape.id), evidence("merge", &task)]

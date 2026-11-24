@@ -99,6 +99,8 @@ struct LessonDraft {
     scope: LessonScope,
     source: &'static str,
     text: String,
+    check_kind: Option<String>,
+    path_class: Option<String>,
     fingerprint: Option<String>,
     evidence: Vec<LessonEvidence>,
 }
@@ -119,6 +121,7 @@ impl Core {
             self.store.crew_use_lessons(project_id),
             self.store.crew_lessons_for_brief("repo", Some(project_id)),
             self.store.crew_lessons_for_brief("global", None),
+            self.lesson_skill_names(project_id),
             &key_needles(key),
         )
     }
@@ -145,6 +148,8 @@ impl Core {
                 scope: scope.word().to_owned(),
                 project_id: scope.project().map(str::to_owned),
                 source: "person".to_owned(),
+                check_kind: None,
+                path_class: None,
                 text,
                 fingerprint: None,
                 evidence,
@@ -207,10 +212,13 @@ impl Core {
             kind: "task".to_owned(),
             id: task.id.clone(),
         });
+        let (check_kind, path_class) = failure_group(&judged.failures);
         let draft = LessonDraft {
             scope: LessonScope::Repo(project.clone()),
             source: "fingerprint",
             text,
+            check_kind,
+            path_class,
             fingerprint: Some(fingerprint_key(&project, fingerprint)),
             evidence,
         };
@@ -240,6 +248,8 @@ impl Core {
             scope: LessonScope::Repo(escape.project_id.clone()),
             source: if reverted { "revert" } else { "escape" },
             text,
+            check_kind: None,
+            path_class: escape_path_class(&escape.areas),
             fingerprint: Some(fingerprint),
             evidence: escape_evidence(&escape.id, &escape.merge_task_id),
         };
@@ -265,6 +275,8 @@ impl Core {
                 &escape.areas,
                 true,
             ),
+            check_kind: None,
+            path_class: escape_path_class(&escape.areas),
             fingerprint: Some(merge_key(merge_task)),
             evidence: escape_evidence(&escape.id, &escape.merge_task_id),
         };
@@ -286,17 +298,55 @@ impl Core {
                 "A global lesson names path classes, not paths.".into(),
             ));
         }
-        self.store.write_crew_lesson(NewCrewLesson {
+        let written = self.store.write_crew_lesson(NewCrewLesson {
             scope: draft.scope.word().to_owned(),
             project_id: draft.scope.project().map(str::to_owned),
             source: draft.source.to_owned(),
+            check_kind: draft.check_kind,
+            path_class: draft.path_class,
             text,
             fingerprint: draft.fingerprint,
             evidence: draft.evidence,
             edited_by_person: draft.source == "person",
             names_path,
-        })
+        })?;
+        // A proposal is made right after the lesson that may complete a group. It never fails the lesson: a proposal is
+        // an offer, and losing it leaves the lessons exactly as they were.
+        if let Some(project) = written
+            .as_ref()
+            .and_then(|lesson| lesson.project_id.as_deref())
+        {
+            self.learn_skill_proposals(project);
+        }
+        Ok(written)
     }
+}
+
+/// The grouping columns of a repeated failure: every failing check kind, sorted and deduped and joined with `+`, and
+/// the smallest path area the failure names. Both are derived from what a lesson may say, never from the key.
+fn failure_group(failures: &[Failed]) -> (Option<String>, Option<String>) {
+    let mut kinds: Vec<String> = failures
+        .iter()
+        .map(|failure| one_line(&failure.kind.word()))
+        .filter(|kind| !kind.is_empty())
+        .collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    let check_kind = (!kinds.is_empty()).then(|| kinds.join("+"));
+    let path_class = failures
+        .iter()
+        .flat_map(|failure| failure.names.iter())
+        .filter_map(|name| path_area(name))
+        .min();
+    (check_kind, path_class)
+}
+
+/// The grouping path class of an escape: its first non-empty area, as the lesson's sentence names it.
+fn escape_path_class(areas: &[String]) -> Option<String> {
+    areas
+        .iter()
+        .map(|area| one_line(area))
+        .find(|area| !area.is_empty())
 }
 
 /// Source 1's sentence: the failing checks by kind, where they failed and the guard's safe failure sentence.
@@ -400,12 +450,17 @@ fn within_window(created_at: &str, now: i64) -> bool {
     parse_time(created_at).is_some_and(|at| at >= now - WINDOW_SECS)
 }
 
-/// The block one brief carries, from the three reads it makes. Lessons are an enhancement, never a rule: a read
-/// failure shows no lesson and the start goes on. A lesson the brief's key check leaves out is counted, not shown.
+/// The lesson ids that are now a skill, by that skill's name. A read failure is no skills, so the lessons stay normal.
+pub(super) type LessonSkills = std::collections::HashMap<String, String>;
+
+/// The block one brief carries, from the reads it makes. Lessons are an enhancement, never a rule: a read
+/// failure shows no lesson and the start goes on. A lesson the brief's key check leaves out is counted, not shown,
+/// and one that is now a skill is left out until that skill is removed.
 pub(super) fn lessons_brief(
     use_lessons: Result<bool>,
     repo: Result<Vec<CrewLesson>>,
     global: Result<Vec<CrewLesson>>,
+    skills: Result<LessonSkills>,
     needles: &[String],
 ) -> LessonBrief {
     match use_lessons {
@@ -430,7 +485,16 @@ pub(super) fn lessons_brief(
             return LessonBrief::none();
         }
     };
-    let (chosen, left_out) = choose_lessons(&repo, &global, needles);
+    // Failing to read what is now a skill shows the lessons as usual: a proposal is an offer, and a missing skill
+    // check never hides a lesson that is still data.
+    let skills = match skills {
+        Ok(skills) => skills,
+        Err(error) => {
+            tracing::warn!(%error, "the skills a lesson became could not be read, so lessons stay normal");
+            LessonSkills::new()
+        }
+    };
+    let (chosen, left_out) = choose_lessons(&repo, &global, needles, &skills);
     if chosen.is_empty() {
         return LessonBrief {
             block: None,
@@ -447,11 +511,13 @@ pub(super) fn lessons_brief(
 }
 
 /// The lessons one brief carries, in order, and the ids its key check left out. A lesson outside the caps is not
-/// chosen; one the key's text appears in is left out and counted; one that looks like a secret is never shown.
+/// chosen; one the key's text appears in is left out and counted; one that looks like a secret is never shown; one
+/// that is now a skill is left out until that skill is removed.
 pub(super) fn choose_lessons<'a>(
     repo: &'a [CrewLesson],
     global: &'a [CrewLesson],
     needles: &[String],
+    skills: &LessonSkills,
 ) -> (Vec<&'a CrewLesson>, Vec<String>) {
     let mut chosen: Vec<&CrewLesson> = Vec::new();
     let mut left_out: Vec<String> = Vec::new();
@@ -461,6 +527,10 @@ pub(super) fn choose_lessons<'a>(
             break;
         }
         if lesson.state != "active" || lesson.hidden_by_cap {
+            continue;
+        }
+        // It is now a skill: the skill carries it, so the brief leaves it out while the skill exists.
+        if skills.contains_key(&lesson.id) {
             continue;
         }
         let value = serde_json::json!({ "lesson": lesson.text });
@@ -506,7 +576,7 @@ pub(super) fn person_text(words: &str) -> Result<String> {
 }
 
 /// The secret scan of a lesson's text: a secret is refused, never stored.
-fn refuse_secret_text(text: &str) -> Result<()> {
+pub(super) fn refuse_secret_text(text: &str) -> Result<()> {
     if super::guard::find_secret(&serde_json::json!({ "text": text })).is_some() {
         return Err(CoreError::Refused {
             status: 400,

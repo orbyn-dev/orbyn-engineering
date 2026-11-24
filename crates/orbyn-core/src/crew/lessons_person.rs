@@ -15,7 +15,8 @@ use crate::store::{CrewLesson, UNDO_SECS};
 use crate::util::{format_unix, parse_time};
 
 use super::lessons::{
-    BRIEF_CHARS_MAX, BRIEF_LESSONS_MAX, LessonScope, choose_lessons, names_path, person_text,
+    BRIEF_CHARS_MAX, BRIEF_LESSONS_MAX, LessonScope, LessonSkills, choose_lessons, names_path,
+    person_text,
 };
 use super::lessons_view::{LessonDetailView, LessonFilter, LessonListView, LessonView};
 
@@ -25,11 +26,16 @@ fn lesson_missing() -> CoreError {
 
 /// The ids the next brief would carry, from this repository's switch and the same chooser the brief uses. No key
 /// needles: the card says whether the lesson is brief-eligible; the left-out count is separate.
-fn chosen_ids(use_lessons: bool, repo: &[CrewLesson], global: &[CrewLesson]) -> HashSet<String> {
+fn chosen_ids(
+    use_lessons: bool,
+    repo: &[CrewLesson],
+    global: &[CrewLesson],
+    skills: &LessonSkills,
+) -> HashSet<String> {
     if !use_lessons {
         return HashSet::new();
     }
-    let (chosen, _) = choose_lessons(repo, global, &[]);
+    let (chosen, _) = choose_lessons(repo, global, &[], skills);
     chosen.into_iter().map(|lesson| lesson.id.clone()).collect()
 }
 
@@ -43,13 +49,15 @@ impl Core {
         let counts = self.store.crew_lessons_counts(repo)?;
         let repo_lessons = self.store.crew_lessons("repo", Some(repo))?;
         let global_lessons = self.store.crew_lessons("global", None)?;
-        let chosen = chosen_ids(use_lessons, &repo_lessons, &global_lessons);
+        let skills = self.lesson_skill_names(repo)?;
+        let chosen = chosen_ids(use_lessons, &repo_lessons, &global_lessons, &skills);
         let lessons = repo_lessons
             .into_iter()
             .chain(global_lessons)
             .filter(|lesson| filter.keeps(lesson))
             .map(|lesson| LessonView {
                 in_next_brief: chosen.contains(&lesson.id),
+                skill: skills.get(&lesson.id).cloned(),
                 lesson,
             })
             .collect();
@@ -79,24 +87,27 @@ impl Core {
         } else {
             lesson.project_id.clone()
         };
-        let in_next_brief = match project.as_deref() {
+        let (in_next_brief, skill) = match project.as_deref() {
             Some(project) => {
                 let use_lessons = self.store.crew_use_lessons(project)?;
-                if use_lessons {
+                let skills = self.lesson_skill_names(project)?;
+                let in_next_brief = if use_lessons {
                     let repo_lessons = self.store.crew_lessons("repo", Some(project))?;
                     let global_lessons = self.store.crew_lessons("global", None)?;
-                    chosen_ids(true, &repo_lessons, &global_lessons).contains(&lesson.id)
+                    chosen_ids(true, &repo_lessons, &global_lessons, &skills).contains(&lesson.id)
                 } else {
                     false
-                }
+                };
+                (in_next_brief, skills.get(&lesson.id).cloned())
             }
-            None => false,
+            None => (false, None),
         };
         let evidence = lesson.evidence.clone();
         Ok(LessonDetailView {
             lesson: LessonView {
                 lesson,
                 in_next_brief,
+                skill,
             },
             evidence,
         })

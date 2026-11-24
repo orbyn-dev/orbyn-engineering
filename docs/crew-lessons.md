@@ -23,7 +23,8 @@ touch the router, the verifier, an answer key, a lease, a budget or a check.
   "names_path": false,        // text names a repo-relative path (repo scope only; promoting such a lesson is refused until edited)
   "uses": 3,                  // briefs that carried it
   "left_out_of": 0,           // briefs it was left out of because the key check failed ("Left out of 1 brief")
-  "skill": null,              // KC9: { "name": "..." } while a skill made from it exists ("Now a skill"); then in_next_brief is false
+  "skill": null,              // the skill's name while a skill made from it exists ("Now a skill"); then in_next_brief is false
+  "evidence": [ { "kind": "task", "id": "..." } ],   // at most 5, ids only
   "created_at": "...", "updated_at": "...", "last_used_at": null,
   "rev": 4                    // integer, +1 on every change; writes send it back
 }
@@ -61,9 +62,9 @@ desktop_required`), audited in the same transaction as the change (`crew.lesson.
 }
 ```
 
-`LessonDetail`: `{ "lesson": Lesson, "evidence": [ { "kind", "id" } ] }`. A global lesson's `in_next_brief` depends on a repository's switch
-and cap, so `repo` is required for a global lesson and the value describes that repository; a repository lesson ignores it. Without it a
-global lesson answers `in_next_brief: false`.
+`LessonDetail`: `{ "lesson": Lesson, "evidence": [ { "kind", "id" } ] }`; its `evidence` equals the lesson's own. A global lesson's
+`in_next_brief` depends on a repository's switch and cap, so `repo` is required for a global lesson and the value describes that
+repository; a repository lesson ignores it. Without it a global lesson answers `in_next_brief: false`.
 
 Rules a client can rely on:
 
@@ -94,25 +95,28 @@ nothing and does not feed the needs-you field. Under `/api/crew/skill-proposals`
 
 | Method and path | Class | Body | Answer |
 |---|---|---|---|
-| `GET /api/crew/skill-proposals?repo=<project id>` | Local | none | `200 { proposals: [SkillProposal] }` |
+| `GET /api/crew/skill-proposals?repo=<project id>` | Local | none | `200 { proposals: [SkillProposal] }` (every state, newest first) |
 | `POST /api/crew/skill-proposals/{id}/approve` | Person | `{ text, rev }` | `200 SkillProposal` (writes the skill; Eng 4 owns where) |
 | `POST /api/crew/skill-proposals/{id}/dismiss` | Person | `{ rev }` | `200 SkillProposal` |
 
 ```json
 {
   "id": "prop_...", "repo": "<project id>",
-  "state": "open",                 // "open" | "approved" | "dismissed"
+  "state": "open",                 // "open" | "approved" | "dismissed"; every state is read
   "text": "...",                   // the template text; the person edits it before Approve
-  "lessons": [ "les_..." ],        // source lessons
+  "lessons": [ { "id": "les_...", "evidence": [ { "kind": "task", "id": "..." } ] } ],
   "can_approve": true,             // false when a source lesson was deleted or disabled; the proposal is kept
   "skill": null,                   // { "name": "..." } once approved
-  "rev": 1, "created_at": "..."
+  "rev": 1, "created_at": "...", "approved_at": null
 }
 ```
 
-Errors: `409 stale` for a wrong `rev`, `409 not_open` for approve or dismiss of a proposal that is not open, `400 invalid` for
-empty approved text or text over 600 characters or `can_approve: false`, `400 secret_refused` as above. An approved proposal marks its source
-lessons "Now a skill" and they leave briefs while that skill exists; if the skill is removed they return to normal.
+An approved local skill applies to all projects on this device, not only the repository whose lessons proposed it.
+
+Errors: `409 stale` for a wrong `rev`, `409 not_open` for approve or dismiss of a proposal that is not open, `409 name_taken`
+when the skill name is held by the shared library or an existing local skill, `400 invalid` for empty approved text or text
+over 600 characters or `can_approve: false`, `400 secret_refused` as above. An approved proposal marks its source lessons
+"Now a skill" and they leave briefs while that skill exists; if the skill is removed they return to normal.
 
 ## KC8: resumed after restart
 

@@ -10,7 +10,8 @@ use serde_json::{Value, json};
 
 use super::harness::{KEY_MARKER, Turn, World, brief, key, world};
 use crate::crew::lessons::{
-    BRIEF_CHARS_MAX, BRIEF_LESSONS_MAX, LessonBrief, LessonScope, choose_lessons, lessons_brief,
+    BRIEF_CHARS_MAX, BRIEF_LESSONS_MAX, LessonBrief, LessonScope, LessonSkills, choose_lessons,
+    lessons_brief,
 };
 use crate::error::CoreError;
 use crate::store::{CrewLesson, NewCrewLesson};
@@ -91,6 +92,8 @@ fn stored_lesson(id: &str, text: &str, state: &str, hidden: bool) -> CrewLesson 
         scope: "repo".to_owned(),
         project_id: Some("p1".to_owned()),
         source: "person".to_owned(),
+        check_kind: None,
+        path_class: None,
         text: text.to_owned(),
         fingerprint: None,
         evidence: Vec::new(),
@@ -189,14 +192,14 @@ fn the_character_cap_stops_before_fifteen_hundred_characters() {
         stored_lesson("les_a", &"x".repeat(800), "active", false),
         stored_lesson("les_b", &"x".repeat(800), "active", false),
     ];
-    let (chosen, _) = choose_lessons(&too_long, &[], &[]);
+    let (chosen, _) = choose_lessons(&too_long, &[], &[], &LessonSkills::new());
     assert_eq!(chosen.len(), 1);
     // 750 + 750 is exactly the cap: both are carried.
     let exactly = [
         stored_lesson("les_c", &"x".repeat(750), "active", false),
         stored_lesson("les_d", &"x".repeat(750), "active", false),
     ];
-    let (chosen, _) = choose_lessons(&exactly, &[], &[]);
+    let (chosen, _) = choose_lessons(&exactly, &[], &[], &LessonSkills::new());
     assert_eq!(chosen.len(), 2);
 }
 
@@ -207,7 +210,7 @@ fn hidden_disabled_and_global_lessons_keep_their_places() {
         stored_lesson("off", "Lesson off.", "disabled", false),
     ];
     let global = [stored_lesson("global", "Lesson global.", "active", false)];
-    let (chosen, left_out) = choose_lessons(&repo, &global, &[]);
+    let (chosen, left_out) = choose_lessons(&repo, &global, &[], &LessonSkills::new());
     assert_eq!(
         chosen
             .iter()
@@ -254,6 +257,8 @@ async fn preview_off_never_injects_a_lesson() {
             scope: "repo".to_owned(),
             project_id: Some(project.clone()),
             source: "person".to_owned(),
+            check_kind: None,
+            path_class: None,
             text: "A stored lesson.".to_owned(),
             fingerprint: None,
             evidence: Vec::new(),
@@ -317,6 +322,8 @@ async fn a_stored_secret_is_never_shown_and_is_not_counted_as_a_key_left_out() {
             scope: "repo".to_owned(),
             project_id: Some(project.clone()),
             source: "person".to_owned(),
+            check_kind: None,
+            path_class: None,
             text: secret,
             fingerprint: None,
             evidence: Vec::new(),
@@ -369,7 +376,7 @@ async fn hidden_lessons_are_never_injected() {
 
 /// One normalized route decision: the run id and the content address that names it are the one part two starts
 /// cannot share.
-fn route_of(w: &World, task: &str) -> Value {
+pub(super) fn route_of(w: &World, task: &str) -> Value {
     let decision = w
         .core
         .store
@@ -386,7 +393,7 @@ fn route_of(w: &World, task: &str) -> Value {
 
 /// The leases with their own run address, content address and clock stamps removed, in a stable order. The
 /// clock stamps differ because each start grants its lease at its own wall-clock time.
-fn leases_of(w: &World, task: &str) -> Vec<Value> {
+pub(super) fn leases_of(w: &World, task: &str) -> Vec<Value> {
     let mut rows: Vec<Value> = w
         .core
         .store
@@ -488,18 +495,31 @@ fn a_storage_failure_shows_no_lessons_and_is_never_an_error() {
             Err(unreadable()),
             Ok(vec![kept.clone()]),
             Ok(Vec::new()),
+            Ok(LessonSkills::new()),
             &[]
         ),
         LessonBrief::none()
     );
     // The repository's lessons could not be read.
     assert_eq!(
-        lessons_brief(Ok(true), Err(unreadable()), Ok(Vec::new()), &[]),
+        lessons_brief(
+            Ok(true),
+            Err(unreadable()),
+            Ok(Vec::new()),
+            Ok(LessonSkills::new()),
+            &[]
+        ),
         LessonBrief::none()
     );
     // The global lessons could not be read.
     assert_eq!(
-        lessons_brief(Ok(true), Ok(vec![kept]), Err(unreadable()), &[]),
+        lessons_brief(
+            Ok(true),
+            Ok(vec![kept]),
+            Err(unreadable()),
+            Ok(LessonSkills::new()),
+            &[]
+        ),
         LessonBrief::none(),
         "a read failure shows no lessons and never refuses a start"
     );
@@ -514,7 +534,13 @@ fn a_brief_whose_only_lesson_the_key_leaves_out_has_no_block_but_counts_it() {
         "active",
         false,
     );
-    let brief = lessons_brief(Ok(true), Ok(vec![leaky]), Ok(Vec::new()), &needles);
+    let brief = lessons_brief(
+        Ok(true),
+        Ok(vec![leaky]),
+        Ok(Vec::new()),
+        Ok(LessonSkills::new()),
+        &needles,
+    );
     assert!(
         brief.block.is_none(),
         "nothing is shown when every lesson leaks"

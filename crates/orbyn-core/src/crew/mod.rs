@@ -35,6 +35,7 @@ pub(crate) mod lifecycle;
 mod needs_you;
 mod persist;
 mod person_check;
+pub mod proposals;
 mod protect;
 mod recover;
 mod report;

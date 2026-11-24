@@ -47,6 +47,12 @@ pub struct Lesson {
     pub uses: u32,
     /// Briefs it was left out of because their answer-key check failed.
     pub left_out_of: u32,
+    /// The skill this lesson is now, while that skill exists; null for an ordinary lesson.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub skill: Option<String>,
+    /// The ids the lesson came from, at most five; ids only, never content.
+    pub evidence: Vec<LessonEvidence>,
     pub created_at: String,
     pub updated_at: String,
     pub last_used_at: Option<String>,

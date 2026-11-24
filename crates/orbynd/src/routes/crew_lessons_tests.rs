@@ -90,12 +90,41 @@ fn seed(app: &Served, scope: &str, repo: Option<&str>, text: &str) -> String {
             project_id: repo.map(str::to_owned),
             source: "person".to_owned(),
             text: text.to_owned(),
+            check_kind: None,
+            path_class: None,
             fingerprint: None,
             evidence: vec![LessonEvidence {
                 kind: "task".to_owned(),
                 id: "sha256:one".to_owned(),
             }],
             edited_by_person: true,
+            names_path: false,
+        })
+        .unwrap()
+        .expect("a lesson with no fingerprint is written")
+        .id
+}
+
+/// One lesson written straight to the store with its own evidence ids.
+fn seed_with_evidence(app: &Served, repo: &str, text: &str, evidence: &[&str]) -> String {
+    app.core
+        .store
+        .write_crew_lesson(NewCrewLesson {
+            scope: "repo".to_owned(),
+            project_id: Some(repo.to_owned()),
+            source: "escape".to_owned(),
+            text: text.to_owned(),
+            check_kind: None,
+            path_class: None,
+            fingerprint: None,
+            evidence: evidence
+                .iter()
+                .map(|id| LessonEvidence {
+                    kind: "escape".to_owned(),
+                    id: (*id).to_owned(),
+                })
+                .collect(),
+            edited_by_person: false,
             names_path: false,
         })
         .unwrap()
@@ -256,6 +285,81 @@ async fn a_global_lesson_detail_answers_for_the_repo_named_and_false_without_one
 
     let (status, body) = detail(&app, "les_missing").await;
     assert_eq!((status, &body["code"]), (404, &json!("not_found")));
+}
+
+#[tokio::test]
+async fn the_list_and_the_detail_agree_on_a_lessons_own_evidence_and_skill() {
+    let app = serve("lessons-evidence", true, false).await;
+    let repo = project(&app, "evidence");
+    let evidence_ids = ["esc-one", "esc-two", "task-three", "merge-four", "esc-five"];
+    let five = seed_with_evidence(&app, &repo, "A lesson from five ids.", &evidence_ids);
+    let none = add(&app, "repo", Some(&repo), "A lesson with no evidence.").await;
+    let none_id = id(&none);
+    assert_eq!(none["evidence"], json!([]), "add by hand keeps no ids");
+    assert_eq!(none["skill"], Value::Null);
+
+    // An approved proposal gives its source lessons a skill; the skill exists, so they leave the brief.
+    let proposal_id = fixtures::skill_proposal(&app.core, &repo, "src", &["esc-approved"]);
+    let proposal = app
+        .core
+        .store
+        .skill_proposal(&proposal_id)
+        .unwrap()
+        .unwrap();
+    let source_id = proposal.lessons[0].clone();
+    let (status, approved) = write(
+        &app,
+        "POST",
+        &format!("/api/crew/skill-proposals/{proposal_id}/approve"),
+        json!({ "text": proposal.text, "rev": proposal.rev }),
+    )
+    .await;
+    assert_eq!(status, 200, "{approved}");
+
+    let (status, list) = get(&app, &format!("{LESSONS}?repo={repo}&filter=all")).await;
+    assert_eq!(status, 200);
+    let listed = |id: &str| -> Value {
+        list["lessons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|lesson| lesson["id"] == json!(id))
+            .cloned()
+            .unwrap_or_else(|| panic!("{id} is listed: {list}"))
+    };
+    for (id, want_evidence, want_skill) in [
+        (five.as_str(), &evidence_ids[..], Value::Null),
+        (none_id.as_str(), &[][..], Value::Null),
+        (
+            source_id.as_str(),
+            &["esc-approved"][..],
+            json!("crew-escape-src"),
+        ),
+    ] {
+        let item = listed(id);
+        let (status, detail) = detail(&app, id).await;
+        assert_eq!(status, 200, "{detail}");
+        assert_eq!(
+            item["evidence"],
+            json!(
+                want_evidence
+                    .iter()
+                    .map(|id| json!({ "kind": "escape", "id": id }))
+                    .collect::<Vec<_>>()
+            ),
+            "{item}"
+        );
+        assert_eq!(item["skill"], want_skill, "{item}");
+        assert_eq!(item["evidence"], detail["lesson"]["evidence"], "{detail}");
+        assert_eq!(item["skill"], detail["lesson"]["skill"], "{detail}");
+        assert_eq!(
+            detail["evidence"], detail["lesson"]["evidence"],
+            "the detail's evidence is the lesson's own"
+        );
+    }
+    let source = listed(&source_id);
+    assert_eq!(source["skill"], "crew-escape-src");
+    assert_eq!(source["in_next_brief"], false);
 }
 
 #[tokio::test]
