@@ -711,7 +711,32 @@ async fn the_check_routes_map_a_stale_view_a_missing_check_and_bad_input_to_plai
 #[tokio::test]
 async fn counts_answer_one_areas_engines_and_bad_input_is_refused() {
     let app = serve("escapes-counts", true, false).await;
-    let (project, _id) = with_escape(&app, "The merge was reverted.");
+    // One project with one merge in `src/app` and one possible escape on it. The merge is joined to the project the way a real crew
+    // run joins it, so the counts read can see it.
+    let project = fixtures::add_project(
+        &app.core,
+        app.core.config.data_dir.join("p").to_str().unwrap(),
+    );
+    let (task, _) = seed_task(&app.core, "counts");
+    app.core
+        .store
+        .add_crew_merge(&fixtures::merge_record(&task, "/repo", "main", "x"))
+        .unwrap();
+    app.core
+        .store
+        .link_merge_to_project_for_test(&project, &task)
+        .unwrap();
+    app.core
+        .store
+        .insert_escape_for_test(
+            "esc_one",
+            &project,
+            &task,
+            "revert",
+            "possible",
+            "The merge was reverted.",
+        )
+        .unwrap();
 
     let (status, counts) = app
         .get(&format!(

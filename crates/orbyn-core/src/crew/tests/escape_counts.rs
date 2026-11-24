@@ -25,13 +25,14 @@ fn decide(project: &str, state: wire::EscapeState) -> wire::EscapeDecide {
 }
 
 /// A merge recorded with `engine` in `areas` at `at`, for the cases where the engine has to differ: the rig's own merges are all
-/// `alpha`. The task is started the way the product starts one, so the merge joins its project's reads.
-async fn merge_as(rig: &mut Rig, engine: &str, areas: &[&str], at: i64) -> String {
+/// `alpha`. The task is started the way the product starts one, so the merge joins its project's reads. `n` keeps each start's leased
+/// path its own, as the rig's do, so a second start is not a lease conflict with the first.
+async fn merge_as(rig: &mut Rig, n: usize, engine: &str, areas: &[&str], at: i64) -> String {
     let (answer, error) = rig
         .w
         .start(
             brief(
-                json!({ "files": [{ "path": "src/t/**", "mode": "write" }], "outcome": "Task." }),
+                json!({ "files": [{ "path": format!("src/t{n}/**"), "mode": "write" }], "outcome": "Task." }),
             ),
             key(),
         )
@@ -181,10 +182,10 @@ async fn an_unknown_project_or_an_area_that_is_not_a_name_is_refused() {
 async fn a_cut_list_says_it_was_cut_and_keeps_the_busiest_engine() {
     let mut rig = rig().await;
     let engine = "alpha";
-    merge_as(&mut rig, engine, &["web/auth"], NOW - 4 * DAY).await;
-    merge_as(&mut rig, engine, &["web/auth"], NOW - 3 * DAY).await;
-    merge_as(&mut rig, engine, &["web/auth"], NOW - 2 * DAY).await;
-    merge_as(&mut rig, "beta", &["web/auth"], NOW - DAY).await;
+    merge_as(&mut rig, 1, engine, &["web/auth"], NOW - 4 * DAY).await;
+    merge_as(&mut rig, 2, engine, &["web/auth"], NOW - 3 * DAY).await;
+    merge_as(&mut rig, 3, engine, &["web/auth"], NOW - 2 * DAY).await;
+    merge_as(&mut rig, 4, "beta", &["web/auth"], NOW - DAY).await;
     let core = &rig.w.core;
 
     let counts = core.crew_escape_counts(&rig.project, "web/auth").unwrap();
