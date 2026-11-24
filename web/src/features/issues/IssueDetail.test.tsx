@@ -214,6 +214,23 @@ it("draws no Closed row for an open issue even when the tracker sends a date", a
   expect(within(facts).queryByText("Closed", { selector: "dt" })).toBeNull();
 });
 
+// ---- the tracker host ----
+
+it("shows the host the tracker reports in the Facts, as text", async () => {
+  setIssuesApi(createIssuesMock({ trackers: [{ tracker: "github", connected: true, scope: "orbyn-dev/orbyn-engineering", host: "https://github.example.com" }] }));
+  at(ISSUE);
+  const facts = await screen.findByRole("group", { name: "Facts" });
+  expect(within(facts).getByText("Host", { selector: "dt" }).nextElementSibling).toHaveTextContent("https://github.example.com");
+  expect(within(facts).queryByRole("link", { name: /github\.example\.com/ })).toBeNull();
+});
+
+it("draws no Host row when the tracker reports no host", async () => {
+  setIssuesApi(createIssuesMock());
+  at(ISSUE);
+  const facts = await screen.findByRole("group", { name: "Facts" });
+  expect(within(facts).queryByText("Host", { selector: "dt" })).toBeNull();
+});
+
 it("lists the linked pull requests the tracker reports: state, title, number, repository and whether it closes the issue", async () => {
   const merged = { ...PR, number: 131, title: "Keep the next parameter when signing in", state: "merged", closes_issue: false } as const;
   const draft = { ...PR, number: 150, title: "Try cookies", repository: "orbyn-planner", is_draft: true, closes_issue: false } as const;
