@@ -75,10 +75,8 @@ pub(crate) enum DependencyFeed {
     /// The tracker has no feed Orbyn reads for this scope. Nothing is claimed and no refusal is written: a
     /// tracker that cannot answer is not a refusal.
     Cannot,
-    /// The updates the tracker reports for the scope. No reader constructs this yet (follow-up #1360), so the
-    /// variant is only built by the listener tests that prove the claim and start path; it is kept here, not
-    /// behind a cfg, because a reader that gains the feed answers it without changing the listener.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// The updates the tracker reports for the scope. GitHub answers it from its Dependabot alerts; every other
+    /// reader takes the trait's default.
     Updates(Vec<DependencyUpdate>),
 }
 
@@ -93,10 +91,8 @@ pub(crate) trait IssueSource: Send + Sync {
         Ok(Vec::new())
     }
     /// What this tracker can report about dependency or advisory updates for one scope. The default is
-    /// [`DependencyFeed::Cannot`] and every reader takes it today: no reader has such a feed yet (the GitHub
-    /// Dependabot alerts feed is follow-up #1360), and a tracker that cannot answer spends no event. A reader
-    /// that gains a feed answers [`DependencyFeed::Updates`]; the listener's claim, start and refusal path
-    /// already handles it, so nothing else changes here.
+    /// [`DependencyFeed::Cannot`] and every reader but GitHub takes it: GitHub answers its Dependabot alerts feed,
+    /// and a tracker that cannot answer spends no event.
     async fn dependency_updates(&self, _scope: &str) -> Result<DependencyFeed> {
         Ok(DependencyFeed::Cannot)
     }
@@ -391,8 +387,8 @@ impl Core {
         self.scope_list(tracker, scope, query).await
     }
 
-    /// What the project's tracker reports about dependency or advisory updates. No reader answers today, so this
-    /// is [`DependencyFeed::Cannot`] for every tracker (follow-up #1360); the listener then spends no event.
+    /// What the project's tracker reports about dependency or advisory updates. GitHub answers from its
+    /// Dependabot alerts; every other tracker answers [`DependencyFeed::Cannot`], and the listener spends no event.
     pub(crate) async fn tracker_dependency_updates(
         &self,
         tracker: TrackerKind,
