@@ -364,8 +364,9 @@ async fn metadata_in(
     (status, response.json().await.unwrap_or(Value::Null))
 }
 
-/// The file names of a tree answer, in order.
-fn names(body: &Value) -> Vec<String> {
+/// The file names of a tree answer, in order; anything but `200` fails here.
+fn names((status, body): (u16, Value)) -> Vec<String> {
+    assert_eq!(status, 200, "{body}");
     body.as_array()
         .unwrap()
         .iter()
@@ -374,7 +375,7 @@ fn names(body: &Value) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn a_repo_id_reads_the_named_repositorys_tree_and_metadata() {
+async fn a_repo_id_reads_the_named_repositories_tree_and_metadata() {
     let dir = TempDir::new();
     // A multi-repository thread needs the beta flag on.
     let service = Service::start(
@@ -411,6 +412,30 @@ async fn a_repo_id_reads_the_named_repositorys_tree_and_metadata() {
     assert_eq!(code, 200, "{added}");
     let other_id = added["id"].as_str().unwrap().to_owned();
     assert_eq!(added["trusted"], false);
+
+    // No route can put an untrusted repository in a thread: the start refuses it here,
+    // and adding one to a running thread is refused the same way. So the file routes'
+    // own untrusted gate (`scoped_thread` -> `409 repo_untrusted`) runs on state no
+    // route can build; the core test
+    // `an_unknown_untrusted_or_flagged_off_repository_is_refused_at_every_entry` asserts it.
+    let start = json!({
+        "repos": [
+            { "repo_id": project_id, "base_branch": "main" },
+            { "repo_id": other_id, "base_branch": "main" },
+        ],
+        "engine": "codex",
+        "model": null,
+        "permission_mode": "supervised",
+    });
+    let (code, refused) = service
+        .send(
+            &format!("/api/projects/{project_id}/repo-threads"),
+            start.clone(),
+        )
+        .await;
+    assert_eq!(code, 409, "{refused}");
+    assert_eq!(refused["code"], "repo_untrusted", "{refused}");
+
     let (code, trusted) = service
         .send(
             &format!("/api/projects/{project_id}/repos/{other_id}/trust"),
@@ -422,18 +447,7 @@ async fn a_repo_id_reads_the_named_repositorys_tree_and_metadata() {
 
     // Two repositories make a task folder: one worktree per repository, one branch.
     let (code, thread) = service
-        .send(
-            &format!("/api/projects/{project_id}/repo-threads"),
-            json!({
-                "repos": [
-                    { "repo_id": project_id, "base_branch": "main" },
-                    { "repo_id": other_id, "base_branch": "main" },
-                ],
-                "engine": "codex",
-                "model": null,
-                "permission_mode": "supervised",
-            }),
-        )
+        .send(&format!("/api/projects/{project_id}/repo-threads"), start)
         .await;
     assert_eq!(code, 200, "{thread}");
     let thread = thread["id"].as_str().unwrap().to_owned();
@@ -441,15 +455,15 @@ async fn a_repo_id_reads_the_named_repositorys_tree_and_metadata() {
     // No repo_id is the primary repository, and naming it explicitly reads the same
     // worktree. Each repository has a file of its own, so a tree is one repository's.
     assert_eq!(
-        names(&tree(&service, &thread, None).await.1),
+        names(tree(&service, &thread, None).await),
         ["base.txt", "same.txt"]
     );
     assert_eq!(
-        names(&tree(&service, &thread, Some(&project_id)).await.1),
+        names(tree(&service, &thread, Some(&project_id)).await),
         ["base.txt", "same.txt"]
     );
     assert_eq!(
-        names(&tree(&service, &thread, Some(&other_id)).await.1),
+        names(tree(&service, &thread, Some(&other_id)).await),
         ["other.txt", "same.txt"]
     );
 
@@ -503,7 +517,7 @@ async fn a_repo_id_reads_the_named_repositorys_tree_and_metadata() {
     // An ordinary thread has one checkout and no repositories, so any repo_id is 404.
     let plain = service.thread(&project_id, "codex").await;
     assert_eq!(
-        names(&tree(&service, &plain, None).await.1),
+        names(tree(&service, &plain, None).await),
         ["base.txt", "same.txt"]
     );
     assert_eq!(tree(&service, &plain, Some(&other_id)).await.0, 404);
