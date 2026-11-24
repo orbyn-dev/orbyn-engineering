@@ -645,6 +645,8 @@ impl EngineDriver for HostDriver {
         warm: WarmProcess,
     ) -> Result<RunHandle> {
         if self.warms() {
+            // A CLI run invalidates a rewind point noted on the SDK path, as `start_run` does for every CLI run.
+            self.pool.clear_resume_at(&self.inner.descriptor().id);
             return self.inner.adopt_run(spec, events, warm).await;
         }
         // The setting changed after the process was started: the run goes the SDK way and the early process is ended unused.

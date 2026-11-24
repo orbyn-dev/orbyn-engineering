@@ -223,6 +223,7 @@ async fn a_thread_moves_between_the_paths_on_the_same_session_id() {
 struct Warmer {
     keys: Mutex<usize>,
     starts: Mutex<usize>,
+    adopted: Mutex<usize>,
 }
 
 #[async_trait]
@@ -258,6 +259,16 @@ impl EngineDriver for Warmer {
     ) -> Result<Option<crate::agents::driver::WarmProcess>> {
         *self.starts.lock().unwrap() += 1;
         Ok(None)
+    }
+
+    async fn adopt_run(
+        &self,
+        spec: RunSpec,
+        events: mpsc::Sender<EngineEvent>,
+        _warm: crate::agents::driver::WarmProcess,
+    ) -> Result<RunHandle> {
+        *self.adopted.lock().unwrap() += 1;
+        Recorder::default().start_run(spec, events).await
     }
 }
 
@@ -299,4 +310,35 @@ async fn a_host_wrapped_claude_warms_only_on_the_cli_path_and_reads_the_setting_
     let driver = HostDriver::new(inner, other.pool.clone(), "fake".into()).with_path(path);
     assert!(!driver.can_warm());
     other.pool.shutdown().await;
+}
+
+/// A CLI run adopted from a warm process invalidates a rewind point noted on the SDK path, as a started CLI run does; on the SDK
+/// path the warm process is ended unused and the run is the host's.
+#[cfg(unix)]
+#[tokio::test]
+async fn adopting_a_warm_cli_run_clears_a_pending_rewind_point() {
+    let Some(rig) = super::tests::standin_family("claude", &[], fast()) else {
+        return;
+    };
+    let inner = Arc::new(Warmer::default());
+    let (_, path) = choice(EnginePath::Cli);
+    let driver = HostDriver::new(inner.clone(), rig.pool.clone(), "claude".into()).with_path(path);
+    let point = "11111111-2222-4333-8444-555555555555";
+    rig.pool
+        .note_resume_at("claude", "session-1", point)
+        .unwrap();
+
+    let warm = crate::agents::driver::stand_in_warm("key").unwrap();
+    let (events, _received) = mpsc::channel(8);
+    driver
+        .adopt_run(super::tests::spec("adopt"), events, warm)
+        .await
+        .unwrap();
+    assert_eq!(*inner.adopted.lock().unwrap(), 1, "the CLI driver ran it");
+    assert_eq!(
+        rig.pool.take_resume_at("claude", "session-1"),
+        None,
+        "the point was cleared"
+    );
+    rig.pool.shutdown().await;
 }
