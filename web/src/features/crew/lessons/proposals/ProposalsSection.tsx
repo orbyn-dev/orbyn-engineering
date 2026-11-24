@@ -39,9 +39,8 @@ import "./proposals.css";
 const PROPOSALS_READ_ERROR = "Can’t read the skill proposals";
 
 /**
- * The skill proposals of one repository, on the Lessons page (KC9): drawn above the lessons groups, always present with its
- * count once the service answers the proposals read, a "No proposals" box when there are none, and one card per open
- * proposal. Approve asks first and writes the proposed text as it stands; Dismiss asks and takes the proposal away. Both are
+ * The skill proposals of one repository, on the Lessons page (KC9): drawn above the lessons groups with their count and one
+ * card per open proposal, and not drawn at all when there are none (the Lessons frames draw no empty box). Approve asks first and writes the proposed text as it stands; Dismiss asks and takes the proposal away. Both are
  * Person routes, so only the person's own click sends one. A service without the routes answers 404 and the section is not
  * drawn at all, as the whole lessons page is not then.
  */
@@ -189,35 +188,29 @@ function SectionBody({
           </span>
         </div>
       ) : null}
-      <h5 className="cx-t10h5">
-        Skill proposals
-        <span className="cx-t10r" style={{ textDecoration: "none" }}>
-          {open.length}
-        </span>
-      </h5>
-      {open.length === 0 ? (
-        <div className="cx-fbx" role="status">
-          <h6>No proposals</h6>
-          <p style={{ margin: 0, color: "var(--color-muted)", fontSize: "12.5px", lineHeight: 1.5 }}>
-            Crew proposes a skill when 3 or more active lessons of one repository share a source, a check kind and a path
-            class. You read it and approve it; nothing is added to skills-local on its own.
-          </p>
-        </div>
-      ) : (
-        open.map((proposal) => (
-          <ProposalCard
-            key={proposal.id}
-            proposal={proposal}
-            project={project}
-            lessons={rows}
-            onReview={() =>
-              navigate({ name: "settings", section: "crew", crewPage: "skill-proposal", repo: project, id: proposal.id })
-            }
-            onApprove={() => setConfirming({ kind: "approve", proposal })}
-            onDismiss={() => setConfirming({ kind: "dismiss", proposal })}
-          />
-        ))
-      )}
+      {open.length > 0 ? (
+        <>
+          <h5 className="cx-t10h5">
+            Skill proposals
+            <span className="cx-t10r" style={{ textDecoration: "none" }}>
+              {open.length}
+            </span>
+          </h5>
+          {open.map((proposal) => (
+            <ProposalCard
+              key={proposal.id}
+              proposal={proposal}
+              project={project}
+              lessons={rows}
+              onReview={() =>
+                navigate({ name: "settings", section: "crew", crewPage: "skill-proposal", repo: project, id: proposal.id })
+              }
+              onApprove={() => setConfirming({ kind: "approve", proposal })}
+              onDismiss={() => setConfirming({ kind: "dismiss", proposal })}
+            />
+          ))}
+        </>
+      ) : null}
       {confirming?.kind === "approve" ? (
         <ApproveConfirm
           proposal={confirming.proposal}

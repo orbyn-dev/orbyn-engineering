@@ -102,13 +102,13 @@ describe("the Skill proposals section of the Lessons page", () => {
     expect(writes(calls, "POST")).toHaveLength(0);
   });
 
-  it("says there are no proposals yet, in the design's words", async () => {
+  it("draws no proposals box and no heading when there are none", async () => {
     answers.proposals = { status: 200, body: { proposals: [] } };
     open();
-    expect(await screen.findByText("No proposals")).toBeInTheDocument();
-    expect(
-      screen.getByText(/Crew proposes a skill when 3 or more active lessons of one repository share a source, a check kind and a path class\./),
-    ).toBeInTheDocument();
+    await waitFor(() => expect(calls.filter(({ url }) => url.includes("/api/crew/skill-proposals?"))).toHaveLength(1));
+    expect(screen.queryByText("No proposals")).toBeNull();
+    expect(screen.queryByText("Skill proposals")).toBeNull();
+    expect(screen.queryByText(/Crew proposes a skill when 3 or more active lessons/)).toBeNull();
     expect(screen.queryByRole("region", { name: /Proposed skill/ })).toBeNull();
     expect(writes(calls, "POST")).toHaveLength(0);
   });
@@ -261,8 +261,8 @@ describe("the Skill proposals section of the Lessons page", () => {
     expect(screen.getByText(/The lessons it came from stay here and stop going into briefs while the skill exists\./)).toBeInTheDocument();
     expect(writes(calls, "POST")).toHaveLength(1);
     expect(bodyOf(writes(calls, "POST")[0]?.init)).toEqual({ text: proposal().text, rev: 1 });
-    // The read is made again, and the answered proposal is no longer open.
-    expect(await screen.findByText("No proposals")).toBeInTheDocument();
+    // The read is made again, and the answered proposal is no longer open: its card and the heading go.
+    await waitFor(() => expect(screen.queryByText("Skill proposals")).toBeNull());
     expect(calls.filter(({ url }) => url.includes("/api/crew/skill-proposals?"))).toHaveLength(2);
   });
 
@@ -286,7 +286,7 @@ describe("the Skill proposals section of the Lessons page", () => {
     await user.click(within(box).getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(useUi.getState().toasts.map((one) => one.text)).toContain("Proposal dismissed."));
     expect(bodyOf(writes(calls, "POST")[0]?.init)).toEqual({ rev: 1 });
-    expect(await screen.findByText("No proposals")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Skill proposals")).toBeNull());
   });
 
   it("keeps the confirm open with the service's own words when the write was refused", async () => {
