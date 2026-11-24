@@ -8,8 +8,12 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use crate::agents::driver::SteerMessage;
+
 use super::bus_support::{Duo, duo};
-use super::harness::{Turn, World, brief, key, report, world_refusing_steers, world_with};
+use super::harness::{
+    Turn, World, brief, key, report, world_refusing_steers, world_refusing_steers_after, world_with,
+};
 
 /// Every kind a lead can send a worker, in the same order as `MessageKind`.
 const KINDS: [&str; 5] = ["fact", "question", "handoff", "blocker", "answer"];
@@ -25,6 +29,17 @@ fn queue(w: &World, thread: &str) -> Vec<String> {
         .unwrap()
         .into_iter()
         .map(|message| message.prompt)
+        .collect()
+}
+
+/// What a running turn's input was handed for this thread, as the fake engine received it.
+fn steered_to(w: &World, thread: &str) -> Vec<String> {
+    w.steered
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(to, _)| to == thread)
+        .map(|(_, text)| text.clone())
         .collect()
 }
 
@@ -423,6 +438,83 @@ async fn a_refused_live_steer_records_next_turn_and_still_requeues() {
         queued.iter().any(|prompt| prompt.contains(&message_id)),
         "{queued:?}"
     );
+}
+
+/// #444: a refusal is matched by the engine's steer id, never the text. A person's steer with
+/// exactly the same text as a live crew message must not consume the crew message's hand-over.
+#[tokio::test]
+async fn a_person_steer_with_the_same_text_never_consumes_a_crew_hand_over() {
+    // Each fake engine takes its first steer and refuses the next: the crew's reaches the running
+    // turn and is accepted, while the person's is refused.
+    let w =
+        world_refusing_steers_after(true, Arc::new(|_, _| Turn::Hang), &[("alpha", true)], 1).await;
+    let (started, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{started}");
+    let task = started["task"].as_str().unwrap().to_owned();
+    let worker = w.worker(&task);
+    let member = w.core.store.crew_run(&task).unwrap().unwrap().member;
+    w.until("the worker's turn runs", |w| running(w, &worker))
+        .await;
+
+    let (sent, error) = w
+        .call(
+            &w.lead_token,
+            "crew_post",
+            message(&member, "fact", "Same words, two senders.", None),
+        )
+        .await;
+    assert!(!error, "{sent}");
+    assert_eq!(sent["delivered"][0]["mode"], "live", "{sent}");
+    let message_id = sent["id"].as_str().unwrap().to_owned();
+    w.until("the crew steer is handed over", |w| {
+        steered_to(w, &worker).len() == 1
+    })
+    .await;
+    // The exact text the engine was handed for the crew message, now sent by the person.
+    let text = steered_to(&w, &worker)[0].clone();
+    assert_eq!(
+        w.core.crew_bus.live_steers.waiting().len(),
+        1,
+        "the crew hand-over is not waiting"
+    );
+
+    w.core.runs.steer(&worker, None, &text).unwrap();
+    w.until("the person's refused steer is requeued", |w| {
+        queue(w, &worker).iter().any(|prompt| prompt == &text)
+    })
+    .await;
+
+    // The refusal belongs to the person's steer: it writes no row for the crew message and leaves the
+    // crew's hand-over waiting for its own refusal.
+    let rows = w.core.store.crew_deliveries(&task).unwrap();
+    let modes: Vec<&str> = rows
+        .iter()
+        .filter(|row| row.message_id == message_id)
+        .map(|row| row.mode.as_str())
+        .collect();
+    assert_eq!(modes, ["live"], "{rows:?}");
+    let waiting = w.core.crew_bus.live_steers.waiting();
+    assert_eq!(
+        waiting.len(),
+        1,
+        "a person's refusal consumed the crew hand-over"
+    );
+
+    // The crew message's own refusal still matches and is the one that corrects its record.
+    w.core.crew_steer_failed(
+        &worker,
+        &SteerMessage {
+            message_id: waiting[0].clone(),
+            prompt: text,
+        },
+    );
+    let rows = w.core.store.crew_deliveries(&task).unwrap();
+    let modes: Vec<&str> = rows
+        .iter()
+        .filter(|row| row.message_id == message_id)
+        .map(|row| row.mode.as_str())
+        .collect();
+    assert_eq!(modes, ["live", "next_turn"], "{rows:?}");
 }
 
 /// #444: a steer the crew bus never handed over writes no delivery row when the engine refuses it:

@@ -450,8 +450,10 @@ Guards, all enforced in code:
     says the engine refused the live steer and the text comes with the next turn, and the text is requeued for that
     turn. Rows are append-only, so the `live` row stays and the newest row says where the message stands. A bounded
     in-memory map (64 hand-overs, 30 minutes, dropped when the run ends) pairs the thread and masked text with the
-    message and recipient, so a refusal it cannot match writes nothing rather than guess. Only fake engines ran: no
-    real Claude or Codex run has yet shown how a live steer is read or refused, so both stay unqualified (#444).
+    message and recipient by the engine's own steer id, never by the text, so a person's steer with the same words
+    cannot consume a crew hand-over; a refusal it cannot match writes nothing rather than guess. Only fake engines
+    ran: no real Claude or Codex run has yet shown how a live steer is read or refused, so both stay unqualified
+    (#444).
   - The hop count is H4 as written: a lead message to a member starts every pair of that member again. The count
     is read from the stored messages. The lead is told once per distinct refusal by a message from the core.
   - Sizes: a body up to 4000 characters, a fact value up to 8 KiB, 128 keys per board. A repo rule can lower the

@@ -55,9 +55,10 @@ the rest of [crew](../README.md): off, the four tools do not exist.
   `turn/steer`, a host steering request answered `rejected`). The bus then appends one more delivery row,
   `next_turn`, for the same message and recipient with a note that the engine refused the live steer and the text
   comes with the next turn; rows are append-only, so the `live` row stays and the newest row says where it stands.
-  A bounded in-memory map (64 hand-overs, 30 minutes, dropped when the run ends) pairs the thread and masked text
-  with the message and recipient; a refusal it cannot match writes nothing rather than guess. Only fake engines
-  have run this (#444).
+  A bounded in-memory map (64 hand-overs, 30 minutes, dropped when the run ends) pairs the thread and the engine's
+  steer id with the message and recipient; matching on that id, never the text, means a person's steer with the same
+  words cannot consume a crew hand-over. A refusal it cannot match writes nothing rather than guess. Only fake
+  engines have run this (#444).
 - A held or live text is checked for secrets and the answer key again when it leaves, against the keys as they are
   then; so is a board read by a worker and an answer returned to a waiting `crew_ask`. A text a key now covers is
   replaced by a plain notice. A worker's first prompt leaves out board facts and messages a key covers.
