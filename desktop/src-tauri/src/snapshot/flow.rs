@@ -36,6 +36,12 @@ pub trait Capturer: Send + Sync {
         &self,
         is_excluded: &dyn Fn(&str, &str) -> bool,
     ) -> Result<Captured, Failure>;
+
+    /// Asks the capturer to give up and return soon. The default does nothing: the stub and the
+    /// Windows capturer have no long platform read to stop. The macOS capturer checks it before
+    /// the AX read and the AX walk checks it on every node, so a capture the flow has given up on
+    /// cannot keep reading another app's window.
+    fn cancel(&self) {}
 }
 
 pub trait Events: Send + Sync {
@@ -130,25 +136,35 @@ impl Flow {
         settings: Settings,
         own_bundle_id: String,
     ) {
+        // One shared handle: the thread reads through it and the flow asks it to stop when the
+        // capture is discarded or times out.
+        let capturer: Arc<dyn Capturer> = Arc::from(capturer);
         if cancelled.load(Ordering::SeqCst) {
+            capturer.cancel();
             self.gate.settle(&id, || {});
             return;
         }
         let (sender, receiver) = mpsc::sync_channel(1);
+        let reading = Arc::clone(&capturer);
         let _ = std::thread::spawn(move || {
             let excluded = |app_id: &str, app_name: &str| {
                 exclusion::is_excluded(app_id, app_name, &own_bundle_id, &settings)
             };
-            let _ = sender.send(capturer.capture_frontmost(&excluded));
+            let _ = sender.send(reading.capture_frontmost(&excluded));
         });
         let deadline = Instant::now() + self.limit;
         loop {
             if cancelled.load(Ordering::SeqCst) {
+                // The page discarded the capture: stop the read instead of leaving it running.
+                capturer.cancel();
                 self.gate.settle(&id, || {});
                 return;
             }
             let now = Instant::now();
             if now >= deadline {
+                // Ask the capture thread to stop, so a platform read that honours the flag cannot
+                // outlive the ten-second capture limit.
+                capturer.cancel();
                 self.fail(&id, "timeout");
                 return;
             }
@@ -461,6 +477,63 @@ mod tests {
         let _ = start(&flow, ready, Duration::from_millis(200));
         assert_eq!(names(&seen), "snapshot://started,snapshot://failed");
         assert_eq!(seen.lock().unwrap()[1].1["reason"], "timeout");
+        assert!(flow.pending.lock().unwrap().is_empty());
+    }
+
+    /// A capturer that keeps reading until either its own five seconds run out or the flow cancels
+    /// it, and records that it ended. Like the macOS capturer, it only stops when asked.
+    struct Stoppable {
+        stop: Arc<AtomicBool>,
+        ended: Arc<AtomicBool>,
+    }
+
+    impl Capturer for Stoppable {
+        fn capture_frontmost(
+            &self,
+            _is_excluded: &dyn Fn(&str, &str) -> bool,
+        ) -> Result<Captured, Failure> {
+            let started = Instant::now();
+            while !self.stop.load(Ordering::SeqCst) && started.elapsed() < Duration::from_secs(5) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            self.ended.store(true, Ordering::SeqCst);
+            (ready)()
+        }
+
+        fn cancel(&self) {
+            self.stop.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn a_capture_over_the_limit_is_asked_to_stop() {
+        let (seen, flow) = set_up(Duration::from_millis(20));
+        let stop = Arc::new(AtomicBool::new(false));
+        let ended = Arc::new(AtomicBool::new(false));
+        let (id, cancelled) = flow.begin().unwrap();
+        flow.run(
+            id,
+            cancelled.unwrap(),
+            Box::new(Stoppable {
+                stop: Arc::clone(&stop),
+                ended: Arc::clone(&ended),
+            }),
+            Settings {
+                snapshot_enabled: true,
+                ..Settings::default()
+            },
+            OWN.to_owned(),
+        );
+        assert_eq!(names(&seen), "snapshot://started,snapshot://failed");
+        assert_eq!(seen.lock().unwrap()[1].1["reason"], "timeout");
+        assert!(stop.load(Ordering::SeqCst), "the flow asked it to stop");
+        for _ in 0..500 {
+            if ended.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(ended.load(Ordering::SeqCst), "the capture thread ended");
         assert!(flow.pending.lock().unwrap().is_empty());
     }
 }
