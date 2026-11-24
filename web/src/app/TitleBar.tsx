@@ -140,6 +140,13 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
   useDragStrip(dragLayer);
   // The integrated bar drags the window where the system bar is gone: macOS traffic lights and Windows controls.
   useEffect(() => (frame && dragLayer.current ? attachBarDrag(dragLayer.current) : undefined), [frame]);
+  // Windows draws a 32 px bar (Engineer Designs v287): the root says so, and the bar and page header heights follow it.
+  useEffect(() => {
+    if (!controls) return undefined;
+    const root = document.documentElement;
+    root.dataset.windowFrame = "windows";
+    return () => { delete root.dataset.windowFrame; };
+  }, [controls]);
   const end = useRef<HTMLSpanElement>(null);
   useBarEndWidth(end);
   const sidebarLabel = shown ? "Hide sidebar" : "Show sidebar";
