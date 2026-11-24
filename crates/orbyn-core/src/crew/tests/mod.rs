@@ -50,6 +50,8 @@ mod core;
 mod could_not_start;
 mod crew_refusal;
 mod dashboard;
+#[cfg(debug_assertions)]
+mod dev_seed;
 mod disk;
 mod draft;
 mod escape_check;

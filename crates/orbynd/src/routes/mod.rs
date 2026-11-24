@@ -16,6 +16,8 @@ mod crew_areas;
 mod crew_backtest;
 mod crew_board;
 mod crew_capacity;
+#[cfg(debug_assertions)]
+mod crew_dev;
 mod crew_escapes;
 mod crew_lessons;
 mod crew_map;

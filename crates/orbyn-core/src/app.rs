@@ -85,6 +85,10 @@ pub struct CoreConfig {
     pub account_backend: crate::account::AccountBackendKind,
     /// Whether the Crew tools exist. Ships `false`: Crew is Preview, with no screen yet.
     pub crew_preview: bool,
+    /// Debug builds only: whether the test seam `POST /api/crew/dev/seed-proposal` is registered
+    /// (`ORBYN_DEV_SEED_PROPOSALS` at service start). A release build has no field and no route.
+    #[cfg(debug_assertions)]
+    pub dev_seed_proposals: bool,
     /// Whether the Code Mode tools (`orbyn_code_search`, `orbyn_code_describe`, `orbyn_code_run`) exist. Ships `false`.
     pub code_mode: bool,
     /// Whether the issue routes exist (docs/issues.md). Ships `false`: every issue route answers 404.
@@ -124,6 +128,8 @@ impl CoreConfig {
             account_gate: crate::account::AccountGate::default(),
             account_backend: crate::account::AccountBackendKind::default(),
             crew_preview: false,
+            #[cfg(debug_assertions)]
+            dev_seed_proposals: false,
             code_mode: false,
             issues: false,
             multi_repo: false,

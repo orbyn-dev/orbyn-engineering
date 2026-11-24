@@ -5,9 +5,7 @@ use std::path::Path;
 
 use serde_json::json;
 
-use crate::store::{
-    ForgeMerge, ForgePhase, LessonEvidence, MergeEntry, MergeRecord, NewCrewLesson,
-};
+use crate::store::{ForgeMerge, ForgePhase, LessonEvidence, MergeEntry, MergeRecord};
 
 /// A merge that reached `branch` in `repo`, with `text` in each free-text field.
 pub fn merge_record(task: &str, repo: &str, branch: &str, text: &str) -> MergeRecord {
@@ -150,39 +148,30 @@ pub fn add_project(core: &crate::Core, path: &str) -> String {
 }
 
 /// Three active escape lessons under `area`, each carrying `evidence`, then one open proposal through the core's own
-/// maker. Returns the proposal's id; its generated skill name is `crew-escape-<area>`.
+/// maker. Returns the proposal's id; its generated skill name is `crew-escape-<area>`. The dev-only seed uses the same
+/// store writer (`Store::write_escape_lessons`).
 pub fn skill_proposal(core: &crate::Core, project: &str, area: &str, evidence: &[&str]) -> String {
-    let mut sources = Vec::new();
-    for text in [
+    let evidence: Vec<LessonEvidence> = evidence
+        .iter()
+        .map(|id| LessonEvidence {
+            kind: "escape".to_owned(),
+            id: (*id).to_owned(),
+        })
+        .collect();
+    let lessons: Vec<(String, Vec<LessonEvidence>)> = [
         "The first escape.",
         "The second escape.",
         "The third escape.",
-    ] {
-        let lesson = core
-            .store
-            .write_crew_lesson(NewCrewLesson {
-                scope: "repo".to_owned(),
-                project_id: Some(project.to_owned()),
-                source: "escape".to_owned(),
-                check_kind: None,
-                path_class: Some(area.to_owned()),
-                text: text.to_owned(),
-                fingerprint: None,
-                evidence: evidence
-                    .iter()
-                    .map(|id| LessonEvidence {
-                        kind: "escape".to_owned(),
-                        id: (*id).to_owned(),
-                    })
-                    .collect(),
-                edited_by_person: false,
-                names_path: false,
-            })
-            .unwrap()
-            .expect("an escape lesson with no fingerprint is written");
-        sources.push(lesson.id);
-    }
+    ]
+    .into_iter()
+    .map(|text| (text.to_owned(), evidence.clone()))
+    .collect();
+    let written = core
+        .store
+        .write_escape_lessons(project, area, &lessons, None)
+        .expect("three escape lessons with no fingerprint are written");
     core.learn_skill_proposals(project);
+    let sources: Vec<String> = written.into_iter().map(|lesson| lesson.id).collect();
     core.store
         .skill_proposals(project)
         .unwrap()

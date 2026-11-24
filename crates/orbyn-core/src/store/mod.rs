@@ -171,6 +171,7 @@ pub(crate) use crew_review_publications::{Publication, PublicationState};
 pub use crew_runs::CrewRun;
 pub use crew_skill_proposals::{
     CrewSkillProposal, NewCrewSkillProposal, PROPOSAL_TEXT_MAX, ReadyLessonGroup,
+    proposal_group_key,
 };
 
 use std::path::Path;
