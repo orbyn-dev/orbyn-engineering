@@ -8,8 +8,13 @@ import { openInEditor } from "../files/openInEditor";
 import { rawUrl } from "../../../product/media/media";
 import { EditorEmpty } from "./EditorShell";
 
-/** editor-binary: no text editor for a file that is not text. It says so, gives the size and can reveal the file. Images, PDFs, archives and documents never get here. */
-export function BinaryFile({ threadId, path, size }: { threadId: string; path: string; size: number }) {
+/**
+ * editor-binary: no text editor for a file that is not text. It says so, gives the size and can reveal the file.
+ * Images, PDFs, archives and documents never get here. Another repository's file is saved from its own repository
+ * (its bytes and download carry the `repo_id`); opening it in an outside editor needs a route that does not take one yet.
+ */
+export function BinaryFile({ threadId, path, size, repoId }: { threadId: string; path: string; size: number; /** Another repository of a multi-repository thread; absent is the thread's own checkout. */ repoId?: string }) {
+  const foreign = repoId !== undefined;
   const editors = useAsync("editors", (signal) => api.editors(signal));
   const manager = (editors.data ?? []).find((one) => one.file_manager);
   const name = path.split("/").at(-1) ?? path;
@@ -28,21 +33,24 @@ export function BinaryFile({ threadId, path, size }: { threadId: string; path: s
       title="Can’t show this file"
       actions={
         <>
-          {manager ? (
+          {!foreign && manager ? (
             <Button tone="quiet" onClick={() => void reveal()}>
               Reveal in {manager.name}
             </Button>
           ) : null}
-          <Button tone="quiet" onClick={() => void openInEditor(threadId, path)}>
-            Open in editor
-          </Button>
-          <a className="btn btn-quiet" href={rawUrl(threadId, path, true)} download>
+          {foreign ? null : (
+            <Button tone="quiet" onClick={() => void openInEditor(threadId, path)}>
+              Open in editor
+            </Button>
+          )}
+          <a className="btn btn-quiet" href={rawUrl(threadId, path, true, repoId)} download>
             Save file
           </a>
         </>
       }
     >
       {name} is a binary file ({formatBytes(size)}). Images, PDFs and archives preview in the file tab; this type has no preview.
+      {foreign ? " It can be saved, but opening it in an outside editor isn't available for another repository yet." : null}
     </EditorEmpty>
   );
 }

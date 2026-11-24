@@ -150,12 +150,11 @@ it("a path outside the repository, and a repository that is not the thread's, sa
   expect(await screen.findByText("This file isn't in this repository.")).toBeVisible();
 });
 
-it("a file the raw routes would read from the primary checkout is not drawn for another repository", async () => {
-  const served = serve();
+it("another repository's image is drawn from the raw route, named with its repo_id", async () => {
+  serve();
   render(<Viewer threadId="t" tabId="img" path="logo.png" repoId={REPO} line={null} />);
-  expect(await screen.findByText("This kind of file can't be shown for another repository yet.")).toBeVisible();
-  expect(served.gets.every((url) => !url.includes("/raw"))).toBe(true);
-  expect(screen.queryByRole("img")).toBeNull();
+  const img = await screen.findByRole("img");
+  expect(new URL(img.getAttribute("src")!, "http://x").searchParams.get("repo_id")).toBe(REPO);
 });
 
 it("a file tab of the thread opens the repository's file, and a thread-less panel draws nothing for it", async () => {
