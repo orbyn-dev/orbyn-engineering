@@ -122,6 +122,24 @@ const couldNotStopRows = (name: string | null = "Add tests for the redirect, inc
   },
 ];
 
+/**
+ * The one item of `crew-worker-stopped-twice` (kc8-resumed-inbox): a task whose worker died again after its one resume. It carries the
+ * service's own line; `crew-worker-stopped-twice-no-reason` is the same item with that line empty, so the row falls back to the design's
+ * sentence.
+ */
+const workerStoppedTwiceRows = (reason: string | null = "The worker’s engine stopped with an error. It had already resumed once, so it did not resume again."): NeedsYouItem[] => [
+  {
+    id: "7a3e91c",
+    kind: "worker_stopped_twice",
+    project_id: "p-app",
+    crew_id: MOCK_CREW,
+    since: "2026-11-07T14:40:00Z",
+    dismissible: true,
+    ...(reason === null ? {} : { reason }),
+    question_hidden: false,
+  },
+];
+
 /** One KC10 item, with every field the card reads. */
 const notifyItem = (over: Partial<NeedsYouItem> & Pick<NeedsYouItem, "id" | "kind" | "since">): NeedsYouItem => ({
   project_id: "p-app",
@@ -194,10 +212,10 @@ export function createNeedsYouMock() {
         const items = notifyRows(scenario);
         return { status: 200, body: { items, count: items.length } };
       }
-      const items = scenario === "crew-background-watch-needsyou" ? watchRows("p-app") : scenario === "crew-background-watch-needsyou-p-two" ? watchRows("p-two") : scenario === "crew-could-not-stop" ? couldNotStopRows() : scenario === "crew-could-not-stop-no-name" ? couldNotStopRows(null) : scenario === "crew-could-not-stop-and-watch" ? [...couldNotStopRows(), ...watchRows("p-app")] : [];
+      const items = scenario === "crew-background-watch-needsyou" ? watchRows("p-app") : scenario === "crew-background-watch-needsyou-p-two" ? watchRows("p-two") : scenario === "crew-could-not-stop" ? couldNotStopRows() : scenario === "crew-could-not-stop-no-name" ? couldNotStopRows(null) : scenario === "crew-could-not-stop-and-watch" ? [...couldNotStopRows(), ...watchRows("p-app")] : scenario === "crew-worker-stopped-twice" ? workerStoppedTwiceRows() : scenario === "crew-worker-stopped-twice-no-reason" ? workerStoppedTwiceRows("") : [];
       return { status: 200, body: { items, count: items.length } };
     }
-    const empty = scenario === "crew-empty" || scenario.startsWith("crew-background-watch") || scenario.startsWith("crew-could-not-stop");
+    const empty = scenario === "crew-empty" || scenario.startsWith("crew-background-watch") || scenario.startsWith("crew-could-not-stop") || scenario.startsWith("crew-worker-stopped-twice");
     if (path === "/api/crew/autopilot/review") {
       const body: AutopilotReviewQueue = { items: empty ? [] : [reviewItem()], total: empty ? 0 : 1, next_offset: null, now_unix: NOW };
       return { status: 200, body };

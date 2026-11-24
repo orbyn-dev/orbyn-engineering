@@ -110,6 +110,9 @@ function Inbox() {
         <>
           <NeedsBar<NeedsKind | "all"> chips={kindChips(view, items.length)} active={view.filters.some((one) => one.kind === filter) ? filter : "all"} onPick={setFilter} rule={CHIP_NOTE} />
           <NeedsList items={shown} narrow={narrow} handlers={handlers} errors={state.partial} onRetry={state.retry} />
+          {shown.some((item) => item.id.startsWith("twice:")) ? (
+            <p className="ny-note">A task that resumed after a restart is not listed: it is running again. Its card on the Board says so.</p>
+          ) : null}
           {items.filter((item) => item.kind === "could_not_start" || item.kind === "could_not_stop").map((item) => <WriteStatus key={item.id} id={item.ref} op={ops[item.ref]} />)}
           {errors.map((one) => <p key={one.id} className="ny-note" role="alert">{one.message}</p>)}
           {state.noticeFailure ? <p className="ny-note" role="alert">{state.noticeFailure.message}</p> : null}
