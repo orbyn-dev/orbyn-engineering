@@ -141,9 +141,13 @@ const watchChangeLabel = (change: BackgroundWatchChange): string =>
 export function watchChangeRow(change: BackgroundWatchChange, changes: BackgroundWatchChange[], crew: WatchCrew, now: Date): WatchChangeRow {
   const where = changes.findIndex((one) => one.id === change.id);
   const raised = where < 0 ? undefined : changes.slice(where + 1).find((one) => one.kind === "failing");
+  // A refused template start carries the sentence core owns (reason, migration 87): "Could not start <template>: <sentence>".
+  // A row for a start that worked, a plain needs_you change or any other change has none, so it keeps "Raised in Needs you.".
   const did =
     change.action === "needs_you"
-      ? "Raised in Needs you."
+      ? change.reason
+        ? `Could not start ${templateNameOf(crew.template)}: ${change.reason}`
+        : "Raised in Needs you."
       : change.action === "started_template"
         ? `Started the ${templateNameOf(crew.template)} template.`
         : change.action === "resolved"
