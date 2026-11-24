@@ -21,21 +21,25 @@ Design note. Status: PR 1 (the `manual` event, Run now through the core), PR 2 (
 ### 2a. The listeners as built (PR 3)
 
 - One owned future, `run_crew_background_listeners`, behind the Preview flag and an interval (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60s to 24h). **No interval means no pass**, not even at startup. With one, a pass runs at startup and then once per interval.
-- Only crews that are on are read from the forge or claimed. A crew that is off costs no forge call and spends no event: turned on later, it sees the branch head and the current schedule bucket as new events. The start's own refusal stays as the second guard.
+- Only crews that are on are read from the forge or claimed. A crew that is off costs no forge call and spends no event: a CI crew turned on later sees the branch head as a new event, and a schedule crew the current bucket; an issue-label crew keeps its baseline across a turn-off, so a label added while it was off fires once per pass when it is back on (one start per pass), unless the issue's label set was already claimed. The start's own refusal stays as the second guard.
 - Claims (table `crew_background_events`, migration 59, first write wins; the claim is the dedupe and the refusal is never retried):
 
 | Event | Claim identity | `PausedTrigger` key |
 | --- | --- | --- |
 | schedule | `schedule:<crew>:<bucket>` | `<crew>:schedule:<bucket>` |
 | CI failure | `ci:<crew>:<head>:<name hash>` | `<crew>:ci:<head>:<name hash>` |
+| issue label baseline | `issue_label:<crew>:baseline:<label hash>` | (none: the baseline starts nothing) |
+| issue label | `issue_label:<crew>:<tracker>:<scope>:<key>:<label hash>:<label-set hash>` | `<crew>:issue_label:<scope hash>:<key hash>:<label hash>` |
+| dependency update | `dependency_update:<crew>:<update hash>` (the path a reader feed takes) | `<crew>:dependency_update:<update hash>` |
 
   `<bucket>` is the Unix time divided by `every_hours`; a bucket at or before the newest one claimed for the crew never fires, so a clock that moves back starts nothing. `<name hash>` is 16 hex characters of the failing check's SHA-256, so a long check name cannot break the held row's 128-character key.
 - At most one start attempt per crew per pass. A head with several failing checks fires the first (by name) and leaves the rest unclaimed for a later pass.
-- A pass watches at most 64 CI crews, from a rotating start, so a store with more is covered over a few passes.
+- A pass watches at most 64 CI crews, reads at most 64 issue-label crews and separately at most 64 dependency-update crews, each from the pass's rotating start, so a store with more is covered over a few passes and a store full of crews cannot turn one pass into unbounded forge or tracker traffic.
 - Refused for capacity, the daily budget, an untrusted folder, no engine, a run in progress or a crew that was turned off meanwhile: dropped, never retried. One code-owned audit row (`crew.background.listener.refused`: the crew, the listener, a fixed reason word) records it, and capacity also leaves its held row.
 - A stop is looked at between firings and never inside one, so a claim is always followed by its whole start. A run a crash leaves behind is settled when the core next opens (`recover_background_starts`).
-- Text from outside (a check's name, a head sha, a file trigger's name) only decides whether a run starts: it never reaches the brief, a prompt, the lead thread or an audit row. The listener's audit actor is the constant `crew`.
-- Not done: `crew_background_events` grows by one row per firing and is not pruned or removed with the crew.
+- Text from outside (a check's name, a head sha, a file trigger's name, a tracker issue's scope and key, a tracker update's key) only decides whether a run starts: it never reaches the brief, a prompt or an audit row. An issue's raw scope and key are kept only in the claim identity; its label and label set only as hashes, and the `PausedTrigger` key keeps hashes only. The listener's audit actor is the constant `crew`.
+- KC7 (later): the `issue_label` listener reads the project's one tracker reader, baselines the labels already there on its first pass per stored label (claiming them across every page, up to ten pages of 100, and starting nothing; a listing cut short baselines again), and claims per issue, label and the issue's sorted label set (the held key keeps hashes of the scope, key and label); with no per-label event time in the readers, an edit is inert, a label-set change fires once, and a removal and re-add that returns the issue to an already claimed label set is not fired (a label feed is a follow-up). The `dependency_update` tick and its claim/start/refusal path are built too, but no issue reader reports a dependency or advisory update yet, so it starts nothing (follow-up #1360).
+- Not done: `crew_background_events` grows by one row per claim (a baseline claims every issue it sees, and each firing claims its event) and is not pruned or removed with the crew.
 
 ## 3. Budget
 
@@ -69,6 +73,6 @@ All behind `CoreConfig::crew_preview`, tests first with fake engines.
 1. The daily budget resets at local midnight. A refusal shows the reset time. (Built in PR 2: the person's clock comes with the create body as `utc_offset_minutes`, the automations' own pattern, because the service cannot read the host's zone portably.)
 2. v1: every background merge waits for a person. No Autopilot auto-landing for background runs until escape data exists.
 3. Run now (`manual`) is part of 4h and is the first PR.
-4. `issue_label` and `dependency_update` are refused when turned on, with a plain reason (no listener).
+4. `issue_label` and `dependency_update` are started by their listeners (KC7) and refused by Run now, which has no event to start them with; a `watch` crew has no listener yet and Run now refuses it too.
 5. A file trigger with no matching crew is ignored: nothing starts and nothing is adopted. At most a diagnostic line, "found in .orbyn/crew.json, no matching crew", and no UI.
 6. The listeners PR (3) gets an independent Opus review: event text from outside is never part of the prompt as instructions.
