@@ -48,7 +48,7 @@ The core answers with the one request it may send before `ready`:
 {"id":1,"type":"init","protocol":1,"instance":"claude-default","logLevel":"info"}
 ```
 
-The host replies `{"type":"response","id":1,"ok":true,"result":{"ready":true}}`.
+The host replies `{"type":"response","id":1,"ok":true,"result":{"ready":true}}`. A family that can check its SDK adds `"sdkMissing": true|false` (Claude and Cursor); the field is optional and an older host leaves it out.
 
 - `protocol` is an integer; a different number is a hard mismatch. The core refuses the host,
   fails nothing that is running (nothing is), and reports "The engine host does not match this app
@@ -427,13 +427,12 @@ bookkeeping and its own checks. No entry carries an environment, arguments, a ke
   driver runs only when the person chose the Claude CLI path (`claude_engine_path` is `cli`) or the family is not host-wrapped
   (Codex and OpenCode). Claude is wrapped today; Cursor and ACP are when their flags are on. Absent when nothing is wrapped.
 - `sdk_missing?`: true when the host answered a run with its fixed sentence that the family's SDK is not available in this build. The pool keeps it until a later turn gets
-  past the SDK load, which clears it. It is the only SDK-availability source the core has: it does not read the SDK folder, so a build whose folder is empty but where no run
-  has tried yet shows no flag. That build-time check remains Planned.
+  past the SDK load, which clears it. The host also checks when it starts: its answer to `init` carries `sdkMissing` (true when it could not load the family's SDK, false when it
+  could) for the Claude and Cursor families, which sets or clears the flag before any run. The probe is one import, bounded at 3 seconds, and its answer is left out when it fails
+  to answer in time or the family has no SDK; a host that leaves the field out changes nothing. Both are the host's own loader, so the core still does not read the SDK folder.
 
 **Planned (not built).** Names are proposals:
 
-- A build-time SDK-availability check, so `sdk_missing` can be true before the first refused run. The core has no resource path today, which is why slice 3 reads only the
-  host's answer.
 - `threads[].state` of `starting`, `restarting` and `unavailable`, and `threads[].last_error` (`{kind?, message}`, only for `unavailable`), so the UI can show a thread
   whose host is coming up or gone. A pooled host (Cursor) lists every thread it serves.
 - `signin?`: `"signed_in" | "signed_out" | "unknown" | "key_in_keychain"` per engine. A state word only: `key_in_keychain` means an API key is saved in the OS

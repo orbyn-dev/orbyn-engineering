@@ -479,6 +479,12 @@ impl Pool {
             self.timings.init,
         )
         .await?;
+        // A host that checked its SDK at init says so before any run has asked for it.
+        match ready.sdk_missing {
+            Some(true) => self.note_sdk_missing(),
+            Some(false) => self.note_sdk_present(),
+            None => {}
+        }
         let id = self.connections.fetch_add(1, Ordering::Relaxed) + 1;
         let stop = self.shutdown.child_token();
         let connection = Connection::start(

@@ -1,6 +1,25 @@
 import { createInterface } from "node:readline";
 import { PROTOCOL, decodeFrame, encodeFrame, serializeError } from "./frame.mjs";
 
+const SDK_PROBE_MS = 3000;
+
+/** True when the family's SDK cannot be loaded, false when it can, undefined for a family with no SDK or no answer in time. */
+async function probeSdk(family) {
+  if (typeof family.probeSdk !== "function") return undefined;
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(undefined), SDK_PROBE_MS);
+  });
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => family.probeSdk()).then((available) => !available, () => undefined),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Runs the protocol over `input`/`output`. `family` is `{name, sdk, capabilities, create(ctx)}`
  * where create returns `{handle(request) -> result}`; a handler may call ctx.send(frame).
@@ -41,7 +60,10 @@ export function runHost({ family, input, output, version = "0.1.0", onExit }) {
           return fail(err);
         }
         initialised = true;
-        return write({ type: "response", id, ok: true, result: { ready: true } });
+        // A family that can tell whether its SDK is in this build says so now, so the app knows before the first run. A probe that
+        // fails to answer in time says nothing: only a run's own refusal is then known.
+        const sdkMissing = await probeSdk(family);
+        return write({ type: "response", id, ok: true, result: sdkMissing === undefined ? { ready: true } : { ready: true, sdkMissing } });
       }
       if (!initialised) {
         const err = new Error("request before init");

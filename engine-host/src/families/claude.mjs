@@ -34,10 +34,13 @@ function errorKind(status, text = "") {
 }
 
 export function claudeFamily({ loadSdk }) {
+  let probed;
   return {
     name: "claude",
     sdk: { name: "@anthropic-ai/claude-agent-sdk", version: process.env.ORBYN_CLAUDE_SDK_VERSION ?? "unknown" },
     capabilities: ["steer", "fork", "models", "usage", "readHistory", "readSubagent", "rollback", "stopTask", "background"],
+    // Whether this build carries the SDK, asked once at init. Node caches the import, so a first run does not load it twice.
+    probeSdk: () => (probed ??= Promise.resolve().then(loadSdk).then(() => true, () => false)),
     create(ctx) {
       const sessions = new Map();
       const pendingPermissions = new Map(); // requestId -> {resolve, sessionId}
