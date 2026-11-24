@@ -289,14 +289,15 @@ A workflow is text and a list of parameters. Saving one runs nothing. It does **
   required parameter with no value is `400 invalid_input`, and a `choice` value outside its list is refused. The
   answer never contains an environment value.
 - `POST /api/library/workflows/{id}/run` renders and starts the command in a terminal in the named project or thread
-  checkout, through the same terminal machinery, folder-trust rule (hard rule 5), gate and audit as typing it there. It is
-  **Person**: it acts on the person's shell. A Crew worker or any service-token caller is refused. It answers `{ "terminal_id": "<id>" }`, the id of the terminal it started, and nothing else. A folder that is not trusted is `403 folder_untrusted`.
+  checkout, through the same terminal machinery, folder-trust rule (hard rule 5), gate and audit as typing it there. It runs
+  under the app's fixed POSIX `/bin/sh -lc` on macOS and Linux, never the person's `$SHELL` (the rendering is POSIX), and under
+  `cmd /C` on Windows. It is **Person**: a Crew worker or any service-token caller is refused. It answers `{ "terminal_id": "<id>" }`, the id of the terminal it started, and nothing else. A folder that is not trusted is `403 folder_untrusted`.
   The body is `{ values, thread_id?, project_id?, ack_grants? }`: exactly one of `thread_id` and `project_id` (a project's
   most recently changed thread hosts the terminal, since terminals belong to threads; a project with no thread is
   `400 invalid_input`).
 - **Parameter substitution is injection-safe.** `render` and `run` quote each value for the target shell at expansion (POSIX
-  single quotes on macOS and Linux, double quotes on Windows `cmd`, where a value with a quote, `%`, `^`, `!` or a line break
-  is refused). A value is always one word. An empty optional value expands to nothing. A placeholder that sits inside the
+  single quotes on macOS and Linux, run by the fixed `/bin/sh -lc` above; double quotes on Windows `cmd`, where a value with a
+  quote, `%`, `^`, `!` or a line break is refused). A value is always one word. An empty optional value expands to nothing. A placeholder that sits inside the
   command's own quotes (`'..'`, `".."`, `$'..'`) or in a command with a here-document cannot be quoted safely and is
   `400 invalid_input` at save. A `path` value is relative to the project, with no `..`, no drive, no leading `-` or `~`.
 - **Grants a run needs.** A run raises a grant in two cases, and the code list lives in one place in core (`needed_grants`):
