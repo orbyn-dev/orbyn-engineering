@@ -447,6 +447,8 @@ function acpPlay(sendId, text) {
 const handlers = {
   init: (r) => {
     if (r.protocol !== Number(env.STANDIN_PROTOCOL ?? 1)) throw Object.assign(new Error("protocol"), { name: "ProtocolMismatch" });
+    // A family that checks its SDK at init says whether it is missing; one that does not leaves the field out.
+    if (env.STANDIN_SDK_PROBE) return { ready: true, sdkMissing: env.STANDIN_SDK_PROBE === "missing" };
     return { ready: true };
   },
   open: (r) => {

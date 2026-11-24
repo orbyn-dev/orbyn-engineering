@@ -646,3 +646,35 @@ async fn a_rewind_refuses_when_the_point_store_is_poisoned() {
     ));
     rig.pool.shutdown().await;
 }
+
+/// A host that checks its SDK when it starts says so before any run asks: the status shows it with no run made.
+#[tokio::test]
+async fn a_host_that_reports_a_missing_sdk_at_start_is_flagged_before_any_run() {
+    let Some(rig) = standin(&[("STANDIN_SDK_PROBE", "missing")], fast()) else {
+        return;
+    };
+    assert!(!rig.pool.status().await.sdk_missing);
+    rig.pool.acquire().await.unwrap();
+    assert!(rig.pool.status().await.sdk_missing);
+    rig.pool.shutdown().await;
+}
+
+/// A host that finds its SDK at start clears an earlier flag, and one that says nothing leaves the flag as it was.
+#[tokio::test]
+async fn a_host_that_finds_its_sdk_at_start_clears_the_flag_and_a_silent_one_keeps_it() {
+    let Some(present) = standin(&[("STANDIN_SDK_PROBE", "present")], fast()) else {
+        return;
+    };
+    present.pool.note_sdk_missing();
+    present.pool.acquire().await.unwrap();
+    assert!(!present.pool.status().await.sdk_missing);
+    present.pool.shutdown().await;
+
+    let Some(silent) = standin(&[], fast()) else {
+        return;
+    };
+    silent.pool.note_sdk_missing();
+    silent.pool.acquire().await.unwrap();
+    assert!(silent.pool.status().await.sdk_missing);
+    silent.pool.shutdown().await;
+}
