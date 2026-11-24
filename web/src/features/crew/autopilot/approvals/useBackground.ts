@@ -3,6 +3,7 @@ import { ApiFailure } from "../../../../api/client";
 import { useAsync } from "../../../../lib/useAsync";
 import type { BackgroundCrew } from "../../../../generated/BackgroundCrew";
 import type { BackgroundRun } from "../../../../generated/BackgroundRun";
+import type { BackgroundRunDetail } from "../../../../generated/BackgroundRunDetail";
 import { useRefresh } from "../../flow/live/useFlow";
 import { crewApi } from "./api";
 import { RECENT_RUNS, type BackgroundRead, type WatchReadRow } from "./backgroundModel";
@@ -88,4 +89,12 @@ export function useBackground(project: string) {
   }, [refreshQuietly]);
   useRefresh(guarded, read.status !== "ready");
   return read;
+}
+
+/**
+ * One run with its crew, for the run's own page: the one read "Open the run" makes. A run that is not stored answers 404
+ * `not_found`; the page draws nothing of it and the list stays.
+ */
+export function useBackgroundRun(runId: string) {
+  return useAsync<BackgroundRunDetail>(`crew-background-run:${runId}`, (signal) => crewApi.backgroundRun(runId, signal));
 }

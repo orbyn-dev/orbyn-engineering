@@ -8,6 +8,7 @@ import { useVisibleProjects } from "../../../../product/state/workspace";
 import { useRepo } from "./AutonomyAreas";
 import { BackgroundCreate } from "./BackgroundCreate";
 import { backgroundView, type BackgroundCrew, type BackgroundRun, type BackgroundView } from "./backgroundModel";
+import { RunPanel } from "./RunPanel";
 import { useWatchFocus } from "./watchFocus";
 import { WatchPanel } from "./WatchPanel";
 
@@ -237,6 +238,7 @@ function Background({ project, repo }: { project: string; repo: string }) {
   const read = useBackground(project);
   const [creating, setCreating] = useState<{ template?: TemplateId } | null>(null);
   const [openWatch, setOpenWatch] = useState<string | null>(null);
+  const [openRun, setOpenRun] = useState<string | null>(null);
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [refused, setRefused] = useState<string | null>(null);
   // A Needs you row (or another screen) asked for one watch: open it once the crews are read, then clear the ask.
@@ -262,6 +264,9 @@ function Background({ project, repo }: { project: string; repo: string }) {
   // The open watch's page: only a watch whose own read answered draws one, and a crew gone from a later read falls back to the list.
   const opened = openWatch ? read.data.crews.find((one) => one.id === openWatch) : undefined;
   const openedWatch = opened ? read.data.watches?.[opened.id] : undefined;
+  // "Open the run" opens the newest run of the watch's own runs read: the banner names the change that started it, and no run
+  // id travels with a change row. A watch whose runs read holds none draws no button.
+  const startedRun = opened ? read.data.runs[opened.id]?.[0] : undefined;
   const shared = (
     <>
       {refused ? <p className="ap-error" role="alert">{refused}</p> : null}
@@ -269,6 +274,21 @@ function Background({ project, repo }: { project: string; repo: string }) {
       {read.status === "error" ? <ErrorState compact title="Can’t refresh background crews" failure={read.error} onRetry={() => void read.reload()} /> : null}
     </>
   );
+  // The run's own page replaces the list like the watch page does; its back control returns to Recent runs.
+  if (openRun) {
+    return (
+      <>
+        {shared}
+        <RunPanel
+          runId={openRun}
+          onBack={() => {
+            setOpenRun(null);
+            setOpenWatch(null);
+          }}
+        />
+      </>
+    );
+  }
   if (opened && openedWatch) {
     return (
       <>
@@ -281,6 +301,7 @@ function Background({ project, repo }: { project: string; repo: string }) {
           onBack={() => setOpenWatch(null)}
           onToggle={toggle}
           onOpenNeeds={() => navigate({ name: "crew", tab: "inbox" })}
+          onOpenRun={startedRun ? () => setOpenRun(startedRun.id) : undefined}
         />
       </>
     );

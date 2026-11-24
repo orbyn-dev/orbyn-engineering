@@ -92,13 +92,12 @@ describe("watches in the Background list", () => {
     expect(within(row).queryByText("Passing")).toBeNull();
   });
 
-  it("draws no Open the run button for a watch that started a template run, until the run route exists", async () => {
+  it("offers Open the run for a watch that started a template run, once the read holds that run", async () => {
     const user = await openBackground("crew-background-watch-template");
     await user.click(screen.getByRole("button", { name: "Open the Main build watch" }));
     const panel = await screen.findByRole("region", { name: "Main build watch" });
     expect(within(panel).getByText("Failing: started Fix failing CI")).toBeVisible();
-    expect(within(panel).queryByRole("button", { name: "Open the run" })).toBeNull();
-    expect(within(panel).queryByText("Open the run")).toBeNull();
+    expect(within(panel).getByRole("button", { name: "Open the run" })).toBeVisible();
   });
 
   it("a paused watch says no check runs and what the next check is compared with", async () => {
