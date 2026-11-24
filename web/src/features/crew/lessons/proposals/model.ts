@@ -13,7 +13,7 @@ export const AVAILABLE =
 
 /** The group note on the Skills page. */
 export const ADDED_GROUP_NOTE =
-  "Available to engines through Orbyn's skills tools. Applies to all your projects. Saved in skills-local on this device, not in your repository.";
+  "Available to threads on the Default profile through Orbyn's skills tools. Applies to all your projects on this device. Saved in skills-local on this device, not in your repository.";
 
 /** The one line the Skills page draws above Built in while nothing has been added from lessons. */
 export const ADDED_EMPTY_LINE =
