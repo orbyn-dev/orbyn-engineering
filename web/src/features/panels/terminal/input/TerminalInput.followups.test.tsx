@@ -247,10 +247,16 @@ describe("path completion while the listing is read", () => {
   });
   it("shows nothing for a word that is not a path", async () => {
     const slow = holdFetch("GET", /^\/api\/projects\/p-app\/worktrees\/[^/]+\/tree/);
-    const { field, user } = setup();
-    await user.type(field, "cat ");
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(screen.queryByText(/Reading files/)).toBeNull();
+    // The clock is the subject: the loading row would show 400 ms after a slow read began.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { field, user } = setup();
+      await user.type(field, "cat ");
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(screen.queryByText(/Reading files/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
     slow.release();
   });
 });
