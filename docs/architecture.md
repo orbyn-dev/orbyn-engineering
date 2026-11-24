@@ -35,7 +35,13 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    name (`app.orbyn.engineering.env-sets`, `.dev` in an unsigned build), one item per key, written through
    `PUT /api/library/env-sets/{id}/keys/{key}` (`Person`) and read back only as the environment of one workflow run the
    person starts, never an engine spawn. They are in no SQLite row, log, audit row, answer or export, and a run's terminal
-   output is masked for them by exact match.
+   output is masked for them by exact match. A third owner-approved keychain use is the **API token of an issue-tracker
+   connection** (`docs/issues.md`, "Trackers and credentials"): `orbyn-core` `credentials::TRACKERS` gives each
+   tracker its own keychain item (`tracker:<tracker>`), written through
+   `POST /api/issues/trackers/{tracker}/connect` (`Person`) and removed through `.../disconnect`. It is never read
+   back by any route: it is fetched for the reader that makes that tracker's own requests, leaves the keychain only as
+   that tracker's authorization header to the connection's own host, and is in no SQLite row, frame, log, audit row,
+   answer or error.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
 3. Claude runs through the person's own installed `claude`. The default path is the engine host with the Claude Agent SDK
    (a dependency used as shipped, never copied or modified); the CLI driver stays a path the person can choose. Both
