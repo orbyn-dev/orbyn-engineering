@@ -3,7 +3,7 @@ import type { NeedsYouKind } from "./NeedsYouKind";
 
 /**
  * One thing that waits for the person. `id` is the task's id, a background run's id or a watch crew's id; `since` is when it
- * began to wait.
+ * began to wait. `name`, `engine`, `model` and `task_kind` are set only for a `could_not_stop` item.
  */
 export type NeedsYouItem = { 
 /**
@@ -31,4 +31,20 @@ dismissible: boolean,
  * it has one (the question, the refusal that kept it from starting, a manual check), and the core's fixed words for a
  * kind whose task has none (a merge that waits, a background run's review, a stop).
  */
-reason?: string | null, };
+reason?: string | null, 
+/**
+ * The task's brief outcome, one redacted line of at most 160 characters, for a `could_not_stop` item only.
+ */
+name?: string | null, 
+/**
+ * The engine routed to build the task, for a `could_not_stop` item whose task is routed.
+ */
+engine?: string | null, 
+/**
+ * The routed model, set with `engine`.
+ */
+model?: string | null, 
+/**
+ * The brief's kind as its wire name, set only for a `could_not_stop` item.
+ */
+task_kind?: string | null, };

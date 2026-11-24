@@ -114,6 +114,11 @@ async fn a_task_waiting_on_a_person_is_task_needs_person_with_its_scrubbed_reaso
     assert!(reason.contains("A person decides"), "{reason}");
     assert!(!reason.contains('\n'), "one line: {reason}");
     assert!(reason.chars().count() <= 160, "{}", reason.chars().count());
+    // Only a could-not-stop item carries the brief and the route.
+    assert!(item.name.is_none(), "{:?}", item.name);
+    assert!(item.engine.is_none(), "{:?}", item.engine);
+    assert!(item.model.is_none(), "{:?}", item.model);
+    assert!(item.task_kind.is_none(), "{:?}", item.task_kind);
 }
 
 #[tokio::test]
@@ -252,6 +257,21 @@ async fn a_task_whose_last_cancel_attempt_failed_is_could_not_stop_and_not_dismi
     assert!(!item.since.is_empty());
     let reason = item.reason.expect("fixed words");
     assert!(!reason.is_empty() && reason.chars().count() <= 160);
+    // The row carries the brief and the route, so it draws without a board read.
+    let name = item.name.expect("the task's name");
+    assert!(!name.is_empty() && !name.contains('\n'), "{name}");
+    assert!(name.contains("Stuck"), "{name} does not hold the outcome");
+    assert!(item.task_kind.is_some(), "{:?}", item.task_kind);
+    match w.core.store.crew_route_decisions(&id).unwrap().pop() {
+        Some(route) => {
+            assert_eq!(item.engine.as_deref(), Some(route.engine.as_str()));
+            assert_eq!(item.model.as_deref(), Some(route.model.as_str()));
+        }
+        None => {
+            assert!(item.engine.is_none(), "{:?}", item.engine);
+            assert!(item.model.is_none(), "{:?}", item.model);
+        }
+    }
 
     // It is answered, never hidden: the person stops it again.
     let refused = w
@@ -271,6 +291,32 @@ async fn a_task_whose_last_cancel_attempt_failed_is_could_not_stop_and_not_dismi
             .any(|one| one.task.id == id)
     );
     assert!(items(&w).iter().all(|item| item.id != id));
+}
+
+/// A read scoped to another crew leaves the could-not-stop item out, and a read that accepts its crew keeps it.
+#[tokio::test]
+async fn a_scoped_read_leaves_out_another_crews_could_not_stop_item() {
+    let w = crew(arc(|_, _| Turn::Hang)).await;
+    let id = started_hanging(&w, "Stuck elsewhere.").await;
+    let _epoch = take_worker_run(&w, &id);
+    let answer = w.core.crew_close_lead(&w.lead, "user").await.unwrap();
+    assert_eq!(answer.failed, vec![id.clone()]);
+    let crew_id = w.task(&id).crew_id;
+
+    let other = w
+        .core
+        .needs_you_all(&|_, crew_id| crew_id == "another-crew")
+        .unwrap();
+    assert!(other.iter().all(|item| item.id != id));
+
+    let own = w
+        .core
+        .needs_you_all(&|_, one| one == crew_id.as_str())
+        .unwrap();
+    assert!(
+        own.iter()
+            .any(|item| item.id == id && item.kind == NeedsYouKind::CouldNotStop)
+    );
 }
 
 /// A task that waits on a person and whose worker could not be stopped is the stop, not the wait: its worker may still run.

@@ -27,7 +27,7 @@ pub enum NeedsYouKind {
 
 wire! {
 /// One thing that waits for the person. `id` is the task's id, a background run's id or a watch crew's id; `since` is when it
-/// began to wait.
+/// began to wait. `name`, `engine`, `model` and `task_kind` are set only for a `could_not_stop` item.
 pub struct NeedsYouItem {
     /// The task's id, a background run's id, or a watch crew's id.
     pub id: String,
@@ -50,6 +50,22 @@ pub struct NeedsYouItem {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub reason: Option<String>,
+    /// The task's brief outcome, one redacted line of at most 160 characters, for a `could_not_stop` item only.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub name: Option<String>,
+    /// The engine routed to build the task, for a `could_not_stop` item whose task is routed.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub engine: Option<String>,
+    /// The routed model, set with `engine`.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub model: Option<String>,
+    /// The brief's kind as its wire name, set only for a `could_not_stop` item.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub task_kind: Option<String>,
 }
 }
 

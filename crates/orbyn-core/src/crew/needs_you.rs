@@ -111,10 +111,29 @@ impl Core {
         let mut stopped = Vec::new();
 
         for waiting in self.store.crew_could_not_stop()? {
+            if !keep(waiting.project_id.as_deref(), &waiting.task.crew_id) {
+                continue;
+            }
             if !seen.insert(waiting.task.id.clone()) {
                 continue;
             }
             let kind = wire::NeedsYouKind::CouldNotStop;
+            let brief = self.store.crew_brief(&waiting.task.id)?;
+            let route = self.store.crew_route_decisions(&waiting.task.id)?.pop();
+            let scrub = match scrubs.entry(waiting.task.crew_id.clone()) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    entry.insert(Scrub::of_crew(self, &person, &waiting.task.crew_id)?)
+                }
+            };
+            let name = brief
+                .as_ref()
+                .and_then(|brief| line(scrub.text(&brief.outcome, REASON_MAX)));
+            let engine = route.as_ref().map(|route| route.engine.as_str().to_owned());
+            let model = route
+                .as_ref()
+                .map(|route| scrub.text(route.model.as_str(), 80));
+            let task_kind = brief.as_ref().map(|brief| wire_name(&brief.kind));
             items.push(wire::NeedsYouItem {
                 id: waiting.task.id.clone(),
                 kind,
@@ -123,6 +142,10 @@ impl Core {
                 since: waiting.since,
                 dismissible: dismissible(kind),
                 reason: fixed_reason(kind).map(str::to_owned),
+                name,
+                engine,
+                model,
+                task_kind,
             });
         }
 
@@ -172,6 +195,10 @@ impl Core {
                     since: place.task.updated_at,
                     dismissible: dismissible(kind),
                     reason,
+                    name: None,
+                    engine: None,
+                    model: None,
+                    task_kind: None,
                 });
             }
         }
@@ -195,6 +222,10 @@ impl Core {
                 since: format_unix(merge.merged_unix),
                 dismissible: false,
                 reason: fixed_reason(wire::NeedsYouKind::MergeWaiting).map(str::to_owned),
+                name: None,
+                engine: None,
+                model: None,
+                task_kind: None,
             });
         }
 
@@ -218,6 +249,10 @@ impl Core {
                 since,
                 dismissible: false,
                 reason: fixed_reason(wire::NeedsYouKind::BackgroundReview).map(str::to_owned),
+                name: None,
+                engine: None,
+                model: None,
+                task_kind: None,
             });
         }
 
@@ -263,6 +298,10 @@ impl Core {
                 since: format_unix(at),
                 dismissible: false,
                 reason,
+                name: None,
+                engine: None,
+                model: None,
+                task_kind: None,
             });
         }
 
@@ -279,6 +318,10 @@ impl Core {
                 since: place.task.updated_at.clone(),
                 dismissible: true,
                 reason: fixed_reason(wire::NeedsYouKind::TripwireStop).map(str::to_owned),
+                name: None,
+                engine: None,
+                model: None,
+                task_kind: None,
             });
         }
         for place in &stopped {
@@ -295,6 +338,10 @@ impl Core {
                 since: place.task.updated_at.clone(),
                 dismissible: true,
                 reason: fixed_reason(wire::NeedsYouKind::WorkerStoppedTwice).map(str::to_owned),
+                name: None,
+                engine: None,
+                model: None,
+                task_kind: None,
             });
         }
 
