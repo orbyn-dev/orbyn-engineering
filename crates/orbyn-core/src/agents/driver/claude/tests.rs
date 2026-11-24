@@ -1477,12 +1477,14 @@ fn the_permission_prompt_waits_as_long_as_the_approval_timeout() {
     );
 }
 
-/// The login probe (I56): the engine's own status command, run from a neutral folder with no settings-source argument,
-/// and its two streams read into the signed-in state and account. The captured text is handed to the parsers and nothing
-/// else: the probe's answer is the state, never the output.
+/// The login probe (I56), through the driver's own `probe()`: the engine's status command is the driver's fixed
+/// `auth status`, run from a neutral folder with no settings-source argument, and a login line printed on stderr maps to
+/// the signed-in state and account. The captured text is handed to the parsers and nothing else: the probe's answer is
+/// the state, never the output.
 #[cfg(unix)]
 #[tokio::test]
-async fn the_login_probe_runs_the_status_command_from_a_neutral_folder_without_settings_sources() {
+async fn the_login_probe_runs_the_drivers_status_command_from_a_neutral_folder() {
+    use crate::agents::driver::EngineDriver;
     use std::os::unix::fs::PermissionsExt;
     let dir = crate::testing::TempDir::new();
     let record = dir.path().join("record.txt");
@@ -1490,31 +1492,32 @@ async fn the_login_probe_runs_the_status_command_from_a_neutral_folder_without_s
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{record}'\npwd >> '{record}'\nprintf '%s\\n' '{{\"loggedIn\":true,\"email\":\"probe@example.test\"}}'\n",
+            "#!/bin/sh\nprintf '%s | %s\\n' \"$*\" \"$(pwd)\" >> '{record}'\ncase \"$*\" in\n  --version) printf '%s\\n' '2.1.318 (Claude Code)' ;;\n  \"auth status\") printf '%s\\n' '{{\"loggedIn\":true,\"email\":\"probe@example.test\"}}' >&2 ;;\nesac\n",
             record = record.display()
         ),
     )
     .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let program = script.to_string_lossy().into_owned();
-    let (auth, account) = crate::agents::engines::probe::read_login(
-        &program,
-        &["auth", "status"],
-        parse_auth_status,
-        parse_auth_account,
-    )
-    .await;
-    assert_eq!(auth, orbyn_contracts::AuthState::LoggedIn);
-    assert_eq!(account.as_deref(), Some("probe@example.test"));
+    let probe = ClaudeDriver::new(script.to_string_lossy().into_owned(), Duration::from_secs(1800))
+        .probe()
+        .await;
+    assert_eq!(probe.version.as_deref(), Some("2.1.318"));
+    assert_eq!(probe.auth, Some(orbyn_contracts::AuthState::LoggedIn));
+    assert_eq!(probe.account.as_deref(), Some("probe@example.test"));
     let recorded = std::fs::read_to_string(&record).unwrap();
-    let mut lines = recorded.lines();
-    assert_eq!(lines.next(), Some("auth"));
-    assert_eq!(lines.next(), Some("status"));
-    // No settings-source argument: the probe wants the login, not a checkout's or the person's settings.
+    // The arguments are the driver's: its own status command, and no settings-source argument for the login probe.
+    let auth_line = recorded
+        .lines()
+        .find(|line| line.starts_with("auth status | "))
+        .expect("the probe ran the driver's status command");
+    let (args, cwd) = auth_line.split_once(" | ").unwrap();
+    assert_eq!(args, "auth status");
     assert!(!recorded.contains("--setting-sources") && !recorded.contains("--bare"));
     // It runs from a neutral folder, not a checkout.
-    let cwd = std::fs::canonicalize(lines.next().unwrap()).unwrap();
-    assert_eq!(cwd, std::fs::canonicalize(std::env::temp_dir()).unwrap());
+    assert_eq!(
+        std::fs::canonicalize(cwd).unwrap(),
+        std::fs::canonicalize(std::env::temp_dir()).unwrap()
+    );
 }
 
 /// The probe is bounded: a status command that never answers is given up on, and the person reads "unknown" rather than a

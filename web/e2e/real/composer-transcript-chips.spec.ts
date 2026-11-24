@@ -5,8 +5,8 @@ import { settled, startProject, type Service } from "./service";
 /**
  * B43, the composer's transcript drop, end to end on the real service: a transcript exported by the real export route is
  * dragged onto another thread's composer and posted to the real Person attach route, becoming a chip with the service's
- * title and message count; the refusal states (over 2 MiB, a newer format) are drawn without uploading anything; and the
- * kept transcript's id rides on the next message's run.
+ * title and message count; an over-2 MiB file is refused before it leaves the page, and a newer-format file is uploaded
+ * and refused by the route, leaving no chip; and the kept transcript's id rides on the next message's run.
  */
 
 let service: Service;
@@ -94,6 +94,8 @@ test("an over-2 MiB transcript and a newer format are refused and nothing is upl
   const newer = { format: "orbyn-transcript", version: 2, exported_at: "2026-11-22T10:00:00Z", title: "A newer one", messages: [] };
   await dropFile(page, { name: "newer.orbyn.json", type: TRANSCRIPT_TYPE, text: JSON.stringify(newer) });
   await expect(page.getByText("Made by a newer Orbyn. Update Orbyn to read it.", { exact: true })).toBeVisible();
+  // Refused means nothing was kept: no transcript chip, and the refused file is only in the strip, not attached to a message.
+  await expect(page.getByRole("list", { name: "Transcripts" })).toHaveCount(0);
   // The service was asked only for the newer one; the oversized file never left the page.
   await expect.poll(() => posts.length).toBe(1);
 });
