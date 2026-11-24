@@ -16,17 +16,17 @@
 use super::frame::cut;
 use super::host::validate_host;
 use super::query::{AssigneeFilter, IssueQuery, StateFilter};
-use super::{IssueSource, MAX_SCOPE_BYTES, ScopeList};
+use super::{IssueSource, MAX_SCOPE_BYTES, NewIssue, ScopeList};
 use crate::error::{CoreError, Result};
 use async_trait::async_trait;
 use base64::Engine as _;
 use orbyn_contracts::{
-    IssueActor, IssueComment, IssueDetail, IssueLabel, IssueState, IssueStateCategory,
-    IssueSummary, TrackerKind,
+    IssueActor, IssueComment, IssueDetail, IssueLabel, IssueReaction, IssueState,
+    IssueStateCategory, IssueSummary, TrackerKind,
 };
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest::{Client, Method, StatusCode, Url, redirect};
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -794,6 +794,78 @@ struct Fetched {
     body: Vec<u8>,
 }
 
+/// The types a new work item is filed as, in the order a project that has them is preferred.
+const CREATE_TYPES: [&str; 3] = ["Issue", "Task", "Bug"];
+
+/// The reactions Azure DevOps has, in the contract's words: it has six of the eight, on comments only.
+const REACTION_SET: &str = "thumbs_up, thumbs_down, laugh, hooray, confused, heart";
+
+/// Azure DevOps' own reaction name for one contract reaction, when it has it. None is mapped to a near one.
+fn reaction_type(reaction: IssueReaction) -> Option<&'static str> {
+    match reaction {
+        IssueReaction::ThumbsUp => Some("like"),
+        IssueReaction::ThumbsDown => Some("dislike"),
+        IssueReaction::Laugh => Some("smile"),
+        IssueReaction::Hooray => Some("hooray"),
+        IssueReaction::Confused => Some("confused"),
+        IssueReaction::Heart => Some("heart"),
+        IssueReaction::Rocket | IssueReaction::Eyes => None,
+    }
+}
+
+/// An Azure DevOps comment id: the number its reaction path takes.
+fn comment_id_ok(comment: &str) -> Result<()> {
+    if comment.is_empty() || comment.len() > 9 || !comment.chars().all(|c| c.is_ascii_digit()) {
+        return Err(CoreError::Invalid(
+            "That comment id is not an Azure DevOps comment.".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The person's text as an Azure DevOps HTML description: every character is text, so it is escaped and its line
+/// breaks become `<br>`; the tracker renders it, this side never does.
+fn html_body(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\n' => out.push_str("<br>"),
+            '\r' => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// The comment a comment-create reply stored: its numeric id, the person who wrote it, the text Azure kept and when.
+fn stored_comment(value: &Value) -> Result<IssueComment> {
+    let id = value
+        .get("id")
+        .and_then(Value::as_u64)
+        .map(|id| id.to_string())
+        .ok_or_else(unreadable)?;
+    let author = value.get("createdBy").and_then(|who| {
+        who.get("uniqueName")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .or_else(|| who.get("displayName").and_then(Value::as_str))
+            .filter(|name| !name.is_empty())
+            .map(|name| IssueActor {
+                login: clip(address_of(name), MAX_LOGIN),
+            })
+    });
+    Ok(IssueComment {
+        id,
+        author,
+        body: cut(&text(value, "text"), MAX_BODY_BYTES).to_owned(),
+        created_at: text(value, "createdDate"),
+    })
+}
+
 /// A failed status in the service's own words. The tracker's body is never passed on.
 fn failure(status: StatusCode, headers: &HeaderMap, what: &str) -> CoreError {
     match status.as_u16() {
@@ -921,6 +993,22 @@ impl Azure {
         body: Option<String>,
         what: &str,
     ) -> Result<Fetched> {
+        self.send(method, path, query, body, "application/json", what)
+            .await
+    }
+
+    /// One request of the API, read or write. The token, host, redirect, timeout and size rules are the read's; a
+    /// JSON body travels in the body, never in the address, and the content type names its shape (a work item create
+    /// is a JSON Patch document).
+    async fn send(
+        &self,
+        method: Method,
+        path: &str,
+        query: &[(&str, String)],
+        body: Option<String>,
+        content_type: &str,
+        what: &str,
+    ) -> Result<Fetched> {
         let encoded =
             base64::engine::general_purpose::STANDARD.encode(format!(":{}", self.token.as_str()));
         let mut token = HeaderValue::from_str(&format!("Basic {encoded}")).map_err(|_| {
@@ -937,7 +1025,7 @@ impl Azure {
             .header(ACCEPT, "application/json")
             .timeout(self.timeout);
         if let Some(body) = body {
-            request = request.header(CONTENT_TYPE, "application/json").body(body);
+            request = request.header(CONTENT_TYPE, content_type).body(body);
         }
         let mut response = request.send().await.map_err(|_| unavailable())?;
         let status = response.status();
@@ -1021,10 +1109,188 @@ impl Azure {
         }
         Ok(ids.iter().filter_map(|id| found.get(id).cloned()).collect())
     }
+
+    /// The type a new work item is filed as: the project's own first of Issue, Task and Bug, else its first enabled
+    /// type. Azure names a work item by its type, so the create cannot leave it out.
+    async fn work_item_type(&self, base: &str) -> Result<String> {
+        let got = self
+            .fetch(
+                Method::GET,
+                &format!("{base}/_apis/wit/workitemtypes"),
+                &[("api-version", "7.1".to_owned())],
+                None,
+                "project",
+            )
+            .await?;
+        let value = parse(&got.body)?;
+        let rows = value
+            .get("value")
+            .and_then(Value::as_array)
+            .ok_or_else(unreadable)?;
+        let names: Vec<&str> = rows
+            .iter()
+            .filter(|row| row.get("isDisabled").and_then(Value::as_bool) != Some(true))
+            .filter_map(|row| row.get("name").and_then(Value::as_str))
+            .filter(|name| !name.is_empty())
+            .collect();
+        CREATE_TYPES
+            .iter()
+            .find(|wanted| names.iter().any(|name| name.eq_ignore_ascii_case(wanted)))
+            .map(|name| (*name).to_owned())
+            .or_else(|| names.first().map(|name| (*name).to_owned()))
+            .ok_or_else(|| {
+                CoreError::Invalid("Azure DevOps offers no work item type to file.".into())
+            })
+    }
 }
 
 #[async_trait]
 impl IssueSource for Azure {
+    fn can_write(&self) -> bool {
+        true
+    }
+
+    async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
+        let (org, project) = scope_parts(scope)?;
+        let base = self.project_base(&org, &project)?;
+        if new.assignees.len() > 1 {
+            return Err(CoreError::Invalid(
+                "Azure DevOps assigns one person to a work item.".into(),
+            ));
+        }
+        let mut fields = vec![json!({
+            "op": "add",
+            "path": "/fields/System.Title",
+            "value": new.title,
+        })];
+        if !new.body.is_empty() {
+            fields.push(json!({
+                "op": "add",
+                "path": "/fields/System.Description",
+                "value": html_body(new.body),
+            }));
+        }
+        if !new.labels.is_empty() {
+            if new.labels.iter().any(|label| label.contains(';')) {
+                return Err(CoreError::Invalid(
+                    "Azure DevOps cannot use a label with a semicolon in it.".into(),
+                ));
+            }
+            fields.push(json!({
+                "op": "add",
+                "path": "/fields/System.Tags",
+                "value": new.labels.join("; "),
+            }));
+        }
+        if let Some(assignee) = new.assignees.first() {
+            fields.push(json!({
+                "op": "add",
+                "path": "/fields/System.AssignedTo",
+                "value": assignee,
+            }));
+        }
+        let kind = self.work_item_type(&base).await?;
+        let got = self
+            .send(
+                Method::POST,
+                &format!("{base}/_apis/wit/workitems/{}", encode_segment(&kind)),
+                &[("api-version", "7.1".to_owned())],
+                Some(Value::Array(fields).to_string()),
+                "application/json-patch+json",
+                "project",
+            )
+            .await?;
+        let value = parse(&got.body)?;
+        let summary = summary(&self.host, &base, scope, &value)?;
+        let fields = value.get("fields").ok_or_else(unreadable)?;
+        // A new work item has no comments: its own reply is the whole answer, so a successful create is never
+        // reported as a failure by a second read.
+        Ok(IssueDetail {
+            summary,
+            body: cut(
+                &html_to_text(
+                    fields
+                        .get("System.Description")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                ),
+                MAX_BODY_BYTES,
+            )
+            .to_owned(),
+            comments: Vec::new(),
+            linked_pull_requests: Vec::new(),
+            linked_threads: Vec::new(),
+            reactions: None,
+        })
+    }
+
+    async fn comment(&self, scope: &str, key: &str, body: &str) -> Result<IssueComment> {
+        let (org, project) = scope_parts(scope)?;
+        key_ok(key)?;
+        let base = self.project_base(&org, &project)?;
+        let got = self
+            .send(
+                Method::POST,
+                &format!("{base}/_apis/wit/workItems/{key}/comments"),
+                &[
+                    ("format", "markdown".to_owned()),
+                    ("api-version", "7.1-preview.4".to_owned()),
+                ],
+                Some(json!({ "text": body }).to_string()),
+                "application/json",
+                "work item",
+            )
+            .await?;
+        stored_comment(&parse(&got.body)?)
+    }
+
+    async fn react(
+        &self,
+        scope: &str,
+        key: &str,
+        comment: Option<&str>,
+        reaction: IssueReaction,
+        on: bool,
+    ) -> Result<IssueDetail> {
+        let (org, project) = scope_parts(scope)?;
+        key_ok(key)?;
+        let base = self.project_base(&org, &project)?;
+        // A work item itself takes no reaction: Azure DevOps reacts on its comments only.
+        let Some(comment) = comment else {
+            return Err(CoreError::Invalid(
+                "Azure DevOps reactions go on comments only.".into(),
+            ));
+        };
+        comment_id_ok(comment)?;
+        let Some(kind) = reaction_type(reaction) else {
+            return Err(CoreError::Invalid(format!(
+                "Azure DevOps has no such reaction. It has: {REACTION_SET}."
+            )));
+        };
+        let path = format!("{base}/_apis/wit/commentsReactions/{key}/{comment}/{kind}");
+        let method = if on { Method::PUT } else { Method::DELETE };
+        match self
+            .send(
+                method,
+                &path,
+                &[("api-version", "7.1-preview.1".to_owned())],
+                None,
+                "application/json",
+                "work item",
+            )
+            .await
+        {
+            Ok(_) => {}
+            // There is no reaction of that kind left to take back: a removal is idempotent at the answer.
+            Err(CoreError::NotFound(_)) if !on => {}
+            Err(error) => return Err(error),
+        }
+        let mut detail = self.get(scope, key).await?;
+        // Azure DevOps reports reactions on comments, not on the work item, so the issue carries none.
+        detail.reactions = None;
+        Ok(detail)
+    }
+
     async fn list(&self, scope: &str, query: &IssueQuery) -> Result<ScopeList> {
         let (org, project) = scope_parts(scope)?;
         let base = self.project_base(&org, &project)?;

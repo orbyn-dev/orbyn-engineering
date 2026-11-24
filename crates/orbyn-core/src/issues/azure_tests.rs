@@ -1619,3 +1619,272 @@ async fn wiql_values_cannot_leave_the_literal() {
         );
     }
 }
+
+mod writes {
+    //! Azure DevOps' issue writes against the same local fake server: the work item type a create picks, the JSON
+    //! Patch document it sends, and the comments-only reactions with their smaller set.
+
+    use super::*;
+    use crate::issues::NewIssue;
+    use orbyn_contracts::IssueReaction;
+    use std::sync::{Arc, Mutex};
+
+    /// The method and address of every write the server saw, without the HTTP version.
+    fn written_requests(seen: &[Seen]) -> Vec<String> {
+        seen.iter()
+            .filter(|req| req.line.starts_with("PUT ") || req.line.starts_with("DELETE "))
+            .map(|req| req.line.split(' ').take(2).collect::<Vec<_>>().join(" "))
+            .collect()
+    }
+
+    fn new_issue<'a>(
+        title: &'a str,
+        body: &'a str,
+        labels: &'a [String],
+        assignees: &'a [String],
+    ) -> NewIssue<'a> {
+        NewIssue {
+            title,
+            body,
+            labels,
+            assignees,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_create_picks_the_work_item_type_and_sends_the_fields_as_a_json_patch() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path.ends_with("/workitemtypes") {
+                return Reply::json(&json!({
+                    "value": [{ "name": "Bug" }, { "name": "Task" }, { "name": "Epic" }]
+                }));
+            }
+            assert_eq!(req.line.split(' ').next(), Some("POST"));
+            assert_eq!(path, "/org/proj/_apis/wit/workitems/Task");
+            assert_eq!(
+                req.header("content-type"),
+                Some("application/json-patch+json")
+            );
+            let auth = basic(TOKEN);
+            assert_eq!(req.header("authorization"), Some(auth.as_str()));
+            assert_eq!(
+                serde_json::from_str::<Value>(&req.body).unwrap(),
+                json!([
+                    { "op": "add", "path": "/fields/System.Title", "value": "Crash on start" },
+                    { "op": "add", "path": "/fields/System.Description", "value": "It breaks.<br>Again &amp; again" },
+                    { "op": "add", "path": "/fields/System.Tags", "value": "bug; ui" },
+                    { "op": "add", "path": "/fields/System.AssignedTo", "value": "ann@example.test" },
+                ]),
+                "the person's text travels HTML-escaped inside a JSON Patch field"
+            );
+            let mut created = item(&base, 21, "Active");
+            created["fields"]["System.Title"] = json!("Crash on start");
+            created["fields"]["System.Description"] = json!("It breaks.<br>Again &amp; again");
+            Reply::json(&created)
+        })
+        .await;
+        assert!(
+            reader(&server).can_write(),
+            "Azure DevOps writes in this build"
+        );
+        let labels = vec!["bug".to_owned(), "ui".to_owned()];
+        let assignees = vec!["ann@example.test".to_owned()];
+        let detail = reader(&server)
+            .create(
+                "org/proj",
+                &new_issue(
+                    "Crash on start",
+                    "It breaks.\nAgain & again",
+                    &labels,
+                    &assignees,
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(detail.summary.key, "21");
+        assert_eq!(detail.summary.title, "Crash on start");
+        assert_eq!(detail.body, "It breaks.\nAgain & again");
+        assert!(detail.comments.is_empty());
+        assert_eq!(detail.reactions, None);
+    }
+
+    #[tokio::test]
+    async fn a_create_with_more_than_one_assignee_is_refused_before_a_request() {
+        let server = Server::start(|_| Reply::json(&json!({}))).await;
+        let assignees = vec!["ann@example.test".to_owned(), "bo@example.test".to_owned()];
+        let refused = reader(&server)
+            .create("org/proj", &new_issue("T", "", &[], &assignees))
+            .await
+            .map(|_| ());
+        assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
+        assert!(server.seen().is_empty(), "{:?}", server.seen());
+    }
+
+    #[tokio::test]
+    async fn a_comment_sends_markdown_and_answers_the_stored_comment() {
+        let server = Server::start(|req| {
+            assert_eq!(req.line.split(' ').next(), Some("POST"));
+            assert_eq!(req.path(), "/org/proj/_apis/wit/workItems/21/comments");
+            assert_eq!(req.param("format").as_deref(), Some("markdown"));
+            assert_eq!(req.param("api-version").as_deref(), Some("7.1-preview.4"));
+            assert_eq!(req.json(), Some(json!({ "text": "Looks good." })));
+            Reply::json(&json!({
+                "id": 9,
+                "text": "Looks good.",
+                "createdDate": "2026-11-25T00:00:00Z",
+                "createdBy": { "uniqueName": "ann@example.test", "displayName": "Ann" },
+            }))
+        })
+        .await;
+        let comment = reader(&server)
+            .comment("org/proj", "21", "Looks good.")
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                comment.id.as_str(),
+                comment.body.as_str(),
+                comment.created_at.as_str()
+            ),
+            ("9", "Looks good.", "2026-11-25T00:00:00Z")
+        );
+        assert_eq!(comment.author.unwrap().login, "ann@example.test");
+    }
+
+    #[tokio::test]
+    async fn a_comment_reaction_is_put_and_taken_back_on_the_comments_reaction_path() {
+        let present = Arc::new(Mutex::new(true));
+        let state = present.clone();
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path.contains("/commentsReactions/") {
+                assert_eq!(req.param("api-version").as_deref(), Some("7.1-preview.1"));
+                if req.line.starts_with("PUT") {
+                    *state.lock().unwrap() = true;
+                    return Reply::json(&json!({ "type": "like", "count": 1 }));
+                }
+                assert!(req.line.starts_with("DELETE"));
+                let was = *state.lock().unwrap();
+                *state.lock().unwrap() = false;
+                return if was {
+                    Reply::raw(204, Vec::new())
+                } else {
+                    Reply::status(404)
+                };
+            }
+            if path.ends_with("/comments") {
+                return Reply::json(&json!({ "comments": [] }));
+            }
+            Reply::json(&item(&base, 21, "Active"))
+        })
+        .await;
+        let azure = reader(&server);
+        let added = azure
+            .react("org/proj", "21", Some("9"), IssueReaction::ThumbsUp, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            added.reactions, None,
+            "Azure DevOps reports reactions on comments, not on the work item"
+        );
+        azure
+            .react("org/proj", "21", Some("9"), IssueReaction::ThumbsUp, false)
+            .await
+            .unwrap();
+        // The same removal again finds nothing to delete and is still a success.
+        azure
+            .react("org/proj", "21", Some("9"), IssueReaction::ThumbsUp, false)
+            .await
+            .unwrap();
+        let seen = server.seen();
+        let written = written_requests(&seen);
+        assert_eq!(
+            written,
+            vec![
+                "PUT /org/proj/_apis/wit/commentsReactions/21/9/like?api-version=7.1-preview.1"
+                    .to_owned(),
+                "DELETE /org/proj/_apis/wit/commentsReactions/21/9/like?api-version=7.1-preview.1"
+                    .to_owned(),
+                "DELETE /org/proj/_apis/wit/commentsReactions/21/9/like?api-version=7.1-preview.1"
+                    .to_owned(),
+            ],
+            "{seen:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_work_item_reaction_and_a_reaction_azure_lacks_are_refused_with_its_own_set() {
+        let server = Server::start(|_| Reply::json(&json!({}))).await;
+        let azure = reader(&server);
+        let on_issue = azure
+            .react("org/proj", "21", None, IssueReaction::Heart, true)
+            .await
+            .map(|_| ());
+        match on_issue {
+            Err(CoreError::Invalid(message)) => {
+                assert!(message.contains("comments only"), "{message}")
+            }
+            other => panic!("a work item takes no reaction: {other:?}"),
+        }
+        let lack = azure
+            .react("org/proj", "21", Some("9"), IssueReaction::Rocket, true)
+            .await
+            .map(|_| ());
+        match lack {
+            Err(CoreError::Invalid(message)) => {
+                assert!(
+                    message.contains("thumbs_up, thumbs_down, laugh, hooray, confused, heart"),
+                    "{message}"
+                );
+                assert!(
+                    !message.contains("rocket"),
+                    "the value it lacks is not named as one it has: {message}"
+                );
+            }
+            other => panic!("Azure DevOps has no rocket reaction: {other:?}"),
+        }
+        assert!(server.seen().is_empty(), "{:?}", server.seen());
+    }
+
+    #[tokio::test]
+    async fn a_refused_create_keeps_the_contract_error_and_never_its_raw_body() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/workitemtypes") {
+                return Reply::json(&json!({ "value": [{ "name": "Issue" }] }));
+            }
+            Reply::status(403)
+        })
+        .await;
+        let error = reader(&server)
+            .create("org/proj", &new_issue("T", "", &[], &[]))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        match error {
+            CoreError::TrackerForbidden(message) => assert!(
+                !message.contains("raw-tracker-text") && !message.contains("secret-detail"),
+                "{message}"
+            ),
+            other => panic!("a 403 is forbidden, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_reaction_azure_has_maps_to_its_own_name_and_the_two_it_lacks_map_to_none() {
+        for (reaction, wanted) in [
+            (IssueReaction::ThumbsUp, Some("like")),
+            (IssueReaction::ThumbsDown, Some("dislike")),
+            (IssueReaction::Laugh, Some("smile")),
+            (IssueReaction::Hooray, Some("hooray")),
+            (IssueReaction::Confused, Some("confused")),
+            (IssueReaction::Heart, Some("heart")),
+            (IssueReaction::Rocket, None),
+            (IssueReaction::Eyes, None),
+        ] {
+            assert_eq!(reaction_type(reaction), wanted);
+        }
+    }
+}
