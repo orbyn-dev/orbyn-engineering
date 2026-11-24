@@ -607,3 +607,36 @@ test("confinement: only the two Claude prefixes are added and the confinement en
   assert.equal(env.CLAUDE_CODE_KEPT, "from-confinement");
 });
 
+test("confinement: a credential-named key the SDK re-adds under an allowed prefix is refused", async () => {
+  const confinement = {
+    argvPrefix: ENV_PRINTING_PREFIX,
+    env: { PATH: "/confinement-path" },
+    cwd: process.cwd(),
+    writeRoots: [process.cwd()],
+  };
+  const { h, spawn } = await confinedSpawn(confinement);
+  const child = spawn({
+    command: "ignored-after-the-prefix",
+    args: [],
+    env: {
+      CLAUDE_CODE_OAUTH_TOKEN: "sdk-oauth-token",
+      CLAUDE_AGENT_SDK_API_KEY: "sdk-api-key",
+      CLAUDE_CODE_BENIGN: "kept",
+    },
+  });
+  const log = await h.next((f) => f.type === "log" && f.event.type === "envAdded");
+  assert.deepEqual(log.event.keys, ["CLAUDE_CODE_BENIGN"]);
+  assert.ok(!JSON.stringify(log).includes("sdk-"), "a key name is logged, never a value");
+  const env = await new Promise((resolve, reject) => {
+    let text = "";
+    child.stdout.on("data", (chunk) => (text += chunk));
+    child.on("error", reject);
+    child.on("close", () => resolve(JSON.parse(text || "{}")));
+  });
+  // The core's credential-name rule, applied to what the SDK hands back: a name that says it holds a secret never returns.
+  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined, "a TOKEN-named key is never re-added");
+  assert.equal(env.CLAUDE_AGENT_SDK_API_KEY, undefined, "an API_KEY-named key is never re-added");
+  assert.equal(env.CLAUDE_CODE_BENIGN, "kept", "a benign key under the documented prefix still passes");
+});
+
+
