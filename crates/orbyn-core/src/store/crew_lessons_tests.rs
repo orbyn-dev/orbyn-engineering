@@ -1,10 +1,54 @@
 //! Crew lessons at rest (migration 80, KC5 slice 1): the round trip, the dedupe key, the caps that hide instead of
-//! deleting, the audit rows, the table's own checks and the read source 1 uses.
+//! deleting, the audit rows, the table's own checks and the read source 1 uses. Migration 81 adds the brief's
+//! counters: a use and a use time for a lesson a brief carried, and `left_out_of` for one its key check left out.
+
+use orbyn_contracts::{AnswerKey, Brief, CrewObject};
+use serde_json::Value;
 
 use crate::testing::TempDir;
 use crate::util::{format_unix, unix_now};
 
 use super::*;
+
+macro_rules! example {
+    ($name:literal) => {
+        include_str!(concat!(
+            "../../../../docs/crew/protocol/schemas/examples/",
+            $name,
+            ".json"
+        ))
+    };
+}
+
+fn object(text: &str) -> CrewObject {
+    CrewObject::parse(&serde_json::from_str::<Value>(text).unwrap()).unwrap()
+}
+
+fn brief() -> Brief {
+    match object(example!("brief.valid.basic")) {
+        CrewObject::Brief(brief) => brief,
+        _ => unreachable!(),
+    }
+}
+
+fn key() -> AnswerKey {
+    match object(example!("answer-key.valid.basic")) {
+        CrewObject::AnswerKey(key) => key,
+        _ => unreachable!(),
+    }
+}
+
+/// One project row, for the project preferences the "use lessons" switch uses.
+fn seed_project(store: &Store, project: &str) {
+    store
+        .writer()
+        .execute(
+            "INSERT OR IGNORE INTO projects (id, name, path, trusted, is_git, created_at, managed, scratch)
+             VALUES (?1, 'p', ?2, 0, 1, 't', 0, 0)",
+            rusqlite::params![project, format!("/{project}")],
+        )
+        .unwrap();
+}
 
 fn open() -> (TempDir, Store) {
     let dir = TempDir::new();
@@ -443,6 +487,142 @@ fn the_same_fingerprint_is_found_only_in_one_repository_and_within_sixty_days() 
 }
 
 #[test]
+fn migration_81_adds_the_brief_counters_and_a_new_lesson_starts_at_zero() {
+    let versions: Vec<i64> = migrations::MIGRATIONS.iter().map(|(v, _)| *v).collect();
+    assert!(versions.windows(2).all(|w| w[1] == w[0] + 1));
+    assert!(versions.contains(&81));
+
+    let (_dir, store) = open();
+    let written = store
+        .write_crew_lesson(lesson(
+            "repo",
+            Some("p1"),
+            "person",
+            "Use pnpm, not npm.",
+            None,
+        ))
+        .unwrap()
+        .unwrap();
+    assert_eq!(written.left_out_of, 0);
+    assert_eq!(
+        store.crew_lesson(&written.id).unwrap().unwrap().left_out_of,
+        0
+    );
+}
+
+#[test]
+fn a_briefs_use_and_left_out_are_counted_in_the_transaction_that_stores_it() {
+    let (_dir, store) = open();
+    let used = store
+        .write_crew_lesson(lesson(
+            "repo",
+            Some("p1"),
+            "person",
+            "The lesson this brief carries.",
+            None,
+        ))
+        .unwrap()
+        .unwrap();
+    let left_out = store
+        .write_crew_lesson(lesson(
+            "repo",
+            Some("p1"),
+            "person",
+            "The lesson this brief's key leaves out.",
+            None,
+        ))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (used.uses, used.left_out_of, used.last_used_at),
+        (0, 0, None)
+    );
+
+    let task = store
+        .create_crew_task_with_lessons(
+            &brief(),
+            &key(),
+            "run-01",
+            std::slice::from_ref(&used.id),
+            std::slice::from_ref(&left_out.id),
+        )
+        .unwrap();
+    assert_eq!(task.id, brief().id.as_str());
+    let carried = store.crew_lesson(&used.id).unwrap().unwrap();
+    assert_eq!(carried.uses, 1);
+    assert!(
+        carried.last_used_at.is_some(),
+        "a carried lesson is stamped used"
+    );
+    assert_eq!(carried.updated_at, carried.last_used_at.clone().unwrap());
+    let omitted = store.crew_lesson(&left_out.id).unwrap().unwrap();
+    assert_eq!((omitted.uses, omitted.left_out_of), (0, 1));
+
+    // The same brief again is the same task, not a second use.
+    store
+        .create_crew_task_with_lessons(
+            &brief(),
+            &key(),
+            "run-01",
+            std::slice::from_ref(&used.id),
+            std::slice::from_ref(&left_out.id),
+        )
+        .unwrap();
+    assert_eq!(store.crew_lesson(&used.id).unwrap().unwrap().uses, 1);
+    assert_eq!(
+        store
+            .crew_lesson(&left_out.id)
+            .unwrap()
+            .unwrap()
+            .left_out_of,
+        1
+    );
+}
+
+#[test]
+fn the_use_lessons_switch_is_on_until_a_person_turns_it_off() {
+    let (_dir, store) = open();
+    seed_project(&store, "p1");
+    assert!(store.crew_use_lessons("p1").unwrap(), "it ships on");
+    assert!(store.crew_use_lessons("no-such-project").unwrap());
+
+    store.set_crew_use_lessons("p1", false, "user").unwrap();
+    assert!(!store.crew_use_lessons("p1").unwrap());
+    assert_eq!(actions(&store).last().unwrap(), "crew.lesson.settings");
+    let stored: String = store
+        .reader()
+        .query_row(
+            "SELECT value FROM project_preferences WHERE project_id = 'p1' AND key = 'crew_use_lessons'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored, "off");
+
+    // On is the default, so it leaves no row behind.
+    store.set_crew_use_lessons("p1", true, "user").unwrap();
+    assert!(store.crew_use_lessons("p1").unwrap());
+    let rows: i64 = store
+        .reader()
+        .query_row(
+            "SELECT COUNT(*) FROM project_preferences WHERE key = 'crew_use_lessons'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(rows, 0);
+
+    // A value this build does not understand reads off: it never injects a lesson the person did not choose.
+    store
+        .writer()
+        .execute(
+            "INSERT INTO project_preferences (project_id, key, value) VALUES ('p1', 'crew_use_lessons', 'maybe')",
+            [],
+        )
+        .unwrap();
+    assert!(!store.crew_use_lessons("p1").unwrap());
+}
+
 fn a_write_keeps_at_most_five_evidence_ids_in_the_row_and_the_audit() {
     let (_dir, store) = open();
     let mut new = lesson("repo", Some("p1"), "person", "Use pnpm.", None);
@@ -467,4 +647,118 @@ fn a_write_keeps_at_most_five_evidence_ids_in_the_row_and_the_audit() {
         detail.contains("sha256:4") && !detail.contains("sha256:5"),
         "{detail}"
     );
+}
+
+#[test]
+fn a_failed_lesson_counter_never_refuses_the_task() {
+    let (_dir, store) = open();
+    seed_project(&store, "p1");
+    let used = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Use pnpm.", None))
+        .unwrap()
+        .unwrap();
+    // A counter that cannot be written: the update is refused by the table itself.
+    store
+        .writer()
+        .execute_batch(
+            "CREATE TRIGGER refuse_counts BEFORE UPDATE ON crew_lessons
+             BEGIN SELECT RAISE(ABORT, 'counter refused'); END;",
+        )
+        .unwrap();
+    let task = store
+        .create_crew_task_with_lessons(
+            &brief(),
+            &key(),
+            "run-01",
+            std::slice::from_ref(&used.id),
+            &[],
+        )
+        .unwrap();
+    assert_eq!(task.id, brief().id.as_str());
+    assert!(
+        store.crew_task(&task.id).unwrap().is_some(),
+        "the task is stored"
+    );
+    assert_eq!(store.crew_lesson(&used.id).unwrap().unwrap().uses, 0);
+}
+
+#[test]
+fn the_brief_read_holds_only_active_visible_lessons_newest_first() {
+    let (_dir, store) = open();
+    let a = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "First.", None))
+        .unwrap()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let b = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Second.", None))
+        .unwrap()
+        .unwrap();
+    store
+        .writer()
+        .execute(
+            "UPDATE crew_lessons SET state = 'disabled' WHERE id = ?1",
+            [&a.id],
+        )
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let c = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Third.", None))
+        .unwrap()
+        .unwrap();
+    store
+        .writer()
+        .execute(
+            "UPDATE crew_lessons SET hidden_by_cap = 1 WHERE id = ?1",
+            [&c.id],
+        )
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let d = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Fourth.", None))
+        .unwrap()
+        .unwrap();
+    let ids: Vec<String> = store
+        .crew_lessons_for_brief("repo", Some("p1"))
+        .unwrap()
+        .into_iter()
+        .map(|lesson| lesson.id)
+        .collect();
+    // Two are eligible, and the newer one comes first; the disabled and the hidden one are not there.
+    assert_eq!(ids, [d.id, b.id]);
+}
+
+#[test]
+fn a_counter_that_fails_after_another_succeeded_rolls_both_back() {
+    let (_dir, store) = open();
+    seed_project(&store, "p1");
+    let first = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Use pnpm.", None))
+        .unwrap()
+        .unwrap();
+    let second = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Run lint.", None))
+        .unwrap()
+        .unwrap();
+    // Only the second counter is refused, so the first one has already been written when the failure comes.
+    store
+        .writer()
+        .execute_batch(&format!(
+            "CREATE TRIGGER refuse_second BEFORE UPDATE ON crew_lessons WHEN NEW.id = '{}'
+             BEGIN SELECT RAISE(ABORT, 'counter refused'); END;",
+            second.id
+        ))
+        .unwrap();
+    let task = store
+        .create_crew_task_with_lessons(
+            &brief(),
+            &key(),
+            "run-01",
+            &[first.id.clone(), second.id.clone()],
+            &[],
+        )
+        .unwrap();
+    assert!(store.crew_task(&task.id).unwrap().is_some());
+    assert_eq!(store.crew_lesson(&first.id).unwrap().unwrap().uses, 0);
+    assert_eq!(store.crew_lesson(&second.id).unwrap().unwrap().uses, 0);
 }

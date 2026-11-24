@@ -322,6 +322,31 @@ describe("the device actions of docs/devices.md", () => {
   });
 });
 
+describe("browser profile renames", () => {
+  it("classifies only the POST rename route with a concrete profile ID", () => {
+    expect(sendsPersonKey("POST", "/api/browser-profiles/profile-1/rename")).toBe(true);
+    for (const [method, path] of [
+      ["GET", "/api/browser-profiles/profile-1/rename"],
+      ["POST", "/api/browser-profiles//rename"],
+      ["POST", "/api/browser-profiles/profile-1/rename/extra"],
+      ["GET", "/api/browser-profiles"],
+      ["POST", "/api/browser-profiles"],
+      ["DELETE", "/api/browser-profiles/profile-1"],
+      ["POST", "/api/browser-profiles/profile-1/clear"],
+    ] as const) {
+      expect(sendsPersonKey(method, path), `${method} ${path}`).toBe(false);
+    }
+  });
+
+  it("sends the shell key with the rename request", async () => {
+    shell(vi.fn(async () => "shell-key"));
+    const posted = ok();
+    vi.stubGlobal("fetch", posted);
+    await request("POST", "/api/browser-profiles/profile-1/rename", { name: "Research" });
+    expect(sentHeaders(posted).get(PERSON_HEADER)).toBe("shell-key");
+  });
+});
+
 describe("the profile writes of docs/execution-profiles-and-library.md", () => {
   it("send the key on every write, and on the reads and the check", () => {
     expect(sendsPersonKey("POST", "/api/profiles")).toBe(true);

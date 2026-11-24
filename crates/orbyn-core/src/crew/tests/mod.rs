@@ -68,6 +68,7 @@ mod harness;
 mod http_probe;
 mod issues;
 mod lessons;
+mod lessons_brief;
 mod lifecycle;
 mod merging_recovery;
 mod model_ids;

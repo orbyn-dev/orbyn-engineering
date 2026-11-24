@@ -262,7 +262,11 @@ impl Core {
             config.workspace_url.clone(),
             config.library_bundle.clone(),
         )?);
-        let skills = Arc::new(SkillService::new(store.clone(), workspace.clone()));
+        let skills = Arc::new(SkillService::new(
+            store.clone(),
+            workspace.clone(),
+            config.data_dir.clone(),
+        ));
         let computer = Arc::new(ComputerGateway::new(store.clone(), gate.clone(), backend));
         let mcp = Arc::new(McpService::new(
             gate.clone(),

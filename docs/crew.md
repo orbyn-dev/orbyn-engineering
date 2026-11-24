@@ -1266,7 +1266,9 @@ uses it as a hard filter. Preview only; Orbyn reads the file and never writes it
   machine does not have is kept and shown as "not on this machine". Unknown keys at the top of the file belong to other slices: they are noted
   and ignored. A file holding a secret (the shared detector) is refused.
 - **An invalid file fails closed.** If the file cannot be read, does not parse or breaks a rule above, every engine is blocked by the rule
-  "crew.json invalid" with the problem in plain words, and the task waits in Needs you. It is never read as "no rules". The same file also holds
+  "crew.json invalid" with the problem in plain words, and the task waits in Needs you; a file that cannot be read
+  only on the default branch is refused this way. A write task whose key does not already declare a `repo_required` check also reads the same file at the commit it starts from for the repository's own checks, so a file that cannot be read there
+  refuses the start before routing, with the reader's problem and nothing stored. It is never read as "no rules". The same file also holds
   review `lanes` and `allowed_hosts`, so a file that is not JSON at all blocks every start now, not only the review; a file whose `lanes` are wrong
   but which is valid JSON still starts and fails at the review as before. The dry run (`crew_route`) says nothing about classes for a thread with no
   commit to read, and a start there is refused on its own terms.
@@ -1308,7 +1310,7 @@ until #441's sandbox covers it, and a symlink a worker adds during the task is n
 (ruling pending). Known limits: **the rules are read at two places and the stricter applies: the checkout's HEAD at task start, and the project's default
 branch as of the last fetch** (`refs/remotes/origin/HEAD`, else `origin/main`, `origin/master` or `origin/trunk`, else a local `init.defaultBranch`, `main`,
 `master` or `trunk`; with none of them the rules are read at HEAD alone, as before). An engine must be allowed by both, a file that cannot be read on either
-side blocks every engine, and the route card says in words when the two files differ. So an agent that moves HEAD to a commit without the file, or commits a
+side blocks every engine (a write start that inherits the repository's checks, and whose starting commit cannot be read, is refused at start instead, as above), and the route card says in words when the two files differ. So an agent that moves HEAD to a commit without the file, or commits a
 looser one, does not loosen the next task. A remote-tracking ref is moved by `git fetch` and `git pull`, not by `checkout`, `switch`, `reset` or a commit in any
 worktree; a local branch is moved by a commit or `git branch -f` on it, so it is the weaker fallback. **Neither is out of an agent's reach:** a worker runs as the person, the
 macOS confinement of #441 closes the data folder and not the repository's `.git`, and Windows and Linux workers are refused, so an agent that runs git plumbing
@@ -1796,7 +1798,7 @@ worker, the secret scan on the way in and out) and builds no screen before its f
 | KC6 | Watches | A background crew kind `watch`: a fixed command on a schedule with no model call; it acts once when the result turns failing | E4 | M26 |
 | KC7 | The missing listeners | `issue_label` and `dependency_update` background crews get listeners. Built: the listeners' shared tick, claim, start and refusal plumbing, and `issue_label` detection through a project's one tracker reader, with a per-label baseline on first sight (every page, up to ten) so the labels already there do not start a run, and a label-set claim so an edit is inert. Not built: `dependency_update` detection, which waits on a reader feed (follow-up #1360) and starts nothing today | E4 | M27 |
 | KC8 | Resume after restart | A task whose worker died in a restart resumes once from its last verified round with the same key and budget, then stops as today | E2 | M28 |
-| KC9 | Skill proposals | Three lessons with the same pattern propose a skill in the skills workspace; nothing installs without the person | E2, E4 | M29 |
+| KC9 | Skill proposals | Three lessons with the same pattern propose a skill in the device's own skills area, `skills-local`; nothing installs without the person | E2, E4 | M29 |
 | KC10 | Device notifications | A desktop notification the first time something needs the person, once per item | E3, E1 | M30 |
 
 **Resume after restart (KC8).** A builder or fix task left `running` (or `changed_approach`) after a restart
@@ -1810,6 +1812,19 @@ writes `crew.task.resumed` in the same transaction as the state, attempt and res
 the same transaction as its `stopped`/`engine_error` move.
 
 **As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342); its core route is not built. KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
+
+**KC9 library side (built after that snapshot):** an approved skill proposal writes the skill into the device's own
+skills folder, `<data>/skills-local/<slug>/SKILL.md`, whose front matter carries a `local_revision`; the shared library and
+any target repository are never written, so the library's revision and dirty flag cannot change. A local skill is personal
+and applies to every project; the repository a proposal came from appears in its text only and cannot narrow where it
+applies. The one writer (`SkillService::write_local_skill`) refuses a name that already exists in the library or in
+`skills-local` unless it edits that local skill at the revision (and under the name) it read, caps the stored file at 64 KiB
+including its revision line, refuses a secret with the contract's `secret_refused` sentence, and records one audit row
+(`skills.local.write`) with the name, the revision and the proposal and lesson ids only, never the text. The shared library
+wins a name it holds: a local skill cannot be created over one, and if the library later gains the name, `skill_load` reads
+the library copy and `skill_search` lists it once. Engines reach local skills through the MCP `skill_search` and
+`skill_load` tools; native discovery is a follow-up. The proposal store and its routes, and the web, are not built in this
+slice.
 
 **Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
 (our router never swaps an engine) and release channels.
