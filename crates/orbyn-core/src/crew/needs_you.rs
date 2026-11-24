@@ -208,7 +208,11 @@ impl Core {
                     None => fixed_reason(kind).map(str::to_owned),
                 };
                 let asked = (kind == wire::NeedsYouKind::TaskNeedsPerson).then_some(question);
-                (reason, asked.flatten(), hidden)
+                (
+                    reason,
+                    asked.flatten(),
+                    hidden && kind == wire::NeedsYouKind::TaskNeedsPerson,
+                )
             };
             if seen.insert(place.task.id.clone()) {
                 items.push(wire::NeedsYouItem {
