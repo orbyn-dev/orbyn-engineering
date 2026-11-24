@@ -703,6 +703,7 @@ impl RunManager {
                 prompt: prompt.to_owned(),
             },
             "user",
+            |_| {},
         )?;
         Ok(SteerResult {
             message_id,
@@ -713,8 +714,16 @@ impl RunManager {
 
     /// Hands `prompt` to the running turn's input and to nothing else: no queue, no new turn.
     /// False when there is no running turn that takes input. The timeline shows the text under
-    /// `role`, so it is not taken for something the person typed.
-    pub fn steer_live(self: &Arc<Self>, thread_id: &str, prompt: &str, role: &str) -> Result<bool> {
+    /// `role`, so it is not taken for something the person typed. `handed` is told the masked text
+    /// the engine is given, just before it is sent, so a caller whose hand-over the engine may
+    /// refuse can record what a refusal will quote back.
+    pub fn steer_live(
+        self: &Arc<Self>,
+        thread_id: &str,
+        prompt: &str,
+        role: &str,
+        handed: impl FnOnce(&str),
+    ) -> Result<bool> {
         check_prompt(prompt)?;
         let Some(run) = self.store.thread(thread_id)?.active_run else {
             return Ok(false);
@@ -734,7 +743,7 @@ impl RunManager {
             prompt: prompt.to_owned(),
         };
         Ok(self
-            .send_steer(thread_id, &run.id, &input, &steer, role)
+            .send_steer(thread_id, &run.id, &input, &steer, role, handed)
             .is_ok())
     }
 
@@ -745,6 +754,7 @@ impl RunManager {
         input: &tokio::sync::mpsc::UnboundedSender<SteerMessage>,
         steer: &SteerMessage,
         role: &str,
+        handed: impl FnOnce(&str),
     ) -> Result<()> {
         // The engine gets the masked text; the timeline below and a requeue keep what was typed.
         let project_id = self.store.thread(thread_id)?.project_id;
@@ -774,6 +784,9 @@ impl RunManager {
                 .steers
                 .insert(steer.message_id.clone(), steer.prompt.clone());
         }
+        // The caller hears what the engine is given before it leaves, so a refusal it sends back at
+        // once cannot arrive before the hand-over is known.
+        handed(&sent.prompt);
         input.send(sent).map_err(|_| CoreError::RunClosed)?;
         // The engine has the message: a failed mark must not fail the request, or a
         // retry would send it twice.

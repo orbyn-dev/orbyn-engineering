@@ -12,7 +12,7 @@ the rest of [crew](../README.md): off, the four tools do not exist.
 | `post` | `crew_post`: the guards in the spec's order, stamp, store, deliver |
 | `wait` | `crew_ask`: post a question, wait up to 40 seconds, return the answer or `pending` |
 | `board` | `crew_board_read` and `crew_board_write`: one standing revision per key, stale writes refused (H12) |
-| `deliver` | The data wrapper, the secret and leak checks on the way out, steering or queueing, and the delivery record |
+| `deliver` | The data wrapper, the secret and leak checks on the way out, steering or queueing, the delivery record and the next_turn correction when a live steer is refused |
 | `notify` | Telling the lead, once, when a guard refuses a member |
 | `rules` | What the guards count: exchanges between two members, who a message is for, the answer to a question. Pure |
 | `config` | The lead repository's committed `bus` limits, trusted caller/project binding and read-only default-branch pin check |
@@ -49,7 +49,15 @@ the rest of [crew](../README.md): off, the four tools do not exist.
   A worker whose guard keys cannot be read receives no held body. When a task ends, the lead's base result notice
   lists at most ten of that worker's undelivered message IDs, its recipient and total/remaining count. It forwards
   no bodies and writes no worker-delivery receipt; the metadata survives fallback without lead-held message bodies.
-  `live` means handed to the running turn's input; a real engine may read it after the tool call it is in (#444).
+  `live` means the text entered the running turn's input, not that the engine read it: the Claude CLI folds a
+  mid-turn message into the turn it is in, so it may read it only after the tool call it is in, and Codex steers
+  through `turn/steer` at its next step. An engine that refuses the steer reports `SteerFailed` (a failed Codex
+  `turn/steer`, a host steering request answered `rejected`). The bus then appends one more delivery row,
+  `next_turn`, for the same message and recipient with a note that the engine refused the live steer and the text
+  comes with the next turn; rows are append-only, so the `live` row stays and the newest row says where it stands.
+  A bounded in-memory map (64 hand-overs, 30 minutes, dropped when the run ends) pairs the thread and masked text
+  with the message and recipient; a refusal it cannot match writes nothing rather than guess. Only fake engines
+  have run this (#444).
 - A held or live text is checked for secrets and the answer key again when it leaves, against the keys as they are
   then; so is a board read by a worker and an answer returned to a waiting `crew_ask`. A text a key now covers is
   replaced by a plain notice. A worker's first prompt leaves out board facts and messages a key covers.
@@ -94,9 +102,11 @@ id that the lead must name (option B) is revisited then (#446).
 
 `tests/bus.rs` runs two fake engines, one that takes input mid-turn and one that does not: a board fact
 crosses between running turns, the hop limit trips and resets, an ask goes pending or returns the answer,
-and nothing is taken after the run ends. `tests/bus_guards.rs` covers stamped fields, secrets, the answer key,
-sizes, the post limit, replies, the board's rules, held messages and the allow list; the count is also tested
-as a pure rule.
+and nothing is taken after the run ends. `tests/bus_steer.rs` covers every kind a lead sends a running worker,
+a held message to a worker that is not running, and (with a fake engine that refuses steers) a refused live steer
+recorded as `next_turn` while a refusal the bus never handed over writes no row. `tests/bus_guards.rs` covers
+stamped fields, secrets, the answer key, sizes, the post limit, replies, the board's rules, held messages and the
+allow list; the count is also tested as a pure rule.
 
 ## Limits of Preview
 
