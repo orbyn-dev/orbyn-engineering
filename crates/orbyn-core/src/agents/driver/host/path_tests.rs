@@ -217,3 +217,86 @@ async fn a_thread_moves_between_the_paths_on_the_same_session_id() {
     assert_eq!(open["engineSessionId"], "cli-session-9");
     rig.pool.shutdown().await;
 }
+
+/// A wrapped driver that can warm and counts what it was asked.
+#[derive(Default)]
+struct Warmer {
+    keys: Mutex<usize>,
+    starts: Mutex<usize>,
+}
+
+#[async_trait]
+impl EngineDriver for Warmer {
+    fn descriptor(&self) -> EngineDescriptor {
+        StandIn::new("claude", Vec::new(), Arc::default()).descriptor()
+    }
+
+    async fn probe(&self) -> EngineProbe {
+        EngineProbe::default()
+    }
+
+    async fn start_run(
+        &self,
+        _spec: RunSpec,
+        _events: mpsc::Sender<EngineEvent>,
+    ) -> Result<RunHandle> {
+        Err(CoreError::Internal("not started in this test".into()))
+    }
+
+    fn can_warm(&self) -> bool {
+        true
+    }
+
+    fn warm_key(&self, _spec: &RunSpec) -> Option<String> {
+        *self.keys.lock().unwrap() += 1;
+        Some("key".into())
+    }
+
+    async fn start_warm(
+        &self,
+        _spec: RunSpec,
+    ) -> Result<Option<crate::agents::driver::WarmProcess>> {
+        *self.starts.lock().unwrap() += 1;
+        Ok(None)
+    }
+}
+
+/// The CLI path warms through the wrapped driver; the SDK path, and every family but Claude, warm nothing.
+#[tokio::test]
+async fn a_host_wrapped_claude_warms_only_on_the_cli_path_and_reads_the_setting_each_time() {
+    let Some(rig) = super::tests::standin_family("claude", &[], fast()) else {
+        return;
+    };
+    let inner = Arc::new(Warmer::default());
+    let (cell, path) = choice(EnginePath::Cli);
+    let driver = HostDriver::new(inner.clone(), rig.pool.clone(), "claude".into()).with_path(path);
+    let spec = super::tests::spec("warm");
+
+    assert!(driver.can_warm());
+    assert_eq!(driver.warm_key(&spec).as_deref(), Some("key"));
+    driver.start_warm(spec.clone()).await.unwrap();
+    assert_eq!(
+        (*inner.keys.lock().unwrap(), *inner.starts.lock().unwrap()),
+        (1, 1)
+    );
+
+    *cell.lock().unwrap() = EnginePath::Sdk;
+    assert!(!driver.can_warm());
+    assert_eq!(driver.warm_key(&spec), None);
+    assert!(driver.start_warm(spec.clone()).await.unwrap().is_none());
+    assert_eq!(
+        (*inner.keys.lock().unwrap(), *inner.starts.lock().unwrap()),
+        (1, 1),
+        "the SDK path asked the wrapped driver for nothing"
+    );
+    rig.pool.shutdown().await;
+
+    // Another family never warms, even on a CLI setting.
+    let Some(other) = standin(&[], fast()) else {
+        return;
+    };
+    let (_, path) = choice(EnginePath::Cli);
+    let driver = HostDriver::new(inner, other.pool.clone(), "fake".into()).with_path(path);
+    assert!(!driver.can_warm());
+    other.pool.shutdown().await;
+}

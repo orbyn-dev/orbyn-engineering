@@ -422,6 +422,7 @@ bookkeeping and its own checks. No entry carries an environment, arguments, a ke
 - `restart?`: while the state is `restarting`, `{attempt, limit, next_try_seconds}`. `attempt` is the restart being waited for, `limit` is the pool's `max_restarts` (five by
   default), and `next_try_seconds` counts to the next try (at least 1). Absent in every other state.
 - `stops_in_window?`: for a `cant_start` family, the restarts inside the pool's restart window: the count that reaches the five-in-five rule. Absent in every other state.
+- **Warm start.** The "Start the next turn early" setting (`warm_next_turn`) works for a host-wrapped Claude only while the person's Claude path is the CLI: the wrapped driver then forwards `can_warm`, `warm_key`, `start_warm` and `adopt_run`, read for each call from the same setting a run reads. On the SDK path nothing is warmed, and a process that was warmed before the setting changed is ended unused when the next run goes the SDK way.
 - `has_driver?`: true when a CLI driver is wrapped for the family, not that it is reachable. Nothing falls back to it: a run on a
   wrapped family (Claude, Cursor or ACP) whose host cannot start fails with `engine_unavailable` and the host's reason, and the CLI
   driver runs only when the person chose the Claude CLI path (`claude_engine_path` is `cli`) or the family is not host-wrapped

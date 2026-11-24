@@ -21,7 +21,7 @@ use super::{confinement, options};
 use crate::agents::driver::pipes::resolve_engine;
 use crate::agents::driver::{
     ApprovalSpec, EngineDescriptor, EngineDriver, EngineEvent, EngineProbe, ModelCatalog,
-    NativeSessionReplay, ProbeDir, RunHandle, RunSpec, UpdatePlan,
+    NativeSessionReplay, ProbeDir, RunHandle, RunSpec, UpdatePlan, WarmProcess,
 };
 use crate::error::{CoreError, Result};
 
@@ -69,6 +69,11 @@ pub struct HostDriver {
 }
 
 impl HostDriver {
+    /// True for the Claude family while the person's setting is the CLI path: the wrapped Rust driver runs, so it may warm.
+    fn warms(&self) -> bool {
+        self.pool.family == "claude" && (self.path)().is_ok_and(|path| path == EnginePath::Cli)
+    }
+
     pub fn new(inner: Arc<dyn EngineDriver>, pool: Arc<Pool>, program: String) -> Self {
         // A caller that builds the ACP pool directly gets the host's default agent entry
         // from the program it named; the engine manager passes the known engine's shape
@@ -616,7 +621,36 @@ impl EngineDriver for HostDriver {
         self.inner.keeps_turn_overrides()
     }
 
-    // `can_warm` stays false: a warm process is a CLI process, which the host replaces.
+    // A warm process is a CLI process. It exists only while the person's setting is the CLI path (read each time, as a run reads
+    // it); on the SDK path the host starts its own, so nothing is warmed and an early process is never adopted.
+    fn can_warm(&self) -> bool {
+        self.warms() && self.inner.can_warm()
+    }
+
+    fn warm_key(&self, spec: &RunSpec) -> Option<String> {
+        self.warms().then(|| self.inner.warm_key(spec)).flatten()
+    }
+
+    async fn start_warm(&self, spec: RunSpec) -> Result<Option<WarmProcess>> {
+        if !self.warms() {
+            return Ok(None);
+        }
+        self.inner.start_warm(spec).await
+    }
+
+    async fn adopt_run(
+        &self,
+        spec: RunSpec,
+        events: mpsc::Sender<EngineEvent>,
+        warm: WarmProcess,
+    ) -> Result<RunHandle> {
+        if self.warms() {
+            return self.inner.adopt_run(spec, events, warm).await;
+        }
+        // The setting changed after the process was started: the run goes the SDK way and the early process is ended unused.
+        drop(warm);
+        self.start_run(spec, events).await
+    }
 
     fn supports_writing(&self) -> bool {
         self.inner.supports_writing()
