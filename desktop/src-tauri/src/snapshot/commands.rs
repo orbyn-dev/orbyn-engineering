@@ -32,18 +32,22 @@ fn require_caller(window: &WebviewWindow) -> Result<(), &'static str> {
 }
 
 fn take_answer(id: &str, capture: Capture) -> Value {
+    let mut source = json!({
+        "kind": "snap_shot",
+        "captured_at": capture.captured_at(),
+        "app_name": capture.app_name(),
+        "window_title": capture.window_title(),
+        "app_id": capture.app_id(),
+    });
+    if let Some(accessible_text) = capture.accessible_text() {
+        source["accessible_text"] = json!(accessible_text);
+    }
     json!({
         "id": id,
         "name": "Snap Shot.png",
         "mime_type": "image/png",
         "size_bytes": capture.png().len(),
-        "source": {
-            "kind": "snap_shot",
-            "captured_at": capture.captured_at(),
-            "app_name": capture.app_name(),
-            "window_title": capture.window_title(),
-            "app_id": capture.app_id(),
-        },
+        "source": source,
         "png_base64": STANDARD.encode(capture.png()),
     })
 }
@@ -208,7 +212,7 @@ mod tests {
     #[test]
     fn the_answer_has_the_source_and_the_png_round_trips() {
         let mut pending = Pending::default();
-        let id = pending.insert(capture());
+        let id = pending.insert(capture().with_accessible_text(None));
         let taken = take_capture(&mut pending, &id).unwrap();
         let answer = take_answer(&id, taken);
         assert_eq!(
@@ -224,6 +228,16 @@ mod tests {
         assert!(answer["source"].get("accessible_text").is_none());
         let encoded = answer["png_base64"].as_str().unwrap();
         assert_eq!(STANDARD.decode(encoded).unwrap(), b"png bytes");
+    }
+
+    #[test]
+    fn the_answer_carries_accessible_text_when_present() {
+        let text = "Read this from Notes.\nSecond line.";
+        let mut pending = Pending::default();
+        let id = pending.insert(capture().with_accessible_text(Some(text.to_owned())));
+        let taken = take_capture(&mut pending, &id).unwrap();
+        let answer = take_answer(&id, taken);
+        assert_eq!(answer["source"]["accessible_text"].as_str(), Some(text));
     }
 
     #[test]
