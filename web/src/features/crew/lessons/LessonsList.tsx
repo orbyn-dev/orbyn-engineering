@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { NETWORK_ERROR, type ApiFailure } from "../../../api/client";
+import type { ApiFailure } from "../../../api/client";
 import type { Project } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
 import { Button } from "../../../ui/controls";
@@ -8,11 +8,11 @@ import type { Lesson, LessonFilter } from "./types";
 import { dayOf } from "../autopilot/approvals/ledger";
 import { ProjectChip } from "../escape/live/parts";
 import { Frame } from "../shared/Frame";
-import { Ic } from "../shared/parts";
 import { lessonsApi } from "./api";
 import { useLessons, type LessonsReady } from "./useLessons";
 import { ProposalsSection } from "./proposals/ProposalsSection";
 import { LessonUndoToast } from "./UndoToast";
+import { ReadError } from "./LessonParts";
 import { Loading } from "../../../product/ui/states";
 import "./lessons.css";
 
@@ -89,35 +89,6 @@ export function LessonsList({
       </Frame>
       <LessonUndoToast onUndone={() => void read.reload()} />
     </>
-  );
-}
-
-/** The one red banner of an unreadable list: nothing was changed here, and the person may try again or copy the error. */
-function ReadError({ failure, onRetry }: { failure: ApiFailure; onRetry: () => void }) {
-  const detail = failure.code === NETWORK_ERROR ? failure.message : `${failure.code}: ${failure.message}`;
-  const copy = () => {
-    try {
-      void navigator.clipboard?.writeText(detail).catch(() => undefined);
-    } catch {
-      /* no clipboard here: the text stays visible below */
-    }
-  };
-  return (
-    <div className="cx-cwbn cx-red" style={{ margin: "0" }} role="alert">
-      <Ic n="alert" sm />
-      <span>
-        <b>Can’t read the lessons</b>
-        <span style={{ display: "block" }}>Nothing was changed. {detail}</span>
-      </span>
-      <span className="cx-acts">
-        <button type="button" className="cx-ghost" onClick={copy}>
-          Copy the error
-        </button>
-        <button type="button" className="cx-btn" onClick={onRetry}>
-          Try again
-        </button>
-      </span>
-    </div>
   );
 }
 

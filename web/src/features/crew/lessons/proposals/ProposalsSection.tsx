@@ -3,6 +3,7 @@ import { navigate, routeHref } from "../../../../product/state/route";
 import { useUi } from "../../../../product/state/ui";
 import { ConfirmDialog } from "../../../../ui/Dialog";
 import { Ic } from "../../shared/parts";
+import { ReadError } from "../LessonParts";
 import type { Lesson } from "../types";
 import { useLessons } from "../useLessons";
 import { skillProposalsApi } from "./api";
@@ -40,6 +41,9 @@ const SOURCE_WORD: Record<Lesson["source"], string> = {
   person: "Your correction",
 };
 
+/** The red banner title of an unreadable proposals list (the lessons list says the same of itself). */
+const PROPOSALS_READ_ERROR = "Can’t read the skill proposals";
+
 /**
  * The skill proposals of one repository, on the Lessons page (KC9): drawn above the lessons groups, always present with its
  * count once the service answers the proposals read, a "No proposals" box when there are none, and one card per open
@@ -47,6 +51,7 @@ const SOURCE_WORD: Record<Lesson["source"], string> = {
  * Person routes, so only the person's own click sends one. A service without the routes answers 404 and the section is not
  * drawn at all, as the whole lessons page is not then.
  */
+
 export function ProposalsSection({
   project,
   name,
@@ -70,6 +75,7 @@ export function ProposalsSection({
   // Under the Hidden filter the page's list is not the whole repository: the section reads the whole one itself.
   if (pageLessons === undefined) return <OwnLessons project={project} name={name} proposals={proposals} added={added} onSetAdded={setAdded} onLessonsChanged={onLessonsChanged} />;
   if (proposals.status === "missing") return null;
+  if (proposals.status === "error") return <ReadError failure={proposals.failure} onRetry={() => void proposals.reload()} title={PROPOSALS_READ_ERROR} />;
   if (proposals.status !== "ready") return null;
   return (
     <SectionBody
@@ -102,6 +108,7 @@ function OwnLessons({
 }) {
   const lessons = useLessons(project, "all");
   if (proposals.status === "missing" || lessons.status === "missing") return null;
+  if (proposals.status === "error") return <ReadError failure={proposals.failure} onRetry={() => void proposals.reload()} title={PROPOSALS_READ_ERROR} />;
   if (proposals.status !== "ready" || lessons.status !== "ready") return null;
   return (
     <SectionBody
