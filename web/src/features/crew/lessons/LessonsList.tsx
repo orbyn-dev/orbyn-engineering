@@ -9,6 +9,7 @@ import { dayOf } from "../autopilot/approvals/ledger";
 import { ProjectChip } from "../escape/live/parts";
 import { Frame } from "../shared/Frame";
 import { lessonsApi } from "./api";
+import { sourceWord } from "./model";
 import { useLessons, type LessonsReady } from "./useLessons";
 import { ProposalsSection } from "./proposals/ProposalsSection";
 import { LessonUndoToast } from "./UndoToast";
@@ -21,13 +22,6 @@ const REPO_CAP = 50;
 const GLOBAL_CAP = 20;
 /** The brief cap the contract fixes, drawn while the list is still being read (the read carries the live values). */
 const DEFAULT_BRIEF_CAP = { lessons: 5, chars: 1500 } as const;
-
-const SOURCE_WORD: Record<Lesson["source"], string> = {
-  fingerprint: "Repeated failure",
-  escape: "Confirmed escape",
-  revert: "Revert",
-  person: "Your correction",
-};
 
 const SCOPE_WORD: Record<Lesson["scope"], string> = { repo: "This repository", global: "All repositories" };
 
@@ -165,7 +159,7 @@ function LessonRow({ lesson, project, hidden }: { lesson: Lesson; project: strin
         ) : null}
         <b>{lesson.text}</b>
         <div className="cx-lsmeta">
-          <span>{SOURCE_WORD[lesson.source]}</span>
+          <span>{sourceWord(lesson.source)}</span>
           <span>·</span>
           <span>Learned {dayOf(lesson.created_at)}</span>
           <span>·</span>

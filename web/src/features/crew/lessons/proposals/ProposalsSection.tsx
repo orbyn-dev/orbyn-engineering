@@ -5,6 +5,7 @@ import { useUi } from "../../../../product/state/ui";
 import { ConfirmDialog } from "../../../../ui/Dialog";
 import { Ic } from "../../shared/parts";
 import { ReadError } from "../LessonParts";
+import { sourceWord } from "../model";
 import type { Lesson } from "../types";
 import { useLessons } from "../useLessons";
 import { skillProposalsApi } from "./api";
@@ -33,14 +34,6 @@ import {
 import type { SkillProposal } from "./types";
 import { openProposals, useProposals } from "./useProposals";
 import "./proposals.css";
-
-/** The source chip's word, as the lessons list names the same source. */
-const SOURCE_WORD: Record<Lesson["source"], string> = {
-  fingerprint: "Repeated failure",
-  escape: "Confirmed escape",
-  revert: "Revert",
-  person: "Your correction",
-};
 
 /** The red banner title of an unreadable proposals list (the lessons list says the same of itself). */
 const PROPOSALS_READ_ERROR = "Can’t read the skill proposals";
@@ -331,7 +324,7 @@ function ProposalCard({
               {sources.map((lesson) => (
                 <div className="cx-pprow" key={lesson.id}>
                   <span className="cx-apchip" style={{ flex: "none" }}>
-                    {SOURCE_WORD[lesson.source]}
+                    {sourceWord(lesson.source)}
                   </span>
                   <span className="cx-pprowtext">
                     {lesson.text}

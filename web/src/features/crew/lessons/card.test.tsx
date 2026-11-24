@@ -124,6 +124,35 @@ describe("a lesson's card on the real route", () => {
     }
   });
 
+  it("draws an unknown source as its raw word in the plain chip, and does not throw", async () => {
+    answers.detail = {
+      status: 200,
+      body: detail({
+        lesson: lesson({ source: "future-kind" }),
+        evidence: [{ kind: "task", id: "5b2d8a3" }],
+      }),
+    };
+    open();
+    await loaded();
+    const chip = screen.getByText("future-kind");
+    expect(chip).toHaveClass("cx-apchip");
+    expect(chip).not.toHaveClass("cx-dim");
+    expect(chip).not.toHaveClass("cx-no");
+  });
+
+  it("draws evidence of an unknown kind as its capitalised kind and id", async () => {
+    answers.detail = {
+      status: 200,
+      body: detail({
+        lesson: lesson({ source: "future-kind" }),
+        evidence: [{ kind: "future-kind", id: "7c4e1d9" }],
+      }),
+    };
+    open();
+    await loaded();
+    expect(screen.getByText("Future-kind 7c4e1d9")).toBeInTheDocument();
+  });
+
   it("links a task to its thread and an escape to the Escapes page, and leaves a revert as plain text", async () => {
     const linked = [
       { evidence: [{ kind: "task", id: "5b2d8a3" }], text: "Task 5b2d8a3", href: "#/threads/5b2d8a3" },
