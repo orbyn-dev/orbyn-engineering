@@ -8,13 +8,13 @@ Source: T3 Code at `9168ca73d` (MIT), ideas and field names only, no code copied
 
 | | macOS 14+ | Windows | Linux |
 | --- | --- | --- | --- |
-| Capture the frontmost window of another app | yes (ScreenCaptureKit; needs Screen Recording) | Planned (Windows Graphics Capture) | **not planned** (H34 is N/A: portals, GNOME, KDE, Hyprland and Niri setup are excluded) |
+| Capture the frontmost window of another app | yes (ScreenCaptureKit; needs Screen Recording) | Code written, off: `PrintWindow` into a memory bitmap (`snapshot/windows.rs`); compiles for Windows but has never run, and `supported` stays false | **not planned** (H34 is N/A: portals, GNOME, KDE, Hyprland and Niri setup are excluded) |
 | App name, window title, app id | yes | Planned | |
 | Accessible text of that window | Built, **not observed**: the shell reads one AX window tree after the capture when `snapshot_include_accessibility` is on and the Accessibility grant exists (compiled and linked on macOS, never run against a real app); the grant is read back only, never prompted | Planned (UI Automation) | |
 | Global shortcut: a key chord | yes | Planned | |
 | Global shortcut: both Shift keys, or one modifier pair | Planned (needs a native key tap and its own grant; not in the beta) | Planned | |
 
-This build is macOS 14+ only; Windows follows the same contract and stays `Planned` until it has run on a Windows machine. The shell registers no shortcut where `supported` is false, so the Windows shortcut stays `Planned`. Nothing here is available in a plain browser: the page asks the desktop shell, and without a shell the Snap Shot settings and button are absent, not disabled.
+This build is macOS 14+ only; the Windows capturer is written and compiled but switched off (`supported: false`) and stays `Planned` until it has run on a Windows machine, where it also needs a different method if `PrintWindow` returns blank frames for GPU-drawn windows. The shell registers no shortcut where `supported` is false, so the Windows shortcut stays `Planned`. Nothing here is available in a plain browser: the page asks the desktop shell, and without a shell the Snap Shot settings and button are absent, not disabled.
 
 ## Rules that do not bend
 

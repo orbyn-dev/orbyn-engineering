@@ -19,6 +19,7 @@ const APP_NAMES: &[&str] = &[
     "Bitwarden",
     "Dashlane",
     "LastPass",
+    "KeePass",
     "KeePassXC",
     "Keychain Access",
     "Passwords",
