@@ -253,10 +253,10 @@ unless the app carries `get-task-allow` or `disable-library-validation`. Control
   host may carry only `allow-jit`, `allow-unsigned-executable-memory` and `disable-library-validation`; every other binary
   (`orbynd` included) carries none; `get-task-allow` is never allowed; `--release` also requires the `runtime` flag on each.
   Signing is blocked until there is an Apple Developer ID, so today it can only run against an ad hoc build, where it passes
-  without `--release` and fails with it (an ad hoc build has no hardened runtime). **Known conflict, not fixed yet:**
-  `desktop/src-tauri/tauri.conf.json` sets one `entitlements` file, which Tauri applies to the app and every sidecar, so a
-  release signed that way would give `orbynd` the host's entitlements and fail this check. The release signing step has to sign
-  each binary with its own entitlements; that step is Planned with Developer ID signing.
+  without `--release` and fails with it (an ad hoc build has no hardened runtime). `desktop/src-tauri/tauri.conf.json` no
+  longer sets one `entitlements` file (Tauri would apply it to the app and every sidecar): the per-binary signing script
+  exists (`scripts/sign-macos-release.sh`), tested on fake bundles; no release job runs it and no Developer ID build exists,
+  so control 6 is still unmet on a real build.
 - Secrets are zeroed on drop (the Engine's secret types) and held only as long as a call needs.
 - **On Windows memory is as open as Credential Manager**: there is no equivalent of hardened runtime that stops a
   same-user process reading it.

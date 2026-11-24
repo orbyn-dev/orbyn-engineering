@@ -57,8 +57,7 @@
     ],
     "macOS": {
       "minimumSystemVersion": "13.0",
-      "hardenedRuntime": true,
-      "entitlements": "../../engine-host/entitlements.plist"
+      "hardenedRuntime": true
     },
     "windows": {
       "webviewInstallMode": {

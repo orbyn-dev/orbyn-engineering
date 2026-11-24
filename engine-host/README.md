@@ -401,19 +401,23 @@ the `sdk` resource: macOS arm64 and Windows x64 both do this, as `scripts/host-p
 an empty placeholder (Tauri needs each `externalBin` file) and an empty sdk folder, and Intel Macs keep the Rust drivers.
 The Windows x64 bundle is **not observed**: no Windows build of the host was run, Authenticode signing does not exist, and
 SmartScreen will show for it like for the installer.
-`tauri.conf.json` lists it in `externalBin` and sets `bundle.macOS.entitlements` to `entitlements.plist`, which Tauri
-applies when it signs each sidecar and the app. The desktop shell sets `ORBYN_ENGINE_HOST` to the binary's path for
+`tauri.conf.json` lists it in `externalBin` and no longer sets `bundle.macOS.entitlements` (one file would apply to the
+app and every sidecar). `scripts/sign-macos-release.sh` signs the host with `entitlements.plist` and every other binary
+with none. The desktop shell sets `ORBYN_ENGINE_HOST` to the binary's path for
 `orbynd` when the file is non-empty; with none, the service keeps the Rust drivers.
 
 Checked by hand on macOS arm64: a stand-in app bundle signed ad hoc in Tauri's order (sidecars, then the bundle,
 hardened runtime) verifies, and the host launched from inside it answers the handshake. With the same signing but
 without the entitlements the host crashes (SIGTRAP), so the entitlements are required. Not checked: a full `tauri build`
-(the app was not built), notarization, other platforms. The entitlements apply to the whole app, not only the host.
+(the app was not built), notarization, other platforms. Only the host gets the entitlements; the app and every other
+binary keep the default hardened runtime with none. The per-binary signing script is built and tested on a fake bundle,
+but no release job runs it and it has not run with a Developer ID.
 
 **Why the host needs them.** The host is a Node single executable application: it embeds Node, whose V8 engine compiles
 JavaScript at run time. Under the hardened runtime that needs `allow-jit` and `allow-unsigned-executable-memory`, and
 `disable-library-validation` lets the injected Node runtime load code that was not signed by the same team. Without them the
 host crashes at start (SIGTRAP, checked by hand). Nothing else in the app needs them. They are a risk for `orbynd`
 (docs/account-threat-model.md control 6), so a release must carry them on `orbyn-engine-host` only;
-`scripts/check-macos-entitlements.sh --release` enforces that. Signing a release that way (one entitlement file per
-binary, not the single `bundle.macOS.entitlements` Tauri applies to everything) is Planned with Developer ID signing.
+`scripts/check-macos-entitlements.sh --release` enforces that. `scripts/sign-macos-release.sh` signs a release that way:
+the host with `entitlements.plist`, everything else with none, inside-out and then the bundle. It runs after `tauri build`
+and before the dmg and updater archive are made; no release job calls it yet.
