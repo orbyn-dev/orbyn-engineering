@@ -55,6 +55,7 @@
     ["GET","/api/crew/autopilot/thresholds","local"],
     ["GET","/api/crew/autopilot/watch","local"],
     ["GET","/api/crew/background","local"],
+    ["GET","/api/crew/background/runs/{run_id}","local"],
     ["GET","/api/crew/background/{id}","local"],
     ["GET","/api/crew/background/{id}/runs","local"],
     ["GET","/api/crew/background/{id}/watch","local"],

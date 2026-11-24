@@ -1159,14 +1159,29 @@ failure was a baseline or a started template, so nothing claims to resolve a row
 exit code and tail and writes no row. A check that could not run (it timed out, could not start, the screen refuses the command now, or
 the folder is not trusted) counts a streak: three in a row raise one Needs you row, and a check that runs again resolves it. A single command
 that could not run never raises by itself, and no model is called while the result stays the same. A template start the listener is
-refused (a run already in progress, the daily budget, no engine, review capacity) leaves the Needs you row raised and writes one
-`crew.background.listener.refused` audit row; the refusal's sentence is not stored. Run now still refuses a watch: its command runs on
+refused (a run already in progress, the daily budget, no engine, review capacity) leaves the Needs you row raised, writes one
+`crew.background.listener.refused` audit row with its fixed word, and records why on the change row (below). Run now still refuses a watch: its command runs on
 its own schedule; turning it off writes one `turned_off` change row (action `none`) in the same transaction as the switch, so
 the history says the checks stopped. Reads: `GET /api/crew/background/{id}/watch` (its state, last check time, exit code and reason, and the redacted
-tail) and `GET /api/crew/background/{id}/watch/changes` (the change history, newest first, paged); the Needs you inbox lists a failing
-watch and one that could not run three times in a row, beside the Review queue's background runs. No migration was needed: migration
-77's two tables hold the state and the history. No screen is built in these slices, and the "Not built yet" chip stays until the web
-slice.
+tail), `GET /api/crew/background/{id}/watch/changes` (the change history, newest first, paged) and
+`GET /api/crew/background/runs/{run_id}` (one run with its crew, below); the Needs you inbox lists a failing
+watch and one that could not run three times in a row, beside the Review queue's background runs. Migration 77's two tables hold the
+state and the history; migration 87 adds a change row's refusal code (an old row keeps NULL). No screen is built in these slices, and
+the "Not built yet" chip stays until the web slice.
+
+**Refused starts keep their sentence (migration 87).** A change row whose action is `needs_you` because the template start was
+refused carries one fixed code — `disk_low`, `no_engine`, `folder_untrusted`, `run_in_progress`, `not_allowed`, `crew_gone` or
+`refused` (the catch-all) — and the read turns it into a fixed sentence: "Not started: not enough free space. Free space and try
+again.", "No engine is set up for this template. Choose one in Settings.", "This folder is not trusted yet. Trust it in Settings.",
+"A run of this crew is already running.", "Your settings do not allow this start.", "This watch no longer exists." or "The start was
+refused. Open the run list for details." Core owns the words: no path, crew name or command is in them. A row for a start that
+succeeded, a plain `needs_you` change, or any other change has no code and no sentence.
+
+**One run opens itself.** `GET /api/crew/background/runs/{run_id}` (Local, Preview) reads one run with the crew it belongs to:
+`{ run, crew_id, name, template }`, where `run` is the entry the runs page already serves (state, start and end, stop reason or
+`reason_code`, spend and budget, `review_waiting`) and `name`/`template` are the crew's, the name read redacted. An unknown run, or
+a run whose crew is not stored, is `not_found`; with the flag off the route is not there. The literal `runs` segment wins over
+`/api/crew/background/{id}`, and crew ids are generated, so a crew can never be `runs`.
 
 **As built (slice 4h, listeners, migration 59; KC7 adds the issue-reader listeners):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
 service starts behind the Preview flag **only when it sets an interval** (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60 s to 24 h; unset means no pass, not even at

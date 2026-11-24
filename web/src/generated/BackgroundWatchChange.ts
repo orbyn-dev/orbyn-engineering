@@ -7,6 +7,15 @@ import type { BackgroundWatchChangeKind } from "./BackgroundWatchChangeKind";
  */
 export type BackgroundWatchChange = { id: number, kind: BackgroundWatchChangeKind, action: BackgroundWatchChangeAction, 
 /**
+ * Why a template start was refused, as the fixed sentence core owns; absent when nothing was refused.
+ */
+reason?: string | null, 
+/**
+ * The fixed code behind `reason` (`disk_low`, `no_engine`, `folder_untrusted`, `run_in_progress`, `not_allowed`,
+ * `crew_gone` or `refused`); absent when nothing was refused.
+ */
+reason_code?: string | null, 
+/**
  * When the change happened, as RFC 3339.
  */
 at: string, exit_code?: number | null, 

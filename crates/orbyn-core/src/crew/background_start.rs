@@ -130,12 +130,18 @@ async fn write_entries(root: &std::path::Path) -> Result<Vec<String>> {
     Ok(entries)
 }
 
+/// The refusal of a start while a run of the same crew is already in progress. The listener maps this exact, code-owned
+/// sentence to `run_in_progress`; it is shared so the rule and the word can never drift apart.
+pub(super) const RUN_IN_PROGRESS: &str = "This crew already has a run in progress.";
+
 /// A refusal from the start, as the plain sentence a person reads.
 fn refusal(error: CrewError) -> CoreError {
-    if matches!(error.code, ErrorCode::NotAuthorized | ErrorCode::DiskLow) {
-        CoreError::PolicyDenied(error.message)
-    } else {
-        CoreError::Invalid(error.message)
+    match error.code {
+        // The disk guard's refusal keeps its own type: a listener records `disk_low` on the change row, while the person
+        // still reads the guard's sentence and the route answers as it always did.
+        ErrorCode::DiskLow => CoreError::DiskLow(error.message),
+        ErrorCode::NotAuthorized => CoreError::PolicyDenied(error.message),
+        _ => CoreError::Invalid(error.message),
     }
 }
 
@@ -349,9 +355,7 @@ impl Core {
         if let (Some(newest), _) = self.store.background_standing(&crew.id)?
             && newest.state == "running"
         {
-            return Err(CoreError::PolicyDenied(
-                "This crew already has a run in progress.".into(),
-            ));
+            return Err(CoreError::PolicyDenied(RUN_IN_PROGRESS.into()));
         }
         Ok(())
     }

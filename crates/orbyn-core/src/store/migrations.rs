@@ -94,6 +94,7 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (84, include_str!("crew_lessons_rev.sql")),
     (85, include_str!("crew_skill_proposals.sql")),
     (86, include_str!("crew_task_stop_detail.sql")),
+    (87, include_str!("crew_watch_change_reason.sql")),
 ];
 
 // What each install, update and removal of an engine did: when, whether it worked, why not, the

@@ -105,6 +105,8 @@ pub struct WatchStateRow {
 pub struct NewWatchChange<'a> {
     pub kind: &'a str,
     pub action: &'a str,
+    /// Why a template start was refused, in the fixed codes `crate::crew::watch` owns; only a refused start carries one.
+    pub reason_code: Option<&'a str>,
     pub at_unix: i64,
     pub exit_code: Option<i64>,
     pub tail: Option<&'a str>,
@@ -116,6 +118,8 @@ pub struct WatchChangeRow {
     pub id: i64,
     pub kind: String,
     pub action: String,
+    /// Why a template start was refused, in the fixed codes `crate::crew::watch` owns; None on every other row.
+    pub reason_code: Option<String>,
     pub at_unix: i64,
     pub exit_code: Option<i64>,
     pub tail: Option<String>,
@@ -156,6 +160,7 @@ fn watch_change_row(row: &Row<'_>) -> rusqlite::Result<WatchChangeRow> {
         id: row.get("id")?,
         kind: row.get("kind")?,
         action: row.get("action")?,
+        reason_code: row.get("reason_code")?,
         at_unix: row.get("at_unix")?,
         exit_code: row.get("exit_code")?,
         tail: row.get("tail")?,
@@ -1445,8 +1450,8 @@ impl Store {
             )?;
             if let Some(change) = change {
                 tx.execute(
-                    "INSERT INTO crew_watch_changes (background_id, kind, at_unix, exit_code, action, tail)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT INTO crew_watch_changes (background_id, kind, at_unix, exit_code, action, tail, reason_code)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                     params![
                         state.background_id,
                         change.kind,
@@ -1454,6 +1459,7 @@ impl Store {
                         change.exit_code,
                         change.action,
                         change.tail,
+                        change.reason_code,
                     ],
                 )?;
             }
