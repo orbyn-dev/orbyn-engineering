@@ -4,7 +4,8 @@
 
 use std::ffi::{c_char, c_int, c_void};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use objc2::AnyThread;
 use objc2::runtime::AnyObject;
@@ -25,17 +26,20 @@ const NEEDS_MACOS_14: &str = "Snap Shot needs macOS 14 or newer.";
 const SCREEN_RECORDING_SETTINGS: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
 
+/// The C `Boolean` type is an `unsigned char`, not Rust's `bool`.
+type Boolean = u8;
+
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
-    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGPreflightScreenCaptureAccess() -> Boolean;
     // SAFETY: takes no arguments, touches no memory, and only asks macOS to show the one
     // Screen Recording prompt for this process.
-    fn CGRequestScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> Boolean;
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
-    fn AXIsProcessTrusted() -> bool;
+    fn AXIsProcessTrusted() -> Boolean;
 }
 
 unsafe extern "C" {
@@ -80,12 +84,12 @@ pub fn supported() -> bool {
 
 fn screen_recording_granted() -> bool {
     // SAFETY: the function takes nothing and only reads the Screen Recording grant.
-    unsafe { CGPreflightScreenCaptureAccess() }
+    unsafe { CGPreflightScreenCaptureAccess() != 0 }
 }
 
 fn accessibility_granted() -> bool {
     // SAFETY: the function takes nothing and only reads the Accessibility grant.
-    unsafe { AXIsProcessTrusted() }
+    unsafe { AXIsProcessTrusted() != 0 }
 }
 
 pub fn setup_platform() -> impl SetupPlatform {
@@ -135,12 +139,15 @@ pub fn capturer(own_bundle_id: &str, include_accessibility: bool) -> Box<dyn Cap
     Box::new(MacCapturer {
         own_bundle_id: own_bundle_id.to_owned(),
         include_accessibility,
+        stop: Arc::new(AtomicBool::new(false)),
     })
 }
 
 struct MacCapturer {
     own_bundle_id: String,
     include_accessibility: bool,
+    /// Set by the flow when the capture is discarded or times out, so the AX read ends with it.
+    stop: Arc<AtomicBool>,
 }
 
 impl Capturer for MacCapturer {
@@ -148,6 +155,9 @@ impl Capturer for MacCapturer {
         &self,
         is_excluded: &dyn Fn(&str, &str) -> bool,
     ) -> Result<Captured, Failure> {
+        if self.stop.load(Ordering::SeqCst) {
+            return Err(Failure::CaptureError);
+        }
         if !supported() {
             return Err(Failure::CaptureError);
         }
@@ -259,8 +269,16 @@ impl Capturer for MacCapturer {
         let image = SCScreenshotManager::capture_image(&filter, &configuration)
             .map_err(|_| Failure::CaptureError)?;
         let png = png_bytes(&image)?;
-        let accessible_text = if self.include_accessibility {
-            super::ax::read_window_text(application.process_id(), &window_title)
+        let accessible_text = if self.include_accessibility && !self.stop.load(Ordering::SeqCst) {
+            // The capture identity the AX reader may use to confirm the app's focused window.
+            // is_active is not a focus signal (Apple documents it as whether the window is
+            // streaming), so the reader starts from the window id and title and falls back to
+            // the focused window only on positive identity evidence.
+            let captured = super::accessible::WindowIdentity {
+                number: Some(i64::from(window_id)),
+                title: window_title.clone(),
+            };
+            super::ax::read_window_text(application.process_id(), &captured, &self.stop)
         } else {
             None
         };
@@ -271,6 +289,10 @@ impl Capturer for MacCapturer {
             app_id,
             accessible_text,
         })
+    }
+
+    fn cancel(&self) {
+        self.stop.store(true, Ordering::SeqCst);
     }
 }
 
