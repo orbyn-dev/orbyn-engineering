@@ -207,7 +207,9 @@ test("a third lesson in one group makes the only proposal, and it survives a rel
   expect(open[0]!.can_approve).toBe(true);
   expect(open[0]!.lessons).toHaveLength(3);
   const sourceIds = open[0]!.lessons.map((lesson) => lesson.id);
-  for (const id of [...one.lessons, ...two.lessons, ...third.lessons]) expect(sourceIds).toContain(id);
+  // The first area's lesson is another group; only the second area's three lessons are this proposal's sources.
+  for (const id of [...two.lessons, ...third.lessons]) expect(sourceIds).toContain(id);
+  for (const id of one.lessons) expect(sourceIds).not.toContain(id);
   seeded = open[0]!;
 
   const card = proposalCard(page, name);
@@ -306,7 +308,7 @@ test("Approve writes the skill, clears the section, marks its lessons and lists 
   expect(after.proposals.filter((proposal) => proposal.state === "open"), "no proposal stays open").toHaveLength(0);
   expect(after.proposals.find((proposal) => proposal.id === seeded.id)?.state).toBe("approved");
   expect(after.proposals.find((proposal) => proposal.id === seeded.id)?.skill?.name).toBe(name);
-  for (const id of seeded.lessons) {
+  for (const { id } of seeded.lessons) {
     const lesson = lessons.lessons.find((one) => one.id === id);
     expect(lesson, `lesson ${id} is still listed`).toBeDefined();
     expect(lesson!.skill, `lesson ${id} is now the skill`).toBe(name);
