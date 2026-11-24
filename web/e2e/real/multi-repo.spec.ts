@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { projectSettingsUrl, startProject, threadIdOf, type Service } from "./service";
 
-// The second test starts from the project the first one changed: it adds and trusts the second repository there.
+// The settings test must see the project's one-repository start; the thread test registers its own repositories, so each
+// runs alone (a title filter or a retry does not replay the other test).
 test.describe.configure({ mode: "serial" });
 
 /**
@@ -15,6 +16,8 @@ test.describe.configure({ mode: "serial" });
  * in the service's answer and on disk with Git), the header Repos chip and its popover, and a third repository added to
  * the running thread later.
  */
+
+test.setTimeout(60_000);
 
 const WINDOW = { width: 1500, height: 1000 };
 
@@ -51,6 +54,15 @@ interface TaskFolder {
 
 const repositories = (page: Page) => page.getByRole("region", { name: "Repositories" });
 const row = (page: Page, name: string) => repositories(page).getByRole("listitem").filter({ hasText: name });
+
+/** Registers and trusts one repository of the project through the real routes; a retry finds what it made already. */
+async function trustRepository(path: string): Promise<RepoRow> {
+  const view = await service.api<{ repositories: RepoRow[] }>("GET", `/api/projects/${projectId}/repos`);
+  const found = view.repositories.find((entry) => entry.path === path);
+  const repository = found ?? (await service.api<RepoRow>("POST", `/api/projects/${projectId}/repos/add-folder`, { path }));
+  if (!repository.trusted) await service.api("POST", `/api/projects/${projectId}/repos/${repository.id}/trust`);
+  return repository;
+}
 
 test.beforeAll(async () => {
   ({ service, projectId } = await startProject({ multiRepo: true, fakeEngines: true }));
@@ -103,6 +115,9 @@ test("the repositories group lists the project's folders with branch and trust, 
 });
 
 test("a thread in two repositories gets one task folder and one branch in each, and gains a repository later", async ({ page }) => {
+  // This test sets up its own second repository (registered and trusted through the real routes), so it does not depend on
+  // the settings test having run, and a retry finds it there already.
+  await trustRepository(secondRepo);
   // The new-thread screen offers the repository dialog once the project has two folders.
   await page.goto(`${service.page}#/new/${projectId}`);
   const start = page.getByRole("button", { name: "Repositories: 2", exact: true });
@@ -160,8 +175,7 @@ test("a thread in two repositories gets one task folder and one branch in each, 
   }
 
   // A repository added to the project later can join the running thread: its worktree is cut on the same branch.
-  const added = await service.api<RepoRow>("POST", `/api/projects/${projectId}/repos/add-folder`, { path: thirdRepo });
-  await service.api("POST", `/api/projects/${projectId}/repos/${added.id}/trust`);
+  await trustRepository(thirdRepo);
   // Close the popover by its own chip and wait for it to leave the DOM, so the next click opens a fresh one (the list behind
   // it is read again for the project, which now holds the third repository).
   await page.getByRole("button", { name: "Repos 2", exact: true }).click();

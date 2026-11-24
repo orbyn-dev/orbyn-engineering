@@ -1,7 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { openDetails, send, settled, startProject, threadIdOf, type Service } from "./service";
 
-// The tests share one thread's links: the first links #7, the second unlinks it, the third links #12 and then #7 again.
+// Each test makes its own thread and its own links, so any test runs alone and a retry starts clean; serial order only keeps
+// one service at a time.
 test.describe.configure({ mode: "serial" });
 
 /**
@@ -12,6 +13,8 @@ test.describe.configure({ mode: "serial" });
  * thread list marker, the issue page with its Linked threads card, unlinking from the Details row, the chip's link form with
  * its not-found error, and the chip as a bottom sheet on a phone.
  */
+
+test.setTimeout(60_000);
 
 const WINDOW = { width: 1500, height: 1000 };
 
@@ -61,13 +64,22 @@ test.beforeAll(async () => {
 test.afterAll(() => service.stop());
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize(WINDOW);
-  if (threadId !== "") return;
+  threadId = "";
+  threadTitle = "";
+  // Every test starts a thread of its own: nothing waits for state an earlier test left (a title filter or a retry is sound).
   await page.goto(`${service.page}#/new/${projectId}`);
   await send(page, "start on the retry issue");
   await expect(page).toHaveURL(/#\/threads\//);
   threadId = threadIdOf(page);
   threadTitle = (await service.api<{ title: string }>("GET", `/api/threads/${threadId}`)).title;
   await settled(service, threadId);
+});
+test.afterEach(async () => {
+  // Leave no link behind: the issue page's Linked threads card is checked per test, so a retry starts from the same state.
+  const byThread = await service.api<Record<string, IssueRef[]>>("GET", "/api/issues/links");
+  for (const ref of byThread[threadId] ?? []) {
+    await service.api("POST", `/api/threads/${threadId}/issue-links/remove`, { tracker: ref.tracker, scope: ref.scope, key: ref.key });
+  }
 });
 
 test("the Details card links an issue from its search dialog, and the chip and thread row mark it", async ({ page }) => {
@@ -115,6 +127,8 @@ test("the Details card links an issue from its search dialog, and the chip and t
 });
 
 test("the issue page shows the Linked threads card, and Unlink removes this thread's link only", async ({ page }) => {
+  // This test links the issue itself; nothing is inherited from the first test.
+  await linkFromDetails(page, "7", /#7 Retry the queue/);
   await page.goto(`${service.page}#/issues/github/o%2Fr/7`);
   await expect(page.getByRole("heading", { name: "Retry the queue", exact: true })).toBeVisible();
   await expect(page.locator(".page-sub")).toContainText("#7 · GitHub · o/r");
@@ -129,7 +143,7 @@ test("the issue page shows the Linked threads card, and Unlink removes this thre
   // The Linked threads card: the thread that links this issue, from GET /api/issues/links.
   const card = page.getByRole("group", { name: "Linked threads" });
   await expect(card).toContainText(threadTitle);
-  await expect(card.getByRole("link")).toHaveAttribute("href", new RegExp(`#/threads/${threadId}`));
+  await expect(card.locator(`a[href="#/threads/${threadId}"]`)).toBeVisible();
   await expect(card.getByRole("button", { name: "Start a thread from this issue" })).toBeVisible();
 
   // Unlink from the Details row: one write, this thread's link only.
