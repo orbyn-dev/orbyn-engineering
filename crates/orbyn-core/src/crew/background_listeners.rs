@@ -14,11 +14,11 @@
 //! workflow filter, the watch timer reads each `watch` crew's `every_hours` and runs its stored command (`crew::watch`),
 //! and the issue-label listener reads the open issues in the project's tracker scope that carry the
 //! crew's stored `label`. An issue-label crew starts with a baseline per stored label: its first pass claims the
-//! matching issues in the one page it reads and starts nothing. Only a later label-set change (while the crew's label
-//! is present) is a new event, and a removal and re-add is not (the readers give no per-label event time; a label feed
-//! is a reader follow-up); the baseline ignores the reader's next page, so an issue outside that page can fire when the
-//! tracker returns it, and re-enabling a crew does not baseline again, so labels added while it was off fire once per
-//! pass. A project is read only through the one tracker reader that can answer for it (the connected
+//! matching issues (every page, up to ten pages of 100) and starts nothing; a baseline that could not read every page is not
+//! kept and starts again on the next pass. Only a later label-set change (while the crew's label is present) is a new
+//! event, and a removal and re-add that returns the issue to a label set already claimed is not (the readers give no
+//! per-label event time; a label feed is a reader follow-up). Re-enabling a crew does not baseline again, so labels added
+//! while it was off fire once per pass, unless the issue's label set was already claimed. A project is read only through the one tracker reader that can answer for it (the connected
 //! tracker its origin remote names; Linear names no project and answers none), so a project with no reader, an
 //! untrusted folder and a crew that is off spend no event and start nothing. A `dependency_update` crew has its tick
 //! and the same claim, start and refusal path, but no reader can report a dependency or advisory update yet, so that
@@ -43,7 +43,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use orbyn_contracts::IssueLabel;
+use orbyn_contracts::{IssueLabel, IssueSummary};
 use tokio_util::sync::CancellationToken;
 
 use super::background::EVERY_HOURS_MAX;
@@ -65,6 +65,9 @@ const CI_CREWS_MAX: usize = 64;
 /// slower than the forge, so a store full of crews must not turn one pass into unbounded tracker traffic; each tick
 /// starts from the pass's rotation, so every crew is reached over a few passes.
 const ISSUE_CREWS_MAX: usize = 64;
+/// The most pages of one crew's matching issues a pass reads (100 issues each), so a tracker with a very long list cannot turn
+/// one pass into unbounded traffic.
+const LABEL_PAGES_MAX: usize = 10;
 /// The most minutes a schedule may be told apart, as hours: the same bound the stored crew already has.
 const HOURS_MAX: u32 = EVERY_HOURS_MAX;
 
@@ -329,14 +332,14 @@ impl Core {
 
     /// The issue-label listener: an enabled `issue_label` crew fires on an open issue in its project's tracker scope
     /// that carries the crew's stored `label` and that it has not seen before. On its first pass for a stored label
-    /// (no `issue_label:<crew>:baseline:<hash of label>` claim yet) it claims every matching issue in the one page it
-    /// reads and starts nothing, so the labels already on that page are never replayed; it then keeps the baseline
-    /// claim. The baseline reads one page (the reader's next page is ignored), so an issue outside it can fire when the
-    /// tracker later returns it, and re-enabling a crew does not baseline again, so labels added while it was off fire
-    /// once per pass. A later pass fires only on an issue whose claim it does not have. The claim keeps
+    /// (no `issue_label:<crew>:baseline:<hash of label>` claim yet) it claims every matching issue on every page it reads
+    /// (up to ten pages of 100) and starts nothing, so the labels already there are never replayed; it then keeps the
+    /// baseline claim, but only when every page was read, so a listing cut short baselines again next pass. Re-enabling a
+    /// crew does not baseline again, so labels added while it was off fire once per pass unless the issue's label set
+    /// was already claimed. A later pass fires only on an issue whose claim it does not have. The claim keeps
     /// a hash of the issue's whole label set, because the readers give no per-label event time: an edit that leaves the
     /// labels alone is inert, adding the label or changing the set while it is present is a new event, and a label
-    /// removed and added again returns to a set already claimed and does not fire (a reader-side label feed is the
+    /// removed and added again that returns the issue to a set already claimed does not fire (a reader-side label feed is the
     /// follow-up). Only a
     /// project with a reader is read at all (see [`Core::project_issue_reader`]); a tracker that cannot answer spends
     /// no event. The newest unseen issue wins, so one pass attempts at most one start per crew and the rest wait for a
@@ -362,10 +365,20 @@ impl Core {
                 "more issue label crews than one pass reads; this pass reads {ISSUE_CREWS_MAX} and the rest come around on the next passes"
             );
         }
-        for crew in window(crews, rotation, ISSUE_CREWS_MAX) {
+        for listed in window(crews, rotation, ISSUE_CREWS_MAX) {
             if stop.is_cancelled() {
                 return;
             }
+            // The list was read before earlier crews of this pass were read from the tracker: read the crew again, so a crew the
+            // person turned off, deleted or gave another label meanwhile is not claimed on the old row.
+            let crew = match self.background_row(&listed.id) {
+                Ok(crew) if crew.enabled && crew.trigger_kind == "issue_label" => crew,
+                Ok(_) => continue,
+                Err(error) => {
+                    tracing::debug!(%error, crew = %listed.id, "an issue label crew could not be read again; nothing fired");
+                    continue;
+                }
+            };
             let Some(reader) = self.background_project_reader(&crew, stop).await else {
                 continue;
             };
@@ -384,31 +397,60 @@ impl Core {
                     continue;
                 }
             };
-            let query = IssueQuery {
-                tracker: Some(reader.tracker),
-                labels: vec![label.to_owned()],
-                limit: MAX_LIMIT,
-                ..IssueQuery::default()
-            };
-            let mut page = tokio::select! {
-                biased;
-                _ = stop.cancelled() => return,
-                page = self.scope_issues(reader.tracker, &reader.scope, &query) => match page {
-                    Ok(page) => page,
+            // Every page of the matching issues, up to a cap: a baseline that read only the first page would let an issue on a
+            // later page fire as new when an edit moves it forward. A listing that stops short (an error, or more pages than
+            // the cap) is not a complete baseline, so its marker is not kept and the next pass baselines again.
+            let mut issues: Vec<IssueSummary> = Vec::new();
+            let mut cursors = std::collections::BTreeMap::new();
+            let mut complete = true;
+            for round in 0..LABEL_PAGES_MAX {
+                let query = IssueQuery {
+                    tracker: Some(reader.tracker),
+                    labels: vec![label.to_owned()],
+                    limit: MAX_LIMIT,
+                    cursors: cursors.clone(),
+                    ..IssueQuery::default()
+                };
+                let page = tokio::select! {
+                    biased;
+                    _ = stop.cancelled() => return,
+                    page = self.scope_issues(reader.tracker, &reader.scope, &query) => page,
+                };
+                match page {
+                    Ok(page) => {
+                        issues.extend(page.issues);
+                        match page.next {
+                            None => break,
+                            Some(next) if round + 1 < LABEL_PAGES_MAX => {
+                                cursors = std::collections::BTreeMap::from([(
+                                    format!("{} {}", tracker_name(reader.tracker), reader.scope),
+                                    next,
+                                )]);
+                            }
+                            Some(_) => {
+                                tracing::warn!(crew = %crew.id, "more labelled issues than one pass reads; the baseline stays open");
+                                complete = false;
+                            }
+                        }
+                    }
                     Err(error) => {
                         tracing::debug!(%error, crew = %crew.id, "the project's issues could not be read; nothing fired");
-                        continue;
+                        complete = false;
+                        break;
                     }
-                },
-            };
+                }
+            }
+            if issues.is_empty() && !complete {
+                continue;
+            }
             // Newest update first, and a stable order for a tie, so which issue wins is not the tracker's page order.
-            page.issues.sort_by(|a, b| {
+            issues.sort_by(|a, b| {
                 b.updated_at
                     .cmp(&a.updated_at)
                     .then_with(|| a.key.cmp(&b.key))
             });
-            let mut baseline_failed = false;
-            for issue in page.issues {
+            let mut baseline_failed = !complete;
+            for issue in issues {
                 if stop.is_cancelled() {
                     return;
                 }

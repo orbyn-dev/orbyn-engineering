@@ -102,6 +102,8 @@ struct Issues {
     issues: Mutex<Vec<IssueSummary>>,
     dependency: Mutex<DependencyFeed>,
     lists: AtomicUsize,
+    /// How many issues one listing returns; 0 means all of them, as a tracker with a single page does.
+    page_size: AtomicUsize,
     dependency_reads: AtomicUsize,
     /// The scope every listing asked for, in call order.
     scopes: Mutex<Vec<String>>,
@@ -114,6 +116,7 @@ impl Issues {
             issues: Mutex::new(issues),
             dependency: Mutex::new(DependencyFeed::Cannot),
             lists: AtomicUsize::new(0),
+            page_size: AtomicUsize::new(0),
             dependency_reads: AtomicUsize::new(0),
             scopes: Mutex::new(Vec::new()),
             unreadable: false,
@@ -125,6 +128,7 @@ impl Issues {
             issues: Mutex::new(Vec::new()),
             dependency: Mutex::new(DependencyFeed::Cannot),
             lists: AtomicUsize::new(0),
+            page_size: AtomicUsize::new(0),
             dependency_reads: AtomicUsize::new(0),
             scopes: Mutex::new(Vec::new()),
             unreadable: true,
@@ -160,11 +164,29 @@ impl IssueSource for Issues {
                 issue.scope = scope.to_owned();
                 issue
             })
-            .collect();
+            .collect::<Vec<_>>();
+        // A page is a slice from the cursor the source issued (an offset); the next cursor is issued while more remain.
+        let size = self.page_size.load(Ordering::SeqCst);
+        let from = query
+            .cursors
+            .values()
+            .next()
+            .and_then(|cursor| cursor.parse::<usize>().ok())
+            .unwrap_or(0);
+        let (issues, next) = if size == 0 {
+            (issues, None)
+        } else {
+            let end = (from + size).min(issues.len());
+            let more = end < issues.len();
+            (
+                issues[from.min(end)..end].to_vec(),
+                more.then(|| end.to_string()),
+            )
+        };
         Ok(ScopeList {
             issues,
             counts: None,
-            next: None,
+            next,
         })
     }
 
@@ -927,4 +949,44 @@ async fn a_dependency_feed_the_tracker_does_not_have_would_claim_and_start_one_r
         .unwrap();
     assert_eq!(runs_of(&w, &id).len(), 1);
     assert_eq!(claims(&w).len(), 1);
+}
+
+#[tokio::test]
+async fn the_baseline_reads_every_page_before_it_is_kept() {
+    let w = world(true, good()).await;
+    add_tracker_origin(&w).await;
+    let reader = Issues::new(vec![
+        labelled("7", "One", &["bug"], "2026-11-03T00:00:00Z"),
+        labelled("8", "Two", &["bug"], "2026-11-02T00:00:00Z"),
+        labelled("9", "Three", &["bug"], "2026-11-01T00:00:00Z"),
+    ]);
+    reader.page_size.store(2, Ordering::SeqCst);
+    connect_reader(&w, reader.clone()).await;
+    let id = issue_crew(&w, "Labels", "bug", true).await;
+
+    w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    assert!(runs_of(&w, &id).is_empty(), "a baseline starts nothing");
+    assert_eq!(
+        claims(&w),
+        [
+            baseline_identity(&id, "bug"),
+            issue_identity(&id, "7", "bug", &["bug"]),
+            issue_identity(&id, "8", "bug", &["bug"]),
+            issue_identity(&id, "9", "bug", &["bug"]),
+        ],
+        "the issue on the second page is part of the baseline"
+    );
+
+    // A title edit that moves the old issue onto the first page is not a label event.
+    *reader.issues.lock().unwrap() = vec![
+        labelled("9", "Three, edited", &["bug"], "2026-11-04T00:00:00Z"),
+        labelled("7", "One", &["bug"], "2026-11-03T00:00:00Z"),
+        labelled("8", "Two", &["bug"], "2026-11-02T00:00:00Z"),
+    ];
+    w.core.issues.clear_cache();
+    w.core
+        .crew_background_listeners_tick(NOW + 60)
+        .await
+        .unwrap();
+    assert!(runs_of(&w, &id).is_empty(), "an edit is inert");
 }
