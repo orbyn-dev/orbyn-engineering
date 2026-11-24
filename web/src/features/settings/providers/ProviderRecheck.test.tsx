@@ -65,6 +65,8 @@ it("ignores a catalogue reply after unmount and a newer page read", async () => 
   render(<ProvidersSection />);
   expect(await screen.findByText("Current catalogue")).toBeVisible();
   // The late reply is delivered and its continuation runs inside act before anything is asserted.
+  // A zero-delay macrotask turn (not real time) drains that continuation: the thing asserted is an
+  // absence, so there is no element to wait for, and the held fetch exposes no completion signal.
   await act(async () => {
     slow.release();
     await new Promise((resolve) => setTimeout(resolve, 0));
