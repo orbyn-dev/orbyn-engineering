@@ -1038,6 +1038,9 @@ export const FRAMES = {
   /** KC2: both halves of a task whose worker could not be stopped (kc2-close-lead-could-not-stop), the inbox row and the Board card, over the mock's crew-could-not-stop scenario. */
   "kc2-close-lead-could-not-stop": { route: "#/crew/inbox", scenario: "crew-could-not-stop" },
   "kc2-close-lead-could-not-stop-board": { route: "#/crew/board", scenario: "crew-could-not-stop" },
+  /** KC3: the Taskboard's words from the one needs-you field (needs-one-source-working-board and needs-one-source-board). */
+  "needs-one-source-working-board": { route: "#/crew/board", scenario: "crew-board-working" },
+  "needs-one-source-board": { route: "#/crew/board", scenario: "crew-board-needs-kinds" },
   "kc8-resumed-inbox": { route: "#/crew/inbox", scenario: "crew-worker-stopped-twice" },
 
   /** Crew, the escape log (Crew Designs v79), on the real escape routes over the mock's crew-escapes scenarios. A detail

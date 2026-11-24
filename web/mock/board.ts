@@ -5,8 +5,9 @@
  *
  * Scenarios: `crew` (the design's sample: one card in each of the first five columns, three passed, two stopped or cancelled),
  * `crew-board-many` (twelve running tasks, so "+N more" pages), `crew-board-empty` (no task), `crew-board-truncated` (the service's
- * cap was hit), and `crew-could-not-stop*` (the sample's verifying task moved to Needs you as the cancelled card whose worker could
- * not be stopped, kc2-close-lead-could-not-stop).
+ * cap was hit), `crew-board-working` (the sample's retry in Running and checks in Verifying, with Needs you empty),
+ * `crew-board-needs-kinds` (the three needs-you kinds the page gives its own amber sentence), and `crew-could-not-stop*` (the
+ * sample's verifying task moved to Needs you as the cancelled card whose worker could not be stopped, kc2-close-lead-could-not-stop).
  */
 import type { FlowBoard } from "../src/generated/FlowBoard.ts";
 import type { FlowCard } from "../src/generated/FlowCard.ts";
@@ -44,12 +45,31 @@ function sample(): Row[] {
     card("routed", "b-routed", "implement", "Rename returnTo to next in the session code", "claude", "Sonnet 5.5", "low", "routed", 0),
     card("running", "b-running", "implement", "Use next in the auth redirect when it points inside the app", "claude", "Sonnet 5.5", "medium", "running", 0),
     card("verifying", "b-verifying", "test", "Add tests for the redirect, including //evil.com", "codex", "GPT-5.5", "medium", "verifying", 0),
-    card("needs_you", "b-needs", "research", "Which target wins when both next and returnTo are set?", "opencode", "DeepSeek V4", "medium", "needs_person", 1, { reason: "Asked you a question: <b>which target wins</b>?" }),
+    card("needs_you", "b-needs", "research", "Which target wins when both next and returnTo are set?", "opencode", "DeepSeek V4", "medium", "needs_person", 1, { needs_you: "task_needs_person", reason: "Which target wins when both next and returnTo are set?" }),
     card("passed", "b-pass1", "docs", "Fix the typo in the README", "codex", "GPT-5.5", "low", "passed", 120, { can_rerun: true, checks: { passed: 4, of: 4 } }),
     card("passed", "b-pass2", "implement", "Move session helpers to auth/session.ts", "claude", "Sonnet 5.5", "medium", "passed", 600, { can_rerun: false, checks: { passed: 3, of: 3 } }),
     card("passed", "b-pass3", "test", "Cover the login route", "codex", "GPT-5.5", "high", "passed", 2000),
     card("stopped_cancelled", "b-stop1", "implement", "Add a rate limit to the login route", "codex", "GPT-5.5", "medium", "stopped", 300, { stop_reason: "repeated_failure", can_rerun: true }),
     card("stopped_cancelled", "b-stop2", "docs", "Move the CHANGELOG entry", "claude", "Sonnet 5.5", "low", "cancelled", 900),
+  ];
+}
+
+/**
+ * `crew-board-working`: the sample's live workers, a retry in Running and checks in Verifying, with nothing in Needs you (the
+ * working frame, needs-one-source-working-board).
+ */
+function workingBoard(): Row[] {
+  return sample()
+    .filter((row) => row.column !== "needs_you")
+    .map((row): Row => (row.id === "b-running" ? { ...row, working: "retry" } : row.id === "b-verifying" ? { ...row, working: "verifying" } : row));
+}
+
+/** `crew-board-needs-kinds`: one card for each needs-you kind the Taskboard gives its own amber sentence. */
+function needsKinds(): Row[] {
+  return [
+    card("needs_you", "b-question", "research", "Which target wins when both next and returnTo are set?", "opencode", "DeepSeek V4", "medium", "needs_person", 1, { needs_you: "task_needs_person", reason: "Which target wins when both next and returnTo are set?" }),
+    card("needs_you", "b-merge", "implement", "Rotate the signing key", "claude", "Sonnet 5.5", "high", "passed", 4, { needs_you: "merge_waiting", reason: "A merge needs your decision." }),
+    card("needs_you", "b-manual", "test", "Check the redirect by hand on staging", "codex", "GPT-5.5", "medium", "needs_person", 9, { needs_you: "manual_check", reason: "A check only a person can make is waiting." }),
   ];
 }
 
@@ -150,6 +170,8 @@ export function boardMock(scenario: string, method: string, path: string, query:
   if (crew !== MOCK_CREW && crew !== MOCK_CREW_TWO) return { status: 404, body: { code: "not_found", message: "crew not found" } };
   const all = scenario === "crew-board-empty" || crew === MOCK_CREW_TWO ? []
     : scenario === "crew-board-many" ? many()
+    : scenario === "crew-board-working" ? workingBoard()
+    : scenario === "crew-board-needs-kinds" ? needsKinds()
     : scenario === "crew-could-not-start-disk" ? couldNotStartDisk()
     : scenario.startsWith("crew-could-not-start") ? couldNotStart()
     : scenario.startsWith("crew-could-not-stop") ? couldNotStop()
