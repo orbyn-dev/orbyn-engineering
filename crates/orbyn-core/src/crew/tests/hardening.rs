@@ -226,7 +226,7 @@ async fn every_orbyn_tool_off_the_allow_list_is_refused_to_a_worker() {
         },
         ..worker.clone()
     };
-    let names: Vec<String> = crate::tools::mcp_tools::tool_specs()
+    let names: Vec<String> = crate::tools::mcp_tools::tool_specs(true)
         .map(|spec| spec["name"].as_str().unwrap().to_owned())
         .collect();
     assert!(names.len() > 40, "the registry is read");
