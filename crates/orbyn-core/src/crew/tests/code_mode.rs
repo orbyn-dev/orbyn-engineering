@@ -41,7 +41,7 @@ fn worker_binding(w: &World, task: &str) -> (String, McpBinding) {
 /// Every tool name the product can list, from the three tool tables, plus the names the service
 /// handles outside a table.
 fn all_tool_names() -> Vec<String> {
-    let mut names: Vec<String> = crate::tools::mcp_tools::tool_specs()
+    let mut names: Vec<String> = crate::tools::mcp_tools::tool_specs(true)
         .chain(crate::tools::mcp::code::specs())
         .chain(crate::crew::tool_specs())
         .filter_map(|spec| spec["name"].as_str().map(str::to_owned))
