@@ -1,7 +1,8 @@
 //! What a Crew worker may do with Orbyn's own tools: an allow list, so a tool added later is
 //! refused by default. Depth is 1 (H3): a worker makes no thread and no schedule. It reads no
 //! other thread, queue or pending request, since the lead's messages and a pending `crew_start`
-//! may quote the answer key (H1). It changes no setting, permission mode or project (N6).
+//! may quote the answer key (H1). It changes no setting, permission mode or project (N6), and
+//! drives no device (N11): the `orbyn_device_*` tools are not on the list.
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};

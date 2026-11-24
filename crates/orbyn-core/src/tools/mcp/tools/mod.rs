@@ -46,24 +46,28 @@ const MAX_PULL_HEAD_SHA: usize = 64;
 const PULL_HEAD_MOVED: &str =
     "The pull request moved since you read it. Read it again before merging.";
 
-/// The tool list for `tools/list`.
-pub(crate) fn tool_specs() -> impl Iterator<Item = Value> {
-    TOOLS.iter().map(|tool| {
-        let properties: serde_json::Map<String, Value> = tool
-            .args
-            .iter()
-            .map(|(name, kind)| ((*name).to_owned(), json!({ "type": kind })))
-            .collect();
-        json!({
-            "name": tool.name,
-            "description": tool.description,
-            "inputSchema": {
-                "type": "object",
-                "properties": properties,
-                "required": tool.required,
-            },
+/// The tool list for `tools/list`. The device tools exist only where this machine has
+/// platform tools to drive, so elsewhere they are not listed and a call is unknown.
+pub(crate) fn tool_specs(devices_available: bool) -> impl Iterator<Item = Value> {
+    TOOLS
+        .iter()
+        .filter(move |tool| devices_available || !is_device_tool(tool.name))
+        .map(|tool| {
+            let properties: serde_json::Map<String, Value> = tool
+                .args
+                .iter()
+                .map(|(name, kind)| ((*name).to_owned(), json!({ "type": kind })))
+                .collect();
+            json!({
+                "name": tool.name,
+                "description": tool.description,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": tool.required,
+                },
+            })
         })
-    })
 }
 
 pub(crate) fn has_effect(name: &str) -> bool {
@@ -72,6 +76,11 @@ pub(crate) fn has_effect(name: &str) -> bool {
 
 pub(crate) fn is_tool(name: &str) -> bool {
     TOOLS.iter().any(|tool| tool.name == name)
+}
+
+/// Whether `name` is one of the tools that drive this machine's devices.
+pub(crate) fn is_device_tool(name: &str) -> bool {
+    name.starts_with("orbyn_device_")
 }
 
 fn text<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
