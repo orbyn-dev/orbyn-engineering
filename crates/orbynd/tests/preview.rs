@@ -1088,5 +1088,23 @@ async fn a_browser_profile_rename_is_person_only_and_updates_the_stored_name() {
         assert_eq!(status, 400, "{name:?}: {answer}");
         assert_eq!(answer["message"], create_refusal["message"]);
     }
+
+    for body in [json!({}), json!({ "name": 42 }), json!({ "name": null })] {
+        let response = service
+            .post(&path)
+            .header("x-orbyn-person", key.as_str())
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        let answer: Value = response.json().await.unwrap();
+        assert_eq!(status, 400, "{body}: {answer}");
+        assert_eq!(answer["code"], "invalid_input", "{body}: {answer}");
+    }
+    assert_eq!(
+        service.json("/api/browser-profiles").await[0]["name"],
+        "Research"
+    );
     service.stop().await;
 }
