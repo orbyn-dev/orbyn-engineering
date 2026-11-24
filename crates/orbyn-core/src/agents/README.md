@@ -20,6 +20,7 @@ Everything about the coding engines Orbyn runs: which exist, how to talk to each
 | `selection` | Model, effort and options a turn asks of its engine |
 | `text_models` | The one-shot model for thread titles and source-control writing: per engine, legacy, small, then thread, and the text-generators read |
 | `usage` | Usage from each engine's local session history |
+| `cursor_usage` | Cursor's billed events read from the account's dashboard API against a fake server; the token is an argument and there is no caller yet |
 | `triage` | A fresh native support session outside governed runs |
 | `sse` | An incremental `text/event-stream` parser |
 | `titles` | Thread titles from a short engine call |

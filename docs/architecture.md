@@ -516,10 +516,11 @@ after 150 ms while the scan is pending. A failed refresh keeps those figures and
 offers Retry. Changing the period clears them, and an earlier response cannot
 replace the new period or clear its pending state. Cursor keeps no local history of its own: its spend is billed to the account, so the core keeps
 the account's billed events in `billed_events`, one row per event, keyed by a digest of the
-conversation, timestamp, model and counters because Cursor sends no event id. Nothing produces
-those events yet: the engine host answers `usage` with limits only and lists Cursor's
-`accountUsage.ts` as not added, so the table stays empty and no `cursor` row appears in
-`/api/usage` — the row is drawn only when the store holds events, never as an always-empty engine.
+conversation, timestamp, model and counters because Cursor sends no event id. The usage reader (`agents/cursor_usage.rs`) is built against a fake server, takes the account's
+access token as an argument and has no caller yet, so the table stays empty and no `cursor` row
+appears in `/api/usage` — the row is drawn only when the store holds events, never as an
+always-empty engine; the credential read, its caller and a real account run remain owner-approved
+work.
 Three states stay apart: no store and no rows are no row at all, and a period that holds none of
 the stored events is a scanned engine of nothing. When the host read lands it must hand over one
 complete window, as T3 reconciles against `totalUsageEventsCount`: a report replaces the rows of
