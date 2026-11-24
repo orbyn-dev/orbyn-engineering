@@ -22,7 +22,9 @@ fn a_non_posix_shell_cannot_change_the_library_runs_interpreter() {
     // SAFETY: this test binary has one test, so no other thread reads the environment beside this one.
     unsafe { std::env::set_var("SHELL", &fake) };
 
-    let command = "printf '%s' \"$0\"";
+    // A login profile may print anything first, so mark the answer and read only between
+    // the markers rather than trimming the whole output.
+    let command = "printf 'ORBYN-SHELL:%s:END' \"$0\"";
     let (program, args) = orbyn_core::host::terminal::library_shell_command(command);
     assert_eq!(program, std::path::PathBuf::from("/bin/sh"));
     assert_eq!(
@@ -37,7 +39,12 @@ fn a_non_posix_shell_cannot_change_the_library_runs_interpreter() {
         .output()
         .unwrap();
     let printed = String::from_utf8_lossy(&out.stdout);
-    assert!(matches!(printed.trim(), "/bin/sh" | "sh"), "{printed}");
+    let shell = printed
+        .split_once("ORBYN-SHELL:")
+        .and_then(|(_, rest)| rest.split_once(":END"))
+        .map(|(shell, _)| shell)
+        .unwrap_or_else(|| panic!("no marked shell answer in {printed:?}"));
+    assert!(matches!(shell, "/bin/sh" | "sh"), "{shell}");
 
     // SAFETY: as above, the one test removes what it set before it ends.
     unsafe { std::env::remove_var("SHELL") };

@@ -638,5 +638,3 @@ test("confinement: a credential-named key the SDK re-adds under an allowed prefi
   assert.equal(env.CLAUDE_AGENT_SDK_API_KEY, undefined, "an API_KEY-named key is never re-added");
   assert.equal(env.CLAUDE_CODE_BENIGN, "kept", "a benign key under the documented prefix still passes");
 });
-
-
