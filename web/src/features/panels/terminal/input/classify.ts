@@ -81,9 +81,9 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\b[0-9a-f]{32,}\b/i,
   // An assignment to a name that says it holds a secret, unless it only copies another variable. `PASS` names a secret only
-  // as a whole word, so `DB_PASS` counts and `BYPASS` does not. A double-quoted value is read inside its quotes:
-  // `"$VAR"` and `"$(command)"` copy or run, while `"hunter2"` is the literal the person typed.
-  /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=(?:(?!["'$])(?!\s|$)\S+|"(?![$`])\S+|'\S+)/i,
+  // as a whole word, so `DB_PASS` counts and `BYPASS` does not. A quoted value is read inside its quotes: `"$VAR"` and
+  // `"$(command)"` copy or run and an empty or blank `""` holds nothing, while `"hunter2"` and `" hunter2"` are typed literals.
+  /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=(?:(?!["'$])(?!\s|$)\S+|"[ \t]*(?![$`"\s])\S|'[ \t]*(?!['\s])\S)/i,
   // A secret-named assignment with an ANSI-C or locale literal value (`API_TOKEN=$'hunter2'`, `API_TOKEN=$"hunter2"`): the literal is typed.
   /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=["']?\$['"](?![$"'])/i,
   // An assignment that copies a variable but falls back to a typed literal after `:-` or `:=` (`API_TOKEN=${TOKEN:-hunter2}`).

@@ -76,6 +76,7 @@ describe("saved history", () => {
     ["export DB_PASSWORD=\"quotedhunter2\"", "quotedhunter2"],
     ["export API_TOKEN=${TOKEN:-${PREFIX}nestedhunter2}", "nestedhunter2"],
     ["API_TOKEN=${TOKEN:-' spacedhunter2'}", "spacedhunter2"],
+    ["export DB_PASSWORD=\" hunter2\"", "hunter2"],
   ])("keeps the secret in %s out of local storage while a harmless line beside it is kept", async (line, secret) => {
     const mod = await fresh();
     mod.recordCommand("k", line, 1);
