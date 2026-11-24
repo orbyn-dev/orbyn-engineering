@@ -29,6 +29,27 @@ fn phase(updates: &UpdateCenter) -> AppUpdatePhase {
     lock(&updates.known).phase
 }
 
+/// The refusal an update call answers: the exact variant and the sentence the update screen shows.
+fn unavailable(error: CoreError) -> String {
+    match error {
+        CoreError::UpdateUnavailable(message) => message,
+        other => panic!("expected UpdateUnavailable, got {other:?}"),
+    }
+}
+
+/// The refusal of a run whose desktop shell went away mid-operation.
+fn update_failed(error: CoreError) -> String {
+    match error {
+        CoreError::UpdateFailed(message) => message,
+        other => panic!("expected UpdateFailed, got {other:?}"),
+    }
+}
+
+/// The sentences the refusals show; changing one is a product change and must fail these tests.
+const BUSY: &str = "An app update is already running.";
+const CHANGED: &str = "The available update changed. Review the new version before downloading.";
+const SHELL_GONE: &str = "The desktop shell is gone.";
+
 #[tokio::test]
 async fn complete_consent_waits_for_readiness_and_duplicate_requests_keep_one_operation() {
     let (_dir, core, mut lines) = fixture();
@@ -93,10 +114,14 @@ async fn complete_cannot_upgrade_a_plain_download_that_won_admission() {
             say(updates, "app_update_preparing", json!({}));
         }
         for operation in [0, 1] {
-            assert!(
-                updates
-                    .start_app("person", request("r1", operation), AppIntent::Complete)
-                    .is_err()
+            assert_eq!(
+                unavailable(
+                    updates
+                        .start_app("person", request("r1", operation), AppIntent::Complete)
+                        .unwrap_err()
+                ),
+                BUSY,
+                "preparing: {preparing}"
             );
         }
         assert!(!lock(&updates.known).install_after_download);
@@ -117,15 +142,21 @@ async fn complete_refuses_changed_release_and_operation_without_any_effect() {
     let updates = &core.updates;
     updates
         .on_shell_line(r#"{"type":"app_update_available","release_id":"r2","version":"100.0.0"}"#);
-    assert!(
-        updates
-            .start_app("person", request("r1", 0), AppIntent::Complete)
-            .is_err()
+    assert_eq!(
+        unavailable(
+            updates
+                .start_app("person", request("r1", 0), AppIntent::Complete)
+                .unwrap_err()
+        ),
+        CHANGED
     );
-    assert!(
-        updates
-            .start_app("person", request("r2", u32::MAX), AppIntent::Complete)
-            .is_err()
+    assert_eq!(
+        unavailable(
+            updates
+                .start_app("person", request("r2", u32::MAX), AppIntent::Complete)
+                .unwrap_err()
+        ),
+        CHANGED
     );
     assert!(lines.try_recv().is_err());
     assert!(core.workspace.admit_with(|| Ok(())).is_ok());
@@ -152,11 +183,14 @@ async fn consent_downloads_once_and_verified_readiness_is_independent_of_bytes()
         json!({"downloaded":100,"total":100}),
     );
     assert_eq!(phase(updates), AppUpdatePhase::Downloading);
-    assert!(
-        updates
-            .install_app("person", request("r1", 1))
-            .await
-            .is_err()
+    assert_eq!(
+        unavailable(
+            updates
+                .install_app("person", request("r1", 1))
+                .await
+                .unwrap_err()
+        ),
+        BUSY
     );
     say(updates, "app_update_preparing", json!({}));
     assert_eq!(phase(updates), AppUpdatePhase::Preparing);
@@ -209,17 +243,23 @@ async fn new_checks_and_old_callbacks_cannot_retarget_staged_consent() {
             .unwrap()
             .starts_with("The available update changed.")
     );
-    assert!(
-        updates
-            .install_app("person", request("r1", 1))
-            .await
-            .is_err()
+    assert_eq!(
+        unavailable(
+            updates
+                .install_app("person", request("r1", 1))
+                .await
+                .unwrap_err()
+        ),
+        CHANGED
     );
-    assert!(
-        updates
-            .install_app("person", request("r2", 1))
-            .await
-            .is_err()
+    assert_eq!(
+        unavailable(
+            updates
+                .install_app("person", request("r2", 1))
+                .await
+                .unwrap_err()
+        ),
+        CHANGED
     );
     assert!(core.workspace.admit_with(|| Ok(())).is_ok());
     assert_eq!(lines.try_recv().unwrap()["type"], "download_app_update");
@@ -244,18 +284,24 @@ async fn stale_consent_or_a_gone_shell_never_leave_admission_held() {
     let updates = &core.updates;
     updates
         .on_shell_line(r#"{"type":"app_update_available","release_id":"r2","version":"99.0.0"}"#);
-    assert!(
-        updates
-            .download_app("person", request("r1", 0))
-            .await
-            .is_err()
+    assert_eq!(
+        unavailable(
+            updates
+                .download_app("person", request("r1", 0))
+                .await
+                .unwrap_err()
+        ),
+        CHANGED
     );
     drop(lines);
-    assert!(
-        updates
-            .download_app("person", request("r2", 0))
-            .await
-            .is_err()
+    assert_eq!(
+        update_failed(
+            updates
+                .download_app("person", request("r2", 0))
+                .await
+                .unwrap_err()
+        ),
+        SHELL_GONE
     );
     assert!(core.workspace.admit_with(|| Ok(())).is_ok());
     assert_eq!(phase(updates), AppUpdatePhase::Available);
@@ -267,7 +313,10 @@ async fn automatic_intent_waits_for_verification_and_keeps_admission() {
     updates
         .start_app("automatic", request("r1", 0), AppIntent::Complete)
         .unwrap();
-    assert!(core.workspace.admit_with(|| Ok(())).is_err());
+    assert!(matches!(
+        core.workspace.admit_with(|| Ok(())),
+        Err(CoreError::Updating)
+    ));
     say(
         updates,
         "app_update_progress",
@@ -286,7 +335,10 @@ async fn automatic_intent_waits_for_verification_and_keeps_admission() {
             .any(|row| row.action == "app.update.install" && row.actor == "automatic")
     );
     assert_eq!(lines.try_recv().unwrap()["type"], "install_app_update");
-    assert!(core.workspace.admit_with(|| Ok(())).is_err());
+    assert!(matches!(
+        core.workspace.admit_with(|| Ok(())),
+        Err(CoreError::Updating)
+    ));
     say(
         updates,
         "app_update_failed",
@@ -429,11 +481,14 @@ async fn r1_failure_after_r2_check_names_the_attempt_without_retargeting_consent
             .starts_with("The available update changed.")
     );
     assert_eq!(shown.phase, AppUpdatePhase::Available);
-    assert!(
-        updates
-            .download_app("person", request("r1", 1))
-            .await
-            .is_err()
+    assert_eq!(
+        unavailable(
+            updates
+                .download_app("person", request("r1", 1))
+                .await
+                .unwrap_err()
+        ),
+        CHANGED
     );
     assert!(core.workspace.admit_with(|| Ok(())).is_ok());
     assert_eq!(lines.try_recv().unwrap()["type"], "download_app_update");
@@ -455,17 +510,23 @@ async fn fresh_release_revokes_ready_stage_but_a_failed_check_retains_it() {
         r#"{"type":"app_update_available","release_id":"r2","version":"100.0.0","changed":true}"#,
     );
     assert_eq!(phase(updates), AppUpdatePhase::Available);
-    assert!(
-        updates
-            .install_app("person", request("r1", 1))
-            .await
-            .is_err()
+    assert_eq!(
+        unavailable(
+            updates
+                .install_app("person", request("r1", 1))
+                .await
+                .unwrap_err()
+        ),
+        CHANGED
     );
-    assert!(
-        updates
-            .install_app("person", request("r2", 1))
-            .await
-            .is_err()
+    assert_eq!(
+        unavailable(
+            updates
+                .install_app("person", request("r2", 1))
+                .await
+                .unwrap_err()
+        ),
+        CHANGED
     );
     assert!(core.workspace.admit_with(|| Ok(())).is_ok());
 }
