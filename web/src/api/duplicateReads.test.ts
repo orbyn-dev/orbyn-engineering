@@ -95,6 +95,21 @@ describe("duplicate shell, account and skill reads", () => {
   });
 
 
+  it("keeps an account-changed read out of an account read already in flight", async () => {
+    const held: Array<(body: unknown) => void> = [];
+    vi.stubGlobal("fetch", vi.fn((url: string) => String(url).endsWith("/api/account")
+      ? new Promise<Response>((resolve) => held.push((body) => resolve(new Response(JSON.stringify(body), { status: 200 }))))
+      : Promise.resolve(new Response("{}", { status: 200 }))));
+    const mounting = accountApi.view();
+    await tick();
+    // The account event asked; it must not join the read sent before the change.
+    const afterEvent = accountApi.view(undefined, true);
+    await tick();
+    expect(held).toHaveLength(2);
+    for (const answer of held) answer({ available: false });
+    await Promise.all([mounting, afterEvent]);
+  });
+
   it("keeps a shell-changed read out of a shell read already in flight", async () => {
     const held: Array<(body: unknown) => void> = [];
     vi.stubGlobal("fetch", vi.fn((url: string) => String(url).endsWith("/api/shell")

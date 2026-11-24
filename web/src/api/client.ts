@@ -203,12 +203,16 @@ export function request<T>(
   const background = inBackground();
   const sendInLane = (own: AbortSignal | undefined) =>
     inLane(lane, own, (laned) => send<T>(method, path, body, laned, options.headers), unreachable, background);
+  // A write may change what a read in flight answers. Clear when it is sent and again when it
+  // settles, so a read awaited after it never joins one sent before or while it ran.
+  const write = method !== "GET" && options.share !== true;
   let sent: Promise<T>;
   if (options.share === true && options.fresh !== true) {
     sent = sharedRead(sharedKey(method, path, body, options.headers), sendInLane, signal);
   } else {
-    if (method !== "GET") forgetSharedReads();
+    if (write) forgetSharedReads();
     sent = sendInLane(signal);
+    if (write) sent = sent.finally(() => forgetSharedReads());
   }
   return sent.finally(() => clearTimeout(slow));
 }

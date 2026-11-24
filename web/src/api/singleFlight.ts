@@ -7,9 +7,17 @@
  * fresh answer never joins, and a request is abandoned only once every caller has aborted.
  */
 
+/**
+ * Reads share only while the first of them is this young. Readers made together (two components
+ * mounting in one render) join; a read made later may need newer server state than a request
+ * that has been in flight since — and one that never settles must not trap every later read.
+ */
+export const JOIN_WINDOW_MS = 100;
+
 interface Flight {
   promise: Promise<unknown>;
   controller: AbortController;
+  startedAt: number;
   callers: number;
   /** Two separate requests answer with two objects; only the first caller gets the one the flight holds. */
   handedOut: boolean;
@@ -28,13 +36,15 @@ export function sharedKey(method: string, path: string, body: unknown, headers?:
 export function sharedRead<T>(key: string, start: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
   if (signal?.aborted) return Promise.reject(abortError());
   let flight = flights.get(key);
+  if (flight && Date.now() - flight.startedAt > JOIN_WINDOW_MS) flight = undefined;
   if (!flight) {
-    const made: Flight = { promise: Promise.resolve(), controller: new AbortController(), callers: 0, handedOut: false };
+    const made: Flight = { promise: Promise.resolve(), controller: new AbortController(), startedAt: Date.now(), callers: 0, handedOut: false };
     made.promise = start(made.controller.signal).finally(() => {
       if (flights.get(key) === made) flights.delete(key);
     });
     // Callers handle the outcome; this keeps a flight every caller left from reporting an unhandled rejection.
     made.promise.catch(() => undefined);
+    // Replaces a flight older than the window, whose remaining callers still get its answer.
     flights.set(key, made);
     flight = made;
   }

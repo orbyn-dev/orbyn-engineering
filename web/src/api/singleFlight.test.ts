@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { request } from "./client";
-import { resetSharedReadsForTests } from "./singleFlight";
+import { JOIN_WINDOW_MS, resetSharedReadsForTests } from "./singleFlight";
 
 interface Pending {
   path: string;
@@ -30,7 +30,10 @@ const shared = <T>(url: string, signal?: AbortSignal) =>
   request<T>("GET", url, undefined, signal, { share: true });
 
 beforeEach(resetSharedReadsForTests);
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe("opt-in single-flight reads", () => {
   it("sends one request for reads made together and gives every caller the data", async () => {
@@ -124,5 +127,42 @@ describe("opt-in single-flight reads", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     pending[1]?.answer([]);
     await expect(c).resolves.toEqual([]);
+  });
+
+  it("starts a new read after the join window, so a hung request cannot trap later reads", async () => {
+    vi.useFakeTimers();
+    const { pending, fetchMock } = holdFetch();
+    // A request that never settles: its flight stays pending.
+    const hung = shared<unknown[]>("/api/threads");
+    void hung.catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(JOIN_WINDOW_MS + 1);
+    const later = shared<unknown[]>("/api/threads");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    pending[1]?.answer([]);
+    await expect(later).resolves.toEqual([]);
+    // The hung request still answers its own caller if it ever settles.
+    pending[0]?.answer(["old"]);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(hung).resolves.toEqual(["old"]);
+  });
+
+  it("starts a read awaited after a write settles; it never joins one sent before or during it", async () => {
+    const { pending, fetchMock } = holdFetch();
+    const write = request<void>("POST", "/api/threads/order", { ids: [] });
+    const during = shared<unknown[]>("/api/threads");
+    await tick();
+    pending[0]?.answer(undefined);
+    await write;
+    const after = shared<unknown[]>("/api/threads");
+    await tick();
+    // The write, the read sent while it ran, and the read awaited after it: three requests.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    pending[1]?.answer(["during"]);
+    pending[2]?.answer(["after"]);
+    await expect(during).resolves.toEqual(["during"]);
+    await expect(after).resolves.toEqual(["after"]);
   });
 });
