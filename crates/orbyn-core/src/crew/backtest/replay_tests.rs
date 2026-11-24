@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::replay::FakeLaneRunner;
 use super::*;
+use crate::error::CoreError;
 use crate::store::{
     BacktestState, LaneState, MOST_BUDGET_TOKENS, NewProject, ResultOutcome, Store,
 };
@@ -63,6 +64,14 @@ fn request(project: &str, lanes: Vec<LaneSpec>, budgets: &[(&str, u64)]) -> Back
         project: project.into(),
         lanes,
         budgets: budgets.iter().map(|(e, t)| ((*e).into(), *t)).collect(),
+    }
+}
+
+/// The exact `Invalid` sentence a request or run rule refuses with.
+fn refused_invalid(error: CoreError) -> String {
+    match error {
+        CoreError::Invalid(message) => message,
+        other => panic!("expected an Invalid refusal, got {other:?}"),
     }
 }
 
@@ -481,18 +490,20 @@ fn a_runner_panic_ends_the_run_as_failed_and_never_leaves_it_running() {
         ],
         &[("engine-a", 10), ("engine-b", 10)],
     );
-    assert!(
-        run(
-            &store,
-            "run-1",
-            &req,
-            &prs(2),
-            NOW,
-            &PanickingRunner,
-            &NoEscapeLog
-        )
-        .is_err()
-    );
+    match run(
+        &store,
+        "run-1",
+        &req,
+        &prs(2),
+        NOW,
+        &PanickingRunner,
+        &NoEscapeLog,
+    ) {
+        Err(CoreError::Internal(message)) => {
+            assert_eq!(message, "a backtest lane runner panicked");
+        }
+        other => panic!("expected the caught panic, got {other:?}"),
+    }
     let stored = store.crew_backtest_run("run-1").unwrap();
     assert_eq!(stored.state, BacktestState::Failed);
     assert!(stored.stop_reason.is_some() && stored.finished_unix == Some(NOW));
@@ -524,7 +535,10 @@ fn a_run_that_cannot_be_written_ends_failed() {
         number: u64::MAX,
         merged_unix: NOW - 40 * DAY,
     }];
-    assert!(run(&store, "run-1", &req, &huge, NOW, &fake, &NoEscapeLog).is_err());
+    assert_eq!(
+        refused_invalid(run(&store, "run-1", &req, &huge, NOW, &fake, &NoEscapeLog).unwrap_err()),
+        "a pull request number is too large"
+    );
     let stored = store.crew_backtest_run("run-1").unwrap();
     assert_eq!(stored.state, BacktestState::Failed);
     assert!(
@@ -544,14 +558,28 @@ fn budgets_outside_one_to_the_maximum_are_refused_up_front() {
             vec![spec("correctness", "engine-a")],
             &[("engine-a", bad)],
         );
-        assert!(req.validate().is_err(), "{bad}");
+        // A lane's own budget of zero fails the lane rule; any out-of-range budget fails the range rule.
+        let expected = if bad == 0 {
+            "every engine of a lane needs a token budget of at least 1".to_owned()
+        } else {
+            format!("a token budget must be from 1 to {MOST_BUDGET_TOKENS}")
+        };
+        assert_eq!(
+            refused_invalid(req.validate().unwrap_err()),
+            expected,
+            "{bad}"
+        );
         // An engine no lane uses is held to the same range.
         let req = request(
             "p",
             vec![spec("correctness", "engine-a")],
             &[("engine-a", 10), ("engine-b", bad)],
         );
-        assert!(req.validate().is_err(), "unused {bad}");
+        assert_eq!(
+            refused_invalid(req.validate().unwrap_err()),
+            format!("a token budget must be from 1 to {MOST_BUDGET_TOKENS}"),
+            "unused {bad}"
+        );
     }
     let ok = request(
         "p",
@@ -622,7 +650,11 @@ fn a_run_id_is_used_once_and_a_second_start_changes_nothing() {
         &[("engine-a", 10)],
     );
     let first = run(&store, "run-1", &req, &prs(2), NOW, &fake, &NoEscapeLog).unwrap();
-    assert!(run(&store, "run-1", &req, &prs(2), NOW + 1, &fake, &NoEscapeLog).is_err());
+    // The run id is the primary key: the second start is a store constraint, not any error.
+    assert!(matches!(
+        run(&store, "run-1", &req, &prs(2), NOW + 1, &fake, &NoEscapeLog),
+        Err(CoreError::Store(rusqlite::Error::SqliteFailure(_, _)))
+    ));
     assert_eq!(report(&store, "run-1").unwrap(), first);
 }
 
@@ -635,7 +667,10 @@ fn an_unknown_project_is_refused() {
         vec![spec("correctness", "engine-a")],
         &[("engine-a", 10)],
     );
-    assert!(run(&store, "run-1", &req, &prs(1), NOW, &fake, &NoEscapeLog).is_err());
+    match run(&store, "run-1", &req, &prs(1), NOW, &fake, &NoEscapeLog) {
+        Err(CoreError::NotFound(what)) => assert_eq!(what, "project nope"),
+        other => panic!("expected the unknown project, got {other:?}"),
+    }
     assert!(fake.calls.borrow().is_empty());
 }
 
@@ -653,7 +688,10 @@ fn a_valid_request_reads_from_json() {
 #[test]
 fn a_builder_lane_is_refused_by_type_and_by_name() {
     let by_kind = valid_json().replace("\"review\"", "\"builder\"");
-    assert!(BacktestRequest::from_json(&by_kind).is_err());
+    assert_eq!(
+        refused_invalid(BacktestRequest::from_json(&by_kind).unwrap_err()),
+        "the backtest request is not valid"
+    );
     for name in [
         "builder",
         "Builder-2",
@@ -662,7 +700,11 @@ fn a_builder_lane_is_refused_by_type_and_by_name() {
         "author",
     ] {
         let req = request("p", vec![spec(name, "engine-a")], &[("engine-a", 10)]);
-        assert!(req.validate().is_err(), "{name}");
+        assert_eq!(
+            refused_invalid(req.validate().unwrap_err()),
+            "a backtest replays reviews and checks, never a builder",
+            "{name}"
+        );
     }
     // A check named build, and a lane that only contains the letters, are fine.
     for name in ["build", "authorization", "decoder-safety", "correctness"] {
@@ -675,62 +717,76 @@ fn a_builder_lane_is_refused_by_type_and_by_name() {
 fn a_money_field_is_refused() {
     for field in ["max_cost_usd", "price", "budget_usd", "currency"] {
         let text = valid_json().replacen('{', &format!("{{\"{field}\":5,"), 1);
-        assert!(BacktestRequest::from_json(&text).is_err(), "{field}");
+        assert_eq!(
+            refused_invalid(BacktestRequest::from_json(&text).unwrap_err()),
+            "the backtest request is not valid",
+            "{field}"
+        );
     }
     let in_lane = valid_json().replace("\"kind\"", "\"cost\":1,\"kind\"");
-    assert!(BacktestRequest::from_json(&in_lane).is_err());
+    assert_eq!(
+        refused_invalid(BacktestRequest::from_json(&in_lane).unwrap_err()),
+        "the backtest request is not valid"
+    );
     // A budget keyed by a currency is money in disguise.
     let req = request(
         "p",
         vec![spec("correctness", "engine-a")],
         &[("engine-a", 10), ("usd", 5)],
     );
-    assert!(req.validate().is_err());
+    assert_eq!(
+        refused_invalid(req.validate().unwrap_err()),
+        "a budget looks like money: a backtest budget is tokens per engine"
+    );
     let req = request("p", vec![spec("correctness", "usd")], &[("usd", 10)]);
-    assert!(req.validate().is_err());
+    assert_eq!(
+        refused_invalid(req.validate().unwrap_err()),
+        "an engine looks like money: a backtest budget is tokens per engine"
+    );
 }
 
 #[test]
 fn a_request_without_lanes_or_a_budget_for_each_engine_is_refused() {
-    assert!(
-        request("p", vec![], &[("engine-a", 10)])
-            .validate()
-            .is_err()
+    assert_eq!(
+        refused_invalid(
+            request("p", vec![], &[("engine-a", 10)])
+                .validate()
+                .unwrap_err()
+        ),
+        "a backtest needs at least one lane"
     );
-    assert!(
-        request("p", vec![spec("correctness", "engine-a")], &[])
-            .validate()
-            .is_err()
-    );
-    assert!(
+    for req in [
+        request("p", vec![spec("correctness", "engine-a")], &[]),
         request(
             "p",
             vec![spec("correctness", "engine-a")],
-            &[("engine-a", 0)]
-        )
-        .validate()
-        .is_err()
-    );
-    assert!(
-        request(
-            "p",
-            vec![
-                spec("correctness", "engine-a"),
-                spec("correctness", "engine-a")
-            ],
-            &[("engine-a", 10)]
-        )
-        .validate()
-        .is_err()
-    );
-    assert!(
+            &[("engine-a", 0)],
+        ),
         request(
             "p",
             vec![spec("correctness", "engine-a")],
-            &[("engine-b", 10)]
-        )
-        .validate()
-        .is_err()
+            &[("engine-b", 10)],
+        ),
+    ] {
+        assert_eq!(
+            refused_invalid(req.validate().unwrap_err()),
+            "every engine of a lane needs a token budget of at least 1"
+        );
+    }
+    assert_eq!(
+        refused_invalid(
+            request(
+                "p",
+                vec![
+                    spec("correctness", "engine-a"),
+                    spec("correctness", "engine-a")
+                ],
+                &[("engine-a", 10)]
+            )
+            .validate()
+            .unwrap_err()
+        ),
+        "a lane is listed twice on one engine"
     );
 }
 
