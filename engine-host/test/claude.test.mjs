@@ -549,3 +549,61 @@ test("a steer or a cancel for a run that is not open is refused and touches noth
   assert.equal(cancel.result.cancelled, false);
   assert.equal(h.replay.calls.interrupts ?? 0, 0);
 });
+
+// The spawn hook of a confined session: the fake query only records its options, so a test drives
+// `spawnClaudeCodeProcess` itself and reads the environment the child actually got. A confinement
+// whose prefix runs node makes the child print its own environment, which no platform-specific shell
+// is needed for.
+const ENV_PRINTING_PREFIX = [process.execPath, "-e", "process.stdout.write(JSON.stringify(process.env))"];
+
+async function confinedSpawn(confinement) {
+  const seen = [];
+  const query = ({ options }) => {
+    seen.push(options);
+    return { [Symbol.asyncIterator]: () => ({ next: async () => ({ done: true }) }), close() {} };
+  };
+  const h = boot("multi_turn", { query });
+  await open(h, {}, { confinement });
+  h.send({ id: 3, type: "send", sessionId: "s", message: FIRST_PROMPT });
+  assert.equal((await h.next((f) => f.id === 3)).ok, true);
+  assert.equal(seen.length, 1, "the session asked the SDK for one query");
+  return { h, spawn: seen[0].spawnClaudeCodeProcess };
+}
+
+test("confinement: only the two Claude prefixes are added and the confinement env is not overridden", async () => {
+  const confinement = {
+    argvPrefix: ENV_PRINTING_PREFIX,
+    env: { PATH: "/confinement-path", CLAUDE_CODE_KEPT: "from-confinement" },
+    cwd: process.cwd(),
+    writeRoots: [process.cwd()],
+  };
+  const { h, spawn } = await confinedSpawn(confinement);
+  // The SDK hands back the host's own environment; only the Claude prefixes may join the allowlist.
+  const child = spawn({
+    command: "ignored-after-the-prefix",
+    args: [],
+    env: {
+      CLAUDE_CODE_ALLOWED: "one",
+      CLAUDE_AGENT_SDK_ALLOWED: "two",
+      NOT_A_PREFIX: "three",
+      PATH: "from-the-sdk",
+      CLAUDE_CODE_KEPT: "from-the-sdk",
+    },
+  });
+  // The keys are logged before the child is started: the frame comes from the same spawn hook.
+  const log = await h.next((f) => f.type === "log" && f.event.type === "envAdded");
+  assert.deepEqual(log.event.keys, ["CLAUDE_CODE_ALLOWED", "CLAUDE_AGENT_SDK_ALLOWED"]);
+  const env = await new Promise((resolve, reject) => {
+    let text = "";
+    child.stdout.on("data", (chunk) => (text += chunk));
+    child.on("error", reject);
+    child.on("close", () => resolve(JSON.parse(text || "{}")));
+  });
+  assert.equal(env.CLAUDE_CODE_ALLOWED, "one");
+  assert.equal(env.CLAUDE_AGENT_SDK_ALLOWED, "two");
+  assert.equal(env.NOT_A_PREFIX, undefined, "only the two Claude prefixes are added");
+  // A key the confinement allowlist already carries is never overridden by the SDK's copy.
+  assert.equal(env.PATH, "/confinement-path");
+  assert.equal(env.CLAUDE_CODE_KEPT, "from-confinement");
+});
+
