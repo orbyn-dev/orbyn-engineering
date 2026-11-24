@@ -26,6 +26,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/issues", get(list))
         .route("/api/issues/item", get(item))
+        .route("/api/issues/templates", get(templates))
         .route("/api/issues/links", get(links))
         .route("/api/issues/find", get(find))
         .route("/api/issues/draft", get(draft))
@@ -104,6 +105,20 @@ async fn item(
 ) -> ApiResult<impl IntoResponse> {
     on(&state)?;
     Ok(Json(state.core.issue(&q.into()).await?))
+}
+
+#[derive(Deserialize)]
+struct TemplatesQuery {
+    tracker: TrackerKind,
+    scope: String,
+}
+
+async fn templates(
+    State(state): State<AppState>,
+    Query(q): Query<TemplatesQuery>,
+) -> ApiResult<impl IntoResponse> {
+    on(&state)?;
+    Ok(Json(state.core.issue_templates(q.tracker, &q.scope).await?))
 }
 
 async fn links(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
