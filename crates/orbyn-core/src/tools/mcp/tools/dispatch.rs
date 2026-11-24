@@ -7,7 +7,8 @@ use super::render::{render_height, render_title};
 use super::{
     ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, issue_query,
     issue_ref_value, issue_summary_value, matches_words, number, pull_checks_value,
-    pull_detail_value, pull_filter, pull_limit, pull_list_value, pull_number, text, wait_seconds,
+    pull_comment_body, pull_detail_value, pull_filter, pull_limit, pull_list_value, pull_number,
+    pull_reply_to, pull_update_args, text, wait_seconds,
 };
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -16,8 +17,8 @@ use crate::issues::ProjectReader;
 use crate::store::AuditRecord;
 use crate::tools::mcp::McpBinding;
 use orbyn_contracts::{
-    ActionKind, CreateThread, DelegateTask, IssueKey, PermissionMode, TaskSchedule, Thread,
-    UpdateThread, UpsertTask,
+    ActionKind, AddPullComment, CreateThread, DelegateTask, IssueKey, PermissionMode, TaskSchedule,
+    Thread, UpdateThread, UpsertTask,
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -68,6 +69,21 @@ impl Core {
                     text(args, "project_id")?,
                     text(args, "path")?
                 ),
+                "orbyn_pull_request_comment" => format!(
+                    "Comment on pull request #{} of this project",
+                    number(args, "number")?
+                ),
+                "orbyn_pull_request_update" => {
+                    let named: Vec<&str> = ["title", "body", "draft"]
+                        .into_iter()
+                        .filter(|field| args.get(*field).is_some_and(|value| !value.is_null()))
+                        .collect();
+                    format!(
+                        "Update pull request #{} of this project ({})",
+                        number(args, "number")?,
+                        named.join(", ")
+                    )
+                }
                 _ => format!("Use {name}"),
             };
             let ask = ActionAsk {
@@ -276,6 +292,26 @@ impl Core {
                 let number = pull_number(args)?;
                 let checks = self.pull_checks(&own.project_id, number, false).await?;
                 pull_checks_value(number, &checks)
+            }
+            "orbyn_pull_request_comment" => {
+                let number = pull_number(args)?;
+                let request = AddPullComment {
+                    body: pull_comment_body(args)?.to_owned(),
+                    path: None,
+                    line: None,
+                    reply_to: pull_reply_to(args)?.map(str::to_owned),
+                };
+                self.comment_pull(&own.project_id, number, &request, &actor)
+                    .await?;
+                json!({ "commented": true, "number": number })
+            }
+            "orbyn_pull_request_update" => {
+                let number = pull_number(args)?;
+                let update = pull_update_args(args)?;
+                let detail = self
+                    .update_pull(&own.project_id, number, &update, &actor)
+                    .await?;
+                pull_detail_value(&detail, self.issue_body_for_tool(&detail.body))
             }
             "orbyn_schedule_list" => {
                 let tasks = self.store.tasks()?;

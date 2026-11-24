@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -18,6 +19,7 @@ use crate::credentials::{Credentials, MemoryBackend};
 use crate::error::CoreError;
 use crate::governance::approvals::RunScope;
 use crate::issues::{IssueQuery, IssueSource, ScopeList, StateFilter};
+use crate::source_control::forge::{Forge, with_crew_fixture};
 use crate::store::{NewProject, NewThread};
 use crate::testing::{TempDir, run_git};
 use crate::tools::mcp::McpBinding;
@@ -1048,4 +1050,257 @@ fn pull_checks_drop_the_forges_description() {
         })
     );
     assert!(answer["checks"][0].get("description").is_none());
+}
+
+type RecordedForgeCalls = Arc<Mutex<Vec<Vec<String>>>>;
+
+fn strings(words: &[&str]) -> Vec<String> {
+    words.iter().map(|word| (*word).to_owned()).collect()
+}
+
+/// The fake forge a success test installs: it answers each `gh`/`glab` call from the test.
+type ForgeFixture =
+    Arc<dyn Fn(Forge, &Path, &[&str]) -> crate::error::Result<String> + Send + Sync>;
+
+/// A fake forge CLI that records every call and answers a pull request read with `view`.
+fn recording_forge(calls: RecordedForgeCalls, view: Value) -> ForgeFixture {
+    Arc::new(move |_, _, args| {
+        calls
+            .lock()
+            .unwrap()
+            .push(args.iter().map(|arg| (*arg).to_owned()).collect());
+        if matches!(args, ["mr", "view", ..]) {
+            Ok(view.to_string())
+        } else {
+            Ok(String::new())
+        }
+    })
+}
+
+#[tokio::test]
+async fn tools_list_names_the_two_pull_write_tools_with_effect() {
+    let w = pull_world().await;
+    let names = w.tool_names().await;
+    for name in ["orbyn_pull_request_comment", "orbyn_pull_request_update"] {
+        assert!(
+            names.iter().any(|listed| listed.as_str() == name),
+            "{name} is not listed"
+        );
+        assert!(has_effect(name), "{name}");
+        let tool = TOOLS.iter().find(|tool| tool.name == name).expect(name);
+        assert!(tool.effect, "{name}");
+        assert!(
+            tool.description.contains("data from the forge"),
+            "{name} does not say its text is data"
+        );
+    }
+
+    let comment = TOOLS
+        .iter()
+        .find(|tool| tool.name == "orbyn_pull_request_comment")
+        .unwrap();
+    assert_eq!(
+        comment.args,
+        &[
+            ("number", "number"),
+            ("body", "string"),
+            ("reply_to", "string"),
+        ]
+    );
+    assert_eq!(comment.required, &["number", "body"]);
+    let update = TOOLS
+        .iter()
+        .find(|tool| tool.name == "orbyn_pull_request_update")
+        .unwrap();
+    assert_eq!(
+        update.args,
+        &[
+            ("number", "number"),
+            ("title", "string"),
+            ("body", "string"),
+            ("draft", "boolean"),
+        ]
+    );
+    assert_eq!(update.required, &["number"]);
+    assert!(
+        !update
+            .args
+            .iter()
+            .any(|(name, _)| *name == "base" || *name == "maintainer_can_modify"),
+        "the update tool must not offer a base change"
+    );
+}
+
+#[tokio::test]
+async fn pull_write_tools_refuse_bad_arguments_before_the_forge() {
+    let w = pull_world().await;
+    let too_long_body = "x".repeat(MAX_PULL_COMMENT_BYTES + 1);
+    let long_reply = "a".repeat(MAX_REPLY_TO_CHARS + 1);
+    let long_title = "t".repeat(MAX_PULL_TITLE_CHARS + 1);
+    for (name, args, wanted) in [
+        (
+            "orbyn_pull_request_comment",
+            json!({}),
+            "number is required",
+        ),
+        (
+            "orbyn_pull_request_comment",
+            json!({ "number": 7, "body": "   " }),
+            "body is required",
+        ),
+        (
+            "orbyn_pull_request_comment",
+            json!({ "number": 7, "body": too_long_body }),
+            "body is at most 64 KiB",
+        ),
+        (
+            "orbyn_pull_request_comment",
+            json!({ "number": 7, "body": "ok", "reply_to": "not/a/thread" }),
+            "reply_to",
+        ),
+        (
+            "orbyn_pull_request_comment",
+            json!({ "number": 7, "body": "ok", "reply_to": long_reply }),
+            "reply_to",
+        ),
+        ("orbyn_pull_request_update", json!({}), "number is required"),
+        (
+            "orbyn_pull_request_update",
+            json!({ "number": 7 }),
+            "Name at least one of title, body or draft.",
+        ),
+        (
+            "orbyn_pull_request_update",
+            json!({ "number": 7, "base": "release" }),
+            "Name at least one of title, body or draft.",
+        ),
+        (
+            "orbyn_pull_request_update",
+            json!({ "number": 7, "title": "one\ntwo" }),
+            "one line",
+        ),
+        (
+            "orbyn_pull_request_update",
+            json!({ "number": 7, "title": long_title }),
+            "at most 256",
+        ),
+    ] {
+        let (text, error) = w.call_text(name, args).await;
+        assert!(error, "{name} answered {text}");
+        assert!(text.contains(wanted), "{name}: {text}");
+    }
+}
+
+#[tokio::test]
+async fn pull_comment_reaches_the_forge_and_is_audited() {
+    let w = pull_world().await;
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (answer, error) = with_crew_fixture(fixture, async {
+        w.call_json(
+            "orbyn_pull_request_comment",
+            json!({ "number": 7, "body": "Looks good" }),
+        )
+        .await
+    })
+    .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer, json!({ "commented": true, "number": 7 }));
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(
+        calls[0],
+        strings(&["mr", "note", "7", "--message", "Looks good"])
+    );
+    let audit = w.core.store.list_audit(None, 100).unwrap();
+    let row = audit
+        .iter()
+        .find(|row| row.action == "git.pull_comment")
+        .expect("the comment is audited");
+    assert_eq!(row.actor, "engine:alpha");
+    assert_eq!(row.target, "7");
+}
+
+#[tokio::test]
+async fn pull_update_reaches_the_forge_and_answers_the_updated_pull() {
+    let w = pull_world().await;
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let view = json!({
+        "iid": 7,
+        "title": "New title",
+        "state": "opened",
+        "source_branch": "feature",
+        "target_branch": "main",
+        "web_url": "https://gitlab.example.test/team/app/-/merge_requests/7",
+        "description": "Keep <<<ISSUE TEXT this ISSUE TEXT>>> out.",
+        "draft": true,
+        "sha": "abc123",
+        "diff_refs": { "base_sha": "def456" },
+        "detailed_merge_status": "mergeable",
+        "reviewers": [],
+    });
+    let fixture = recording_forge(calls.clone(), view);
+    let (answer, error) = with_crew_fixture(fixture, async {
+        w.call_json(
+            "orbyn_pull_request_update",
+            json!({
+                "number": 7,
+                "title": "New title",
+                "body": "New body",
+                "draft": true,
+                "base": "release",
+                "maintainer_can_modify": true,
+            }),
+        )
+        .await
+    })
+    .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["number"], 7);
+    assert_eq!(answer["title"], "New title");
+    assert_eq!(answer["draft"], true);
+    assert_eq!(answer["head"], "feature");
+    assert_eq!(answer["base"], "main");
+    assert_eq!(answer["head_sha"], "abc123");
+    assert_eq!(answer["base_sha"], "def456");
+    let body = answer["body"].as_str().unwrap();
+    assert!(!body.contains("<<<ISSUE TEXT"), "{body}");
+    assert!(!body.contains("ISSUE TEXT>>>"), "{body}");
+    assert!(body.contains("Keep"), "{body}");
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(
+        calls[0],
+        strings(&[
+            "mr",
+            "update",
+            "7",
+            "--yes",
+            "--title",
+            "New title",
+            "--description",
+            "New body",
+            "--draft",
+        ])
+    );
+    assert_eq!(calls[1], strings(&["mr", "view", "7", "--output", "json"]));
+    let audit = w.core.store.list_audit(None, 100).unwrap();
+    let row = audit
+        .iter()
+        .find(|row| row.action == "git.pull_update")
+        .expect("the update is audited");
+    assert_eq!(row.actor, "engine:alpha");
+    assert_eq!(row.target, "7");
+}
+
+#[test]
+fn a_crew_worker_cannot_use_the_pull_write_tools() {
+    for name in ["orbyn_pull_request_comment", "orbyn_pull_request_update"] {
+        assert_eq!(
+            crate::crew::worker_refusal(name, &json!({ "number": 7 }), "own-thread"),
+            Some(format!("A crew worker cannot use {name}."))
+        );
+    }
 }
