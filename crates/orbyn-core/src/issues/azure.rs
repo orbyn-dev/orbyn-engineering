@@ -138,10 +138,13 @@ fn shared_client() -> Result<Client> {
 fn host_shape(host: &str) -> Result<(String, Option<String>, bool)> {
     let rest = host.strip_prefix("https://").ok_or_else(host_refused)?;
     let (authority, path) = rest.split_once('/').map_or((rest, ""), |(a, p)| (a, p));
+    // The allowlist names bare cloud hosts. A port would send the PAT to `host:port`, and the other
+    // readers' host rules refuse one (Linear compares the exact string), so refuse it here too.
+    if authority.contains(':') {
+        return Err(host_refused());
+    }
     let authority = authority.to_ascii_lowercase();
-    let name = authority
-        .rsplit_once(':')
-        .map_or(authority.as_str(), |(name, _)| name);
+    let name = authority.as_str();
     let path = path.trim_matches('/');
     if name == "dev.azure.com" {
         if path.is_empty() {
