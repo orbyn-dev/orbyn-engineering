@@ -24,6 +24,8 @@ let answers: { preview?: Answer; projects?: Answer; proposals?: Answer; lessons?
 
 const notFound = { status: 404, body: { code: "not_found", message: "No such route." } } as const;
 const open = () => render(<ProposalsSection project="p-app" name="orbyn-engineering" />);
+/** What the code enforces: the skills tools reach Default-profile threads, on this device. */
+const REACH = "Available to threads on the Default profile through Orbyn's skills tools\\. Applies to all your projects on this device\\.";
 const card = () => screen.findByRole("region", { name: "Proposed skill redirect-checks" });
 const dialog = () => screen.findByRole("dialog", { hidden: true });
 
@@ -253,11 +255,13 @@ describe("the Skill proposals section of the Lessons page", () => {
     const box = await dialog();
     expect(within(box).getByText("Add redirect-checks to skills-local?")).toBeInTheDocument();
     expect(within(box).getByText(/You have not opened the full text yet\./)).toBeInTheDocument();
+    expect(within(box).getByText(new RegExp(`^${REACH}`))).toBeInTheDocument();
     expect(within(box).getByText("As proposed, 14 lines.")).toBeInTheDocument();
     await user.click(within(box).getByRole("button", { name: "Add to skills-local" }));
     expect(await screen.findByText("Added to skills-local.")).toBeInTheDocument();
     expect(screen.getByText("redirect-checks", { selector: "a" })).toHaveAttribute("href", "#/skills/redirect-checks");
     expect(screen.getByText(/is listed on the Skills page as Personal\./)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(REACH))).toBeInTheDocument();
     expect(screen.getByText(/The lessons it came from stay here and stop going into briefs while the skill exists\./)).toBeInTheDocument();
     expect(writes(calls, "POST")).toHaveLength(1);
     expect(bodyOf(writes(calls, "POST")[0]?.init)).toEqual({ text: proposal().text, rev: 1 });

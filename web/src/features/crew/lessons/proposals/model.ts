@@ -9,7 +9,7 @@ export const DEFAULT_SELECTION_NOTE = "joins the Default selection";
 
 /** The sentence every approved place repeats, as Engineering 4 ruled it. */
 export const AVAILABLE =
-  "Available to engines through Orbyn's skills tools. Applies to all your projects. Added to the Default selection.";
+  "Available to threads on the Default profile through Orbyn's skills tools. Applies to all your projects on this device.";
 
 /** The group note on the Skills page. */
 export const ADDED_GROUP_NOTE =
@@ -21,7 +21,7 @@ export const ADDED_EMPTY_LINE =
 
 /** The sentence under the Proposed card on the Skills page. */
 export const PROPOSED_GROUP_NOTE =
-  "Crew proposed this from 3 or more active lessons on this device. Nothing is added until you review and approve it; Review opens the same page as on Lessons. Once added it is listed under “Added from lessons” as Personal. Available to engines through Orbyn's skills tools. Applies to all your projects. Added to the Default selection.";
+  "Crew proposed this from 3 or more active lessons on this device. Nothing is added until you review and approve it; Review opens the same page as on Lessons. Once added it is listed under “Added from lessons” as Personal. Available to threads on the Default profile through Orbyn's skills tools. Applies to all your projects on this device.";
 
 /** The card's three lines under the text preview. */
 export const NOTHING_ADDED =
@@ -40,7 +40,7 @@ export const REVIEW_NOTE =
 export const REVIEW_NOTE_BUSY =
   "The text was filled in from a fixed template, not written by a model. Crew is meant to scan the text for secrets before it makes a proposal, so a text that holds one is never proposed, and to scan it again when you edit it.";
 export const REVIEW_FOOT =
-  "Approve saves the skill in skills-local on this device and lists it on the Skills page as Personal. Available to engines through Orbyn's skills tools. Applies to all your projects. Added to the Default selection. Cancel leaves the proposal where it is.";
+  "Approve saves the skill in skills-local on this device and lists it on the Skills page as Personal. Available to threads on the Default profile through Orbyn's skills tools. Applies to all your projects on this device. Cancel leaves the proposal where it is.";
 export const APPROVING_BANNER = "Adding the skill. It is not listed or used until the write has finished.";
 /** The review page's sentence while the repository's lessons have not been read yet, so the active count is unknown. */
 export const STALE_APPROVE_OFF_WAITING =
