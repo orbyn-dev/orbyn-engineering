@@ -120,6 +120,10 @@ when the skill name is held by the shared library or an existing local skill, `4
 over 600 characters or `can_approve: false`, `400 secret_refused` as above. An approved proposal marks its source lessons
 "Now a skill" and they leave briefs while that skill exists; if the skill is removed they return to normal.
 
+## EvalHistory samples (KC5 slice 4)
+
+Each task records exactly one sample (migration 88): its brief's kind, whether it carried lessons and which lesson ids it used and left out, then its outcome, stop reason, latest routed engine and finish time when it ends. Device only, never synced or exported, ids and enums only. Nothing reads a sample yet: routing, `score`, `EvalHistory`, the brief, checks and leases are unchanged.
+
 ## KC8: resumed after restart
 
 On the Flow task row (`FlowTaskRow`): `resumed: boolean` (the task resumed once after a restart) and the existing `round: number`,

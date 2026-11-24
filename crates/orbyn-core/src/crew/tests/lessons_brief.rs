@@ -487,6 +487,52 @@ async fn lessons_change_nothing_about_the_key_the_route_the_leases_or_the_checks
 }
 
 #[test]
+fn a_sample_never_changes_the_router_decision() {
+    use super::fake::{Ask, engine, routed};
+    use crate::store::Store;
+    use crate::testing::TempDir;
+
+    let dir = TempDir::new();
+    let store = Store::open(&dir.path().join("orbyn.db"), "epoch-a").unwrap();
+    let now = crate::crew::tool::stamp_now().unwrap();
+    let stamper = crate::crew::stamp::Stamper {
+        crew_id: wire::CrewId::new("crew-fixed").unwrap(),
+        engine: wire::CrewToken::new("alpha").unwrap(),
+        member: wire::CrewMember::new("lead-01").unwrap(),
+        now,
+    };
+    let stamped_brief = stamper
+        .brief(&super::fake::draft(
+            json!({ "outcome": "One task, with and without samples." }),
+        ))
+        .unwrap();
+    let stamped_key = stamper.answer_key(&key(), &stamped_brief.id).unwrap();
+    let engines = [engine("claude"), engine("codex")];
+    let ask = Ask::default();
+    let before = routed(&stamped_brief, &engines, &ask);
+
+    // A task that carried lessons records its one sample; the router never reads that table.
+    let task = store
+        .create_crew_task_with_lessons(
+            &stamped_brief,
+            &stamped_key,
+            "run-01",
+            &["les_a".to_owned(), "les_b".to_owned()],
+            &["les_c".to_owned()],
+        )
+        .unwrap();
+    store.move_crew_task(&task.id, "cancelled", None).unwrap();
+    let recorded = store.crew_eval_sample(&task.id).unwrap().unwrap();
+    assert!(recorded.had_lessons);
+    assert_eq!(recorded.lesson_ids, ["les_a", "les_b"]);
+    assert_eq!(recorded.left_out_ids, ["les_c"]);
+    assert_eq!(recorded.outcome.as_deref(), Some("cancelled"));
+
+    let after = routed(&stamped_brief, &engines, &ask);
+    assert_eq!(before, after, "samples never enter the router's input");
+}
+
+#[test]
 fn a_storage_failure_shows_no_lessons_and_is_never_an_error() {
     let kept = stored_lesson("les_a", "A stored lesson.", "active", false);
     // The switch could not be read.
