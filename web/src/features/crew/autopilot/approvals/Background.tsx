@@ -281,7 +281,6 @@ function Background({ project, repo }: { project: string; repo: string }) {
           onBack={() => setOpenWatch(null)}
           onToggle={toggle}
           onOpenNeeds={() => navigate({ name: "crew", tab: "inbox" })}
-          onOpenRun={() => setOpenWatch(null)}
         />
       </>
     );
