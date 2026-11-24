@@ -704,10 +704,19 @@ the node count, explicitly has no next page, and every node has a known review s
 Missing, malformed or truncated connections leave the count absent; a complete empty
 connection proves zero. An error under a pull alias still withholds its whole row.
 GitHub answers all of a project's rows with one batched GraphQL request, which
-also names the viewer, so the review state needs no other call. A field is absent when
-unknown, never zero or partial. A row is left out whole when its project cannot be read,
-its returned object has no known fields,
-its own batch yields no data for it or its forge has no details; only GitHub has them.
+also names the viewer, so the review state needs no other call. The `reviewRequests`
+and `latestReviews` connections are read up to 200 entries: the first page of 50
+from the batched request, then at most three follow-up requests of 50 each naming
+only the connections that reported a page after them. Their pages are merged in
+cursor order, and a name a page repeats keeps its first place,
+so `requested_reviewers` and `viewer_review_state` cover a busy pull request. A
+connection still naming a page after that cap, one whose page could not be read
+whole, or one whose follow-up request failed or ran out of the read's 20-second
+budget is absent, never a short list; an error on a follow-up page withholds only
+the connection it named. A field is absent when unknown, never zero or partial. A
+row is left out whole when its project cannot be read, its returned object has no
+known fields, its own batch yields no data for it or its forge has no details; only
+GitHub has them.
 The comment count is known only when the review connection is complete: at most 100
 review nodes, no next page, a matching total count, and valid nonnegative component
 counts whose sum fits the wire count. Incomplete, malformed or overflowing counts
