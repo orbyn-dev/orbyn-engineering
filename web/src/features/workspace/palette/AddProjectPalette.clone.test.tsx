@@ -30,12 +30,22 @@ it("keeps the Clone dialog open with the reason for an address it cannot send, a
   const { user, dialog, field } = await openClone(onClose);
   await user.type(field, "bad url with spaces");
   await user.click(within(dialog).getByRole("button", { name: "Clone" }));
-  // The dialog's own error pattern: one alert line, and the field takes the focus back to be fixed.
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent("The address cannot hold spaces or control characters.");
+  // The dialog's own error pattern: one alert line, described by the field, and the field takes
+  // the focus back to be fixed.
+  const said = await within(dialog).findByRole("alert");
+  expect(said).toHaveTextContent("The address cannot hold spaces or control characters.");
+  expect(said).toHaveAttribute("id", "add-project-field-error");
+  expect(field).toHaveAttribute("aria-invalid", "true");
+  expect(field).toHaveAttribute("aria-describedby", "add-project-field-error");
   expect(field).toHaveFocus();
   expect(dialog).toBeVisible();
   expect(onClose).not.toHaveBeenCalled();
   expect(start).not.toHaveBeenCalled();
+  // Editing clears the invalid state and the association along with the message.
+  await user.type(field, "x");
+  expect(within(dialog).queryByRole("alert")).toBeNull();
+  expect(field).not.toHaveAttribute("aria-invalid");
+  expect(field).not.toHaveAttribute("aria-describedby");
 });
 
 it.each([

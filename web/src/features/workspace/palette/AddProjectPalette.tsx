@@ -10,16 +10,11 @@ import { Dialog } from "../../../ui/Dialog";
 import { FolderBrowser } from "../../../product/ui/FolderBrowser";
 import { dropTrailingSlash, expandHome, homePrefix, pathName, replaceHomePrefix, shortenHome, splitPath, withSlash } from "./pathInput";
 import { trackClone } from "../app-chrome/CloneJobs";
-import { canPickFolder, checkCloneSource, pickFolder } from "../../repos";
+import { canPickFolder, pickFolder } from "../../repos";
+import { checkCloneSource, cloneAddress } from "../../../product/git/cloneSource";
 import "../addProject.css";
 
 export type AddProjectView = "folders" | "new" | "clone";
-
-/** An `owner/name` on GitHub is a clone address too; anything else goes to Git as typed. */
-export function cloneAddress(text: string): string {
-  const typed = text.trim();
-  return /^[\w.-]+\/[\w.-]+$/.test(typed) && !/^\.{1,2}\//.test(typed) ? `https://github.com/${typed}.git` : typed;
-}
 
 /** A folder this dialog hands Git as typed: a drive path, home, the current folder or a UNC share. */
 const isLocalPath = (address: string) => /^(?:[A-Za-z]:[\\/]|\\\\|~[\\/]|\/|\.{1,2}[\\/])/.test(address);
@@ -283,6 +278,10 @@ function Folders({
   );
 }
 
+const FIELD_ID = "add-project-field";
+/** A stable id for the dialog's one error line, so the field can describe itself by it. */
+const ERROR_ID = `${FIELD_ID}-error`;
+
 /** One field, Cancel and the confirm: the design's New project and Clone dialogs. */
 function AddDialog({
   title,
@@ -317,6 +316,7 @@ function AddDialog({
   );
   const send = async () => {
     const text = value.trim();
+    // The confirm is disabled while the field is empty, so an empty value never reaches this guard.
     if (!text || busy) return;
     const problem = check?.(text) ?? null;
     if (problem !== null) {
@@ -360,9 +360,9 @@ function AddDialog({
           void send();
         }}
       >
-        <label htmlFor="add-project-field">{label}</label>
+        <label htmlFor={FIELD_ID}>{label}</label>
         <input
-          id="add-project-field"
+          id={FIELD_ID}
           ref={field}
           className={mono ? "dialog-field dialog-field-mono" : "dialog-field"}
           data-dialog-focus
@@ -371,13 +371,15 @@ function AddDialog({
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? ERROR_ID : undefined}
           onChange={(event) => {
             setValue(event.target.value);
             if (error !== null) setError(null);
           }}
         />
         {error ? (
-          <p className="field-error" role="alert">
+          <p id={ERROR_ID} className="field-error" role="alert">
             {error}
           </p>
         ) : hint ? (
