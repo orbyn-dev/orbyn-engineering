@@ -39,6 +39,15 @@ use super::render::{
 };
 use super::*;
 
+/// The exact refusal a parser answers: `Invalid` with the sentence the tool shows its caller.
+fn invalid<T>(result: crate::error::Result<T>) -> String {
+    match result {
+        Err(CoreError::Invalid(message)) => message,
+        Ok(_) => panic!("expected a refusal"),
+        Err(other) => panic!("expected Invalid, got {other:?}"),
+    }
+}
+
 #[test]
 fn a_guide_is_written_through_the_gate_and_read_without_it() {
     let find = |name: &str| TOOLS.iter().find(|tool| tool.name == name).unwrap();
@@ -48,9 +57,18 @@ fn a_guide_is_written_through_the_gate_and_read_without_it() {
     let read = find("orbyn_pull_guide_read");
     assert!(!read.effect);
     assert_eq!(read.required, ["number"]);
-    assert!(pull_number(&json!({ "number": 0 })).is_err());
-    assert!(pull_number(&json!({ "number": -3 })).is_err());
-    assert!(pull_number(&json!({ "number": 5_000_000_000u64 })).is_err());
+    assert_eq!(
+        invalid(pull_number(&json!({ "number": 0 }))),
+        "number must be a pull request number."
+    );
+    assert_eq!(
+        invalid(pull_number(&json!({ "number": -3 }))),
+        "number is required."
+    );
+    assert_eq!(
+        invalid(pull_number(&json!({ "number": 5_000_000_000u64 }))),
+        "number must be a pull request number."
+    );
     assert_eq!(pull_number(&json!({ "number": 42 })).unwrap(), 42);
 }
 
@@ -69,7 +87,11 @@ fn a_guide_head_is_a_commit_id_or_absent() {
         json!("a".repeat(65)),
         json!(7),
     ] {
-        assert!(guide_head(&json!({ "head_sha": bad })).is_err(), "{bad}");
+        assert_eq!(
+            invalid(guide_head(&json!({ "head_sha": bad }))),
+            "head_sha is a commit id of 7 to 64 hexadecimal characters.",
+            "{bad}"
+        );
     }
 }
 
@@ -103,29 +125,78 @@ fn guide_stops_keep_only_the_known_shape_within_bounds() {
             .extend(extra.as_object().unwrap().clone());
         guide_stops(&json!({ "stops": [stop] }))
     };
-    assert!(guide_stops(&json!({})).is_err(), "stops are required");
-    assert!(guide_stops(&json!({ "stops": [] })).is_err());
-    assert!(guide_stops(&json!({ "stops": ["text"] })).is_err());
-    assert!(guide_stops(&json!({ "stops": [{ "title": " " }] })).is_err());
+    assert_eq!(
+        invalid(guide_stops(&json!({}))),
+        "stops must list at least one stop.",
+        "stops are required"
+    );
+    assert_eq!(
+        invalid(guide_stops(&json!({ "stops": [] }))),
+        "stops must list at least one stop."
+    );
+    assert_eq!(
+        invalid(guide_stops(&json!({ "stops": ["text"] }))),
+        "Each stop must be an object."
+    );
+    assert_eq!(
+        invalid(guide_stops(&json!({ "stops": [{ "title": " " }] }))),
+        "A stop's title is required."
+    );
     let many: Vec<Value> = (0..=MAX_GUIDE_STOPS)
         .map(|_| json!({ "title": "t" }))
         .collect();
-    assert!(guide_stops(&json!({ "stops": many })).is_err());
-    assert!(stop(json!({ "title": "x".repeat(MAX_STOP_TITLE_CHARS + 1) })).is_err());
-    assert!(stop(json!({ "summary": "x".repeat(MAX_STOP_SUMMARY_CHARS + 1) })).is_err());
-    assert!(stop(json!({ "summary": "a\0b" })).is_err());
-    assert!(stop(json!({ "files": [{ "note": "no path" }] })).is_err());
-    assert!(stop(json!({ "files": [{ "path": "p".repeat(MAX_GUIDE_PATH_BYTES + 1) }] })).is_err());
-    assert!(
-        stop(json!({ "files": [{ "path": "é".repeat(MAX_GUIDE_PATH_BYTES / 2 + 1) }] })).is_err()
+    assert_eq!(
+        invalid(guide_stops(&json!({ "stops": many }))),
+        "A guide holds at most 30 stops."
+    );
+    assert_eq!(
+        invalid(stop(
+            json!({ "title": "x".repeat(MAX_STOP_TITLE_CHARS + 1) })
+        )),
+        "A stop's title is at most 200 characters and cannot contain NUL."
+    );
+    assert_eq!(
+        invalid(stop(
+            json!({ "summary": "x".repeat(MAX_STOP_SUMMARY_CHARS + 1) })
+        )),
+        "A stop's summary is at most 4000 characters and cannot contain NUL."
+    );
+    assert_eq!(
+        invalid(stop(json!({ "summary": "a\0b" }))),
+        "A stop's summary is at most 4000 characters and cannot contain NUL."
+    );
+    assert_eq!(
+        invalid(stop(json!({ "files": [{ "note": "no path" }] }))),
+        "A file's path must be text."
+    );
+    assert_eq!(
+        invalid(stop(
+            json!({ "files": [{ "path": "p".repeat(MAX_GUIDE_PATH_BYTES + 1) }] })
+        )),
+        "A file's path is at most 1024 characters and cannot contain NUL."
+    );
+    assert_eq!(
+        invalid(stop(
+            json!({ "files": [{ "path": "é".repeat(MAX_GUIDE_PATH_BYTES / 2 + 1) }] })
+        )),
+        "A file's path is at most 1024 bytes."
     );
     let files: Vec<Value> = (0..=MAX_STOP_FILES)
         .map(|_| json!({ "path": "p" }))
         .collect();
-    assert!(stop(json!({ "files": files })).is_err());
+    assert_eq!(
+        invalid(stop(json!({ "files": files }))),
+        "files holds at most 50."
+    );
     let asks: Vec<Value> = (0..=MAX_STOP_QUESTIONS).map(|_| json!("q")).collect();
-    assert!(stop(json!({ "questions": asks })).is_err());
-    assert!(stop(json!({ "questions": [""] })).is_err());
+    assert_eq!(
+        invalid(stop(json!({ "questions": asks }))),
+        "questions holds at most 10."
+    );
+    assert_eq!(
+        invalid(stop(json!({ "questions": [""] }))),
+        "A question is required."
+    );
 
     let big: Vec<Value> = (0..MAX_GUIDE_STOPS)
         .map(|_| {
@@ -133,8 +204,9 @@ fn guide_stops_keep_only_the_known_shape_within_bounds() {
             "files": [{ "path": "p", "note": "n".repeat(MAX_FILE_NOTE_CHARS) }] })
         })
         .collect();
-    assert!(
-        guide_stops(&json!({ "stops": big })).is_err(),
+    assert_eq!(
+        invalid(guide_stops(&json!({ "stops": big }))),
+        "A guide is at most 131072 bytes.",
         "the whole guide is capped"
     );
 }
@@ -161,25 +233,37 @@ fn project_mutations_are_gated_and_arguments_are_bounded() {
         assert_eq!(tool.args, &[(argument, "string")]);
         assert_eq!(tool.required, &[argument]);
     }
-    assert!(bounded_project_text(&json!({}), "path", MAX_PROJECT_PATH_BYTES).is_err());
-    assert!(
-        bounded_project_text(
+    assert_eq!(
+        invalid(bounded_project_text(
+            &json!({}),
+            "path",
+            MAX_PROJECT_PATH_BYTES
+        )),
+        "path is required."
+    );
+    assert_eq!(
+        invalid(bounded_project_text(
             &json!({"path": "x".repeat(4097)}),
             "path",
             MAX_PROJECT_PATH_BYTES
-        )
-        .is_err()
+        )),
+        "path is at most 4096 bytes and cannot contain NUL."
     );
-    assert!(
-        bounded_project_text(&json!({"path": "x\0y"}), "path", MAX_PROJECT_PATH_BYTES).is_err()
+    assert_eq!(
+        invalid(bounded_project_text(
+            &json!({"path": "x\0y"}),
+            "path",
+            MAX_PROJECT_PATH_BYTES
+        )),
+        "path is at most 4096 bytes and cannot contain NUL."
     );
-    assert!(
-        bounded_project_text(
+    assert_eq!(
+        invalid(bounded_project_text(
             &json!({"project_id": "x".repeat(129)}),
             "project_id",
             MAX_PROJECT_ID_BYTES
-        )
-        .is_err()
+        )),
+        "project_id is at most 128 bytes and cannot contain NUL."
     );
 }
 
@@ -215,7 +299,11 @@ fn delegated_stop_is_gated_and_background_wait_is_bounded() {
     assert_eq!(wait_seconds(&json!({"seconds": 0})).unwrap(), 0);
     assert_eq!(wait_seconds(&json!({"seconds": u64::MAX})).unwrap(), 40);
     for seconds in [json!(-1), json!(0.5), json!("1"), Value::Null] {
-        assert!(wait_seconds(&json!({"seconds": seconds})).is_err());
+        assert_eq!(
+            invalid(wait_seconds(&json!({"seconds": seconds}))),
+            "seconds must be a non-negative integer.",
+            "{seconds}"
+        );
     }
 }
 
@@ -327,8 +415,15 @@ fn the_page_tools_read_or_act_and_all_need_a_tab() {
             "{name} escapes the browser-access guard"
         );
     }
-    assert!(text(&json!({}), "tab_id").is_err(), "a tab is required");
-    assert!(text(&json!({ "tab_id": "  " }), "tab_id").is_err());
+    assert_eq!(
+        invalid(text(&json!({}), "tab_id")),
+        "tab_id is required.",
+        "a tab is required"
+    );
+    assert_eq!(
+        invalid(text(&json!({ "tab_id": "  " }), "tab_id")),
+        "tab_id is required."
+    );
     assert_eq!(text(&json!({ "tab_id": "t" }), "tab_id").unwrap(), "t");
 }
 
@@ -381,13 +476,30 @@ fn a_wait_names_exactly_one_target_of_a_bounded_size() {
         wait_target(&json!({ "text": "done" })).unwrap(),
         (None, Some("done".to_owned()))
     );
-    assert!(wait_target(&json!({ "selector": " #b ", "text": "done" })).is_err());
-    assert!(wait_target(&json!({ "both": true })).is_err());
-    assert!(wait_target(&json!({ "selector": "   " })).is_err());
-    assert!(wait_target(&json!({ "selector": "s".repeat(MAX_SELECTOR_CHARS + 1) })).is_err());
+    assert_eq!(
+        invalid(wait_target(&json!({ "selector": " #b ", "text": "done" }))),
+        "Name a selector or text to wait for, not both."
+    );
+    assert_eq!(
+        invalid(wait_target(&json!({ "both": true }))),
+        "Name a selector or text to wait for."
+    );
+    assert_eq!(
+        invalid(wait_target(&json!({ "selector": "   " }))),
+        "Name a selector or text to wait for."
+    );
+    assert_eq!(
+        invalid(wait_target(
+            &json!({ "selector": "s".repeat(MAX_SELECTOR_CHARS + 1) })
+        )),
+        "A selector is at most 300 characters."
+    );
     assert!(wait_target(&json!({ "selector": "s".repeat(MAX_SELECTOR_CHARS) })).is_ok());
     let long = "t".repeat(MAX_WAIT_TEXT_CHARS + 1);
-    assert!(wait_target(&json!({ "text": long })).is_err());
+    assert_eq!(
+        invalid(wait_target(&json!({ "text": long }))),
+        "Text to wait for is at most 200 characters."
+    );
     let at_cap = "t".repeat(MAX_WAIT_TEXT_CHARS);
     assert!(wait_target(&json!({ "text": at_cap })).is_ok());
 }
@@ -874,38 +986,38 @@ async fn pull_request_tools_refuse_bad_arguments_before_the_forge() {
         (
             "orbyn_pull_request_list",
             json!({ "state": "draft" }),
-            "state must be",
+            "state must be open, closed, merged or all.",
         ),
         (
             "orbyn_pull_request_list",
             json!({ "state": 7 }),
-            "state must be",
+            "state must be open, closed, merged or all.",
         ),
         (
             "orbyn_pull_request_list",
             json!({ "limit": -1 }),
-            "limit must be",
+            "limit must be a whole number.",
         ),
         (
             "orbyn_pull_request_list",
             json!({ "limit": 1.5 }),
-            "limit must be",
+            "limit must be a whole number.",
         ),
-        ("orbyn_pull_request_read", json!({}), "number is required"),
+        ("orbyn_pull_request_read", json!({}), "number is required."),
         (
             "orbyn_pull_request_read",
             json!({ "number": 0 }),
-            "pull request number",
+            "number must be a pull request number.",
         ),
         (
             "orbyn_pull_request_checks",
             json!({ "number": 5_000_000_000u64 }),
-            "pull request number",
+            "number must be a pull request number.",
         ),
     ] {
         let (text, error) = w.call_text(name, args).await;
         assert!(error, "{name} answered {text}");
-        assert!(text.contains(wanted), "{name}: {text}");
+        assert_eq!(text, wanted, "{name}");
     }
 }
 
@@ -923,7 +1035,11 @@ fn pull_filters_default_to_open_and_limits_are_bounded() {
         );
     }
     for bad in [json!("draft"), json!(1), json!(true), json!([])] {
-        assert!(pull_filter(&json!({ "state": bad })).is_err(), "{bad}");
+        assert_eq!(
+            invalid(pull_filter(&json!({ "state": bad }))),
+            "state must be open, closed, merged or all.",
+            "{bad}"
+        );
     }
 
     assert_eq!(pull_limit(&json!({})).unwrap(), 30);
@@ -934,7 +1050,11 @@ fn pull_filters_default_to_open_and_limits_are_bounded() {
     assert_eq!(pull_limit(&json!({ "limit": 51 })).unwrap(), 50);
     assert_eq!(pull_limit(&json!({ "limit": u64::MAX })).unwrap(), 50);
     for bad in [json!(-1), json!(1.5), json!("10"), json!(true)] {
-        assert!(pull_limit(&json!({ "limit": bad })).is_err(), "{bad}");
+        assert_eq!(
+            invalid(pull_limit(&json!({ "limit": bad }))),
+            "limit must be a whole number.",
+            "{bad}"
+        );
     }
 }
 
