@@ -148,7 +148,7 @@ pub async fn call(forge: Forge, cwd: &Path, args: &[&str]) -> Result<String> {
     }
 }
 
-pub(super) async fn call_input(
+pub(crate) async fn call_input(
     forge: Forge,
     cwd: &Path,
     args: &[&str],
