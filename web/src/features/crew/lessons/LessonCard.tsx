@@ -81,9 +81,10 @@ export function LessonCard({ id, repo, name }: { id: string; repo: string; name:
 function Loaded({ read, repo, name }: { read: LessonReader & { status: "ready" }; repo: string; name: string }) {
   const detail = read.detail;
   const lesson = detail.lesson;
-  // The repository's switch comes from the lessons list read; while it is loading or failed, treat it as on.
+  // The repository's switch comes from the lessons list read. Until that read is ready it is unknown, not on: the card
+  // says neither the limit nor the switch-off sentence for a switch it has not seen.
   const list = useLessons(repo, "all");
-  const switchOn = list.status === "ready" ? list.list.use_lessons : true;
+  const switchOn = list.status === "ready" ? list.list.use_lessons : null;
   const [editing, setEditing] = useState(false);
   // A save's line depends on the read's own answer: a lesson the next brief will not carry does not claim it will.
   const [saved, setSaved] = useState<{ kind: "added" | "edited"; inNextBrief: boolean } | null>(null);
@@ -306,16 +307,18 @@ function EvidenceIds({ evidence }: { evidence: readonly Evidence[] }) {
 }
 
 /**
- * A lesson's state as the card says it: off, on and in the next brief, or on and out of it for the read's own reason.
+ * A lesson's state as the card says it: off, on and in the next brief, or on and out of it for the reason it knows.
  * `in_next_brief` is the contract's answer, so the card never claims briefs a lesson the read says misses the next one.
+ * The switch is null until the list read is ready; an unknown switch says only that the lesson misses the next brief.
  */
-function stateWords(lesson: Lesson, switchOn: boolean): string {
+function stateWords(lesson: Lesson, switchOn: boolean | null): string {
   if (lesson.state === "disabled") return "Off: stays here and does not go into a brief";
   if (lesson.in_next_brief) return "On: goes into briefs";
   if (lesson.hidden_by_cap) return "On, but over the cap: readable under Hidden, never in a brief";
-  if (!switchOn) return "On, not in the next brief: lessons are switched off for this repository.";
+  if (switchOn === false) return "On, not in the next brief: lessons are switched off for this repository.";
   if (lesson.skill) return "On, not in the next brief: it is now a skill.";
-  return "On, not in the next brief: this repository is over the 5-lesson limit for a brief.";
+  if (switchOn === true) return "On, not in the next brief: this repository is over the 5-lesson limit for a brief.";
+  return "On, not in the next brief.";
 }
 
 /**
@@ -323,7 +326,7 @@ function stateWords(lesson: Lesson, switchOn: boolean): string {
  * what a worker gets, the two checks on the way in and at start, what never reads it, whether it helped (not measured yet)
  * and where it is kept.
  */
-function HowItIsUsed({ lesson, switchOn }: { lesson: Lesson; switchOn: boolean }) {
+function HowItIsUsed({ lesson, switchOn }: { lesson: Lesson; switchOn: boolean | null }) {
   const rows: (readonly [string, ReactNode])[] = [
     ["State", stateWords(lesson, switchOn)],
     ["Used", usedWords(lesson)],

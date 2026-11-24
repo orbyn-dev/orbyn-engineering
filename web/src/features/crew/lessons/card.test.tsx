@@ -200,11 +200,12 @@ describe("a lesson's card on the real route", () => {
   });
 
   it("says a lesson over the five-lesson limit is not in the next brief", async () => {
+    answers.list = { status: 200, body: list({ use_lessons: true }) };
     answers.detail = { status: 200, body: detail({ lesson: lesson({ in_next_brief: false }) }) };
     open();
     await loaded();
     expect(
-      screen.getByText("On, not in the next brief: this repository is over the 5-lesson limit for a brief."),
+      await screen.findByText("On, not in the next brief: this repository is over the 5-lesson limit for a brief."),
     ).toBeInTheDocument();
     expect(screen.queryByText("On: goes into briefs")).toBeNull();
   });
@@ -220,15 +221,45 @@ describe("a lesson's card on the real route", () => {
     expect(screen.queryByText("On, not in the next brief: this repository is over the 5-lesson limit for a brief.")).toBeNull();
   });
 
-  it("treats the repository's switch as on while the lessons list is still loading", async () => {
+  it("says only that the lesson is not in the next brief while the lessons list is still loading", async () => {
     answers.list = "never";
     answers.detail = { status: 200, body: detail({ lesson: lesson({ in_next_brief: false }) }) };
     open();
     await loaded();
+    expect(screen.getByText("On, not in the next brief.")).toBeInTheDocument();
     expect(
-      screen.getByText("On, not in the next brief: this repository is over the 5-lesson limit for a brief."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("On, not in the next brief: lessons are switched off for this repository.")).toBeNull();
+      screen.queryByText("On, not in the next brief: this repository is over the 5-lesson limit for a brief."),
+    ).toBeNull();
+    expect(
+      screen.queryByText("On, not in the next brief: lessons are switched off for this repository."),
+    ).toBeNull();
+  });
+
+  it("says only that the lesson is not in the next brief when the lessons list read fails", async () => {
+    answers.list = { status: 500, body: { code: "unreadable", message: "The lessons on this device can’t be read." } };
+    answers.detail = { status: 200, body: detail({ lesson: lesson({ in_next_brief: false }) }) };
+    open();
+    await loaded();
+    await waitFor(() => expect(calls.some(({ url }) => url.includes("/api/crew/lessons?"))).toBe(true));
+    expect(screen.getByText("On, not in the next brief.")).toBeInTheDocument();
+    expect(
+      screen.queryByText("On, not in the next brief: this repository is over the 5-lesson limit for a brief."),
+    ).toBeNull();
+    expect(
+      screen.queryByText("On, not in the next brief: lessons are switched off for this repository."),
+    ).toBeNull();
+  });
+
+  it("says a lesson is now a skill even while the lessons list has not answered", async () => {
+    answers.list = "never";
+    answers.detail = {
+      status: 200,
+      body: detail({ lesson: lesson({ skill: { name: "Fixture first" }, in_next_brief: false }) }),
+    };
+    open();
+    await loaded();
+    expect(screen.getByText("On, not in the next brief: it is now a skill.")).toBeInTheDocument();
+    expect(screen.queryByText("On, not in the next brief.")).toBeNull();
   });
 
   it("says a lesson is off and left out of two briefs, and offers Turn on", async () => {
