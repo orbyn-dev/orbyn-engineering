@@ -398,7 +398,7 @@ impl Core {
         };
         let dropped: Vec<KeybindingRule> = own
             .iter()
-            .filter(|rule| same(*rule))
+            .filter(|rule| same(rule))
             .map(|rule| KeybindingRule {
                 remove: true,
                 ..rule.clone()
