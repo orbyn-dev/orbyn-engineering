@@ -15,13 +15,16 @@ export const parentOfPath = parentPath;
 export function FolderBrowser({
   actionLabel,
   busy,
+  start = null,
   onChoose,
 }: {
   actionLabel: string;
+  /** The folder to open first; the service picks its own start when this is null. */
+  start?: string | null;
   busy?: boolean;
   onChoose(path: string): void;
 }) {
-  const [path, setPath] = useState<string | null>(null);
+  const [path, setPath] = useState<string | null>(start);
   const listing = useAsync(`browse:${path ?? ""}`, (signal) => api.browse(path, signal));
   const current = listing.data?.path ?? path;
   // No listing has answered for the folder on screen yet, so Up reads the folder above it from the path itself.
