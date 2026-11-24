@@ -3,7 +3,7 @@ import "./autopilot.css";
 
 export { CrewSurface, CREW_TABS } from "./CrewSurface";
 export { CrewSettingsSection } from "./CrewSettings";
-export { useCrewPreview } from "./useCrew";
+export { useCrewPreview, useCrewPreviewRead } from "./useCrew";
 export { ApprovalCards } from "./ApprovalRows";
 export { BackgroundCards } from "./Background";
 export { YouPanel, GuardHold, GuardNeedsYouItem, type YouActions } from "./YouPanel";

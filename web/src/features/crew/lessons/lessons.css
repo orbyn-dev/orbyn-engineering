@@ -50,6 +50,11 @@
   .cx-lsadd { margin-left: 0; }
 }
 
+/* A lesson that became a skill (KC9): the green chip and the skill's own name, above the lesson's text. */
+.cx-apchip.cx-skill { background: var(--color-greenSoft); color: var(--color-green); }
+.cx-lsskill { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.cx-lsskillname { color: var(--color-text); font-size: 11.5px; text-underline-offset: 2px; }
+
 /* A lesson's own page (KC5 part B), from the design's .cwsheet: the text box, the action row and the two facts boxes. */
 .cx-cwbn.cx-green { background: var(--color-greenSoft); }
 .cx-cwbn.cx-red .cx-why b { color: var(--color-text); }

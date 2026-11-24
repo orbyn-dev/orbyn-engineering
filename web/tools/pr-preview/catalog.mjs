@@ -1039,6 +1039,59 @@ export const FRAMES = {
   "transcript-import-error-key-missing": importRoute("nokey.orbyn.json", engineThread),
   "transcript-imported-thread": { route: "#/threads/t-imported", scenario: "transcript-imported" },
 
+  /** Crew, skill proposals (Crew Designs v121, KC9) on the real routes and the mock's crew-proposals scenarios: the proposal
+   *  waiting on the Lessons page, nothing proposed, the pattern that lost a lesson, the approve and dismiss confirms, the
+   *  review page, the refused edit, the write in flight, the refused write, the
+   *  Lessons page after an approve, the Proposed and Added from lessons groups on the Skills page (and the line while nothing
+   *  is added), and the skill added from lessons on its own page. */
+  "kc9-skill-proposal-card": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals" },
+  "kc9-skill-proposal-none": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals-none" },
+  "kc9-skill-proposal-stale": { route: "#/settings/crew/lessons?repo=p-app", scenario: "crew-proposals-stale" },
+  "kc9-skill-proposal-confirm": {
+    route: "#/settings/crew/lessons?repo=p-app",
+    scenario: "crew-proposals",
+    steps: [click("button", "Approve")],
+  },
+  "kc9-skill-proposal-dismiss-confirm": {
+    route: "#/settings/crew/lessons?repo=p-app",
+    scenario: "crew-proposals",
+    steps: [click("button", "Dismiss")],
+  },
+  "kc9-skill-proposal-approved": {
+    route: "#/settings/crew/lessons?repo=p-app",
+    scenario: "crew-proposals",
+    steps: [click("button", "Approve"), click("button", "Add to skills-local")],
+    wait: 1800,
+  },
+  "kc9-skill-proposal-review": {
+    route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
+    scenario: "crew-proposals",
+  },
+  "kc9-skill-proposal-review-refused": {
+    route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
+    scenario: "crew-proposals-secret",
+    steps: [
+      { do: "fill", label: "Skill text", value: "Use the staging token sk-live-xxxxxxxxxxxx when you test the redirect." },
+      click("button", "Approve"),
+    ],
+  },
+  "kc9-skill-proposal-approving": {
+    route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
+    scenario: "crew-proposals",
+    pre: [{ route: "**/api/crew/skill-proposals/*/approve", delay: 20000 }],
+    steps: [click("button", "Approve")],
+    wait: 1800,
+  },
+  "kc9-skill-proposal-approve-failed": {
+    route: "#/settings/crew/lessons/proposal?repo=p-app&id=prop-redirect-checks",
+    scenario: "crew-proposals-approve-fails",
+    steps: [click("button", "Approve")],
+  },
+  "kc9-skill-proposal-skills-item": { route: "#/skills", scenario: "crew-proposals" },
+  "kc9-skill-proposal-skill-added": { route: "#/skills/redirect-checks", scenario: "crew-proposals-approved" },
+  "kc9-skills-added-group": { route: "#/skills", scenario: "crew-proposals-approved" },
+  "kc9-skills-added-group-empty": { route: "#/skills", scenario: "crew" },
+
   /** Crew, a lesson's card and its states (Crew Designs v121, KC5), on the real lessons routes over the mock's
    *  crew-lessons scenario, whose five sample lessons follow the design's states: the card, its edit form, a lesson
    *  turned off, a correction for all repositories, the promote confirm and the refusal the contract gives a lesson that
