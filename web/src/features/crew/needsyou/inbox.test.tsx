@@ -50,6 +50,7 @@ describe("the Needs you inbox on live data", () => {
     mock.reset("default");
     const { container } = render(<NeedsYouInbox />);
     await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
     expect(calls("/api/crew/approvals/held")).toHaveLength(0);
@@ -455,6 +456,7 @@ describe("the Inbox tab of the Crew page", () => {
     mock.reset("default");
     const { container } = render(<CrewSurface tab="inbox" />);
     await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
   });
@@ -474,6 +476,7 @@ describe("the Inbox tab of the Crew page", () => {
       const reads = calls("/api/crew/").length;
       await act(async () => { vi.advanceTimersByTime(NEEDS_REFRESH_MS); });
       await waitFor(() => expect(calls("/api/crew/").length).toBeGreaterThan(reads));
+      // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
       expect(within(await list()).getAllByRole("listitem")).toHaveLength(before);
       expect(screen.queryByText("The service is busy.")).toBeNull();

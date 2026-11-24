@@ -1,14 +1,20 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
-import { request } from "../../../api/client";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { MockApi } from "../../../../mock/api";
 import type { EngineStatus } from "../../../api/types";
 import type { ProviderEntry } from "../../../generated/ProviderEntry";
 import { createEngineHostMock } from "../../../../mock/engineHost";
 import { setEngineHostApi } from "../../enginehost";
+import { installMockFetch } from "../../../test-support";
+import { wireWrites } from "../../../wire.test-support";
+import { seedPreference } from "../rows/seedPreference.test-support";
 import { ProviderTable } from "./ProviderTable";
 
-vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+let mock: MockApi;
+beforeEach(() => {
+  mock = installMockFetch();
+});
 
 const store = { raw: [], instances: [], disabled: false, error: null, conflict: false, save: vi.fn(), reload: vi.fn() };
 const claude = { id: "claude", name: "Claude Code", tier: "native", installed: true, path: "/bin/claude", version: "2.1.318",
@@ -17,34 +23,14 @@ const entry: ProviderEntry = { id: "claude", name: "Claude Code", group: "in_use
 
 type Path = "sdk" | "cli";
 
-const pathRow = (value: Path) => ({
-  key: "claude_engine_path", value, mixed: false, default: "sdk", project_scoped: false, revision: `rev-${value}`,
-  environment: { key: "claude_engine_path", value, default: "sdk", source: "global", project_scoped: false }, members: [], overrides: [],
-});
-
-const inUseRow = () => ({
-  key: "disabled_engines", value: [], mixed: false, default: [], project_scoped: true, revision: "rev-in-use",
-  environment: { key: "disabled_engines", value: [], default: [], source: "global", project_scoped: true }, members: [], overrides: [],
-});
-
-const result = (rows: unknown[]) => ({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows }) as never;
-
 /** The In use writes the table sent, so a test can see that navigation alone writes nothing. */
-const putBodies = () => vi.mocked(request).mock.calls
-  .filter(([method, path]) => method === "PUT" && path === "/api/settings/preferences")
-  .map(([, , body]) => body);
+const putBodies = () => wireWrites()
+  .filter((call) => call.method === "PUT" && call.path === "/api/settings/preferences")
+  .map((call) => call.body);
 
 function show(path: Path = "sdk", open = vi.fn(), engine: EngineStatus = claude, provider: ProviderEntry = entry) {
-  vi.mocked(request).mockReset();
-  vi.mocked(request).mockImplementation(async (method, url, body) => {
-    if (method === "POST" && url === "/api/settings/preferences/query") {
-      const keys = ((body ?? {}) as { keys?: string[] }).keys ?? [];
-      return result(keys.map((key) => key === "claude_engine_path" ? pathRow(path) : key === "disabled_engines" ? inUseRow() : null)
-        .filter((row) => row !== null));
-    }
-    if (method === "PUT" && url === "/api/settings/preferences") return result([inUseRow()]);
-    throw new Error(`Unexpected request ${method} ${url}`);
-  });
+  seedPreference(mock, "claude_engine_path", path);
+  seedPreference(mock, "disabled_engines", []);
   render(<ProviderTable store={store} onOpen={open} onEdit={() => undefined} engines={[engine]} catalog={{ providers: [provider] }} />);
   return open;
 }

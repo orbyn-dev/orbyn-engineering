@@ -27,6 +27,7 @@ mod guard;
 mod http_probe;
 mod index_flags;
 mod leases;
+pub mod lessons;
 pub(crate) mod lifecycle;
 mod needs_you;
 mod persist;
@@ -48,6 +49,7 @@ mod tool;
 pub mod triggers;
 mod verify;
 mod view;
+mod watch;
 mod workers;
 
 #[cfg(test)]

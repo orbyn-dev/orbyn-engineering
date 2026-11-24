@@ -67,6 +67,7 @@ describe("Settings › Crew › Daily digest", () => {
     render(<DigestTime />);
     await waitFor(() => expect(field()).toHaveValue("17:00"));
     fireEvent.blur(field());
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(writes()).toHaveLength(0);
   });
@@ -93,6 +94,7 @@ describe("Settings › Crew › Daily digest", () => {
       render(<DigestTime />);
       await waitFor(() => expect(field()).toHaveValue("17:00"));
       fireEvent.blur(field());
+      // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(writes()).toHaveLength(0);
       fireEvent.change(field(), { target: { value: "09:00" } });
@@ -102,6 +104,7 @@ describe("Settings › Crew › Daily digest", () => {
       expect(JSON.parse(String(writes()[0]![1]?.body))).toEqual({ time: "17:00", utc_offset_minutes: 600 });
       // Stored is now 600 and matches the page: saving the same time again is a no-op.
       fireEvent.keyDown(field(), { key: "Enter" });
+      // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(writes()).toHaveLength(1);
     } finally {

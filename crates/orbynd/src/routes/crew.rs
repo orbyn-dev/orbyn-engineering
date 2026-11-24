@@ -1,6 +1,7 @@
 //! Crew (Preview) over HTTP: the Preview flag, background crews' state (`/api/crew/background`: list, read, create, update, on, off,
-//! delete, the runs, Run now, which starts one run by hand, and the acknowledgement that settles a run's waiting review; nothing
-//! fires a trigger on its own), Autopilot's modes, trust, risk, the Review queue, the merge queue, the watch on
+//! delete, the runs, a watch's last check and change history, Run now, which starts one run by hand, and the acknowledgement that
+//! settles a run's waiting review; nothing fires a trigger on its own), Autopilot's modes, trust, risk, the Review queue, the
+//! merge queue, the watch on
 //! main, the digest, the approval ledger, the trip wires and the guards, and three reads of the repository's data classes (`/api/crew/classes`,
 //! `/api/crew/classes/test`, `/api/crew/route/{task}`). Transport only: `orbyn_core::crew` builds every view and
 //! owns every rule.
@@ -414,6 +415,11 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/background", get(background_list))
         .route("/api/crew/background/{id}", get(background_get))
         .route("/api/crew/background/{id}/runs", get(background_runs))
+        .route("/api/crew/background/{id}/watch", get(background_watch))
+        .route(
+            "/api/crew/background/{id}/watch/changes",
+            get(background_watch_changes),
+        )
         .route("/api/crew/guard/targets", get(guard_targets))
         .route("/api/crew/guard/test", get(guard_test))
         .route("/api/crew/projects/{id}/pinned-ref", get(pinned_ref))
@@ -954,6 +960,25 @@ async fn background_runs(
     query: QueryMap,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.background_runs(&id, page(&query)?)?))
+}
+
+/// A watch's last check: its state, when it last checked, the exit code and reason, and the redacted tail it kept.
+async fn background_watch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.background_watch(&id)?))
+}
+
+/// A watch's change history, newest first: `limit`, `offset`.
+async fn background_watch_changes(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state.core.background_watch_changes(&id, page(&query)?)?,
+    ))
 }
 
 async fn background_create(

@@ -1,39 +1,35 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { EngineModels, EngineStatus } from "../../../api/types";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { MockApi } from "../../../../mock/api";
+import type { EngineStatus } from "../../../api/types";
+import { useWorkspace } from "../../../product/state/workspace";
+import { installMockFetch } from "../../../test-support";
+import { wire, wireWrites } from "../../../wire.test-support";
 import { ProvidersSection } from "./Providers";
 
-const mock = vi.hoisted(() => ({ refresh: vi.fn(), engines: [] as EngineStatus[] }));
-const actions = vi.hoisted(() => ({ installRecommended: vi.fn(), updateEngine: vi.fn(), models: vi.fn() }));
-vi.mock("../../../api/client", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../../api/client")>();
-  return { ...original, api: { ...original.api, ...actions } };
+let mock: MockApi;
+beforeEach(() => {
+  mock = installMockFetch();
 });
-vi.mock("../../../product/state/workspace", () => ({
-  useWorkspace: (select: (state: {
-    refreshEngines: typeof mock.refresh;
-    engines: { data: EngineStatus[]; error: null };
-    projects: { data: unknown[]; error: null };
-    threads: Record<string, never>;
-  }) => unknown) =>
-    select({
-      refreshEngines: mock.refresh,
-      engines: { data: mock.engines, error: null },
-      projects: { data: [], error: null },
-      threads: {},
-    }),
-}));
-vi.mock("../rows/SettingsScopeContext", () => ({ useSettingsScope: () => null }));
+
+/** What the page asked the engine routes to change. */
+const engineWrites = () => wireWrites().filter((call) => call.path.startsWith("/api/engines"));
+
+/** Opens a provider's page once the list has settled into its groups (the rows are replaced when the catalogue arrives). */
+async function openProvider(name: string) {
+  await screen.findByText("Not built yet");
+  await userEvent.click(await screen.findByRole("button", { name }));
+}
+
+/** The service reports these engines, and the page has read them. */
+async function report(engines: EngineStatus[]) {
+  mock.setEngines(engines);
+  await useWorkspace.getState().refreshEngines();
+}
 
 const rangeWarning =
   "This engine version is outside the supported range for this Orbyn release. Use 0.166.0.";
-const catalog: EngineModels = {
-  engine: "codex", source: "engine", models: [], error: null,
-  checked_at: "2026-11-05T00:00:00Z", fallback: false, options: [], agents: [],
-  output_styles: [],
-};
-
 function engine(overrides: Partial<EngineStatus> = {}): EngineStatus {
   return {
     id: "codex",
@@ -60,27 +56,19 @@ function engine(overrides: Partial<EngineStatus> = {}): EngineStatus {
   };
 }
 
-beforeEach(() => {
-  mock.refresh.mockReset();
-  actions.installRecommended.mockReset();
-  actions.updateEngine.mockReset();
-  actions.models.mockReset();
-  actions.models.mockResolvedValue(catalog);
-});
-
 describe("provider compatibility warning", () => {
   it("offers the recommended version through the installer that owns the binary", async () => {
     const user = userEvent.setup();
-    mock.engines = [engine({
+    await report([engine({
       compatibility: {
         status: "unsupported",
         message: rangeWarning,
         recommended_version: "0.166.0",
         recommended_command: "npm install -g @openai/codex@0.166.0",
       },
-    })];
+    })]);
     render(<ProvidersSection />);
-    await userEvent.click(await screen.findByRole("button", { name: "Codex" }));
+    await openProvider("Codex");
 
     expect(await screen.findByText(rangeWarning)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
@@ -88,17 +76,20 @@ describe("provider compatibility warning", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("npm install -g @openai/codex@0.166.0")).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "Install 0.166.0" }));
-    await waitFor(() => expect(actions.installRecommended).toHaveBeenCalledWith("codex"));
-    expect(actions.updateEngine).not.toHaveBeenCalled();
-    expect(mock.refresh).toHaveBeenCalled();
+    await waitFor(() => expect(engineWrites()).toEqual([{ method: "POST", path: "/api/engines/codex/install-recommended" }]));
+    // The page reads the engines again, and the warning is gone once the service reports the version it installed.
+    await waitFor(() => expect(screen.queryByText(rangeWarning)).toBeNull());
+    const calls = wire();
+    expect(calls.slice(calls.findIndex((call) => call.path.endsWith("/install-recommended")) + 1)).toContainEqual({ method: "GET", path: "/api/engines" });
+    expect(engineWrites().some((call) => call.path.endsWith("/update"))).toBe(false);
   });
 
   it("keeps manual instructions when no installer can pin the version", async () => {
-    mock.engines = [engine({
+    await report([engine({
       compatibility: { status: "unsupported", message: rangeWarning, recommended_version: "0.166.0" },
-    })];
+    })]);
     render(<ProvidersSection />);
-    await userEvent.click(await screen.findByRole("button", { name: "Codex" }));
+    await openProvider("Codex");
 
     expect(await screen.findByText(rangeWarning)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Install 0.166.0" })).toBeNull();
@@ -110,9 +101,9 @@ describe("provider compatibility warning", () => {
   });
 
   it("says nothing about a version the signed manifest does not flag", async () => {
-    mock.engines = [engine({ version: "0.166.0", support: "tested", latest: "0.170.0" })];
+    await report([engine({ version: "0.166.0", support: "tested", latest: "0.170.0" })]);
     render(<ProvidersSection />);
-    await userEvent.click(await screen.findByRole("button", { name: "Codex" }));
+    await openProvider("Codex");
 
     expect(await screen.findByRole("button", { name: "Update to 0.170.0" })).toBeVisible();
     expect(screen.queryByText(rangeWarning)).toBeNull();

@@ -26,6 +26,7 @@ describe("the Crew category of Settings", () => {
     mock.reset("crew");
     render(<SettingsPage section={null} onClose={() => undefined} />);
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(0));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(screen.queryByRole("link", { name: "Crew" })).toBeNull();
     expect(crewCalls().filter(([url]) => String(url).includes("/api/crew/preview"))).toHaveLength(0);

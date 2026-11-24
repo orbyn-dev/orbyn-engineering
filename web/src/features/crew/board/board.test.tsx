@@ -39,6 +39,7 @@ describe("the Taskboard on the board route", () => {
     mock.reset("default");
     const { container } = render(<BoardView />);
     await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
     expect(calls("/api/crew/flow")).toHaveLength(0);
@@ -206,8 +207,10 @@ describe("useBoard, the next page of a column", () => {
   it("sends one read when showMore is called twice before the first answer", async () => {
     mock.reset("crew-board-many");
     const real = vi.mocked(fetch).getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
     vi.mocked(fetch).mockImplementation(async (input, init) => {
-      if (String(input).includes("column=running")) await new Promise((resolve) => setTimeout(resolve, 60));
+      if (String(input).includes("column=running")) await gate;
       return real(input, init);
     });
     const { result } = renderHook(() => useBoard({ crew: MOCK_CREW, engine: null, kind: null }));
@@ -216,6 +219,7 @@ describe("useBoard, the next page of a column", () => {
       void result.current.showMore("running");
       void result.current.showMore("running");
     });
+    release();
     await waitFor(() => expect(result.current.cardsOf("running")).toHaveLength(12));
     expect(calls("column=running")).toHaveLength(1);
   });
@@ -231,6 +235,7 @@ describe("a card asked for by a map node", () => {
     await waitFor(() => expect(useBoardFocus.getState().task).toBeNull());
     render(<BoardView />);
     await screen.findByRole("region", { name: /^Queued/ });
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(document.activeElement?.hasAttribute("data-task")).toBe(false);
   });
@@ -243,6 +248,7 @@ describe("a card asked for by a map node", () => {
     expect(useBoardFocus.getState().task).toBeNull();
     // That crew's board (it holds no task) must not say a card was missing: nothing asked for one.
     await screen.findByText("No tasks yet");
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByText(/isn’t on the current page/)).toBeNull();
     await user.selectOptions(screen.getByLabelText("Crew"), MOCK_CREW);
