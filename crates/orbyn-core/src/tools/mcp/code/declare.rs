@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn every_orbyn_tool_has_a_declaration_matching_its_required_arguments() {
-        for spec in crate::tools::mcp_tools::tool_specs() {
+        for spec in crate::tools::mcp_tools::tool_specs(true) {
             let text = declaration(&spec);
             let name = spec["name"].as_str().unwrap();
             assert!(
