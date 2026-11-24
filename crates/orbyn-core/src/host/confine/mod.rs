@@ -280,6 +280,14 @@ fn inside(data: &Path, allowed: PathBuf) -> Result<PathBuf> {
             allowed.display()
         )));
     }
+    // The skills-local area holds the skills a worker later reads through the skills tools: a worker that could write it could
+    // plant what a later run loads. Refused for the area and anything inside it.
+    if allowed.starts_with(data.join(crate::tools::local_skills::AREA_DIR)) {
+        return Err(CoreError::EngineUnavailable(format!(
+            "A crew worker could not be restricted: {} is Orbyn's skills-local folder or inside it.",
+            allowed.display()
+        )));
+    }
     Ok(allowed)
 }
 

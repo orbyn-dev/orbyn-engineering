@@ -66,6 +66,33 @@ fn a_path_that_does_not_resolve_is_an_error() {
 }
 
 #[test]
+fn no_allowance_may_overlap_the_skills_local_area() {
+    let dir = crate::testing::TempDir::new();
+    let data = dir.path().join("data");
+    let inner = data.join("workspace");
+    let area = data.join(crate::tools::local_skills::AREA_DIR);
+    let skill = area.join("redirect-checks");
+    let sibling = data.join("skills-local-notes");
+    for folder in [&inner, &skill, &sibling] {
+        std::fs::create_dir_all(folder).unwrap();
+    }
+    // The area, and anything inside it, would let a worker write the skills it later reads.
+    for overlap in [area.as_path(), skill.as_path()] {
+        assert_refused(
+            Confinement::new(&data, &inner, &[overlap], &[]),
+            "skills-local",
+        );
+        assert_refused(
+            Confinement::new(&data, &inner, &[], &[overlap]),
+            "skills-local",
+        );
+        assert_refused(Confinement::new(&data, overlap, &[], &[]), "skills-local");
+    }
+    // A neighbour with a similar name is not the area.
+    assert!(Confinement::new(&data, &inner, &[&sibling], &[&sibling]).is_ok());
+}
+
+#[test]
 fn an_allowance_that_contains_the_data_folder_is_refused() {
     let dir = crate::testing::TempDir::new();
     let data = dir.path().join("data");
