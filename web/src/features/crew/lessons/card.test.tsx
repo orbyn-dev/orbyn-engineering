@@ -220,7 +220,7 @@ describe("a lesson's card on the real route", () => {
   it("says a lesson that became a skill is not in the next brief", async () => {
     answers.detail = {
       status: 200,
-      body: detail({ lesson: lesson({ skill: { name: "Fixture first" }, in_next_brief: false }) }),
+      body: detail({ lesson: lesson({ skill: "Fixture first", in_next_brief: false }) }),
     };
     open();
     await loaded();
@@ -283,7 +283,7 @@ describe("a lesson's card on the real route", () => {
     answers.list = "never";
     answers.detail = {
       status: 200,
-      body: detail({ lesson: lesson({ skill: { name: "Fixture first" }, in_next_brief: false }) }),
+      body: detail({ lesson: lesson({ skill: "Fixture first", in_next_brief: false }) }),
     };
     open();
     await loaded();

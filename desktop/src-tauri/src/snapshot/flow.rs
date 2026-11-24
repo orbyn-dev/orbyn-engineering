@@ -28,6 +28,7 @@ pub struct Captured {
     pub app_name: String,
     pub window_title: String,
     pub app_id: String,
+    pub accessible_text: Option<String>,
 }
 
 pub trait Capturer: Send + Sync {
@@ -207,7 +208,8 @@ impl Flow {
             captured.window_title,
             captured.app_id,
             pending::captured_at_now(),
-        );
+        )
+        .with_accessible_text(captured.accessible_text);
         let stored = match self.pending.lock() {
             Ok(mut pending) => {
                 pending.insert_with_id(id.to_owned(), capture);
@@ -259,6 +261,17 @@ mod tests {
             app_name: "Notes".to_owned(),
             window_title: "Weekly plan".to_owned(),
             app_id: "com.apple.Notes".to_owned(),
+            accessible_text: None,
+        })
+    }
+
+    fn ready_with_text() -> Result<Captured, Failure> {
+        Ok(Captured {
+            png: b"png bytes".to_vec(),
+            app_name: "Notes".to_owned(),
+            window_title: "Weekly plan".to_owned(),
+            app_id: "com.apple.Notes".to_owned(),
+            accessible_text: Some("Line one\nLine two".to_owned()),
         })
     }
 
@@ -274,6 +287,7 @@ mod tests {
             app_name: String::new(),
             window_title: String::new(),
             app_id: String::new(),
+            accessible_text: None,
         })
     }
 
@@ -348,6 +362,16 @@ mod tests {
             json!({ "id": id, "app_name": "1Password" })
         );
         assert!(flow.pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn accessible_text_reaches_the_pending_capture() {
+        let (seen, flow) = set_up(Duration::from_secs(1));
+        let id = start(&flow, ready_with_text, Duration::ZERO);
+        assert_eq!(names(&seen), "snapshot://started,snapshot://ready");
+        let mut pending = flow.pending.lock().unwrap();
+        let capture = pending.take(&id).unwrap();
+        assert_eq!(capture.accessible_text(), Some("Line one\nLine two"));
     }
 
     #[test]

@@ -38,6 +38,7 @@ const proposal = (over: Partial<SkillProposal> = {}): SkillProposal => ({
   skill: null,
   rev: 1,
   created_at: "2026-11-07T16:31:00Z",
+  approved_at: null,
   ...over,
 });
 
@@ -63,7 +64,7 @@ export function createSkillProposalsMock(
         : scenario === "crew-proposals-stale"
           ? [proposal({ can_approve: false })]
           : scenario === "crew-proposals-approved"
-            ? [proposal({ state: "approved", skill: { name: "redirect-checks" }, rev: 2 })]
+            ? [proposal({ state: "approved", skill: { name: "redirect-checks" }, rev: 2, approved_at: "2026-11-07T16:33:00Z" })]
             : scenario === "crew-proposals-secret" || scenario === "crew-proposals-approve-fails"
               ? [proposal()]
               : [];
@@ -71,7 +72,7 @@ export function createSkillProposalsMock(
 
   const bad = (code: string, message: string, status = 400): MockResponse => ({ status, body: { code, message } });
   const canApprove = (one: SkillProposal): boolean =>
-    options.lessonNow ? one.lessons.every((id) => options.lessonNow?.(id)?.state === "active") : one.can_approve;
+    options.lessonNow ? one.lessons.every((entry) => options.lessonNow?.(entry.id)?.state === "active") : one.can_approve;
   const served = (one: SkillProposal): SkillProposal => ({ ...one, can_approve: canApprove(one) });
   const nameOf = (one: SkillProposal): string => /^name:\s*(.+)$/m.exec(one.text)?.[1]?.trim() ?? "proposed-skill";
 
@@ -113,7 +114,8 @@ export function createSkillProposalsMock(
     one.state = "approved";
     one.skill = { name: nameOf(one) };
     one.rev += 1;
-    options.onApproved?.(one.skill.name, one.lessons);
+    one.approved_at = "2026-11-07T16:33:00Z";
+    options.onApproved?.(one.skill.name, one.lessons.map((entry) => entry.id));
     return { status: 200, body: served(one) };
   }
 

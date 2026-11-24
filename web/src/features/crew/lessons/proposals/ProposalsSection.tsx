@@ -4,7 +4,7 @@ import { navigate, routeHref } from "../../../../product/state/route";
 import { useUi } from "../../../../product/state/ui";
 import { ConfirmDialog } from "../../../../ui/Dialog";
 import { Ic } from "../../shared/parts";
-import { ReadError } from "../LessonParts";
+import { EvidenceIds, ReadError } from "../LessonParts";
 import { sourceWord } from "../model";
 import type { Lesson } from "../types";
 import { useLessons } from "../useLessons";
@@ -328,7 +328,14 @@ function ProposalCard({
                   </span>
                   <span className="cx-pprowtext">
                     {lesson.text}
-                    <small>Learned {moment(lesson.created_at)}</small>
+                    <small>
+                      {lesson.evidence.length > 0 ? (
+                        <>
+                          <EvidenceIds evidence={lesson.evidence} /> ·{" "}
+                        </>
+                      ) : null}
+                      Learned {moment(lesson.created_at)}
+                    </small>
                   </span>
                   <button
                     type="button"

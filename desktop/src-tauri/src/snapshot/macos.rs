@@ -262,6 +262,7 @@ impl Capturer for MacCapturer {
             app_name,
             window_title,
             app_id,
+            accessible_text: None,
         })
     }
 }

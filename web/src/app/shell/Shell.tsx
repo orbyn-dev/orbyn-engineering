@@ -1,5 +1,5 @@
 import { useClearSelectionOnLeave } from "../../lib/clearSelection";
-import { CloseLeadDialog } from "../../features/crew";
+import { CloseLeadDialog, useCrewNotifications } from "../../features/crew";
 import { CloneJobs, CommandPalette, FoldersNotice, GitHubStarPrompt, QuitConfirmation, Sidebar } from "../../features/workspace";
 import { ChevronLeft } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
@@ -51,6 +51,7 @@ export function Shell() {
   useGlobalKeys(route);
   useThreadNotifications(route.name === "thread" ? route.id : null);
   useTaskRunNotifications();
+  useCrewNotifications();
   useTerminalAttention(route.name === "thread" ? route.id : null);
   usePanelMotionRoot(routeKey);
   // The phone's sheet takes the page's place (it is `hidden` under it), so the new screen only takes

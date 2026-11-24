@@ -109,13 +109,13 @@ export function firstLines(text: string, count: number): string {
 /** How many of a proposal's source lessons are active now: a lesson that was deleted or turned off is not. */
 export function activeLessons(proposal: SkillProposal, lessons: readonly Lesson[]): number {
   const byId = new Map(lessons.map((lesson) => [lesson.id, lesson]));
-  return proposal.lessons.filter((id) => byId.get(id)?.state === "active").length;
+  return proposal.lessons.filter((one) => byId.get(one.id)?.state === "active").length;
 }
 
 /** The source lessons a read of the repository's lessons still holds, in the proposal's own order. */
 export function sourceLessons(proposal: SkillProposal, lessons: readonly Lesson[]): Lesson[] {
   const byId = new Map(lessons.map((lesson) => [lesson.id, lesson]));
-  return proposal.lessons.flatMap((id) => (byId.has(id) ? [byId.get(id) as Lesson] : []));
+  return proposal.lessons.flatMap((one) => (byId.has(one.id) ? [byId.get(one.id) as Lesson] : []));
 }
 
 /** "3 active lessons with the same source, check kind and path class": the contract's own rule for a proposal. */

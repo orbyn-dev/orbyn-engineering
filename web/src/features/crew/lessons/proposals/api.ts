@@ -2,6 +2,8 @@
 // writes are Person-only and are never sent by a load, a refresh or a retry of a read: only a person's own click
 // approves or dismisses. A service without the routes answers 404 not_found to the read, and the screens draw nothing.
 import { ApiFailure, request } from "../../../../api/client";
+import type { SkillProposalApprove } from "../../../../generated/SkillProposalApprove";
+import type { SkillProposalDismiss } from "../../../../generated/SkillProposalDismiss";
 import type { SkillProposal, SkillProposalList } from "./types";
 
 /** The same shape the service's every crew id check accepts. */
@@ -12,13 +14,15 @@ const path = (id: string): string => {
   return `/api/crew/skill-proposals/${encodeURIComponent(id)}`;
 };
 
+const dismissBody = (rev: number): SkillProposalDismiss => ({ rev });
+
 export const skillProposalsApi = {
   /** One repository's proposals. A read, never a write. */
   list: (repo: string, signal?: AbortSignal) =>
     request<SkillProposalList>("GET", `/api/crew/skill-proposals?repo=${encodeURIComponent(repo)}`, undefined, signal),
   /** A person adds the skill from the text they read. */
-  approve: (id: string, body: { text: string; rev: number }) =>
+  approve: (id: string, body: SkillProposalApprove) =>
     request<SkillProposal>("POST", `${path(id)}/approve`, body),
   /** A person dismisses the proposal; the lessons it came from stay as they are. */
-  dismiss: (id: string, rev: number) => request<SkillProposal>("POST", `${path(id)}/dismiss`, { rev }),
+  dismiss: (id: string, rev: number) => request<SkillProposal>("POST", `${path(id)}/dismiss`, dismissBody(rev)),
 };

@@ -38,6 +38,7 @@ export const lesson = (over: Partial<Lesson> = {}): Lesson => ({
   uses: 2,
   left_out_of: 0,
   skill: null,
+  evidence: [],
   created_at: "2026-11-07T14:20:00Z",
   updated_at: "2026-11-07T14:20:00Z",
   last_used_at: "2026-11-07T16:05:00Z",
@@ -47,11 +48,12 @@ export const lesson = (over: Partial<Lesson> = {}): Lesson => ({
 
 /** The three repeated failures the sample proposal is based on. */
 export const sourceLessons = (): Lesson[] => [
-  lesson(),
+  lesson({ evidence: [{ kind: "task", id: "5b2d8a3" }, { kind: "task", id: "91c4e07" }] }),
   lesson({
     id: "les-navcleanup",
     text: "Checks like a unit test failed on web/nav before: old returnTo links stopped redirecting after a helper was renamed.",
     uses: 1,
+    evidence: [{ kind: "task", id: "8c1d4f6" }],
     created_at: "2026-11-07T15:40:00Z",
     updated_at: "2026-11-07T15:40:00Z",
   }),
@@ -60,6 +62,7 @@ export const sourceLessons = (): Lesson[] => [
     text: "Checks like a unit test failed on web/nav before: a login link kept a returnTo from another host.",
     uses: 0,
     last_used_at: null,
+    evidence: [{ kind: "task", id: "3e6a9b0" }, { kind: "task", id: "6d2f8a1" }],
     created_at: "2026-11-07T16:30:00Z",
     updated_at: "2026-11-07T16:30:00Z",
   }),
@@ -74,18 +77,29 @@ export const lessons = (over: Partial<LessonList> = {}): LessonList => ({
   ...over,
 });
 
-export const proposal = (over: Partial<SkillProposal> = {}): SkillProposal => ({
-  id: "prop-redirect-checks",
-  repo: "p-app",
-  state: "open",
-  text: SKILL_TEXT,
-  lessons: ["les-returnto", "les-navcleanup", "les-loginlink"],
-  can_approve: true,
-  skill: null,
-  rev: 1,
-  created_at: "2026-11-07T16:31:00Z",
-  ...over,
-});
+export const proposal = (over: Partial<SkillProposal> = {}): SkillProposal => {
+  const one: SkillProposal = {
+    id: "prop-redirect-checks",
+    repo: "p-app",
+    state: "open",
+    text: SKILL_TEXT,
+    lessons: [
+      { id: "les-returnto", evidence: [{ kind: "task", id: "5b2d8a3" }, { kind: "task", id: "91c4e07" }] },
+      { id: "les-navcleanup", evidence: [{ kind: "task", id: "8c1d4f6" }] },
+      { id: "les-loginlink", evidence: [{ kind: "task", id: "3e6a9b0" }, { kind: "task", id: "6d2f8a1" }] },
+    ],
+    can_approve: true,
+    skill: null,
+    rev: 1,
+    created_at: "2026-11-07T16:31:00Z",
+    approved_at: null,
+    ...over,
+  };
+  // An approved proposal was written at a time; a dismissed or open one has none.
+  return one.state === "approved" && one.approved_at === null
+    ? { ...one, approved_at: "2026-11-07T16:33:00Z" }
+    : one;
+};
 
 /** "never" waits forever; "network" fails the way a lost connection does, so the page cannot tell whether the write was made. */
 export type Answer = { status: number; body?: unknown } | "never" | "network";

@@ -105,6 +105,8 @@ Crew, a lesson's card and its states (Crew Designs v125, KC5), on the real lesso
 
 Crew, the reviewer backtest (Crew Designs v23), on the real 4n routes and the mock's `crew-backtest` scenarios: `backtest-estimate`, `backtest-report` (the run named in the hash: `?id=run-4n`) and `backtest-stopped` (`?id=run-stopped`). The backtest page reads start-view: `entry-crew-backtest-page` (the project never ran one), `entry-crew-backtest-page-last-finished`, `entry-crew-backtest-page-last-stopped`, `entry-crew-backtest-page-running`, `entry-crew-backtest-page-narrow-window`, `backtest-lanes-reading`, `backtest-lanes-error` (Try again), `backtest-lanes-kind-not-recorded`, `backtest-lanes-budget-not-set`, `backtest-lanes-last-failed` and `backtest-lanes-narrow-window`; `backtest-lanes-data-map` is the contract drawing rather than a screen, so it has no catalog entry. The settings, over-budget, running, vendors, escapes, unmatched, lane-failed, empty, low-history, lane-picker and narrow frames stay drawn sample data until their own pull requests.
 
+Crew, KC10 device notifications: the cards are system notifications, not screens, so the preview shooter has no entry for them and the `kc10-notify-*` frames stay Planned until the Settings pull request that draws their rows.
+
 1. If the screen needs data the mock does not have, add a scenario to `web/mock/api.ts` (and its fixtures to `web/mock/fixtures.ts`).
 2. Add an entry to `catalog.mjs`: `route`, `scenario`, `pre` (requests to hold or fail before the page opens), `steps` (click, fill, press, route, offline) and `wait` for states that show only after a delay.
 3. List the id here (a test fails until you do), render it locally and look at all three themes.
