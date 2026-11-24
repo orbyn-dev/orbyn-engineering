@@ -2325,7 +2325,9 @@ a handshake or session open is refused with ACP's auth-required code, and `faile
 fails any other way. A successful open or model handshake clears it, so a signed-out engine
 reports the login again only until it next starts cleanly.
 
-Skills come from the workspace, in place. Nothing is copied, packed or signed.
+Skills come from the workspace, in place. Nothing is copied, packed or signed. The one
+exception is a skill approved from a Crew proposal, written into the device's own skills
+area under [Workspace](#workspace), never into the workspace.
 
 - Claude starts in the selected checkout, so the project's own instructions are the
   primary ones, and gets the library with `--add-dir <library>`, which loads its
@@ -2511,6 +2513,27 @@ A skill's identity is the library revision plus its dirty flag. Profiles filter 
 the MCP server and the bootstrap list. On Windows `.claude/skills` and
 `.agents/skills` are Git symlinks; if they did not materialize, status says so and
 that session uses the MCP route. The tree is never rewritten.
+
+Approval does not write this file yet: the proposal store and its Approve route are not built, and
+`SkillService::write_local_skill` has no caller. It is the writer that approval will call once the route exists.
+
+A skill approved from a Crew proposal is the one skill that is not in the workspace: it is
+stored on the device at `<data>/skills-local/<slug>/SKILL.md`, one folder per skill, its
+front matter carrying a `local_revision`. A local skill is personal and applies to every
+project; the repository a proposal came from is in its text only and cannot narrow where it
+applies. The write is staged beside the file and renamed into place; only slug names and
+paths inside the skill's own folder are accepted; the stored file, its revision line
+included, is capped at 64 KiB and that cap holds when it is read back; a body the locked
+secret scan finds a secret in is refused (`400 secret_refused`); a name the shared library
+or `skills-local` already holds is refused unless it edits the local skill at the revision
+(and under the name) it read; and one audit row carries the name, the revision and the
+proposal and lesson ids, never the text. That row is written before the rename, as rule 6
+requires, so a publish that fails after it can leave the attempt's row while the file
+itself is unchanged. The shared library wins a name it holds: a local skill cannot be
+created over one, and if the library later gains the name, `skill_load` reads the library
+copy and `skill_search` lists it once. The library's revision and dirty flag never include
+these skills, and no target repository is written. Engines reach them through the MCP
+`skill_search` and `skill_load` tools; native discovery is not built yet.
 
 ## Updates
 

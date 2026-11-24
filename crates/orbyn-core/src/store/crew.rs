@@ -209,6 +209,86 @@ pub(super) fn insert_object(
     Ok(())
 }
 
+/// A verified brief and key ready to be stored, built before the transaction like every other crew object.
+struct PreparedCrewTask<'a> {
+    brief: &'a Brief,
+    key: &'a AnswerKey,
+    brief_body: String,
+    key_body: String,
+}
+
+/// Checks a brief and its key and canonicalises both, before the transaction that stores them.
+fn prepare_crew_task<'a>(brief: &'a Brief, key: &'a AnswerKey) -> Result<PreparedCrewTask<'a>> {
+    let brief_object = CrewObject::Brief(brief.clone());
+    let key_object = CrewObject::AnswerKey(key.clone());
+    let brief_body = checked(&brief_object)?;
+    let key_body = checked(&key_object)?;
+    if key.brief != brief.id || key.crew_id != brief.crew_id {
+        return Err(CoreError::Invalid(
+            "crew answer key refused: it belongs to another brief".into(),
+        ));
+    }
+    Ok(PreparedCrewTask {
+        brief,
+        key,
+        brief_body,
+        key_body,
+    })
+}
+
+/// Stores a prepared brief and key, in the state `briefed`. The second value says whether this call created the
+/// task: storing the same task again, with the same key and run, returns it as it is; a different key or run is
+/// refused. Only a created task is counted against the brief's lessons.
+fn insert_crew_task(
+    tx: &Transaction<'_>,
+    prepared: &PreparedCrewTask<'_>,
+    run_id: &str,
+) -> Result<(CrewTask, bool)> {
+    let (brief, key) = (prepared.brief, prepared.key);
+    if let Some(existing) = tx
+        .query_row(
+            "SELECT * FROM crew_tasks WHERE id = ?1",
+            [brief.id.as_str()],
+            task_row,
+        )
+        .optional()?
+    {
+        let stored_key: String = tx.query_row(
+            "SELECT id FROM crew_answer_keys WHERE task_id = ?1",
+            [brief.id.as_str()],
+            |row| row.get(0),
+        )?;
+        // Same brief, but a different key or run: refuse, never return the old one.
+        if stored_key != key.id.as_str() || existing.run_id != run_id {
+            return Err(CoreError::Invalid(format!(
+                "crew task {} already exists with a different {}",
+                existing.id,
+                if stored_key != key.id.as_str() {
+                    "answer key"
+                } else {
+                    "run"
+                }
+            )));
+        }
+        return Ok((existing, false));
+    }
+    let stamp = now();
+    tx.execute(
+        "INSERT INTO crew_tasks (id, crew_id, run_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        params![brief.id.as_str(), brief.crew_id.as_str(), run_id, stamp],
+    )?;
+    tx.execute(
+        "INSERT INTO crew_briefs (id, body) VALUES (?1, ?2)",
+        params![brief.id.as_str(), prepared.brief_body],
+    )?;
+    tx.execute(
+        "INSERT INTO crew_answer_keys (task_id, id, body) VALUES (?1, ?2, ?3)",
+        params![brief.id.as_str(), key.id.as_str(), prepared.key_body],
+    )?;
+    Ok((find_task(tx, brief.id.as_str())?, true))
+}
+
 impl Store {
     /// Stores a brief and its answer key together, in the state `briefed`. The key's
     /// `brief` must be this brief's id. Storing the same task again, with the same key and
@@ -219,58 +299,27 @@ impl Store {
         key: &AnswerKey,
         run_id: &str,
     ) -> Result<CrewTask> {
-        let brief_object = CrewObject::Brief(brief.clone());
-        let key_object = CrewObject::AnswerKey(key.clone());
-        let brief_body = checked(&brief_object)?;
-        let key_body = checked(&key_object)?;
-        if key.brief != brief.id || key.crew_id != brief.crew_id {
-            return Err(CoreError::Invalid(
-                "crew answer key refused: it belongs to another brief".into(),
-            ));
-        }
+        self.create_crew_task_with_lessons(brief, key, run_id, &[], &[])
+    }
+
+    /// `create_crew_task`, and the brief's lessons counted in that one transaction (KC5 slice 2): each lesson the
+    /// brief carried gets a use and its use time, each one its key check left out grows `left_out_of`. The block
+    /// itself is not stored: it reaches the worker's brief, never the `Brief` object the router and the checks read.
+    pub fn create_crew_task_with_lessons(
+        &self,
+        brief: &Brief,
+        key: &AnswerKey,
+        run_id: &str,
+        used: &[String],
+        left_out: &[String],
+    ) -> Result<CrewTask> {
+        let prepared = prepare_crew_task(brief, key)?;
         self.commit(|tx, _| {
-            if let Some(existing) = tx
-                .query_row(
-                    "SELECT * FROM crew_tasks WHERE id = ?1",
-                    [brief.id.as_str()],
-                    task_row,
-                )
-                .optional()?
-            {
-                let stored_key: String = tx.query_row(
-                    "SELECT id FROM crew_answer_keys WHERE task_id = ?1",
-                    [brief.id.as_str()],
-                    |row| row.get(0),
-                )?;
-                // Same brief, but a different key or run: refuse, never return the old one.
-                if stored_key != key.id.as_str() || existing.run_id != run_id {
-                    return Err(CoreError::Invalid(format!(
-                        "crew task {} already exists with a different {}",
-                        existing.id,
-                        if stored_key != key.id.as_str() {
-                            "answer key"
-                        } else {
-                            "run"
-                        }
-                    )));
-                }
-                return Ok(existing);
+            let (task, created) = insert_crew_task(tx, &prepared, run_id)?;
+            if created && !(used.is_empty() && left_out.is_empty()) {
+                super::crew_lessons::record_lesson_use(tx, used, left_out, &now())?;
             }
-            let stamp = now();
-            tx.execute(
-                "INSERT INTO crew_tasks (id, crew_id, run_id, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?4)",
-                params![brief.id.as_str(), brief.crew_id.as_str(), run_id, stamp],
-            )?;
-            tx.execute(
-                "INSERT INTO crew_briefs (id, body) VALUES (?1, ?2)",
-                params![brief.id.as_str(), brief_body],
-            )?;
-            tx.execute(
-                "INSERT INTO crew_answer_keys (task_id, id, body) VALUES (?1, ?2, ?3)",
-                params![brief.id.as_str(), key.id.as_str(), key_body],
-            )?;
-            find_task(tx, brief.id.as_str())
+            Ok(task)
         })
     }
 
