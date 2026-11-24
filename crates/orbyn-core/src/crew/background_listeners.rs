@@ -70,6 +70,14 @@ const CI_CREWS_MAX: usize = 64;
 /// slower than the forge, so a store full of crews must not turn one pass into unbounded tracker traffic; each tick
 /// starts from the pass's rotation, so every crew is reached over a few passes.
 const ISSUE_CREWS_MAX: usize = 64;
+/// The most watch checks one pass runs. Each check may take five minutes, so a store full of watches must not turn one
+/// pass into unbounded command time; the pass starts with the watches whose newest claim is oldest, so the ones it does
+/// not reach come first on the next pass.
+#[cfg(not(test))]
+pub(super) const WATCH_CHECKS_PER_PASS: usize = 64;
+/// The watch-check cap in tests, small enough that a test needs only a few real crews.
+#[cfg(test)]
+pub(super) const WATCH_CHECKS_PER_PASS: usize = 3;
 /// The most pages of one crew's matching issues a pass reads (100 issues each), so a tracker with a very long list cannot turn
 /// one pass into unbounded traffic.
 const LABEL_PAGES_MAX: usize = 10;
@@ -133,8 +141,8 @@ impl Core {
     /// One pass of the listeners: the schedule timer, the CI-failure watch, the issue-label and dependency-update ticks, the
     /// file triggers and the watch timer, in that order. A pass never fails on one crew's trouble: each item is logged and the
     /// pass goes on, so one unreadable forge, tracker or project cannot stop the other events. The ticks run one after another,
-    /// so a slow watch command can hold the pass (each check is bounded by its five-minute cap, but a pass has no overall cap
-    /// yet; a per-pass cap is a follow-up, #1354). `rotation` moves which crews are watched or read when there are more than
+    /// so a slow watch command can hold the pass: each check is bounded by its five-minute cap, and the watch timer runs only
+    /// `WATCH_CHECKS_PER_PASS` checks per pass. `rotation` moves which crews are watched or read when there are more than
     /// `CI_CREWS_MAX` CI crews or `ISSUE_CREWS_MAX` issue-reader crews. `stop` is checked between firings only, and the tracker
     /// reads are raced against it too.
     pub(crate) async fn crew_background_listeners_pass(
@@ -845,8 +853,10 @@ impl Core {
     /// writes its own state and history and only starts a run (through `crew_background_start`, with the event in the held
     /// row's key) when a result turns failing with `on_failing` = `template`; a start that is refused is audited like the other
     /// listeners' refusals and leaves the Needs you row raised. Nothing here calls a model. This tick runs last in a pass,
-    /// after the other listeners and the file triggers; the checks of one pass run one after another, bounded per check by the
-    /// five-minute cap and, for now, by nothing for the pass as a whole (#1354).
+    /// after the other listeners and the file triggers; its checks run one after another, bounded per check by the five-minute
+    /// cap and per pass by `WATCH_CHECKS_PER_PASS` (64). The crews run oldest claim first, so a pass that reaches the cap stops
+    /// without claiming the rest and the next pass starts with those watches; a crew skipped before its bucket is claimed
+    /// (off, not due, unreadable) costs no check.
     async fn crew_background_watch_tick(self: &Arc<Self>, now: i64, stop: &CancellationToken) {
         let crews = self
             .store
@@ -855,9 +865,29 @@ impl Core {
                 tracing::warn!(%error, "the watch crews could not be read");
                 Vec::new()
             });
-        for listed in crews.into_iter().filter(|crew| crew.enabled) {
+        // The newest claimed bucket orders the pass: oldest first, and a watch never claimed before any claimed one. A
+        // pass that stops at the cap therefore leaves the watches it did not reach at the front of the next pass. This read
+        // is only for that order; the bucket is read again just before the claim.
+        let mut crews: Vec<(Option<i64>, BackgroundRow)> = crews
+            .into_iter()
+            .filter(|crew| crew.enabled)
+            .map(|crew| {
+                let newest = self.store.latest_watch_bucket(&crew.id).unwrap_or_default();
+                (newest, crew)
+            })
+            .collect();
+        crews.sort_by_key(|(newest, _)| *newest);
+        let mut checks = 0usize;
+        for (_, listed) in crews {
             if stop.is_cancelled() {
                 return;
+            }
+            if checks >= WATCH_CHECKS_PER_PASS {
+                tracing::debug!(
+                    checks,
+                    "the watch checks for this pass are done; the rest come first on the next pass"
+                );
+                break;
             }
             // The list was read before earlier checks of this pass, which may have taken minutes: read the crew again, so a watch
             // the person turned off, changed or deleted in the meantime is not claimed or run on the old row.
@@ -895,7 +925,7 @@ impl Core {
             }
             let identity = format!("watch:{}:{bucket}", crew.id);
             match self.store.claim_background_event(&identity) {
-                Ok(true) => {}
+                Ok(true) => checks += 1,
                 Ok(false) => continue,
                 Err(error) => {
                     tracing::warn!(%error, crew = %crew.id, "a watch check could not be claimed");
