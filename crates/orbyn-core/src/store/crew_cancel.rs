@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 
 use super::crew::{CrewTask, find_task};
@@ -69,6 +70,23 @@ impl Store {
             [task_id],
             |row| row.get(0),
         )?)
+    }
+
+    /// The reason the task's latest `crew.task.cancel` row was written with, when it has one. A close of a lead thread reads it
+    /// back: its cancels say so, and a lead that closed is not told about a task it cancelled.
+    pub fn crew_cancel_reason(&self, task_id: &str) -> Result<Option<String>> {
+        let detail: Option<String> = self
+            .reader()
+            .query_row(
+                "SELECT detail FROM audit_events WHERE action = 'crew.task.cancel' AND target = ?1
+                 ORDER BY id DESC LIMIT 1",
+                [task_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(detail
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|detail| detail.get("reason")?.as_str().map(str::to_owned)))
     }
 
     /// Checks the task and writes the intent row (`crew.task.cancel`) in one transaction. `cancelled` answers `Already` and writes

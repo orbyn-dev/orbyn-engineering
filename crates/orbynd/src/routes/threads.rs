@@ -138,6 +138,8 @@ async fn update_thread(
     Path(id): Path<String>,
     ApiJson(patch): ApiJson<UpdateThread>,
 ) -> ApiResult<impl IntoResponse> {
+    // Stopping a lead's live Crew tasks is the person's own, confirmed `POST /api/crew/lead/{thread_id}/close`: this route is
+    // not a Person route, so a settle or archive here never cancels a task.
     Ok(Json(state.core.update_thread(&id, &patch, LOCAL_USER)?))
 }
 

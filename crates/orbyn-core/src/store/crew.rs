@@ -330,6 +330,20 @@ impl Store {
             .optional()?)
     }
 
+    /// Every task a lead thread leads, oldest first, whatever its state: `crew_runs.lead_thread_id` is the only link, so a task
+    /// another thread leads is never one. The caller decides which are live.
+    pub fn crew_tasks_led_by(&self, lead_thread_id: &str) -> Result<Vec<CrewTask>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT t.* FROM crew_tasks t
+             JOIN crew_runs r ON r.task_id = t.id
+             WHERE r.lead_thread_id = ?1
+             ORDER BY t.created_at, t.id",
+        )?;
+        let rows = statement.query_map([lead_thread_id], task_row)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// The brief: what a worker may read. It never carries the key.
     pub fn crew_brief(&self, task_id: &str) -> Result<Option<Brief>> {
         let body: Option<String> = self

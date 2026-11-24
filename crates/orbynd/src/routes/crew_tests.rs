@@ -103,6 +103,7 @@ impl Drop for Served {
 
 fn concrete(path: &str) -> String {
     path.replace("{task_id}", "task-1")
+        .replace("{thread_id}", "thread-1")
         .replace("{id}", "task-1")
 }
 

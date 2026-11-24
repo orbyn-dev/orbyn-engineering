@@ -3,4 +3,4 @@
 /**
  * Why an item is in the inbox: the first matching rule for a task, or the wait of a merge, a background run or a watch.
  */
-export type NeedsYouKind = "task_needs_person" | "could_not_start" | "manual_check" | "merge_waiting" | "background_review" | "watch_failing" | "watch_could_not_run" | "tripwire_stop" | "worker_stopped_twice";
+export type NeedsYouKind = "task_needs_person" | "could_not_start" | "manual_check" | "merge_waiting" | "background_review" | "watch_failing" | "watch_could_not_run" | "tripwire_stop" | "worker_stopped_twice" | "could_not_stop";

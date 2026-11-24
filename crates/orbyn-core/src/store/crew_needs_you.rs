@@ -31,6 +31,15 @@ pub struct NeedsYouTask {
     pub project_id: Option<String>,
 }
 
+/// One task whose last cancel attempt failed, with the project of its lead thread and when that attempt was recorded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CouldNotStopTask {
+    pub task: CrewTask,
+    pub project_id: Option<String>,
+    /// When the failed attempt was recorded, as RFC 3339.
+    pub since: String,
+}
+
 /// Whether `one` is a later RFC 3339 time than `other`. A pair that does not parse falls back to the stored strings, which are
 /// written in one format.
 fn later(one: &str, other: &str) -> bool {
@@ -95,6 +104,41 @@ impl Store {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows.into_iter().collect())
+    }
+
+    /// The tasks whose last cancel attempt could not stop the worker, newest first, with the project of their lead thread and
+    /// when that attempt failed. The try is the last `crew.task.cancel_failed` row of the task, with no `crew.task.cancelled` row
+    /// after it. A task in a final state is not one: a failed first stop leaves the state alone, but a failed second stop leaves a
+    /// task already `cancelled` with a live worker, which this read does not show (#1400). Reads the audit rows the cancel
+    /// already writes and adds no storage.
+    pub fn crew_could_not_stop(&self) -> Result<Vec<CouldNotStopTask>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT t.*, th.project_id AS lead_project, a.ts AS failed_at
+             FROM crew_tasks t
+             JOIN audit_events a ON a.id = (
+                 SELECT MAX(f.id) FROM audit_events f
+                 WHERE f.target = t.id AND f.action = 'crew.task.cancel_failed'
+             )
+             LEFT JOIN crew_runs r ON r.task_id = t.id
+             LEFT JOIN threads th ON th.id = r.lead_thread_id
+             WHERE t.state NOT IN ('passed', 'stopped', 'cancelled')
+               AND NOT EXISTS (
+                   SELECT 1 FROM audit_events c
+                   WHERE c.target = t.id AND c.action = 'crew.task.cancelled' AND c.id > a.id
+               )
+             ORDER BY t.updated_at DESC, t.id",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(CouldNotStopTask {
+                    task: super::crew::task_row(row)?,
+                    project_id: row.get("lead_project")?,
+                    since: row.get("failed_at")?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     /// The tasks that have a ledger row of this kind, in one query.

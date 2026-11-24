@@ -5,7 +5,7 @@
 use orbyn_contracts::{NeedsYouItem, NeedsYouKind};
 use serde_json::json;
 
-use super::harness::{Turn, World, brief, key, world};
+use super::harness::{Turn, World, brief, give_back_worker_run, key, take_worker_run, world};
 use super::review_support::{arc, built, crew};
 use crate::crew::WORKER_STOPPED_TWICE;
 use crate::error::CoreError;
@@ -234,6 +234,62 @@ async fn a_stopped_task_whose_worker_stopped_twice_is_worker_stopped_twice() {
     assert!(item.dismissible);
     assert_eq!(item.since, w.task(&id).updated_at);
     assert!(item.reason.is_some());
+}
+
+/// The task KC2 could not stop is a wait of its own, answered and never hidden, and a successful Stop again ends it.
+#[tokio::test]
+async fn a_task_whose_last_cancel_attempt_failed_is_could_not_stop_and_not_dismissible() {
+    let w = crew(arc(|_, _| Turn::Hang)).await;
+    let id = started_hanging(&w, "Stuck.").await;
+    let epoch = take_worker_run(&w, &id);
+    let answer = w.core.crew_close_lead(&w.lead, "user").await.unwrap();
+    assert_eq!(answer.failed, vec![id.clone()]);
+
+    let item = item_of(&w, NeedsYouKind::CouldNotStop, &id);
+    assert!(!item.dismissible);
+    assert!(item.project_id.is_some(), "the lead thread names a project");
+    assert_eq!(item.crew_id.as_deref(), Some(w.task(&id).crew_id.as_str()));
+    assert!(!item.since.is_empty());
+    let reason = item.reason.expect("fixed words");
+    assert!(!reason.is_empty() && reason.chars().count() <= 160);
+
+    // It is answered, never hidden: the person stops it again.
+    let refused = w
+        .core
+        .crew_needs_you_dismiss(NeedsYouKind::CouldNotStop, &id, "user");
+    assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
+
+    // The stop now takes: the task is cancelled, and the item goes with it.
+    give_back_worker_run(&w, &id, &epoch);
+    w.core.crew_cancel_task(&id, None, "user").await.unwrap();
+    assert!(
+        !w.core
+            .store
+            .crew_could_not_stop()
+            .unwrap()
+            .iter()
+            .any(|one| one.task.id == id)
+    );
+    assert!(items(&w).iter().all(|item| item.id != id));
+}
+
+/// A task that waits on a person and whose worker could not be stopped is the stop, not the wait: its worker may still run.
+#[tokio::test]
+async fn a_failed_stop_outranks_the_same_task_waiting_on_a_person() {
+    let w = crew(arc(|_, _| Turn::Hang)).await;
+    let id = started_hanging(&w, "Stuck and waiting.").await;
+    let _epoch = take_worker_run(&w, &id);
+    let answer = w.core.crew_close_lead(&w.lead, "user").await.unwrap();
+    assert_eq!(answer.failed, vec![id.clone()]);
+    w.core
+        .store
+        .move_crew_task(&id, "needs_person", None)
+        .unwrap();
+
+    let ours: Vec<_> = items(&w).into_iter().filter(|item| item.id == id).collect();
+    assert_eq!(ours.len(), 1, "one item for the task");
+    assert_eq!(ours[0].kind, NeedsYouKind::CouldNotStop);
+    assert!(!ours[0].dismissible);
 }
 
 #[tokio::test]
