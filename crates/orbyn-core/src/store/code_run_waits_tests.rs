@@ -227,6 +227,10 @@ fn the_runs_list_carries_the_error_kind_of_a_run_that_ended_badly() {
     };
     assert_eq!(kind("a-cancelled").as_deref(), Some("cancelled"));
     assert_eq!(kind("b-failed").as_deref(), Some("runtime"));
-    assert_eq!(kind("c-unreadable"), None, "an error row with no kind is null");
+    assert_eq!(
+        kind("c-unreadable"),
+        None,
+        "an error row with no kind is null"
+    );
     assert_eq!(kind("d-done"), None, "a run that did not fail has none");
 }

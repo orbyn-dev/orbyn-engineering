@@ -154,7 +154,7 @@ pub use crew_escapes::{
 pub(crate) use crew_flow::last_events_sql;
 pub use crew_flow::{DELIVERY_WINDOW, LIVE_WORKERS_MAX, LiveWorker, MESSAGE_WINDOW, MemberTimes};
 pub use crew_guard::ENTRIES_MAX as GUARD_ENTRIES_MAX;
-pub use crew_lessons::{CrewLesson, EVIDENCE_MAX, LessonEvidence, NewCrewLesson};
+pub use crew_lessons::{CrewLesson, EVIDENCE_MAX, LessonEvidence, NewCrewLesson, UNDO_SECS};
 pub use crew_manual_checks::{ManualCheck, ManualCheckState, NOTE_MAX as MANUAL_CHECK_NOTE_MAX};
 pub use crew_merge_forge::{ForgeMerge, ForgePhase, ForgeResolution};
 pub use crew_merges::{MergeEntry, MergeRecord, MergeStateMove, OPEN_MERGE_STATES};

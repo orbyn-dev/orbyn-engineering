@@ -1,6 +1,7 @@
 //! Crew lessons at rest (migration 80, KC5 slice 1): the round trip, the dedupe key, the caps that hide instead of
 //! deleting, the audit rows, the table's own checks and the read source 1 uses. Migration 81 adds the brief's
 //! counters: a use and a use time for a lesson a brief carried, and `left_out_of` for one its key check left out.
+//! Migration 84 adds the person's `rev`, the 10 s Undo and the forgotten fingerprints.
 
 use orbyn_contracts::{AnswerKey, Brief, CrewObject};
 use serde_json::Value;
@@ -762,4 +763,401 @@ fn a_counter_that_fails_after_another_succeeded_rolls_both_back() {
     assert!(store.crew_task(&task.id).unwrap().is_some());
     assert_eq!(store.crew_lesson(&first.id).unwrap().unwrap().uses, 0);
     assert_eq!(store.crew_lesson(&second.id).unwrap().unwrap().uses, 0);
+}
+
+fn assert_stale(error: CoreError) {
+    match error {
+        CoreError::Refused {
+            status,
+            code,
+            message,
+            detail,
+        } => {
+            assert_eq!(status, 409);
+            assert_eq!(code, "stale");
+            assert_eq!(message, "This lesson changed. Reload it and try again.");
+            assert!(detail.is_null());
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn migration_84_adds_rev_the_undo_and_the_forgotten_table() {
+    let versions: Vec<i64> = migrations::MIGRATIONS.iter().map(|(v, _)| *v).collect();
+    assert!(versions.windows(2).all(|w| w[1] == w[0] + 1));
+    assert!(versions.contains(&84));
+
+    let (_dir, store) = open();
+    let written = store
+        .write_crew_lesson(lesson(
+            "repo",
+            Some("p1"),
+            "person",
+            "Use pnpm, not npm.",
+            None,
+        ))
+        .unwrap()
+        .unwrap();
+    assert_eq!(written.rev, 1);
+    assert_eq!(written.deleted_at, None);
+    let forgotten: i64 = store
+        .reader()
+        .query_row("SELECT COUNT(*) FROM crew_lessons_forgotten", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(forgotten, 0);
+}
+
+#[test]
+fn a_soft_deleted_lesson_is_hidden_from_every_read_and_undo_restores_it_with_a_new_rev() {
+    let (_dir, store) = open();
+    let written = store
+        .write_crew_lesson(lesson(
+            "repo",
+            Some("p1"),
+            "person",
+            "Use pnpm, not npm.",
+            None,
+        ))
+        .unwrap()
+        .unwrap();
+    let deleted_at = store.delete_crew_lesson(&written.id, 1).unwrap();
+    assert!(!deleted_at.is_empty());
+
+    assert_eq!(store.crew_lesson(&written.id).unwrap(), None);
+    assert!(store.crew_lessons("repo", Some("p1")).unwrap().is_empty());
+    assert!(
+        store
+            .crew_lessons_for_brief("repo", Some("p1"))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(store.crew_lessons_counts("p1").unwrap(), (0, 0, 0));
+    let hidden = store
+        .crew_lesson_including_deleted(&written.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(hidden.rev, 1, "a soft delete keeps the rev the person saw");
+    assert_eq!(hidden.deleted_at.as_deref(), Some(deleted_at.as_str()));
+
+    let restored = store.undo_delete_crew_lesson(&written.id).unwrap();
+    assert_eq!(restored.rev, 2);
+    assert_eq!(restored.deleted_at, None);
+    assert_eq!(
+        store.crew_lesson(&written.id).unwrap().unwrap(),
+        restored,
+        "the restored lesson reads again"
+    );
+    assert_eq!(
+        actions(&store),
+        [
+            "crew.lesson.learn",
+            "crew.lesson.delete",
+            "crew.lesson.undo"
+        ]
+    );
+    assert!(matches!(
+        store.undo_delete_crew_lesson(&written.id),
+        Err(CoreError::NotFound(_))
+    ));
+}
+
+#[test]
+fn undo_after_the_window_or_without_a_delete_is_not_found() {
+    let (_dir, store) = open();
+    let deleted = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Deleted.", None))
+        .unwrap()
+        .unwrap();
+    store
+        .writer()
+        .execute(
+            "UPDATE crew_lessons SET deleted_at = ?1 WHERE id = ?2",
+            rusqlite::params![format_unix(unix_now() - 60), &deleted.id],
+        )
+        .unwrap();
+    assert!(matches!(
+        store.undo_delete_crew_lesson(&deleted.id),
+        Err(CoreError::NotFound(_))
+    ));
+
+    let live = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Live.", None))
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        store.undo_delete_crew_lesson(&live.id),
+        Err(CoreError::NotFound(_))
+    ));
+}
+
+#[test]
+fn a_wrong_rev_refuses_every_lesson_change_and_writes_nothing() {
+    let (_dir, store) = open();
+    let written = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Use pnpm.", None))
+        .unwrap()
+        .unwrap();
+    assert_stale(
+        store
+            .edit_crew_lesson(&written.id, "Changed.", false, 9)
+            .unwrap_err(),
+    );
+    assert_stale(
+        store
+            .set_crew_lesson_state(&written.id, false, 9)
+            .unwrap_err(),
+    );
+    assert_stale(
+        store
+            .set_crew_lesson_state(&written.id, true, 9)
+            .unwrap_err(),
+    );
+    assert_stale(store.promote_crew_lesson(&written.id, 9).unwrap_err());
+    assert_stale(store.delete_crew_lesson(&written.id, 9).unwrap_err());
+    let global = store
+        .write_crew_lesson(lesson("global", None, "person", "Global.", None))
+        .unwrap()
+        .unwrap();
+    assert_stale(store.demote_crew_lesson(&global.id, "p1", 9).unwrap_err());
+
+    assert_eq!(store.crew_lesson(&written.id).unwrap().unwrap(), written);
+    assert_eq!(
+        store.crew_lesson(&global.id).unwrap().unwrap(),
+        global,
+        "a refused write leaves the lesson as it was"
+    );
+    assert_eq!(actions(&store), ["crew.lesson.learn", "crew.lesson.learn"]);
+}
+
+#[test]
+fn a_rev_bumps_on_every_visible_change_and_not_on_use_counting_or_the_soft_delete() {
+    let (_dir, store) = open();
+    let written = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Use pnpm.", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(written.rev, 1);
+
+    let edited = store
+        .edit_crew_lesson(&written.id, "Use pnpm, not npm.", false, 1)
+        .unwrap();
+    assert_eq!(edited.rev, 2);
+    assert!(edited.edited_by_person);
+    assert_eq!(edited.source, written.source);
+    assert_eq!(edited.fingerprint, written.fingerprint);
+
+    let off = store.set_crew_lesson_state(&written.id, false, 2).unwrap();
+    assert_eq!((off.state.as_str(), off.rev), ("disabled", 3));
+    let on = store.set_crew_lesson_state(&written.id, true, 3).unwrap();
+    assert_eq!((on.state.as_str(), on.rev), ("active", 4));
+
+    let promoted = store.promote_crew_lesson(&written.id, 4).unwrap();
+    assert_eq!(
+        (
+            promoted.scope.as_str(),
+            promoted.project_id.as_deref(),
+            promoted.rev
+        ),
+        ("global", None, 5)
+    );
+    let demoted = store.demote_crew_lesson(&written.id, "p1", 5).unwrap();
+    assert_eq!(
+        (
+            demoted.scope.as_str(),
+            demoted.project_id.as_deref(),
+            demoted.rev
+        ),
+        ("repo", Some("p1"), 6)
+    );
+
+    store
+        .create_crew_task_with_lessons(
+            &brief(),
+            &key(),
+            "run-01",
+            std::slice::from_ref(&written.id),
+            &[],
+        )
+        .unwrap();
+    let used = store.crew_lesson(&written.id).unwrap().unwrap();
+    assert_eq!(used.uses, 1);
+    assert_eq!(used.rev, 6, "a brief's use count is not a lesson change");
+    assert!(used.last_used_at.is_some());
+
+    store.delete_crew_lesson(&written.id, 6).unwrap();
+    assert_eq!(
+        store
+            .crew_lesson_including_deleted(&written.id)
+            .unwrap()
+            .unwrap()
+            .rev,
+        6,
+        "the soft delete leaves the rev the person saw"
+    );
+    assert_eq!(
+        store.undo_delete_crew_lesson(&written.id).unwrap().rev,
+        7,
+        "undo is a visible change"
+    );
+}
+
+#[test]
+fn counts_cover_the_repository_and_global_lessons_and_leave_deleted_out() {
+    let (_dir, store) = open();
+    let hidden = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Hidden.", None))
+        .unwrap()
+        .unwrap();
+    let disabled = store
+        .write_crew_lesson(lesson("repo", Some("p1"), "person", "Disabled.", None))
+        .unwrap()
+        .unwrap();
+    store.set_crew_lesson_state(&disabled.id, false, 1).unwrap();
+    let global = store
+        .write_crew_lesson(lesson("global", None, "person", "Global.", None))
+        .unwrap()
+        .unwrap();
+    store
+        .writer()
+        .execute(
+            "UPDATE crew_lessons SET hidden_by_cap = 1 WHERE id = ?1",
+            [&hidden.id],
+        )
+        .unwrap();
+    assert_eq!(store.crew_lessons_counts("p1").unwrap(), (1, 1, 1));
+
+    store.delete_crew_lesson(&hidden.id, 1).unwrap();
+    assert_eq!(
+        store.crew_lessons_counts("p1").unwrap(),
+        (1, 1, 0),
+        "a deleted lesson is in no count"
+    );
+    assert_eq!(
+        store.crew_lessons_counts("another-repo").unwrap(),
+        (1, 0, 0),
+        "another repository still sees the global lesson, never p1's"
+    );
+    assert_eq!(global.rev, 1);
+}
+
+#[test]
+fn purge_after_the_undo_window_remembers_the_fingerprint_and_no_write_rewrites_it() {
+    let (_dir, store) = open();
+    let fingerprint = "e".repeat(64);
+    let written = store
+        .write_crew_lesson(lesson(
+            "repo",
+            Some("p1"),
+            "fingerprint",
+            "Checks failed before.",
+            Some(&fingerprint),
+        ))
+        .unwrap()
+        .unwrap();
+    store.delete_crew_lesson(&written.id, 1).unwrap();
+
+    // A cutoff before the deletion leaves the row alone.
+    assert!(
+        store
+            .purge_deleted_lessons(&format_unix(unix_now() - 60))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .crew_lesson_including_deleted(&written.id)
+            .unwrap()
+            .is_some()
+    );
+
+    // A cutoff after the window purges it, remembers its key and audits the purge.
+    let purged = store
+        .purge_deleted_lessons(&format_unix(unix_now() + 60))
+        .unwrap();
+    assert_eq!(purged.as_slice(), std::slice::from_ref(&written.id));
+    assert_eq!(
+        store.crew_lesson_including_deleted(&written.id).unwrap(),
+        None
+    );
+    assert_eq!(
+        actions(&store),
+        [
+            "crew.lesson.learn",
+            "crew.lesson.delete",
+            "crew.lesson.purge"
+        ]
+    );
+    let forgotten: String = store
+        .reader()
+        .query_row(
+            "SELECT fingerprint FROM crew_lessons_forgotten",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(forgotten, fingerprint);
+
+    let again = store
+        .write_crew_lesson(lesson(
+            "repo",
+            Some("p1"),
+            "fingerprint",
+            "The same failure again.",
+            Some(&fingerprint),
+        ))
+        .unwrap();
+    assert_eq!(again, None, "a forgotten fingerprint is never rewritten");
+    assert!(store.crew_lessons("repo", Some("p1")).unwrap().is_empty());
+    assert_eq!(
+        actions(&store),
+        [
+            "crew.lesson.learn",
+            "crew.lesson.delete",
+            "crew.lesson.purge"
+        ],
+        "a refused rewrite writes no learn row"
+    );
+}
+
+#[test]
+fn demoting_into_a_full_repository_hides_one_and_bumps_its_rev() {
+    let (_dir, store) = open();
+    for n in 0..50 {
+        store
+            .write_crew_lesson(lesson(
+                "repo",
+                Some("p1"),
+                "person",
+                &format!("Repository lesson {n}."),
+                None,
+            ))
+            .unwrap()
+            .unwrap();
+    }
+    let global = store
+        .write_crew_lesson(lesson("global", None, "person", "Global lesson.", None))
+        .unwrap()
+        .unwrap();
+    let demoted = store.demote_crew_lesson(&global.id, "p1", 1).unwrap();
+    assert_eq!(
+        (
+            demoted.scope.as_str(),
+            demoted.project_id.as_deref(),
+            demoted.rev
+        ),
+        ("repo", Some("p1"), 2)
+    );
+    let rows = store.crew_lessons("repo", Some("p1")).unwrap();
+    assert_eq!(rows.len(), 51);
+    let hidden: Vec<&CrewLesson> = rows.iter().filter(|lesson| lesson.hidden_by_cap).collect();
+    assert_eq!(hidden.len(), 1);
+    assert_ne!(hidden[0].id, demoted.id, "the demoted lesson is not hidden");
+    assert_eq!(
+        hidden[0].rev, 2,
+        "a cap hide is a visible change and bumps rev"
+    );
+    assert_eq!(store.crew_lessons_counts("p1").unwrap(), (50, 0, 1));
 }

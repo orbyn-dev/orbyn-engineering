@@ -29,6 +29,8 @@ mod http_probe;
 mod index_flags;
 mod leases;
 pub mod lessons;
+mod lessons_person;
+pub mod lessons_view;
 pub(crate) mod lifecycle;
 mod needs_you;
 mod persist;
