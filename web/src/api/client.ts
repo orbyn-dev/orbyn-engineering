@@ -3,6 +3,7 @@ import { serviceUrl } from "./origin";
 import { forgetPersonKey, personKeyHeaders } from "./personKey";
 import { readToken } from "./token";
 import { inBackground, inLane, laneFor } from "./lanes";
+import { forgetSharedReads, sharedKey, sharedRead } from "./singleFlight";
 import type { CreateBranch } from "../generated/CreateBranch";
 import type { RewindResult } from "../generated/RewindResult";
 import type { SwitchBranch } from "../generated/SwitchBranch";
@@ -173,12 +174,21 @@ export interface RequestOptions {
   priority?: "foreground";
   /** Extra headers, such as the nonce a confirmed account action sends back. */
   headers?: Record<string, string>;
+  /**
+   * Opt in: identical reads in flight share one request. Set only on reads a screen can start
+   * from more than one place at the same moment; a write never joins one.
+   */
+  share?: boolean;
+  /** Never join a read already in flight: the answer decides something, so it must be read now. */
+  fresh?: boolean;
 }
 
 const unreachable = () => new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0);
 
 /**
  * Slow reads queue in their own lane (see `lanes.ts`); everything else goes straight out.
+ * A read that opts into sharing joins an identical one in flight (see `singleFlight.ts`), and
+ * a write drops those flights so a read made after it never joins one sent before it.
  * The slow-request warning counts queued time.
  */
 export function request<T>(
@@ -190,7 +200,16 @@ export function request<T>(
 ): Promise<T> {
   const slow = setTimeout(() => onSlowRequest(), SLOW_REQUEST_MS);
   const lane = options.priority === "foreground" ? "interactive" : laneFor(method, path);
-  const sent = inLane(lane, signal, (laned) => send<T>(method, path, body, laned, options.headers), unreachable, inBackground());
+  const background = inBackground();
+  const sendInLane = (own: AbortSignal | undefined) =>
+    inLane(lane, own, (laned) => send<T>(method, path, body, laned, options.headers), unreachable, background);
+  let sent: Promise<T>;
+  if (options.share === true && options.fresh !== true) {
+    sent = sharedRead(sharedKey(method, path, body, options.headers), sendInLane, signal);
+  } else {
+    if (method !== "GET") forgetSharedReads();
+    sent = sendInLane(signal);
+  }
   return sent.finally(() => clearTimeout(slow));
 }
 
@@ -404,7 +423,8 @@ export const api = {
     request<ProjectRemoval>("DELETE", `/api/projects/${q(id)}${confirm ? "?confirm=true" : ""}`),
 
   skills: (signal?: AbortSignal) => request<SkillPackStatus>("GET", "/api/skills", undefined, signal),
-  info: (signal?: AbortSignal) => request<ServerInfo>("GET", "/api/info", undefined, signal),
+  info: (signal?: AbortSignal) =>
+    request<ServerInfo>("GET", "/api/info", undefined, signal, { share: true }),
   signIn: (key: string) => request<void>("POST", "/auth/session", { key }),
 
   projects: (signal?: AbortSignal) => request<Project[]>("GET", "/api/projects", undefined, signal),
@@ -415,13 +435,14 @@ export const api = {
     request<FsListing>("GET", `/api/fs/browse${path ? `?path=${q(path)}` : ""}`, undefined, signal),
 
   threads: (projectId: string, signal?: AbortSignal) =>
-    request<Thread[]>("GET", `/api/threads?project_id=${q(projectId)}`, undefined, signal),
+    request<Thread[]>("GET", `/api/threads?project_id=${q(projectId)}`, undefined, signal, { share: true }),
   editors: (signal?: AbortSignal) => request<EditorInfo[]>("GET", "/api/editors", undefined, signal),
   openInEditor: (threadId: string, body: { path: string; editor: string; line?: number; column?: number }) =>
     request<void>("POST", `/api/threads/${q(threadId)}/files/open`, body),
   openPreviewFile: (threadId: string, path: string) =>
     request<PreviewTab>("POST", `/api/threads/${q(threadId)}/previews/file`, { path }),
-  allThreads: (signal?: AbortSignal) => request<Thread[]>("GET", "/api/threads", undefined, signal),
+  allThreads: (signal?: AbortSignal) =>
+    request<Thread[]>("GET", "/api/threads", undefined, signal, { share: true }),
   adoptScratch: (threadId: string) => request<Project>("POST", `/api/threads/${q(threadId)}/adopt`, {}),
   thread: (id: string, signal?: AbortSignal) =>
     request<Thread>("GET", `/api/threads/${q(id)}`, undefined, signal),

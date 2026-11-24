@@ -175,6 +175,8 @@ describe("visible projects", () => {
 describe("the quick refresh", () => {
   const stub = () => ({
     projects: vi.spyOn(api, "projects").mockResolvedValue([]),
+    threads: vi.spyOn(api, "threads").mockResolvedValue([]),
+    allThreads: vi.spyOn(api, "allThreads").mockResolvedValue([]),
     workspace: vi.spyOn(api, "workspace").mockResolvedValue({ configured: true, default_url: "", library: null, targets: [] } as never),
     updates: vi.spyOn(api, "updates").mockResolvedValue({ library: {}, app: {}, engines: [], checked_at: null, error: null } as never),
     approvals: vi.spyOn(api, "pendingApprovals").mockResolvedValue([]),
@@ -199,6 +201,20 @@ describe("the quick refresh", () => {
       await useWorkspace.getState().refreshAll();
       expect(spies.workspace).toHaveBeenCalledTimes(1);
       expect(spies.updates).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.values(spies).forEach((spy) => spy.mockRestore());
+    }
+  });
+
+  it("reads one global thread list on a full refresh instead of one read per project", async () => {
+    const a = { ...projects[0]!, id: "a" };
+    const b = { ...projects[0]!, id: "b" };
+    useWorkspace.setState({ projects: { data: [a, b], error: null, loading: false }, threadIds: {}, threads: {} });
+    const spies = stub();
+    try {
+      await useWorkspace.getState().refreshAll();
+      expect(spies.allThreads).toHaveBeenCalledTimes(1);
+      expect(spies.threads).not.toHaveBeenCalled();
     } finally {
       Object.values(spies).forEach((spy) => spy.mockRestore());
     }

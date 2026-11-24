@@ -23,7 +23,7 @@ export function cloneAddress(text: string): string {
 
 /** The base directory setting, when the person has chosen one. */
 function useBaseDirectory(): string | null {
-  const preferences = useAsync("add-project-base-directory", (signal) => readPreferences(signal));
+  const preferences = useAsync("add-project-base-directory", (signal) => readPreferences(null, signal));
   const value = (Array.isArray(preferences.data) ? preferences.data : []).find((view) => view.key === "add_project_base_directory")?.value;
   return typeof value === "string" && value.trim() ? value : null;
 }

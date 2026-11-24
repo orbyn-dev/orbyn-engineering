@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
+import { resetSharedReadsForTests } from "./api/singleFlight";
 import { forgetKept } from "./lib/keptData";
 import { resetLimitsStore } from "./lib/limitsStore";
 import { useThreadLogs } from "./product/state/threadLogs";
@@ -10,6 +11,7 @@ import { useWorkspace } from "./product/state/workspace";
 
 afterEach(() => {
   cleanup();
+  resetSharedReadsForTests();
   forgetKept();
   resetLimitsStore();
   useWorkspace.setState(useWorkspace.getInitialState(), true);
