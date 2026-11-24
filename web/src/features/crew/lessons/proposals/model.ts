@@ -42,10 +42,9 @@ export const REVIEW_NOTE_BUSY =
 export const REVIEW_FOOT =
   "Approve saves the skill in skills-local on this device and lists it on the Skills page as Personal. Available to engines through Orbyn's skills tools. Applies to all your projects. Added to the Default selection. Cancel leaves the proposal where it is.";
 export const APPROVING_BANNER = "Adding the skill. It is not listed or used until the write has finished.";
-/** The review page while the proposal can no longer be approved: reading stays, Approve is off. */
-// Honest temporary copy: the copy is not drawn in a frame, and waits for the Designer's wording.
-export const STALE_APPROVE_OFF =
-  "Approve is off: a lesson it was based on was deleted or turned off. You can still read the text; go back to dismiss it.";
+/** The review page's sentence while the repository's lessons have not been read yet, so the active count is unknown. */
+export const STALE_APPROVE_OFF_WAITING =
+  "This proposal is stale: a lesson it was based on was deleted or turned off. Go back to dismiss it.";
 /** The refused-write frame's sentence: that frame offers Try again, so it is drawn on a failed write and not on the scan refusal. */
 export const REFUSED_FOOT = "Nothing was written. Approve or Try again sends the same text once more.";
 /** The footer when the service did not answer: the write may or may not have been made, so "nothing was written" is not said. */
@@ -128,13 +127,18 @@ export function basedOnWords(proposal: SkillProposal, lessons: readonly Lesson[]
 }
 
 /** The amber line of a proposal whose pattern lost a lesson: the count now, and that Approve is off. */
-export function staleWords(proposal: SkillProposal, lessons: readonly Lesson[]): string {
+export function cardStaleWords(proposal: SkillProposal, lessons: readonly Lesson[]): string {
   const active = activeLessons(proposal, lessons);
   const rest = "You can still read the text or dismiss it; Approve is off.";
   // The contract turns Approve off when any source lesson is gone, so three or more can remain: say what is true then.
   if (active >= 3)
     return `Based on ${active} active ${lessonsOnly(active)} now, ${proposal.lessons.length} when it was proposed. A lesson it was based on was deleted or turned off, so the text no longer matches its lessons. ${rest}`;
   return `Based on ${active} active ${lessonsOnly(active)} now: needs 3. A lesson it was based on was deleted or turned off, so the pattern no longer has three active ones. ${rest}`;
+}
+
+/** The review page's sentence once the repository's lessons say how many of the proposal's lessons remain active. */
+export function staleWords(active: number): string {
+  return `This proposal is stale: it now rests on ${active} ${active === 1 ? "lesson" : "lessons"} and needs 3. Go back to dismiss it.`;
 }
 
 /** The name a proposal's text gives, falling back to the row's own word. */
