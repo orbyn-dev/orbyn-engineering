@@ -198,7 +198,8 @@ impl Core {
             ForgeActor::LocalCaller
         };
         let outcomes = self.process_forge_lane(target, crew_id, actor, now).await?;
-        self.crew_watch_forge_main(target, crew_id, now).await?;
+        // Holds the whole watch and correction chain; boxed to keep it off this process's stack.
+        Box::pin(self.crew_watch_forge_main(target, crew_id, now)).await?;
         Ok(outcomes)
     }
 
@@ -781,7 +782,8 @@ impl Core {
         let deadline = Instant::now() + Duration::from_secs(30 * 60);
         let mut ids = Vec::new();
         for (number, command) in commands.iter().enumerate() {
-            let ran = run_line(command, &scratch.dir, deadline).await;
+            // run_line holds a whole command run; boxed to keep it off this merge chain's stack.
+            let ran = Box::pin(run_line(command, &scratch.dir, deadline)).await;
             ids.push(self.merge_evidence(&entry.task_id, &combined, number, &ran, now)?);
             if ran.outcome != CheckOutcome::Pass {
                 return Err(CoreError::Invalid(
