@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AutopilotTrust } from "../../../generated/AutopilotTrust";
 import type { DashboardHistory } from "./contract";
-import { barHeights, compact, costText, costTotals, duration, fill, fromHistory, fromTrust, medianOf, percent, rate, text, whole } from "./model";
+import { barHeights, compact, costText, costTotals, duration, fill, fromHistory, fromTrust, medianOf, percent, rate, text, waitingKindLabel, whole, workingWhyLabel } from "./model";
 
 const trust = (over: Partial<AutopilotTrust> = {}): AutopilotTrust => ({
   window_days: 60,
@@ -127,6 +127,65 @@ describe("from the history read", () => {
   it("drops a cost with no usable amount", () => {
     const model = fromHistory(history({ engines: [{ name: "codex", model: null, merges: 1, unaided: 1, reverted: 0, cost: { unit: "tokens", amount: -4 } }] }), 60);
     expect(model.engines[0]?.cost).toBeNull();
+  });
+});
+
+describe("the Right now row", () => {
+  it("carries the live rows from the history read and none from the trust record", () => {
+    const model = fromHistory(history({
+      live: {
+        needs_you: [{ kind: "merge_waiting", count: 1 }, { kind: "task_needs_person", count: 2 }],
+        working: [{ why: "retry", count: 1 }],
+        truncated: true,
+      },
+    }), 60);
+    expect(model.live).toEqual({
+      needsYou: [{ kind: "merge_waiting", count: 1 }, { kind: "task_needs_person", count: 2 }],
+      working: [{ why: "retry", count: 1 }],
+      truncated: true,
+    });
+    expect(fromTrust(trust()).live).toBeNull();
+    expect(fromHistory(history({ live: undefined }), 60).live).toBeNull();
+    expect(fromHistory(history({ live: null }), 60).live).toBeNull();
+  });
+
+  it("keeps an unknown kind in the order given, drops a zero or unusable count, and keeps an unknown reason", () => {
+    const model = fromHistory(history({
+      live: {
+        needs_you: [
+          { kind: "future_kind" as never, count: 2 },
+          { kind: "merge_waiting", count: 0 },
+          { kind: "task_needs_person", count: 1 },
+        ],
+        working: [
+          { why: "future_why" as never, count: 2 },
+          { why: "running", count: -1 },
+          { why: "verifying", count: 1 },
+        ],
+        truncated: false,
+      },
+    }), 60);
+    expect(model.live?.needsYou).toEqual([{ kind: "future_kind", count: 2 }, { kind: "task_needs_person", count: 1 }]);
+    expect(model.live?.working).toEqual([{ why: "future_why", count: 2 }, { why: "verifying", count: 1 }]);
+  });
+
+  it("gives every wait and reason its own words, and an unknown one its raw word", () => {
+    expect(waitingKindLabel("task_needs_person")).toBe("Asked a question");
+    expect(waitingKindLabel("merge_waiting")).toBe("A merge that waits");
+    expect(waitingKindLabel("manual_check")).toBe("A check only you can make");
+    expect(waitingKindLabel("could_not_start")).toBe("A task that could not start");
+    expect(waitingKindLabel("could_not_stop")).toBe("A task that could not be stopped");
+    expect(waitingKindLabel("tripwire_stop")).toBe("A task stopped by a trip wire");
+    expect(waitingKindLabel("worker_stopped_twice")).toBe("A worker that stopped twice");
+    expect(waitingKindLabel("watch_failing")).toBe("A watch that is failing");
+    expect(waitingKindLabel("watch_could_not_run")).toBe("A watch that could not run");
+    expect(waitingKindLabel("background_review")).toBe("A background run to review");
+    expect(waitingKindLabel("future_kind")).toBe("future kind");
+    expect(workingWhyLabel("running")).toBe("Running");
+    expect(workingWhyLabel("verifying")).toBe("Checks running");
+    expect(workingWhyLabel("retry")).toBe("Retrying after a failed check");
+    expect(workingWhyLabel("fix")).toBe("Fixing a review finding");
+    expect(workingWhyLabel("future_why")).toBe("future_why");
   });
 });
 

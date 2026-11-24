@@ -1041,6 +1041,8 @@ export const FRAMES = {
   /** KC3: the Taskboard's words from the one needs-you field (needs-one-source-working-board and needs-one-source-board). */
   "needs-one-source-working-board": { route: "#/crew/board", scenario: "crew-board-working" },
   "needs-one-source-board": { route: "#/crew/board", scenario: "crew-board-needs-kinds" },
+  /** KC3: the dashboard's Right now row (needs-one-source-dashboard), on the dashboard's sample frame. */
+  "needs-one-source-dashboard": { route: "#/preview/crew/dash-default", scenario: "crew" },
   "kc8-resumed-inbox": { route: "#/crew/inbox", scenario: "crew-worker-stopped-twice" },
 
   /** Crew, the escape log (Crew Designs v79), on the real escape routes over the mock's crew-escapes scenarios. A detail

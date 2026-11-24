@@ -112,6 +112,23 @@ export interface Cycle {
   slowest: number | null;
 }
 
+/** One kind of wait that is in the inbox now, and how many of it. */
+export interface LiveWait {
+  kind: string;
+  count: number;
+}
+/** One reason workers own live work now, and how many of them. */
+export interface LiveWork {
+  why: string;
+  count: number;
+}
+/** The dashboard's "Right now" row (KC3): the live read as the page draws it, in the order the service gave. */
+export interface DashLive {
+  needsYou: LiveWait[];
+  working: LiveWork[];
+  truncated: boolean;
+}
+
 export interface DashModel {
   /** Where the figures come from: the history read, or the trust record alone (which has no autonomy, cycle time, cost or weeks). */
   source: "history" | "trust";
@@ -131,8 +148,56 @@ export interface DashModel {
   areas: AreaRow[];
   reverts: RevertRow[] | null;
   recent: HistoryMerge[] | null;
+  /** The live row. `null` when the read carries none (an older service) or the trust record answers. */
+  live: DashLive | null;
   truncated: boolean;
 }
+
+/** Every kind of wait the service can send, in the page's own words. */
+const WAITING_KIND_LABELS = new Map<string, string>([
+  ["task_needs_person", "Asked a question"],
+  ["merge_waiting", "A merge that waits"],
+  ["manual_check", "A check only you can make"],
+  ["could_not_start", "A task that could not start"],
+  ["could_not_stop", "A task that could not be stopped"],
+  ["tripwire_stop", "A task stopped by a trip wire"],
+  ["worker_stopped_twice", "A worker that stopped twice"],
+  ["watch_failing", "A watch that is failing"],
+  ["watch_could_not_run", "A watch that could not run"],
+  ["background_review", "A background run to review"],
+]);
+/** A kind this page does not know is never dropped: its raw word is drawn with underscores as spaces. */
+export function waitingKindLabel(kind: string): string {
+  const raw = text(kind).replace(/_/g, " ").replace(/\s+/g, " ").trim();
+  return WAITING_KIND_LABELS.get(kind) ?? (raw || "unknown");
+}
+
+/** Every reason workers own live work now, in the page's own words. */
+const WORKING_WHY_LABELS = new Map<string, string>([
+  ["running", "Running"],
+  ["verifying", "Checks running"],
+  ["retry", "Retrying after a failed check"],
+  ["fix", "Fixing a review finding"],
+]);
+/** A reason this page does not know is drawn as the raw word. */
+export function workingWhyLabel(why: string): string {
+  return WORKING_WHY_LABELS.get(why) ?? (text(why) || "unknown");
+}
+
+const liveOf = (live: DashboardHistory["live"]): DashLive | null => {
+  if (!live || typeof live !== "object" || Array.isArray(live)) return null;
+  const waits = Array.isArray(live.needs_you) ? live.needs_you : [];
+  const works = Array.isArray(live.working) ? live.working : [];
+  return {
+    needsYou: waits
+      .map((row) => ({ kind: typeof row?.kind === "string" ? row.kind : "", count: count(row?.count) }))
+      .filter((row) => row.count > 0),
+    working: works
+      .map((row) => ({ why: typeof row?.why === "string" ? row.why : "", count: count(row?.count) }))
+      .filter((row) => row.count > 0),
+    truncated: live.truncated === true,
+  };
+};
 
 const nameOf = (value: unknown, fallback = "unknown") => text(value) || fallback;
 
@@ -156,6 +221,7 @@ export function fromTrust(trust: AutopilotTrust): DashModel {
     areas: rows(trust.areas).map((row) => ({ name: nameOf(row?.name), merges: count(row?.rate?.merges), reverted: count(row?.rate?.reverts), unaided: null })),
     reverts: null,
     recent: null,
+    live: null,
     truncated: trust.truncated === true,
   };
 }
@@ -196,6 +262,7 @@ export function fromHistory(history: DashboardHistory, asked: Period): DashModel
     areas: list<DashboardHistory["areas"][number]>(history.areas, MAX_ROWS).map((row) => ({ name: nameOf(row?.name), merges: count(row?.merges), reverted: count(row?.reverted), unaided: whole(row?.unaided) })),
     reverts: list<DashboardHistory["reverts"][number]>(history.reverts, MAX_LIST).map((row) => ({ title: nameOf(row?.title, "A merge"), at: count(row?.at), by: BY.get(row?.by) ?? "unknown", certain: typeof row?.certain === "boolean" ? row.certain : null })),
     recent: list<HistoryMerge>(history.recent, MAX_LIST).map((row) => ({ title: nameOf(row?.title, "A merge"), engine: nameOf(row?.engine), at: count(row?.at), needed: NEEDED.get(row?.needed) ?? "other", checks: CHECKS.get(row?.checks) ?? "none" })),
+    live: liveOf(history.live),
     truncated: history.truncated === true,
   };
 }
