@@ -86,6 +86,14 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   none), set in Settings › General. A crew's spend is the per-task tally summed over its tasks, so the two budgets cannot disagree; a new
   task is refused once the crew has spent it, and a task already running is never stopped by it.
 
+## Stack budget
+
+Tokio worker and test threads have 2 MiB stacks, and the check chain runs deep: forge watch ->
+`prepare_and_verify_forge_correction` -> `verify_forge_correction` -> `crew_verify` -> `run_check`
+-> `run_line`. Futures over 16 KiB are `Box::pin`ed at their await sites, and `tests/future_sizes.rs`
+measures each and guards a budget with 25% headroom. Re-measure with
+`cargo test -p orbyn-core --lib -- crew::tests::future_sizes --nocapture`.
+
 ## Known limits of Preview
 
 - Background processes a worker starts outlive its turn. They can edit protected files after a check has read

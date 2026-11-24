@@ -513,7 +513,8 @@ impl Core {
         let deadline = Instant::now() + CHECK_TIME * 2;
         let mut ran = 0u32;
         for command in &commands {
-            let result = run_line(command, &scratch.dir, deadline).await;
+            // run_line holds a whole command run; boxed to keep it off this merge chain's stack.
+            let result = Box::pin(run_line(command, &scratch.dir, deadline)).await;
             ran += 1;
             if result.outcome != CheckOutcome::Pass {
                 return Ok(Err(

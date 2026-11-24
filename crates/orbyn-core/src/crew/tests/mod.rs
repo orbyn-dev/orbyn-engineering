@@ -3,6 +3,7 @@
 //! rules and the verifier. `core`, `starts` and `runs` use a real `Core` with a scripted engine:
 //! `starts` for what a start refuses, `runs` for a task from its first turn to its end.
 
+mod audit_edges;
 mod autopilot;
 mod autopilot_areas;
 mod autopilot_bisect;
@@ -16,7 +17,6 @@ mod autopilot_risk;
 mod autopilot_rules;
 mod autopilot_support;
 mod autopilot_watch;
-mod audit_edges;
 mod background;
 mod background_daily;
 mod background_issue_listeners;
@@ -64,6 +64,7 @@ mod flow_map;
 mod forge_corrections;
 mod forge_merge;
 mod forge_resolve;
+mod future_sizes;
 mod hardening;
 mod harness;
 mod http_probe;

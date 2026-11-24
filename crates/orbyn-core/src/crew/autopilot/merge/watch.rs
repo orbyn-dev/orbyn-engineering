@@ -179,7 +179,9 @@ const CHECK_TIME: Duration = Duration::from_secs(15 * 60);
 async fn passes(scratch: &Scratch, commands: &[String]) -> bool {
     let deadline = Instant::now() + CHECK_TIME * 2;
     for command in commands {
-        if run_line(command, &scratch.dir, deadline).await.outcome != CheckOutcome::Pass {
+        // run_line holds a whole command run; boxed to keep it off this watch chain's stack.
+        let ran = Box::pin(run_line(command, &scratch.dir, deadline)).await;
+        if ran.outcome != CheckOutcome::Pass {
             return false;
         }
     }

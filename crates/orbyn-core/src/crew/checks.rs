@@ -146,7 +146,14 @@ pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
     let description = format!("{}: {}", kind_name(check), check.id);
     match check.typed_params() {
         Ok(CheckParams::Run(params)) => {
-            run_command(&params.run, params.expect_exit.unwrap_or(0), site, started, None).await
+            run_command(
+                &params.run,
+                params.expect_exit.unwrap_or(0),
+                site,
+                started,
+                None,
+            )
+            .await
         }
         Ok(CheckParams::FileScope(params)) => {
             file_scope(&params.only, site, description, started).await
@@ -904,7 +911,8 @@ async fn repo_required(
                 started,
             );
         }
-        let one = run_line(line, site.worktree, site.deadline).await;
+        // run_line holds a whole command run; boxed to keep it off this check chain's stack.
+        let one = Box::pin(run_line(line, site.worktree, site.deadline)).await;
         match one.outcome {
             CheckOutcome::Pass => log.push_str(&format!("pass: {line}\n")),
             CheckOutcome::Fail => {

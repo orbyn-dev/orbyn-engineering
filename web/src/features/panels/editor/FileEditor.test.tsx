@@ -57,6 +57,27 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
+it("labels Find, Go to line and Save for a Windows client", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  serve();
+  open();
+  await editor();
+  expect(screen.getByRole("button", { name: "Find Ctrl+F" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Go to line Ctrl+G" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("title", "Save Ctrl+S");
+});
+
+it("uses the Mac user agent for editor labels when navigator.platform is empty", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("");
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X)");
+  serve();
+  open();
+  await editor();
+  expect(screen.getByRole("button", { name: "Find ⌘F" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Go to line ⌘G" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("title", "Save ⌘S");
+});
+
 it("opens a text file as an editor: crumb, text, cursor, language, and Saved (editor-default)", async () => {
   serve();
   open();
@@ -156,9 +177,11 @@ it("Reload brings back what is on disk and clears the unsaved mark", async () =>
 });
 
 it("finds, counts and steps through matches, and says No matches (editor-find)", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   serve();
   open();
   await editor();
+  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("title", "Save ⌘S");
   const find = screen.getByRole("button", { name: "Find ⌘F" });
   expect(find).toHaveAttribute("aria-pressed", "false");
   await userEvent.click(find);
@@ -190,6 +213,7 @@ it("opens Find with Ctrl+F in this test window (⌘F on a Mac) from the code", a
 });
 
 it("goes to a line, says how many there are, and clamps a number outside them (editor-goto)", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   serve();
   open();
   const box = await editor();

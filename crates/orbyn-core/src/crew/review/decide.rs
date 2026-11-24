@@ -186,7 +186,8 @@ impl Core {
             deadline: std::time::Instant::now() + REPRO_TIME,
             base: subject_run.base_commit.as_deref(),
         };
-        let ran = run_check(&check, &site).await;
+        // run_check holds every check kind's runner; boxed to keep it off this review chain's stack.
+        let ran = Box::pin(run_check(&check, &site)).await;
         Ok((check, ran, worktree))
     }
 

@@ -31,6 +31,10 @@ const load = (signal?: AbortSignal) => readKeybindings(signal);
  */
 const COLUMNS = "minmax(150px, 1fr) minmax(120px, 230px) 150px 72px";
 
+/** The service reports a clash under the normalised key (trimmed, lower case); a rule in the file may spell it otherwise. */
+const normalisedKey = (key: string) => key.split("+").map((part) => part.trim().toLowerCase()).join("+");
+const sameKey = (a: string, b: string) => normalisedKey(a) === normalisedKey(b);
+
 export function KeybindingsSection() {
   const view = useAsync("keybindings", load, { keep: true });
   const [filter, setFilter] = useState("");
@@ -105,7 +109,7 @@ export function KeybindingsSection() {
                 .filter((rule) => !rule.remove && `${commandLabel(rule.command)} ${rule.command} ${whenPhrase(rule.when)} ${rule.key}`.toLowerCase().includes(filter.toLowerCase()))
                 .map((rule) => {
                   const id = `${rule.command}:${rule.key}:${rule.when ?? ""}`;
-                  const clash = view.data.conflicts.find((conflict) => conflict.key === rule.key && (conflict.when ?? "") === (rule.when ?? "") && conflict.commands.includes(rule.command));
+                  const clash = view.data.conflicts.find((conflict) => sameKey(conflict.key, rule.key) && ((conflict.when ?? "") === (rule.when ?? "") || !rule.when?.trim()) && conflict.commands.includes(rule.command));
                   return (
                     <div key={id} role="row" className="set-tr" style={{ gridTemplateColumns: COLUMNS }}>
                       <span role="cell" title={rule.command}>{commandLabel(rule.command)}</span>

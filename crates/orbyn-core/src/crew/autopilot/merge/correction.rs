@@ -93,7 +93,7 @@ impl Drop for Leases<'_> {
 impl Core {
     /// Local work only: build the exact rollback in a checkout, bind it and verify it. Nothing is queued, pushed or opened on
     /// the forge. `actor` is `person` for a Revert answer and `watch` for the code's own verification of a broken main.
-    pub(super) async fn prepare_and_verify_forge_correction(
+    pub(in crate::crew) async fn prepare_and_verify_forge_correction(
         self: &Arc<Self>,
         parent: &str,
         target: &MergeTarget,

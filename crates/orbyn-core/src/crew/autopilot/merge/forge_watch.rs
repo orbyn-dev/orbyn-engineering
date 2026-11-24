@@ -254,10 +254,10 @@ impl Core {
                 branch,
                 owed: None,
             };
-            if let Err(error) = self
-                .crew_watch_forge_main(&target, None, crate::util::unix_now())
-                .await
-            {
+            // Holds the whole watch and correction chain; boxed to keep it off this tick's stack.
+            let watched =
+                Box::pin(self.crew_watch_forge_main(&target, None, crate::util::unix_now())).await;
+            if let Err(error) = watched {
                 tracing::warn!(%error, "Crew forge watch needs another observation");
             }
         }
