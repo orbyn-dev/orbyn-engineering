@@ -1542,8 +1542,10 @@ are refused before a request is sent.
 
 The local environment publishes a theme in `GET /api/info` as `environment_theme`:
 the `default_theme` preference and `default_theme_set_at`, the Unix milliseconds when
-it was last written. Every write of `default_theme`, from settings or `orbyn theme`,
-stamps that time, and clearing the theme clears it; a client cannot write the time.
+it was last written. Every write of `default_theme` the service accepts, from settings
+or `orbyn theme`, stamps that time, and clearing the theme clears it; a client cannot
+write the time. A shipped `orbyn` CLI holds only the service token, so the enforced
+`Person` route refuses its `theme set` and `clear` ([the CLI reference](cli.md)).
 A theme is `system`, `light`, `dark` or a theme id. Each viewer applies a published
 theme once, when its `set_at` is newer than the one it last applied, at startup and
 when the window takes focus; after that the viewer's own choice stays. An unknown id
