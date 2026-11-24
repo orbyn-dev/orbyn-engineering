@@ -193,6 +193,8 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/issues/item/create"],
   ["POST", "/api/issues/item/comment"],
   ["POST", "/api/issues/item/react"],
+  ["POST", "/api/issues/item/update"],
+  ["POST", "/api/issues/item/state"],
   ["POST", "/api/issues/start-thread"],
   ["POST", "/api/threads/{id}/issue-links"],
   ["POST", "/api/threads/{id}/issue-links/remove"],
@@ -252,11 +254,6 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
  * `personKey.test.ts` fails once `routes.json` lists one: move that line into `PERSON_ROUTES` then.
  */
 export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern: string])[] = [
-  // Issues (docs/issues.md, "Issue writes and list controls"): the two writes of the tracker's own data. The five Issues writes of the
-  // first slice (connect, disconnect, link, unlink, start-thread) are in `routes.json` and so in `PERSON_ROUTES`. These two are not
-  // built in the service yet: when they land in `routes.json` the test below fails and each line moves into `PERSON_ROUTES`.
-  ["POST", "/api/issues/item/update"],
-  ["POST", "/api/issues/item/state"],
   // Multi-repository projects (docs/multi-repo.md, PR #923): every write is Person-class. The reads (`GET .../repos`) are not.
   // Folder scan and `.code-workspace` import (docs/multi-repo.md, "Folder scan"): Person-class although it writes nothing, because it reads a folder the person picked.
 ];

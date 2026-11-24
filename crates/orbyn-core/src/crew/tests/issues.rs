@@ -117,6 +117,7 @@ impl IssueSource for Fake {
             linked_pull_requests: vec![],
             linked_threads: vec![],
             reactions: None,
+            states: None,
         })
     }
 }
@@ -1615,6 +1616,7 @@ mod writes {
                 linked_pull_requests: vec![],
                 linked_threads: vec![],
                 reactions: None,
+                states: None,
             })
         }
 
@@ -1653,6 +1655,7 @@ mod writes {
                     content: format!("{reaction:?}"),
                     count: u32::from(on),
                 }]),
+                states: None,
             })
         }
     }
