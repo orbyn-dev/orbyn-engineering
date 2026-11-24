@@ -3,6 +3,7 @@ import type { IssueActor } from "./IssueActor";
 import type { IssueComment } from "./IssueComment";
 import type { IssueLabel } from "./IssueLabel";
 import type { IssueLinkedPull } from "./IssueLinkedPull";
+import type { IssueReactionCount } from "./IssueReactionCount";
 import type { IssueState } from "./IssueState";
 import type { TrackerKind } from "./TrackerKind";
 
@@ -14,7 +15,12 @@ comments: Array<IssueComment>, linked_pull_requests: Array<IssueLinkedPull>,
 /**
  * Threads that link this issue.
  */
-linked_threads: Array<string>, tracker: TrackerKind, scope: string, key: string, 
+linked_threads: Array<string>, 
+/**
+ * The reactions on the issue as the tracker reports them, in the tracker's own words. Absent when the
+ * tracker does not report them; a write route answers them for a tracker that does (docs/issues.md).
+ */
+reactions?: Array<IssueReactionCount> | null, tracker: TrackerKind, scope: string, key: string, 
 /**
  * How the tracker writes the key: `#412`, `ORB-87`.
  */
