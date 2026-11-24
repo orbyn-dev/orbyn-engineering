@@ -63,7 +63,7 @@ The two SDKs cannot live in the single file (native files, webpack chunks), so `
 --ignore-scripts`, so no install script runs), plus `THIRD_PARTY_NOTICES.md`. Anthropic's `@anthropic-ai/claude-agent-sdk-<platform>`
 packages (the `claude` binary) are left out, because the host runs the person's own `claude`; the Cursor SDK's package for the build
 platform is in. `scripts/prepare-bundle.mjs` copies it to `build/sdk`, which `tauri.conf.json` ships as `Contents/Resources/sdk`
-(macOS arm64 only, like the host; other targets get an empty folder).
+on macOS arm64 and beside the app exe on Windows x64, as `scripts/host-plan.mjs` decides; other targets get an empty folder.
 
 `src/sdkLocation.mjs` picks where the host imports an SDK from: `ORBYN_CLAUDE_SDK_MODULE` / `ORBYN_CURSOR_SDK_MODULE` first, then
 `<dir of the executable>/sdk/node_modules/<pkg>`, then `<dir>/../Resources/sdk/node_modules/<pkg>`, else the bare package name
@@ -394,23 +394,30 @@ and `auth.ts` (stored keys, sign-in); Muse `usage.ts` and `MuseUsageHome.ts` (th
 history, a file reader the host does not need; the core reads them, parity J27); Muse `isMuseUsageLimitFailure` and `museUsageLimitResetAt` (retry scheduling from refusal text: the core owns
 retry, and Muse's quota reset already rides `retry.resetsAt`); Codex `resetCredits` (this document's limit shape has no field for it).
 
-## In the app bundle (macOS arm64)
+## In the app bundle (macOS arm64 and Windows x64)
 
-`scripts/prepare-bundle.mjs` builds the host and stages it as `binaries/orbyn-engine-host-<triple>`; every other target
-stages an empty placeholder (Tauri needs each `externalBin` file), and Intel Macs keep the Rust drivers.
-`tauri.conf.json` lists it in `externalBin` and sets `bundle.macOS.entitlements` to `entitlements.plist`, which Tauri
-applies when it signs each sidecar and the app. The desktop shell sets `ORBYN_ENGINE_HOST` to the binary's path for
+`scripts/prepare-bundle.mjs` builds the host and stages it as `binaries/orbyn-engine-host-<triple>`, and stages the SDKs as
+the `sdk` resource: macOS arm64 and Windows x64 both do this, as `scripts/host-plan.mjs` decides. Every other target stages
+an empty placeholder (Tauri needs each `externalBin` file) and an empty sdk folder, and Intel Macs keep the Rust drivers.
+The Windows x64 bundle is **not observed**: no Windows build of the host was run, Authenticode signing does not exist, and
+SmartScreen will show for it like for the installer.
+`tauri.conf.json` lists it in `externalBin` and no longer sets `bundle.macOS.entitlements` (one file would apply to the
+app and every sidecar). `scripts/sign-macos-release.sh` signs the host with `entitlements.plist` and every other binary
+with none. The desktop shell sets `ORBYN_ENGINE_HOST` to the binary's path for
 `orbynd` when the file is non-empty; with none, the service keeps the Rust drivers.
 
 Checked by hand on macOS arm64: a stand-in app bundle signed ad hoc in Tauri's order (sidecars, then the bundle,
 hardened runtime) verifies, and the host launched from inside it answers the handshake. With the same signing but
 without the entitlements the host crashes (SIGTRAP), so the entitlements are required. Not checked: a full `tauri build`
-(the app was not built), notarization, other platforms. The entitlements apply to the whole app, not only the host.
+(the app was not built), notarization, other platforms. Only the host gets the entitlements; the app and every other
+binary keep the default hardened runtime with none. The per-binary signing script is built and tested on a fake bundle,
+but no release job runs it and it has not run with a Developer ID.
 
 **Why the host needs them.** The host is a Node single executable application: it embeds Node, whose V8 engine compiles
 JavaScript at run time. Under the hardened runtime that needs `allow-jit` and `allow-unsigned-executable-memory`, and
 `disable-library-validation` lets the injected Node runtime load code that was not signed by the same team. Without them the
 host crashes at start (SIGTRAP, checked by hand). Nothing else in the app needs them. They are a risk for `orbynd`
 (docs/account-threat-model.md control 6), so a release must carry them on `orbyn-engine-host` only;
-`scripts/check-macos-entitlements.sh --release` enforces that. Signing a release that way (one entitlement file per
-binary, not the single `bundle.macOS.entitlements` Tauri applies to everything) is Planned with Developer ID signing.
+`scripts/check-macos-entitlements.sh --release` enforces that. `scripts/sign-macos-release.sh` signs a release that way:
+the host with `entitlements.plist`, everything else with none, inside-out and then the bundle. It runs after `tauri build`
+and before the dmg and updater archive are made; no release job calls it yet.

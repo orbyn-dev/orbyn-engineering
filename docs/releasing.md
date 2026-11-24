@@ -19,6 +19,8 @@ How a release is built today. Nothing here publishes: a person reviews and promo
 
 A local build is ad-hoc signed the same way by `scripts/sign-adhoc-macos.sh` (run it after `npm run build` in `desktop/`; it signs the whole `.app` with `-`, no hardened runtime, and verifies it). Without it a local bundle fails `codesign --verify --deep --strict` ("code has no resources but signature indicates they must be present"), because Tauri does not sign a bundle when it has no identity.
 
+`scripts/sign-macos-release.sh` is the per-binary release signer (the host with `engine-host/entitlements.plist`, everything else with none); no release job runs it yet.
+
 In both macOS cases `codesign --verify --deep --strict` runs on the `.app` and the dmg's `.app`, and a failure fails the job.
 
 There is no Apple Developer account, so no Developer ID and no notarization. Expect a Gatekeeper block on a downloaded Mac build and SmartScreen on the Windows installer. Tester steps: [first run on an unsigned build](setup.md#first-run-on-an-unsigned-build).

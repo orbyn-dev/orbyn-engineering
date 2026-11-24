@@ -5,6 +5,7 @@ import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeF
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hostPlan } from "./host-plan.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const windows = process.platform === "win32";
@@ -59,19 +60,23 @@ for (const program of ["orbynd", "orbyn"]) {
   );
 }
 
-// The engine host (Node single executable) ships for macOS arm64 only. Every other target stages an empty
-// placeholder, because Tauri needs each `externalBin` file to exist; the app treats an empty file as "no host"
-// and the service keeps the Rust drivers. Intel Macs stay on the Rust drivers (the executable crashes there).
+// The engine host (Node single executable) and its SDKs ship for macOS arm64 and Windows x64, as
+// `scripts/host-plan.mjs` decides. Every other target stages an empty placeholder and an empty sdk folder,
+// because Tauri needs each `externalBin` file and resource path to exist; the app treats an empty file as
+// "no host" and the service keeps the Rust drivers. Intel Macs stay on the Rust drivers (the executable
+// crashes there), and a Windows arm64 host would need an arm64 Node.
 const hostFile = join(root, "desktop/src-tauri/binaries", `orbyn-engine-host-${target}${suffix}`);
-if (target === "aarch64-apple-darwin" && process.platform === "darwin" && process.arch === "arm64") {
+const plan = hostPlan({ target, platform: process.platform, arch: process.arch });
+if (plan.ship) {
   const hostDir = join(root, "engine-host");
   run("npm", ["ci"], hostDir);
   run("npm", ["run", "build:sea"], hostDir);
-  cpSync(join(hostDir, "dist/orbyn-engine-host"), hostFile);
+  cpSync(join(hostDir, "dist", `orbyn-engine-host${suffix}`), hostFile);
   chmodSync(hostFile, 0o755);
-  // The Claude and Cursor SDKs: a production node_modules the host loads from Contents/Resources/sdk, beside Contents/MacOS
-  // (engine-host/src/sdkLocation.mjs). Their native files cannot live inside the single executable.
-  run("npm", ["run", "prepare:sdks"], hostDir);
+  // The Claude and Cursor SDKs: a production node_modules the host loads from a `sdk` folder beside its executable:
+  // Contents/Resources/sdk beside Contents/MacOS on macOS, beside the app exe on Windows (engine-host/src/sdkLocation.mjs).
+  // Their native files cannot live inside the single executable.
+  run("npm", ["run", "prepare:sdks", "--", "--platform", plan.sdk.platform, "--arch", plan.sdk.arch], hostDir);
   cpSync(join(hostDir, "dist/sdk"), join(build, "sdk"), { recursive: true });
 } else {
   writeFileSync(hostFile, "");
