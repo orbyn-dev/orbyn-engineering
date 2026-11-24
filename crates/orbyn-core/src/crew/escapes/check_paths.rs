@@ -363,9 +363,15 @@ mod tests {
             judge(&[add("tests/a.rs"), add("tests/b.rs")], "tests/a.rs").unwrap_err(),
             "The change adds tests/b.rs, but a check adds only the proposed file tests/a.rs."
         );
+        // A dotted first segment is refused by the plain-path rule before the policy rule; a policy file
+        // with a plain name reaches the policy rule itself (the two cases below are different refusals).
         assert_eq!(
             judge(&[add("tests/a.rs"), add(".orbyn/crew.json")], "tests/a.rs").unwrap_err(),
-            ".orbyn/crew.json: A check cannot add a policy, CI or manifest file. It may only add a test file."
+            ".orbyn/crew.json: The path must be a plain relative path with no `..`, `.git` or backslash."
+        );
+        assert_eq!(
+            judge(&[add("tests/a.rs"), add("package.json")], "tests/a.rs").unwrap_err(),
+            "package.json: A check cannot add a policy, CI or manifest file. It may only add a test file."
         );
         let mut modified = add("tests/a.rs");
         modified.status = 'M';
