@@ -6,7 +6,8 @@ use super::preview::{page_act, wait_target};
 use super::render::{render_height, render_title};
 use super::{
     ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, issue_query,
-    issue_ref_value, issue_summary_value, matches_words, number, pull_number, text, wait_seconds,
+    issue_ref_value, issue_summary_value, matches_words, number, pull_checks_value,
+    pull_detail_value, pull_filter, pull_limit, pull_list_value, pull_number, text, wait_seconds,
 };
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -260,6 +261,22 @@ impl Core {
                 "linked": self.store.linked_pulls(&own.id, &own.project_id)?,
                 "watched": self.thread_watches(&own.id)?,
             }),
+            "orbyn_pull_request_list" => {
+                let filter = pull_filter(args)?;
+                let limit = pull_limit(args)?;
+                let pulls = self.project_pulls(&own.project_id, &filter, false).await?;
+                pull_list_value(&pulls, limit)
+            }
+            "orbyn_pull_request_read" => {
+                let number = pull_number(args)?;
+                let detail = self.project_pull(&own.project_id, number, false).await?;
+                pull_detail_value(&detail, self.issue_body_for_tool(&detail.body))
+            }
+            "orbyn_pull_request_checks" => {
+                let number = pull_number(args)?;
+                let checks = self.pull_checks(&own.project_id, number, false).await?;
+                pull_checks_value(number, &checks)
+            }
             "orbyn_schedule_list" => {
                 let tasks = self.store.tasks()?;
                 let tasks: Vec<_> = tasks
