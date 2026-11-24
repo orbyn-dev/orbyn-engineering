@@ -68,6 +68,13 @@ describe("the proposed skill's review page", () => {
       screen.getByText("Check where a redirect or returnTo link goes before changing code that follows it."),
     ).toBeInTheDocument();
     expect(screen.getByText("Based on")).toBeInTheDocument();
+    const basedOn = screen.getByText("Based on").nextElementSibling as HTMLElement;
+    expect(basedOn).toHaveTextContent(
+      "Task 5b2d8a3 and 1 more · Task 8c1d4f6 · Task 3e6a9b0 and 1 more · 3 lessons",
+    );
+    expect(screen.getByRole("link", { name: "Task 5b2d8a3" })).toHaveAttribute("href", "#/threads/5b2d8a3");
+    expect(screen.getByRole("link", { name: "Task 8c1d4f6" })).toHaveAttribute("href", "#/threads/8c1d4f6");
+    expect(screen.getByRole("link", { name: "Task 3e6a9b0" })).toHaveAttribute("href", "#/threads/3e6a9b0");
     expect(screen.getByText("3 lessons")).toBeInTheDocument();
     expect(screen.getByText("Will be saved in")).toBeInTheDocument();
     const field = screen.getByRole("textbox", { name: "Skill text" });

@@ -19,6 +19,7 @@ export const lesson = (over: Partial<Lesson> = {}): Lesson => ({
   uses: 3,
   left_out_of: 0,
   skill: null,
+  evidence: [],
   created_at: "2026-11-07T15:30:00Z",
   updated_at: "2026-11-07T15:30:00Z",
   last_used_at: "2026-11-07T16:10:00Z",

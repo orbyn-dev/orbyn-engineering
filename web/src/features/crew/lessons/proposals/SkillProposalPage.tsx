@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { NETWORK_ERROR } from "../../../../api/client";
 import { useLayoutWidth, type LayoutWidth } from "../../../../lib/useLayout";
@@ -10,6 +10,7 @@ import { useUi } from "../../../../product/state/ui";
 import { useCrewPreview } from "../../autopilot/approvals/useCrew";
 import { Frame } from "../../shared/Frame";
 import { Ic } from "../../shared/parts";
+import { EvidenceId } from "../LessonParts";
 import { useLessons } from "../useLessons";
 import { markSkillAdded } from "./marks";
 import {
@@ -31,6 +32,7 @@ import {
   staleWords,
 } from "./model";
 import { skillProposalsApi } from "./api";
+import type { SkillProposal } from "./types";
 import { useProposals } from "./useProposals";
 import "./proposals.css";
 
@@ -216,9 +218,7 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
             ) : null}
             <span>Based on</span>
             <b>
-              {!proposal.can_approve && active !== null
-                ? `(${lessonsWord(active)} now, ${proposal.lessons.length} when it was proposed)`
-                : lessonsWord(proposal.lessons.length)}
+              <BasedOn proposal={proposal} active={active} />
             </b>
             <span>Applies to</span>
             <b>
@@ -287,6 +287,38 @@ function ProposalReview({ id, repo }: { id: string; repo: string }) {
         </p>
       </div>
     </Frame>
+  );
+}
+
+/**
+ * The review's Based on row: each source lesson's first evidence id, joined by " · ", with " and N more" when it holds
+ * further ids; then the count of lessons the proposal was made from. A lesson with no evidence contributes nothing, so
+ * its count still stands alone. The ids link as a lesson card's do: a task to its thread, an escape to Escapes.
+ */
+function BasedOn({ proposal, active }: { proposal: SkillProposal; active: number | null }) {
+  const sources = proposal.lessons.filter((one) => one.evidence.length > 0);
+  const count =
+    !proposal.can_approve && active !== null
+      ? `(${lessonsWord(active)} now, ${proposal.lessons.length} when it was proposed)`
+      : lessonsWord(proposal.lessons.length);
+  return (
+    <>
+      {sources.length > 0 ? (
+        <>
+          <span style={{ color: "var(--color-muted)" }}>
+            {sources.map((one, index) => (
+              <Fragment key={one.id}>
+                {index > 0 ? " · " : null}
+                <EvidenceId one={one.evidence[0]!} />
+                {one.evidence.length > 1 ? ` and ${one.evidence.length - 1} more` : null}
+              </Fragment>
+            ))}
+          </span>
+          {" · "}
+        </>
+      ) : null}
+      <span>{count}</span>
+    </>
   );
 }
 

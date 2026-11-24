@@ -109,6 +109,7 @@ const couldNotStopRows = (name: string | null = "Add tests for the redirect, inc
     engine: "codex",
     model: "GPT-5.5",
     task_kind: "test",
+    question_hidden: false,
   },
 ];
 
