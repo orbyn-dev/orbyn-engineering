@@ -116,6 +116,7 @@ impl IssueSource for Fake {
             comments: vec![],
             linked_pull_requests: vec![],
             linked_threads: vec![],
+            reactions: None,
         })
     }
 }
@@ -1532,6 +1533,379 @@ mod linear {
                 .iter()
                 .any(|r| query_of(r).contains("OrbynTeams")),
             "a stored team key needs no teams read"
+        );
+    }
+}
+
+mod writes {
+    //! The issue write routes' owning rules through a real core: which tracker's own write is built, what a write
+    //! validates before anything is sent, and what it refuses (docs/issues.md, "Create, comment, react"). The
+    //! trackers' wire calls are tested against each tracker's own fake; here the source counts the writes it receives,
+    //! so a refusal can be shown to have sent nothing.
+
+    use super::*;
+    use crate::issues::{NewIssue, display_name};
+    use orbyn_contracts::{CommentIssue, CreateIssue, IssueComment, IssueReaction, ReactIssue};
+
+    /// A source whose write may or may not be built. Every write it receives is counted; a read answers nothing.
+    struct Writes {
+        can_write: bool,
+        creates: AtomicUsize,
+        comments: AtomicUsize,
+        reactions: AtomicUsize,
+    }
+
+    impl Writes {
+        fn new(can_write: bool) -> Arc<Self> {
+            Arc::new(Self {
+                can_write,
+                creates: AtomicUsize::new(0),
+                comments: AtomicUsize::new(0),
+                reactions: AtomicUsize::new(0),
+            })
+        }
+
+        fn writes(&self) -> usize {
+            self.creates.load(Ordering::SeqCst)
+                + self.comments.load(Ordering::SeqCst)
+                + self.reactions.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl IssueSource for Writes {
+        async fn list(&self, _scope: &str, _query: &IssueQuery) -> Result<ScopeList> {
+            Ok(ScopeList {
+                issues: vec![],
+                counts: None,
+                next: None,
+            })
+        }
+
+        async fn get(&self, _scope: &str, key: &str) -> Result<IssueDetail> {
+            Err(CoreError::NotFound(format!("issue {key}")))
+        }
+
+        fn can_write(&self) -> bool {
+            self.can_write
+        }
+
+        async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
+            self.creates.fetch_add(1, Ordering::SeqCst);
+            let mut summary = issue(TrackerKind::Github, "7", "2026-11-24T00:00:00Z");
+            summary.scope = scope.to_owned();
+            summary.title = new.title.to_owned();
+            Ok(IssueDetail {
+                summary,
+                body: new.body.to_owned(),
+                comments: vec![],
+                linked_pull_requests: vec![],
+                linked_threads: vec![],
+                reactions: None,
+            })
+        }
+
+        async fn comment(&self, scope: &str, key: &str, body: &str) -> Result<IssueComment> {
+            self.comments.fetch_add(1, Ordering::SeqCst);
+            Ok(IssueComment {
+                id: format!("{scope} {key}"),
+                author: None,
+                body: body.to_owned(),
+                created_at: "2026-11-24T00:00:00Z".into(),
+            })
+        }
+
+        async fn react(
+            &self,
+            scope: &str,
+            key: &str,
+            _comment: Option<&str>,
+            reaction: IssueReaction,
+            on: bool,
+        ) -> Result<IssueDetail> {
+            self.reactions.fetch_add(1, Ordering::SeqCst);
+            let mut summary = issue(TrackerKind::Github, key, "2026-11-24T00:00:00Z");
+            summary.scope = scope.to_owned();
+            Ok(IssueDetail {
+                summary,
+                body: String::new(),
+                comments: vec![],
+                linked_pull_requests: vec![],
+                linked_threads: vec![],
+                reactions: Some(vec![orbyn_contracts::IssueReactionCount {
+                    content: format!("{reaction:?}"),
+                    count: u32::from(on),
+                }]),
+            })
+        }
+    }
+
+    /// A world with one connected tracker and a source that counts writes. The host, scope and token are the ones
+    /// each tracker's `connect` accepts (docs/issues.md, "Trackers and credentials").
+    async fn connected(
+        kind: TrackerKind,
+        scope: &str,
+        can_write: bool,
+    ) -> (super::super::harness::World, Arc<Writes>) {
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        let (host, token) = match kind {
+            TrackerKind::Gitlab => (Some("https://gitlab.example.test"), Some("glpat-test")),
+            TrackerKind::Forgejo => (Some("https://forgejo.example.test"), Some("fj-test")),
+            TrackerKind::AzureDevops => (Some("https://dev.azure.com/acme"), Some("az-test")),
+            TrackerKind::Linear => (None, Some("lin-test")),
+            TrackerKind::Github => (None, None),
+        };
+        w.core
+            .connect_issue_tracker(
+                kind,
+                ConnectTracker {
+                    host: host.map(str::to_owned),
+                    scope: Some(scope.to_owned()),
+                    token: token.map(str::to_owned),
+                },
+            )
+            .await
+            .unwrap();
+        let source = Writes::new(can_write);
+        w.core.issues.set_source(kind, source.clone());
+        (w, source)
+    }
+
+    fn create(kind: TrackerKind, scope: &str) -> CreateIssue {
+        CreateIssue {
+            tracker: kind,
+            scope: scope.to_owned(),
+            title: "Crash on start".into(),
+            body: Some("It breaks.".into()),
+            labels: vec!["bug".into()],
+            assignees: vec!["12".into()],
+            template: None,
+        }
+    }
+
+    fn comment(kind: TrackerKind, scope: &str) -> CommentIssue {
+        CommentIssue {
+            tracker: kind,
+            scope: scope.to_owned(),
+            key: "7".into(),
+            body: "Looks good.".into(),
+        }
+    }
+
+    fn react(kind: TrackerKind, scope: &str) -> ReactIssue {
+        ReactIssue {
+            tracker: kind,
+            scope: scope.to_owned(),
+            key: "7".into(),
+            comment_id: None,
+            reaction: IssueReaction::Heart,
+            on: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_tracker_without_its_own_write_answers_422_unsupported_and_sends_nothing() {
+        for (kind, scope) in [
+            (TrackerKind::Gitlab, "team/app"),
+            (TrackerKind::Forgejo, "team/app"),
+            (TrackerKind::AzureDevops, "acme/app"),
+            (TrackerKind::Linear, "ENG"),
+        ] {
+            let (w, source) = connected(kind, scope, false).await;
+            let wanted = format!("{} issue writes arrive in a later update.", display_name(kind));
+            let create = w.core.create_issue(create(kind, scope)).await.map(|_| ());
+            let comment = w.core.comment_issue(comment(kind, scope)).await.map(|_| ());
+            let react = w.core.react_issue(react(kind, scope)).await.map(|_| ());
+            for (what, refused) in [("create", create), ("comment", comment), ("react", react)] {
+                let Err(error) = refused else {
+                    panic!("{kind:?} {what} answered a success");
+                };
+                assert_eq!(error.status(), 422, "{kind:?} {what}: {error:?}");
+                assert_eq!(error.code(), "unsupported", "{kind:?} {what}");
+                assert_eq!(error.public_message(), wanted, "{kind:?} {what}");
+            }
+            assert_eq!(source.writes(), 0, "{kind:?}: nothing reached the tracker");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_create_checks_every_field_and_writes_one_issue() {
+        let (w, source) = connected(TrackerKind::Gitlab, "team/app", true).await;
+        let valid = create(TrackerKind::Gitlab, "team/app");
+        let detail = w.core.create_issue(valid.clone()).await.unwrap();
+        assert_eq!(
+            (detail.summary.title.as_str(), detail.summary.scope.as_str()),
+            ("Crash on start", "team/app")
+        );
+        assert_eq!(source.writes(), 1);
+        for (what, input) in [
+            (
+                "an empty title",
+                CreateIssue {
+                    title: "   ".into(),
+                    ..valid.clone()
+                },
+            ),
+            (
+                "a title with a line break",
+                CreateIssue {
+                    title: "one\ntwo".into(),
+                    ..valid.clone()
+                },
+            ),
+            (
+                "a title over 256 characters",
+                CreateIssue {
+                    title: "x".repeat(257),
+                    ..valid.clone()
+                },
+            ),
+            (
+                "a body over 64 KiB",
+                CreateIssue {
+                    body: Some("x".repeat(64 * 1024 + 1)),
+                    ..valid.clone()
+                },
+            ),
+            (
+                "more than 50 labels",
+                CreateIssue {
+                    labels: (0..51).map(|n| format!("label-{n}")).collect(),
+                    ..valid.clone()
+                },
+            ),
+            (
+                "an empty label name",
+                CreateIssue {
+                    labels: vec![String::new()],
+                    ..valid.clone()
+                },
+            ),
+            (
+                "more than 25 assignees",
+                CreateIssue {
+                    assignees: (0..26).map(|n| n.to_string()).collect(),
+                    ..valid.clone()
+                },
+            ),
+            (
+                "a template id",
+                CreateIssue {
+                    template: Some("bug".into()),
+                    ..valid.clone()
+                },
+            ),
+        ] {
+            let refused = w.core.create_issue(input).await.map(|_| ());
+            assert!(
+                matches!(refused, Err(CoreError::Invalid(_))),
+                "{what}: {refused:?}"
+            );
+            assert_eq!(source.writes(), 1, "{what}: nothing was written");
+        }
+        let template = CreateIssue {
+            template: Some("bug".into()),
+            ..valid.clone()
+        };
+        let error = w.core.create_issue(template).await.unwrap_err();
+        assert_eq!(error.public_message(), "Unknown issue template.");
+    }
+
+    #[tokio::test]
+    async fn a_comment_is_one_to_64_kib_and_not_blank() {
+        let (w, source) = connected(TrackerKind::Gitlab, "team/app", true).await;
+        let stored = w
+            .core
+            .comment_issue(comment(TrackerKind::Gitlab, "team/app"))
+            .await
+            .unwrap();
+        assert_eq!(stored.body, "Looks good.");
+        assert_eq!(source.writes(), 1);
+        for (what, body) in [
+            ("a blank comment", " \n\t ".to_owned()),
+            ("a comment over 64 KiB", "x".repeat(64 * 1024 + 1)),
+        ] {
+            let refused = w
+                .core
+                .comment_issue(CommentIssue {
+                    body,
+                    ..comment(TrackerKind::Gitlab, "team/app")
+                })
+                .await
+                .map(|_| ());
+            assert!(
+                matches!(refused, Err(CoreError::Invalid(_))),
+                "{what}: {refused:?}"
+            );
+            assert_eq!(source.writes(), 1, "{what}: nothing was written");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_reaction_takes_a_plain_comment_id_and_answers_the_issue_with_its_counts() {
+        let (w, source) = connected(TrackerKind::Gitlab, "team/app", true).await;
+        let detail = w
+            .core
+            .react_issue(react(TrackerKind::Gitlab, "team/app"))
+            .await
+            .unwrap();
+        assert_eq!(detail.reactions.unwrap()[0].count, 1);
+        assert_eq!(source.writes(), 1);
+        for comment_id in ["bad\nid".to_owned(), String::new()] {
+            let refused = w
+                .core
+                .react_issue(ReactIssue {
+                    comment_id: Some(comment_id),
+                    ..react(TrackerKind::Gitlab, "team/app")
+                })
+                .await
+                .map(|_| ());
+            assert!(
+                matches!(refused, Err(CoreError::Invalid(_))),
+                "{refused:?}"
+            );
+            assert_eq!(source.writes(), 1, "a refused id wrote nothing");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_scope_outside_the_connection_is_refused_and_nothing_is_written() {
+        let (w, source) = connected(TrackerKind::Gitlab, "team/app", true).await;
+        for (what, refused) in [
+            (
+                "create",
+                w.core
+                    .create_issue(create(TrackerKind::Gitlab, "other/repo"))
+                    .await
+                    .map(|_| ()),
+            ),
+            (
+                "comment",
+                w.core
+                    .comment_issue(comment(TrackerKind::Gitlab, "other/repo"))
+                    .await
+                    .map(|_| ()),
+            ),
+            (
+                "react",
+                w.core
+                    .react_issue(react(TrackerKind::Gitlab, "other/repo"))
+                    .await
+                    .map(|_| ()),
+            ),
+        ] {
+            assert!(
+                matches!(refused, Err(CoreError::Invalid(_))),
+                "{what}: {refused:?}"
+            );
+        }
+        assert_eq!(
+            source.writes(),
+            0,
+            "nothing was written outside the connection"
         );
     }
 }
