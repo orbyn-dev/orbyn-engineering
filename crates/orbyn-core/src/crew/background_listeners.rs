@@ -21,7 +21,7 @@
 //! while it was off fire once per pass, unless the issue's label set was already claimed. A project is read only through the one tracker reader that can answer for it (the connected
 //! tracker its origin remote names; Linear names no project and answers none), so a project with no reader, an
 //! untrusted folder and a crew that is off spend no event and start nothing. A `dependency_update` crew reads its
-//! project's tracker for dependency or advisory updates: GitHub answers from its open Dependabot alerts (one page of
+//! project's tracker for dependency or advisory updates: GitHub answers from its open Dependabot alerts (up to 10 pages of
 //! 100) and every other tracker answers [`DependencyFeed::Cannot`], so those spend no event and start nothing. A crew
 //! baselines on its first pass that gets a feed: every update it selects is claimed and nothing starts, so alerts that
 //! were already open are never replayed; only a later unclaimed update starts a run. The start seam still refuses what
@@ -574,7 +574,12 @@ impl Core {
             // kept only after every selected update is claimed, so a pass that could not claim them all baselines again.
             // The marker is per stored ecosystem, so a crew pointed at another ecosystem baselines the alerts already open there
             // instead of firing them one per pass.
-            let marker = dependency_baseline(&crew.id, wanted);
+            let marker = dependency_baseline(
+                &crew.id,
+                tracker_name(reader.tracker),
+                &reader.scope,
+                wanted,
+            );
             let baseline = match self.store.background_event_claimed(&marker) {
                 Ok(kept) => !kept,
                 Err(error) => {
@@ -597,7 +602,8 @@ impl Core {
                     continue;
                 }
                 let tag = event_tag(&update.key);
-                let identity = format!("dependency_update:{}:{tag}", crew.id);
+                let identity =
+                    dependency_claim(&crew.id, tracker_name(reader.tracker), &reader.scope, &tag);
                 match self.store.claim_background_event(&identity) {
                     Ok(true) => {}
                     Ok(false) => continue,
@@ -614,7 +620,7 @@ impl Core {
                 self.fire_background_event(
                     &crew.id,
                     "dependency_update",
-                    &format!("dependency_update:{tag}"),
+                    &format!("dependency_update:{}:{tag}", event_tag(&reader.scope)),
                 )
                 .await;
                 // One start attempt per crew per pass.
@@ -858,10 +864,18 @@ fn refusal_reason(error: &CoreError) -> &'static str {
     }
 }
 
-/// The baseline marker of a dependency-update crew for its stored ecosystem (none means every ecosystem).
-fn dependency_baseline(crew: &str, ecosystem: Option<&str>) -> String {
+/// The baseline marker of a dependency-update crew for its tracker, repository scope and stored ecosystem (none means
+/// every ecosystem). The scope comes from the project's current remote, so a crew pointed at another repository
+/// baselines that repository's alerts instead of replaying them.
+fn dependency_baseline(crew: &str, tracker: &str, scope: &str, ecosystem: Option<&str>) -> String {
     let tag = event_tag(&ecosystem.unwrap_or_default().to_ascii_lowercase());
-    format!("dependency_update:{crew}:baseline:{tag}")
+    format!("dependency_update:{crew}:{tracker}:{scope}:baseline:{tag}")
+}
+
+/// The claim of one dependency update: the crew, the tracker and scope, and a short hash of the update's key, so the
+/// same alert number in another repository is another event.
+fn dependency_claim(crew: &str, tracker: &str, scope: &str, tag: &str) -> String {
+    format!("dependency_update:{crew}:{tracker}:{scope}:{tag}")
 }
 
 /// A short hash of a check's name: 16 hex characters of its SHA-256. The name is outside text and can be any length, so

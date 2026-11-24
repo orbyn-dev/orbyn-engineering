@@ -941,8 +941,14 @@ async fn a_dependency_feed_baselines_on_its_first_pass_then_starts_one_run_for_a
     w.core.crew_background_listeners_tick(NOW).await.unwrap();
     assert!(runs_of(&w, &id).is_empty(), "a baseline starts nothing");
     let mut expected = vec![
-        format!("dependency_update:{id}:baseline:{}", event_tag("cargo")),
-        format!("dependency_update:{id}:{}", event_tag("alert-1")),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:baseline:{}",
+            event_tag("cargo")
+        ),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:{}",
+            event_tag("alert-1")
+        ),
     ];
     expected.sort();
     assert_eq!(
@@ -980,9 +986,18 @@ async fn a_dependency_feed_baselines_on_its_first_pass_then_starts_one_run_for_a
         .unwrap();
     assert_eq!(runs_of(&w, &id).len(), 1);
     let mut expected = vec![
-        format!("dependency_update:{id}:baseline:{}", event_tag("cargo")),
-        format!("dependency_update:{id}:{}", event_tag("alert-1")),
-        format!("dependency_update:{id}:{}", event_tag("alert-3")),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:baseline:{}",
+            event_tag("cargo")
+        ),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:{}",
+            event_tag("alert-1")
+        ),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:{}",
+            event_tag("alert-3")
+        ),
     ];
     expected.sort();
     assert_eq!(claims(&w), expected);
@@ -1016,8 +1031,14 @@ async fn a_cannot_feed_keeps_no_marker_and_spends_nothing() {
         .unwrap();
     assert!(runs_of(&w, &id).is_empty(), "the first feed is a baseline");
     let mut expected = vec![
-        format!("dependency_update:{id}:baseline:{}", event_tag("")),
-        format!("dependency_update:{id}:{}", event_tag("alert-1")),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:baseline:{}",
+            event_tag("")
+        ),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:{}",
+            event_tag("alert-1")
+        ),
     ];
     expected.sort();
     assert_eq!(claims(&w), expected);
@@ -1048,8 +1069,14 @@ async fn an_ecosystem_filtered_crew_baselines_only_its_own_ecosystem() {
     w.core.crew_background_listeners_tick(NOW).await.unwrap();
     assert!(runs_of(&w, &id).is_empty(), "a baseline starts nothing");
     let mut expected = vec![
-        format!("dependency_update:{id}:baseline:{}", event_tag("cargo")),
-        format!("dependency_update:{id}:{}", event_tag("alert-1")),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:baseline:{}",
+            event_tag("cargo")
+        ),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:{}",
+            event_tag("alert-1")
+        ),
     ];
     expected.sort();
     assert_eq!(
@@ -1057,6 +1084,69 @@ async fn an_ecosystem_filtered_crew_baselines_only_its_own_ecosystem() {
         expected,
         "only the crew's own ecosystem is claimed"
     );
+}
+
+#[tokio::test]
+async fn a_crew_pointed_at_another_repository_baselines_that_repositorys_alerts() {
+    let w = world(true, good()).await;
+    add_tracker_origin(&w).await;
+    let reader = Issues::new(Vec::new());
+    *reader.dependency.lock().unwrap() = DependencyFeed::Updates(vec![DependencyUpdate {
+        key: "1".into(),
+        ecosystem: Some("cargo".into()),
+    }]);
+    connect_reader(&w, reader.clone()).await;
+    let id = dependency_crew(&w, "Deps", Some("cargo"), true).await;
+    w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    assert!(runs_of(&w, &id).is_empty(), "the first feed is a baseline");
+
+    // The project's remote moves to another repository whose open alerts reuse number 1 and add number 2.
+    run_git(
+        &w.repo,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://gitlab.example.test/team/other.git",
+        ],
+    );
+    *reader.dependency.lock().unwrap() = DependencyFeed::Updates(vec![
+        DependencyUpdate {
+            key: "1".into(),
+            ecosystem: Some("cargo".into()),
+        },
+        DependencyUpdate {
+            key: "2".into(),
+            ecosystem: Some("cargo".into()),
+        },
+    ]);
+    w.core.issues.clear_cache();
+    w.core
+        .crew_background_listeners_tick(NOW + 60)
+        .await
+        .unwrap();
+    assert!(
+        runs_of(&w, &id).is_empty(),
+        "the new repository is baselined, not replayed one alert per pass"
+    );
+    let claimed = claims(&w);
+    for key in ["1", "2"] {
+        assert!(claimed.contains(&format!(
+            "dependency_update:{id}:gitlab:team/other:{}",
+            event_tag(key)
+        )));
+    }
+
+    // An alert opened there after the baseline starts one run.
+    *reader.dependency.lock().unwrap() = DependencyFeed::Updates(vec![DependencyUpdate {
+        key: "3".into(),
+        ecosystem: Some("cargo".into()),
+    }]);
+    w.core
+        .crew_background_listeners_tick(NOW + 120)
+        .await
+        .unwrap();
+    assert_eq!(runs_of(&w, &id).len(), 1);
 }
 
 #[tokio::test]
@@ -1120,7 +1210,10 @@ async fn changing_a_crews_ecosystem_baselines_the_alerts_already_open_there() {
     w.core.crew_background_listeners_tick(NOW).await.unwrap();
     assert!(runs_of(&w, &id).is_empty());
     assert!(
-        claims(&w).contains(&format!("dependency_update:{id}:{}", event_tag("alert-1"))),
+        claims(&w).contains(&format!(
+            "dependency_update:{id}:gitlab:team/app:{}",
+            event_tag("alert-1")
+        )),
         "{:?}",
         claims(&w)
     );
@@ -1139,5 +1232,8 @@ async fn changing_a_crews_ecosystem_baselines_the_alerts_already_open_there() {
         runs_of(&w, &id).is_empty(),
         "an alert already open never fires"
     );
-    assert!(claims(&w).contains(&format!("dependency_update:{id}:{}", event_tag("alert-2"))));
+    assert!(claims(&w).contains(&format!(
+        "dependency_update:{id}:gitlab:team/app:{}",
+        event_tag("alert-2")
+    )));
 }
