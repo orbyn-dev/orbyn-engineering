@@ -25,13 +25,14 @@ pub enum ResumeOutcome {
 
 /// The lane a member belongs to. The launch prefixes are the lane kinds: `worker-` is the builder
 /// and the fix that answers a finding, `reviewer-` is a review lane. Any other member does not resume.
-enum Lane {
+/// Shared with the lead's resume (`crew::resume`), so both paths read a worker's lane one way.
+pub(crate) enum Lane {
     Builder,
     Reviewer,
     Other,
 }
 
-fn lane(member: &str) -> Lane {
+pub(crate) fn lane(member: &str) -> Lane {
     if member
         .strip_prefix("worker-")
         .is_some_and(|rest| !rest.is_empty())

@@ -1,7 +1,7 @@
 //! `crew_resume`: the lead resumes a held Crew task (issue #438). A task waits in `needs_person` when its checks could
 //! not be run or could not decide it; this tool takes it back to `running` and sends its worker another turn, so the same
 //! thread, answer key and budget carry on. It is the lead's own action, as `crew_stop` is: a worker's token is refused
-//! before anything is read, and only the thread that leads the task may call it.
+//! before the task is read, and only the thread that leads the task may call it.
 //!
 //! Not every held task is the lead's to resume. A task whose worker never ran (a start was refused) is started again with
 //! `crew_start`, or retried on another engine by the person; a task waiting on a `manual` check is the person's to answer;
@@ -9,10 +9,11 @@
 //! in any other state are refused, and a refused request writes nothing but the `tool.call` row every Crew tool gets.
 //!
 //! The move is the claim: one transaction takes the task from `needs_person` to `running`, so two windows or a racing stop
-//! cannot both resume it. Then the worker is told through the same guarded path every retry uses (H1, H2), and a prompt that
-//! cannot be queued puts the task back in `needs_person` rather than leaving a `running` task with no worker. The task's
-//! minutes keep running through the wait: a task past its budget is refused, and a resumed one gets its timer again with
-//! what is left (a task held across a restart would otherwise run with no timer at all).
+//! cannot both resume it, and a caller that loses the race is told what moved the task rather than that it ended. Then the
+//! worker is told through the same guarded path every retry uses (H1, H2), and a prompt that cannot be queued puts the task
+//! back in `needs_person` rather than leaving a `running` task with no worker. The task's minutes keep running through the
+//! wait: a restart credits a held task's off time (see `recover::excuse_held_downtime`), the run is read again here so that
+//! credit is counted, a task past its budget is refused, and a resumed one gets its timer again with what is left.
 
 use std::sync::Arc;
 
@@ -26,6 +27,7 @@ use super::tool::invalid;
 use super::{lifecycle, valid_id};
 use crate::app::Core;
 use crate::error::CoreError;
+use crate::store::{CrewTask, Lane, lane};
 use crate::tools::mcp::McpBinding;
 
 /// What the worker is told when its lead resumes it. Code-owned like every retry prompt: it names no check, no part of the
@@ -55,10 +57,20 @@ impl Core {
         binding: &McpBinding,
         args: &Value,
     ) -> Result<Value, CrewError> {
+        self.crew_resume_with(binding, args, |task, text| self.send_to_worker(task, text))
+    }
+
+    /// `crew_resume_tool`, with how the worker is told given, so a test can make the prompt fail and see the task put back.
+    pub(super) fn crew_resume_with(
+        self: &Arc<Self>,
+        binding: &McpBinding,
+        args: &Value,
+        send: impl Fn(&CrewTask, &str) -> Result<(), CrewError>,
+    ) -> Result<Value, CrewError> {
         if !self.crew_enabled() {
             return Err(CrewError::new(ErrorCode::UnknownTool, "crew_resume"));
         }
-        // Only the lead resumes a task. A worker's token is refused before anything is read.
+        // Only the lead resumes a task. A worker's token is refused before the task is read.
         if !matches!(self.crew_caller(binding)?, Caller::Lead) {
             return Err(CrewError::new(
                 ErrorCode::NotAuthorized,
@@ -114,12 +126,20 @@ impl Core {
                  person can retry it on another engine",
             ));
         }
-        // KC8's rule, for the same reason: only the builder or fix lane resumes. A review lane is asked for again by
-        // the review machinery, whose own prompt and state a resume would bypass.
-        if !run.member.starts_with("worker-") {
-            return Err(invalid(
-                "this task is a review lane; a review is asked for again, not resumed",
-            ));
+        // KC8's rule, for the same reason: only the builder or fix lane resumes. A review lane is asked for again by the review
+        // machinery, whose own prompt and state a resume would bypass.
+        match lane(&run.member) {
+            Lane::Builder => {}
+            Lane::Reviewer => {
+                return Err(invalid(
+                    "this task is a review lane; a review is asked for again, not resumed",
+                ));
+            }
+            Lane::Other => {
+                return Err(invalid(
+                    "this task is not a builder or fix task, so the lead does not resume it",
+                ));
+            }
         }
         // A manual check is the person's to answer, not the lead's to skip.
         if !self
@@ -159,6 +179,13 @@ impl Core {
                 "this task's worker is still running; wait for its turn to end before resuming it",
             ));
         }
+        // A restart credits a held task's off time in the background; read the run again for the minutes so the credit is
+        // counted even when startup and this call overlap.
+        let run = self
+            .store
+            .crew_run(&task.id)
+            .map_err(internal)?
+            .ok_or_else(|| invalid("this task has no run"))?;
         // The minutes keep running through the wait the way the live timer counts them; a task past its budget cannot be
         // resumed, and a resumed one gets the rest of its timer back (a task held across a restart would otherwise have none).
         let left = match self.store.crew_brief(&task.id).map_err(internal)? {
@@ -182,14 +209,34 @@ impl Core {
         let moved = match self.store.move_crew_task(&task.id, "running", None) {
             Ok(moved) => moved,
             Err(CoreError::InvalidTransition { .. }) => {
-                return Err(CrewError::new(
-                    ErrorCode::RunEnded,
-                    "this task ended before it could be resumed",
-                ));
+                // Name what is there now: an ending is an ending, but another resume or a move is not one.
+                let now = self
+                    .store
+                    .crew_task(&task.id)
+                    .map_err(internal)?
+                    .map(|task| task.state);
+                return Err(match now.as_deref() {
+                    Some(state) if lifecycle::is_final(state) => CrewError::new(
+                        ErrorCode::RunEnded,
+                        "this task ended before it could be resumed",
+                    ),
+                    Some("running") => CrewError::new(
+                        ErrorCode::InvalidTransition,
+                        "another action resumed this task a moment ago",
+                    ),
+                    Some(state) => CrewError::new(
+                        ErrorCode::InvalidTransition,
+                        format!("this task moved to {state} before it could be resumed"),
+                    ),
+                    None => CrewError::new(
+                        ErrorCode::RunEnded,
+                        "this task ended before it could be resumed",
+                    ),
+                });
             }
             Err(error) => return Err(internal(error)),
         };
-        if let Err(error) = self.send_to_worker(&moved, &resume_prompt()) {
+        if let Err(error) = send(&moved, &resume_prompt()) {
             // No prompt, no resume: put the task back the way it was rather than leave it running with no worker.
             if let Err(back) = self.store.move_crew_task(&task.id, "needs_person", None) {
                 tracing::warn!(

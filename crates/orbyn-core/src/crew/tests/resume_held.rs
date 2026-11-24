@@ -1,8 +1,10 @@
 //! `crew_resume` on fake engines (issue #438): the lead resumes a task held in `needs_person` after its worker reported.
 //! The state goes back to `running` and the same worker is re-admitted with its next turn; a task that is not held, one
-//! that never started, one waiting on a person's check, another thread and a worker's token are refused and leave it alone.
+//! that never started, one waiting on a person's check, a review lane, a merge correction, a busy worker, one past its
+//! minutes and a prompt that cannot be queued are refused (or put back) and leave the task alone, and a task held across a
+//! restart is credited its off time so the minutes it resumes with are right. Another thread and a worker's token are refused.
 
-use orbyn_contracts::CreateThread;
+use orbyn_contracts::{CreateThread, CrewError, ErrorCode, PermissionMode};
 use serde_json::{Value, json};
 
 use super::harness::{Turn, World, bind, brief, key, report, world};
@@ -62,6 +64,40 @@ async fn held(w: &World) -> (String, String) {
 
 async fn resume(w: &World, token: &str, task: &str) -> (Value, bool) {
     w.call(token, "crew_resume", json!({ "task": task })).await
+}
+
+/// Puts a task's stored times where a test needs them, as a long wait or a restart would leave them.
+fn set_times(w: &World, task: &str, created: i64, updated: i64) {
+    w.core
+        .store
+        .reader()
+        .execute(
+            "UPDATE crew_tasks SET created_at = ?2, updated_at = ?3 WHERE id = ?1",
+            rusqlite::params![
+                task,
+                crate::util::format_unix(created),
+                crate::util::format_unix(updated)
+            ],
+        )
+        .unwrap();
+}
+
+/// The lead's binding, for the seam the tool leaves open: `crew_resume_with` takes the binding, so a test can drive the one
+/// effect after the state move (the worker's prompt).
+fn lead_binding(w: &World) -> crate::tools::mcp::McpBinding {
+    crate::tools::mcp::McpBinding {
+        scope: crate::governance::approvals::RunScope {
+            run_id: "run-seam".into(),
+            thread_id: w.lead.clone(),
+            engine: "alpha".into(),
+            family: "alpha".into(),
+            write_scope: None,
+            mode: PermissionMode::Supervised,
+            plan: false,
+        },
+        permission_prompt: false,
+        skills: Vec::new(),
+    }
 }
 
 #[tokio::test]
@@ -281,6 +317,164 @@ async fn a_review_lane_is_not_resumed() {
         "{reply}"
     );
     assert_eq!(w.task(&task.id).state, "needs_person");
+}
+
+#[tokio::test]
+async fn a_restart_credits_a_held_tasks_off_time_so_the_resume_keeps_its_minutes() {
+    let w = world(true, held_script()).await;
+    let (id, _) = held(&w).await;
+    // A task held two hours ago, before the app was off: its thirty minutes have not run out, and the app off time must not
+    // be charged to them. Without the credit the resume below would be refused (see the past-minutes test).
+    let now = crate::util::unix_now();
+    let held_at = now - 2 * 60 * 60;
+    set_times(&w, &id, held_at, held_at);
+    w.core.recover_crew_tasks().await;
+
+    let run = w.core.store.crew_run(&id).unwrap().unwrap();
+    assert!(
+        run.downtime_secs >= 2 * 60 * 60 - 5,
+        "the off time is credited: {}",
+        run.downtime_secs
+    );
+    let credited = w
+        .core
+        .store
+        .list_audit(None, 500)
+        .unwrap()
+        .into_iter()
+        .any(|row| row.action == "crew.task.downtime_excused" && row.target == id);
+    assert!(credited, "the credit has its audit row");
+
+    let (answer, error) = resume(&w, &w.lead_token, &id).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["state"], "running");
+}
+
+#[tokio::test]
+async fn a_task_past_its_minutes_is_not_resumed() {
+    let w = world(true, held_script()).await;
+    let (id, worker) = held(&w).await;
+    // Two hours on a thirty-minute brief with no restart between: the wait counts, so there is no budget left to resume into.
+    let now = crate::util::unix_now();
+    let held_at = now - 2 * 60 * 60;
+    set_times(&w, &id, held_at, held_at);
+    let sent = w.sent_to(&worker).len();
+
+    let (reply, refused) = resume(&w, &w.lead_token, &id).await;
+    assert!(refused, "{reply}");
+    assert_eq!(reply["code"], "invalid_object");
+    assert!(
+        reply["message"].as_str().unwrap().contains("time budget"),
+        "{reply}"
+    );
+    assert_eq!(w.task(&id).state, "needs_person", "the task is as it was");
+    assert_eq!(w.sent_to(&worker).len(), sent, "no new turn");
+}
+
+#[tokio::test]
+async fn a_resumed_task_gets_its_minutes_timer_back() {
+    let w = world(true, held_script()).await;
+    let (id, _) = held(&w).await;
+    // Ten seconds of the thirty-minute brief are left: the timer the resume arms must be the one that ends the task.
+    let now = crate::util::unix_now();
+    let held_at = now - (30 * 60 - 10);
+    set_times(&w, &id, held_at, held_at);
+
+    let (answer, error) = resume(&w, &w.lead_token, &id).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["state"], "running");
+    w.until_state(&id, "stopped").await;
+    let task = w.task(&id);
+    assert_eq!(task.stop_reason.as_deref(), Some("budget"));
+}
+
+#[tokio::test]
+async fn a_merge_correction_is_not_resumed() {
+    let w = world(true, held_script()).await;
+    let (id, worker) = held(&w).await;
+    // The stored shape of a corrective task: the correction owns it, and its owner takes it on without a worker turn.
+    let db = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    db.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+    let body = json!({
+        "parent_task": "parent-task",
+        "parent_commit": "a".repeat(40),
+        "task_id": id,
+        "run_id": "run-correction",
+        "repo": "C:/repo",
+        "remote": "origin",
+        "branch": "main",
+        "base": "b".repeat(40),
+        "candidate": "c".repeat(40),
+        "tree": "d".repeat(40),
+        "checkout": "C:/repo",
+    })
+    .to_string();
+    db.execute(
+        "INSERT INTO crew_forge_corrections(parent_task,task_id,body) VALUES(?1,?2,?3)",
+        rusqlite::params!["parent-task", id, body],
+    )
+    .unwrap();
+    let sent = w.sent_to(&worker).len();
+
+    let (reply, refused) = resume(&w, &w.lead_token, &id).await;
+    assert!(refused, "{reply}");
+    assert_eq!(reply["code"], "invalid_object");
+    assert!(
+        reply["message"]
+            .as_str()
+            .unwrap()
+            .contains("merge correction"),
+        "{reply}"
+    );
+    assert_eq!(w.task(&id).state, "needs_person", "the task is as it was");
+    assert_eq!(w.sent_to(&worker).len(), sent, "no new turn");
+}
+
+#[tokio::test]
+async fn a_busy_worker_is_not_resumed() {
+    let w = world(true, held_script()).await;
+    let (id, worker) = held(&w).await;
+    // A prompt of its own puts the worker mid-turn: the resume must not queue a second one behind it.
+    w.core.runs.enqueue(&worker, "later", &[]).unwrap();
+    w.until("the worker's own turn", |w| {
+        w.core.store.thread(&worker).unwrap().active_run.is_some()
+    })
+    .await;
+    let sent = w.sent_to(&worker).len();
+
+    let (reply, refused) = resume(&w, &w.lead_token, &id).await;
+    assert!(refused, "{reply}");
+    assert_eq!(reply["code"], "invalid_object");
+    assert!(
+        reply["message"].as_str().unwrap().contains("still running"),
+        "{reply}"
+    );
+    assert_eq!(w.task(&id).state, "needs_person", "the task is as it was");
+    assert_eq!(w.sent_to(&worker).len(), sent, "no new turn");
+}
+
+#[tokio::test]
+async fn a_prompt_that_cannot_be_queued_puts_the_task_back() {
+    let w = world(true, held_script()).await;
+    let (id, worker) = held(&w).await;
+    let binding = lead_binding(&w);
+    let args = json!({ "task": id });
+
+    let refused = w.core.crew_resume_with(&binding, &args, |_, _| {
+        Err(CrewError::new(
+            ErrorCode::InvalidObject,
+            "the test sender failed",
+        ))
+    });
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(w.task(&id).state, "needs_person", "the state is put back");
+    assert_eq!(w.sent_to(&worker).len(), 1, "no turn started");
+    assert!(w.core.store.list_queue(&worker).unwrap().is_empty());
+
+    // The rollback leaves a task the same call can resume: it did not move it halfway.
+    let (answer, error) = resume(&w, &w.lead_token, &id).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["state"], "running");
 }
 
 #[test]
