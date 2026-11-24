@@ -1847,7 +1847,7 @@ On the web, one shared needs-you read draws the Inbox's watch and could-not-stop
 | KC6 watches | slices 1 to 3 (#1343, #1353) | watch pages and Inbox rows (#1363) | a run route for "Open the run" |
 | KC7 listeners | plumbing and `issue_label` (#1364) | none needed | `dependency_update` needs a reader feed (#1360) |
 | KC8 resume | merged (#1344); the second death's Inbox item names `stop_detail: worker_stopped_twice` (migration 86) | card line (#1340) | the web Inbox row |
-| KC9 skill proposals | the `skills-local` area and its one writer (#1366, #1411); native discovery of the local skills for Claude (per-run read-only copy, built after this snapshot) | Skills group, proposals, review page, read error (#1358, #1409), hidden on a 404 | the proposal store and the Approve/Dismiss routes; a Windows junction check (#1406) |
+| KC9 skill proposals | the `skills-local` area and its one writer (#1366, #1411); native discovery of the local skills for Claude (per-run read-only copy, built after this snapshot) | Skills group, proposals, review page, read error (#1358, #1409), hidden on a 404 | a Windows junction check (#1406) |
 | KC10 notifications | the once-per-item claim, migration 83 (#1418) | not built | the notification, its settings switch |
 
 **KC9 library side (built after that snapshot):** an approved skill proposal writes the skill into the device's own
@@ -1864,8 +1864,8 @@ the library copy and `skill_search` lists it once. Native discovery is built for
 folder, rebuilt every run and never a link, and adds it with `--add-dir`; only each skill's readable `SKILL.md` is copied,
 and a skill whose name the library holds, one over 64 KiB, or one that hits the locked secret scan is left out. It has not
 been run against a real engine: a real Claude run listing the local skill was not done. Codex and the other engines still
-reach local skills only through the MCP `skill_search` and `skill_load` tools. The proposal store and its routes are not
-built in this slice; the web is built against the mock (#1358).
+reach local skills only through the MCP `skill_search` and `skill_load` tools. The proposal store and its Approve and Dismiss
+routes are built (#1446).
 
 **Not adding:** Docker, a remote host, a crew shared between people, Slack or Discord, inbound webhooks, model fallback
 (our router never swaps an engine) and release channels.

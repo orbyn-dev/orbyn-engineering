@@ -756,6 +756,42 @@ async fn approve_writes_the_skill_sets_the_state_and_audits_file_then_approval()
 }
 
 #[tokio::test]
+async fn an_approved_skill_reaches_a_native_run_through_its_read_only_copy() {
+    let w = quiet().await;
+    let project = project_of(&w);
+    let view = make_proposal(&w, &project);
+    w.core
+        .crew_skill_proposal_approve(&view.proposal.id, &view.proposal.text, view.proposal.rev)
+        .unwrap();
+    let name = "crew-escape-src";
+    let route = |native: bool| crate::tools::skills::SkillRoute {
+        native,
+        selection: Vec::new(),
+        limited: false,
+    };
+    let copy = w._dir.path().join("run").join("skills-local-view");
+
+    // A native default-profile run gets the approved text as a plain file, byte for byte.
+    assert!(w.core.skills.local_view(&route(true), &copy).unwrap());
+    let copied = copy.join(".claude/skills").join(name).join("SKILL.md");
+    assert!(
+        std::fs::symlink_metadata(&copied)
+            .unwrap()
+            .file_type()
+            .is_file()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&copied).unwrap(),
+        std::fs::read_to_string(skill_dir(&w, name).join("SKILL.md")).unwrap()
+    );
+
+    // An engine off the native route gets no copy and reaches the skill through the MCP tools.
+    let other = w._dir.path().join("run").join("other-view");
+    assert!(!w.core.skills.local_view(&route(false), &other).unwrap());
+    assert!(!other.exists());
+}
+
+#[tokio::test]
 async fn a_stale_rev_writes_no_file() {
     let w = quiet().await;
     let project = project_of(&w);
