@@ -253,8 +253,8 @@ function SettingsPageContent({ section, sub, unknown, row: addressRow, onClose }
           className="settings-nav"
           aria-label="Settings sections"
           onFocus={(event) => {
-            // The browser's focus scroll only moves the row when the focused chip is wholly outside it, so at a phone
-            // width the row's last chip can stay half-cut under the edge. Reveal the chip the keyboard reached.
+            // The browser's focus scroll moves the row part-way, centring the chip it reveals, and can stop short of
+            // the end, so at a phone width the last chip stays clipped under the edge. Reveal the chip the keyboard reached.
             if (event.target instanceof HTMLElement) event.target.scrollIntoView?.({ block: "nearest", inline: "nearest" });
           }}
         >
