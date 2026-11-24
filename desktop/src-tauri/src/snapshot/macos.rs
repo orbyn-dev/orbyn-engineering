@@ -131,14 +131,16 @@ pub fn facts() -> PlatformFacts {
     }
 }
 
-pub fn capturer(own_bundle_id: &str) -> Box<dyn Capturer> {
+pub fn capturer(own_bundle_id: &str, include_accessibility: bool) -> Box<dyn Capturer> {
     Box::new(MacCapturer {
         own_bundle_id: own_bundle_id.to_owned(),
+        include_accessibility,
     })
 }
 
 struct MacCapturer {
     own_bundle_id: String,
+    include_accessibility: bool,
 }
 
 impl Capturer for MacCapturer {
@@ -257,12 +259,17 @@ impl Capturer for MacCapturer {
         let image = SCScreenshotManager::capture_image(&filter, &configuration)
             .map_err(|_| Failure::CaptureError)?;
         let png = png_bytes(&image)?;
+        let accessible_text = if self.include_accessibility {
+            super::ax::read_window_text(application.process_id(), &window_title)
+        } else {
+            None
+        };
         Ok(Captured {
             png,
             app_name,
             window_title,
             app_id,
-            accessible_text: None,
+            accessible_text,
         })
     }
 }

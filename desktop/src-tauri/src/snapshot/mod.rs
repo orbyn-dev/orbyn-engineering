@@ -1,8 +1,11 @@
 //! Snap Shot's desktop shell: settings, the pending in-memory captures, one global shortcut and the six commands.
 
-// The collector is pure and tested on every OS; a later task wires it to the platform reader.
+// The collector is pure and tested on every OS. Only the macOS reader wires it to a platform, so
+// non-macOS builds keep the allow instead of reporting every item as unused.
 #[cfg_attr(not(test), allow(dead_code))]
 mod accessible;
+#[cfg(target_os = "macos")]
+mod ax;
 mod commands;
 mod exclusion;
 mod flow;
@@ -190,7 +193,8 @@ impl SnapShot {
         let (id, cancelled) = flow.begin().map_err(|_| "unavailable")?;
         if let Some(cancelled) = cancelled {
             let started = id.clone();
-            let capturer = platform::capturer(&own_bundle_id);
+            let capturer =
+                platform::capturer(&own_bundle_id, settings.snapshot_include_accessibility);
             let _ = std::thread::spawn(move || {
                 flow.run(started, cancelled, capturer, settings, own_bundle_id)
             });
