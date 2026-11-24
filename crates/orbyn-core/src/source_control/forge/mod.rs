@@ -34,6 +34,7 @@ pub use merge::{
     strip_agent_credits, update_pull,
 };
 pub use parse::parse_pull;
+pub(crate) use process::call_input;
 #[cfg(test)]
 pub(crate) use process::with_crew_fixture;
 #[cfg(test)]

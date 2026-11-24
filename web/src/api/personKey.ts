@@ -190,6 +190,9 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   // Issue trackers (beta; behind the issues flag).
   ["POST", "/api/issues/trackers/{tracker}/connect"],
   ["POST", "/api/issues/trackers/{tracker}/disconnect"],
+  ["POST", "/api/issues/item/create"],
+  ["POST", "/api/issues/item/comment"],
+  ["POST", "/api/issues/item/react"],
   ["POST", "/api/issues/start-thread"],
   ["POST", "/api/threads/{id}/issue-links"],
   ["POST", "/api/threads/{id}/issue-links/remove"],

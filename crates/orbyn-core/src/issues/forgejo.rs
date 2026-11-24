@@ -664,6 +664,7 @@ impl IssueSource for Forgejo {
             comments: comments_from(rows),
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
+            reactions: None,
         })
     }
 }

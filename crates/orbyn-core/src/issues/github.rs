@@ -3,13 +3,16 @@
 //! becomes empty, never an error that hides the other issues.
 
 use super::query::{AssigneeFilter, IssueQuery, StateFilter};
-use super::{DependencyFeed, DependencyUpdate, IssueSource, LabelEvent, LabelFeed, ScopeList};
+use super::{
+    DependencyFeed, DependencyUpdate, IssueSource, LabelEvent, LabelFeed, NewIssue, ScopeList,
+};
 use crate::error::{CoreError, Result};
-use crate::source_control::forge::{Forge, call};
+use crate::source_control::forge::{Forge, call, call_input};
 use async_trait::async_trait;
 use orbyn_contracts::{
     IssueActor, IssueCloseReason, IssueComment, IssueCounts, IssueDetail, IssueLabel,
-    IssueLinkedPull, IssueState, IssueStateCategory, IssueSummary, LinkedPullState, TrackerKind,
+    IssueLinkedPull, IssueReaction, IssueReactionCount, IssueState, IssueStateCategory,
+    IssueSummary, LinkedPullState, TrackerKind,
 };
 use serde_json::Value;
 use std::path::PathBuf;
@@ -19,6 +22,15 @@ const LIST_FIELDS: &str = "number,title,url,author,state,stateReason,createdAt,u
 const DEPENDENCY_PAGE_SIZE: usize = 100;
 const DEPENDENCY_PAGES: u32 = 10;
 const DETAIL_FIELDS: &str = "number,title,url,author,state,stateReason,createdAt,updatedAt,closedAt,assignees,labels,comments,body";
+/// The one issue a reaction is added to, by its GraphQL node id: `addReaction` takes a node id, never a number.
+const ISSUE_NODE_QUERY: &str = "query OrbynIssueNode($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){id}}}";
+/// Proves a comment node id belongs to one issue before a reaction is written to it: node ids are global on GitHub,
+/// and a Person-authorized caller must not have a reaction written outside the scope the guard checked.
+const COMMENT_SCOPE_QUERY: &str = "query OrbynCommentScope($id:ID!){node(id:$id){__typename ... on IssueComment{issue{number repository{nameWithOwner}}}}}";
+/// Both directions are idempotent in GitHub: adding a reaction that is already there answers the stored one, and
+/// removing one that is not there answers no reaction without an error.
+const ADD_REACTION_MUTATION: &str = "mutation OrbynAddReaction($subject:ID!,$content:ReactionContent!){addReaction(input:{subjectId:$subject,content:$content}){reaction{content}}}";
+const REMOVE_REACTION_MUTATION: &str = "mutation OrbynRemoveReaction($subject:ID!,$content:ReactionContent!){removeReaction(input:{subjectId:$subject,content:$content}){reaction{content}}}";
 const MAX_COMMENTS: usize = 50;
 
 pub(crate) struct GitHub {
@@ -44,16 +56,15 @@ fn actor(value: &Value) -> Option<IssueActor> {
         })
 }
 
-fn state(value: &Value) -> IssueState {
-    let closed = text(value, "state").eq_ignore_ascii_case("closed");
+/// One state from the words the tracker gave: `gh`'s JSON spells the reason `stateReason` and the REST API
+/// `state_reason`, so both callers share this.
+fn named_state(closed: bool, reason: &str) -> IssueState {
     let close_reason = closed
-        .then(
-            || match text(value, "stateReason").to_ascii_uppercase().as_str() {
-                "NOT_PLANNED" => Some(IssueCloseReason::NotPlanned),
-                "COMPLETED" => Some(IssueCloseReason::Completed),
-                _ => None,
-            },
-        )
+        .then(|| match reason.to_ascii_uppercase().as_str() {
+            "NOT_PLANNED" => Some(IssueCloseReason::NotPlanned),
+            "COMPLETED" => Some(IssueCloseReason::Completed),
+            _ => None,
+        })
         .flatten();
     let name = match (closed, close_reason) {
         (false, _) => "Open",
@@ -71,6 +82,83 @@ fn state(value: &Value) -> IssueState {
     }
 }
 
+fn state(value: &Value) -> IssueState {
+    named_state(
+        text(value, "state").eq_ignore_ascii_case("closed"),
+        &text(value, "stateReason"),
+    )
+}
+
+fn rest_state(value: &Value) -> IssueState {
+    named_state(
+        text(value, "state").eq_ignore_ascii_case("closed"),
+        &text(value, "state_reason"),
+    )
+}
+
+fn labels_of(value: &Value) -> Vec<IssueLabel> {
+    value
+        .get("labels")
+        .and_then(Value::as_array)
+        .map(|labels| {
+            labels
+                .iter()
+                .filter_map(|label| label.get("name").and_then(Value::as_str))
+                .map(|name| IssueLabel {
+                    name: name.to_owned(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn assignees_of(value: &Value) -> Vec<IssueActor> {
+    value
+        .get("assignees")
+        .and_then(Value::as_array)
+        .map(|assignees| assignees.iter().filter_map(actor).collect())
+        .unwrap_or_default()
+}
+
+/// The reactions `gh issue view --json reactionGroups` reports: each group's own word (`THUMBS_UP`) and how many
+/// people used it. A group nobody used is dropped, so the answer is the counts the person can see, not every enum
+/// value. `None` when the answer carries no groups at all, so a reader that cannot report them says so rather than
+/// guessing zero.
+fn reaction_counts(value: &Value) -> Option<Vec<IssueReactionCount>> {
+    let groups = value.get("reactionGroups").and_then(Value::as_array)?;
+    Some(
+        groups
+            .iter()
+            .filter_map(|group| {
+                let content = group
+                    .get("content")
+                    .and_then(Value::as_str)?
+                    .trim()
+                    .to_owned();
+                if content.is_empty() {
+                    return None;
+                }
+                let count = group
+                    .get("users")
+                    .and_then(|users| users.get("totalCount"))
+                    .and_then(Value::as_u64)
+                    .or_else(|| {
+                        group
+                            .get("users")
+                            .and_then(|users| users.get("nodes"))
+                            .and_then(Value::as_array)
+                            .map(|nodes| nodes.len() as u64)
+                    })
+                    .unwrap_or(0);
+                (count > 0).then(|| IssueReactionCount {
+                    content,
+                    count: u32::try_from(count).unwrap_or(u32::MAX),
+                })
+            })
+            .collect(),
+    )
+}
+
 pub(crate) fn summary(scope: &str, value: &Value) -> Option<IssueSummary> {
     let number = value.get("number").and_then(Value::as_u64)?;
     Some(IssueSummary {
@@ -85,23 +173,8 @@ pub(crate) fn summary(scope: &str, value: &Value) -> Option<IssueSummary> {
         created_at: text(value, "createdAt"),
         updated_at: text(value, "updatedAt"),
         closed_at: Some(text(value, "closedAt")).filter(|t| !t.is_empty()),
-        assignees: value
-            .get("assignees")
-            .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(actor).collect())
-            .unwrap_or_default(),
-        labels: value
-            .get("labels")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(|l| l.get("name").and_then(Value::as_str))
-                    .map(|name| IssueLabel {
-                        name: name.to_owned(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
+        assignees: assignees_of(value),
+        labels: labels_of(value),
         comment_count: value
             .get("comments")
             .and_then(Value::as_array)
@@ -258,7 +331,12 @@ pub(crate) fn classify(error: CoreError) -> CoreError {
         CoreError::TrackerNotConnected("Sign in to gh to read GitHub issues.".into())
     } else if any(&["rate limit", "http 429", "secondary rate"]) {
         CoreError::TrackerRateLimited("GitHub asked us to slow down. Try again in a minute.".into())
-    } else if any(&["could not resolve to an issue", "http 404", "not found"]) {
+    } else if any(&[
+        "could not resolve to an issue",
+        "could not resolve to a node",
+        "http 404",
+        "not found",
+    ]) {
         CoreError::NotFound("issue".into())
     } else if any(&[
         "http 403",
@@ -315,11 +393,140 @@ pub(crate) fn list_args(scope: &str, query: &IssueQuery) -> Vec<String> {
     args
 }
 
+fn unreadable() -> CoreError {
+    CoreError::TrackerUnavailable("GitHub answered something unreadable.".into())
+}
+
+fn parse_json(out: &str) -> Result<Value> {
+    serde_json::from_str(out).map_err(|_| unreadable())
+}
+
+/// One `gh` read whose answer must be JSON.
 async fn run(cwd: &std::path::Path, args: &[String]) -> Result<Value> {
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let out = call(Forge::GitHub, cwd, &refs).await.map_err(classify)?;
-    serde_json::from_str(&out)
-        .map_err(|_| CoreError::TrackerUnavailable("GitHub answered something unreadable.".into()))
+    parse_json(&out)
+}
+
+/// One GraphQL call through the person's `gh`. `gh api graphql` can exit zero while its answer holds an `errors`
+/// array, so a refused mutation is read there and never mistaken for a success; the words are classified as every
+/// other `gh` failure is and never passed on.
+async fn graphql(cwd: &std::path::Path, args: &[String]) -> Result<Value> {
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = call(Forge::GitHub, cwd, &refs).await.map_err(classify)?;
+    let value = parse_json(&out)?;
+    if let Some(errors) = value
+        .get("errors")
+        .and_then(Value::as_array)
+        .filter(|errors| !errors.is_empty())
+    {
+        let words: Vec<&str> = errors
+            .iter()
+            .filter_map(|error| error.get("message").and_then(Value::as_str))
+            .collect();
+        return Err(classify(CoreError::Git(words.join(" "))));
+    }
+    Ok(value)
+}
+
+/// A create whose outcome nobody saw: the issue may exist now, so the answer says so and nothing retries. A refusal
+/// keeps its own meaning and changes nothing.
+fn possibly_created(error: CoreError) -> CoreError {
+    match error {
+        CoreError::TrackerUnavailable(_) => CoreError::TrackerUnavailable(
+            "GitHub did not answer, so the issue was possibly created. Re-read the list before writing it again."
+                .into(),
+        ),
+        other => other,
+    }
+}
+
+/// The comment a REST answer stored: its node id as text (the numeric id when the reply has none), its author, its
+/// body as GitHub kept it and when.
+fn stored_comment(value: &Value) -> Result<IssueComment> {
+    // The node id is what a reaction takes; the REST reply also carries its numeric id, which can only name the
+    // comment for an edit or a delete. A reply without a node id (an older shape) falls back to the numeric one.
+    let id = value
+        .get("node_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            value.get("id").and_then(|id| {
+                id.as_u64()
+                    .map(|id| id.to_string())
+                    .or_else(|| id.as_str().map(str::to_owned))
+            })
+        })
+        .filter(|id| !id.is_empty())
+        .ok_or_else(unreadable)?;
+    Ok(IssueComment {
+        id,
+        author: value.get("user").and_then(actor),
+        body: text(value, "body"),
+        created_at: text(value, "created_at"),
+    })
+}
+
+/// A summary from the REST issue shape `POST /repos/{scope}/issues` answers with: the same fields as a read, in the
+/// API's own spelling.
+fn rest_summary(scope: &str, value: &Value) -> Option<IssueSummary> {
+    let number = value.get("number").and_then(Value::as_u64)?;
+    Some(IssueSummary {
+        tracker: TrackerKind::Github,
+        scope: scope.to_owned(),
+        key: number.to_string(),
+        display_key: format!("#{number}"),
+        title: text(value, "title"),
+        url: text(value, "html_url"),
+        author: value.get("user").and_then(actor),
+        state: rest_state(value),
+        created_at: text(value, "created_at"),
+        updated_at: text(value, "updated_at"),
+        closed_at: Some(text(value, "closed_at")).filter(|t| !t.is_empty()),
+        assignees: assignees_of(value),
+        labels: labels_of(value),
+        comment_count: value
+            .get("comments")
+            .and_then(Value::as_u64)
+            .map_or(0, |count| u32::try_from(count).unwrap_or(u32::MAX)),
+    })
+}
+
+/// The issue a create just made, from the create's own answer: nothing is read again, so a successful create cannot
+/// be reported as a failure. A new issue has no comments.
+fn created_detail(scope: &str, value: &Value) -> Result<IssueDetail> {
+    let summary = rest_summary(scope, value).ok_or_else(unreadable)?;
+    Ok(IssueDetail {
+        summary,
+        body: text(value, "body"),
+        comments: Vec::new(),
+        linked_pull_requests: Vec::new(),
+        linked_threads: Vec::new(),
+        reactions: None,
+    })
+}
+
+/// The tracker's own word for one reaction, as its GraphQL `ReactionContent` spells it.
+fn reaction_content(reaction: IssueReaction) -> &'static str {
+    match reaction {
+        IssueReaction::ThumbsUp => "THUMBS_UP",
+        IssueReaction::ThumbsDown => "THUMBS_DOWN",
+        IssueReaction::Laugh => "LAUGH",
+        IssueReaction::Hooray => "HOORAY",
+        IssueReaction::Confused => "CONFUSED",
+        IssueReaction::Heart => "HEART",
+        IssueReaction::Rocket => "ROCKET",
+        IssueReaction::Eyes => "EYES",
+    }
+}
+
+/// A GitHub issue key is a number, checked before `gh` runs.
+fn key_ok(key: &str) -> Result<()> {
+    if key.is_empty() || !key.chars().all(|c| c.is_ascii_digit()) || key.len() > 9 {
+        return Err(CoreError::Invalid("A GitHub issue key is a number.".into()));
+    }
+    Ok(())
 }
 
 fn scope_ok(scope: &str) -> Result<()> {
@@ -335,6 +542,94 @@ fn scope_ok(scope: &str) -> Result<()> {
     } else {
         Err(CoreError::Invalid("A GitHub scope is owner/repo.".into()))
     }
+}
+
+/// The reactions `gh` reports for one issue, or `None` when this `gh` cannot say. It is a read of its own because
+/// `reactionGroups` is a field an older `gh` does not know: naming it in the detail read would fail that whole call,
+/// and the module's rule is that a field a tracker lacks becomes empty, never an error. Only the react answer carries
+/// counts (docs/issues.md); a plain detail read does not ask for them.
+async fn optional_reactions(
+    cwd: &std::path::Path,
+    scope: &str,
+    key: &str,
+) -> Option<Vec<IssueReactionCount>> {
+    let args: Vec<String> = [
+        "issue",
+        "view",
+        key,
+        "--repo",
+        scope,
+        "--json",
+        "reactionGroups",
+    ]
+    .map(str::to_owned)
+    .into();
+    let value = run(cwd, &args).await.ok()?;
+    reaction_counts(&value)
+}
+
+/// Refuses a comment node id that is not on this repository and issue: one read, made only when a reaction names a
+/// comment. A node id from another issue or repository is `not_found` (the usual refusal wording) and no mutation is
+/// sent, so such a reaction can never be written outside the connection's scope.
+async fn comment_belongs(
+    cwd: &std::path::Path,
+    scope: &str,
+    key: &str,
+    comment: &str,
+) -> Result<()> {
+    let args = vec![
+        "api".to_owned(),
+        "graphql".to_owned(),
+        "-f".to_owned(),
+        format!("query={COMMENT_SCOPE_QUERY}"),
+        "-f".to_owned(),
+        format!("id={comment}"),
+    ];
+    let value = graphql(cwd, &args).await?;
+    let refused = || CoreError::NotFound("issue".into());
+    let node = value
+        .pointer("/data/node")
+        .filter(|node| !node.is_null())
+        .ok_or_else(refused)?;
+    let wants = key.parse::<u64>().map_err(|_| refused())?;
+    let repository = node
+        .pointer("/issue/repository/nameWithOwner")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let number = node.pointer("/issue/number").and_then(Value::as_u64);
+    if node.get("__typename").and_then(Value::as_str) != Some("IssueComment")
+        || number != Some(wants)
+        || !repository.eq_ignore_ascii_case(scope)
+    {
+        return Err(refused());
+    }
+    Ok(())
+}
+
+/// The GraphQL node id of one issue: `addReaction` and `removeReaction` take a node id, never a number.
+async fn node_id(cwd: &std::path::Path, scope: &str, key: &str) -> Result<String> {
+    let (owner, name) = scope
+        .split_once('/')
+        .ok_or_else(|| CoreError::Invalid("A GitHub scope is owner/repo.".into()))?;
+    let args = vec![
+        "api".to_owned(),
+        "graphql".to_owned(),
+        "-f".to_owned(),
+        format!("query={ISSUE_NODE_QUERY}"),
+        "-f".to_owned(),
+        format!("owner={owner}"),
+        "-f".to_owned(),
+        format!("name={name}"),
+        "-F".to_owned(),
+        format!("number={key}"),
+    ];
+    let value = graphql(cwd, &args).await?;
+    value
+        .pointer("/data/repository/issue/id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| CoreError::NotFound("issue".into()))
 }
 
 #[async_trait]
@@ -449,11 +744,100 @@ impl IssueSource for GitHub {
         Ok(LabelFeed::Events(label_events_of(&value, label)))
     }
 
+    fn can_write(&self) -> bool {
+        true
+    }
+
+    async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
+        scope_ok(scope)?;
+        // The person's text travels as the JSON body's field values, never as an argument position.
+        let payload = serde_json::json!({
+            "title": new.title,
+            "body": new.body,
+            "labels": new.labels,
+            "assignees": new.assignees,
+        })
+        .to_string();
+        let args: Vec<String> = vec![
+            "api".to_owned(),
+            "-X".to_owned(),
+            "POST".to_owned(),
+            format!("repos/{scope}/issues"),
+            "--input".to_owned(),
+            "-".to_owned(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let answer = call_input(Forge::GitHub, &self.cwd, &refs, &payload)
+            .await
+            .map_err(|error| possibly_created(classify(error)))?;
+        created_detail(scope, &parse_json(&answer)?)
+    }
+
+    async fn comment(&self, scope: &str, key: &str, body: &str) -> Result<IssueComment> {
+        scope_ok(scope)?;
+        key_ok(key)?;
+        let payload = serde_json::json!({ "body": body }).to_string();
+        let args: Vec<String> = vec![
+            "api".to_owned(),
+            "-X".to_owned(),
+            "POST".to_owned(),
+            format!("repos/{scope}/issues/{key}/comments"),
+            "--input".to_owned(),
+            "-".to_owned(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let answer = call_input(Forge::GitHub, &self.cwd, &refs, &payload)
+            .await
+            .map_err(classify)?;
+        stored_comment(&parse_json(&answer)?)
+    }
+
+    async fn react(
+        &self,
+        scope: &str,
+        key: &str,
+        comment: Option<&str>,
+        reaction: IssueReaction,
+        on: bool,
+    ) -> Result<IssueDetail> {
+        scope_ok(scope)?;
+        key_ok(key)?;
+        // A comment id is the subject exactly as the detail carried it, but node ids are global: prove it belongs to
+        // this issue before writing to it, or the reaction could land outside the scope the route checked. The issue
+        // itself is looked up by its node id.
+        let subject = match comment {
+            Some(comment) => {
+                comment_belongs(&self.cwd, scope, key, comment).await?;
+                comment.to_owned()
+            }
+            None => node_id(&self.cwd, scope, key).await?,
+        };
+        let mutation = if on {
+            ADD_REACTION_MUTATION
+        } else {
+            REMOVE_REACTION_MUTATION
+        };
+        let args = vec![
+            "api".to_owned(),
+            "graphql".to_owned(),
+            "-f".to_owned(),
+            format!("query={mutation}"),
+            "-f".to_owned(),
+            format!("subject={subject}"),
+            "-f".to_owned(),
+            format!("content={}", reaction_content(reaction)),
+        ];
+        graphql(&self.cwd, &args).await?;
+        let mut detail = self.get(scope, key).await?;
+        // The counts go in the reaction's answer only. The read is optional so a `gh` without the field still answers
+        // the issue it just changed, with no counts rather than a failure.
+        detail.reactions = optional_reactions(&self.cwd, scope, key).await;
+        Ok(detail)
+    }
+
     async fn get(&self, scope: &str, key: &str) -> Result<IssueDetail> {
         scope_ok(scope)?;
-        if key.is_empty() || !key.chars().all(|c| c.is_ascii_digit()) || key.len() > 9 {
-            return Err(CoreError::Invalid("A GitHub issue key is a number.".into()));
-        }
+        key_ok(key)?;
         let args: Vec<String> = [
             "issue",
             "view",
@@ -489,6 +873,8 @@ impl IssueSource for GitHub {
             comments: comments(&value),
             linked_pull_requests: linked,
             linked_threads: Vec::new(),
+            // Counts are the react answer's alone: a detail read keeps them absent (docs/issues.md, "As built").
+            reactions: None,
         })
     }
 }
@@ -768,3 +1154,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "github_write_tests.rs"]
+mod write_tests;
