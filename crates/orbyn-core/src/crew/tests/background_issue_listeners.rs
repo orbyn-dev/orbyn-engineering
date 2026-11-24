@@ -1,7 +1,8 @@
-//! The issue-reader background listeners (KC7): the issue-label listener baselines the labels already on its
-//! project's tracker on the first pass for a stored label, then starts one run per label-set change through the same
-//! seam as Run now; the readers expose no per-label event time, so an edit is inert and a removal and re-add is not a
-//! new event (a label feed is a follow-up). The dependency-update tick reads the project tracker's feed: a crew
+//! The issue-reader background listeners (KC7): the issue-label listener reads GitHub's label event feed (so a
+//! label removed and added again fires once) and otherwise baselines the labels already on its project's tracker on
+//! the first pass for a stored label, then starts one run per label-set change through the same seam as Run now; the
+//! proxy readers expose no per-label event time, so an edit is inert and a removal and re-add is not a new event. The
+//! dependency-update tick reads the project tracker's feed: a crew
 //! baselines its first feed (every selected update is claimed and nothing starts), then a later unclaimed update
 //! starts one run, while a `Cannot` answer keeps no marker and spends no event. A fake tracker stands in for the issue
 //! readers; no real tracker is contacted.
@@ -30,7 +31,9 @@ use crate::crew::background_listeners::event_tag;
 use crate::crew::capacity::{PausedKind, Priority};
 use crate::crew::fixtures::audit_actions;
 use crate::error::{CoreError, Result};
-use crate::issues::{DependencyFeed, DependencyUpdate, IssueQuery, IssueSource, ScopeList};
+use crate::issues::{
+    DependencyFeed, DependencyUpdate, IssueQuery, IssueSource, LabelEvent, LabelFeed, ScopeList,
+};
 use crate::testing::run_git;
 
 /// A test keychain: the tracker token stays in memory, and no OS keychain is asked.
@@ -98,15 +101,17 @@ fn labelled(key: &str, title: &str, labels: &[&str], updated: &str) -> IssueSumm
 }
 
 /// The issue reader a listener reads. It lists the issues that carry every asked label, with a count of the reads;
-/// the dependency feed stands in for the tracker's own feed (GitHub's is tested in `issues::github`), and unreadable
-/// fails every read.
+/// the dependency and label feeds stand in for the tracker's own (GitHub's are tested in `issues::github`), and
+/// unreadable fails every read.
 struct Issues {
     issues: Mutex<Vec<IssueSummary>>,
     dependency: Mutex<DependencyFeed>,
+    label_feed: Mutex<LabelFeed>,
     lists: AtomicUsize,
     /// How many issues one listing returns; 0 means all of them, as a tracker with a single page does.
     page_size: AtomicUsize,
     dependency_reads: AtomicUsize,
+    label_reads: AtomicUsize,
     /// The scope every listing asked for, in call order.
     scopes: Mutex<Vec<String>>,
     unreadable: bool,
@@ -117,9 +122,11 @@ impl Issues {
         Arc::new(Self {
             issues: Mutex::new(issues),
             dependency: Mutex::new(DependencyFeed::Cannot),
+            label_feed: Mutex::new(LabelFeed::Cannot),
             lists: AtomicUsize::new(0),
             page_size: AtomicUsize::new(0),
             dependency_reads: AtomicUsize::new(0),
+            label_reads: AtomicUsize::new(0),
             scopes: Mutex::new(Vec::new()),
             unreadable: false,
         })
@@ -129,9 +136,11 @@ impl Issues {
         Arc::new(Self {
             issues: Mutex::new(Vec::new()),
             dependency: Mutex::new(DependencyFeed::Cannot),
+            label_feed: Mutex::new(LabelFeed::Cannot),
             lists: AtomicUsize::new(0),
             page_size: AtomicUsize::new(0),
             dependency_reads: AtomicUsize::new(0),
+            label_reads: AtomicUsize::new(0),
             scopes: Mutex::new(Vec::new()),
             unreadable: true,
         })
@@ -199,6 +208,11 @@ impl IssueSource for Issues {
     async fn dependency_updates(&self, _scope: &str) -> Result<DependencyFeed> {
         self.dependency_reads.fetch_add(1, Ordering::SeqCst);
         Ok(self.dependency.lock().unwrap().clone())
+    }
+
+    async fn label_events(&self, _scope: &str, _label: &str) -> Result<LabelFeed> {
+        self.label_reads.fetch_add(1, Ordering::SeqCst);
+        Ok(self.label_feed.lock().unwrap().clone())
     }
 }
 
@@ -287,6 +301,19 @@ async fn dependency_crew(w: &World, name: &str, ecosystem: Option<&str>, on: boo
 /// The baseline claim an issue-label crew keeps on its first pass for one stored label.
 fn baseline_identity(crew: &str, label: &str) -> String {
     format!("issue_label:{crew}:baseline:{}", event_tag(label))
+}
+
+/// The baseline claim an issue-label crew keeps on the first label-event feed for one stored label.
+fn event_baseline_identity(crew: &str, label: &str) -> String {
+    format!(
+        "issue_label:{crew}:gitlab:team/app:baseline-events:{}",
+        event_tag(label)
+    )
+}
+
+/// The claim of one label event from the tracker's feed, as the listener builds it.
+fn event_identity(crew: &str, id: &str) -> String {
+    format!("issue_label:{crew}:gitlab:team/app:event:{}", event_tag(id))
 }
 
 /// The hash of a label set, as the listener builds the claim's last part. The production function is used, so the
@@ -429,8 +456,8 @@ async fn a_label_added_after_the_baseline_fires_once_and_a_removal_and_re_add_do
     assert_eq!(runs_of(&w, &id).len(), 1);
     assert_eq!(claims(&w).len(), 2);
 
-    // Added again later: the label set is one the crew already claimed, so nothing starts. The readers expose no
-    // per-label event time, so this removal and re-add cannot be told from an edit; a label feed is the follow-up.
+    // Added again later: the label set is one the crew already claimed, so nothing starts. A tracker with no event
+    // feed cannot tell this removal and re-add from an edit; the event feed test below proves that GitHub fires it.
     *reader.issues.lock().unwrap() = vec![labelled("7", "Bug", &["bug"], "2026-11-04T00:00:00Z")];
     w.core.issues.clear_cache();
     w.core
@@ -886,6 +913,114 @@ async fn labels_added_while_a_crew_was_off_fire_once_per_pass_when_it_is_back_on
         .unwrap();
     assert_eq!(runs_of(&w, &id).len(), 2);
     assert_eq!(claims(&w).len(), 3);
+}
+
+#[tokio::test]
+async fn a_label_event_feed_baselines_then_fires_a_relabeled_issue_once() {
+    let w = world(true, good()).await;
+    add_tracker_origin(&w).await;
+    let reader = Issues::new(vec![labelled("7", "Bug", &["bug"], "2026-11-01T00:00:00Z")]);
+    *reader.label_feed.lock().unwrap() = LabelFeed::Events(vec![LabelEvent {
+        id: "101".into(),
+        issue: "7".into(),
+    }]);
+    connect_reader(&w, reader.clone()).await;
+    let id = issue_crew(&w, "Events", "bug", true).await;
+
+    // The first feed is a baseline: the marker and every event are claimed, and nothing starts.
+    w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    assert_eq!(reader.label_reads.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        reader.lists.load(Ordering::SeqCst),
+        0,
+        "the event path does not list issues"
+    );
+    assert!(runs_of(&w, &id).is_empty(), "a baseline starts nothing");
+    assert_eq!(
+        claims(&w),
+        [
+            event_baseline_identity(&id, "bug"),
+            event_identity(&id, "101"),
+        ]
+    );
+
+    // A repeat is inert.
+    w.core
+        .crew_background_listeners_tick(NOW + 60)
+        .await
+        .unwrap();
+    assert!(runs_of(&w, &id).is_empty());
+    assert_eq!(claims(&w).len(), 2);
+
+    // The label is removed and added again: a new event id for the same issue fires, though the label set the
+    // proxy sees is unchanged.
+    *reader.label_feed.lock().unwrap() = LabelFeed::Events(vec![
+        LabelEvent {
+            id: "102".into(),
+            issue: "7".into(),
+        },
+        LabelEvent {
+            id: "101".into(),
+            issue: "7".into(),
+        },
+    ]);
+    w.core
+        .crew_background_listeners_tick(NOW + 120)
+        .await
+        .unwrap();
+    assert_eq!(runs_of(&w, &id).len(), 1);
+    assert_eq!(
+        claims(&w),
+        [
+            event_baseline_identity(&id, "bug"),
+            event_identity(&id, "101"),
+            event_identity(&id, "102"),
+        ]
+    );
+    let run = until_run(&w, &id, wire::BackgroundRunState::Running).await;
+    let task = task_of(&w, &run);
+    w.until_state(&task, "passed").await;
+    until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+
+    // The same event again is inert: its claim stays.
+    w.core
+        .crew_background_listeners_tick(NOW + 180)
+        .await
+        .unwrap();
+    assert_eq!(runs_of(&w, &id).len(), 1);
+    assert_eq!(claims(&w).len(), 3);
+}
+
+#[tokio::test]
+async fn a_cannot_label_feed_keeps_the_label_set_proxy_path() {
+    let w = world(true, hung()).await;
+    add_tracker_origin(&w).await;
+    let reader = Issues::new(vec![labelled("7", "Bug", &["bug"], "2026-11-01T00:00:00Z")]);
+    *reader.label_feed.lock().unwrap() = LabelFeed::Cannot;
+    connect_reader(&w, reader.clone()).await;
+    let id = issue_crew(&w, "Cannot labels", "bug", true).await;
+
+    w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    assert_eq!(
+        reader.label_reads.load(Ordering::SeqCst),
+        1,
+        "the tick asks the feed first"
+    );
+    assert!(
+        runs_of(&w, &id).is_empty(),
+        "the proxy baseline starts nothing"
+    );
+    assert!(
+        reader.lists.load(Ordering::SeqCst) > 0,
+        "the proxy path lists the issues"
+    );
+    assert_eq!(
+        claims(&w),
+        [
+            baseline_identity(&id, "bug"),
+            issue_identity(&id, "7", "bug", &["bug"]),
+        ]
+    );
 }
 
 #[tokio::test]
