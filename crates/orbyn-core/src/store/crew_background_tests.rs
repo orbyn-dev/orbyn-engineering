@@ -11,6 +11,33 @@ fn store(dir: &TempDir) -> Store {
     Store::open(&dir.path().join("orbyn.sqlite3"), "epoch-a").unwrap()
 }
 
+/// A direct write the table itself refused: a constraint violation from a CHECK, a trigger or a unique
+/// index, not any error. This is the whole claim of these cases: the rule lives in the table, whatever
+/// the caller does, so there is no `CoreError` sentence to name.
+fn refused_by_table(result: rusqlite::Result<usize>, what: &str) {
+    match result {
+        Err(rusqlite::Error::SqliteFailure(error, message)) => assert_eq!(
+            error.code,
+            rusqlite::ErrorCode::ConstraintViolation,
+            "{what}: {message:?}"
+        ),
+        other => panic!("{what} was not refused by a table constraint: {other:?}"),
+    }
+}
+
+/// A store write refused because the audit row it needs was refused: the variant is the store's own
+/// error over the database refusal, and the transaction rolled the change back (asserted beside each).
+fn refused_for_audit(error: crate::error::CoreError) {
+    match error {
+        crate::error::CoreError::Store(rusqlite::Error::SqliteFailure(code, _)) => assert_eq!(
+            code.code,
+            rusqlite::ErrorCode::ConstraintViolation,
+            "the refused audit row is a constraint violation"
+        ),
+        other => panic!("expected the refused audit row, got {other:?}"),
+    }
+}
+
 fn new_crew<'a>(name: &'a str, settings: &'a Value) -> NewBackground<'a> {
     NewBackground {
         project_id: "project-1",
@@ -47,7 +74,7 @@ fn the_table_refuses_a_change_of_budget_template_or_project() {
             &format!("UPDATE crew_background SET {column} WHERE id = ?1"),
             [&crew.id],
         );
-        assert!(result.is_err(), "{column}");
+        refused_by_table(result, column);
     }
     assert_eq!(store.background_crew(&crew.id).unwrap().unwrap(), crew);
 }
@@ -80,7 +107,7 @@ fn the_table_refuses_what_the_core_would_have_refused() {
         "'n', 'flaky_test', 'schedule', '{}', 0, 5",
         "'n', 'flaky_test', 'schedule', '{}', 5, 1441",
     ] {
-        assert!(insert(bad).is_err(), "{bad}");
+        refused_by_table(insert(bad), bad);
     }
 }
 
@@ -99,22 +126,22 @@ fn a_failed_audit_row_rolls_the_change_back() {
              WHEN NEW.action LIKE 'crew.background%' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
         )
         .unwrap();
-    assert!(
+    refused_for_audit(
         store
             .create_background_crew(&new_crew("Unaudited", &settings), "user")
-            .is_err()
+            .unwrap_err(),
     );
-    assert!(
+    refused_for_audit(
         store
             .update_background_crew(&crew.id, Some("Renamed"), None, "user")
-            .is_err()
+            .unwrap_err(),
     );
-    assert!(
+    refused_for_audit(
         store
             .set_background_enabled(&crew.id, true, "user")
-            .is_err()
+            .unwrap_err(),
     );
-    assert!(store.delete_background_crew(&crew.id, "user").is_err());
+    refused_for_audit(store.delete_background_crew(&crew.id, "user").unwrap_err());
     let (all, total) = store.background_crews_page(None, 50, 0).unwrap();
     assert_eq!(
         (total, all),
@@ -140,13 +167,13 @@ fn a_run_is_refused_the_second_running_row_by_the_table_too() {
          VALUES ('r2', ?1, 'running', 1, 1, 'a', 'a')",
         [&crew.id],
     );
-    assert!(second.is_err(), "one running run per crew");
+    refused_by_table(second, "one running run per crew");
     let bad_stop = store.writer().execute(
         "INSERT INTO crew_background_runs (id, background_id, state, budget_turns, budget_minutes, started_at, updated_at, ended_at)
          VALUES ('r3', ?1, 'stopped', 1, 1, 'a', 'a', 'b')",
         [&crew.id],
     );
-    assert!(bad_stop.is_err(), "a stopped run names its reason");
+    refused_by_table(bad_stop, "a stopped run names its reason");
 }
 
 #[test]
@@ -166,7 +193,7 @@ fn a_run_keeps_the_budget_it_was_given() {
             &format!("UPDATE crew_background_runs SET {column} WHERE id = ?1"),
             [&run.id],
         );
-        assert!(result.is_err(), "{column}");
+        refused_by_table(result, column);
     }
     // What a run spends still changes.
     let spent = store.add_background_spend(&run.id, 1, 1).unwrap();
@@ -204,7 +231,7 @@ fn a_spend_needs_its_audit_row_and_a_budget_stop_needs_both() {
              WHEN NEW.action = 'crew.background.run.spend' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
         )
         .unwrap();
-    assert!(store.add_background_spend(&run.id, 2, 2).is_err());
+    refused_for_audit(store.add_background_spend(&run.id, 2, 2).unwrap_err());
     unchanged(&store);
     store
         .writer()
@@ -218,7 +245,8 @@ fn a_spend_needs_its_audit_row_and_a_budget_stop_needs_both() {
              WHEN NEW.action = 'crew.background.run.stop' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
         )
         .unwrap();
-    assert!(store.add_background_spend(&run.id, 10, 0).is_err());
+    // Reaching the budget needs the stop's audit row too, so the spend rolls back with it.
+    refused_for_audit(store.add_background_spend(&run.id, 10, 0).unwrap_err());
     unchanged(&store);
     store
         .writer()
@@ -756,10 +784,10 @@ fn a_refused_start_with_a_task_is_retained_atomically_and_retryable() {
     store.writer().execute_batch(
         "CREATE TRIGGER refuse_review_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'crew.background.run.review' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
     ).unwrap();
-    assert!(
+    refused_for_audit(
         store
             .unwind_background_run(&run.id, "launch refused")
-            .is_err()
+            .unwrap_err(),
     );
     assert_eq!(store.background_run(&run.id).unwrap().unwrap(), run);
     assert_eq!(
@@ -806,7 +834,8 @@ fn the_table_keeps_the_daily_budget_and_the_persons_clock_within_their_bounds() 
              VALUES ('clock', 'p', 'n', 'flaky_test', 'schedule', '{}', 5, 5, ?1, 'a', 'a')",
             [offset],
         );
-        assert!(result.is_err(), "utc_offset_minutes {offset}");
+        let what = format!("utc_offset_minutes {offset}");
+        refused_by_table(result, &what);
     }
 }
 
@@ -899,10 +928,10 @@ fn a_daily_spend_needs_its_audit_row() {
              WHEN NEW.action = 'crew.background.daily.spend' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
         )
         .unwrap();
-    assert!(
+    refused_for_audit(
         store
             .add_background_daily_turn(&crew.id, &run.id, "2026-11-19", "alpha")
-            .is_err()
+            .unwrap_err(),
     );
     assert_eq!(
         store
@@ -949,12 +978,11 @@ fn a_daily_stop_ends_the_run_with_the_sentence_it_was_given() {
             "Engine alpha reached this crew's daily budget: 3 of its 2 turns today. The budget resets at 2026-11-20T00:00:00+11:00."
         )
     );
-    // It is a stop like any other: a second one is refused.
-    assert!(
-        store
-            .end_background_run_daily(&run.id, "again", (3, 12))
-            .is_err()
-    );
+    // It is a stop like any other: a second one names the closed run.
+    assert!(matches!(
+        store.end_background_run_daily(&run.id, "again", (3, 12)),
+        Err(crate::error::CoreError::RunClosed)
+    ));
 }
 
 #[test]
@@ -1153,10 +1181,10 @@ fn an_acknowledgement_needs_its_audit_row() {
              WHEN NEW.action = 'crew.background.run.acknowledge' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
         )
         .unwrap();
-    assert!(
+    refused_for_audit(
         store
             .acknowledge_background_review(&run.id, "user")
-            .is_err()
+            .unwrap_err(),
     );
     let (rows, _) = store.background_runs_page(&crew.id, 10, 0).unwrap();
     assert!(
@@ -1286,16 +1314,14 @@ fn migration_77_keeps_background_rows_and_adds_the_watch_tables() {
             [],
         )
         .unwrap();
-    assert!(
-        store
-            .writer()
-            .execute(
-                "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
-                 budget_turns, budget_minutes, created_at, updated_at)
-                 VALUES ('bad', 'project-1', 'Bad', 'fix_failing_ci', 'webhook', '{}', 1, 1, 'c', 'u')",
-                [],
-            )
-            .is_err()
+    refused_by_table(
+        store.writer().execute(
+            "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+             budget_turns, budget_minutes, created_at, updated_at)
+             VALUES ('bad', 'project-1', 'Bad', 'fix_failing_ci', 'webhook', '{}', 1, 1, 'c', 'u')",
+            [],
+        ),
+        "a webhook trigger has its own kind",
     );
 
     // The two tables exist, with the index later slices read.
@@ -1329,25 +1355,21 @@ fn migration_77_keeps_background_rows_and_adds_the_watch_tables() {
         .unwrap();
 
     // The table's own rules still hold: the budget trigger and the case-folded name index.
-    assert!(
-        store
-            .writer()
-            .execute(
-                "UPDATE crew_background SET budget_turns = 99 WHERE id = 'old'",
-                []
-            )
-            .is_err()
+    refused_by_table(
+        store.writer().execute(
+            "UPDATE crew_background SET budget_turns = 99 WHERE id = 'old'",
+            [],
+        ),
+        "the budget it was given cannot be changed",
     );
-    assert!(
-        store
-            .writer()
-            .execute(
-                "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
-                 budget_turns, budget_minutes, created_at, updated_at)
-                 VALUES ('same-name', 'project-1', 'OLD', 'fix_failing_ci', 'schedule', '{}', 1, 1, 'c', 'u')",
-                [],
-            )
-            .is_err()
+    refused_by_table(
+        store.writer().execute(
+            "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+             budget_turns, budget_minutes, created_at, updated_at)
+             VALUES ('same-name', 'project-1', 'OLD', 'fix_failing_ci', 'schedule', '{}', 1, 1, 'c', 'u')",
+            [],
+        ),
+        "the name index is case-folded",
     );
 
     // Deleting a crew cascades its runs, its daily rows and its watch rows.
@@ -1540,19 +1562,14 @@ fn migration_82_keeps_background_rows_and_lets_a_run_never_start() {
              started_at, updated_at) VALUES ('bad-3', 'old', 'running', 'disk_low', 10, 30, 's', 's')",
         ),
     ] {
-        assert!(
-            store.writer().execute(sql, []).is_err(),
-            "{name} was accepted"
-        );
+        refused_by_table(store.writer().execute(sql, []), name);
     }
-    assert!(
-        store
-            .writer()
-            .execute(
-                "UPDATE crew_background_runs SET budget_turns = 99 WHERE id = 'run-2'",
-                []
-            )
-            .is_err()
+    refused_by_table(
+        store.writer().execute(
+            "UPDATE crew_background_runs SET budget_turns = 99 WHERE id = 'run-2'",
+            [],
+        ),
+        "the budget a run was given cannot be changed",
     );
 
     // The rebuilt index and link still hold: only one run of a crew runs, and deleting the crew cascades both tables.
@@ -1564,16 +1581,13 @@ fn migration_82_keeps_background_rows_and_lets_a_run_never_start() {
             [],
         )
         .unwrap();
-    assert!(
-        store
-            .writer()
-            .execute(
-                "INSERT INTO crew_background_runs (id, background_id, state, budget_turns, budget_minutes, started_at,
-                 updated_at) VALUES ('run-4', 'old', 'running', 10, 30, 'r', 'r')",
-                [],
-            )
-            .is_err(),
-        "two runs of one crew ran at once"
+    refused_by_table(
+        store.writer().execute(
+            "INSERT INTO crew_background_runs (id, background_id, state, budget_turns, budget_minutes, started_at,
+             updated_at) VALUES ('run-4', 'old', 'running', 10, 30, 'r', 'r')",
+            [],
+        ),
+        "two runs of one crew ran at once",
     );
     store
         .writer()
