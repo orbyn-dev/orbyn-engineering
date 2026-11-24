@@ -470,8 +470,8 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
 ## Create, comment, react, templates and project binding (contract)
 
 R15 rows `create`, `comment`, `react`, `templates` and `bindProject`. `create`, `comment` and `react` are built
-for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b) and `templates` is built in R15 PR2; `bindProject`
-is not built yet (PR3), and the web keeps each unbuilt control as Planned. They follow the rules of "Issue writes and list
+for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b) and `templates` is built in R15 PR2 and
+`bindProject` in R15 PR3; the web keeps each unbuilt control as Planned. They follow the rules of "Issue writes and list
 controls": every write is Person-class and goes in `ENFORCED` and `PERSON_ROUTES`, answers the stored issue, and a
 tracker refusal answers the usual error (`forbidden`, `not_found`, `rate_limited`, `tracker_unavailable`) and changes
 nothing here. Issue text going in is sent as a field value, never in an argument position, and never rendered as markup
@@ -511,10 +511,10 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   GitLab and Linear answer their own.
   Template text is the tracker's text and as untrusted as any other (see "Issue text is untrusted"); it only ever
   fills the person's own create form.
-- `bindProject` (not built, PR3): stores which connected tracker and scope this project's issues come from, so the page and the engine
-  tools default to it. `scope` must be one of the connection's scopes; a tracker that is not connected is
-  `400 invalid`. It stores two names and no secret, writes one audit row (`issues.project.bind`, ids only), and never
-  changes the connection, the project or any issue.
+- `bindProject` (**built, PR3**): stores which connected tracker and scope this project's issues come from, so the
+  page and the engine tools can default to it. `scope` must be one of the connection's scopes; a tracker that is not
+  connected is `400 invalid`. It stores two names and no secret, writes one audit row (`issues.project.bind`, ids
+  and names only), and never changes the connection, the project or any issue.
 - **Engines.** The engine-facing issue tools (N24) stay read, link and unlink. These five do not give an engine any new
   power: create, comment and react are the person's own actions from the page; an engine that wants one asks the person.
 - **Tests when built.** Each write against the local fake server of each tracker that supports it: exact status and `code`,
@@ -632,12 +632,39 @@ create form; nothing feeds it to an engine.
   and the shapes (`templates/issues` entries and content, Linear's `templates` connection, `templateData` and
   `hasFormFields`) are from the APIs as understood. No real `orbynd` service run exercises the route.
 
+### As built (R15 PR3)
+
+`POST /api/projects/{id}/issue-tracker` is a Person-class write behind the Issues flag, and with the flag off it
+answers `404 not_found` like every other issues route. Body `{ tracker, scope }` binds; `{ tracker: null }` unbinds.
+The tracker field is required: a body without it is `400 invalid_input`, never read as an unbind. A bind answers
+`200 { tracker, scope }`; an unbind answers `204`.
+
+- **Validation, before anything is stored**: the project must exist (`404` otherwise); a tracker that is not
+  connected is `400 invalid` (the write routes' invalid, not the reads' `409`); `scope` is required on a bind, is at
+  most 200 bytes with no control characters, and must be one of the connection's scopes (the stored scopes; for
+  GitHub, GitLab, Azure DevOps and Forgejo the project remotes on the connection's host; for Linear the teams its key
+  can see when the connection stores none), else `400 invalid`. An unbind that names a scope is `400 invalid`.
+- **What it stores**: one row per project — the tracker and scope, two names and no secret (migration 89, table
+  `project_issue_trackers`, `ON DELETE CASCADE` so a removed project takes its binding with it). It never writes the
+  connection, the project row or an issue.
+- **Audit**: one `issues.project.bind` row per bind, written **before** the binding row it describes
+  (docs/architecture.md rule 6), so an audit failure leaves no binding; target the project id and detail
+  `{ project, tracker, scope }` — ids and names only, never a secret. An unbind writes no audit row and answers
+  `204` again when there was nothing bound: "no binding" is the desired end state, so the call is idempotent rather
+  than a `404`.
+- **Read side**: the contract specifies no read route for the binding, so none is added and nothing defaults to it
+  yet: the page does not draw a bound tracker and the engine tools (N24) still take an explicit tracker and scope.
+  A later read (and the page/engine defaulting) can read the stored row; the storage is the minimal write-only slice.
+- **Not verified.** No real tracker was contacted: the binding stores names the connection already reports, and the
+  route is tested through the real service with a stand-in `gh` and a local fake tracker connection. No real
+  `orbynd` service run with a real connected tracker exercises it.
+
 ## What T3 has that this does not (Planned)
 
 The event timeline, "involved/mentioned"
 filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting and
-reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b) and templates in R15 PR2;
-project binding is specified above and not built (PR3). The engine-facing
+reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b), templates in R15 PR2 and
+project binding in R15 PR3. The engine-facing
 issue tools (N24) list, read, link, unlink and list a thread's linked issues; they do not create, comment or
 change state.
 
