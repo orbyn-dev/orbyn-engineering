@@ -216,6 +216,11 @@ export interface ServiceOptions {
   path?: string[];
   /** Runs the service with Crew Preview on (`ORBYN_CREW_PREVIEW=1`): its beta routes, writes and hash screens. */
   crewPreview?: boolean;
+  /**
+   * Runs the background listener tick at this interval in seconds (60 to 86400), the service's own
+   * `ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`: a spec needs a watch checked without waiting for a real schedule.
+   */
+  backgroundWatchIntervalSecs?: number;
   /** Runs a debug service with `ORBYN_DEV_SEED_PROPOSALS=1`, so `POST /api/crew/dev/seed-proposal` exists (404 otherwise). */
   seedProposals?: boolean;
   /** Runs the service with Issues on (`ORBYN_ISSUES=1`): its beta routes, the Issues pages and the thread issue links. */
@@ -279,7 +284,7 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
   if (ui && !existsSync(join(ui, "index.html"))) throw new Error("Build this checkout's production UI first: npm run build");
   const service = spawn(BIN, ["serve", "--data-dir", join(dir, "data"), "--workspace-url", makeLibrary(dir), ...(options.parentStdin ? ["--parent-stdin"] : []), ...(ui ? ["--ui-dir", ui] : [])], {
     // A home of its own, so no real engine history or login is read.
-    env: { ...inherited, ...profile, ...engines, ...(options.crewPreview ? { ORBYN_CREW_PREVIEW: "1" } : {}), ...(options.seedProposals ? { ORBYN_DEV_SEED_PROPOSALS: "1" } : {}), ...(options.issues ? { ORBYN_ISSUES: "1" } : {}), ...(options.multiRepo ? { ORBYN_MULTI_REPO: "1" } : {}), ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${forge ? `${forge.bin}${delimiter}` : ""}${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", ORBYN_DEV_DISABLE_PERSON_KEY: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
+    env: { ...inherited, ...profile, ...engines, ...(options.crewPreview ? { ORBYN_CREW_PREVIEW: "1" } : {}), ...(options.backgroundWatchIntervalSecs ? { ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS: String(options.backgroundWatchIntervalSecs) } : {}), ...(options.seedProposals ? { ORBYN_DEV_SEED_PROPOSALS: "1" } : {}), ...(options.issues ? { ORBYN_ISSUES: "1" } : {}), ...(options.multiRepo ? { ORBYN_MULTI_REPO: "1" } : {}), ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${forge ? `${forge.bin}${delimiter}` : ""}${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", ORBYN_DEV_DISABLE_PERSON_KEY: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
     stdio: ["pipe", "pipe", "inherit"],
   });
   const ready = await new Promise<{ url: string; token: string }>((done, fail) => {
