@@ -578,4 +578,19 @@ pub(super) const TOOLS: &[Tool] = &[
         &[("task_id", "string")],
         &["task_id"],
     ),
+    act(
+        "orbyn_device_list",
+        "List this machine's Android emulators and iOS simulators: each id, name, platform, \
+         state and fold state.",
+        &[],
+        &[],
+    ),
+    act(
+        "orbyn_device_screenshot",
+        "Take a screenshot of one of this machine's devices by id. The answer is \
+         {ok, device, image}: the device read back after the shot and the PNG as base64; an \
+         image over the tool's 192 KiB image cap is left out and the answer says its size.",
+        &[("device_id", "string")],
+        &["device_id"],
+    ),
 ];

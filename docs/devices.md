@@ -325,3 +325,30 @@ argv table and the one-writer set; `crates/orbynd/src/routes/devices.rs` owns th
   argv as unverified.
 - **Always on, no feature flag**, like the neighbouring preview and media routes; a client that reaches an older service still
   gets the `404` for which the web draws the disabled entry.
+
+## Agent tools (group 1)
+
+Two MCP tools let an agent ask about this machine's devices. Both are **effect** tools, like the
+pull write tools: each call goes through the app approval gate on its own, so a person allows or
+denies it, or the thread's permission mode or a rule answers; nothing is auto-approved. A Crew
+worker is refused both with the same words the pull write tools use. Each call the gate allows
+writes one audit row **before** the device call it describes (architecture rule 6), `device.tool.list`
+or `device.tool.screenshot`, with the calling engine as actor, a fixed empty detail and the device
+id as target: none for the list, the id when it is a short id with no path separator or control
+character, and `-` otherwise, so a path can never reach the row. A call the gate denies writes the
+gate's own deny row and no device row. The row never carries the answer, an image or a path.
+
+| Tool | Arguments | Answers |
+| --- | --- | --- |
+| `orbyn_device_list` | none | The same list `GET /api/devices` answers, as JSON; gate summary "List the devices on this machine". |
+| `orbyn_device_screenshot` | `device_id` | The same effect as `POST /api/devices/{id}/actions` with `{"type":"screenshot"}`, through the service's own `Devices::act`, so the id is matched against the list the service rebuilt and only the service's stored tool id reaches a process. The answer is the action route's own `{ok, device, image}`, the image as base64 PNG; gate summary "Take a screenshot of device <device_id>". An unknown id is the service's `device_not_found`. |
+
+A screenshot over the tool's 192 KiB image cap is still taken and read back, but the answer leaves
+the image out and says its size in `image_base64_bytes` and `note`; the reply itself is capped at
+256 KiB, so a longer image would be cut mid-JSON. The audit row never carries either value.
+
+The tools are listed only when this machine has at least one platform's tools, as the list decides
+that (Android: `adb` and the emulator; iOS: `xcrun`). On a machine with none they are absent from
+`tools/list` and a call is not found, like any unknown tool; the check is the service's own
+`Devices::tools_available`, read once per process. Groups 2 and 3 (open, close, fold, rotate,
+button, power off) are not built.
