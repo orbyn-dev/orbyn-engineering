@@ -62,6 +62,7 @@ impl AccessToken {
 }
 
 /// What one read found: the raw events the store takes, or one plain sentence.
+#[allow(dead_code)] // no caller until the owner approves the credential read
 #[derive(Clone, Debug)]
 pub(crate) struct CursorAccountUsage {
     pub(crate) records: Vec<Value>,
@@ -130,7 +131,12 @@ async fn read_account(
     if since_ms > end_date {
         return Err(Failure::Generic);
     }
-    let client = build_client(!base.starts_with("http://"))?;
+    // Plain http is for a loopback fake server only: the bearer token never crosses a network in clear.
+    let plain = base.starts_with("http://");
+    if plain && !(base.starts_with("http://127.0.0.1") || base.starts_with("http://localhost")) {
+        return Err(Failure::Generic);
+    }
+    let client = build_client(!plain)?;
     let (team_ids, user_id) = membership(&client, base, token).await?;
     let mut scopes = vec![None];
     scopes.extend(team_ids.into_iter().map(Some));

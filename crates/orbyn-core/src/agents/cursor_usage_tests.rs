@@ -286,3 +286,12 @@ async fn the_records_feed_the_store_unchanged() {
     assert_eq!(totals[0].cache_write, 8);
     assert_eq!(totals[0].reported_cents, Some(10));
 }
+
+#[tokio::test]
+async fn plain_http_to_another_host_is_refused_before_any_request() {
+    let usage =
+        read_cursor_account_usage(&token(), SINCE, END, Some("http://cursor.example.invalid"))
+            .await;
+    assert_eq!(usage.error.as_deref(), Some(GENERIC));
+    assert!(usage.records.is_empty());
+}
