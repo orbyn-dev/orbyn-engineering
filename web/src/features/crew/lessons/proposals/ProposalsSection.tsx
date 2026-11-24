@@ -406,7 +406,7 @@ function ApproveConfirm({
       onConfirm={onConfirm}
     >
       <p>
-        Available to engines through Orbyn's skills tools. Applies to all your projects. Added to the Default selection.
+        Available to threads on the Default profile through Orbyn's skills tools. Applies to all your projects on this device.
         Crew saves the skill in skills-local on this device and lists it on the Skills page. It writes nothing to any
         repository. You have not opened the full text yet.
       </p>
