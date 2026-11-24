@@ -65,7 +65,7 @@ function makeRepo(parent: string, name: string): string {
 
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "ignore" });
 
-/** The id a file tab of another repository is saved under (`features/panels/files/fileTab.ts`): ["t", path, repo_id]. */
+/** The id a file tab of another repository is saved under (`web/src/product/state/ui/fileTab.ts`): ["t", path, repo_id]. */
 const repoFileTabId = (path: string, repoId: string) => `file:${encodeURIComponent(JSON.stringify(["t", path, repoId]))}`;
 
 /** Registers and trusts one repository of the project through the real routes. */
@@ -139,8 +139,10 @@ test("the file tree and the content read take repo_id and answer that repository
 
 test("the whole-file editor of another repository shows that repository's file", async ({ page }) => {
   const tab = repoFileTabId("notes.txt", secondRepoId);
-  // The app remembers each thread's panel tabs on this machine. Seed that save with the tab of the second repository's file, so
-  // the thread reopens the whole-file editor on it and reads it afresh, the same restore path an earlier opened file tab takes.
+  // Changes -> a repository's changed file -> "Open in editor" is the direct way in, but it is blocked by #1562: the thread's diff
+  // ignores repo_id and reads the task folder, which is not a Git repository. So seed the panel tab the app remembers for a thread:
+  // it reopens the whole-file editor on the second repository's file and reads it afresh, as a file tab opened earlier restores.
+  // When #1562 is fixed this test can open the file from Changes instead.
   await page.addInitScript(
     (prefs: { layoutKey: string; tab: string }) => {
       localStorage.setItem(
