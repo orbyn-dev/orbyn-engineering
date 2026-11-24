@@ -10,7 +10,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  * The sparse frame is the mock's own one-provider report. The dense frame serves a full
  * 30-day, four-provider report from the test over the same route, so neither the mock data
  * nor product code changes. The mock plugin has no per-route hold, so the reads are gated
- * with page.route, the same pattern as e2e/library-first-load.spec.ts.
+ * with page.route, the same pattern as e2e/real/library-first-load.spec.ts.
  */
 
 const USAGE = "#/usage";
