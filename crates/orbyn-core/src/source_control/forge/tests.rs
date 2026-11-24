@@ -1139,6 +1139,36 @@ async fn a_failed_follow_up_keeps_the_first_page_facts_and_withholds_the_rest() 
     assert_eq!(queries.lock().unwrap().len(), 2, "one follow-up was tried");
 }
 
+#[tokio::test]
+async fn a_rate_limited_follow_up_pauses_the_whole_read() {
+    use std::sync::{Arc, Mutex};
+    // The first page names a page after it, so the read has to ask for more.
+    let first = paged_details_response();
+    let queries = Arc::new(Mutex::new(Vec::<String>::new()));
+    let asked = queries.clone();
+    let fixture = Arc::new(move |_forge, _cwd: &Path, args: &[&str]| {
+        let query = args.last().unwrap().to_string();
+        asked.lock().unwrap().push(query.clone());
+        if query.contains("after:") {
+            // The words a spent limit comes back with, on the follow-up request.
+            Ok("GraphQL: API rate limit already exceeded".to_string())
+        } else {
+            Ok(first.to_string())
+        }
+    });
+    let outcome = super::process::with_crew_fixture(fixture, async {
+        details_batch(Forge::GitHub, Path::new("."), "proj", &[3]).await
+    })
+    .await;
+    // A pause is not a details answer, so the row's first-page facts are never shown as
+    // complete.
+    assert!(
+        matches!(outcome, DetailsOutcome::RateLimited),
+        "a spent limit on a follow-up pauses the read: {outcome:?}"
+    );
+    assert_eq!(queries.lock().unwrap().len(), 2, "one follow-up was tried");
+}
+
 #[test]
 fn a_paused_details_request_withholds_the_approval_count_too() {
     assert_eq!(

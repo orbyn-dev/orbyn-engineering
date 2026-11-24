@@ -156,7 +156,8 @@ repository(owner:$owner,name:$repo){{{aliases}}}}}"
 }
 
 /// One GraphQL request reading the next page of every pending connection, one alias per pull
-/// request and only the connections that still name a page.
+/// request and only the connections that still name a page. `pending_pages` lists each pull
+/// request's pages together, so one chunk is one alias.
 pub(super) fn page_query(pending: &[PendingPage]) -> String {
     let mut aliases = String::new();
     for group in pending.chunk_by(|left, right| left.number == right.number) {
