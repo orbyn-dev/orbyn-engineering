@@ -368,12 +368,18 @@ describe("closed terminal bar", () => {
   });
 
   it("does not ask while the device is offline", async () => {
-    serve([terminal({})]);
-    useConnection.setState({ offline: true });
-    render(<TerminalBar threadId="th" onOpen={() => undefined} />);
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(wire()).toEqual([]);
-    useConnection.setState({ offline: false });
+    vi.useFakeTimers();
+    try {
+      serve([terminal({})]);
+      useConnection.setState({ offline: true });
+      render(<TerminalBar threadId="th" onOpen={() => undefined} />);
+      // Long enough for the bar's slowest poll to have come due.
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+      expect(wire()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+      useConnection.setState({ offline: false });
+    }
   });
 
   it("is not there when nothing runs", async () => {
