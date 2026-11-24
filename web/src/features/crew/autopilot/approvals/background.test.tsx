@@ -597,6 +597,43 @@ describe("The watch kind in the create dialog (KC6)", () => {
   });
 });
 
+describe("A background start the disk guard refused (KC4, frame kc4-low-disk-background-run)", () => {
+  const recentRuns = () => screen.getByRole("table", { name: "Recent runs" });
+  const newestRun = () => within(recentRuns()).getAllByRole("row")[1] as HTMLElement;
+
+  it("draws the refused start as Not started · Disk with the service's sentence, and no spend", async () => {
+    mock.reset("crew-background-disk-low");
+    render(<BackgroundTab />);
+    await screen.findByRole("table", { name: "Recent runs" });
+    const row = newestRun();
+    expect(row).toHaveTextContent("Fix failing CITemplate: fix failing CICI failed on main");
+    expect(within(row).getByText("Not started: 3.1 GB free, Crew needs 5 GB. Free space and try again.")).toBeVisible();
+    expect(within(row).getByText("No worker ran. Nothing was removed to make room.")).toBeVisible();
+    const chip = within(row).getByText("Not started · Disk", { selector: ".ap-chip" });
+    expect(chip).toHaveClass("ap-chip-am");
+    expect(row).not.toHaveTextContent(/Stopped|Failed|turns|min\b/);
+    // The run before it keeps drawing as it did.
+    expect(within(recentRuns()).getByText("Stopped · Budget")).toBeVisible();
+  });
+
+  it("keeps a stopped run with a reason code it does not know drawn as a stopped run", async () => {
+    mock.reset("crew-background-reason-unknown");
+    render(<BackgroundTab />);
+    await screen.findByRole("table", { name: "Recent runs" });
+    const row = newestRun();
+    expect(within(row).getByText("Stopped", { selector: ".ap-chip" })).toBeVisible();
+    expect(row).toHaveTextContent("0 of 40 turns · 0 of 60 min");
+    expect(row).not.toHaveTextContent(/Not started|Disk|No worker ran/);
+  });
+
+  it("draws nothing of it until a run carries the code", async () => {
+    mock.reset("crew-background");
+    render(<BackgroundTab />);
+    await screen.findByRole("table", { name: "Recent runs" });
+    expect(recentRuns()).not.toHaveTextContent(/Not started|No worker ran/);
+  });
+});
+
 describe("Background crew words", () => {
   const base = { template: "fix_failing_ci" as const };
   it("says each trigger the way the designs do", () => {

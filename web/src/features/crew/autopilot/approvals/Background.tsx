@@ -95,8 +95,8 @@ function Runs({ runs }: { runs: BackgroundRun[] }) {
           <div key={run.id} className="ap-bg-row" role="row">
             <span role="cell"><b>{run.name}</b><small>Template: {templateName(run.template)}</small></span>
             <span role="cell" className="ap-clip">{run.startedBy}</span>
-            <span role="cell" className="ap-clip">{run.result}</span>
-            <span role="cell">{run.state ? <Chip tone={run.state === "Stopped" ? "am" : run.state === "Failed" ? "no" : run.state === "Merged" ? "ok" : run.state === "Needs review" ? "plain" : "dim"}>{run.reason ? `${run.state} · ${run.reason}` : run.state}</Chip> : null}</span>
+            {run.note ? <span role="cell">{run.result ? <>{run.result}<br /></> : null}<small className="ap-muted">{run.note}</small></span> : <span role="cell" className="ap-clip">{run.result}</span>}
+            <span role="cell">{run.state ? <Chip tone={run.state === "Stopped" || run.state === "Not started" ? "am" : run.state === "Failed" ? "no" : run.state === "Merged" ? "ok" : run.state === "Needs review" ? "plain" : "dim"}>{run.reason ? `${run.state} · ${run.reason}` : run.state}</Chip> : null}</span>
             {mode && run.mode ? <span role="cell"><Chip tone="plain">{MODE_COPY[run.mode].name}</Chip></span> : null}
           </div>
         ))}
