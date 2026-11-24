@@ -31,9 +31,22 @@ const watch = (id: string, name: string, command: string, every: number, onFaili
 const status = (crew_id: string, state: BackgroundWatchStatus["state"], over: Partial<BackgroundWatchStatus> = {}): BackgroundWatchStatus => ({
   crew_id, state, baseline_done: true, error_streak: 0, ...over,
 });
-const change = (id: number, kind: BackgroundWatchChange["kind"], action: BackgroundWatchChange["action"], at: string, exit_code: number | null, tail: string | null = null): BackgroundWatchChange => ({
-  id, kind, action, at, exit_code, tail,
-});
+/** A refused template start's fixed sentence, code by code, as core's `refusal_sentence` words it (docs/crew.md). */
+const REFUSAL_SENTENCE: Record<string, string> = {
+  disk_low: "Not started: not enough free space. Free space and try again.",
+  no_engine: "No engine is set up for this template. Choose one in Settings.",
+  folder_untrusted: "This folder is not trusted yet. Trust it in Settings.",
+  run_in_progress: "A run of this crew is already running.",
+  not_allowed: "Your settings do not allow this start.",
+  crew_gone: "This watch no longer exists.",
+  refused: "The start was refused. Open the run list for details.",
+};
+/** A change row. A refused start names its code, and the read turns it into the fixed sentence core owns; every other row has neither. */
+const change = (id: number, kind: BackgroundWatchChange["kind"], action: BackgroundWatchChange["action"], at: string, exit_code: number | null, tail: string | null = null, reasonCode: string | null = null): BackgroundWatchChange => {
+  const row = { id, kind, action, at, exit_code, tail };
+  const reason = reasonCode ? REFUSAL_SENTENCE[reasonCode] : undefined;
+  return reason ? { ...row, reason, reason_code: reasonCode } : row;
+};
 
 const T = "2026-11-07T";
 const PASSING_TAIL = "> npm test web/nav/redirect\nTests: 12 passed, 12 total";
@@ -216,6 +229,41 @@ function seedFor(scenario: string): Seed {
       },
     };
   }
+  // The frame background-run-detail: one watch whose newest run stopped at its budget, reached by "Open the run".
+  if (scenario === "crew-background-run-detail") {
+    return {
+      crews: [watch("bg-7f3a21", "Main build", "npm run build", 1, "template", true)],
+      runs: [run("r-main-1", "bg-7f3a21", "stopped", T + "14:02:00Z", T + "14:48:00Z", { stop_reason: "budget", turns_spent: 40, minutes_spent: 31, review_waiting: true })],
+      watches: {
+        "bg-7f3a21": {
+          status: status("bg-7f3a21", "failing", { last_checked_at: T + "14:02:00Z", last_exit_code: 1 }),
+          changes: [change(4, "failing", "started_template", T + "14:02:00Z", 1), baseline],
+        },
+      },
+    };
+  }
+  // The frame watch-could-not-start-reasons: the seven fixed sentences a refused template start keeps, newest first.
+  if (scenario === "crew-background-watch-refused") {
+    const refusals: [number, string, string][] = [
+      [8, "disk_low", T + "14:02:00Z"],
+      [7, "no_engine", T + "13:02:00Z"],
+      [6, "folder_untrusted", T + "12:02:00Z"],
+      [5, "run_in_progress", T + "11:02:00Z"],
+      [4, "not_allowed", T + "10:02:00Z"],
+      [3, "crew_gone", T + "09:02:00Z"],
+      [2, "refused", "2026-11-06T14:02:00Z"],
+    ];
+    return {
+      crews: [watch("bg-watch-main", "Main build", "npm run build", 1, "template", true)],
+      runs: [],
+      watches: {
+        "bg-watch-main": {
+          status: status("bg-watch-main", "failing", { last_checked_at: T + "14:02:00Z", last_exit_code: 1 }),
+          changes: refusals.map(([id, code, at]) => change(id, "failing", "needs_you", at, 1, null, code)),
+        },
+      },
+    };
+  }
   if (scenario === "crew-background-watch-template") {
     return {
       crews: [watch("bg-watch-main", "Main build", "npm run build", 1, "template", true)],
@@ -315,6 +363,13 @@ export function createBackgroundMock() {
       const parts = path.split("/").slice(4);
       if (method === "GET" && parts.length === 0) return page("crews", byName(state.crews), params);
       if (method === "GET" && parts.length === 2 && parts[1] === "runs") return page("runs", state.runs.filter((one) => one.crew_id === parts[0]), params);
+      // One run with its crew (KC6 "Open the run"): a run or a crew that is not stored answers 404, as the service does.
+      if (method === "GET" && parts.length === 2 && parts[0] === "runs") {
+        const stored = state.runs.find((one) => one.id === parts[1]);
+        const owner = stored ? find(stored.crew_id) : undefined;
+        if (!stored || !owner) return fail(404, "not_found", "No such background run.");
+        return { status: 200, body: { run: stored, crew_id: owner.id, name: owner.name, template: owner.template } };
+      }
       if (method === "GET" && parts.length === 2 && parts[1] === "watch") {
         const watched = find(parts[0]!);
         if (!watched) return fail(404, "not_found", "No such background crew.");
