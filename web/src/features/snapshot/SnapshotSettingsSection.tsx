@@ -242,7 +242,8 @@ export function SnapshotSettingsSection() {
           </Row>
           {accessibilityMissing ? (
             <p className="banner snapshot-warn">
-              Accessibility is not allowed for Orbyn, so no text is read. Captures still work without it.
+              Accessibility is not allowed for Orbyn, so no text is read. Captures still work without it. Turn
+              Orbyn on under System Settings › Privacy & Security › Accessibility; Orbyn never grants it itself.
               {waiting ? <span className="snapshot-waiting"><i className="spin" aria-label="Waiting" />Waiting</span> : null}
               {SNAPSHOT_ACCESSIBILITY_SETUP_AVAILABLE ? <Button small tone="primary" onClick={() => void setupAction("allow_accessibility")}>Allow Accessibility</Button> : null}
             </p>
