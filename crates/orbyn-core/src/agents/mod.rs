@@ -5,6 +5,7 @@ pub mod acp_registry;
 pub(crate) mod attention;
 pub mod claude_history;
 pub mod console;
+pub(crate) mod cursor_usage;
 pub mod driver;
 pub mod earlier;
 pub(crate) mod engine_tools;
