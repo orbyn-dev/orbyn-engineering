@@ -5,6 +5,7 @@ import type { BackgroundCrew } from "../../../../generated/BackgroundCrew";
 import type { BackgroundCrewCreate } from "../../../../generated/BackgroundCrewCreate";
 import type { BackgroundCrewList } from "../../../../generated/BackgroundCrewList";
 import type { BackgroundCrewUpdate } from "../../../../generated/BackgroundCrewUpdate";
+import type { BackgroundRunDetail } from "../../../../generated/BackgroundRunDetail";
 import type { BackgroundRunList } from "../../../../generated/BackgroundRunList";
 import type { BackgroundWatchChanges } from "../../../../generated/BackgroundWatchChanges";
 import type { BackgroundWatchStatus } from "../../../../generated/BackgroundWatchStatus";
@@ -120,6 +121,12 @@ export const crewApi = {
   /** One crew's runs with what each spent against its budget, newest first. */
   backgroundRuns: (id: string, query: { offset: number; limit: number }, signal?: AbortSignal) =>
     request<BackgroundRunList>("GET", `/api/crew/background/${encodeURIComponent(id)}/runs?${new URLSearchParams({ offset: String(query.offset), limit: String(query.limit) })}`, undefined, signal),
+  /**
+   * One run with the crew it belongs to (KC6, "Open the run"): the run's own state, times, reason and spend, and the crew's
+   * id, name and template. The route is Local; an unknown run, or one whose crew is not stored, answers 404 `not_found`.
+   */
+  backgroundRun: (id: string, signal?: AbortSignal) =>
+    request<BackgroundRunDetail>("GET", `/api/crew/background/runs/${encodeURIComponent(id)}`, undefined, signal),
   /**
    * A watch's last check (KC6): its state, when it last checked, the exit code and reason, and the redacted tail it
    * kept. The route is Local and answers 404 while Crew Preview is off or on a service that has no watch read yet; a
