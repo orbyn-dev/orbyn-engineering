@@ -2915,7 +2915,8 @@ needs a person. A turn that ends with no report is a failed attempt; an engine t
 brief's minutes or turns are spent stops on its next failed attempt with the reason `budget`: the turns are the worker's runs and
 the approvals reserved against the same budget, and a result counts them. A crew's turns are the same tally summed over its tasks:
 a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; set in Settings › General) refuses a new task once its crew
-has spent them, before anything is stored or sent, and never stops a task already running. A worker's file change is checked
+has spent them, before anything is stored or sent, and never stops a task already running. That budget fails closed: a budget or a spend
+no read can settle refuses the start, so an unknown count is never read as under budget. A worker's file change is checked
 against its lease at the gate, before the write, and refused with the lease's own refusal; a command it runs is not read.
 After a run ends, member tools refuse (H7), but the core can verify again and add Evidence and Gates; no state reopens.
 A lease's expiry is read when it is used and a lapsed lease is recorded `expired` and blocks nobody. Its refusals use the Crew Protocol's error codes

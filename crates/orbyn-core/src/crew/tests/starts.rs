@@ -489,6 +489,176 @@ async fn an_in_flight_task_is_not_killed_by_the_crew_budget() {
     );
 }
 
+/// The crew budget fails closed: a budget that no read can settle refuses the start instead of
+/// reading as "no budget", so a crew whose Settings cannot be read starts nothing rather than
+/// spending turns nobody can count. The refusal names the failed read, as the background crews'
+/// daily budget does (`refuse_background_daily`).
+#[tokio::test]
+async fn a_crew_turn_budget_that_cannot_be_read_refuses_a_new_start() {
+    let w = quiet().await;
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_turn_budget".to_owned(), json!(5))]),
+        )
+        .unwrap();
+    // The read of the stored settings is what fails, as under a corrupt settings row or a locked
+    // database; the budget itself is still on disk and unread.
+    w.core
+        .store
+        .reader()
+        .execute_batch("DROP TABLE settings")
+        .unwrap();
+    let (refusal, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(error, "the start was not refused: {refusal}");
+    assert_eq!(refusal["code"], "not_authorized");
+    assert_eq!(
+        refusal["message"],
+        "The crew's turn budget could not be read, so no new task can start. Try again."
+    );
+    assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
+    assert!(
+        w.prompts.lock().unwrap().is_empty(),
+        "a refused start sends nothing"
+    );
+}
+
+/// The budget record itself holds only whole turns, so a value the setting cannot hold is a count
+/// nobody can settle: the start is refused rather than read as an absent budget. Nothing is
+/// stored or sent, and the refusal is the same one an unreadable settings row gives.
+#[tokio::test]
+async fn a_crew_turn_budget_that_is_not_a_whole_number_refuses_a_new_start() {
+    let w = quiet().await;
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_turn_budget".to_owned(), json!(5))]),
+        )
+        .unwrap();
+    // What an older or damaged row leaves behind: the setting only ever writes a whole number.
+    w.core
+        .store
+        .reader()
+        .execute_batch("UPDATE settings SET value = '\"a few\"' WHERE key LIKE '%crew_turn_budget'")
+        .unwrap();
+    let (refusal, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(error, "the start was not refused: {refusal}");
+    assert_eq!(refusal["code"], "not_authorized");
+    assert_eq!(
+        refusal["message"],
+        "The crew's turn budget could not be read, so no new task can start. Try again."
+    );
+    assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
+    assert!(
+        w.prompts.lock().unwrap().is_empty(),
+        "a refused start sends nothing"
+    );
+}
+
+/// A crew whose spend cannot be read fails closed too: "not under budget" is not something a
+/// failed count can establish, so the start is refused. The crew's own tasks stay untouched.
+#[tokio::test]
+async fn a_crew_whose_turns_cannot_be_read_refuses_a_new_start() {
+    let w = quiet().await;
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_turn_budget".to_owned(), json!(5))]),
+        )
+        .unwrap();
+    // The per-task tally reads the approvals it reserved, so losing that table loses the count.
+    w.core
+        .store
+        .reader()
+        .execute_batch("DROP TABLE crew_autopilot_events")
+        .unwrap();
+    let (refusal, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(error, "the start was not refused: {refusal}");
+    assert_eq!(refusal["code"], "not_authorized");
+    assert_eq!(
+        refusal["message"],
+        "The crew's turns could not be read, so no new task can start. Try again."
+    );
+    assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
+    assert!(
+        w.prompts.lock().unwrap().is_empty(),
+        "a refused start sends nothing"
+    );
+}
+
+/// The boundary the budget is read against is "at least the limit", never "over it": a crew one
+/// turn under its budget still starts a task, and the start that spends the last turn is the one
+/// after which starts are refused.
+#[tokio::test]
+async fn one_turn_under_the_crew_turn_budget_still_starts_a_task() {
+    let w = quiet().await;
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_turn_budget".to_owned(), json!(3))]),
+        )
+        .unwrap();
+    for path in ["src/a.txt", "src/b.txt"] {
+        let (answer, error) = w.start(leased(path), key()).await;
+        assert!(!error, "{answer}");
+    }
+    w.until("the crew's two turns are spent", |w| {
+        w.core.store.crew_turns_spent_in_crew(&w.lead).unwrap() == 2
+            && w.prompts.lock().unwrap().len() == 2
+    })
+    .await;
+    // Two of the three turns are gone: the crew is one under, so this start runs.
+    let (answer, error) = w.start(leased("src/c.txt"), key()).await;
+    assert!(
+        !error,
+        "a start one turn under the budget was refused: {answer}"
+    );
+    w.until("the crew's third turn is spent", |w| {
+        w.core.store.crew_turns_spent_in_crew(&w.lead).unwrap() == 3
+    })
+    .await;
+    let (refusal, error) = w.start(leased("src/d.txt"), key()).await;
+    assert!(error, "the start at the limit was not refused: {refusal}");
+    assert_eq!(
+        refusal["message"],
+        "The crew has spent its turn budget, so no new task can start."
+    );
+    assert_eq!(count(&w, "crew_tasks"), 3, "a refused start stores nothing");
+}
+
+/// No budget recorded behaves as documented: a crew made before the budget existed (unset) and a
+/// budget of 0 both start tasks without limit, while the turns are still counted for the person.
+#[tokio::test]
+async fn a_crew_with_no_turn_budget_recorded_starts_every_task() {
+    let w = quiet().await;
+    for budget in [None, Some(json!(0))] {
+        if let Some(value) = budget {
+            w.core
+                .set_preferences(
+                    None,
+                    &BTreeMap::from([("crew_turn_budget".to_owned(), value)]),
+                )
+                .unwrap();
+        }
+        for path in ["src/a.txt", "src/b.txt"] {
+            let (answer, error) = w.start(leased(path), key()).await;
+            assert!(
+                !error,
+                "a crew with no turn budget refused a start: {answer}"
+            );
+        }
+    }
+    w.until("the crew's four turns are counted", |w| {
+        w.core.store.crew_turns_spent_in_crew(&w.lead).unwrap() == 4
+    })
+    .await;
+    assert_eq!(
+        count(&w, "crew_tasks"),
+        4,
+        "a crew with no budget starts every task"
+    );
+}
+
 /// The disk guard (KC4): a start is refused, with the free space in the reason, when the lead's volume has less than the
 /// person's floor, and nothing is started. The default floor is 5 GB; faked free space lets this run on any machine.
 #[tokio::test]

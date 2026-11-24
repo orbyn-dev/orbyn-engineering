@@ -360,7 +360,10 @@ retries with the reason. The same failure twice means one change of approach, an
     (`crew_turn_budget`; unset or 0 is no crew budget), set in Settings › General (`Crew turn budget`). A crew's spend is the same per-task tally summed over its
     tasks, so the crew's budget and a task's own cannot disagree. Once the crew's turns are spent, a new task is
     refused with `not_authorized` and "The crew has spent its turn budget, so no new task can start."; nothing is
-    stored, routed or sent. A task already running keeps its retries, approvals and verification, and may spend past
+    stored, routed or sent. **It fails closed:** a budget or a spend that cannot be read refuses the start too
+    (`not_authorized`, with a sentence saying the read failed), because the budget is what allows a start, so an
+    unknown one is never read as no budget. The background crews' daily budget answers a failed read the same way.
+    A task already running keeps its retries, approvals and verification, and may spend past
     the number. There is no reset: a new crew starts at zero because its count is read from its tasks. Every new
     task counts, including review lanes and fixes, except Autopilot's merge corrections, which create their task
     directly (deterministic, no worker turns). A task whose worker thread exists or whose first prompt is still queued
