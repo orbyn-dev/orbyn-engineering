@@ -234,4 +234,32 @@ impl Store {
             Ok(true)
         })
     }
+
+    /// Claims one item for a desktop notification: true for the first caller at this `since`, false for every later one. A later
+    /// `since` for the same kind and id is a new wait and is claimed again. Written in one statement, so two windows asking at once
+    /// are told apart by the database. Nothing behind the item is touched.
+    pub fn claim_crew_needs_you_notice(&self, kind: &str, id: &str, since: &str) -> Result<bool> {
+        self.commit(|tx, _| {
+            let stored: Option<String> = tx
+                .query_row(
+                    "SELECT since FROM crew_needs_you_notified WHERE kind = ?1 AND id = ?2",
+                    params![kind, id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if stored
+                .as_deref()
+                .is_some_and(|stored| !later(since, stored))
+            {
+                return Ok(false);
+            }
+            tx.execute(
+                "INSERT INTO crew_needs_you_notified (kind, id, since, notified_unix)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(kind, id) DO UPDATE SET since = ?3, notified_unix = ?4",
+                params![kind, id, since, unix_now()],
+            )?;
+            Ok(true)
+        })
+    }
 }

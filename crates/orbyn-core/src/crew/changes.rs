@@ -43,6 +43,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/cancel"),
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
     ("POST", "/api/crew/needs-you/dismiss"),
+    ("POST", "/api/crew/needs-you/notify"),
     ("POST", "/api/crew/lead/{thread_id}/close"),
     ("POST", "/api/crew/guard/targets/add"),
     ("POST", "/api/crew/guard/targets/{id}/remove"),
