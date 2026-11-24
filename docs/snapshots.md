@@ -1,6 +1,6 @@
 # Snap Shot contract
 
-Capture the window the person is looking at, put it in the composer as a draft image with the app's name and title, and let the person send it. **The service side is built; the desktop shell half is built on macOS 14+, while accessible text and Windows remain Planned.** The shell reports `supported: false` on Windows and Linux and below macOS 14. The service keeps an attachment's source (`Attachment.source`, `PUT /api/attachments/{id}/source`), puts a Snap Shot's accessible text in front of the prompt at send time and writes one `snapshot.attached` audit row. Rows H33 and H34 in [parity](parity.md) stay open until accessible text and Windows land. The settings page K49 and the draft flow are built against the mock and flip when the shell answers. Eng 3 owns the shell and service side. A name here changes only if the shell PR says so.
+Capture the window the person is looking at, put it in the composer as a draft image with the app's name and title, and let the person send it. **The service side is built; the desktop shell half is built on macOS 14+. Accessible text is built and opt-in (default off, never observed on a real app, and its AX surface is under security review); Windows remains Planned.** The shell reports `supported: false` on Windows and Linux and below macOS 14. The service keeps an attachment's source (`Attachment.source`, `PUT /api/attachments/{id}/source`), puts a Snap Shot's accessible text in front of the prompt at send time and writes one `snapshot.attached` audit row. Rows H33 and H34 in [parity](parity.md) stay open until accessible text and Windows land. The settings page K49 and the draft flow are built against the mock and flip when the shell answers. Eng 3 owns the shell and service side. A name here changes only if the shell PR says so.
 
 Source: T3 Code at `9168ca73d` (MIT), ideas and field names only, no code copied: `apps/desktop/src/snapShot/` (`DesktopSnapShot.ts`, `MacSnapShot.ts`, `SnapShotAccessibility.ts`), `packages/contracts/src/ipc.ts` (`DesktopSnapShotState`, `DesktopPendingSnapShot`, `DesktopSnapShotEvent`), `chatAttachment.ts` (`SnapShotSource`) and the client settings in `settings.ts`.
 
@@ -10,7 +10,7 @@ Source: T3 Code at `9168ca73d` (MIT), ideas and field names only, no code copied
 | --- | --- | --- | --- |
 | Capture the frontmost window of another app | yes (ScreenCaptureKit; needs Screen Recording) | Code written, off: `PrintWindow` into a memory bitmap (`snapshot/windows.rs`); compiles for Windows but has never run, and `supported` stays false | **not planned** (H34 is N/A: portals, GNOME, KDE, Hyprland and Niri setup are excluded) |
 | App name, window title, app id | yes | Planned | |
-| Accessible text of that window | Built, **not observed**: the shell reads one AX window tree after the capture when `snapshot_include_accessibility` is on and the Accessibility grant exists (compiled and linked on macOS, never run against a real app); the grant is read back only, never prompted | Planned (UI Automation) | |
+| Accessible text of that window | Built, **not observed**: the shell reads one AX window tree after the capture when `snapshot_include_accessibility` is on and the Accessibility grant exists (compiled and linked on macOS, never run against a real app); the grant is read back only, never prompted from a capture; the AX surface is under security review (security-review-notes.md, batch 1 F36.1) | Planned (UI Automation) | |
 | Global shortcut: a key chord | yes | Planned | |
 | Global shortcut: both Shift keys, or one modifier pair | Planned (needs a native key tap and its own grant; not in the beta) | Planned | |
 
@@ -23,7 +23,7 @@ This build is macOS 14+ only; the Windows capturer is written and compiled but s
 3. **Off until turned on.** `snapshot_enabled` is false by default. While off the shell registers no shortcut and asks for no permission.
 4. **Not Orbyn, not a password manager.** The shell does not capture its own windows, nor a window whose app id is on the exclusion list (default: 1Password, Bitwarden, Dashlane, LastPass, KeePassXC, Keychain Access, Passwords). It answers `excluded` and keeps nothing. The person can extend the list in Settings; they cannot shrink the built-in part.
 5. **No file on disk.** The PNG lives in the shell's memory until the page takes it, at most 5 pending captures and 5 minutes each, then it is dropped. It never goes to the clipboard, a temp folder or a log.
-6. **Accessible text is Planned and is data, not instruction.** The shell reads none yet and sends no `accessible_text`. When it lands, the text is stored on the attachment, shown to the person before sending, masked by the redactor like any text that reaches an engine, and delivered to the engine under a heading that says it is untrusted text read from another app's window.
+6. **Accessible text is data, not instruction.** It is built and opt-in: with `snapshot_include_accessibility` on and the Accessibility grant present, the shell reads one AX window tree read-only after the capture (never observed on a real app yet; the AX surface is under security review). The text is stored on the attachment, shown to the person before sending, masked by the redactor like any text that reaches an engine, and delivered to the engine under a heading that says it is untrusted text read from another app's window.
 7. **No token ever leaves the shell.** The page asks the shell for the capture; the page uploads it through the ordinary attachment route, with its own session. The shell never writes to the service on the page's behalf.
 
 ## Settings (K49)
@@ -34,7 +34,7 @@ Client settings, kept where the web keeps the other client settings, sent to the
 | --- | --- | --- |
 | `snapshot_enabled` | bool | `false` |
 | `snapshot_shortcut` | `{kind: "chord", key: string, mod: bool, shift: bool, alt: bool, ctrl: bool}` (at least one modifier) | `{chord, key: "9", mod, shift}` (Cmd+Shift+9, Ctrl+Shift+9 on Windows) |
-| `snapshot_include_accessibility` | bool | `false` (T3 defaults it on; here it sends the contents of another app's window, so it is opt-in; this build accepts the setting and sends no text) |
+| `snapshot_include_accessibility` | bool | `false` (T3 defaults it on; here it sends the contents of another app's window, so it is opt-in; with it on and the Accessibility grant present the shell reads that window's AX text read-only after the capture — built, not observed on a real app, and its AX surface is under security review) |
 | `snapshot_play_sound` | bool | `true` |
 | `snapshot_sound` | `soft-pop` or `camera-shutter` | `soft-pop` |
 | `snapshot_flash` | bool | `true` |
