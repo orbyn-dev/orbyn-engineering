@@ -319,8 +319,21 @@ impl Store {
         let prepared = prepare_crew_task(brief, key)?;
         self.commit(|tx, _| {
             let (task, created) = insert_crew_task(tx, &prepared, run_id)?;
-            if created && !(used.is_empty() && left_out.is_empty()) {
-                super::crew_lessons::record_lesson_use(tx, used, left_out, &now())?;
+            if created {
+                let at = now();
+                if !(used.is_empty() && left_out.is_empty()) {
+                    super::crew_lessons::record_lesson_use(tx, used, left_out, &at)?;
+                }
+                // KC5 slice 4: the one EvalHistory sample this task records. Recording only, and a failure is
+                // logged by the sample's own savepoint, never a reason to refuse a start.
+                super::crew_eval_samples::record_start(
+                    tx,
+                    &task.id,
+                    prepared.brief.kind,
+                    used,
+                    left_out,
+                    &at,
+                );
             }
             Ok(task)
         })

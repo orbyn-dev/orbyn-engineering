@@ -129,6 +129,31 @@ pub(super) fn step_with_detail(
     stop_detail: Option<&str>,
     evidence: &[String],
 ) -> Result<CrewTask> {
+    advance(tx, task, to, stop_reason, stop_detail, evidence, true)
+}
+
+/// [`step_with_detail`] for a transient state: the state is written, but the task's eval sample is not finished on it.
+/// `fail_crew_verification` goes through `failed` to the state the guard names in one transaction, so only that
+/// transaction's last move records the outcome.
+fn step_transient(
+    tx: &Transaction<'_>,
+    task: &CrewTask,
+    to: &str,
+    stop_reason: Option<&str>,
+    evidence: &[String],
+) -> Result<CrewTask> {
+    advance(tx, task, to, stop_reason, None, evidence, false)
+}
+
+fn advance(
+    tx: &Transaction<'_>,
+    task: &CrewTask,
+    to: &str,
+    stop_reason: Option<&str>,
+    stop_detail: Option<&str>,
+    evidence: &[String],
+    sample: bool,
+) -> Result<CrewTask> {
     if !allowed(&task.state, to) {
         return Err(CoreError::InvalidTransition {
             from: task.state.clone(),
@@ -161,16 +186,22 @@ pub(super) fn step_with_detail(
             ));
         }
     }
+    let at = now();
     tx.execute(
         "UPDATE crew_tasks SET state = ?2, stop_reason = ?3, stop_detail = ?4, updated_at = ?5
          WHERE id = ?1",
-        params![task.id, to, stop_reason, stop_detail, now()],
+        params![task.id, to, stop_reason, stop_detail, at],
     )?;
     // A claim on a verification ends with the state it was for.
     tx.execute(
         "UPDATE crew_runs SET verifying_since = NULL WHERE task_id = ?1",
         [&task.id],
     )?;
+    if sample {
+        // KC5 slice 4: the sample's outcome is written once, in this same transaction. Its own savepoint logs a
+        // failure and rolls only the sample back, so bookkeeping never refuses the state change.
+        super::crew_eval_samples::record_finish(tx, &task.id, to, stop_reason, &at);
+    }
     find_task(tx, &task.id)
 }
 
@@ -385,7 +416,7 @@ impl Store {
         self.commit(|tx, _| {
             let task = find_task(tx, task_id)?;
             let run = find_run(tx, task_id)?;
-            let failed = step(tx, &task, "failed", None, &[])?;
+            let failed = step_transient(tx, &task, "failed", None, &[])?;
             let (guard, next) = run.guard.after_failure(fingerprint);
             tx.execute(
                 "UPDATE crew_runs SET failures = failures + 1, streak = ?2, fingerprint = ?3,

@@ -48,6 +48,9 @@ mod crew_escape_scan_tests;
 mod crew_escapes;
 #[cfg(test)]
 mod crew_escapes_tests;
+mod crew_eval_samples;
+#[cfg(test)]
+mod crew_eval_samples_tests;
 mod crew_flow;
 #[cfg(test)]
 mod crew_formats_tests;
@@ -153,6 +156,7 @@ pub use crew_escape_scan::{EscapesAdded, PossibleEscape};
 pub use crew_escapes::{
     ESCAPES_PER_PROJECT_MAX, EVENTS_PER_ESCAPE_MAX, EscapeEventRecord, EscapeRecord, EscapeTally,
 };
+pub use crew_eval_samples::CrewEvalSample;
 #[cfg(test)]
 pub(crate) use crew_flow::last_events_sql;
 pub use crew_flow::{DELIVERY_WINDOW, LIVE_WORKERS_MAX, LiveWorker, MESSAGE_WINDOW, MemberTimes};
