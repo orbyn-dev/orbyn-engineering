@@ -67,6 +67,7 @@ impl Fixture {
             cwd: self.cwd.clone(),
             checkout: self.cwd.clone(),
             library: self.cwd.clone(),
+            local_skills: None,
             prompt: "new prompt".into(),
             user_prompt: "new prompt".into(),
             context: String::new(),

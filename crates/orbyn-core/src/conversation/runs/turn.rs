@@ -72,6 +72,19 @@ impl RunManager {
             thread.skill_profile.as_deref(),
         )?;
         std::fs::create_dir_all(run_dir)?;
+        // A native engine discovers the library's skills through its own route; the
+        // approved device-local ones are laid out for it in the run's private folder,
+        // and never exposed from `skills-local` itself. A failure leaves them out and
+        // never fails the run.
+        let local_skills_dir = run_dir.join("skills-local-view");
+        let local_skills = match self.skills.local_view(&route, &local_skills_dir) {
+            Ok(true) => Some(local_skills_dir),
+            Ok(false) => None,
+            Err(error) => {
+                tracing::warn!(%error, "could not build this run's copy of the device-local skills");
+                None
+            }
+        };
         if !retry {
             self.checkpoint_start(scope, &checkout, run_dir).await;
         }
@@ -231,6 +244,7 @@ impl RunManager {
             thread_id: thread.id.clone(),
             cwd: start,
             library: root,
+            local_skills,
             checkout,
             prompt: format!("{context}\n\n{sent_prompt}"),
             context,

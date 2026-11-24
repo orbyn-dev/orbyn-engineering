@@ -21,8 +21,9 @@
 //! created over one, `skill_load` reads the library one, and `skill_search` lists it once.
 //!
 //! The one writer is `SkillService::write_local_skill`; the Crew proposals service calls
-//! it when a person approves. Engines reach the result through the MCP `skill_search`
-//! and `skill_load` tools only: native discovery of a local skill is not built yet.
+//! it when a person approves. Engines on the native skill route (Claude) also get a per-run
+//! read-only copy laid out under `.claude/skills` (`SkillService::local_view`); every other
+//! engine reaches the result through the MCP `skill_search` and `skill_load` tools.
 
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};

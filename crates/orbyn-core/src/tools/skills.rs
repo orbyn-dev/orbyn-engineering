@@ -1,7 +1,8 @@
 //! Skills are read in place from the workspace library. Engines with native
 //! discovery find them on their own; this service backs the MCP tools, the
-//! bootstrap list and the settings view. A skill's identity is the library's
-//! revision plus its dirty flag.
+//! bootstrap list and the settings view, and lays out the per-run copy of the
+//! device-local skills native discovery also sees. A skill's identity is the
+//! library's revision plus its dirty flag.
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
@@ -13,6 +14,7 @@ use serde_json::{Value, json};
 
 use crate::error::{CoreError, Result};
 use crate::project::workspace::{Workspace, native_skills_available};
+use crate::redaction::Redactor;
 use crate::store::Store;
 use crate::tools::local_skills::{LocalSkill, LocalSkillWrite, LocalSkills};
 use crate::util::canonicalize;
@@ -200,6 +202,55 @@ impl SkillService {
         })
     }
 
+    /// Lays out a read-only copy of the readable device-local skills for an engine that
+    /// discovers skills natively, and says whether it wrote one. Only a native,
+    /// default-profile route gets a copy, the same rule `tool_selection` applies. The copy
+    /// at `dir` is rebuilt on every call, holds only each skill's `SKILL.md`, and is a
+    /// plain file tree, never a link: nothing a run does to it reaches `skills-local`. A
+    /// skill whose name the library holds, one over the read cap, or one the locked secret
+    /// scan hits is left out. When no skill is copied the call answers `false` and `dir`
+    /// does not exist.
+    pub fn local_view(&self, route: &SkillRoute, dir: &Path) -> Result<bool> {
+        if !route.native || route.limited {
+            return Ok(false);
+        }
+        match std::fs::remove_dir_all(dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let library: BTreeSet<String> = self
+            .catalog()?
+            .into_iter()
+            .map(|skill| skill.name)
+            .collect();
+        let skills = match self.local.list() {
+            Ok(skills) => skills,
+            Err(error) => {
+                tracing::warn!(%error, "the skills-local area could not be read; no local skills were copied");
+                return Ok(false);
+            }
+        };
+        let mut written = false;
+        for skill in skills {
+            if library.contains(&skill.name) {
+                continue;
+            }
+            // The read enforces the 64 KiB cap and stays inside the skill's own folder.
+            let Ok(text) = self.local.read(&skill.name, None) else {
+                continue;
+            };
+            if Redactor::locked().class_of(&text).is_some() {
+                continue;
+            }
+            let folder = dir.join(".claude/skills").join(&skill.name);
+            std::fs::create_dir_all(&folder)?;
+            std::fs::write(folder.join("SKILL.md"), text)?;
+            written = true;
+        }
+        Ok(written)
+    }
+
     /// The skill names a run's MCP `skill_search` and `skill_load` tools may serve: the
     /// route's own selection, plus the device-local skills an approved Crew proposal wrote
     /// while the thread uses the default profile. A chosen profile stays what it names, so
@@ -329,6 +380,7 @@ impl SkillService {
 mod tests {
     use super::*;
     use crate::testing::{TempDir, library};
+    use crate::tools::local_skills::MAX_SKILL_BYTES;
     use orbyn_contracts::WorkspaceSetup;
 
     async fn fixture() -> (TempDir, SkillService) {
@@ -467,6 +519,20 @@ description: \"Check where a redirect or returnTo link goes.\"
 Read this before changing how a redirect is followed.
 ";
 
+    fn seed_local(dir: &TempDir, name: &str, text: &str) {
+        let folder = dir.path().join("data/skills-local").join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("SKILL.md"), text).unwrap();
+    }
+
+    fn native_route() -> SkillRoute {
+        SkillRoute {
+            native: true,
+            selection: vec!["how".to_owned()],
+            limited: false,
+        }
+    }
+
     fn files(root: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
         fn walk(root: &Path, at: &Path, out: &mut Vec<(std::path::PathBuf, Vec<u8>)>) {
             for entry in std::fs::read_dir(at).unwrap() {
@@ -559,6 +625,131 @@ Read this before changing how a redirect is followed.
             limited: true,
         };
         assert_eq!(service.tool_selection(&limited).unwrap(), ["how"]);
+    }
+
+    #[tokio::test]
+    async fn a_native_default_run_gets_a_plain_copy_of_each_local_skill() {
+        let (dir, service) = fixture().await;
+        seed_local(&dir, "redirect-checks", LOCAL_SKILL);
+        let release_notes = "---\nname: release-notes\ndescription: \"Write release notes.\"\n---\n\n# Release notes\n";
+        seed_local(&dir, "release-notes", release_notes);
+        let view = dir.path().join("runs/run-1/skills-local-view");
+        assert!(service.local_view(&native_route(), &view).unwrap());
+        let copied = files(&view);
+        let paths: Vec<&Path> = copied.iter().map(|(path, _)| path.as_path()).collect();
+        assert_eq!(
+            paths,
+            [
+                Path::new(".claude/skills/redirect-checks/SKILL.md"),
+                Path::new(".claude/skills/release-notes/SKILL.md"),
+            ]
+        );
+        assert_eq!(copied[0].1, LOCAL_SKILL.as_bytes().to_vec());
+        assert_eq!(copied[1].1, release_notes.as_bytes().to_vec());
+        for name in ["redirect-checks", "release-notes"] {
+            let copy = view.join(".claude/skills").join(name).join("SKILL.md");
+            let kind = std::fs::symlink_metadata(&copy).unwrap().file_type();
+            assert!(kind.is_file(), "{name}");
+            assert!(!kind.is_symlink(), "{name}");
+        }
+        // The copy is the run's: changing it never reaches the device area.
+        std::fs::write(
+            view.join(".claude/skills/redirect-checks/SKILL.md"),
+            "changed",
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(
+                dir.path()
+                    .join("data/skills-local/redirect-checks/SKILL.md")
+            )
+            .unwrap(),
+            LOCAL_SKILL
+        );
+    }
+
+    #[tokio::test]
+    async fn a_non_native_or_limited_route_gets_no_local_view() {
+        let (dir, service) = fixture().await;
+        seed_local(&dir, "redirect-checks", LOCAL_SKILL);
+        let view = dir.path().join("runs/run-2/skills-local-view");
+        let non_native = SkillRoute {
+            native: false,
+            ..native_route()
+        };
+        assert!(!service.local_view(&non_native, &view).unwrap());
+        assert!(!view.exists());
+        let limited = SkillRoute {
+            native: true,
+            limited: true,
+            ..native_route()
+        };
+        assert!(!service.local_view(&limited, &view).unwrap());
+        assert!(!view.exists());
+    }
+
+    #[tokio::test]
+    async fn a_local_skill_the_library_names_is_not_copied() {
+        let (dir, service) = fixture().await;
+        seed_local(
+            &dir,
+            "how",
+            "---\nname: how\ndescription: \"A local copy.\"\n---\n\n# Local how\n",
+        );
+        seed_local(&dir, "redirect-checks", LOCAL_SKILL);
+        let view = dir.path().join("runs/run-3/skills-local-view");
+        assert!(service.local_view(&native_route(), &view).unwrap());
+        assert!(!view.join(".claude/skills/how").exists());
+        assert!(
+            view.join(".claude/skills/redirect-checks/SKILL.md")
+                .is_file()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_oversize_or_secret_local_skill_is_left_out_while_a_good_one_is_copied() {
+        let (dir, service) = fixture().await;
+        let big = format!(
+            "---\nname: big\ndescription: \"A big one.\"\n---\n{}",
+            "x".repeat(MAX_SKILL_BYTES)
+        );
+        seed_local(&dir, "big", &big);
+        let leaky = "---\nname: leaky\ndescription: \"A leaky one.\"\n---\n\nTOKEN: ghp_0123456789abcdefghijklmnopqrstuvwxyz\n";
+        seed_local(&dir, "leaky", leaky);
+        seed_local(&dir, "redirect-checks", LOCAL_SKILL);
+        let view = dir.path().join("runs/run-4/skills-local-view");
+        assert!(service.local_view(&native_route(), &view).unwrap());
+        let copied = files(&view);
+        assert_eq!(copied.len(), 1, "{copied:?}");
+        assert_eq!(
+            copied[0].0.as_path(),
+            Path::new(".claude/skills/redirect-checks/SKILL.md")
+        );
+        assert_eq!(copied[0].1, LOCAL_SKILL.as_bytes().to_vec());
+    }
+
+    #[tokio::test]
+    async fn each_local_view_answers_the_current_device_area() {
+        let (dir, service) = fixture().await;
+        seed_local(&dir, "redirect-checks", LOCAL_SKILL);
+        let view = dir.path().join("runs/run-5/skills-local-view");
+        assert!(service.local_view(&native_route(), &view).unwrap());
+        assert!(
+            view.join(".claude/skills/redirect-checks/SKILL.md")
+                .is_file()
+        );
+        // The local skill goes away and another appears: the next run's copy holds only
+        // what the device holds now, with no stale file left behind.
+        std::fs::remove_dir_all(dir.path().join("data/skills-local/redirect-checks")).unwrap();
+        let release_notes = "---\nname: release-notes\ndescription: \"Write release notes.\"\n---\n\n# Release notes\n";
+        seed_local(&dir, "release-notes", release_notes);
+        assert!(service.local_view(&native_route(), &view).unwrap());
+        assert!(!view.join(".claude/skills/redirect-checks").exists());
+        assert!(view.join(".claude/skills/release-notes/SKILL.md").is_file());
+        // No local skill left: no copy, and the folder is gone.
+        std::fs::remove_dir_all(dir.path().join("data/skills-local/release-notes")).unwrap();
+        assert!(!service.local_view(&native_route(), &view).unwrap());
+        assert!(!view.exists());
     }
 
     #[tokio::test]

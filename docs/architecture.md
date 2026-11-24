@@ -2328,13 +2328,17 @@ a handshake or session open is refused with ACP's auth-required code, and `faile
 fails any other way. A successful open or model handshake clears it, so a signed-out engine
 reports the login again only until it next starts cleanly.
 
-Skills come from the workspace, in place. Nothing is copied, packed or signed. The one
-exception is a skill approved from a Crew proposal, written into the device's own skills
-area under [Workspace](#workspace), never into the workspace.
+Skills come from the workspace, in place. Nothing there is copied, packed or signed. The
+exception is a skill approved from a Crew proposal: it is written into the device's own
+skills area under [Workspace](#workspace), never into the workspace, and copied per run for
+native discovery.
 
 - Claude starts in the selected checkout, so the project's own instructions are the
   primary ones, and gets the library with `--add-dir <library>`, which loads its
-  skills only. A run passes `--setting-sources user`: a checkout's
+  skills only. A skill approved from a Crew proposal is copied for it into a per-run
+  read-only `.claude/skills` root in the run's private folder (see
+  [Workspace](#workspace)), added with `--add-dir` after the library's; the copy is
+  rebuilt every run and is never a link. A run passes `--setting-sources user`: a checkout's
   `.claude/settings.json` or `settings.local.json` can hold `permissions.allow` rules,
   `PreToolUse` hooks that answer allow, and `env`, all decided before Claude asks the
   permission tool, so an edit outside the checkout would skip the write scope. The
@@ -2351,7 +2355,7 @@ area under [Workspace](#workspace), never into the workspace.
   started in the library is found there (`projects/<folder>/<session>.jsonl`) and
   resumes from the library with `--add-dir <checkout>`; any other session, and every
   new one, starts in the checkout. The engine console picks the folder the same
-  way. The composer offers the same skill names the CLI loads: `CLAUDE_CONFIG_DIR`
+  way. The composer offers the same library skill names the CLI loads: `CLAUDE_CONFIG_DIR`
   (or `~/.claude`) `skills`, the start folder's (the checkout's) and the added
   library's `.claude/skills`, and enabled plugins as `plugin:skill`. Discovery only
   reads names and descriptions for the `$` menu; the CLI still loads and runs them.
@@ -2535,8 +2539,14 @@ requires, so a publish that fails after it can leave the attempt's row while the
 itself is unchanged. The shared library wins a name it holds: a local skill cannot be
 created over one, and if the library later gains the name, `skill_load` reads the library
 copy and `skill_search` lists it once. The library's revision and dirty flag never include
-these skills, and no target repository is written. Engines reach them through the MCP
-`skill_search` and `skill_load` tools; native discovery is not built yet.
+these skills, and no target repository is written. Native discovery is built for engines on
+the native skill route (Claude): each run builds a read-only copy of the local skills under
+`.claude/skills` in the run's private folder, rebuilt every run and never a link, and adds it
+with `--add-dir`; only each skill's readable `SKILL.md` is copied, a skill whose name the
+library holds, one over 64 KiB, or one that hits the locked secret scan is left out, and
+nothing a run does to the copy reaches `skills-local`. This has not been run against a real
+engine: a Claude run listing the local skill was not done. Codex and the other engines
+still reach local skills only through the MCP `skill_search` and `skill_load` tools.
 
 ## Updates
 

@@ -50,6 +50,7 @@ fn spec(confine: Option<Confinement>, base: &Path) -> RunSpec {
         cwd: base.join("data/workspace/repo/p"),
         checkout: base.join("data/workspace/repo/p"),
         library: base.join("data/workspace/lib"),
+        local_skills: None,
         prompt: "p".into(),
         user_prompt: "p".into(),
         context: "<orbyn_context>c</orbyn_context>".into(),

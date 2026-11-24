@@ -351,6 +351,7 @@ async fn a_program_that_is_another_cli_is_never_launched() {
         cwd: dir.path().to_path_buf(),
         checkout: dir.path().to_path_buf(),
         library: dir.path().to_path_buf(),
+        local_skills: None,
         prompt: "secret prompt".into(),
         user_prompt: "secret prompt".into(),
         context: String::new(),

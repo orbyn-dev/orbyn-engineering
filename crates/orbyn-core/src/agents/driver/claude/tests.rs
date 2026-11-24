@@ -322,6 +322,7 @@ fn spec() -> RunSpec {
         cwd: PathBuf::from("/workspace/repo/app"),
         checkout: PathBuf::from("/workspace/repo/app"),
         library: PathBuf::from("/workspace"),
+        local_skills: None,
         prompt: "hello".into(),
         user_prompt: "hello".into(),
         context: String::new(),
@@ -668,6 +669,35 @@ fn command_line_matches_the_contract_and_never_uses_bare() {
             .iter()
             .any(|arg| arg == "--bare" || arg == "--plugin-dir")
     );
+}
+
+#[test]
+fn a_local_skill_view_is_added_after_the_existing_add_dir_entries() {
+    let mut run = spec();
+    run.local_skills = Some(PathBuf::from("/run/skills-local-view"));
+    let args: Vec<String> = run_args(&run, Path::new("/run/mcp.json"))
+        .into_iter()
+        .map(|arg| arg.into_string().unwrap())
+        .collect();
+    let added: Vec<&str> = args
+        .windows(2)
+        .filter(|pair| pair[0] == "--add-dir")
+        .map(|pair| pair[1].as_str())
+        .collect();
+    assert_eq!(added, ["/workspace", "/run/skills-local-view"]);
+    // A run with no local skills gets no extra folder.
+    let mut plain = spec();
+    plain.local_skills = None;
+    let args: Vec<String> = run_args(&plain, Path::new("/run/mcp.json"))
+        .into_iter()
+        .map(|arg| arg.into_string().unwrap())
+        .collect();
+    let added: Vec<&str> = args
+        .windows(2)
+        .filter(|pair| pair[0] == "--add-dir")
+        .map(|pair| pair[1].as_str())
+        .collect();
+    assert_eq!(added, ["/workspace"]);
 }
 
 #[test]
