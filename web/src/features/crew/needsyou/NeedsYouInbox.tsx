@@ -3,6 +3,7 @@ import { navigate } from "../../../product/state/route";
 import { ErrorState, Loading } from "../../../product/ui/states";
 import { Button } from "../../../ui/controls";
 import { useAreaOverride } from "../autopilot/approvals/areaOverride";
+import { useWatchFocus } from "../autopilot/approvals/watchFocus";
 import { useRepo } from "../autopilot/approvals/AutonomyAreas";
 import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { HELD } from "../autopilot/approvals/copy";
@@ -48,6 +49,11 @@ function Inbox() {
   const handlers: NeedsActions = {
     act(item: NeedsItem, action: NeedsAction, anchor: HTMLElement) {
       if (item.kind === "could_not_start") setAsking({ id: item.ref, name: item.from, kind: action.key === "retry" ? "retry" : "dismiss" });
+      else if (item.kind === "could_not_stop") {
+        // Stop again is the person's own cancel of the task, as the Board's Cancel; Open task goes to the task's page.
+        if (action.key === "stop-again") void runWrite("cancel", item.ref, "", state.retry);
+        else navigate({ name: "crew", tab: "flow", task: item.ref });
+      }
       else if (item.kind === "autonomy") {
         // The demotion's own actions (needsyou-demoted): the row's Review opens the area, Override… the page's menu, Dismiss is remembered here.
         if (action.key === "dismiss") state.dismiss(item.id);
@@ -60,9 +66,18 @@ function Inbox() {
       else if (action.key === "dismiss") state.dismiss(item.id);
       else if (action.key === "sign-in") navigate({ name: "settings", section: "providers" });
       else if (action.key === "deny") state.hold(item.ref)?.deny();
-      else if (action.key === "approve" || action.key === "open") navigate({ name: "crew", tab: item.kind === "background" ? "background" : "approvals" });
+      else if (action.key === "approve" || action.key === "open") {
+        // A watch row opens that watch's own page on the Background tab; a background run opens the list it waits on.
+        if (item.id.startsWith("watch:")) useWatchFocus.getState().ask(item.ref, item.project);
+        navigate({ name: "crew", tab: item.kind === "background" ? "background" : "approvals" });
+      }
     },
     off(item, action) {
+      if (item.kind === "could_not_stop") {
+        if (action.key !== "stop-again") return null;
+        if (remote) return "Not available from another computer";
+        return ops[item.ref]?.phase === "busy" ? "Waiting for the answer" : null;
+      }
       if (item.kind === "could_not_start") {
         const op = ops[item.ref];
         if (remote) return "Not available from another computer";
@@ -95,7 +110,7 @@ function Inbox() {
         <>
           <NeedsBar<NeedsKind | "all"> chips={kindChips(view, items.length)} active={view.filters.some((one) => one.kind === filter) ? filter : "all"} onPick={setFilter} rule={CHIP_NOTE} />
           <NeedsList items={shown} narrow={narrow} handlers={handlers} errors={state.partial} onRetry={state.retry} />
-          {items.filter((item) => item.kind === "could_not_start").map((item) => <WriteStatus key={item.id} id={item.ref} op={ops[item.ref]} />)}
+          {items.filter((item) => item.kind === "could_not_start" || item.kind === "could_not_stop").map((item) => <WriteStatus key={item.id} id={item.ref} op={ops[item.ref]} />)}
           {errors.map((one) => <p key={one.id} className="ny-note" role="alert">{one.message}</p>)}
           {state.noticeFailure ? <p className="ny-note" role="alert">{state.noticeFailure.message}</p> : null}
         </>

@@ -5,7 +5,9 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
+use super::acp::HostAcpAgent;
 use crate::agents::driver::{MCP_SERVER_NAME, RunSpec};
+use crate::error::Result;
 
 /// Claude: the Agent SDK's `query()` options under `sdk`, and the person's own `claude` path.
 /// The permission mode is never one that skips asking: every tool the SDK is unsure about
@@ -57,6 +59,50 @@ pub fn claude(spec: &RunSpec, claude_path: Option<&Path>) -> Value {
         options.insert("claudePath".into(), json!(path));
     }
     Value::Object(options)
+}
+
+/// Cursor: the SDK's `AgentOptions`/`SendOptions` fields this host reads. The model is the
+/// SDK's `{id}` selection, mode is `agent` or `plan`, and the run's MCP endpoint is an HTTP
+/// server the host hands to the SDK. There is no context field in the recorded calls, so
+/// none is invented here.
+pub fn cursor(spec: &RunSpec) -> Value {
+    let mut options = Map::new();
+    if let Some(model) = &spec.model {
+        options.insert("model".into(), json!({ "id": model }));
+    }
+    options.insert(
+        "mode".into(),
+        json!(if spec.plan { "plan" } else { "agent" }),
+    );
+    if let Some(url) = &spec.mcp_url {
+        options.insert(
+            "mcpServers".into(),
+            json!({ (MCP_SERVER_NAME): { "type": "http", "url": url } }),
+        );
+    }
+    Value::Object(options)
+}
+
+/// ACP: the agent the core resolved, the turn's model, effort and mode, and the run's MCP
+/// servers. Policy stays in Rust: no autopilot value is ever sent, and the host's own
+/// session rules decide the rest.
+pub fn acp(spec: &RunSpec, agent: &HostAcpAgent) -> Result<Value> {
+    let mut options = Map::new();
+    options.insert("agent".into(), agent.json()?);
+    if let Some(model) = &spec.model {
+        options.insert("model".into(), json!(model));
+    }
+    if let Some(effort) = &spec.effort {
+        options.insert("effort".into(), json!(effort));
+    }
+    if let Some(mode) = spec.options.get(crate::agents::selection::MODE) {
+        options.insert("mode".into(), json!(mode));
+    }
+    options.insert(
+        "mcpServers".into(),
+        crate::agents::driver::acp::host_mcp_servers(spec.mcp_url.as_deref(), &spec.run_dir),
+    );
+    Ok(Value::Object(options))
 }
 
 #[cfg(test)]

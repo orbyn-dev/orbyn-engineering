@@ -6,6 +6,8 @@ export interface SettingSearchItem {
   title: string;
   section: SettingsSection;
   desktopOnly?: boolean;
+  /** The row is drawn only on macOS, where its behaviour exists. */
+  macosOnly?: boolean;
   availability?: "cli" | "accessibility" | "screen_recording";
 }
 
@@ -25,6 +27,7 @@ export const SETTINGS: readonly SettingSearchItem[] = [
   {"id": "general-git-fetch-interval-minutes", "title": "Git fetch interval", "section": "general"},
   {"id": "general-provider-health-interval-minutes", "title": "Provider health interval", "section": "general"},
   {"id": "general-crew-turn-budget", "title": "Crew turn budget", "section": "general"},
+  {"id": "crew-free-disk-space", "title": "Free disk space Crew needs", "section": "crew"},
   {"id": "general-keep-the-computer-awake-during-runs", "title": "Keep the computer awake during runs", "section": "general"},
   {"id": "general-check-providers-for-updates", "title": "Check providers for updates", "section": "general"},
   {"id": "threads-continue-after-update", "title": "Continue threads after an update", "section": "threads"},
@@ -32,7 +35,7 @@ export const SETTINGS: readonly SettingSearchItem[] = [
   {"id": "general-unpin-confirmation", "title": "Unpin confirmation", "section": "general"},
   {"id": "general-archive-confirmation", "title": "Archive confirmation", "section": "general"},
   {"id": "general-delete-confirmation", "title": "Delete confirmation", "section": "general"},
-  {"id": "general-quit-confirmation", "title": "Quit confirmation", "section": "general"},
+  {"id": "general-quit-confirmation", "title": "Quit confirmation", "section": "general", "macosOnly": true},
   {"id": "threads-import-history", "title": "Import history", "section": "threads"},
   {"id": "about-triage", "title": "Triage a problem", "section": "about"},
   {"id": "chat-chat-width", "title": "Chat width", "section": "chat"},
@@ -97,6 +100,7 @@ export const SETTINGS: readonly SettingSearchItem[] = [
   {"id": "threads-keep-pull-requests", "title": "Keep threads with open pull requests", "section": "threads"},
   {"id": "threads-title-instructions", "title": "Title instructions", "section": "threads"},
   {"id": "threads-name-new-threads", "title": "Name new threads automatically", "section": "threads"},
+  {"id": "threads-text-generators", "title": "Text generators", "section": "threads"},
   {"id": "threads-title-model", "title": "Title model", "section": "threads"},
   {"id": "secrets-terminal-blocks", "title": "Terminal blocks", "section": "secrets"},
   {"id": "secrets-what-agents-read", "title": "What agents read", "section": "secrets"},
@@ -133,9 +137,10 @@ export function settingSearchId(section: SettingsSection, title: string): string
   return SETTINGS.find((item) => item.section === section && item.title === title)?.id;
 }
 
-export function searchSettings(query: string, desktop: boolean, available?: ReadonlySet<SettingSearchItem["availability"]>): readonly SettingSearchItem[] {
+/** `macos` is the platform the service reports, from `api.info()`: a macOS-only row is left out everywhere else. */
+export function searchSettings(query: string, desktop: boolean, available?: ReadonlySet<SettingSearchItem["availability"]>, macos = false): readonly SettingSearchItem[] {
   const words = query.normalize("NFKC").toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
   if (!words.length) return [];
-  return SETTINGS.filter((item) => (!item.desktopOnly || desktop) && (!item.availability || !available || available.has(item.availability)) && words.every((word) =>
+  return SETTINGS.filter((item) => (!item.desktopOnly || desktop) && (!item.macosOnly || macos) && (!item.availability || !available || available.has(item.availability)) && words.every((word) =>
     `${item.title} ${item.section}`.normalize("NFKC").toLocaleLowerCase().includes(word)));
 }

@@ -173,6 +173,50 @@ async fn restore_returns_files_keeps_ignored_ones_and_can_be_undone() {
     assert_eq!(String::from_utf8(kept.stdout).unwrap(), "later");
 }
 
+/// The restore's safety ref is the user's way back: checking it out over the restored tree returns every later file and
+/// edit byte for byte, so a restore never loses work.
+#[tokio::test]
+async fn the_safety_ref_of_a_restore_returns_every_later_edit() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, options(&dir, false), "codex").await;
+    seed(&dir);
+    let checkout = dir.path().join("library/repo/project");
+    let id = run(&service, &thread, "[write:one.txt]").await;
+    std::fs::write(checkout.join("base.txt"), "later edit\r\nwith crlf\n").unwrap();
+    std::fs::write(checkout.join("later.txt"), "later").unwrap();
+    std::fs::create_dir_all(checkout.join("later-dir")).unwrap();
+    std::fs::write(checkout.join("later-dir/inner"), "inner").unwrap();
+
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/restore"),
+            json!({ "run_id": id, "point": "start" }),
+        )
+        .await;
+    assert_eq!(code, 204, "{body}");
+    assert!(!checkout.join("later.txt").exists());
+    assert!(!checkout.join("later-dir/inner").exists());
+
+    let audit = service.audit(&thread).await;
+    let safety = audit
+        .iter()
+        .find(|row| row["action"] == "workspace.restore")
+        .unwrap()["detail"]["safety"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    run_git(&checkout, &["checkout", &safety, "--", "."]);
+    assert_eq!(
+        std::fs::read(checkout.join("base.txt")).unwrap(),
+        b"later edit\r\nwith crlf\n"
+    );
+    assert_eq!(std::fs::read(checkout.join("later.txt")).unwrap(), b"later");
+    assert_eq!(
+        std::fs::read(checkout.join("later-dir/inner")).unwrap(),
+        b"inner"
+    );
+}
+
 #[tokio::test]
 async fn restored_bytes_match_the_checkpoint_whatever_git_would_convert() {
     let dir = TempDir::new();
@@ -253,9 +297,10 @@ async fn rewind_drops_the_session_and_hands_the_earlier_conversation_on_once() {
             json!({ "run_id": second, "restore_files": true }),
         )
         .await;
-    assert_eq!(code, 204, "{body}");
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["native"], false);
+    assert_eq!(body["mode"], "handoff");
     assert!(!dir.path().join("library/repo/project/one.txt").exists());
-
     run(&service, &thread, "third thing").await;
     run(&service, &thread, "fourth thing").await;
     let log = std::fs::read_to_string(dir.path().join("launches")).unwrap();
@@ -279,6 +324,23 @@ async fn rewind_drops_the_session_and_hands_the_earlier_conversation_on_once() {
     );
     let events = service.all_events(&thread).await;
     assert!(!events.is_empty());
+
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/rewind"),
+            json!({ "run_id": "missing", "restore_files": false }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+    assert_eq!(body["message"], "This run was not found in this thread.");
+    let (code, body) = service
+        .send(
+            "/api/threads/missing/rewind",
+            json!({ "run_id": "missing", "restore_files": false }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+    assert_eq!(body["message"], "This thread was not found.");
 }
 
 #[tokio::test]
@@ -295,7 +357,9 @@ async fn a_codex_rewind_reverts_its_own_session_and_keeps_it() {
             json!({ "run_id": second, "restore_files": true }),
         )
         .await;
-    assert_eq!(code, 204, "{body}");
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["native"], true);
+    assert_eq!(body["mode"], "native");
     assert!(!dir.path().join("library/repo/project/one.txt").exists());
     run(&service, &thread, "fourth thing").await;
 
@@ -379,7 +443,8 @@ async fn a_handoff_survives_a_failed_run_and_goes_only_with_a_finished_one() {
             json!({ "run_id": second, "restore_files": false }),
         )
         .await;
-    assert_eq!(code, 204, "{body}");
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["mode"], "handoff");
     // A bare command has no way to carry the earlier conversation.
     let (code, body) = service
         .send(

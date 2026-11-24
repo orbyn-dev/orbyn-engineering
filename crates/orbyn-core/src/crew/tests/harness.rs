@@ -26,6 +26,11 @@ use crate::testing::{TempDir, run_git};
 use crate::tools::mcp::McpBinding;
 use crate::{CoreConfig, store::CrewTask};
 
+/// How long [`World::until`] waits before it panics. It is not one of the production budgets: a test's wait must
+/// survive a shared machine, which the archived full-suite log showed tens of times slower than idle. Three
+/// minutes is far past any loaded start and short enough that a deadlocked test still fails in the run.
+const WAIT_LIMIT: Duration = Duration::from_secs(3 * 60);
+
 /// A run and the restriction it was started under: `(thread, rules)`.
 pub type Confined = (String, Option<crate::host::confine::Confinement>);
 
@@ -654,15 +659,18 @@ impl World {
         self.core.store.crew_task(id).unwrap().unwrap()
     }
 
-    /// Waits (bounded) for `done`, which reads the world.
+    /// Waits for `done`, which reads the world, on a clock this test owns rather than a production budget: a machine
+    /// shared with other builds can be tens of times slower than an idle one, and a start that takes 20 seconds there is
+    /// not a bug in the test. The panic says how long it waited, so a real hang still fails by name.
     pub async fn until(&self, what: &str, mut done: impl FnMut(&World) -> bool) {
-        for _ in 0..3000 {
-            if done(self) {
-                return;
-            }
+        let give_up = std::time::Instant::now() + WAIT_LIMIT;
+        while !done(self) {
+            assert!(
+                std::time::Instant::now() < give_up,
+                "never happened in {WAIT_LIMIT:?}: {what}"
+            );
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        panic!("never happened: {what}");
     }
 
     pub async fn until_state(&self, id: &str, state: &str) {
@@ -689,8 +697,100 @@ impl World {
             .worker_thread_id
             .unwrap()
     }
+
+    /// A real restart: closes this core and opens a new one on the same data folder. Fake engines
+    /// are not registered again, since a stored record and its replay only need the core.
+    pub async fn restart(self) -> World {
+        let World {
+            _dir,
+            core,
+            lead,
+            repo,
+            prompts,
+            answers,
+            steered,
+            confines,
+            crew_tasks,
+            approval_turns,
+            approval_specs,
+            ..
+        } = self;
+        let config = core.config.clone();
+        // A process that dies takes its live scripts with it.
+        core.code_runs.forget_all();
+        core.shutdown().await;
+        // An aborted script drops its hold on the core when the runtime next polls it.
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while Arc::strong_count(&core) > 1 && std::time::Instant::now() < until {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let old = Arc::downgrade(&core);
+        drop(core);
+        assert!(old.upgrade().is_none(), "the old core is gone");
+        let core = Arc::new(Core::open(config).expect("the restarted core opens"));
+        let lead_token = bind(&core, &lead, "run-lead");
+        World {
+            approval_turns,
+            approval_specs,
+            _dir,
+            core,
+            repo,
+            lead,
+            lead_token,
+            prompts,
+            answers,
+            steered,
+            confines,
+            crew_tasks,
+        }
+    }
 }
 
+/// Makes a running worker's run look like another process's, so the service cannot confirm its stop and a cancel fails closed.
+/// Returns the epoch to put back with [`give_back_worker_run`].
+pub fn take_worker_run(w: &World, task: &str) -> String {
+    let db = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    db.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+    let run_id = w
+        .core
+        .store
+        .thread(&w.worker(task))
+        .unwrap()
+        .active_run
+        .unwrap()
+        .id;
+    let own: String = db
+        .query_row(
+            "SELECT owner_epoch FROM runs WHERE id = ?1",
+            [&run_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    db.execute(
+        "UPDATE runs SET owner_epoch = 'another-process' WHERE id = ?1",
+        [&run_id],
+    )
+    .unwrap();
+    own
+}
+
+/// Puts back the epoch [`take_worker_run`] saved, once the stop may be confirmed again.
+pub fn give_back_worker_run(w: &World, task: &str, epoch: &str) {
+    let db = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    let run_id = w
+        .core
+        .store
+        .thread(&w.worker(task))
+        .unwrap()
+        .active_run
+        .unwrap()
+        .id;
+    db.execute(
+        "UPDATE runs SET owner_epoch = ?2 WHERE id = ?1",
+        rusqlite::params![run_id, epoch],
+    )
+    .unwrap();
+}
 /// A brief draft that writes under `src/`, and a key whose checks keep to it. The command
 /// check's text is what the leak tests look for.
 pub const KEY_MARKER: &str = "orbyn-key-marker-77";
@@ -719,8 +819,8 @@ pub fn key() -> Value {
             { "id": "chk-run", "kind": "command",
               "params": { "run": format!("echo {KEY_MARKER}") },
               "proves": "The command exits 0." },
-            { "id": "chk-probe", "kind": "http_probe",
-              "params": { "url": "http://127.0.0.1:9/health", "expect_status": 200 },
+            { "id": "chk-probe", "kind": "preview",
+              "params": { "url": "http://127.0.0.1:9/health" },
               "proves": "The service answers." }
         ],
         "protected_paths": ["tests/**"]

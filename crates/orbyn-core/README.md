@@ -27,6 +27,7 @@ group; a new group adds its own `README.md` and a row here.
 | [governance](src/governance/README.md) | Policy, the approval gate, the computer gateway and the outbound request list |
 | [project](src/project/README.md) | Projects, the managed workspace, project files, icons and images, setup, checkout files |
 | [source_control](src/source_control/README.md) | Git, Jujutsu, forge CLIs, commit text and review guides |
+| [devices](src/devices/README.md) | Local Android AVDs and iOS simulators, their actions, and one writer per device |
 | [browser](src/browser/README.md) | Preview tabs, their bridge, recordings and remote images |
 | [tools](src/tools/README.md) | The per-run MCP server, Orbyn's agent tools, MCP Apps and skills |
 | [account](src/account/README.md) | The optional account's settings sync core: record, merge, allowlist-only apply, outbox and one worker per zone; inactive while the sign-in gate is `Off` |

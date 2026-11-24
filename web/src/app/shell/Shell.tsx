@@ -1,4 +1,5 @@
 import { useClearSelectionOnLeave } from "../../lib/clearSelection";
+import { CloseLeadDialog } from "../../features/crew";
 import { CloneJobs, CommandPalette, FoldersNotice, GitHubStarPrompt, QuitConfirmation, Sidebar } from "../../features/workspace";
 import { ChevronLeft } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
@@ -8,7 +9,7 @@ import { Toasts } from "../../product/ui/Toasts";
 import { usePanelMotionRoot } from "../../product/panels/panelAnimations";
 import { useTaskRunNotifications } from "../taskNotifications";
 import { useLayoutWidth } from "../../lib/useLayout";
-import { navigate, routeHref, useRoute } from "../../product/state/route";
+import { closeSettings, goToHash, routeHref, useRoute } from "../../product/state/route";
 import { DRAFT_LAYOUT, useUi } from "../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../product/state/workspace";
 import { TitleBar } from "../TitleBar";
@@ -37,6 +38,8 @@ export function Shell() {
   const main = useRef<HTMLElement>(null);
   const routeKey = routeHref(route);
   const threadReady = useWorkspace((state) => route.name !== "thread" || state.threads[route.id] !== undefined);
+  const phone = layout === "phone";
+  const drawerOpen = useSidebarDrawer((state) => state.open);
 
   const layoutKey =
     route.name === "thread" ? route.id : route.name === "new" || route.name === "home" ? DRAFT_LAYOUT : null;
@@ -50,7 +53,10 @@ export function Shell() {
   useTaskRunNotifications();
   useTerminalAttention(route.name === "thread" ? route.id : null);
   usePanelMotionRoot(routeKey);
-  useRouteFocus(routeKey, route.name, threadReady, main);
+  // The phone's sheet takes the page's place (it is `hidden` under it), so the new screen only takes
+  // focus once the sheet is out of the way: a chosen destination's title, never a node the sheet took
+  // with it, and never the page while it is still hidden.
+  useRouteFocus(routeKey, route.name, threadReady && !(phone && drawerOpen), main);
   useClearSelectionOnLeave(routeKey);
   useToastClearance(`${routeKey}:${threadReady}`);
 
@@ -83,12 +89,10 @@ export function Shell() {
   const reading = useUi((state) => state.workspaceLayout === "reading");
   const readingNav = useReadingNav((state) => state.open);
   // The sidebar is never docked under 900 px. A small window folds it into a drawer over the thread;
-  // the phone (under 600 px) draws it as its home page, and as a full-screen sheet over any page that
-  // is not home (Engineer Designs, "Phone layout (under 600 px)": the sidebar is a full-screen sheet,
-  // never docked or overlaid beside the page).
-  const phone = layout === "phone";
+  // the phone (under 600 px, see `phone` above) draws it as its home page, and as a full-screen sheet
+  // over any page that is not home (Engineer Designs, "Phone layout (under 600 px)": the sidebar is a
+  // full-screen sheet, never docked or overlaid beside the page).
   const small = layout === "small";
-  const drawerOpen = useSidebarDrawer((state) => state.open);
   const closeDrawer = useSidebarDrawer((state) => state.close);
   const home = underneath.name === "home" && !needsProject && !overlay;
   const showNav = phone ? home || drawerOpen : small ? drawerOpen : reading ? readingNav : !collapsed;
@@ -102,6 +106,22 @@ export function Shell() {
   useEffect(() => {
     closeDrawer();
   }, [routeKey, small, phone, closeDrawer]);
+  // Settings links are plain addresses, and a browser navigation would push an entry for each one. Sending
+  // them through the router keeps Settings on the single entry it holds, so Close goes back to the page
+  // instead of leaving entries behind to back out of.
+  useEffect(() => {
+    const intercept = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href^="#/settings"]');
+      const href = anchor?.getAttribute("href");
+      if (!href) return;
+      event.preventDefault();
+      goToHash(href.slice(1));
+    };
+    document.addEventListener("click", intercept);
+    return () => document.removeEventListener("click", intercept);
+  }, []);
   useEscapeClose(overlaid, closeDrawer, () => document.querySelector<HTMLElement>("[data-sidebar-toggle]"));
   const dismissDrawer = () => {
     closeDrawer();
@@ -157,18 +177,19 @@ export function Shell() {
       ) : null}
       <BackgroundAnnouncer />
       <QuitConfirmation />
+      <CloseLeadDialog />
       <TranscriptImportHost />
       <PreviewFloat threadId={route.name === "thread" ? route.id : null} />
       <DevicesFloat threadId={route.name === "thread" ? route.id : null} />
       <Toasts
         lead={
           <>
+            <CloneJobs />
             <FoldersNotice />
             <GitHubStarPrompt />
           </>
         }
       />
-      <CloneJobs />
       {palette ? <CommandPalette start={palette} onClose={() => setPalette(null)} /> : null}
       {phone && home ? (
         // The sidebar is this page, so nothing is drawn under it.
@@ -176,7 +197,7 @@ export function Shell() {
       ) : (
         // The page under the phone's sheet stays mounted, so its scroll and its terminal survive.
         <main id="main" ref={main} tabIndex={-1} className="main" hidden={phone && drawerOpen}>
-          {route.name === "settings" ? <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} row={route.row} onClose={() => navigate(underneath)} /> : null}
+          {route.name === "settings" ? <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} row={route.row} onClose={() => closeSettings(underneath)} /> : null}
           {/* The page behind settings stays mounted, so a terminal, preview or scroll position survives. `hidden` takes it out of the
               accessibility tree and the tab order while Settings is open, so the open page owns the only h1. Not `inert`: the theme
               editor's element picker shows this page again (`html[data-inspecting]`) and inert content cannot be pointed at. */}

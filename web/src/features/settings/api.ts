@@ -26,6 +26,7 @@ import type { RedactionPatternTest } from "../../generated/RedactionPatternTest"
 import type { RedactionPatternTestInput } from "../../generated/RedactionPatternTestInput";
 import type { RedactionSettings } from "../../generated/RedactionSettings";
 import type { RedactionSurfaceChange } from "../../generated/RedactionSurfaceChange";
+import type { TextGenerators } from "../../generated/TextGenerators";
 import type { TriagePlaybook } from "../../generated/TriagePlaybook";
 
 const q = encodeURIComponent;
@@ -33,6 +34,11 @@ const q = encodeURIComponent;
 /** The grouped provider list: labels and rows the router's own facts give (Providers page). */
 export function listProviders(signal?: AbortSignal) {
   return request<ProviderList>("GET", "/api/providers", undefined, signal);
+}
+
+/** Every enabled engine with its text-generator models and the choice for this scope. */
+export function listTextGenerators(project: string | null, signal?: AbortSignal) {
+  return request<TextGenerators>("GET", project === null ? "/api/text-generators" : `/api/text-generators?project=${q(project)}`, undefined, signal);
 }
 
 export { queryPreferences, updatePreferences } from "../../api/preferences";

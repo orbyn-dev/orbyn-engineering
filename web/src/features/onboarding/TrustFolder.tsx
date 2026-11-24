@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import { canSendPersonKey } from "../../api/personKey";
 import { toFailure } from "../../lib/useAsync";
 import { navigate, routeHref, type Route } from "../../product/state/route";
 import { useWorkspace } from "../../product/state/workspace";
 import { Button, LinkButton } from "../../ui/controls";
 import { Empty, Loading } from "../../product/ui/states";
-import { TRUST_CONFIRM, TRUST_DECLINE, TRUST_TITLE, TrustBody } from "../../product/ui/TrustPrompt";
+import { TRUST_CONFIRM, TRUST_DECLINE, TRUST_DESKTOP_ONLY, TRUST_TITLE, TrustBody } from "../../product/ui/TrustPrompt";
 import "./onboarding.css";
 
 export function TrustFolder({ projectId, threadId }: { projectId: string; threadId: string | null }) {
@@ -19,6 +20,9 @@ export function TrustFolder({ projectId, threadId }: { projectId: string; thread
     ? { name: "thread", id: threadId }
     : { name: "new", projectId };
   const leave: Route = threadId ? { name: "thread", id: threadId } : { name: "home" };
+  // Trusting is a `Person` route: only a page that holds the person key may ask. A browser tab says why instead of
+  // offering a button the service would refuse.
+  const canTrust = canSendPersonKey();
 
   useEffect(() => {
     if (project?.trusted) navigate(next);
@@ -51,6 +55,7 @@ export function TrustFolder({ projectId, threadId }: { projectId: string; thread
           {TRUST_TITLE(project.name)}
         </h1>
         <TrustBody path={project.path} />
+        {canTrust ? null : <p>{TRUST_DESKTOP_ONLY}</p>}
         {error ? (
           <p className="field-error" role="alert">
             {error}
@@ -58,9 +63,11 @@ export function TrustFolder({ projectId, threadId }: { projectId: string; thread
         ) : null}
         <div className="trust-actions">
           <LinkButton href={routeHref(leave)}>{TRUST_DECLINE}</LinkButton>
-          <Button tone="primary" busy={busy} onClick={() => void trust()}>
-            {TRUST_CONFIRM}
-          </Button>
+          {canTrust ? (
+            <Button tone="primary" busy={busy} onClick={() => void trust()}>
+              {TRUST_CONFIRM}
+            </Button>
+          ) : null}
         </div>
       </div>
     </div>

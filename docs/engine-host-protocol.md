@@ -5,7 +5,7 @@ engine SDKs and libraries (Claude Agent SDK, Cursor SDK, OpenCode, Muse, ACP and
 The Rust `HostDriver{family}` implements `EngineDriver` against this document; the host implements
 the other side. Neither side reads the other's code.
 
-Status: slices 1 and 2 of the Rust side are built (spawn and handshake, runs, steer, cancel, restarts, status; then permissions, questions, stop, restart and the spawn secret); the Claude family is behind a flag and the Codex family is registered without one. The shape follows the
+Status: slices 1 and 2 of the Rust side are built (spawn and handshake, runs, steer, cancel, restarts, status; then permissions, questions, stop, restart and the spawn secret); the Claude, Cursor and ACP families are behind their own flags and the Codex family is registered without one. The shape follows the
 worker protocol of T3 Code's Cursor provider (MIT, `CursorAgentSdkWorkerProtocol.ts`), with three
 changes: a version handshake, `permission`/`question` frames so policy stays in Rust, and
 per-run confinement inputs supplied by Rust.
@@ -48,7 +48,7 @@ The core answers with the one request it may send before `ready`:
 {"id":1,"type":"init","protocol":1,"instance":"claude-default","logLevel":"info"}
 ```
 
-The host replies `{"type":"response","id":1,"ok":true,"result":{"ready":true}}`.
+The host replies `{"type":"response","id":1,"ok":true,"result":{"ready":true}}`. A family that can check its SDK adds `"sdkMissing": true|false` (Claude and Cursor); the field is optional and an older host leaves it out.
 
 - `protocol` is an integer; a different number is a hard mismatch. The core refuses the host,
   fails nothing that is running (nothing is), and reports "The engine host does not match this app
@@ -219,7 +219,9 @@ Not run against a real Codex turn: every behaviour above comes from replayed T3 
 ## ACP family
 
 Family `acp` (`src/families/acp.mjs`) speaks the Agent Client Protocol, newline JSON-RPC 2.0 on stdio, to one agent
-process per open session. Capabilities: `steer` and `models`. The per-agent quirks and Kiro's launch/session knowledge
+process per open session. Capabilities: `steer` and `models`. The Rust side maps every engine the native ACP driver serves through this family when `ORBYN_ENGINE_HOST_ACP=1`
+(with `ORBYN_ENGINE_HOST` set), the same pattern as Claude and Cursor; with the flag off those engines keep the
+Rust driver. The per-agent quirks and Kiro's launch/session knowledge
 are a plain-JavaScript port of T3 Code (MIT, Copyright (c) 2026 T3 Tools Inc., commit
 `9168ca73d02003557725430b515b44e1551544af`): `provider-acp-registry`'s droid/omp/kimi flavours and
 `provider-kiro`/`provider-acp`'s Kiro and model/config rules.
@@ -330,11 +332,28 @@ turn heads, and the core opens a new host session for every run), so the core do
   {dir: cwd})` and checks the uuid is there; it then passes it as `resumeSessionAt` on the first query of that host session only.
 - `resumeAt` with any other operation, a value that is not a uuid, a uuid the session does not hold or one that belongs to a
   sub-agent fails `open` with `kind: "invalid_request"`; an SDK without `getSessionMessages` answers `UnsupportedRequest`.
-- The core chooses the uuid (the last top-level assistant message before the user message whose uuid is the prompt's
-  `messageId`), remembers it for the thread, sends `resumeAt` on the next run's `open` once, and clears it when the host reports
-  the `session` frame. With no earlier assistant message the rewind falls back to a handoff, as before.
+- The core chooses the uuid itself. The host's `turnId` is its own counter (`turn-<sendId>`), not a value in the session
+  file, so the core keeps the prompt's `messageId` as the run's engine turn on this path. `HostDriver::revert_session`
+  reads the session JSONL from the Claude history root by the session id the store holds (`CLAUDE_CONFIG_DIR`, else
+  `~/.claude`), finds the top-level user message whose uuid is that prompt id, and walks its `parentUuid` chain to the
+  nearest top-level assistant ancestor. Subagent messages (`isSidechain` or a parent tool use) and tool-result user
+  messages are skipped. A prompt with no `parentUuid` field, or a chain that leaves the file before an assistant, falls
+  back to the last top-level assistant before the prompt in file order; a chain that reaches the root with no assistant
+  names no point.
+- It remembers the uuid in the host pool for that engine session with no expiry: the core hides the rewound messages
+  immediately, so the engine must roll them back on the thread's next send, however late it comes. The next run's
+  `open` takes it once, for `operation: "resume"` only, and a create or another family never carries it. A create, a
+  resume of a different session, a thread whose session id changed, or a new rewind on the same session drops or
+  replaces the waiting point. A failed `open` or the run's `session` frame leaves nothing for a later run.
+- The point lives in memory only. A service restart between the rewind and the next send loses it, so that run
+  resumes with the engine's full history; the thread view and the `thread.rewound` event still say the rewind was
+  native, because it was when it happened. This is a known limit, not a rollback.
+- With no earlier top-level assistant message, a missing, unreadable or changed session file, an unknown prompt uuid, a
+  file that is not a regular file or is over the read cap, or any error, `revert_session` fails and the rewind leaves the
+  handoff as before. Runs stored before this change (their engine turn is the synthetic host id) fall back the same way.
 
-Tested against a fake SDK only; not yet against a real `claude`. The core side is Engineering 2's.
+Tested against a fake SDK only; not yet against a real `claude`. The core side is built and tested against the stand-in
+host, and a real rewind was observed on 22 November 2026 on the packaged service (build 2be1fb834, SDK path, signed-in `claude`, no tools): after a rewind through the second run, a third run knew only the first run's code word, twice. Not checked: `restore_files`, a rewind to the first run, threads older than the host.
 
 `readSubagent` is announced and gated in the core (`GATED`), but the core has no method that sends it yet. It gets one after the
 beta, with a subagent transcript panel.
@@ -360,7 +379,7 @@ One shape everywhere an error crosses the wire:
 ## Host status (core to UI)
 
 Not a host frame: this is what the core's `GET /api/engine-host` route returns (Local read), one entry per family. The contract is
-`crates/orbyn-contracts/src/engine_host.rs` with the generated `EngineHost*.ts` in `web/src/generated` (HostDriver slices 1 and 2: #941, merged, and this change). The host sends none of these fields; the core builds them from the host's `hello`, its own restart
+`crates/orbyn-contracts/src/engine_host.rs` with the generated `EngineHost*.ts` in `web/src/generated` (HostDriver slices 1 and 2: #941, merged; slice 3 is this change). The host sends none of these fields; the core builds them from the host's `hello`, its own restart
 bookkeeping and its own checks. No entry carries an environment, arguments, a key, a path, a token or a stack.
 
 **Slice 1 (the contract above).** `EngineHostStatus`:
@@ -394,6 +413,25 @@ bookkeeping and its own checks. No entry carries an environment, arguments, a ke
 - **Spawn secret.** A host's spawn environment gets an engine's key only from `Core::engine_spawn_secret(engine)`, which honours the person's per-engine opt-in. The key goes
   in the child's environment and nowhere else: not argv, not a frame, not a log line or an error. No key and no core bound yet mean no key.
 
+**Slice 3 (built).** Optional and ignorable, no host frame and no protocol bump; the pool already holds these:
+
+- `since?`: RFC 3339 time the live host started running, from the moment the pool adopted it. Absent while no host is live.
+- `sdk?`: `{name, version}` from the live host's `hello`. Absent unless the hello names both halves, and while no host is live.
+- `capabilities?`: the request names the live host's `hello` lists. Absent while no host is live; an empty list is a host that lists none.
+- `pooled?`: true, because one host process serves every thread of the family. Absent on a `not_used` family, which has no pool.
+- `restart?`: while the state is `restarting`, `{attempt, limit, next_try_seconds}`. `attempt` is the restart being waited for, `limit` is the pool's `max_restarts` (five by
+  default), and `next_try_seconds` counts to the next try (at least 1). Absent in every other state.
+- `stops_in_window?`: for a `cant_start` family, the restarts inside the pool's restart window: the count that reaches the five-in-five rule. Absent in every other state.
+- **Warm start.** The "Start the next turn early" setting (`warm_next_turn`) works for a host-wrapped Claude only while the person's Claude path is the CLI: the wrapped driver then forwards `can_warm`, `warm_key`, `start_warm` and `adopt_run`, read for each call from the same setting a run reads. On the SDK path nothing is warmed, and a process that was warmed before the setting changed is ended unused when the next run goes the SDK way.
+- `has_driver?`: true when a CLI driver is wrapped for the family, not that it is reachable. Nothing falls back to it: a run on a
+  wrapped family (Claude, Cursor or ACP) whose host cannot start fails with `engine_unavailable` and the host's reason, and the CLI
+  driver runs only when the person chose the Claude CLI path (`claude_engine_path` is `cli`) or the family is not host-wrapped
+  (Codex and OpenCode). Claude is wrapped today; Cursor and ACP are when their flags are on. Absent when nothing is wrapped.
+- `sdk_missing?`: true when the host answered a run with its fixed sentence that the family's SDK is not available in this build. The pool keeps it until a later turn gets
+  past the SDK load, which clears it. The host also checks when it starts: its answer to `init` carries `sdkMissing` (true when it could not load the family's SDK, false when it
+  could) for the Claude and Cursor families, which sets or clears the flag before any run. The probe is one import, bounded at 3 seconds, and its answer is left out when it fails
+  to answer in time or the family has no SDK; a host that leaves the field out changes nothing. Both are the host's own loader, so the core still does not read the SDK folder.
+
 **Planned (not built).** Names are proposals:
 
 - `threads[].state` of `starting`, `restarting` and `unavailable`, and `threads[].last_error` (`{kind?, message}`, only for `unavailable`), so the UI can show a thread
@@ -404,7 +442,7 @@ bookkeeping and its own checks. No entry carries an environment, arguments, a ke
   `unsupported_platform`) covers `flag_off`; the host driver does not fall back to the CLI when a host is `cant_start` (the run is refused), so `unavailable` would be
   untrue today, and a build with no host has no entry to attach `not_installed` to.
 
-The web client reads this route with the generated types (`web/src/features/enginehost/hostStatus.ts`; a 404 means nothing is reported) and turns each entry into the `HostRow` the Settings screens draw (`contract.ts`). The `HostRow` fields for the Planned items above, and for stop, restart and retry, are filled only by the dev mock: the real client leaves them empty, and the screens draw nothing for them (no Stop, Restart or Try again button until the Person routes of slice 2 exist).
+The web client reads this route with the generated types (`web/src/features/enginehost/hostStatus.ts`; a 404 means nothing is reported) and turns each entry into the `HostRow` the Settings screens draw (`contract.ts`). Slice 3's fields are mapped from the service. `running_threads` and `failed_threads` are still mock-only guesses; the screens draw a field only when the service sends it.
 
 ## Crash and recovery
 

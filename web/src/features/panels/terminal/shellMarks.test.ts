@@ -76,3 +76,63 @@ describe("shell marks", () => {
     expect(screen(["$ ls", "a", "$ "]).marks.commandAt(1, 1)).toBeNull();
   });
 });
+
+describe("the commands a shell finished", () => {
+  it("lists each one with the code it reported, oldest first, and leaves a running command out", () => {
+    const term = screen(["$ one", "a", "$ two", "b", "$ "]);
+    term.at(0, 2);
+    term.mark(133, "B");
+    term.at(1);
+    term.mark(133, "C");
+    // Output started: the command is known but has not ended.
+    expect(term.marks.finished()).toEqual([]);
+    term.at(2);
+    term.mark(133, "D;0");
+    expect(term.marks.finished()).toEqual([{ seq: 0, command: "one", exitCode: 0 }]);
+    term.at(2, 2);
+    term.mark(133, "B");
+    term.at(3);
+    term.mark(133, "C");
+    term.at(4);
+    term.mark(133, "D;1");
+    expect(term.marks.finished()).toEqual([
+      { seq: 0, command: "one", exitCode: 0 },
+      { seq: 1, command: "two", exitCode: 1 },
+    ]);
+  });
+
+  it("leaves out a command whose line the shell never showed, and one that ended without a code keeps null", () => {
+    const term = screen(["$ ", "$ ls", "out", "$ "]);
+    // The command started and its output began on the same row: the shell showed no command line.
+    term.at(0, 2);
+    term.mark(133, "B");
+    term.at(0, 5);
+    term.mark(133, "C");
+    term.at(1);
+    term.mark(133, "D;0");
+    // A second command that ends at the next prompt without a finish mark.
+    term.at(1, 2);
+    term.mark(133, "B");
+    term.at(2);
+    term.mark(133, "C");
+    term.at(3);
+    term.mark(133, "A");
+    expect(term.marks.finished()).toEqual([{ seq: 1, command: "ls", exitCode: null }]);
+  });
+
+  it("gives each run its own sequence number, so two runs of one command stay apart", () => {
+    const term = screen(["$ npm test", "a", "$ npm test", "b", "$ "]);
+    for (const [line, code] of [[1, 1], [3, 0]] as const) {
+      term.at(line - 1, 2);
+      term.mark(133, "B");
+      term.at(line);
+      term.mark(133, "C");
+      term.at(line + 1);
+      term.mark(133, `D;${code}`);
+    }
+    expect(term.marks.finished()).toEqual([
+      { seq: 0, command: "npm test", exitCode: 1 },
+      { seq: 1, command: "npm test", exitCode: 0 },
+    ]);
+  });
+});

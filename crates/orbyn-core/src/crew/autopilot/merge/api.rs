@@ -640,6 +640,12 @@ impl Core {
             next_offset,
             background_runs,
             background_total: to_u32(background_total),
+            // KC3: the Inbox's waits, from the one needs-you field the queue already read.
+            waiting_elsewhere: all
+                .waiting_elsewhere
+                .into_iter()
+                .map(|(kind, count)| wire::AutopilotWaitingElsewhere { kind, count })
+                .collect(),
             now_unix: now,
         })
     }
@@ -718,6 +724,11 @@ impl Core {
         let commit = self
             .crew_answer_review(task_id, answer, &target, now)
             .await?;
+        // A person's local revert is a lesson of its own (source 2), written after the branch moved; a forge revert
+        // only queues the corrective PR, so nothing is reverted yet and nothing is learned. Neither can fail the act.
+        if matches!(answering, Answering::Revert) && commit.is_some() {
+            self.learn_person_merge_revert(task_id);
+        }
         // A forge revert queues a corrective PR: show exactly which commit will be pushed onto which base.
         let correction = if matches!(answering, Answering::Revert) {
             self.store.crew_forge_correction(task_id)?

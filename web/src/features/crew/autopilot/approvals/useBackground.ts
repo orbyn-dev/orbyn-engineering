@@ -5,13 +5,15 @@ import type { BackgroundCrew } from "../../../../generated/BackgroundCrew";
 import type { BackgroundRun } from "../../../../generated/BackgroundRun";
 import { useRefresh } from "../../flow/live/useFlow";
 import { crewApi } from "./api";
-import { RECENT_RUNS, type BackgroundRead } from "./backgroundModel";
+import { RECENT_RUNS, type BackgroundRead, type WatchReadRow } from "./backgroundModel";
 
 const PAGE = 100;
 /** The most pages of crews one read follows, so a very long list cannot hold the page open. */
 const PAGES = 5;
-/** The most runs reads in flight at once. */
+/** The most runs and watch reads in flight at once. */
 const AT_ONCE = 4;
+/** The watch changes one crew read follows: the newest page, enough to name every change the design's screens draw. */
+export const WATCH_CHANGES = 20;
 
 /** A crew's newest runs. A crew deleted since the list was read answers 404 and has none. */
 async function runsOf(crew: BackgroundCrew, signal: AbortSignal): Promise<BackgroundRun[]> {
@@ -19,6 +21,25 @@ async function runsOf(crew: BackgroundCrew, signal: AbortSignal): Promise<Backgr
     return (await crewApi.backgroundRuns(crew.id, { offset: 0, limit: RECENT_RUNS }, signal)).runs;
   } catch (failure) {
     if (failure instanceof ApiFailure && failure.status === 404) return [];
+    throw failure;
+  }
+}
+
+/**
+ * A watch's two reads: its last check and its newest changes. A service without them answers 404 (an older build, or Crew
+ * Preview off): that is not an error, it means the watch is not drawn at all, so it answers null. Any other failure is the
+ * page's own error.
+ */
+async function watchOf(crew: BackgroundCrew, signal: AbortSignal): Promise<WatchReadRow | null> {
+  if (crew.trigger.kind !== "watch") return null;
+  try {
+    const [status, page] = await Promise.all([
+      crewApi.backgroundWatch(crew.id, signal),
+      crewApi.backgroundWatchChanges(crew.id, { offset: 0, limit: WATCH_CHANGES }, signal),
+    ]);
+    return { status, changes: page.changes };
+  } catch (failure) {
+    if (failure instanceof ApiFailure && failure.status === 404) return null;
     throw failure;
   }
 }
@@ -34,10 +55,17 @@ async function readBackground(project: string, signal: AbortSignal): Promise<Bac
     next = page.next_offset ?? null;
   }
   const runs: Record<string, BackgroundRun[]> = {};
+  const watches: Record<string, WatchReadRow> = {};
   for (let at = 0; at < crews.length; at += AT_ONCE) {
-    await Promise.all(crews.slice(at, at + AT_ONCE).map(async (crew) => { runs[crew.id] = await runsOf(crew, signal); }));
+    await Promise.all(
+      crews.slice(at, at + AT_ONCE).map(async (crew) => {
+        const [crewRuns, watch] = await Promise.all([runsOf(crew, signal), watchOf(crew, signal)]);
+        runs[crew.id] = crewRuns;
+        if (watch) watches[crew.id] = watch;
+      }),
+    );
   }
-  return { crews, total, runs };
+  return { crews, total, runs, watches };
 }
 
 /**

@@ -3,11 +3,11 @@
 import type { Risk } from "../autopilot/approvals/model";
 
 /** The kinds the designs name, in the order their filters are drawn. The kinds with a route behind them are in LIVE_KINDS. */
-export const NEEDS_KINDS = ["autonomy", "approval", "denied", "questions", "review", "main", "conflict", "stopped", "could_not_start", "background"] as const;
+export const NEEDS_KINDS = ["autonomy", "approval", "denied", "questions", "review", "main", "conflict", "stopped", "could_not_start", "could_not_stop", "background"] as const;
 export type NeedsKind = (typeof NEEDS_KINDS)[number];
 
 /** The kinds `assemble.ts` builds from a route today. The rest are drawn by the frames only. */
-export const LIVE_KINDS = ["autonomy", "approval", "denied", "stopped", "could_not_start", "main", "background"] as const satisfies readonly NeedsKind[];
+export const LIVE_KINDS = ["autonomy", "approval", "denied", "stopped", "could_not_start", "could_not_stop", "main", "background"] as const satisfies readonly NeedsKind[];
 
 /** A filter chip's word, from the designs: Approvals, Denied, Questions, Main, Conflicts, Reviews, Autonomy. */
 export const KIND_FILTER: Record<NeedsKind, string> = {
@@ -20,6 +20,7 @@ export const KIND_FILTER: Record<NeedsKind, string> = {
   conflict: "Conflicts",
   stopped: "Stops",
   could_not_start: "Could not start",
+  could_not_stop: "Could not stop",
   background: "Background",
 };
 
@@ -34,12 +35,13 @@ export const KIND_ONE: Record<NeedsKind, string> = {
   conflict: "Conflict",
   stopped: "Stopped",
   could_not_start: "Could not start",
+  could_not_stop: "Could not stop",
   background: "Background",
 };
 
 /** An answer an item offers. `key` names what the screen's owner does; none is a merge, a revert or an approval of its own. */
 export interface NeedsAction {
-  key: "approve" | "deny" | "dismiss" | "sign-in" | "open" | "decide" | "open-both" | "answer" | "rerun" | "review" | "override" | "later" | "open-review" | "open-thread" | "retry";
+  key: "approve" | "deny" | "dismiss" | "sign-in" | "open" | "decide" | "open-both" | "answer" | "rerun" | "review" | "override" | "later" | "open-review" | "open-thread" | "retry" | "stop-again";
   label: string;
   primary?: boolean;
 }
@@ -53,7 +55,7 @@ export interface NeedsItem {
   risk: Risk | null;
   /** Reversibility is stated by no route: only the frames carry it. */
   undo: "easy" | "hard" | null;
-  /** Who asked and what it is, after the tags: "Claude Code · Sonnet 5.5 · approval". */
+  /** Who asked and what it is, after the tags: "claude · approval". */
   from: string;
   /** What waiting costs, in the designs' sentence for the kind; null when no source says. */
   cost: string | null;
@@ -68,6 +70,8 @@ export interface NeedsItem {
   engine?: string;
   /** The source's own id the screen's handlers act on (a held command's id, a task id, a crew id). */
   ref: string;
+  /** The project the item belongs to, when the source names one (a watch row opens its page on that project). */
+  project?: string;
 }
 
 /** The inbox as a filter and a list. */

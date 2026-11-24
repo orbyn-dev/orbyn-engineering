@@ -34,6 +34,22 @@ describe("the runs of a thread", () => {
     expect(await screen.findByText(/A script may make 200 calls\./)).toBeInTheDocument();
   });
 
+  it.each([
+    ["cancelled", "Cancelled"],
+    ["lost", "Lost"],
+    ["syntax", "Error"],
+    ["runtime", "Error"],
+    ["limit", "Error"],
+    ["denied", "Error"],
+    [null, "Error"],
+  ] as const)("draws an errored run of kind %s as %s", async (kind, word) => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ runs: [{ run_id: "run_k", status: "error", started_at: started, ended_at: started, calls: 1, error_kind: kind }] }), { status: 200 }));
+    render(<CodeRunsList threadId="t-1" />);
+    const row = await screen.findByRole("button", { name: /run_k/ });
+    expect(row).toHaveTextContent(word);
+    if (kind === "cancelled") expect(row).not.toHaveTextContent("Error");
+  });
+
   it("shows a status it does not know as Unknown and does not open it", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ runs: [{ run_id: "run_x", status: "sideways", started_at: started, ended_at: null, calls: 0 }] }), { status: 200 }));
     render(<CodeRunsList threadId="t-1" />);
@@ -46,17 +62,20 @@ describe("the runs of a thread", () => {
     mock.codeMode.setOffered(false);
     const { container } = render(<CodeRunsList threadId="t-1" />);
     await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled());
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
   });
 
   it("draws nothing for a thread with no runs, and nothing when the read fails", async () => {
     const empty = render(<CodeRunsList threadId="t-1" />);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(empty.container).toBeEmptyDOMElement();
     empty.unmount();
     mock.fail("/api/threads/t-2/code-runs", 1, 500);
     const failed = render(<CodeRunsList threadId="t-2" />);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(failed.container).toBeEmptyDOMElement();
     expect(screen.queryByRole("alert")).toBeNull();

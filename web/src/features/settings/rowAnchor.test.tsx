@@ -57,6 +57,7 @@ describe("a deep link to a row (pb-k55-row-anchor)", () => {
     for (const row of ["no-such-row", "constructor", "search-engine-x"]) {
       const { unmount } = render(<SettingsPage section="chat" row={row} onClose={() => undefined} />);
       await screen.findByRole("navigation", { name: "Breadcrumb" });
+      // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(ringed()).toBeNull();
       unmount();
@@ -66,6 +67,7 @@ describe("a deep link to a row (pb-k55-row-anchor)", () => {
   it("does not ring a row of another page", async () => {
     render(<SettingsPage section="general" row="search-engine" onClose={() => undefined} />);
     await screen.findByRole("navigation", { name: "Breadcrumb" });
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(ringed()).toBeNull();
   });

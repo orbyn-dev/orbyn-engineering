@@ -5,6 +5,7 @@
 //! every answer is written again from decoded pixels, so no metadata (EXIF GPS) travels with it.
 
 use std::io::Cursor;
+use std::sync::{Condvar, Mutex};
 
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, ImageFormat, ImageReader, Limits};
@@ -23,6 +24,41 @@ pub const MAX_PHOTO_INPUT_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_PHOTO_PIXELS: u64 = 100_000_000;
 /// What one decode may allocate. A photo at [`MAX_PHOTO_PIXELS`] needs 400 MiB as RGBA.
 const MAX_DECODE_ALLOC: u64 = 512 * 1024 * 1024;
+/// Bounds concurrent decoded photos across all Core instances in the service process.
+pub const MAX_CONCURRENT_PHOTOS: usize = 2;
+static PHOTO_SLOTS: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+#[cfg(test)]
+static PHOTO_WAIT_OBSERVER: Mutex<Option<std::sync::mpsc::Sender<()>>> = Mutex::new(None);
+
+/// A slot stays held until all decoded and intermediate images have been dropped.
+struct PhotoPermit;
+
+impl PhotoPermit {
+    fn acquire() -> Self {
+        let (count, available) = &PHOTO_SLOTS;
+        let mut count = count.lock().unwrap_or_else(|error| error.into_inner());
+        while *count >= MAX_CONCURRENT_PHOTOS {
+            #[cfg(test)]
+            if let Some(observer) = PHOTO_WAIT_OBSERVER.lock().unwrap().as_ref() {
+                let _ = observer.send(());
+            }
+            count = available
+                .wait(count)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+        *count += 1;
+        Self
+    }
+}
+
+impl Drop for PhotoPermit {
+    fn drop(&mut self) {
+        let (count, available) = &PHOTO_SLOTS;
+        let mut count = count.lock().unwrap_or_else(|error| error.into_inner());
+        *count -= 1;
+        available.notify_one();
+    }
+}
 /// Quality of a JPEG written again: high enough that a photo shown to the engine still looks right.
 const JPEG_QUALITY: u8 = 82;
 
@@ -208,6 +244,18 @@ fn name_for(label: &str, kind: PhotoKind) -> String {
     format!("{stem}.{}", kind.ending())
 }
 
+/// Keep the permit over decoding and encoding, including all intermediate images.
+fn convert_pixels(
+    bytes: &[u8],
+    kind: PhotoKind,
+    must_shrink: bool,
+    decoder: impl FnOnce(&[u8], ImageFormat) -> Result<DynamicImage>,
+) -> Result<(Vec<u8>, PhotoAction)> {
+    let _permit = PhotoPermit::acquire();
+    let image = decoder(bytes, kind.format())?;
+    write_within(image, kind, MAX_IMAGE_BYTES, must_shrink)
+}
+
 impl Core {
     /// Converts or shrinks one photo and stores the answer as this thread's attachment, so the run
     /// sends the stored photo rather than the one the person picked. The pick is only a label and a
@@ -228,9 +276,8 @@ impl Core {
         }
         let original_name = safe_name(label);
         let kind = kind_of(bytes)?;
-        let image = decode(bytes, kind.format())?;
         let must_shrink = original_size > MAX_IMAGE_BYTES;
-        let (stored, action) = write_within(image, kind, MAX_IMAGE_BYTES, must_shrink)?;
+        let (stored, action) = convert_pixels(bytes, kind, must_shrink, decode)?;
         let attachment = self.add_attachment(
             thread_id,
             &name_for(&original_name, kind),
@@ -252,6 +299,52 @@ impl Core {
 mod tests {
     use super::*;
     use image::{ImageBuffer, Rgb};
+
+    #[test]
+    fn only_two_photo_conversions_enter_at_once_and_waiters_continue() {
+        use std::sync::{Arc, Barrier, mpsc};
+        use std::time::Duration;
+
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let release = Arc::new(Barrier::new(3));
+        let bytes = Arc::new(written(&photo(8, 8), PhotoKind::Png));
+        let mut workers = Vec::new();
+        for _ in 0..2 {
+            let entered = entered_tx.clone();
+            let release = Arc::clone(&release);
+            let bytes = Arc::clone(&bytes);
+            workers.push(std::thread::spawn(move || {
+                convert_pixels(&bytes, PhotoKind::Png, false, |bytes, format| {
+                    entered.send(()).unwrap();
+                    release.wait();
+                    decode(bytes, format)
+                })
+                .unwrap();
+            }));
+        }
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (waiting_tx, waiting_rx) = mpsc::channel();
+        *PHOTO_WAIT_OBSERVER.lock().unwrap() = Some(waiting_tx);
+        workers.push(std::thread::spawn(move || {
+            convert_pixels(&bytes, PhotoKind::Png, false, |bytes, format| {
+                entered_tx.send(()).unwrap();
+                decode(bytes, format)
+            })
+            .unwrap();
+        }));
+        waiting_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        *PHOTO_WAIT_OBSERVER.lock().unwrap() = None;
+        assert!(matches!(
+            entered_rx.recv_timeout(Duration::from_millis(200)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        release.wait();
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    }
 
     /// An image that does not compress to nothing, so a small limit forces a real shrink.
     fn photo(width: u32, height: u32) -> DynamicImage {

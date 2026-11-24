@@ -187,7 +187,10 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
             std::env::var_os("ORBYN_ENGINE_HOST"),
             std::env::var("ORBYN_ENGINE_HOST_CLAUDE").ok().as_deref(),
         )
-        .map(|host| host.with_cursor(std::env::var("ORBYN_ENGINE_HOST_CURSOR").ok().as_deref())),
+        .map(|host| {
+            host.with_acp(std::env::var("ORBYN_ENGINE_HOST_ACP").ok().as_deref())
+                .with_cursor(std::env::var("ORBYN_ENGINE_HOST_CURSOR").ok().as_deref())
+        }),
     };
     if let Ok(seconds) = std::env::var("ORBYN_APPROVAL_TIMEOUT_SECS") {
         let seconds: u64 = seconds
@@ -629,8 +632,9 @@ mod known_engine_config_tests {
             Some(vec!["opencode".into()])
         );
         for value in ["", "broken", "null", "{}", "[1]", r#""opencode""#] {
-            assert!(
-                known_engine_ids(Some(std::ffi::OsStr::new(value))).is_err(),
+            assert_eq!(
+                known_engine_ids(Some(std::ffi::OsStr::new(value))).unwrap_err(),
+                "ORBYN_KNOWN_ENGINE_IDS must be a JSON array of strings.",
                 "{value}"
             );
         }
@@ -660,11 +664,26 @@ mod crew_merge_config_tests {
         .unwrap();
         assert_eq!(checks, ["Rust (windows-2022)", "Web"]);
         assert_eq!(interval, Some(std::time::Duration::from_secs(60)));
-        for bad in ["null", "{}", r#"[""]"#, r#"["ci","ci"]"#, r#"[" ci"]"#] {
-            assert!(crew_merge_config(true, Some(OsStr::new(bad)), None).is_err());
+        for bad in ["null", "{}"] {
+            assert_eq!(
+                crew_merge_config(true, Some(OsStr::new(bad)), None).unwrap_err(),
+                "ORBYN_CREW_REQUIRED_CHECKS must be a JSON array of check names.",
+                "{bad}"
+            );
+        }
+        for bad in [r#"[""]"#, r#"["ci","ci"]"#, r#"[" ci"]"#] {
+            assert_eq!(
+                crew_merge_config(true, Some(OsStr::new(bad)), None).unwrap_err(),
+                "ORBYN_CREW_REQUIRED_CHECKS accepts at most 128 unique nonempty check names of at most 200 bytes.",
+                "{bad}"
+            );
         }
         for bad in ["0", "59", "86401", "invalid", "-1"] {
-            assert!(crew_merge_config(true, None, Some(OsStr::new(bad))).is_err());
+            assert_eq!(
+                crew_merge_config(true, None, Some(OsStr::new(bad))).unwrap_err(),
+                "ORBYN_CREW_WATCH_INTERVAL_SECS must be 60 to 86400, or unset to disable.",
+                "{bad}"
+            );
         }
     }
 }
@@ -686,7 +705,11 @@ mod background_watch_interval_tests {
             Some(std::time::Duration::from_secs(86400))
         );
         for bad in ["0", "59", "86401", "invalid", "-1"] {
-            assert!(background_watch_interval(Some(OsStr::new(bad))).is_err());
+            assert_eq!(
+                background_watch_interval(Some(OsStr::new(bad))).unwrap_err(),
+                "ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS must be 60 to 86400, or unset for off.",
+                "{bad}"
+            );
         }
     }
 }

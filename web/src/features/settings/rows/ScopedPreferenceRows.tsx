@@ -27,7 +27,8 @@ export function ScopedRows({ groups, query, inheritance }: {
   const keys = groups.flatMap((group) => group.rows.map((row) => row.key));
   const list = useAsync(JSON.stringify([query, keys]), (signal) =>
     queryPreferences({ scope: query, keys }, signal), { keep: true });
-  const [error, setError] = useState<string | null>(null);
+  /** The failed save's message stays on the row whose key it names; a row is never picked by its place in the list. */
+  const [error, setError] = useState<{ key: string; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const mounted = useRef(true);
@@ -54,7 +55,7 @@ export function ScopedRows({ groups, query, inheritance }: {
       return { saved: true, row: changed.rows.find((value) => value.key === row.key) };
     } catch (failure) {
       const message = toFailure(failure).message;
-      if (mounted.current) setError(message);
+      if (mounted.current) setError({ key: row.key, message });
       return { saved: false, error: message };
     } finally {
       pending.current = false;
@@ -63,7 +64,6 @@ export function ScopedRows({ groups, query, inheritance }: {
   };
   const save = (row: ScopedPreferenceRow, edit: PreferenceEdit) => { void commit(row, edit); };
   return <>
-    {error ? <p className="field-error" role="alert">{error} <button type="button" disabled={busy} onClick={list.reload}>Retry</button></p> : null}
     {groups.filter((group) => group.rows.some((row) => result.rows.some((entry) => entry.key === row.key))).map((group) => <SettingGroup key={group.title} title={group.title}>
       {group.rows.map((row) => {
         const value = result.rows.find((entry) => entry.key === row.key);
@@ -71,7 +71,9 @@ export function ScopedRows({ groups, query, inheritance }: {
         if (row.showWhen && !row.showWhen((key) => result.rows.find((entry) => entry.key === key)?.value)) return null;
         const hasOverride = value.members.some((member) => member.view.source === "project");
         const description = row.describe?.((key) => result.rows.find((entry) => entry.key === key)?.value) ?? row.description;
-        return <SettingRow key={row.key} title={row.title} description={description} actions={
+        const failure = error?.key === row.key ? error.message : null;
+        return <SettingRow key={row.key} title={row.title} description={description}
+          error={failure === null ? undefined : <>{failure} <button type="button" disabled={busy} onClick={list.reload}>Retry</button></>} actions={
           <div className="setting-inheritance-actions">
             {showInheritance && (inheritance === true || value.project_scoped) ? <PreferenceInheritance row={row} view={value.members[0]?.view ?? value.environment} global={value.environment}
               members={value.members} mixed={value.mixed} overrides={all ? value.overrides : []} disabled={disabled}

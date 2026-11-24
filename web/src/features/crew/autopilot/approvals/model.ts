@@ -150,7 +150,7 @@ export interface TripwireStop {
 }
 
 export type TemplateId = "fix_ci" | "flaky_test" | "dependency_bump" | "security_advisory";
-export type TriggerId = "ci_fails" | "issue_label" | "schedule" | "dependency_update";
+export type TriggerId = "ci_fails" | "issue_label" | "schedule" | "dependency_update" | "watch";
 
 export interface StageLine {
   label: string;

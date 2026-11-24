@@ -9,6 +9,7 @@ What a running agent can call: Orbyn's per-run MCP server, its tools and the ski
 | `mcp::apps` | MCP Apps: a tool's `ui://` page shown beside its row |
 | `mcp::flight` | The cap and single-flight on an app's tool-info read: a few engine sessions at once, identical concurrent reads share one, nothing kept |
 | `skills` | Skills read in place from the workspace library |
+| `local_skills` | The device-local skills area an approved Crew proposal writes into: one folder per skill slug, a `SKILL.md` with front matter and its own revision, written atomically, delivered through the MCP skills tools only |
 | `claude_skills` | Claude Code's own skills, where its CLI reads them |
 | `workflow_scripts` | The script a Claude Code workflow runs, for display |
 

@@ -6,4 +6,4 @@ import type { ErrorCode } from "./ErrorCode";
  * What a crew tool returns when it refuses. A tool result, not a ledger object:
  * it has no id and is never hashed.
  */
-export type CrewError = { v: number, code: ErrorCode, message: string, object?: CrewHash, };
+export type CrewError = { v: number, code: ErrorCode, message: string, object?: CrewHash, free_bytes?: number, floor_gb?: number, };

@@ -80,10 +80,13 @@ function protocolError(name, message, kind) {
 }
 
 export function cursorFamily({ loadSdk, env = process.env, fetch: fetchImpl = globalThis.fetch }) {
+  let probed;
   return {
     name: "cursor",
     sdk: { name: "@cursor/sdk", version: env.ORBYN_CURSOR_SDK_VERSION ?? "unknown" },
     capabilities: ["steer", "models", "usage"],
+    // Whether this build carries the SDK, asked once at init. Node caches the import, so a first run does not load it twice.
+    probeSdk: () => (probed ??= Promise.resolve().then(loadSdk).then(() => true, () => false)),
     create(ctx) {
       const sessions = new Map(); // sessionId -> {id, agent, cwd, run}
       const runs = new Map(); // sendId -> session

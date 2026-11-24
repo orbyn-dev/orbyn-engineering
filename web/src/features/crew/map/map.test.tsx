@@ -46,6 +46,7 @@ describe("the Crew map on the map route", () => {
     mock.reset("default");
     const { container } = render(<MapView />);
     await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
     expect(calls("/api/crew/flow")).toHaveLength(0);
@@ -262,8 +263,9 @@ describe("the wide Map tree from the map route", () => {
     const legend = document.querySelector(".mp-legend")!;
     expect(legend).toHaveTextContent("started by");
     expect(legend).toHaveTextContent("talking to");
-    expect(legend).toHaveTextContent("“live” means handed to a turn in progress");
+    expect(legend).toHaveTextContent("“live” means handed to a turn in progress or to a waiting crew_ask call");
     expect(legend).toHaveTextContent("“next turn” means queued, or sent with the next prompt");
+    expect(legend).not.toHaveTextContent("can’t be steered mid-turn");
   });
 
   it("draws one subagent report beside each worker: reported without inventing the rows, not reported as not an empty tree", async () => {
@@ -319,6 +321,13 @@ describe("the conversation lanes' swim lanes", () => {
     for (const one of labels) expect(one).not.toContain("undefined");
   });
 
+  it("draws the live legend with the waiting crew_ask call", async () => {
+    await openLanes();
+    const legend = document.querySelector(".mp-legend")!;
+    expect(legend).toHaveTextContent("“live” means handed to a turn in progress or to a waiting crew_ask call");
+    expect(legend).not.toHaveTextContent("can’t be steered mid-turn");
+  });
+
   it("takes its time axis from the messages and marks the lane level it cannot read Planned", async () => {
     await openLanes();
     const ticks = [...document.querySelectorAll(".mp-tick")];
@@ -347,6 +356,7 @@ describe("the conversation lanes on the message and fact routes", () => {
     mock.reset("default");
     const { container } = render(<LanesView />);
     await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
   });
@@ -386,8 +396,10 @@ describe("the conversation lanes on the message and fact routes", () => {
   it("pages messages with +N more, and a double call sends one read", async () => {
     mock.reset("crew-map-many-messages");
     const real = vi.mocked(fetch).getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
     vi.mocked(fetch).mockImplementation(async (input, init) => {
-      if (String(input).includes("offset=50")) await new Promise((resolve) => setTimeout(resolve, 60));
+      if (String(input).includes("offset=50")) await gate;
       return real(input, init);
     });
     const { result } = renderHook(() => useCrewMessages(MOCK_CREW, null));
@@ -396,6 +408,7 @@ describe("the conversation lanes on the message and fact routes", () => {
       void result.current.showMore();
       void result.current.showMore();
     });
+    release();
     await waitFor(() => expect(result.current.rows).toHaveLength(60));
     expect(calls("offset=50")).toHaveLength(1);
   });

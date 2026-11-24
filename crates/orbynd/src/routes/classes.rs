@@ -85,6 +85,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/autopilot/review/{task_id}/looks-good"),
     ("POST", "/api/crew/autopilot/review/{task_id}/revert"),
     ("POST", "/api/crew/background/create"),
+    ("POST", "/api/crew/background/runs/{id}/acknowledge"),
     ("POST", "/api/crew/background/{id}/delete"),
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/enable"),
@@ -110,7 +111,13 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/cancel"),
     ("POST", "/api/crew/tasks/{id}/merge"),
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
+    ("POST", "/api/crew/tasks/{id}/checks/{check}/decide"),
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
+    ("POST", "/api/crew/lead/{thread_id}/close"),
+    // Code Mode: stopping a live script run is the person's own stop button (docs/code-mode.md).
+    ("POST", "/api/code-runs/{id}/cancel"),
+    // Devices: every action is a Person write (docs/devices.md).
+    ("POST", "/api/devices/{id}/actions"),
     // Engines, updates, workspace and the shell.
     ("POST", "/api/acp/registry/{id}"),
     ("POST", "/api/engine-host/{family}/restart"),
@@ -132,6 +139,8 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/workspace/rollback"),
     ("POST", "/api/workspace/setup"),
     ("POST", "/api/workspace/update"),
+    // Browser profiles: a rename is the person's own action; the other profile routes stay Local.
+    ("POST", "/api/browser-profiles/{id}/rename"),
     // Preferences, policy and redaction.
     ("POST", "/api/policy/rules"),
     ("DELETE", "/api/policy/rules/{id}"),
@@ -522,6 +531,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/background/runs/{id}/acknowledge",
+        "Crew write behind local_only: the person settles one background review that waits; the wait clears and the run keeps its reason, state, stop reason and spend",
+    ),
+    (
+        "POST",
         "/api/crew/background/{id}/delete",
         "Crew write behind local_only: deletes a background worker",
     ),
@@ -642,6 +656,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/lead/{thread_id}/close",
+        "Crew write behind local_only: closing a lead thread stops the live tasks it leads",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/cancel",
         "Crew write behind local_only: the person stops a task",
     ),
@@ -654,6 +673,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/tasks/{id}/rerun-checks",
         "Crew write behind local_only: the person's re-run of a task's checks",
+    ),
+    (
+        "POST",
+        "/api/crew/tasks/{id}/checks/{check}/decide",
+        "Crew write behind local_only: the person passes or denies a manual check that holds the task",
     ),
     (
         "POST",
@@ -704,6 +728,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/engines/{id}/update",
         "updates engine software",
+    ),
+    (
+        "POST",
+        "/api/browser-profiles/{id}/rename",
+        "the person renames their own browser profile; only the stored name changes, so a profile open in a tab can be renamed",
     ),
     (
         "POST",
@@ -1210,6 +1239,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "/api/threads/{id}/repos/{repo_id}",
         "the person removes a repository from a thread, which removes its worktree",
     ),
+    (
+        "POST",
+        "/api/devices/{id}/actions",
+        "controls a local device and can expose its screen; every action is a Person write (docs/devices.md)",
+    ),
+    (
+        "POST",
+        "/api/code-runs/{id}/cancel",
+        "the person stops a live Code Mode run and denies the approval it waits on; no engine or worker stops another's work (docs/code-mode.md)",
+    ),
 ];
 
 #[cfg(test)]
@@ -1397,13 +1436,28 @@ mod tests {
         assert!(rows.lock().unwrap().len() <= 1024);
     }
 
+    /// The status and `code` a refused `person_check_field` answers with.
+    fn refusal_code(result: Result<(), ApiFailure>) -> (u16, String) {
+        use axum::response::IntoResponse;
+        let response = result.expect_err("the call is refused").into_response();
+        let status = response.status().as_u16();
+        let body = futures_util::FutureExt::now_or_never(axum::body::to_bytes(
+            response.into_body(),
+            4096,
+        ))
+        .expect("body is ready")
+        .expect("body reads");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json body");
+        (status, json["code"].as_str().expect("code").to_owned())
+    }
+
     #[tokio::test]
     async fn a_handler_level_refusal_is_audited_by_field_and_a_failed_write_still_refuses() {
         let headers = axum::http::HeaderMap::new();
         let (_, rows, offset, access) = audited(Some("the-key"), false).await;
         for _ in 0..3 {
             let refused = access.person_check_field(&headers, "POST", "/r/{id}", "resume");
-            assert!(refused.is_err());
+            assert_eq!(refusal_code(refused), (403, "person_required".to_owned()));
         }
         let _ = access.person_check_field(&headers, "POST", "/r/{id}", "worktree");
         access.audit_person_refusal("POST", "/r/{id}", None, CallerClass::ServiceToken);
@@ -1418,7 +1472,11 @@ mod tests {
 
         let (_, rows, _, failing) = audited(Some("the-key"), true).await;
         let refused = failing.person_check_field(&headers, "POST", "/r/{id}", "resume");
-        assert!(refused.is_err(), "a failed audit write still refuses");
+        assert_eq!(
+            refusal_code(refused),
+            (403, "person_required".to_owned()),
+            "a failed audit write still refuses"
+        );
         assert!(rows.lock().unwrap().is_empty());
     }
 

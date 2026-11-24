@@ -1,52 +1,54 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../../../../api/client";
+import type { MockApi } from "../../../../../mock/api";
 import { useConnection } from "../../../../product/state/connection";
+import { useUi } from "../../../../product/state/ui";
 import { useWorkspace } from "../../../../product/state/workspace";
+import { installMockFetch } from "../../../../test-support";
+import { wire } from "../../../../wire.test-support";
 import { registerTerminal } from "../terminalControls";
 import { recordCommand } from "./history";
 import { TerminalInput } from "./TerminalInput";
 
-vi.mock("../../../../api/client", async (original) => {
-  const real = await original<{ api: object }>();
-  return { ...real, api: { ...real.api, startRun: vi.fn(), enqueue: vi.fn(), cancelRun: vi.fn(), removeQueued: vi.fn() } };
-});
-vi.mock("./useInputContext", async (original) => {
-  const real = await original<typeof import("./useInputContext")>();
-  return { ...real, usePathListing: () => ({ listDir: () => null, state: "idle" }) };
-});
-
-const KEY = "th:main";
+// An idle thread of the mock service, which answers the runs, the queue and the cancel the editor sends.
+const THREAD = "t-done";
+const KEY = `${THREAD}:main`;
+let mock: MockApi;
+const prompts = () => wire().filter((call) => call.method === "POST" && call.path === `/api/threads/${THREAD}/runs`);
+const queued = () => wire().filter((call) => call.method === "POST" && call.path === `/api/threads/${THREAD}/queue`);
+const cancels = () => wire().filter((call) => call.method === "POST" && /^\/api\/runs\/[^/]+\/cancel$/.test(call.path));
 const write = vi.fn();
 let stop = () => undefined as void;
 
 const setup = (over: { auth?: "logged_in" | "logged_out"; active?: boolean } = {}) => {
   useWorkspace.setState({
-    threads: { th: { id: "th", project_id: "p", engine: "claude", model: "Sonnet", active_run: over.active ? { id: "r0" } : null } },
+    threads: { [THREAD]: { id: THREAD, project_id: "p-app", engine: "claude", model: "Sonnet", active_run: over.active ? { id: "r0" } : null } },
     engines: { data: [{ id: "claude", name: "Claude", installed: true, auth: over.auth ?? "logged_in" }] },
-    refreshThread: vi.fn(() => Promise.resolve()),
   } as never);
-  render(<TerminalInput threadId="th" keyOf={KEY} />);
+  render(<TerminalInput threadId={THREAD} keyOf={KEY} />);
   return { field: screen.getByLabelText("Terminal input") as HTMLTextAreaElement, user: userEvent.setup() };
 };
 
 beforeEach(() => {
   write.mockReset();
-  vi.mocked(api.startRun).mockReset().mockResolvedValue({ id: "r1" } as never);
-  vi.mocked(api.cancelRun).mockReset().mockResolvedValue(undefined as never);
-  vi.mocked(api.enqueue).mockReset().mockResolvedValue({ id: "q1" } as never);
+  // A long step keeps the run the editor starts alive, so Undo has a run to stop.
+  mock = installMockFetch({ stepMs: 60_000 });
+  useUi.setState({ toasts: [] });
   useConnection.setState({ offline: false, serviceDown: false });
   stop = registerTerminal(KEY, { write, clear: vi.fn(), interrupt: vi.fn(), output: () => "", find: vi.fn(), onResults: () => () => undefined });
 });
-afterEach(() => stop());
+afterEach(() => {
+  stop();
+  vi.unstubAllGlobals();
+});
 
 describe("terminal input", () => {
   it("runs a command in the shell with one write and sends nothing to the engine", async () => {
     const { field, user } = setup();
     await user.type(field, "git status{Enter}");
     expect(write).toHaveBeenCalledExactlyOnceWith("git status\r");
-    expect(api.startRun).not.toHaveBeenCalled();
+    expect(prompts()).toHaveLength(0);
     expect(field.value).toBe("");
   });
   it("says where a sentence goes before it is sent, then sends it as a prompt and runs nothing in the shell", async () => {
@@ -54,7 +56,8 @@ describe("terminal input", () => {
     await user.type(field, "why is the build failing?");
     expect(screen.getByText(/prompt to Claude \(Sonnet\)/)).toBeTruthy();
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(api.startRun).toHaveBeenCalledExactlyOnceWith("th", "why is the build failing?"));
+    await waitFor(() => expect(prompts()).toHaveLength(1));
+    expect(prompts()[0]?.body).toEqual({ prompt: "why is the build failing?", purpose: "terminal_proposal" });
     expect(write).not.toHaveBeenCalled();
     expect(await screen.findByText(/Sent to Claude as a prompt/)).toBeTruthy();
   });
@@ -65,26 +68,29 @@ describe("terminal input", () => {
       fireEvent.keyDown(field, { key: "Enter" });
       fireEvent.keyDown(field, { key: "Enter" });
     });
-    expect(api.startRun).toHaveBeenCalledTimes(1);
+    expect(prompts()).toHaveLength(1);
   });
   it("queues behind a running turn", async () => {
     const { field, user } = setup({ active: true });
     await user.type(field, "why is it slow?{Enter}");
-    await waitFor(() => expect(api.enqueue).toHaveBeenCalledWith("th", "why is it slow?", []));
-    expect(api.startRun).not.toHaveBeenCalled();
+    await waitFor(() => expect(queued()).toHaveLength(1));
+    expect(queued()[0]?.body).toEqual({ prompt: "why is it slow?", attachment_ids: [] });
+    expect(prompts()).toHaveLength(0);
   });
   it("Undo withdraws the prompt and puts the text back", async () => {
     const { field, user } = setup();
     await user.type(field, "why is it slow?{Enter}");
+    await waitFor(() => expect(prompts()).toHaveLength(1));
+    const runId = mock.threads.find((thread) => thread.id === THREAD)?.active_run?.id;
     await user.click(await screen.findByRole("button", { name: "Undo" }));
-    await waitFor(() => expect(api.cancelRun).toHaveBeenCalledWith("r1"));
+    await waitFor(() => expect(cancels().map((call) => call.path)).toEqual([`/api/runs/${runId}/cancel`]));
     await waitFor(() => expect(field.value).toBe("why is it slow?"));
   });
   it("keeps an unclear line in the shell", async () => {
     const { field, user } = setup();
     await user.type(field, "make sure the tests pass{Enter}");
     expect(write).toHaveBeenCalledWith("make sure the tests pass\r");
-    expect(api.startRun).not.toHaveBeenCalled();
+    expect(prompts()).toHaveLength(0);
   });
   it("Esc keeps a suggested prompt in the shell", async () => {
     const { field, user } = setup();
@@ -92,13 +98,13 @@ describe("terminal input", () => {
     expect(screen.getByText(/Nothing is sent to Claude/)).toBeTruthy();
     await user.keyboard("{Enter}");
     expect(write).toHaveBeenCalledWith("why is it slow?\r");
-    expect(api.startRun).not.toHaveBeenCalled();
+    expect(prompts()).toHaveLength(0);
   });
   it("never sends a secret to the engine, even in Engine mode", async () => {
     const { field, user } = setup();
     await user.click(screen.getByRole("button", { name: "Engine" }));
     await user.type(field, "check export OPENAI_API_KEY=abc123 please{Enter}");
-    expect(api.startRun).not.toHaveBeenCalled();
+    expect(prompts()).toHaveLength(0);
     expect(write).not.toHaveBeenCalled();
     expect(screen.getByText(/Looks like a secret/)).toBeTruthy();
   });
@@ -106,16 +112,17 @@ describe("terminal input", () => {
     const { field, user } = setup();
     await user.click(screen.getByRole("button", { name: "Engine" }));
     await user.type(field, "ls -la | grep x{Enter}");
-    expect(api.startRun).not.toHaveBeenCalled();
+    expect(prompts()).toHaveLength(0);
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(prompts()).toHaveLength(1));
+    expect(prompts()[0]?.body).toEqual({ prompt: "ls -la | grep x", purpose: "terminal_proposal" });
     expect(write).not.toHaveBeenCalled();
   });
   it("does not run a question in the shell when the engine is signed out, and says so", async () => {
     const { field, user } = setup({ auth: "logged_out" });
     await user.type(field, "why is it slow?{Enter}");
     expect(write).not.toHaveBeenCalled();
-    expect(api.startRun).not.toHaveBeenCalled();
+    expect(prompts()).toHaveLength(0);
     expect(screen.getByText(/not signed in/)).toBeTruthy();
   });
   it("does not run a question in the shell when offline", async () => {

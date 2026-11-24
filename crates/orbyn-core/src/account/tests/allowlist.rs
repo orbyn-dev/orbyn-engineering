@@ -9,7 +9,7 @@ async fn each_catalog_key_outside_the_allowlist_from_a_peer_is_not_applied_and_i
     let core = on(&dir, "a");
     let api = Arc::new(FakeDeviceApi::new());
     let foreign = not_allowlisted();
-    assert_eq!(foreign.len(), 56);
+    assert_eq!(foreign.len(), 58);
     let mut sent = Vec::new();
     let mut valid = 0;
     for key in &foreign {
@@ -52,6 +52,7 @@ async fn each_catalog_key_outside_the_allowlist_from_a_peer_is_not_applied_and_i
         "default_model",
         "fallback_model",
         "text_generation_model",
+        "text_generation_models",
         "default_effort",
         "default_thread_env_mode",
         // A peer could turn model calls back on.

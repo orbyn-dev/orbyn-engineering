@@ -65,6 +65,17 @@ fn retry_prompt(reason: &str) -> String {
     )
 }
 
+/// What a worker is told when a restart lost its previous turn. It is the same brief a retry gets:
+/// no lesson, no hint, no check and no part of the key, and it keeps the same thread and budget.
+pub(super) fn resume_prompt(round: u32) -> String {
+    format!(
+        "Your previous turn was lost when Orbyn restarted. Read the repository state and continue \
+         from your last verified round (round {round}). When you are done, call crew_report again. \
+         The core runs the checks; you do not see them. Do not widen your changes beyond the paths \
+         you were given."
+    )
+}
+
 fn change_prompt(reason: &str) -> String {
     format!(
         "The same failure happened twice, so repeating the same approach will not help.\n\n{reason}\n\n\
@@ -159,6 +170,18 @@ impl Core {
         }
         // A background run's lead thread runs no engine: telling it would start one.
         if self.crew_background_lead(&run.lead_thread_id) {
+            return;
+        }
+        // A lead thread that closed its tasks is not told: its close is what cancelled them, and the note would start the
+        // closed thread again. The reason is the cancel's own intent row, so a later attempt with another reason still tells it.
+        if result.state == ResultState::Cancelled
+            && self
+                .store
+                .crew_cancel_reason(run.task_id.as_str())
+                .ok()
+                .flatten()
+                .is_some_and(|reason| reason == super::close_lead::REASON)
+        {
             return;
         }
         // Held messages for the lead ride along, capped. They are recorded as sent only once the
@@ -266,6 +289,16 @@ impl Core {
         let Ok(Some(task)) = self.store.crew_task(task_id) else {
             return;
         };
+        // A check only a person can make: the task holds for that person and never passes on the checks around it.
+        if judged.waiting() {
+            let waits = judged.awaiting.join(", ");
+            self.crew_needs_person(
+                task_id,
+                &format!("This task's checks include one a person makes ({waits}), so it waits for their decision."),
+                true,
+            );
+            return;
+        }
         if judged.passed() {
             let ids: Vec<String> = judged
                 .evidence
@@ -344,6 +377,11 @@ impl Core {
                 return;
             }
         };
+        // The lesson source 1 reads the guard's fingerprint after it is stored: the same failure on another task of
+        // this repository is what teaches it. It never changes the judgement or the task.
+        if let Some(judged) = judged {
+            self.learn_repeated_failure(&moved, fingerprint, judged);
+        }
         match next {
             Next::Stop => self.end_crew_task(
                 &moved,
@@ -422,8 +460,18 @@ impl Core {
         let Ok(Some(brief)) = self.store.crew_brief(&task.id) else {
             return None;
         };
-        let over_time = crate::util::parse_time(&task.created_at)
-            .is_some_and(|at| crate::util::unix_now() - at > i64::from(brief.budget.minutes) * 60);
+        let over_time = crate::util::parse_time(&task.created_at).is_some_and(|at| {
+            let downtime = self
+                .store
+                .crew_run(&task.id)
+                .ok()
+                .flatten()
+                .map_or(0, |run| run.downtime_secs);
+            crate::util::unix_now()
+                .saturating_sub(at)
+                .saturating_sub(downtime)
+                > i64::from(brief.budget.minutes) * 60
+        });
         if over_time {
             return Some("The task ran past its time budget.");
         }

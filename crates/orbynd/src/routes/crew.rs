@@ -1,5 +1,7 @@
 //! Crew (Preview) over HTTP: the Preview flag, background crews' state (`/api/crew/background`: list, read, create, update, on, off,
-//! delete, the runs and Run now, which starts one run by hand; nothing fires a trigger on its own), Autopilot's modes, trust, risk, the Review queue, the merge queue, the watch on
+//! delete, the runs, a watch's last check and change history, Run now, which starts one run by hand, and the acknowledgement that
+//! settles a run's waiting review; nothing fires a trigger on its own), Autopilot's modes, trust, risk, the Review queue, the
+//! merge queue, the watch on
 //! main, the digest, the approval ledger, the trip wires and the guards, and three reads of the repository's data classes (`/api/crew/classes`,
 //! `/api/crew/classes/test`, `/api/crew/route/{task}`). Transport only: `orbyn_core::crew` builds every view and
 //! owns every rule.
@@ -154,12 +156,12 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     (
         "POST",
         "/api/crew/background/create",
-        "core background_create: a live project, bounded name, run budget, daily per-engine budget with the person's UTC offset, and trigger settings of the trigger's own kind, redacted, created off, audited in the same transaction; local only",
+        "core background_create: a live project, bounded name, run budget, daily per-engine budget with the person's UTC offset, and trigger settings of the trigger's own kind, redacted (a watch command also screened), created off, audited in the same transaction; local only",
     ),
     (
         "POST",
         "/api/crew/background/{id}/update",
-        "core background_update: the name and trigger only (project, template and budget are fixed, also by the table), redacted, audited in the same transaction; local only",
+        "core background_update: the name and trigger only (project, template and budget are fixed, also by the table), redacted (a watch command also screened), audited in the same transaction; local only",
     ),
     (
         "POST",
@@ -183,6 +185,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/background/runs/{id}/acknowledge",
+        "core background_acknowledge_review: the person settles one background review that waits. Preview, a run whose review is waiting, the audit row first in the same transaction; the wait clears and the run keeps its reason, state, stop reason and spend; a run that is not waiting is refused plainly and nothing is written; local only",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/cancel",
         "core crew_cancel_task: the person's stop button; the intent audit row before any effect, the worker's engine stopped and confirmed (else the state is kept and a failed-attempt row is written), then the state and its row in one transaction; already cancelled answers already and writes nothing; passed or stopped is a conflict; optional reason 1 to 200 characters, redacted; no agent tool reaches it; local only",
     ),
@@ -203,8 +210,23 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/needs-you/dismiss",
+        "core crew_needs_you_dismiss: Preview, a dismissible kind only, the id must be a current item of that kind, the audit row first in the same transaction as the device-local dismissal keyed by the item's since; hides only that item and never touches the task, merge or run; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/needs-you/notify",
+        "core crew_needs_you_notify: Preview, at most 50 item refs; answers the ones that are current, undismissed items not announced yet at their current wait and marks them announced before the answer (first window wins); touches nothing behind the item; local only",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/rerun-checks",
         "core crew_rerun_checks: the person's re-run of the key's checks only; the task must be passed, or stopped for a benign reason after its checks ran live (a safety stop is refused), with a key and a checkout, no live verification, no open worker run, no other re-run on the device and a 10 second gap per task (409 task_busy); the intent audit row before any command, every command screened by the always-denied list and the blast-radius guard (a refused check is not run), bounded in time, the outcome row after with counts only; no Evidence or Gate is stored; the answer has counts and the ids of refused checks, never a command, output or claim, and no state changes; optional reason 1 to 200 characters, redacted; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/tasks/{id}/checks/{check}/decide",
+        "core crew_decide_manual_check: the person's answer to a `manual` check of a task that waits for it; the task must be needs_person and the id must be a manual check of its key that is still waiting, else invalid; the audit row first, then the check's row from awaiting to passed or failed (a repeat writes nothing, the opposite is refused), then the person's own checks-stage Gate; when no check of the task waits any more it goes back to verifying and the key runs again in its own checkout, so a pass ends the task and a denial is the worker's reason through the ordinary loop guard; the answer is the checks still waiting; no command, output or key text reaches the caller; no agent tool reaches it; local only",
     ),
     (
         "POST",
@@ -281,6 +303,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "/api/crew/profile/apply",
         "core apply_profile_to_crew: a person applies an execution profile to a crew, a copy and never a link; a profile that grants full access or Autopilot Full needs its grant codes acknowledged or answers confirm_required and applies nothing; the audit row first in the same transaction; no agent tool reaches it; local only",
     ),
+    (
+        "POST",
+        "/api/crew/lead/{thread_id}/close",
+        "core crew_close_lead: Preview; every non-final task the thread leads is cancelled one by one through the audited cancel with a fixed reason, ids only in the answer; one that ended meanwhile is skipped and one that could not be stopped is named and the loop goes on; the thread's own close or archive proceeds either way; no agent tool reaches it; local only",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -332,6 +359,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
             "/api/crew/background/{id}/run-now",
             post(background_run_now),
         )
+        .route(
+            "/api/crew/background/runs/{id}/acknowledge",
+            post(background_acknowledge),
+        )
         .route("/api/crew/tasks/{id}/cancel", post(cancel_task))
         .route(
             "/api/crew/projects/{id}/pinned-ref/confirm",
@@ -354,9 +385,16 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .merge(super::crew_escapes::writes())
         .route("/api/crew/tasks/{id}/rerun-checks", post(rerun_checks))
         .route(
+            "/api/crew/tasks/{id}/checks/{check}/decide",
+            post(decide_manual_check),
+        )
+        .route(
             "/api/crew/tasks/{id}/retry-elsewhere",
             post(retry_elsewhere),
         )
+        .route("/api/crew/needs-you/dismiss", post(needs_you_dismiss))
+        .route("/api/crew/needs-you/notify", post(needs_you_notify))
+        .route("/api/crew/lead/{thread_id}/close", post(lead_close))
         .route("/api/crew/tasks/{id}/merge", post(merge_request))
         .route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
@@ -385,9 +423,16 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/stops", get(stops))
         .route("/api/crew/trust", get(trust))
         .route("/api/crew/dashboard", get(dashboard))
+        .route("/api/crew/needs-you", get(needs_you))
+        .route("/api/crew/lead/{thread_id}/live", get(lead_live))
         .route("/api/crew/background", get(background_list))
         .route("/api/crew/background/{id}", get(background_get))
         .route("/api/crew/background/{id}/runs", get(background_runs))
+        .route("/api/crew/background/{id}/watch", get(background_watch))
+        .route(
+            "/api/crew/background/{id}/watch/changes",
+            get(background_watch_changes),
+        )
         .route("/api/crew/guard/targets", get(guard_targets))
         .route("/api/crew/guard/test", get(guard_test))
         .route("/api/crew/projects/{id}/pinned-ref", get(pinned_ref))
@@ -930,11 +975,30 @@ async fn background_runs(
     Ok(Json(state.core.background_runs(&id, page(&query)?)?))
 }
 
+/// A watch's last check: its state, when it last checked, the exit code and reason, and the redacted tail it kept.
+async fn background_watch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.background_watch(&id)?))
+}
+
+/// A watch's change history, newest first: `limit`, `offset`.
+async fn background_watch_changes(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state.core.background_watch_changes(&id, page(&query)?)?,
+    ))
+}
+
 async fn background_create(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<wire::BackgroundCrewCreate>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.background_create(&body)?))
+    Ok(Json(state.core.background_create(&body).await?))
 }
 
 async fn background_update(
@@ -942,7 +1006,7 @@ async fn background_update(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<wire::BackgroundCrewUpdate>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.background_update(&id, &body)?))
+    Ok(Json(state.core.background_update(&id, &body).await?))
 }
 
 async fn background_enable(
@@ -974,6 +1038,15 @@ async fn background_run_now(
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.crew_background_run_now(&id, "user").await?))
+}
+
+/// The person's acknowledgement of one background run waiting in Review: the wait clears and the run is returned as it now
+/// stands, still holding its state, its stop reason and why it waited. A run that is not waiting is refused with a plain reason.
+async fn background_acknowledge(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.background_acknowledge_review(&id)?))
 }
 
 /// The person's stop button: cancels a task. The body may be empty, or `{ "reason": "..." }`.
@@ -1056,6 +1129,48 @@ async fn retry_elsewhere(
     Ok(Json(state.core.crew_retry_elsewhere(&id, "user").await?))
 }
 
+/// Everything that waits for the person, across every crew. Read-only.
+async fn needs_you(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_needs_you()?))
+}
+
+/// A person hides one dismissible inbox item on this device. Nothing behind the item changes.
+async fn needs_you_dismiss(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<wire::NeedsYouDismissBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state
+            .core
+            .crew_needs_you_dismiss(body.kind, &body.id, "user")?,
+    ))
+}
+
+/// A window asks which items it may announce with a desktop notification; the ones it is given are marked announced.
+async fn needs_you_notify(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<wire::NeedsYouNotifyBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_needs_you_notify(&body.items)?))
+}
+
+/// The live Crew tasks a lead thread leads: exactly what closing or archiving it would cancel. Read-only.
+async fn lead_live(
+    State(state): State<AppState>,
+    Path(thread_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_lead_live(&thread_id)?))
+}
+
+/// Closing a lead thread: cancel the live tasks it leads, one by one, and answer their ids. The thread's own settle or archive
+/// is the person's `PATCH /api/threads/{id}` and proceeds whatever this answers.
+async fn lead_close(
+    State(state): State<AppState>,
+    Path(thread_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_close_lead(&thread_id, "user").await?))
+}
+
 /// The person's re-run of a task's key checks. The body may be empty, or `{ "reason": "..." }`. The answer is counts and outcomes.
 async fn rerun_checks(
     State(state): State<AppState>,
@@ -1078,4 +1193,51 @@ async fn rerun_checks(
             .crew_rerun_checks(&id, body.reason.as_deref(), "user")
             .await?,
     ))
+}
+
+/// A person's answer to one `manual` check of a task: `{ "decision": "pass" | "deny", "note": "..." }`, the note optional. The answer
+/// is the checks of that task still waiting for a person, empty when it has carried on.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManualDecision {
+    decision: String,
+    #[serde(default)]
+    note: Option<String>,
+}
+
+/// A person passes or denies a `manual` check that holds a task. The route is classed `Person` (`routes/classes.rs`), so a caller
+/// without this launch's person key never reaches it, and the core refuses a reply that would be an instruction to a worker.
+async fn decide_manual_check(
+    State(state): State<AppState>,
+    Path((id, check)): Path<(String, String)>,
+    body: Bytes,
+) -> ApiResult<impl IntoResponse> {
+    // The flag first: with it off nothing here exists, and the body is not even read.
+    if !state.core.config.crew_preview {
+        return Err(CoreError::NotFound("route".into()).into());
+    }
+    if body.iter().all(u8::is_ascii_whitespace) {
+        return Err(CoreError::Invalid(
+            "the body names a decision: { \"decision\": \"pass\" | \"deny\" }".into(),
+        )
+        .into());
+    }
+    let asked: ManualDecision = serde_json::from_slice(&body).map_err(|_| {
+        CoreError::Invalid(
+            "the body is { \"decision\": \"pass\" | \"deny\", \"note\": text }".into(),
+        )
+    })?;
+    let pass = match asked.decision.as_str() {
+        "pass" => true,
+        "deny" => false,
+        _ => {
+            return Err(CoreError::Invalid("decision: pass or deny".into()).into());
+        }
+    };
+    let waiting = state
+        .core
+        .crew_decide_manual_check(&id, &check, pass, asked.note.as_deref(), "user")
+        .await
+        .map_err(|why| CoreError::Invalid(why.to_string()))?;
+    Ok(Json(serde_json::json!({ "waiting": waiting })))
 }

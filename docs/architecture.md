@@ -42,7 +42,7 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    run the unmodified `claude` binary, never collect, read or store Claude.ai credentials (the engine keeps its own
    login), and never use `--bare`, which ignores subscription login. The person's `claude_engine_path` setting (`sdk`,
    the default, or `cli`, a device-local preference) is read at the start of each run; `ORBYN_ENGINE_HOST_CLAUDE` is opt-out
-   (only `0` turns the host off). The core default is on; the Settings › Providers › Claude Code page sets `claude_engine_path` (the engine picker rows are *Planned*), and a packaged turn on the SDK path is not yet observed
+   (only `0` turns the host off). The core default is on; the Settings › Providers › Claude Code page sets `claude_engine_path` (the engine picker rows are built), and a packaged turn on the SDK path is not yet observed
    (docs/sdk-default-plan.md). A person's choice is never switched silently: when the host is down the person sees why and may pick the CLI.
 4. Orbyn writes nothing into target repositories or engine user config: no skills,
    instructions, excludes or context maps. The project file is read-only to Orbyn.
@@ -137,7 +137,10 @@ this transaction keeps failing, startup fails rather than run on.
 
 A refused background start removes its run and lead thread
 only while no Crew task exists, and does so in one transaction with the refusal
-audit, so a crash leaves none of them behind. After task creation, refusal holds the
+audit, so a crash leaves none of them behind. A start refused for low disk is the
+one exception: its run stays as the crew's history, stopped with `reason_code`
+`disk_low` and the disk sentence, waiting for nobody, and only its lead thread is
+removed, in the same transaction. After task creation, refusal holds the
 task for a person and ends the background run `needs_review`, retaining its lead;
 the run is returned, not an error. The refusal audit, task hold and run end
 share one transaction; a failed unwind transaction is returned to the caller. After the commit each held task gives up its leases and gets one `NeedsPerson` result, best effort and only logged; a task with no run row gets none and the run's `review_reason` carries the reason.
@@ -249,6 +252,7 @@ EXIF location. The input is capped at 50 MiB, refused from the declared length b
 body is read, and at 100 megapixels with a 512 MiB decoder allocation, checked from the
 header before a decoder allocates. A HEIC, HEIF or WebP is refused as `415 unsupported_type`
 until a decoder this build can carry is chosen, and the route reads no path from the request.
+At most two photo conversions decode and encode at once across the service; others wait.
 
 The composer edits a fenced code block as plain text: Tab and Shift+Tab move the
 selected block's lines by two spaces, Enter from the block's empty last line closes
@@ -490,7 +494,13 @@ fresh once, logging `CUSTOM engine.session_lost`. A second loss fails the run.
 `UsageCenter` reads local session history and nothing else: `projects/**/*.jsonl`
 under `~/.claude` (or `CLAUDE_CONFIG_DIR`), `sessions/**/*.jsonl` under `~/.codex`
 (or `CODEX_HOME`), and `sessions/**/session.jsonl` under Muse's home
-(`$XDG_DATA_HOME/muse`, else `~/.local/share/muse`). It keeps only timestamps, models
+(`$XDG_DATA_HOME/muse`, else `~/.local/share/muse`). Each launch reads its own profile
+and not one it inherited: a relocated path is this launch's only when it lies outside a
+sandbox the environment declares, or when the launch declares that profile itself
+(`ORBYN_LAUNCH_PROFILE=smoke` with the harness's `ORBYN_SMOKE_SANDBOX` root). Any other
+launch that inherits those variables reads the person's own home, the account's own home
+from the user database when the inherited one is the sandbox's, so a personal build never
+reports the harness's empty sandbox. It keeps only timestamps, models
 and token counts, and never opens a credential file. Claude rewrites an entry as it
 streams, so each message counts once. Codex repeats its running total, so an
 unchanged total counts once. Muse writes one log per session, counts its cached
@@ -504,7 +514,26 @@ standard rate, so its tokens stay unpriced. Each estimate is also split by token
 the same period's figures and chart during an explicit local refresh, dimming them
 after 150 ms while the scan is pending. A failed refresh keeps those figures and
 offers Retry. Changing the period clears them, and an earlier response cannot
-replace the new period or clear its pending state. Subscription
+replace the new period or clear its pending state. Cursor keeps no local history of its own: its spend is billed to the account, so the core keeps
+the account's billed events in `billed_events`, one row per event, keyed by a digest of the
+conversation, timestamp, model and counters because Cursor sends no event id. Nothing produces
+those events yet: the engine host answers `usage` with limits only and lists Cursor's
+`accountUsage.ts` as not added, so the table stays empty and no `cursor` row appears in
+`/api/usage` — the row is drawn only when the store holds events, never as an always-empty engine.
+Three states stay apart: no store and no rows are no row at all, and a period that holds none of
+the stored events is a scanned engine of nothing. When the host read lands it must hand over one
+complete window, as T3 reconciles against `totalUsageEventsCount`: a report replaces the rows of
+the days it names, so reading a window twice writes the same rows and a window of two events is
+stored as two, while an amount that settles later updates its row instead of adding one. A record
+that cannot be read as a billed event — no usage block, no timestamp or model that names a day,
+a negative counter — is dropped rather than counted as zero. The account's counters are separate,
+not inclusive: `inputTokens` is the uncached input, and cached input and cache writes are their own
+counters; reasoning stays inside `outputTokens`, which is where Cursor bills it, so no separate
+reasoning counter is kept or added. Cost has one source for every engine, the configured
+`model_prices`; the account's own billed cents are stored but not yet shown, because a day row
+costed from them would disagree with the model rows that are priced from the table.
+
+Subscription
 limits appear only where an engine reports them itself, as Codex does through
 `account/rateLimits/read`. Subscription reports are read fresh on every request:
 the supported drivers do not expose an authoritative current account/workspace binding
@@ -515,8 +544,10 @@ cannot answer after a newer read, a forget or an engine configuration change. No
 report is exposed through the no-I/O `cached_limits` path: Crew treats it as not reported,
 and scheduled near-limit checks still ask the engine afresh. Only Codex's `rateLimits`,
 `rateLimitsByLimitId` and plan leave the driver; its account ID, upsell copy and
-reset-credit offers are dropped; `?force=true` reads again and
-spends no model usage. `/api/limits` also gives one number per window length across
+reset-credit offers are dropped; `?force=true` reads again, spends no model usage and
+skips no window or fence, because no report is kept: a forced read takes the same
+fences and the same bounded provider read.
+`/api/limits` also gives one number per window length across
 engines, the highest used percentage, since that engine stops first. The overview excludes
 the Claude family, including named instances, before any status or usage probe; an explicit
 engine/thread limits read can still ask Claude.
@@ -547,17 +578,29 @@ next run. A rewind does the same unless the engine rolls its own session back. D
 stays until a run that carried it completes, so a failed start, a stop or a restart
 leaves it pending, and until then `/compact` and `/goal`, which reach an engine bare, are
 `422 unsupported`. The log stays whole; a rewind is logged as `CUSTOM
-thread.rewound` for clients to hide what follows.
+thread.rewound` for clients to hide what follows. The event carries the `through` position
+and `native: true` only when the engine point was noted. The web hides events between `through` and
+the rewound event, and says "went back" only on `native: true`. That point waits in memory until
+the thread's next send, however late: a service restart before that send loses it, and the
+run then resumes with the engine's full history while the view and the event still say the
+rewind was native.
 
-Each run keeps the engine session and the first turn id it spoke in. No run is admitted
-while a rewind is under way. Rewinding a Codex thread before a run whose session is
-still the thread's, with no handoff waiting and an earlier run in that same session (a
-session's first run may have carried a handoff), loads
-that thread in a short-lived app-server and sends `thread/revert` with that run's turn,
-which keeps only the earlier turns. The session then goes on, nothing is handed off,
-and the event and audit carry `native: true`. Files are restored only by the rewind's
-own checkpoint step. Any refusal, a missing turn id or another engine falls back to the
-handoff above.
+Each run keeps the engine session and the first turn id it spoke in; for the Claude host
+the turn it keeps is the prompt's message id, because the host's own turn id is a counter
+that never appears in the session file. No run is admitted while a rewind is under way.
+Rewinding a Codex thread before a run whose session is still the thread's, with no handoff
+waiting and an earlier run in that same session (a session's first run may have carried a
+handoff), loads that thread in a short-lived app-server and sends `thread/revert` with
+that run's turn, which keeps only the earlier turns. Rewinding a Claude thread whose run
+went through the engine host reads the session file by the stored session id and names the
+nearest top-level assistant ancestor of the run's prompt, falling back to the last one
+before it in file order when the file has no parent links; the next run's `open` carries it
+as `resumeAt` once, on the thread's next send however late, and a create, a different
+session or a changed thread session drops it. The session then goes on, nothing is handed
+off, and the event, audit and `RewindResult` carry `native: true`. Files are restored only
+by the rewind's own checkpoint step.
+Any refusal, a missing turn id or point, a missing or changed session file, or another
+engine falls back to the handoff above.
 
 ## What a run changed
 
@@ -599,9 +642,11 @@ refuse the action. A reply may be bare JSON or one Markdown fence around it. Gen
 needs Git 2.40 or later, which honours `GIT_ATTR_SOURCE`; older Git could apply
 the working tree's clean filters while the diff is read, so it falls back instead.
 
-Writing uses the selected thread engine and the configured text-generation model,
-or the thread's explicit model when that setting is empty. It never chooses another
-provider or guesses a smaller model. Only the guarded Claude one-shot path supports
+Writing uses the selected thread engine and the one-shot model resolved for that
+engine ([Text generators](#text-generators)): the per-engine choice, then the legacy
+setting, then the engine's small model, then the thread's model. A name the engine
+does not list is passed over, never sent, and it never chooses another provider.
+Only the guarded Claude one-shot path supports
 repository-derived text: an owned temporary folder, empty tools, strict empty MCP
 configuration, disabled hooks/cloud MCP/IDE connections and slash commands,
 `dontAsk`, and no session persistence. Rejected flags fail without a retry.
@@ -615,8 +660,7 @@ remote's tracking ref (the branch's configured remote, else `origin`) when it
 exists, else the local base branch; the staleness check uses the same ref. The
 checked snapshot includes the symbolic branch name (a fixed marker on a detached
 HEAD), so switching branches at the same commit during generation is refused.
-Existing title calls retain their separate model policy and
-Codex path; this change does not qualify that path as tool-free. No credential
+Existing title calls share that model policy; the Codex path is still not qualified as tool-free writing. No credential
 configuration or MCP server list is read to implement writing. Prompts and patches
 are not saved by the generation audit, which records purpose, engine and model.
 
@@ -1569,6 +1613,43 @@ client may stop reading early. Both routes share one scanner, so the stream neve
 a different set or order, and a message written while a streamed search runs may not be
 in it.
 
+## Text generators
+
+Two one-shot calls spend engine usage for text a person did not ask a model for: a
+thread's first-message title and a confirmed Git action's commit or pull request text.
+Both go through one resolver: the model `text_generation_models` names for the thread's
+engine when that engine lists it, then the legacy `text_generation_model` when that
+engine lists it, then the engine's small model (a `haiku`, `luna`, `mini`, `flash` or
+`small` family name), then the thread's model. The reason travels with the choice
+(`chosen`, `legacy`, `small` or `thread`), and a name an engine does not list is passed
+over, never sent. A failed model-list read is an empty list, so the next fallback applies
+instead of failing the call.
+
+`text_generation_models` is a JSON object of engine id to model id, global or per
+project, at most 64 entries. An engine id is at most 64 letters, digits, `-` and `_`,
+starting with a letter or digit; a model id is at most 256 plain characters and cannot
+start with `-`. A write always checks that shape, and when the engine has already listed
+its models, it refuses a model that list does not offer. An engine that has not answered
+yet cannot say, so the write is accepted and the run's own start check still applies. The
+key never syncs ([account](account.md#never-synced)), and the old `text_generation_model`
+stays as the fallback with no data migration.
+
+`GET /api/text-generators` is a read. It lists every known engine that is not turned
+off for the scope, with its display name, up to 200 of the models its catalog returned (a
+failed listing is an empty list, not an error), the global chosen model or null, and the
+resolved model with its reason or null. `?project=<id>` adds the project's effective
+chosen and resolved choice, and `own`: true when the project's own map names that engine,
+false when the choice is inherited from all projects. A project's map is layered over the
+global one engine by engine, so an engine the project does not name keeps the global
+choice. Clearing a choice (back to Automatic) is a write of the map without that engine,
+at either scope; at project scope the engine then inherits the global choice. A write goes through the ordinary preferences routes
+(`PUT /api/preferences`, `PUT /api/projects/{id}/preferences` or the scoped settings
+route); there is no text-generator write route.
+
+Branch names and cleanup have no generator in the service yet: branch names come from
+`branch_name_prefix`, and the stored `branch_naming_mode` semantic and custom modes are
+not called, so no branch or cleanup call reaches the resolver.
+
 ## Automatic requests
 
 `GET /api/network` and `crates/orbyn-core/src/governance/network.rs` list every outbound request
@@ -1578,9 +1659,10 @@ The two-minute pull request poll has its own, `poll_pull_requests`. Engines make
 
 A thread's first message also spends one short engine call on its title, in the
 background, unless `auto_thread_titles` is off. It sees only that message and goes through
-the thread's own engine with no tools and no session. The model is
-`text_generation_model` when that engine lists it, otherwise the engine's small model,
-otherwise the thread's. A thread with a chosen title, a delegated thread, and a goal
+the thread's own engine with no tools and no session. The model is the one
+[Text generators](#text-generators) resolves for that engine: its per-engine choice,
+then `text_generation_model`, then its small model, then the thread's. A thread with a
+chosen title, a delegated thread, and a goal
 command are left alone. A failure keeps the default title, and a rename that lands first
 wins.
 
@@ -2246,7 +2328,9 @@ a handshake or session open is refused with ACP's auth-required code, and `faile
 fails any other way. A successful open or model handshake clears it, so a signed-out engine
 reports the login again only until it next starts cleanly.
 
-Skills come from the workspace, in place. Nothing is copied, packed or signed.
+Skills come from the workspace, in place. Nothing is copied, packed or signed. The one
+exception is a skill approved from a Crew proposal, written into the device's own skills
+area under [Workspace](#workspace), never into the workspace.
 
 - Claude starts in the selected checkout, so the project's own instructions are the
   primary ones, and gets the library with `--add-dir <library>`, which loads its
@@ -2432,6 +2516,27 @@ A skill's identity is the library revision plus its dirty flag. Profiles filter 
 the MCP server and the bootstrap list. On Windows `.claude/skills` and
 `.agents/skills` are Git symlinks; if they did not materialize, status says so and
 that session uses the MCP route. The tree is never rewritten.
+
+Approval does not write this file yet: the proposal store and its Approve route are not built, and
+`SkillService::write_local_skill` has no caller. It is the writer that approval will call once the route exists.
+
+A skill approved from a Crew proposal is the one skill that is not in the workspace: it is
+stored on the device at `<data>/skills-local/<slug>/SKILL.md`, one folder per skill, its
+front matter carrying a `local_revision`. A local skill is personal and applies to every
+project; the repository a proposal came from is in its text only and cannot narrow where it
+applies. The write is staged beside the file and renamed into place; only slug names and
+paths inside the skill's own folder are accepted; the stored file, its revision line
+included, is capped at 64 KiB and that cap holds when it is read back; a body the locked
+secret scan finds a secret in is refused (`400 secret_refused`); a name the shared library
+or `skills-local` already holds is refused unless it edits the local skill at the revision
+(and under the name) it read; and one audit row carries the name, the revision and the
+proposal and lesson ids, never the text. That row is written before the rename, as rule 6
+requires, so a publish that fails after it can leave the attempt's row while the file
+itself is unchanged. The shared library wins a name it holds: a local skill cannot be
+created over one, and if the library later gains the name, `skill_load` reads the library
+copy and `skill_search` lists it once. The library's revision and dirty flag never include
+these skills, and no target repository is written. Engines reach them through the MCP
+`skill_search` and `skill_load` tools; native discovery is not built yet.
 
 ## Updates
 
@@ -2770,7 +2875,9 @@ longer in the user-role prompt.
 A crew worker is refused every `orbyn_*` tool that makes a thread or schedule or reads another thread (H3, H1).
 The protected `.orbyn/crew.json` may lower H4/H5 through `bus: { exchanges, posts }`.
 Start validates this section before admission. Existing whole-document, class and pin failures keep
-the router's `needs_person` refusal and audit without launching a worker. Each post (including an ask) and board write reads
+the router's `needs_person` refusal and audit without launching a worker; the one exception is a start that would write
+and inherits the repository's checks, which reads `.orbyn/crew.json` at the commit it starts from, so a file that cannot
+be read there refuses the start before routing, with the reader's problem and no task stored. Each post (including an ask) and board write reads
 the lead checkout's committed HEAD and accepted default-branch rules through the bounded plain-blob
 reader and remembered ancestry check. The stricter repository values are combined with the current
 host ceilings, never written into the process-wide bus. Caller/lead/worker project bindings come from
@@ -3178,7 +3285,9 @@ A tab's zoom, appearance and phone layout are set with `/view`. Zoom keeps the f
 same size and lays the page out smaller, 0.25 to 3 times. New tabs start from the
 `preview_zoom` and `preview_appearance` settings. A tab with no named profile ends with its
 profile. A named profile lives in `<data>/browser-profiles`, survives restarts, and holds
-one tab at a time because a browser locks its profile folder. A private tab only stays
+one tab at a time because a browser locks its profile folder. A profile can be renamed
+while a tab has it open: only the stored name changes, never the folder, so its cookies
+and history stay. A private tab only stays
 out of the UI's history. `/previews/file` opens a file inside the checkout as `file:`,
 which agents and the address bar cannot reach. Picking an element reads it and changes
 nothing, and what it returns comes from the page, so the UI quotes it into the draft for a
@@ -3231,6 +3340,8 @@ approval, so a late answer does nothing. Claude's `approve` is a run's permissio
 and stays on `ORBYN_APPROVAL_TIMEOUT_SECS`. `orbyn_thread_wait` waits at most 40 seconds
 and reports `ended: false`. `crew_review` paces itself by that timer's own deadline: it stops starting lanes in time and its
 error lists the lanes that started, waited on a person, were refused and were not reached. A request can be 512 KiB and a reply is cut at 256 KiB.
+A test build gives the MCP tool call and gated wait budgets ten minutes instead: a test calls the service directly and shares the machine with other work,
+so no engine is waiting on the other side and a loaded box must not decide a test with the production cut.
 
 ## Service access
 
@@ -3697,10 +3808,10 @@ every method, path and which routes need a credential.
 | `POST /api/settings/projects/icon` | `ChangeProjectIcon` → `Project[]`; selected structured icon/reset with membership and metadata revision compare-and-set |
 | `POST /api/settings/projects/rename` | `RenameSelectedProjects` → `Project[]`; selected names with membership and raw-name compare-and-set |
 | `POST /api/settings/project-scopes` | `ProjectScopesQuery` → `ProjectScopeCatalog`; full-app read, stale selections remain unavailable |
-| `POST /api/projects/clone`, `/create` | Make a folder, by default under `repo/`, or at `path`; `create` takes `readme` for a first commit |
+| `POST /api/projects/clone`, `/create` | Make a folder, by default under `repo/`, or at `path`; `create` takes `readme` for a first commit. Before filesystem or audit changes, `create` rejects names with path separators or control characters, empty names and dot components; Windows additionally rejects reserved characters and device names and names ending in a dot or space, checking the actual default slug or chosen folder leaf |
 | `PATCH /api/projects/:id` | `RenameProject`: the name shown; the folder stays |
 | `DELETE /api/projects/:id?delete_files=&confirm=` | `ProjectRemoval`: unregisters; `delete_files` is `400` unless Orbyn made the folder, and can be `409 project_has_work` |
-| `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home |
+| `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home. Folders only, never a `.`-named one, and on Windows never one marked hidden or system and never a junction or link, which a person does not pick as a project and some of which loop when opened. A filesystem root, a Windows drive or a share, also lists the mounted drives that can be read, first, because nothing is above a root |
 | `GET /api/threads?project_id=&archived=`, `POST /api/threads`, `GET, DELETE /api/threads/:id` | Threads; no `project_id` on create makes a scratch folder |
 | `GET /api/threads/:id/family` | `ThreadFamily`: the topmost thread and every thread below it, so any member answers the same tree; the stored edge is `parent_thread_id` with its `fork`, `side` or `subagent` relation, and archived members stay |
 | `POST /api/threads/batch` | `BatchThreads` to `BatchThreadResult[]`; at most 100 entries, oversized batches return `400 invalid_input` before creating any thread; one item failure does not stop an accepted batch |
@@ -3822,7 +3933,7 @@ every method, path and which routes need a credential.
 | `GET /api/threads/:id/commits` | `CommitInfo[]`, newest 100 |
 | `GET /api/threads/:id/checkpoints` | `Checkpoint[]` |
 | `POST /api/threads/:id/restore` | `RestoreWorkspace`; `409 shared_directory`, `409 thread_busy` |
-| `POST /api/threads/:id/rewind` | `RewindThread`: continue from before a run |
+| `POST /api/threads/:id/rewind` | `RewindThread` to `RewindResult` (`200`): continue from before a run, `native` or `handoff` |
 | `POST /api/threads/:id/fork` | `ForkThread`: a child thread with the log up to a run |
 | `POST /api/threads/:id/switch-engine` | `SwitchEngine`: hand the conversation to another engine, with an optional selection |
 | `GET, POST /api/threads/:id/previews` | `PreviewTab[]`; `OpenPreview` |
@@ -3834,6 +3945,7 @@ every method, path and which routes need a credential.
 | `POST .../previews/:tab/view`, `/reload`, `/clear`, `/pick` | `PreviewView`; `ReloadPreview`; `ClearPreview`; `PickPreview` to `PickedElement` |
 | `GET, POST /api/browser-profiles` | `BrowserProfile[]`; `CreateBrowserProfile` |
 | `DELETE /api/browser-profiles/:id`, `POST .../clear` | Remove, or empty, a profile no tab has open |
+| `POST /api/browser-profiles/:id/rename` | `RenameBrowserProfile` to `BrowserProfile`: only the stored name changes, never the folder, so a profile open in a tab can be renamed |
 | `GET /ws/preview/:thread_id/:tab` | Base64 JPEG text frames |
 | `GET /api/threads/:id/servers`, `POST .../servers/:pid/stop` | `LocalServer[]`; stop one in this checkout, otherwise `404` |
 | `POST /api/threads/:id/console` | Opens the engine's own console on the thread's session |

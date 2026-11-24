@@ -2,17 +2,25 @@
 //! a thread's links to issues and a thread started from one. Beta, read-only against the tracker. Everything a
 //! tracker returns is untrusted text and is never fed to an engine except in the framed first message.
 
+mod azure;
 #[cfg(test)]
 pub(crate) mod fake_http;
+mod forgejo;
 mod frame;
 mod github;
 mod gitlab;
 mod host;
+mod linear;
 mod query;
 
 #[cfg(test)]
+pub(crate) use azure::Azure;
+#[cfg(test)]
+pub(crate) use forgejo::Forgejo;
+#[cfg(test)]
 pub(crate) use gitlab::GitLab;
 pub use host::validate_host;
+pub(crate) use query::MAX_LIMIT;
 pub use query::{AssigneeFilter, IssueQuery, StateFilter};
 
 use crate::app::Core;
@@ -22,7 +30,8 @@ use crate::store::{TrackerConnection, tracker_name};
 use async_trait::async_trait;
 use orbyn_contracts::{
     ConnectTracker, CreateThread, IssueCounts, IssueDetail, IssueDraft, IssueKey, IssueList,
-    IssueListFailure, IssueRef, IssueSummary, StartIssueThread, Thread, TrackerKind, TrackerRow,
+    IssueListFailure, IssueRef, IssueSummary, Project, StartIssueThread, Thread, TrackerKind,
+    TrackerRow,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -38,6 +47,8 @@ const ALL: [TrackerKind; 5] = [
 const CACHE_FOR: Duration = Duration::from_secs(30);
 const MAX_SCOPE_BYTES: usize = 200;
 const GITLAB_DEFAULT_HOST: &str = "https://gitlab.com";
+/// The one Linear connection's teams fallback, cached for [`CACHE_FOR`] like a listing.
+const LINEAR_TEAMS: &str = "linear teams";
 
 /// One scope's page of a listing.
 #[derive(Clone, Debug)]
@@ -47,20 +58,68 @@ pub(crate) struct ScopeList {
     pub next: Option<String>,
 }
 
+/// One dependency or advisory update a tracker reports for one scope.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DependencyUpdate {
+    /// A stable identity the tracker gives the update (an alert's number, or a package and version): the
+    /// listener claims it first write wins, so the same update starts one run.
+    pub key: String,
+    /// The ecosystem the tracker names (`npm`, `cargo`, ...), when it names one. It is compared with the stored
+    /// trigger's own `ecosystem` setting and never reaches a prompt.
+    pub ecosystem: Option<String>,
+}
+
+/// What a tracker can report about dependency or advisory updates for one scope.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DependencyFeed {
+    /// The tracker has no feed Orbyn reads for this scope. Nothing is claimed and no refusal is written: a
+    /// tracker that cannot answer is not a refusal.
+    Cannot,
+    /// The updates the tracker reports for the scope. No reader constructs this yet (follow-up #1360), so the
+    /// variant is only built by the listener tests that prove the claim and start path; it is kept here, not
+    /// behind a cfg, because a reader that gains the feed answers it without changing the listener.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Updates(Vec<DependencyUpdate>),
+}
+
 /// What a tracker offers. A scope and a key are checked by the source before anything is sent.
 #[async_trait]
 pub(crate) trait IssueSource: Send + Sync {
     async fn list(&self, scope: &str, query: &IssueQuery) -> Result<ScopeList>;
     async fn get(&self, scope: &str, key: &str) -> Result<IssueDetail>;
+    /// The scopes the tracker itself names when a connection stores none. Only Linear needs this: a team key
+    /// cannot be read from a git remote (docs/issues.md, "Linear as built").
+    async fn scopes(&self) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+    /// What this tracker can report about dependency or advisory updates for one scope. The default is
+    /// [`DependencyFeed::Cannot`] and every reader takes it today: no reader has such a feed yet (the GitHub
+    /// Dependabot alerts feed is follow-up #1360), and a tracker that cannot answer spends no event. A reader
+    /// that gains a feed answers [`DependencyFeed::Updates`]; the listener's claim, start and refusal path
+    /// already handles it, so nothing else changes here.
+    async fn dependency_updates(&self, _scope: &str) -> Result<DependencyFeed> {
+        Ok(DependencyFeed::Cannot)
+    }
 }
 
 pub(crate) struct IssueDesk {
     credentials: Mutex<Credentials>,
     sources: Mutex<HashMap<TrackerKind, Arc<dyn IssueSource>>>,
     cache: Mutex<HashMap<String, (Instant, ScopeList)>>,
+    /// Linear's teams fallback, which every no-scope read would otherwise ask for again.
+    scope_cache: Mutex<HashMap<String, (Instant, Vec<String>)>>,
     /// Tests send the reader GitLab builds to a local fake server instead of the stored host.
     #[cfg(test)]
     gitlab_test_base: Mutex<Option<String>>,
+    /// Tests send the reader Forgejo builds to a local fake server instead of the stored host.
+    #[cfg(test)]
+    forgejo_test_base: Mutex<Option<String>>,
+    /// Tests send the reader Azure DevOps builds to a local fake server instead of the stored host.
+    #[cfg(test)]
+    azure_test_base: Mutex<Option<String>>,
+    /// Tests send the reader Linear builds to a local fake server instead of the fixed host.
+    #[cfg(test)]
+    linear_test_base: Mutex<Option<String>>,
 }
 
 impl IssueDesk {
@@ -69,8 +128,15 @@ impl IssueDesk {
             credentials: Mutex::new(credentials),
             sources: Mutex::new(HashMap::new()),
             cache: Mutex::new(HashMap::new()),
+            scope_cache: Mutex::new(HashMap::new()),
             #[cfg(test)]
             gitlab_test_base: Mutex::new(None),
+            #[cfg(test)]
+            forgejo_test_base: Mutex::new(None),
+            #[cfg(test)]
+            azure_test_base: Mutex::new(None),
+            #[cfg(test)]
+            linear_test_base: Mutex::new(None),
         }
     }
 
@@ -113,6 +179,91 @@ impl IssueDesk {
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
+
+    /// A local plain-http server the Forgejo source built by `forgejo_source` talks to, in tests only.
+    #[cfg(test)]
+    pub(crate) fn set_forgejo_test_base(&self, base: &str) {
+        *self
+            .forgejo_test_base
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(base.trim_end_matches('/').to_owned());
+    }
+
+    #[cfg(test)]
+    fn forgejo_test_base(&self) -> Option<String> {
+        self.forgejo_test_base
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// A local plain-http server the Azure DevOps source built by `azure_source` talks to, in tests only.
+    #[cfg(test)]
+    pub(crate) fn set_azure_test_base(&self, base: &str) {
+        *self
+            .azure_test_base
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(base.trim_end_matches('/').to_owned());
+    }
+
+    #[cfg(test)]
+    fn azure_test_base(&self) -> Option<String> {
+        self.azure_test_base
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// A local plain-http server the Linear source built by `linear_source` talks to, in tests only.
+    #[cfg(test)]
+    pub(crate) fn set_linear_test_base(&self, base: &str) {
+        *self
+            .linear_test_base
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(base.trim_end_matches('/').to_owned());
+    }
+
+    #[cfg(test)]
+    fn linear_test_base(&self) -> Option<String> {
+        self.linear_test_base
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// A tracker-named scope list cached for [`CACHE_FOR`]. Only the Linear teams fallback uses this.
+    fn cached_scopes(&self, key: &str) -> Option<Vec<String>> {
+        let cache = self
+            .scope_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (at, scopes) = cache.get(key)?;
+        (at.elapsed() < CACHE_FOR).then(|| scopes.clone())
+    }
+
+    fn cache_scopes(&self, key: &str, scopes: Vec<String>) {
+        self.scope_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key.to_owned(), (Instant::now(), scopes));
+    }
+
+    fn clear_scopes(&self) {
+        self.scope_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+
+    /// Drops the 30-second listing cache. Tests call it between passes when a fake tracker changes its answer inside
+    /// the cache window; no production path needs it, because a listener's interval is 60 seconds at least.
+    #[cfg(test)]
+    pub(crate) fn clear_cache(&self) {
+        self.cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
 }
 
 fn credential_error(error: CredentialError) -> CoreError {
@@ -151,7 +302,105 @@ pub(crate) fn github_repo_of_remote(url: &str) -> Option<String> {
         .then(|| format!("{owner}/{repo}"))
 }
 
+/// The scope one tracker names for a project's origin remote, or none when the remote is on another host or names no
+/// container. Shared by `issue_scopes` (a listing over every project the connection may read) and a listener's
+/// `project_issue_reader` (the one project behind a crew), so the two mappings cannot drift. Linear names a team key
+/// that a git remote cannot give, so it answers none.
+fn scope_of_remote(connection: &TrackerConnection, remote: &str) -> Option<String> {
+    let host = match connection.tracker {
+        TrackerKind::Github | TrackerKind::Gitlab => {
+            connection.host.as_deref().unwrap_or(GITLAB_DEFAULT_HOST)
+        }
+        TrackerKind::AzureDevops | TrackerKind::Forgejo => {
+            connection.host.as_deref().unwrap_or_default()
+        }
+        TrackerKind::Linear => return None,
+    };
+    match connection.tracker {
+        TrackerKind::Github => github_repo_of_remote(remote),
+        TrackerKind::Gitlab => gitlab::gitlab_path_of_remote(remote, host),
+        TrackerKind::AzureDevops => azure::azure_scope_of_remote(remote, host),
+        TrackerKind::Forgejo => forgejo::forgejo_path_of_remote(remote, host),
+        TrackerKind::Linear => None,
+    }
+}
+
+/// The issue reader that can answer for one project: the tracker its checkout's origin remote names, and the
+/// scope that remote maps to. Only a connected tracker whose host matches the remote can answer, and Linear reads
+/// team keys that no git remote names, so it never answers for a project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ProjectReader {
+    pub tracker: TrackerKind,
+    pub scope: String,
+}
+
 impl Core {
+    /// The issue reader for one project, or none. A folder Orbyn is not trusted with, a folder that is not a git
+    /// checkout, a checkout with no `origin` remote and a project whose tracker is not connected or is on another
+    /// host all answer none: a listener reads nothing for them and spends no event. The scope is derived from the
+    /// project's own remote exactly as `issue_scopes` derives it, so nothing outside the connection's scopes is read.
+    pub(crate) async fn project_issue_reader(
+        &self,
+        project: &Project,
+    ) -> Result<Option<ProjectReader>> {
+        if project.scratch || !project.is_git || !project.trusted {
+            return Ok(None);
+        }
+        let root = std::path::Path::new(&project.path);
+        let Ok(url) = crate::source_control::git::git(root, &["remote", "get-url", "origin"]).await
+        else {
+            return Ok(None);
+        };
+        let remote = crate::source_control::git::text(&url);
+        let connections = self.store.tracker_connections()?;
+        for row in self
+            .issue_trackers()
+            .await?
+            .into_iter()
+            .filter(|row| row.connected)
+        {
+            let connection = connections
+                .iter()
+                .find(|connection| connection.tracker == row.tracker)
+                .cloned()
+                .unwrap_or(TrackerConnection {
+                    tracker: row.tracker,
+                    host: None,
+                    scopes: Vec::new(),
+                });
+            if let Some(scope) =
+                scope_of_remote(&connection, &remote).filter(|scope| !scope.is_empty())
+            {
+                return Ok(Some(ProjectReader {
+                    tracker: row.tracker,
+                    scope,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// One scope's page of issues for a background listener: only the tracker and scope a project's reader named,
+    /// so a listener can read no other project's issues. Reads only; the listing's 30-second cache applies.
+    pub(crate) async fn scope_issues(
+        &self,
+        tracker: TrackerKind,
+        scope: &str,
+        query: &IssueQuery,
+    ) -> Result<ScopeList> {
+        self.scope_list(tracker, scope, query).await
+    }
+
+    /// What the project's tracker reports about dependency or advisory updates. No reader answers today, so this
+    /// is [`DependencyFeed::Cannot`] for every tracker (follow-up #1360); the listener then spends no event.
+    pub(crate) async fn tracker_dependency_updates(
+        &self,
+        tracker: TrackerKind,
+        scope: &str,
+    ) -> Result<DependencyFeed> {
+        self.issue_source(tracker)?.dependency_updates(scope).await
+    }
+
     fn issue_source(&self, kind: TrackerKind) -> Result<Arc<dyn IssueSource>> {
         if let Some(source) = self
             .issues
@@ -167,10 +416,9 @@ impl Core {
                 cwd: self.config.data_dir.clone(),
             })),
             TrackerKind::Gitlab => self.gitlab_source(),
-            other => Err(CoreError::Unsupported(format!(
-                "Reading {} issues arrives in a later update.",
-                crate::issues::display_name(other)
-            ))),
+            TrackerKind::AzureDevops => self.azure_source(),
+            TrackerKind::Forgejo => self.forgejo_source(),
+            TrackerKind::Linear => self.linear_source(),
         }
     }
 
@@ -208,16 +456,137 @@ impl Core {
         Ok(Arc::new(gitlab::GitLab::new(host, token)?))
     }
 
-    /// The scopes a tracker is read in: for GitHub and GitLab the projects of this machine's git remotes (for
-    /// GitLab only those on the connection's host), then any the connection names; for the others the
-    /// connection's own.
-    async fn issue_scopes(&self, connection: &TrackerConnection) -> Vec<String> {
+    /// The Forgejo reader of the stored connection: its https host and the token from the keychain.
+    pub(crate) fn forgejo_source(&self) -> Result<Arc<dyn IssueSource>> {
+        let not_connected = |why: &str| CoreError::TrackerNotConnected(why.to_owned());
+        let connection = self
+            .store
+            .tracker_connections()?
+            .into_iter()
+            .find(|c| c.tracker == TrackerKind::Forgejo)
+            .ok_or_else(|| not_connected("Forgejo is not connected."))?;
+        let token = self
+            .issues
+            .creds()
+            .tracker_token(tracker_name(TrackerKind::Forgejo))
+            .map_err(|error| match error {
+                CredentialError::Unavailable => not_connected("There is no usable keychain here"),
+                CredentialError::Blocked => {
+                    not_connected("The keychain refused for now. Unlock it and try again.")
+                }
+                _ => not_connected("The saved Forgejo token could not be read."),
+            })?
+            .ok_or_else(|| not_connected("No token is saved"))?;
+        let host = connection
+            .host
+            .as_deref()
+            .ok_or_else(|| not_connected("Forgejo has no host saved."))?;
+        #[cfg(test)]
+        if let Some(base) = self.issues.forgejo_test_base() {
+            validate_host(host)?;
+            return Ok(Arc::new(forgejo::Forgejo::for_test(
+                &base,
+                token.as_str(),
+                Duration::from_secs(10),
+            )));
+        }
+        Ok(Arc::new(forgejo::Forgejo::new(host, token)?))
+    }
+
+    /// The Azure DevOps reader of the stored connection: its https host and the token from the keychain.
+    pub(crate) fn azure_source(&self) -> Result<Arc<dyn IssueSource>> {
+        let not_connected = |why: &str| CoreError::TrackerNotConnected(why.to_owned());
+        let connection = self
+            .store
+            .tracker_connections()?
+            .into_iter()
+            .find(|c| c.tracker == TrackerKind::AzureDevops)
+            .ok_or_else(|| not_connected("Azure DevOps is not connected."))?;
+        let token = self
+            .issues
+            .creds()
+            .tracker_token(tracker_name(TrackerKind::AzureDevops))
+            .map_err(|error| match error {
+                CredentialError::Unavailable => not_connected("There is no usable keychain here"),
+                CredentialError::Blocked => {
+                    not_connected("The keychain refused for now. Unlock it and try again.")
+                }
+                _ => not_connected("The saved Azure DevOps token could not be read."),
+            })?
+            .ok_or_else(|| not_connected("No token is saved"))?;
+        let host = connection
+            .host
+            .as_deref()
+            .ok_or_else(|| not_connected("Azure DevOps has no host saved."))?;
+        #[cfg(test)]
+        if let Some(base) = self.issues.azure_test_base() {
+            validate_host(host)?;
+            return Ok(Arc::new(azure::Azure::for_test(
+                &base,
+                token.as_str(),
+                Duration::from_secs(10),
+            )));
+        }
+        Ok(Arc::new(azure::Azure::new(host, token)?))
+    }
+
+    /// The Linear reader of the stored connection: the one endpoint and the token from the keychain.
+    pub(crate) fn linear_source(&self) -> Result<Arc<dyn IssueSource>> {
+        let not_connected = |why: &str| CoreError::TrackerNotConnected(why.to_owned());
+        let connection = self
+            .store
+            .tracker_connections()?
+            .into_iter()
+            .find(|c| c.tracker == TrackerKind::Linear)
+            .ok_or_else(|| not_connected("Linear is not connected."))?;
+        let token = self
+            .issues
+            .creds()
+            .tracker_token(tracker_name(TrackerKind::Linear))
+            .map_err(|error| match error {
+                CredentialError::Unavailable => not_connected("There is no usable keychain here"),
+                CredentialError::Blocked => {
+                    not_connected("The keychain refused for now. Unlock it and try again.")
+                }
+                _ => not_connected("The saved Linear token could not be read."),
+            })?
+            .ok_or_else(|| not_connected("No token is saved"))?;
+        let host = connection
+            .host
+            .as_deref()
+            .ok_or_else(|| not_connected("Linear has no host saved."))?;
+        #[cfg(test)]
+        if let Some(base) = self.issues.linear_test_base() {
+            linear::validate_linear_host(host)?;
+            return Ok(Arc::new(linear::Linear::for_test(
+                &base,
+                token.as_str(),
+                Duration::from_secs(10),
+            )));
+        }
+        Ok(Arc::new(linear::Linear::new(host, token)?))
+    }
+
+    /// The scopes a tracker is read in: the scopes the connection names, then for GitHub, GitLab, Azure DevOps
+    /// and Forgejo the projects of this machine's git remotes (for the last three only those on the connection's
+    /// host); for Linear the teams its key can see when it names none; for the others only the connection's own.
+    async fn issue_scopes(&self, connection: &TrackerConnection) -> Result<Vec<String>> {
         let mut scopes = connection.scopes.clone();
+        if connection.tracker == TrackerKind::Linear && scopes.is_empty() {
+            if let Some(cached) = self.issues.cached_scopes(LINEAR_TEAMS) {
+                return Ok(cached);
+            }
+            let teams = self.issue_source(TrackerKind::Linear)?.scopes().await?;
+            self.issues.cache_scopes(LINEAR_TEAMS, teams.clone());
+            return Ok(teams);
+        }
         if matches!(
             connection.tracker,
-            TrackerKind::Github | TrackerKind::Gitlab
+            TrackerKind::Github
+                | TrackerKind::Gitlab
+                | TrackerKind::AzureDevops
+                | TrackerKind::Forgejo
         ) {
-            let host = connection.host.as_deref().unwrap_or(GITLAB_DEFAULT_HOST);
             for project in self.store.list_projects().unwrap_or_default() {
                 if project.scratch || !project.is_git {
                     continue;
@@ -229,18 +598,14 @@ impl Core {
                     continue;
                 };
                 let remote = crate::source_control::git::text(&url);
-                let path = match connection.tracker {
-                    TrackerKind::Github => github_repo_of_remote(&remote),
-                    _ => gitlab::gitlab_path_of_remote(&remote, host),
-                };
-                if let Some(path) = path
+                if let Some(path) = scope_of_remote(connection, &remote)
                     && !scopes.contains(&path)
                 {
                     scopes.push(path);
                 }
             }
         }
-        scopes
+        Ok(scopes)
     }
 
     /// Every tracker, whether it is connected, and why not.
@@ -327,6 +692,20 @@ impl Core {
                 })?)?)
             }
         };
+        if kind == TrackerKind::AzureDevops {
+            let host = host
+                .as_deref()
+                .ok_or_else(|| CoreError::Invalid("This tracker needs a host.".into()))?;
+            azure::check_connect_host(host)?;
+            if let Some(scope) = scope {
+                azure::check_connect_scope(scope)?;
+            }
+        }
+        if kind == TrackerKind::Linear
+            && let Some(scope) = scope
+        {
+            linear::team_key(scope)?;
+        }
         if kind != TrackerKind::Github {
             let token = input
                 .token
@@ -348,6 +727,7 @@ impl Core {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
+        self.issues.clear_scopes();
         Ok(self
             .issue_trackers()
             .await?
@@ -370,6 +750,7 @@ impl Core {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
+        self.issues.clear_scopes();
         Ok(self
             .issue_trackers()
             .await?
@@ -434,7 +815,20 @@ impl Core {
         let mut counted = true;
         let mut any = false;
         for (kind, connection) in jobs {
-            let mut scopes = self.issue_scopes(&connection).await;
+            let mut scopes = match self.issue_scopes(&connection).await {
+                Ok(scopes) => scopes,
+                Err(error) => {
+                    if matches!(&error, CoreError::Invalid(_)) {
+                        return Err(error);
+                    }
+                    counted = false;
+                    list.failed.push(IssueListFailure {
+                        tracker: kind,
+                        message: error.public_message(),
+                    });
+                    continue;
+                }
+            };
             if !query.cursors.is_empty() {
                 // Carrying on: only the scopes named in `cursors` are read, one page each.
                 scopes.retain(|s| {
@@ -531,7 +925,7 @@ impl Core {
                 host: None,
                 scopes: Vec::new(),
             });
-        if self.issue_scopes(&connection).await.contains(&key.scope) {
+        if self.issue_scopes(&connection).await?.contains(&key.scope) {
             Ok(())
         } else {
             Err(CoreError::Invalid(
@@ -600,7 +994,7 @@ impl Core {
                         host: None,
                         scopes: Vec::new(),
                     });
-                for scope in self.issue_scopes(&connection).await {
+                for scope in self.issue_scopes(&connection).await.unwrap_or_default() {
                     let key = IssueKey {
                         tracker: row.tracker,
                         scope,

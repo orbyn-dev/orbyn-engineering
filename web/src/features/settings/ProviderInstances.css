@@ -26,9 +26,13 @@
 .choice small { display: block; margin-top: 2px; color: var(--color-muted); font-size: var(--text-meta); }
 .choice input { margin-top: 3px; }
 
-/* The provider list and its drill-in pages. */
+/* The provider list and its drill-in pages. A row that opens its detail carries the designs' disclosure cue: the row
+   takes the raised hover fill and the name button a trailing chevron (`.tcr` in the designs: `--raise` on hover, a
+   `.chev` cell at `--t4`). `--raise` is `--color-hover` and `--t4` is `--color-faint` here. */
 .set-tr-open { cursor: pointer; }
-.set-row-open { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.set-tr-open:hover { background: var(--color-hover); }
+.set-row-open { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.set-row-open > svg { color: var(--color-faint); }
 .set-row-open:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .set-back-end { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; }
 .set-tools-end { justify-content: flex-end; }

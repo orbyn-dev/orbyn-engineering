@@ -203,6 +203,17 @@ describe("the run card, failed", () => {
     expect(screen.getByText(message)).toBeInTheDocument();
   });
 
+  it("says a cancelled run was cancelled, never failed", async () => {
+    mock.codeMode.putRun(fail("cancelled", "The run was cancelled.", undefined, { calls: recorded }));
+    render(<Trail items={[item(reply("error", { error: { kind: "cancelled", message: "The run was cancelled." } }))]} />);
+    const row = await open();
+    await waitFor(() => expect(row).toHaveTextContent("· cancelled"));
+    expect(row).toHaveTextContent("Cancelled");
+    expect(row).not.toHaveTextContent("Failed");
+    expect(await screen.findByText("The run was cancelled.")).toBeInTheDocument();
+    expect(screen.getByText(/Error ·/)).toHaveTextContent("Error · cancelled");
+  });
+
   it("shows a declined call as Declined with the gate's reason", async () => {
     mock.codeMode.putRun(fail("denied", "orbyn_thread_send was declined.", undefined, { calls: [call(1), call(5, { tool: "orbyn_thread_send", status: "denied", preview: null })] }));
     render(<Trail items={[item(reply("error", { error: { kind: "denied", message: "orbyn_thread_send was declined." } }))]} />);
@@ -362,6 +373,7 @@ describe("a run id the model chose", () => {
     const row = await open();
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/api/code-runs/"))).toBe(true));
     expect(row).toHaveClass("s-run");
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(document.querySelector("button.tcr")).not.toBeNull();
   });

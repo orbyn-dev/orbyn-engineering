@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { request } from "./client";
-import { forgetPersonKey, PENDING_PERSON_ROUTES, PERSON_HEADER, PERSON_ROUTES, personKeyHeaders, personKeyProtocols, sendsPersonKey } from "./personKey";
+import { terminalUrl } from "../features/panels/terminal/terminalSocket";
+import { ApiFailure, request } from "./client";
+import { canSendPersonKey, forgetPersonKey, PENDING_PERSON_ROUTES, PERSON_HEADER, PERSON_ROUTES, personKeyHeaders, personKeyProtocols, sendsPersonKey } from "./personKey";
 
 const ok = () => vi.fn(async () => new Response(null, { status: 204 }));
 const sentHeaders = (fetchMock: ReturnType<typeof ok>) => new Headers((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].headers);
@@ -12,6 +13,8 @@ function shell(invoke: (command: string) => unknown) {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  vi.stubGlobal("__ORBYN_PREVIEWS__", true);
   delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   forgetPersonKey();
 });
@@ -84,6 +87,28 @@ describe("which requests carry the person key", () => {
     // The field-level routes are the only local rows in the list.
     const local = PERSON_ROUTES.filter(([method, pattern]) => table.protected.some(([m, p, kind]) => m === method && p === pattern && kind === "local"));
     expect(local.map(([method, pattern]) => `${method} ${pattern}`).sort()).toEqual(["POST /agui/threads/{id}", "POST /api/projects/{id}/pulls/{number}/checkout", "POST /api/threads/{id}/runs"]);
+  });
+});
+
+describe("the Crew and Code Mode cancel routes", () => {
+  it("send the key on the exact cancel route, whatever the method or the trailing path says", async () => {
+    shell(vi.fn(async () => "shell-key"));
+    const cases = [
+      ["POST", "/api/crew/tasks/t1/cancel", "shell-key"],
+      ["POST", "/api/code-runs/r1/cancel", "shell-key"],
+      ["POST", "/api/crew/tasks/t1/cancelled", null],
+      ["POST", "/api/code-runs/r1/cancel/extra", null],
+      ["GET", "/api/crew/tasks/t1/cancel", null],
+    ] as const;
+    for (const [method, path, expected] of cases) {
+      const sent = ok();
+      vi.stubGlobal("fetch", sent);
+      await request(method, path);
+      const [url, init] = sent.mock.calls[0] as unknown as [string, RequestInit];
+      expect(sent, `${method} ${path} is one request`).toHaveBeenCalledTimes(1);
+      expect(String(url), `${method} ${path}`).toBe(path);
+      expect(new Headers(init.headers).get(PERSON_HEADER), `${method} ${path}`).toBe(expected);
+    }
   });
 });
 
@@ -160,6 +185,24 @@ describe("the terminal sockets", () => {
     shell(vi.fn(async () => ""));
     expect(await personKeyProtocols()).toEqual(["orbyn.v1"]);
   });
+
+  it("puts the key in the socket's subprotocols, never in the URL it opens", async () => {
+    const key = "KEY-SENTINEL-123";
+    shell(vi.fn(async () => key));
+    expect(await personKeyProtocols()).toContain(`orbyn.person.${key}`);
+    // The socket-opening effect is not exercised here: it would need the xterm renderer and a browser WebSocket stand-in, and it
+    // composes exactly these two helpers, `terminalUrl(...)` and `personKeyProtocols()`. So this pins the helpers only.
+    sessionStorage.clear();
+    const url = terminalUrl("t1", { protocol: "https:", host: "desk.local" });
+    expect(url).toBe("wss://desk.local/ws/terminal/t1");
+    expect(url).not.toContain(key);
+  });
+
+  it("offers an empty list of person-key subprotocols where the page has no key", async () => {
+    shell(vi.fn(async () => ""));
+    // `orbyn.v1` still goes so the service selects it; the list of person-key subprotocols is empty.
+    expect((await personKeyProtocols()).filter((protocol) => protocol.startsWith("orbyn.person."))).toEqual([]);
+  });
 });
 
 describe("the key, from the shell", () => {
@@ -201,6 +244,58 @@ describe("the key, from the shell", () => {
     expect(sentHeaders(next).get(PERSON_HEADER)).toBe("second");
   });
 
+  it("makes one request for a write refused as person_required, names its ApiFailure, and asks the shell again for the next write", async () => {
+    const invoke = vi.fn(async () => "first");
+    shell(invoke);
+    const refused = vi.fn(async () => new Response(JSON.stringify({ code: "person_required", message: "No." }), { status: 403 }));
+    vi.stubGlobal("fetch", refused);
+    const failure = await request("POST", "/api/crew/tasks/t1/cancel").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiFailure);
+    expect(failure).toMatchObject({ name: "ApiFailure", code: "person_required", status: 403 });
+    expect(refused, "no automatic retry and no second send for the refused write").toHaveBeenCalledTimes(1);
+    expect(String((refused.mock.calls[0] as unknown as [string, RequestInit])[0])).toBe("/api/crew/tasks/t1/cancel");
+
+    invoke.mockImplementation(async () => "second");
+    const next = ok();
+    vi.stubGlobal("fetch", next);
+    await request("POST", "/api/crew/tasks/t1/cancel");
+    expect(sentHeaders(next).get(PERSON_HEADER)).toBe("second");
+    expect(invoke, "the next write asks the shell's person_key again").toHaveBeenCalledTimes(2);
+  });
+
+  it("never puts the person key in a URL, storage, a console argument or an ApiFailure message", async () => {
+    const key = "KEY-SENTINEL-123";
+    shell(vi.fn(async () => key));
+    localStorage.clear();
+    sessionStorage.clear();
+    const consoleSpies = (["log", "info", "warn", "error"] as const).map((level) => vi.spyOn(console, level).mockImplementation(() => undefined));
+
+    const succeeded = ok();
+    vi.stubGlobal("fetch", succeeded);
+    await request("POST", "/api/crew/tasks/t1/cancel");
+    expect(sentHeaders(succeeded).get(PERSON_HEADER)).toBe(key);
+
+    const refused = vi.fn(async () => new Response(JSON.stringify({ code: "person_required", message: "No." }), { status: 403 }));
+    vi.stubGlobal("fetch", refused);
+    const failure = await request("POST", "/api/crew/tasks/t1/cancel").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiFailure);
+    expect(new Headers((refused.mock.calls[0] as unknown as [string, RequestInit])[1].headers).get(PERSON_HEADER)).toBe(key);
+
+    for (const [url] of [...succeeded.mock.calls, ...refused.mock.calls] as unknown as [string, RequestInit][]) {
+      expect(String(url)).not.toContain(key);
+    }
+    for (const storage of [localStorage, sessionStorage]) {
+      for (let at = 0; at < storage.length; at += 1) {
+        const name = storage.key(at) ?? "";
+        expect(`${name}=${storage.getItem(name) ?? ""}`).not.toContain(key);
+      }
+    }
+    for (const spy of consoleSpies) {
+      for (const args of spy.mock.calls) expect(`${args.map((arg) => String(arg)).join(" ")} ${JSON.stringify(args)}`).not.toContain(key);
+    }
+    expect((failure as ApiFailure).message).not.toContain(key);
+  });
+
   it("sends the fixed fake key where there is no shell, which only a dev or test build does", async () => {
     const fetchMock = ok();
     vi.stubGlobal("fetch", fetchMock);
@@ -227,6 +322,31 @@ describe("the device actions of docs/devices.md", () => {
   });
 });
 
+describe("browser profile renames", () => {
+  it("classifies only the POST rename route with a concrete profile ID", () => {
+    expect(sendsPersonKey("POST", "/api/browser-profiles/profile-1/rename")).toBe(true);
+    for (const [method, path] of [
+      ["GET", "/api/browser-profiles/profile-1/rename"],
+      ["POST", "/api/browser-profiles//rename"],
+      ["POST", "/api/browser-profiles/profile-1/rename/extra"],
+      ["GET", "/api/browser-profiles"],
+      ["POST", "/api/browser-profiles"],
+      ["DELETE", "/api/browser-profiles/profile-1"],
+      ["POST", "/api/browser-profiles/profile-1/clear"],
+    ] as const) {
+      expect(sendsPersonKey(method, path), `${method} ${path}`).toBe(false);
+    }
+  });
+
+  it("sends the shell key with the rename request", async () => {
+    shell(vi.fn(async () => "shell-key"));
+    const posted = ok();
+    vi.stubGlobal("fetch", posted);
+    await request("POST", "/api/browser-profiles/profile-1/rename", { name: "Research" });
+    expect(sentHeaders(posted).get(PERSON_HEADER)).toBe("shell-key");
+  });
+});
+
 describe("the profile writes of docs/execution-profiles-and-library.md", () => {
   it("send the key on every write, and on the reads and the check", () => {
     expect(sendsPersonKey("POST", "/api/profiles")).toBe(true);
@@ -235,5 +355,30 @@ describe("the profile writes of docs/execution-profiles-and-library.md", () => {
     expect(sendsPersonKey("PUT", "/api/threads/t1/profile")).toBe(true);
     expect(sendsPersonKey("POST", "/api/crew/profile/apply")).toBe(true);
     for (const [method, path] of [["GET", "/api/profiles"], ["GET", "/api/profiles/01j0"], ["POST", "/api/profiles/check"]] as const) expect(sendsPersonKey(method, path), path).toBe(false);
+  });
+});
+
+describe("which pages may send the key", () => {
+  it("is true in the desktop app, whose shell has the bridge to ask", () => {
+    shell(vi.fn(async () => "shell-key"));
+    expect(canSendPersonKey()).toBe(true);
+  });
+
+  it("stays true in a dev preview, which sends the mock's fixed key, so the designed frames stay reachable there", () => {
+    // No bridge: a browser tab. The preview build compiles `__ORBYN_PREVIEWS__` true (vite.config.ts), which is what the
+    // prompt and the mock both rely on; a production build has it false and this answers false.
+    expect(window as unknown as { __TAURI_INTERNALS__?: unknown }).not.toHaveProperty("__TAURI_INTERNALS__");
+    expect(canSendPersonKey()).toBe(__ORBYN_PREVIEWS__);
+  });
+
+  it("sends no person key from a browser tab, where the page cannot send one", async () => {
+    vi.stubGlobal("__ORBYN_PREVIEWS__", false);
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    expect(canSendPersonKey()).toBe(false);
+    const sent = ok();
+    vi.stubGlobal("fetch", sent);
+    await request("POST", "/api/crew/tasks/t1/cancel");
+    expect(sent).toHaveBeenCalledTimes(1);
+    expect(sentHeaders(sent).get(PERSON_HEADER)).toBeNull();
   });
 });

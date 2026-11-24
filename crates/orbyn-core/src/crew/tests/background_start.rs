@@ -25,21 +25,28 @@ fn project(w: &World) -> String {
 }
 
 /// A stored crew, on or off. `trigger` is the wire shape of its trigger.
-fn crew_with(w: &World, name: &str, trigger: Value, turns: u32, minutes: u32, on: bool) -> String {
+async fn crew_with(
+    w: &World,
+    name: &str,
+    trigger: Value,
+    turns: u32,
+    minutes: u32,
+    on: bool,
+) -> String {
     let body: wire::BackgroundCrewCreate = serde_json::from_value(json!({
         "project_id": project(w), "name": name, "template": "fix_failing_ci",
         "trigger": trigger, "budget": { "turns": turns, "minutes": minutes },
         "daily": { "runs": 100, "turns": 1000 }, "utc_offset_minutes": 600
     }))
     .unwrap();
-    let crew = w.core.background_create(&body).unwrap();
+    let crew = w.core.background_create(&body).await.unwrap();
     if on {
         w.core.background_set_enabled(&crew.id, true).unwrap();
     }
     crew.id
 }
 
-fn crew(w: &World) -> String {
+async fn crew(w: &World) -> String {
     crew_with(
         w,
         "Fix CI",
@@ -48,6 +55,7 @@ fn crew(w: &World) -> String {
         30,
         true,
     )
+    .await
 }
 
 /// A worker that changes a file it may change and says so, as a real engine does.
@@ -104,7 +112,7 @@ async fn with_the_flag_off_nothing_starts() {
 #[tokio::test]
 async fn an_enabled_crew_starts_one_low_priority_run_with_a_lead_thread_of_its_own() {
     let w = world(true, good()).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     let threads_before = threads(&w);
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     assert_eq!(run.crew_id, id);
@@ -165,7 +173,7 @@ async fn a_persons_start_is_not_low_and_never_paused() {
 
     let run = w
         .core
-        .crew_background_run_now(&crew(&w), "user")
+        .crew_background_run_now(&crew(&w).await, "user")
         .await
         .unwrap();
     assert_eq!(
@@ -177,7 +185,7 @@ async fn a_persons_start_is_not_low_and_never_paused() {
 #[tokio::test]
 async fn a_crew_that_is_off_is_refused_and_nothing_is_made() {
     let w = world(true, good()).await;
-    let id = crew_with(&w, "Off", json!({ "kind": "ci_failure" }), 5, 5, false);
+    let id = crew_with(&w, "Off", json!({ "kind": "ci_failure" }), 5, 5, false).await;
     let before = (threads(&w), mode_rows(&w));
     let error = w
         .core
@@ -200,7 +208,7 @@ async fn a_crew_that_is_off_is_refused_and_nothing_is_made() {
 }
 
 #[tokio::test]
-async fn a_kind_nothing_can_start_is_refused_with_a_plain_reason() {
+async fn a_kind_only_its_listener_starts_is_refused_by_run_now_with_a_plain_reason() {
     let w = world(true, good()).await;
     let label = crew_with(
         &w,
@@ -209,7 +217,8 @@ async fn a_kind_nothing_can_start_is_refused_with_a_plain_reason() {
         5,
         5,
         true,
-    );
+    )
+    .await;
     let bump = crew_with(
         &w,
         "Bump",
@@ -217,26 +226,55 @@ async fn a_kind_nothing_can_start_is_refused_with_a_plain_reason() {
         5,
         5,
         true,
-    );
+    )
+    .await;
+    let watch = crew_with(
+        &w,
+        "Watch",
+        json!({ "kind": "watch", "command": "cargo test", "every_hours": 6, "on_failing": "needs_you" }),
+        5,
+        5,
+        true,
+    )
+    .await;
     let before = threads(&w);
-    for id in [label, bump] {
+    for (id, why) in [
+        (
+            label,
+            "An issue label crew starts when its label appears on an issue; Run now has no issue to start.",
+        ),
+        (
+            bump,
+            "A dependency update crew starts when an update appears; Run now has no update to start.",
+        ),
+    ] {
         let error = w
             .core
             .crew_background_run_now(&id, "user")
             .await
             .unwrap_err();
-        let CoreError::PolicyDenied(why) = &error else {
-            panic!("{error}")
-        };
-        assert!(why.contains("cannot run yet"), "{why}");
+        assert!(
+            matches!(&error, CoreError::PolicyDenied(message) if message == why),
+            "{error}"
+        );
     }
+    // A watch runs its command on its own schedule; Run now does not start a run for it.
+    let error = w
+        .core
+        .crew_background_run_now(&watch, "user")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, CoreError::PolicyDenied(why) if why == "A watch crew's command runs on its schedule; Run now does not start a run for it."),
+        "{error}"
+    );
     assert_eq!(threads(&w), before);
 }
 
 #[tokio::test]
 async fn a_second_run_of_the_same_crew_waits_for_the_first() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     w.core.crew_background_run_now(&id, "user").await.unwrap();
     let before = threads(&w);
     let error = w
@@ -285,7 +323,7 @@ fn capacity(w: &World, limit: u32, pause: bool) {
 #[tokio::test]
 async fn review_capacity_pauses_a_background_start_and_leaves_nothing_behind() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     waiting_merges(&w, 3).await;
     capacity(&w, 2, true);
     let before = (
@@ -359,7 +397,7 @@ async fn pausing_is_off_until_a_person_turns_it_on() {
     capacity(&w, 1, false);
     let run = w
         .core
-        .crew_background_run_now(&crew(&w), "user")
+        .crew_background_run_now(&crew(&w).await, "user")
         .await
         .unwrap();
     assert_eq!(run.state, wire::BackgroundRunState::Running);
@@ -377,7 +415,7 @@ fn outside() -> Script {
 #[tokio::test]
 async fn a_run_stops_for_its_budget_when_its_last_turn_did_not_pass() {
     let w = world(true, outside()).await;
-    let id = crew_with(&w, "One turn", json!({ "kind": "ci_failure" }), 1, 30, true);
+    let id = crew_with(&w, "One turn", json!({ "kind": "ci_failure" }), 1, 30, true).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let stopped = until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
     assert_eq!(
@@ -401,7 +439,7 @@ async fn a_run_stops_for_its_budget_when_its_last_turn_did_not_pass() {
 #[tokio::test]
 async fn the_time_budget_cancels_a_running_worker_and_the_run_records_it() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let task = task_of(&w, &run);
     // What the minute timer calls when the budget runs out.
@@ -418,7 +456,7 @@ async fn the_time_budget_cancels_a_running_worker_and_the_run_records_it() {
 #[tokio::test]
 async fn a_worker_turn_with_no_reply_is_an_engine_error_not_a_finished_run() {
     let w = world(true, Arc::new(|_, _| Turn::Silent)).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let stopped = until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
     assert_eq!(
@@ -446,7 +484,8 @@ async fn the_same_failure_again_is_a_repeated_failure_stop() {
         20,
         30,
         true,
-    );
+    )
+    .await;
     w.core.crew_background_run_now(&id, "user").await.unwrap();
     let stopped = until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
     assert_eq!(
@@ -459,7 +498,7 @@ async fn the_same_failure_again_is_a_repeated_failure_stop() {
 #[tokio::test]
 async fn a_task_that_waits_for_a_person_ends_the_run_as_needs_review() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let task = task_of(&w, &run);
     w.core
@@ -486,7 +525,7 @@ fn committing(main: Arc<OnceLock<String>>) -> Script {
 #[tokio::test]
 async fn a_project_that_is_not_trusted_is_refused_and_nothing_is_made() {
     let w = world(true, good()).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     w.core
         .store
         .reader()
@@ -504,10 +543,134 @@ async fn a_project_that_is_not_trusted_is_refused_and_nothing_is_made() {
     assert_eq!(w.core.background_runs(&id, page).unwrap().total, 0);
 }
 
+/// The disk guard (KC4 PR B): a background start it refuses keeps one stopped history row and no thread, the person still
+/// gets the sentence, and the crew reads idle because it never ran. Faked free space lets this run on any machine.
+#[tokio::test]
+async fn a_background_start_refused_for_low_disk_keeps_one_stopped_history_row() {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w).await;
+    let path = w.repo.clone();
+    let threads_before = threads(&w);
+    crate::host::disk::set_free_for_test(&path, Some(7 * GIB / 2));
+
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
+    let CoreError::PolicyDenied(why) = &error else {
+        panic!("{error}");
+    };
+    assert_eq!(
+        why,
+        "Not started: 3.5 GB free, Crew needs 5 GB. Free space and try again."
+    );
+    // The run is the crew's history: stopped, the code and the sentence, nothing spent, nobody waiting, and no thread or
+    // task left behind (the disk gate sits before either is stored).
+    assert_eq!(threads(&w), threads_before);
+    let page = crate::crew::Page::new(None, None).unwrap();
+    let listed = w.core.background_runs(&id, page).unwrap();
+    assert_eq!(listed.total, 1);
+    let run = &listed.runs[0];
+    assert!(w.core.store.crew_tasks_in_crew(&run.id).unwrap().is_empty());
+    assert_eq!(run.state, wire::BackgroundRunState::Stopped);
+    assert_eq!(run.stop_reason, None);
+    assert_eq!(run.reason_code.as_deref(), Some("disk_low"));
+    assert!(!run.review_waiting);
+    assert_eq!(run.review_reason.as_deref(), Some(why.as_str()));
+    assert_eq!((run.turns_spent, run.minutes_spent), (0, 0));
+    assert_eq!((run.budget.turns, run.budget.minutes), (10, 30));
+    assert!(run.ended_at.is_some());
+    // The crew never ran, so it reads idle: the stopped row is only the history of the refused start.
+    assert_eq!(
+        w.core.background_get(&id).unwrap().state,
+        wire::BackgroundState::Idle
+    );
+    // The refusal is audited with its code in the same transaction.
+    let audits = w.core.store.list_audit(None, 500).unwrap();
+    let refusal = audits
+        .iter()
+        .find(|row| row.action == "crew.background.run.refused")
+        .expect("the refusal audit row");
+    assert_eq!(refusal.detail["run"].as_str(), Some(run.id.as_str()));
+    assert_eq!(refusal.detail["reason_code"], "disk_low");
+
+    // A later start on a volume with room runs, and the stopped row stays in the history.
+    crate::host::disk::set_free_for_test(&path, Some(20 * GIB));
+    let started = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    assert_eq!(started.state, wire::BackgroundRunState::Running);
+    assert_eq!(started.reason_code, None);
+    let listed = w.core.background_runs(&id, page).unwrap();
+    assert_eq!(listed.total, 2);
+    assert_eq!(listed.runs[0].id, started.id);
+    assert_eq!(listed.runs[1].id, run.id);
+    crate::host::disk::set_free_for_test(&path, None);
+}
+
+/// The refusals that are not the disk guard still take the run and its lead thread back: a start that never happened
+/// leaves no history row, and nothing changes about what the person could not start.
+#[tokio::test]
+async fn the_refusals_that_are_not_low_disk_still_leave_no_run_row() {
+    let page = || crate::crew::Page::new(None, None).unwrap();
+
+    // An untrusted folder is refused before a lead thread or a run row exists.
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w).await;
+    w.core
+        .store
+        .reader()
+        .execute_batch("UPDATE projects SET trusted = 0")
+        .unwrap();
+    let threads_before = threads(&w);
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CoreError::FolderUntrusted), "{error}");
+    assert_eq!(w.core.background_runs(&id, page()).unwrap().total, 0);
+    assert_eq!(threads(&w), threads_before);
+
+    // No usable engine is refused before a lead thread or a run row exists.
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w).await;
+    w.core
+        .set_preferences(
+            Some(&project(&w)),
+            &BTreeMap::from([("disabled_engines".to_owned(), json!(["alpha"]))]),
+        )
+        .unwrap();
+    let threads_before = threads(&w);
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CoreError::EngineUnavailable(_)), "{error}");
+    assert_eq!(w.core.background_runs(&id, page()).unwrap().total, 0);
+    assert_eq!(threads(&w), threads_before);
+
+    // A start held by review capacity (a not-authorized refusal) reaches the run row, and takes it and the thread back.
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w).await;
+    waiting_merges(&w, 3).await;
+    capacity(&w, 2, true);
+    let threads_before = threads(&w);
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CoreError::PolicyDenied(_)), "{error}");
+    assert_eq!(w.core.background_runs(&id, page()).unwrap().total, 0);
+    assert_eq!(threads(&w), threads_before);
+}
+
 #[tokio::test]
 async fn a_crew_with_no_engine_ready_is_refused_and_nothing_is_made() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     // The one engine is turned off for the project, the way a person does in settings; no usable one is left.
     w.core
         .set_preferences(
@@ -533,7 +696,7 @@ async fn a_crew_with_no_engine_ready_is_refused_and_nothing_is_made() {
 #[tokio::test]
 async fn a_project_with_nothing_committed_is_refused_with_a_plain_reason() {
     let w = world(true, good()).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     // An unborn HEAD: the checkout keeps its files but has nothing committed to list.
     run_git(&w.repo, &["checkout", "-q", "--orphan", "nothing"]);
     let before = threads(&w);
@@ -570,7 +733,7 @@ async fn task_ends_without_a_stored_reason_wait_with_their_plain_sentence() {
         ),
     ];
     for (name, state, stop, words) in cases {
-        let id = crew_with(&w, name, json!({ "kind": "ci_failure" }), 5, 5, true);
+        let id = crew_with(&w, name, json!({ "kind": "ci_failure" }), 5, 5, true).await;
         let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
         let task = w.core.store.crew_task(&task_of(&w, &run)).unwrap().unwrap();
         w.core.crew_background_task_ended(&task, state, stop);
@@ -590,7 +753,7 @@ async fn task_ends_without_a_stored_reason_wait_with_their_plain_sentence() {
 #[tokio::test]
 async fn a_cancelled_task_ends_its_run_through_the_real_cancel() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let task = task_of(&w, &run);
     w.core
@@ -611,7 +774,7 @@ async fn a_cancelled_task_ends_its_run_through_the_real_cancel() {
 #[tokio::test]
 async fn the_audit_names_who_pressed_run_now() {
     let w = world(true, good()).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     w.core.crew_background_run_now(&id, "user").await.unwrap();
     let rows = w.core.store.list_audit(None, 500).unwrap();
     let start = rows
@@ -625,7 +788,7 @@ async fn the_audit_names_who_pressed_run_now() {
 #[tokio::test]
 async fn a_removed_project_is_refused_and_nothing_is_made() {
     let w = world(true, good()).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     w.core
         .store
         .reader()
@@ -647,7 +810,7 @@ async fn a_removed_project_is_refused_and_nothing_is_made() {
 #[tokio::test]
 async fn turning_a_crew_off_cancels_the_worker_with_the_record() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let task = task_of(&w, &run);
     w.until("the worker is running", |w| {
@@ -689,7 +852,7 @@ async fn turning_a_crew_off_cancels_the_worker_with_the_record() {
 #[tokio::test]
 async fn a_background_lead_takes_no_message_and_a_retry_never_prompts_it() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let error = w.core.runs.enqueue(&run.id, "hello", &[]).unwrap_err();
     assert!(
@@ -728,7 +891,7 @@ async fn a_background_lead_takes_no_message_and_a_retry_never_prompts_it() {
 #[tokio::test]
 async fn turning_off_again_cancels_a_task_left_after_a_failed_cancel() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let task = task_of(&w, &run);
     // The first press only ended the record, as when its cancel failed.
@@ -744,7 +907,7 @@ async fn turning_off_again_cancels_a_task_left_after_a_failed_cancel() {
 #[tokio::test]
 async fn a_stored_full_mode_for_a_background_crew_is_ignored() {
     let w = world(true, good()).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     let rows = mode_rows(&w);
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     assert_eq!(mode_rows(&w), rows, "a run stores no mode row");
@@ -780,7 +943,8 @@ async fn a_bad_branch_name_is_refused_and_nothing_is_made() {
         5,
         5,
         true,
-    );
+    )
+    .await;
     let before = threads(&w);
     let error = w
         .core
@@ -826,7 +990,7 @@ async fn a_background_merge_waits_for_a_person_even_when_autopilot_is_full() {
     assert_eq!(queued.state, "queued", "{queued:?}");
 
     // The background run's merge is held as waiting, under the mode `off` the code gives its crew.
-    let id = crew(&w);
+    let id = crew(&w).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     assert_eq!(w.core.crew_autopilot_mode(&project(&w), &run.id), Mode::Off);
     let task = task_of(&w, &run);
@@ -860,7 +1024,7 @@ async fn a_background_merge_waits_for_a_person_even_when_autopilot_is_full() {
 #[tokio::test]
 async fn a_post_row_launch_refusal_keeps_its_task_and_lead_reviewable() {
     let w = world(true, good()).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     // Use an existing tracked file regardless of the harness fixture's names.
     let listed = gitq(&w.repo, &["ls-files"]).await;
     let path = listed.lines().next().unwrap();
@@ -907,7 +1071,7 @@ async fn a_post_row_launch_refusal_keeps_its_task_and_lead_reviewable() {
 #[tokio::test]
 async fn a_failed_refusal_transaction_preserves_the_lead_and_reports_the_store_error() {
     let w = world(true, good()).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     let listed = gitq(&w.repo, &["ls-files"]).await;
     run_git(
         &w.repo,
@@ -946,7 +1110,7 @@ fn refusals(w: &World, run: &str) -> i64 {
 #[tokio::test]
 async fn a_start_refused_while_the_task_is_briefed_holds_the_task_through_the_real_start() {
     let w = world(true, good()).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     // The run row cannot be stored, so the start fails after the task exists and while it is still `briefed`.
     rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap().execute_batch(
         "CREATE TRIGGER no_crew_run BEFORE INSERT ON crew_runs BEGIN SELECT RAISE(ABORT, 'no crew run'); END;",
@@ -979,7 +1143,7 @@ async fn a_start_refused_while_the_task_is_briefed_holds_the_task_through_the_re
 #[tokio::test]
 async fn a_crash_between_the_refusal_and_the_cleanup_leaves_nothing_partial() {
     let w = world(true, good()).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     let crew_row = w.core.background_row(&id).unwrap();
     let thread = w
         .core
@@ -1049,7 +1213,7 @@ async fn a_crash_between_the_refusal_and_the_cleanup_leaves_nothing_partial() {
 #[tokio::test]
 async fn a_held_task_gives_up_its_leases() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
-    let id = crew(&w);
+    let id = crew(&w).await;
     // The lead thread of this harness stands for a run's lead: the task started under it has a lease and a worker.
     w.core
         .store

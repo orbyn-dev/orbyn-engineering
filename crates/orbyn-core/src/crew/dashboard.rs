@@ -17,10 +17,11 @@ use serde_json::Value;
 
 use crate::app::Core;
 use crate::crew::autopilot::ledger;
-use crate::crew::{key_needles, valid_id};
+use crate::crew::working::working;
+use crate::crew::{key_needles, valid_id, wire_name};
 use crate::error::{CoreError, Result};
 use crate::redaction::Redactor;
-use crate::store::{AutopilotEvent, MergeRecord};
+use crate::store::{AutopilotEvent, LIVE_WORKERS_MAX, LiveWorker, MergeRecord};
 use crate::util::parse_time;
 
 /// A rate shows from this many merges; it is in the answer so the page never hard-codes it.
@@ -50,12 +51,15 @@ const APPROVAL_KINDS: [&str; 5] = [
     "hold_used",
 ];
 
-/// Ledger kinds that mean something waited on the person and none of them is an approval.
-const OTHER_NEEDED_KINDS: [&str; 3] = ["person", "main_broken", "merge_waiting"];
+/// Ledger kinds that mean something waited on the person and none of them is an approval. A trip wire is one: the
+/// crew stopped the task and a person had to deal with it, and a task merged by hand after such a stop still carries
+/// the row. Leaving it out made that merge read as one that needed nothing.
+const OTHER_NEEDED_KINDS: [&str; 4] = ["person", "main_broken", "merge_waiting", "tripwire"];
 
 /// The ledger kinds this read looks at. The window's rows are fetched in one query over these,
-/// never one task at a time and never the whole ledger.
-const DASHBOARD_KINDS: [&str; 10] = [
+/// never one task at a time and never the whole ledger. `tripwire` is here so a stop the person had to handle is
+/// counted among what a merge needed; without it the row was never read and the merge read as unaided.
+const DASHBOARD_KINDS: [&str; 11] = [
     "held",
     "approved_once",
     "denied_by_person",
@@ -66,6 +70,7 @@ const DASHBOARD_KINDS: [&str; 10] = [
     "merge_waiting",
     "person_told",
     "reverted",
+    "tripwire",
 ];
 
 /// One merge with the records the answer needs beside it.
@@ -371,14 +376,62 @@ impl Core {
             .into_iter()
             .map(|record| merge_facts(record, &facts, &person))
             .collect();
-        Ok(figures(
-            project,
-            days,
-            now,
-            utc_offset_minutes,
-            window,
-            caps,
-        ))
+        let mut answer = figures(project, days, now, utc_offset_minutes, window, caps);
+        // KC3: the live row is read after the window and never narrowed by it. It is refused with the same
+        // `history_unreadable` as the rest when a record cannot be read.
+        answer.live = self.dashboard_live(project).map_err(history_unreadable)?;
+        Ok(answer)
+    }
+
+    /// What waits and what works right now, for one repository (KC3): the dashboard's "Right now" row. Both
+    /// counts come from one place: the one needs-you list (`needs_you_all`, the field `crew_needs_you` answers from, before its 200 cap)
+    /// for the waits, so it agrees with the Inbox and the Taskboard including dismissals, and the one `working`
+    /// function over this project's tasks for the workers. It is not windowed, writes nothing and starts nothing.
+    fn dashboard_live(&self, project: &str) -> Result<wire::CrewDashboardLive> {
+        let mut waits: BTreeMap<String, (wire::NeedsYouKind, u32)> = BTreeMap::new();
+        for item in self.needs_you_all(&|item_project, _| item_project == Some(project))? {
+            if item.project_id.as_deref() != Some(project) {
+                continue;
+            }
+            let row = waits.entry(wire_name(&item.kind)).or_insert((item.kind, 0));
+            row.1 = row.1.saturating_add(1);
+        }
+        let mut needs_you: Vec<wire::CrewDashboardWaiting> = waits
+            .into_values()
+            .map(|(kind, count)| wire::CrewDashboardWaiting { kind, count })
+            .collect();
+        needs_you.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| wire_name(&a.kind).cmp(&wire_name(&b.kind)))
+        });
+
+        let (workers, cut) = self
+            .store
+            .crew_live_workers_of_project(project, LIVE_WORKERS_MAX)?;
+        let mut works: BTreeMap<String, (wire::FlowWorking, u32)> = BTreeMap::new();
+        for LiveWorker { state, fix_state } in workers {
+            let Some(word) = working(&state, fix_state.as_deref()) else {
+                continue;
+            };
+            let word = word.wire();
+            let row = works.entry(wire_name(&word)).or_insert((word, 0));
+            row.1 = row.1.saturating_add(1);
+        }
+        let mut working: Vec<wire::CrewDashboardWorking> = works
+            .into_values()
+            .map(|(why, count)| wire::CrewDashboardWorking { why, count })
+            .collect();
+        working.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| wire_name(&a.why).cmp(&wire_name(&b.why)))
+        });
+        Ok(wire::CrewDashboardLive {
+            needs_you,
+            working,
+            truncated: cut,
+        })
     }
 
     /// Every record the window's merges need, read for all their task ids at once. A store read
@@ -594,6 +647,12 @@ fn figures(
         areas: area_rows,
         reverts,
         recent,
+        // Filled by `crew_dashboard_with` from the live reads; a window never fills it.
+        live: wire::CrewDashboardLive {
+            needs_you: Vec::new(),
+            working: Vec::new(),
+            truncated: false,
+        },
         truncated: more_engines || more_areas || more_reverts || more_recent,
     }
 }
@@ -786,6 +845,38 @@ mod tests {
         let row = cycle_row(vec![10, 20, 30, 40, 50]).unwrap();
         assert_eq!((row.fastest_s, row.slowest_s), (Some(10), Some(50)));
         assert_eq!(row.median_s, Some(30));
+    }
+
+    #[test]
+    fn a_tripwire_stop_counts_as_something_the_merge_needed() {
+        // A task merged by hand after a trip wire stopped it carries a `tripwire` ledger row. Before this was in
+        // `DASHBOARD_KINDS` the row was never read, so the merge read as one that needed nothing from the person.
+        let record = crate::crew::fixtures::merge_record("sha256:trip", "/repo", "main", "a trip");
+        let merge = Merge {
+            record,
+            title: String::new(),
+            model: None,
+            engine: "claude".to_owned(),
+            areas: Vec::new(),
+            created_unix: None,
+            events: vec![AutopilotEvent {
+                id: 1,
+                crew_id: "crew-1".to_owned(),
+                task_id: "sha256:trip".to_owned(),
+                kind: "tripwire".to_owned(),
+                body: serde_json::json!({ "in_a_row": 3 }),
+                at: "2026-01-01T00:00:00Z".to_owned(),
+            }],
+            answered: false,
+        };
+        assert_eq!(
+            merge.needed(),
+            wire::CrewNeeded::Other,
+            "a stop the person had to deal with is not unaided"
+        );
+        assert!(!merge.unaided());
+        assert!(DASHBOARD_KINDS.contains(&"tripwire"));
+        assert!(OTHER_NEEDED_KINDS.contains(&"tripwire"));
     }
 
     #[test]

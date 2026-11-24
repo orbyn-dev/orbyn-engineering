@@ -347,7 +347,10 @@ mod tests {
     fn windows_has_no_background_service_manager() {
         assert_eq!(Os::for_platform("macos"), Ok(Os::Mac));
         assert_eq!(Os::for_platform("linux"), Ok(Os::Linux));
-        assert!(Os::for_platform("windows").is_err());
+        assert_eq!(
+            Os::for_platform("windows"),
+            Err("Background setup supports Linux with systemd and macOS with launchd.")
+        );
     }
 
     #[test]
@@ -404,14 +407,24 @@ mod tests {
     #[test]
     fn a_line_that_is_not_a_variable_is_refused_by_number() {
         assert_eq!(parse_env("A=1\noops\n").unwrap_err(), "Line 2 has no `=`.");
-        assert!(parse_env("1A=x").is_err());
-        assert!(parse_env("A B=x").is_err());
-        assert!(parse_env("=x").is_err());
-        assert!(parse_env("A=\0").is_err());
+        for line in ["1A=x", "A B=x", "=x"] {
+            assert_eq!(
+                parse_env(line).unwrap_err(),
+                "Line 1 does not start with a variable name.",
+                "{line}"
+            );
+        }
+        assert_eq!(
+            parse_env("A=\0").unwrap_err(),
+            "Line 1 contains a null character."
+        );
         assert_eq!(
             parse_env("A='first\nsecond'\nbad").unwrap_err(),
             "Line 3 has no `=`."
         );
-        assert!(parse_env("A='unfinished").is_err());
+        assert_eq!(
+            parse_env("A='unfinished").unwrap_err(),
+            "Line 1 has an unterminated quoted value."
+        );
     }
 }

@@ -64,6 +64,9 @@ pub enum ConnectError {
 #[derive(Debug)]
 pub struct Ready {
     pub hello: Hello,
+    /// What `init`'s answer said about the family's SDK: `Some(true)` when the host could not load it, `Some(false)` when it
+    /// could, `None` when the family has no SDK or the host did not say.
+    pub sdk_missing: Option<bool>,
 }
 
 /// Reads lines of at most `MAX_FRAME_BYTES` (without the newline) from the host's stdout.
@@ -310,7 +313,7 @@ pub async fn handshake(
             }
         }
     };
-    tokio::time::timeout(init_timeout, answered)
+    let result = tokio::time::timeout(init_timeout, answered)
         .await
         .map_err(|_| {
             failed(
@@ -318,5 +321,10 @@ pub async fn handshake(
                 "The engine host did not become ready in time.",
             )
         })??;
-    Ok(Ready { hello })
+    Ok(Ready {
+        hello,
+        sdk_missing: result
+            .get("sdkMissing")
+            .and_then(serde_json::Value::as_bool),
+    })
 }

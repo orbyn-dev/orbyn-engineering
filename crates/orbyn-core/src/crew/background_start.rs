@@ -6,7 +6,11 @@
 //! **The lead thread runs no engine.** It exists so the task has a crew and a project. Nothing in the crew's own paths sends it a
 //! prompt (the retry and the lead notices refuse a background lead), and a person's message to it is refused at admission: the run is
 //! the person's to read, not a lead's to answer. A run's id is its lead thread's id, which is also the `crew_id` of every task of
-//! that thread, so a task finds its run (and the run its tasks) with no extra column.
+//! that thread, so a task finds its run (and the run its tasks) with no extra column. A run that never started has no lead thread.
+//!
+//! **A start the disk guard refuses keeps its row.** Every other refusal before a task exists takes its run and lead thread back and
+//! returns an error. A disk refusal is different: the run stays as the crew's history, ended `stopped` with `reason_code`
+//! `disk_low` and the disk sentence, waiting for nobody, and its lead thread is removed with it. The person still gets the error.
 //!
 //! **What a task's end means for the run.** A task that passed ends the run `needs_review`. A budget stop, a loop-guard stop and an
 //! engine error end it `stopped` with that reason. Anything else that ends a task without a person (a cancel, too many denials, text
@@ -45,6 +49,10 @@ const MAX_FILES: u64 = 50;
 const MAX_LINES: u64 = 2000;
 /// The longest sentence kept as why a run waits, in characters.
 const WHY_MAX: usize = 300;
+/// The `reason_code` of a run the disk guard refused: the volume holding the project was under the person's floor, so no worker ran.
+/// It is the wire spelling of `ErrorCode::DiskLow` (the `wire_enum` macro serializes `snake_case`); a literal because the enum derives
+/// no string accessor, and the contract test that reads `"disk_low"` pins the spelling.
+const DISK_LOW: &str = "disk_low";
 
 /// What a template asks for, in the words of the task. Code-owned: no repository text and no event text is part of it.
 fn outcome(template: &str, branch: Option<&str>) -> Result<String> {
@@ -124,7 +132,7 @@ async fn write_entries(root: &std::path::Path) -> Result<Vec<String>> {
 
 /// A refusal from the start, as the plain sentence a person reads.
 fn refusal(error: CrewError) -> CoreError {
-    if error.code == ErrorCode::NotAuthorized {
+    if matches!(error.code, ErrorCode::NotAuthorized | ErrorCode::DiskLow) {
         CoreError::PolicyDenied(error.message)
     } else {
         CoreError::Invalid(error.message)
@@ -147,8 +155,9 @@ impl Core {
     /// text a model reads, which stays code-owned exactly as the manual start's is. `actor` is written on the run's audit rows and is
     /// always a code-owned constant or the person's own actor, never event text. The run is Low priority and Crew-started, so
     /// review capacity may refuse it (nothing is stored then, and the refusal is a held `background` start); a crew that is off, a
-    /// trigger kind nothing can start yet, a crew that already has a run in progress and a project that is not trusted are refused
-    /// with a plain reason. Behind the Crew Preview flag.
+    /// trigger kind only its listener starts (issue label and dependency update), a watch crew (it has no listener yet), a crew
+    /// that already has a run in progress and a project that is not trusted are refused with a plain reason. Behind the Crew
+    /// Preview flag.
     pub(crate) async fn crew_background_start(
         self: &Arc<Self>,
         id: &str,
@@ -157,7 +166,7 @@ impl Core {
     ) -> Result<wire::BackgroundRun> {
         self.crew_preview_only()?;
         let crew = self.background_row(id)?;
-        self.refuse_background_start(&crew)?;
+        self.refuse_background_start(&crew, event)?;
         let branch = match crew.trigger_settings["branch"].as_str() {
             None => None,
             Some(name) if orbyn_contracts::CrewBranch::new(name).is_ok() => Some(name),
@@ -278,6 +287,17 @@ impl Core {
         }
         match (launched, run) {
             (Err(error), Some(run)) if run.state == "running" => {
+                // A disk refusal never deletes its run: the stopped row is the only history of the start that never happened.
+                // Nothing of the task was stored (the gate sits before it), so the lead thread goes and the row keeps its id.
+                // Every other refusal before a task still takes the run and the thread back.
+                if error.code == ErrorCode::DiskLow {
+                    let why = redact(&error.message);
+                    // A run ended meanwhile (the person turned the crew off) leaves nothing to keep; the person still gets the
+                    // refusal, as for any other refusal before a task.
+                    self.store
+                        .end_background_run_not_started(&thread.id, DISK_LOW, &why, "crew")?;
+                    return Err(refusal(error));
+                }
                 self.unwind_background_start(&thread.id, refusal(error))
             }
             (_, Some(run)) => run_wire(run),
@@ -286,8 +306,11 @@ impl Core {
         }
     }
 
-    /// The refusals that need only the stored crew.
-    fn refuse_background_start(&self, crew: &BackgroundRow) -> Result<()> {
+    /// The refusals that need only the stored crew. `event` is the start's event key: Run now passes `manual`, a listener
+    /// passes its own. The issue-label and dependency-update kinds are refused by hand but started by their listener through this
+    /// same seam, so only a `manual` start is turned away. A watch's own check fires `watch:<start>`, which a watch accepts;
+    /// Run now's `manual` is refused for it, because a watch runs its command on its schedule and not on demand.
+    fn refuse_background_start(&self, crew: &BackgroundRow, event: &str) -> Result<()> {
         if !crew.enabled {
             return Err(CoreError::PolicyDenied(
                 "This background crew is off. Turn it on, then start a run.".into(),
@@ -300,11 +323,22 @@ impl Core {
         }
         match crew.trigger_kind.as_str() {
             "ci_failure" | "schedule" => {}
-            "issue_label" => {
+            "issue_label" | "dependency_update" if event == "manual" => {
+                let why = if crew.trigger_kind == "issue_label" {
+                    "An issue label crew starts when its label appears on an issue; Run now has no issue to start."
+                } else {
+                    "A dependency update crew starts when an update appears; Run now has no update to start."
+                };
+                return Err(CoreError::PolicyDenied(why.into()));
+            }
+            // Its own listener fires these kinds through this seam; only Run now is turned away above.
+            "issue_label" | "dependency_update" => {}
+            "watch" if !event.starts_with("watch:") => {
                 return Err(CoreError::PolicyDenied(
-                    "An issue label crew cannot run yet: Orbyn cannot see new issue labels.".into(),
+                    "A watch crew's command runs on its schedule; Run now does not start a run for it.".into(),
                 ));
             }
+            "watch" => {}
             kind => {
                 let words = kind.replace('_', " ");
                 return Err(CoreError::PolicyDenied(format!(

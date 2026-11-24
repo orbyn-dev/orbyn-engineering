@@ -239,7 +239,7 @@ describe("an unchanged poll", () => {
   const poll = (answer: { projects: Project[]; threads: Thread[]; approvals: Approval[] }) => [
     vi.spyOn(api, "projects").mockResolvedValue(answer.projects),
     vi.spyOn(api, "threads").mockResolvedValue(answer.threads),
-    vi.spyOn(api, "allThreads").mockResolvedValue([]),
+    vi.spyOn(api, "allThreads").mockResolvedValue(answer.threads),
     vi.spyOn(api, "pendingApprovals").mockResolvedValue(answer.approvals),
   ];
 
@@ -310,6 +310,7 @@ describe("an unchanged poll", () => {
     expect(calls).toEqual([true]);
     forced.resolve({ marker: 1 } as never);
     await running;
+    // Real wait: one macrotask turn lets already-resolved promises settle; no clock is involved.
     await new Promise((resolve) => setTimeout(resolve, 0));
     // The person's read landed and stays; the quiet read ran after it and its failure showed nothing.
     expect(calls).toEqual([true, false]);

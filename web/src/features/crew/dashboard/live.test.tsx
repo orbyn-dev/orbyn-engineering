@@ -194,6 +194,7 @@ describe("Settings › Crew › Dashboard on the real reads", () => {
     answers.preview = { status: 404, body: { code: "not_found", message: "Not found" } };
     const { container } = render(<LiveDashboard />);
     await waitFor(() => expect(sent()).toContain("GET /api/crew/preview"));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
     expect(sent().filter((call) => call.includes("/api/crew/trust"))).toHaveLength(0);

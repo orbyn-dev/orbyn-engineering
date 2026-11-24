@@ -1,6 +1,8 @@
 import { ChevronDown } from "lucide-react";
 import { settingsLabel } from "../settingsSearch";
 import { useState } from "react";
+import { api } from "../api";
+import { useAsync } from "../../../lib/useAsync";
 import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode";
 import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
@@ -36,13 +38,19 @@ function DetailRowsButton() {
 }
 
 /** A whole number with its unit beside it, kept within `min` and `max` and saved when the field loses focus. */
-function NumberWithUnit({ value, unit, label, save, disabled, min = 1, max }: { value: unknown; unit: string; label: string; save(next: number): void; disabled: boolean; min?: number; max?: number }) {
+export function NumberWithUnit({ value, unit, label, save, disabled, min = 1, max }: { value: unknown; unit: string; label: string; save(next: number): void; disabled: boolean; min?: number; max?: number }) {
   return (
     <span className="unit-field">
       <input type="number" min={min} max={max} aria-label={label} disabled={disabled} defaultValue={typeof value === "number" ? value : ""}
         onBlur={(event) => {
-          const typed = Number(event.target.value);
-          if (!Number.isFinite(typed) || event.target.value === "") return;
+          const text = event.target.value.trim();
+          const typed = Number(text);
+          // An emptied field goes back to the stored value: saving nothing would leave
+          // the row reading differently from what the service holds.
+          if (text === "" || !Number.isFinite(typed)) {
+            event.target.value = typeof value === "number" ? String(value) : "";
+            return;
+          }
           const next = Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min, typed));
           event.target.value = String(next);
           if (next !== value) save(next);
@@ -85,6 +93,9 @@ export function GeneralSection() {
   const confirmDelete = useUi((state) => state.confirmDelete);
   const setPrefs = useUi((state) => state.setPrefs);
   const sound = useUi((state) => state.threadSound);
+  // ⌘Q is the macOS desktop app's key, so its confirmation is the only row drawn there.
+  const info = useAsync("environment-identity", (signal) => api.info(signal));
+  const macos = info.data?.platform === "macos";
   const order = [{ value: "updated_at", label: "Last user message" }, { value: "created_at", label: "Created" }] as const;
   return (
     <>
@@ -129,17 +140,19 @@ export function GeneralSection() {
           showWhen: (valueOf) => valueOf("terminal_attention_enabled") !== false,
           render: (value, save, control) => <NumberWithUnit value={value} unit="seconds" min={10} max={120} label={settingsLabel("general-terminal-agents-quiet-time")} save={save} disabled={control.disabled} /> },
       ] }]} />
-      <PreferenceGroups groups={[{ title: "", rows: [{
-        key: "quit_confirmation",
-        title: settingsLabel("general-quit-confirmation"),
-        description: "How ⌘Q quits the desktop app on macOS. The Quit menu item quits.",
-        segmented: true,
-        options: [
-          { value: "direct", label: "Quit at once" },
-          { value: "hold", label: "Hold ⌘Q" },
-          { value: "double_press", label: "Press ⌘Q twice" },
-        ],
-      }] }]} />
+      {macos ? (
+        <PreferenceGroups groups={[{ title: "", rows: [{
+          key: "quit_confirmation",
+          title: settingsLabel("general-quit-confirmation"),
+          description: "How ⌘Q quits the desktop app on macOS. The Quit menu item quits.",
+          segmented: true,
+          options: [
+            { value: "direct", label: "Quit at once" },
+            { value: "hold", label: "Hold ⌘Q" },
+            { value: "double_press", label: "Press ⌘Q twice" },
+          ],
+        }] }]} />
+      ) : null}
       <SettingGroup>
         <SettingRow title={settingsLabel("general-project-grouping")} description="How projects in the same repository are shown">
           <Segmented

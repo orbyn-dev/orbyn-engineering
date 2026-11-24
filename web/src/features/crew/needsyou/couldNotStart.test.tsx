@@ -6,7 +6,8 @@ import type { FlowCard } from "../../../generated/FlowCard";
 import { useConnection } from "../../../product/state/connection";
 import { installMockFetch } from "../../../test-support";
 import { useWrites } from "../writes/store";
-import { couldNotStartItems, NEVER_RAN } from "./assemble";
+import { NO_WORKER_RAN } from "../tool";
+import { couldNotStartItems, NEVER_RAN, type CouldNotStartCard } from "./assemble";
 import { NeedsYouInbox } from "./NeedsYouInbox";
 import { NeedsCard } from "./NeedsYou";
 
@@ -14,7 +15,8 @@ let mock: MockApi;
 beforeAll(async () => {
   installMockFetch();
   await import("../../../app/App");
-});
+  // App's first import is the cold module graph of the whole app; under a full-suite run it passes the 10 s default hook timeout.
+}, 60_000);
 beforeEach(() => {
   mock = installMockFetch();
   useConnection.setState({ remote: false });
@@ -40,6 +42,11 @@ const card = (over: Partial<FlowCard> = {}): FlowCard => ({
   could_not_start: true, can_cancel: true, can_rerun: false, ...over,
 });
 
+/** A could-not-start card whose refusal the service named in its structured answer, never in the reason. */
+const diskCard = (over: Partial<CouldNotStartCard> = {}): CouldNotStartCard => ({
+  ...card(), code: "disk_low", free_bytes: 3_400_000_000, floor_gb: 5, reason: "A different sentence.", ...over,
+});
+
 describe("couldNotStartItems", () => {
   it("makes a Could not start item with the reason and only Retry and Dismiss, and skips a card that did start", () => {
     const items = couldNotStartItems([card({ reason: REFUSED, engine: "codex" }), card({ id: "t2", could_not_start: false })]);
@@ -54,6 +61,39 @@ describe("couldNotStartItems", () => {
   });
   it("says the worker never ran when the service gave no reason", () => {
     expect(couldNotStartItems([card()])[0]!.cost).toBe(NEVER_RAN);
+  });
+});
+
+describe("a task refused for low disk", () => {
+  it("writes the disk sentence from the numbers, not from the reason, with the muted line and Dismiss only", () => {
+    const [one] = couldNotStartItems([diskCard({ reason: "The service said something else." })]);
+    expect(one).toMatchObject({
+      cost: "Not started: 3.1 GB free, Crew needs 5 GB. Free space and try again.",
+      hint: NO_WORKER_RAN,
+    });
+    expect(one!.actions.map((action) => action.label)).toEqual(["Dismiss"]);
+    expect(one!.actions.some((action) => action.key === "retry")).toBe(false);
+  });
+
+  it("writes free space in whole MB below 1 GB and the floor in whole GB", () => {
+    expect(couldNotStartItems([diskCard({ free_bytes: 640 * 1024 * 1024, floor_gb: 5 })])[0]!.cost).toBe(
+      "Not started: 640 MB free, Crew needs 5 GB. Free space and try again.",
+    );
+  });
+
+  it("keeps the reason and Retry for every other code", () => {
+    const [one] = couldNotStartItems([diskCard({ code: "not_authorized", reason: REFUSED })]);
+    expect(one).toMatchObject({ cost: REFUSED, hint: undefined });
+    expect(one!.actions.map((action) => action.label)).toEqual(["Retry on another engine", "Dismiss"]);
+  });
+
+  it("draws Dismiss only on the narrow card, and no engine line", () => {
+    const [one] = couldNotStartItems([diskCard({ name: "Rename returnTo to next", engine: "codex" })]);
+    const { container } = render(<ul><NeedsCard item={one!} handlers={{ act: () => undefined }} /></ul>);
+    expect(container).toHaveTextContent("Not started: 3.1 GB free, Crew needs 5 GB. Free space and try again.");
+    expect(container).toHaveTextContent(NO_WORKER_RAN);
+    expect(screen.getByRole("button", { name: "Dismiss: Rename returnTo to next" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
   });
 });
 
@@ -118,6 +158,18 @@ describe("a task that could not start in the Needs you inbox", () => {
   it("leaves a task that waits on a real decision out of this kind", async () => {
     const { list } = await open("crew");
     expect(within(list).queryAllByRole("listitem").filter((row) => row.getAttribute("data-kind") === "could_not_start")).toHaveLength(0);
+  });
+
+  it("writes the disk sentence for a disk_low row in the inbox, with the muted line and Dismiss only", async () => {
+    const { list } = await open("crew-could-not-start-disk");
+    const rows = within(list).getAllByRole("listitem").filter((row) => row.getAttribute("data-kind") === "could_not_start");
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row).toHaveTextContent("Not started: 3.1 GB free, Crew needs 5 GB. Free space and try again.");
+      expect(row).toHaveTextContent(NO_WORKER_RAN);
+      expect(within(row).getByRole("button", { name: /^Dismiss/ })).toBeEnabled();
+      expect(within(row).queryByRole("button", { name: /Retry/ })).toBeNull();
+    }
   });
 
   it("names the source when the tasks that could not start cannot be read, and keeps the rest", async () => {

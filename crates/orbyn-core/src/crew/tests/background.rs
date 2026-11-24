@@ -53,6 +53,24 @@ fn create_body(project: &str, name: &str) -> wire::BackgroundCrewCreate {
     .unwrap()
 }
 
+fn watch_body(
+    project: &str,
+    name: &str,
+    command: &str,
+    on_failing: &str,
+) -> wire::BackgroundCrewCreate {
+    serde_json::from_value(json!({
+        "project_id": project,
+        "name": name,
+        "template": "fix_failing_ci",
+        "trigger": { "kind": "watch", "command": command, "every_hours": 6, "on_failing": on_failing },
+        "budget": { "turns": 10, "minutes": 30 },
+        "daily": { "runs": 2, "turns": 40 },
+        "utc_offset_minutes": 600
+    }))
+    .unwrap()
+}
+
 fn page() -> Page {
     Page::new(None, None).unwrap()
 }
@@ -66,8 +84,8 @@ fn audit_actions(core: &Core) -> Vec<String> {
         .collect()
 }
 
-#[test]
-fn with_the_flag_off_nothing_exists() {
+#[tokio::test]
+async fn with_the_flag_off_nothing_exists() {
     let f = fixture(false);
     let not_found = |error: CoreError| assert!(matches!(error, CoreError::NotFound(_)), "{error}");
     not_found(f.core.background_list(None, page()).unwrap_err());
@@ -75,6 +93,7 @@ fn with_the_flag_off_nothing_exists() {
     not_found(
         f.core
             .background_create(&create_body(&f.project, "A"))
+            .await
             .unwrap_err(),
     );
     not_found(f.core.background_set_enabled("x", true).unwrap_err());
@@ -82,15 +101,17 @@ fn with_the_flag_off_nothing_exists() {
     not_found(f.core.background_runs("x", page()).unwrap_err());
     not_found(f.core.crew_background_start_run("x").unwrap_err());
     not_found(f.core.crew_background_spend("x", 1, 1).unwrap_err());
+    not_found(f.core.background_acknowledge_review("x").unwrap_err());
     assert!(audit_actions(&f.core).is_empty());
 }
 
-#[test]
-fn a_crew_is_created_off_and_audited() {
+#[tokio::test]
+async fn a_crew_is_created_off_and_audited() {
     let f = fixture(true);
     let crew = f
         .core
         .background_create(&create_body(&f.project, "  Fix CI  "))
+        .await
         .unwrap();
     assert_eq!(crew.name, "Fix CI");
     assert!(!crew.enabled);
@@ -114,12 +135,12 @@ fn a_crew_is_created_off_and_audited() {
     assert_eq!(audit_actions(&f.core), ["crew.background.create"]);
 }
 
-#[test]
-fn input_is_checked_strictly() {
+#[tokio::test]
+async fn input_is_checked_strictly() {
     let f = fixture(true);
-    let refused = |value: Value| {
+    let refused = async |value: Value| {
         let body: wire::BackgroundCrewCreate = serde_json::from_value(value).unwrap();
-        let error = f.core.background_create(&body).unwrap_err();
+        let error = f.core.background_create(&body).await.unwrap_err();
         assert!(matches!(error, CoreError::Invalid(_)), "{error}");
     };
     let base = |patch: Value| {
@@ -137,43 +158,56 @@ fn input_is_checked_strictly() {
         }
         body
     };
-    refused(base(json!({ "name": "" })));
-    refused(base(json!({ "name": "   " })));
-    refused(base(json!({ "name": "x".repeat(81) })));
-    refused(base(json!({ "name": "bad\u{7}name" })));
-    refused(base(json!({ "budget": { "turns": 0, "minutes": 5 } })));
-    refused(base(json!({ "budget": { "turns": 1001, "minutes": 5 } })));
-    refused(base(json!({ "budget": { "turns": 5, "minutes": 0 } })));
-    refused(base(json!({ "budget": { "turns": 5, "minutes": 1441 } })));
-    refused(base(json!({ "project_id": "../etc" })));
+    refused(base(json!({ "name": "" }))).await;
+    refused(base(json!({ "name": "   " }))).await;
+    refused(base(json!({ "name": "x".repeat(81) }))).await;
+    refused(base(json!({ "name": "bad\u{7}name" }))).await;
+    refused(base(json!({ "budget": { "turns": 0, "minutes": 5 } }))).await;
+    refused(base(json!({ "budget": { "turns": 1001, "minutes": 5 } }))).await;
+    refused(base(json!({ "budget": { "turns": 5, "minutes": 0 } }))).await;
+    refused(base(json!({ "budget": { "turns": 5, "minutes": 1441 } }))).await;
+    refused(base(json!({ "project_id": "../etc" }))).await;
     // Trigger settings: required, foreign and out of range.
-    refused(base(json!({ "trigger": { "kind": "issue_label" } })));
-    refused(base(json!({ "trigger": { "kind": "schedule" } })));
+    refused(base(json!({ "trigger": { "kind": "issue_label" } }))).await;
+    refused(base(json!({ "trigger": { "kind": "schedule" } }))).await;
     refused(base(
         json!({ "trigger": { "kind": "schedule", "every_hours": 0 } }),
-    ));
+    ))
+    .await;
     refused(base(
         json!({ "trigger": { "kind": "schedule", "every_hours": 721 } }),
-    ));
+    ))
+    .await;
     refused(base(
         json!({ "trigger": { "kind": "ci_failure", "label": "bug" } }),
-    ));
+    ))
+    .await;
     refused(base(
         json!({ "trigger": { "kind": "ci_failure", "every_hours": 3 } }),
-    ));
+    ))
+    .await;
     refused(base(
         json!({ "trigger": { "kind": "dependency_update", "branch": "main" } }),
-    ));
+    ))
+    .await;
     refused(base(
         json!({ "trigger": { "kind": "issue_label", "label": "y".repeat(101) } }),
-    ));
+    ))
+    .await;
     refused(base(
         json!({ "trigger": { "kind": "issue_label", "label": " " } }),
-    ));
+    ))
+    .await;
+    // A watch setting on another kind is a known field the core refuses, not a wire shape.
+    refused(base(
+        json!({ "trigger": { "kind": "ci_failure", "command": "rm -rf /" } }),
+    ))
+    .await;
     // A project that is nothing.
     let error = f
         .core
         .background_create(&serde_json::from_value(base(json!({ "project_id": "nope" }))).unwrap())
+        .await
         .unwrap_err();
     assert!(matches!(error, CoreError::NotFound(_)), "{error}");
     // The shapes the wire refuses before the core sees them: an unknown template, trigger or field.
@@ -181,7 +215,6 @@ fn input_is_checked_strictly() {
         base(json!({ "template": "deploy_to_production" })),
         base(json!({ "trigger": { "kind": "webhook" } })),
         base(json!({ "enabled": true })),
-        base(json!({ "trigger": { "kind": "ci_failure", "command": "rm -rf /" } })),
         base(json!({ "budget": { "turns": 5, "minutes": 5, "tokens": 9 } })),
         base(json!({ "budget": { "turns": -1, "minutes": 5 } })),
     ] {
@@ -196,46 +229,50 @@ fn input_is_checked_strictly() {
     for (n, (turns, minutes)) in [(1, 1), (1000, 1440)].into_iter().enumerate() {
         let mut body = create_body(&f.project, &format!("edge-{n}"));
         body.budget = wire::BackgroundBudget { turns, minutes };
-        f.core.background_create(&body).unwrap();
+        f.core.background_create(&body).await.unwrap();
     }
     let mut body = create_body(&f.project, &"é".repeat(80));
     body.trigger =
         serde_json::from_value(json!({ "kind": "schedule", "every_hours": 720 })).unwrap();
-    f.core.background_create(&body).unwrap();
+    f.core.background_create(&body).await.unwrap();
 }
 
-#[test]
-fn a_name_is_unique_in_its_project_and_a_project_holds_a_few_crews() {
+#[tokio::test]
+async fn a_name_is_unique_in_its_project_and_a_project_holds_a_few_crews() {
     let f = fixture(true);
     f.core
         .background_create(&create_body(&f.project, "Same"))
+        .await
         .unwrap();
     let error = f
         .core
         .background_create(&create_body(&f.project, "SAME"))
+        .await
         .unwrap_err();
     assert!(matches!(error, CoreError::Invalid(_)), "{error}");
     for n in 1..crate::store::BACKGROUND_PER_PROJECT_MAX {
         f.core
             .background_create(&create_body(&f.project, &format!("crew-{n}")))
+            .await
             .unwrap();
     }
     let error = f
         .core
         .background_create(&create_body(&f.project, "one too many"))
+        .await
         .unwrap_err();
     assert!(error.to_string().contains("at most"), "{error}");
 }
 
-#[test]
-fn free_text_is_redacted_before_it_is_stored() {
+#[tokio::test]
+async fn free_text_is_redacted_before_it_is_stored() {
     let f = fixture(true);
     let secret = format!("ghp_{}", "q".repeat(36));
     let mut body = create_body(&f.project, &format!("Fix {secret}"));
     body.trigger =
         serde_json::from_value(json!({ "kind": "issue_label", "label": format!("tok {secret}") }))
             .unwrap();
-    let crew = f.core.background_create(&body).unwrap();
+    let crew = f.core.background_create(&body).await.unwrap();
     assert!(!crew.name.contains(&secret) && crew.name.contains("[redacted]"));
     assert!(!crew.trigger.label.as_deref().unwrap().contains(&secret));
     let stored = f.core.store.background_crew(&crew.id).unwrap().unwrap();
@@ -244,16 +281,254 @@ fn free_text_is_redacted_before_it_is_stored() {
     assert!(!audit.contains(&secret), "the audit row holds none either");
 }
 
-#[test]
-fn update_changes_the_name_and_trigger_and_never_the_budget() {
+#[tokio::test]
+async fn a_watch_is_created_with_each_on_failing_action() {
+    let f = fixture(true);
+    for (n, action) in ["needs_you", "template"].into_iter().enumerate() {
+        let crew = f
+            .core
+            .background_create(&watch_body(
+                &f.project,
+                &format!("watch-{n}"),
+                "cargo test",
+                action,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(crew.trigger.kind, wire::BackgroundTriggerKind::Watch);
+        assert_eq!(crew.trigger.command.as_deref(), Some("cargo test"));
+        assert_eq!(crew.trigger.every_hours, Some(6));
+        assert_eq!(
+            crew.trigger.on_failing,
+            Some(if action == "needs_you" {
+                wire::BackgroundWatchAction::NeedsYou
+            } else {
+                wire::BackgroundWatchAction::Template
+            })
+        );
+        let stored = f.core.store.background_crew(&crew.id).unwrap().unwrap();
+        assert_eq!(stored.trigger_kind, "watch");
+        assert_eq!(stored.trigger_settings["command"], "cargo test");
+        assert_eq!(stored.trigger_settings["on_failing"], action);
+    }
+    assert_eq!(f.core.background_list(None, page()).unwrap().total, 2);
+}
+
+#[tokio::test]
+async fn a_watch_command_and_schedule_are_checked_strictly() {
+    let f = fixture(true);
+    let refused = async |body: wire::BackgroundCrewCreate| {
+        let error = f.core.background_create(&body).await.unwrap_err();
+        assert!(matches!(error, CoreError::Invalid(_)), "{error}");
+        error.to_string()
+    };
+    let watch = |command: &str, hours: u32, on_failing: Option<&str>, extra: Value| {
+        let mut trigger = json!({ "kind": "watch", "command": command, "every_hours": hours });
+        if let Some(on_failing) = on_failing {
+            trigger["on_failing"] = json!(on_failing);
+        }
+        if let Some(extra) = extra.as_object() {
+            for (key, value) in extra {
+                trigger[key] = value.clone();
+            }
+        }
+        serde_json::from_value(json!({
+            "project_id": f.project,
+            "name": "Watch",
+            "template": "fix_failing_ci",
+            "trigger": trigger,
+            "budget": { "turns": 5, "minutes": 5 },
+            "daily": { "runs": 2, "turns": 40 },
+            "utc_offset_minutes": 600
+        }))
+        .unwrap()
+    };
+    assert_eq!(
+        refused(watch("", 6, Some("needs_you"), json!({}))).await,
+        "command is 1 to 500 characters"
+    );
+    assert_eq!(
+        refused(watch(&"x".repeat(501), 6, Some("needs_you"), json!({}))).await,
+        "command is 1 to 500 characters"
+    );
+    assert_eq!(
+        refused(watch("echo bad\u{7}", 6, Some("needs_you"), json!({}))).await,
+        "command has a character that cannot be shown"
+    );
+    assert_eq!(
+        refused(watch("echo \"unclosed", 6, Some("template"), json!({}))).await,
+        "That command is empty or has an open quote."
+    );
+    assert_eq!(
+        refused(watch(
+            "git push --force origin main",
+            6,
+            Some("needs_you"),
+            json!({})
+        ))
+        .await,
+        "That command is not allowed: force-push, history rewrite or any push to main."
+    );
+    assert_eq!(
+        refused(watch("cargo test", 0, Some("needs_you"), json!({}))).await,
+        "every_hours is 1 to 720"
+    );
+    assert_eq!(
+        refused(watch("cargo test", 721, Some("needs_you"), json!({}))).await,
+        "every_hours is 1 to 720"
+    );
+    assert_eq!(
+        refused(watch("cargo test", 6, None, json!({}))).await,
+        "a watch trigger needs on_failing"
+    );
+    assert_eq!(
+        refused(watch(
+            "cargo test",
+            6,
+            Some("needs_you"),
+            json!({ "label": "bug" })
+        ))
+        .await,
+        "a watch trigger has no label setting"
+    );
+    assert_eq!(f.core.background_list(None, page()).unwrap().total, 0);
+    assert!(
+        audit_actions(&f.core).is_empty(),
+        "a refusal stores nothing"
+    );
+}
+
+#[tokio::test]
+async fn a_project_holds_ten_watches_and_an_update_into_one_counts_too() {
+    let f = fixture(true);
+    for n in 0..10 {
+        f.core
+            .background_create(&watch_body(
+                &f.project,
+                &format!("watch-{n}"),
+                "cargo test",
+                "needs_you",
+            ))
+            .await
+            .unwrap();
+    }
+    let error = f
+        .core
+        .background_create(&watch_body(
+            &f.project,
+            "one too many",
+            "cargo test",
+            "needs_you",
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "A project can have 10 watches.");
+    // A crew of another kind does not take one of the ten places, but an update that turns it into a watch is refused.
+    let other = f
+        .core
+        .background_create(&create_body(&f.project, "ci"))
+        .await
+        .unwrap();
+    let update: wire::BackgroundCrewUpdate = serde_json::from_value(json!({
+        "trigger": { "kind": "watch", "command": "cargo test", "every_hours": 6, "on_failing": "template" }
+    }))
+    .unwrap();
+    let error = f
+        .core
+        .background_update(&other.id, &update)
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "A project can have 10 watches.");
+    assert_eq!(
+        f.core.background_get(&other.id).unwrap().trigger.kind,
+        wire::BackgroundTriggerKind::CiFailure
+    );
+}
+
+#[tokio::test]
+async fn a_watch_command_is_screened_on_update_and_the_stored_one_is_redacted() {
+    let f = fixture(true);
+    let secret = format!("ghp_{}", "q".repeat(36));
+    let body = watch_body(&f.project, "Secret", &format!("echo {secret}"), "needs_you");
+    let crew = f.core.background_create(&body).await.unwrap();
+    let stored = f.core.store.background_crew(&crew.id).unwrap().unwrap();
+    let command = stored.trigger_settings["command"].as_str().unwrap();
+    assert!(!command.contains(&secret) && command.contains("[redacted]"));
+    assert!(!stored.trigger_settings.to_string().contains(&secret));
+
+    let refused: wire::BackgroundCrewUpdate = serde_json::from_value(json!({
+        "trigger": { "kind": "watch", "command": "git push --force origin main", "every_hours": 6, "on_failing": "needs_you" }
+    }))
+    .unwrap();
+    let error = f
+        .core
+        .background_update(&crew.id, &refused)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "That command is not allowed: force-push, history rewrite or any push to main."
+    );
+    assert_eq!(
+        f.core
+            .background_get(&crew.id)
+            .unwrap()
+            .trigger
+            .command
+            .as_deref(),
+        Some(command),
+        "the refused update changes nothing"
+    );
+    // A safe update still works.
+    let accepted: wire::BackgroundCrewUpdate = serde_json::from_value(json!({
+        "trigger": { "kind": "watch", "command": "cargo test", "every_hours": 12, "on_failing": "template" }
+    }))
+    .unwrap();
+    let changed = f.core.background_update(&crew.id, &accepted).await.unwrap();
+    assert_eq!(changed.trigger.command.as_deref(), Some("cargo test"));
+    assert_eq!(
+        changed.trigger.on_failing,
+        Some(wire::BackgroundWatchAction::Template)
+    );
+    assert_eq!(changed.trigger.every_hours, Some(12));
+}
+
+#[tokio::test]
+async fn a_needs_you_watch_stores_the_budgets_it_is_given_and_a_template_watch_validates_them() {
+    let f = fixture(true);
+    let mut body = watch_body(&f.project, "Budgets", "cargo test", "needs_you");
+    body.template = wire::BackgroundTemplate::SecurityAdvisory;
+    body.budget = wire::BackgroundBudget {
+        turns: 1000,
+        minutes: 1440,
+    };
+    body.daily = wire::BackgroundDailyBudget {
+        runs: 1000,
+        turns: 10_000,
+    };
+    let crew = f.core.background_create(&body).await.unwrap();
+    assert_eq!(crew.template, wire::BackgroundTemplate::SecurityAdvisory);
+    assert_eq!((crew.budget.turns, crew.budget.minutes), (1000, 1440));
+    assert_eq!((crew.daily.runs, crew.daily.turns), (1000, 10_000));
+
+    let mut invalid = watch_body(&f.project, "Bad budget", "cargo test", "template");
+    invalid.budget.turns = 1001;
+    let error = f.core.background_create(&invalid).await.unwrap_err();
+    assert!(matches!(error, CoreError::Invalid(_)), "{error}");
+}
+
+#[tokio::test]
+async fn update_changes_the_name_and_trigger_and_never_the_budget() {
     let f = fixture(true);
     let crew = f
         .core
         .background_create(&create_body(&f.project, "One"))
+        .await
         .unwrap();
     let other = f
         .core
         .background_create(&create_body(&f.project, "Two"))
+        .await
         .unwrap();
     let update = |value: Value| serde_json::from_value::<wire::BackgroundCrewUpdate>(value);
     // The budget, template and project have no place in an update.
@@ -268,11 +543,13 @@ fn update_changes_the_name_and_trigger_and_never_the_budget() {
     let error = f
         .core
         .background_update(&crew.id, &update(json!({})).unwrap())
+        .await
         .unwrap_err();
     assert!(matches!(error, CoreError::Invalid(_)));
     let error = f
         .core
         .background_update(&crew.id, &update(json!({ "name": "two" })).unwrap())
+        .await
         .unwrap_err();
     assert!(matches!(error, CoreError::Invalid(_)), "a name taken");
     let error = f
@@ -281,6 +558,7 @@ fn update_changes_the_name_and_trigger_and_never_the_budget() {
             &crew.id,
             &update(json!({ "trigger": { "kind": "schedule" } })).unwrap(),
         )
+        .await
         .unwrap_err();
     assert!(matches!(error, CoreError::Invalid(_)));
     let changed = f
@@ -292,6 +570,7 @@ fn update_changes_the_name_and_trigger_and_never_the_budget() {
             )
             .unwrap(),
         )
+        .await
         .unwrap();
     assert_eq!(changed.name, "Renamed");
     assert_eq!(changed.trigger.every_hours, Some(6));
@@ -303,12 +582,13 @@ fn update_changes_the_name_and_trigger_and_never_the_budget() {
     assert_eq!(unchanged.budget, crew.budget);
 }
 
-#[test]
-fn a_run_needs_an_enabled_crew_and_one_at_a_time() {
+#[tokio::test]
+async fn a_run_needs_an_enabled_crew_and_one_at_a_time() {
     let f = fixture(true);
     let crew = f
         .core
         .background_create(&create_body(&f.project, "Run"))
+        .await
         .unwrap();
     let error = f.core.crew_background_start_run(&crew.id).unwrap_err();
     assert!(
@@ -347,12 +627,13 @@ fn a_run_needs_an_enabled_crew_and_one_at_a_time() {
     );
 }
 
-#[test]
-fn reaching_the_budget_stops_the_run_and_queues_a_review() {
+#[tokio::test]
+async fn reaching_the_budget_stops_the_run_and_queues_a_review() {
     let f = fixture(true);
     let crew = f
         .core
         .background_create(&create_body(&f.project, "Budget"))
+        .await
         .unwrap();
     f.core.background_set_enabled(&crew.id, true).unwrap();
     let run = f.core.crew_background_start_run(&crew.id).unwrap();
@@ -425,6 +706,7 @@ async fn a_budget_stop_adds_no_merge_authority() {
     let crew = f
         .core
         .background_create(&create_body(&f.project, "NoMerge"))
+        .await
         .unwrap();
     f.core.background_set_enabled(&crew.id, true).unwrap();
     let run = f.core.crew_background_start_run(&crew.id).unwrap();
@@ -440,12 +722,13 @@ async fn a_budget_stop_adds_no_merge_authority() {
     );
 }
 
-#[test]
-fn turning_a_crew_off_stops_its_run_and_deleting_needs_it_idle() {
+#[tokio::test]
+async fn turning_a_crew_off_stops_its_run_and_deleting_needs_it_idle() {
     let f = fixture(true);
     let crew = f
         .core
         .background_create(&create_body(&f.project, "Off"))
+        .await
         .unwrap();
     f.core.background_set_enabled(&crew.id, true).unwrap();
     let run = f.core.crew_background_start_run(&crew.id).unwrap();
@@ -493,12 +776,13 @@ fn turning_a_crew_off_stops_its_run_and_deleting_needs_it_idle() {
     assert!(matches!(again, CoreError::NotFound(_)));
 }
 
-#[test]
-fn lists_are_paged_and_a_repository_file_is_never_written() {
+#[tokio::test]
+async fn lists_are_paged_and_a_repository_file_is_never_written() {
     let f = fixture(true);
     for n in 0..5 {
         f.core
             .background_create(&create_body(&f.project, &format!("crew-{n}")))
+            .await
             .unwrap();
     }
     let first = f
@@ -530,8 +814,8 @@ fn audit_rows(core: &Core, action: &str) -> Vec<orbyn_contracts::AuditEvent> {
         .collect()
 }
 
-#[test]
-fn hidden_characters_are_refused_in_names_and_trigger_text() {
+#[tokio::test]
+async fn hidden_characters_are_refused_in_names_and_trigger_text() {
     let f = fixture(true);
     let hidden = [
         '\u{200b}',
@@ -549,6 +833,7 @@ fn hidden_characters_are_refused_in_names_and_trigger_text() {
         let error = f
             .core
             .background_create(&create_body(&f.project, &name))
+            .await
             .unwrap_err();
         assert!(matches!(error, CoreError::Invalid(_)), "{c:?}: {error}");
         let body: wire::BackgroundCrewCreate = serde_json::from_value(json!({
@@ -562,7 +847,10 @@ fn hidden_characters_are_refused_in_names_and_trigger_text() {
         }))
         .unwrap();
         assert!(
-            matches!(f.core.background_create(&body), Err(CoreError::Invalid(_))),
+            matches!(
+                f.core.background_create(&body).await,
+                Err(CoreError::Invalid(_))
+            ),
             "{c:?} in a trigger setting"
         );
     }
@@ -570,12 +858,14 @@ fn hidden_characters_are_refused_in_names_and_trigger_text() {
     let crew = f
         .core
         .background_create(&create_body(&f.project, "Plain"))
+        .await
         .unwrap();
     let update: wire::BackgroundCrewUpdate =
         serde_json::from_value(json!({ "name": "re\u{200b}named" })).unwrap();
-    assert!(f.core.background_update(&crew.id, &update).is_err());
+    assert!(f.core.background_update(&crew.id, &update).await.is_err());
     f.core
         .background_create(&create_body(&f.project, "Heart \u{2764}\u{fe0f}"))
+        .await
         .unwrap();
     assert_eq!(
         audit_actions(&f.core).len(),
@@ -584,31 +874,36 @@ fn hidden_characters_are_refused_in_names_and_trigger_text() {
     );
 }
 
-#[test]
-fn look_alike_names_are_not_two_names() {
+#[tokio::test]
+async fn look_alike_names_are_not_two_names() {
     let f = fixture(true);
     f.core
         .background_create(&create_body(&f.project, "fix-ci"))
+        .await
         .unwrap();
     // The zero-width look-alike is refused outright.
     assert!(
         f.core
             .background_create(&create_body(&f.project, "fix\u{200b}-ci"))
+            .await
             .is_err()
     );
     // Case is folded beyond ASCII.
     f.core
         .background_create(&create_body(&f.project, "Écran"))
+        .await
         .unwrap();
     let error = f
         .core
         .background_create(&create_body(&f.project, "éCRAN"))
+        .await
         .unwrap_err();
     assert!(error.to_string().contains("already"), "{error}");
     // A rename onto an existing name is refused, a rename to its own name is not.
     let other = f
         .core
         .background_create(&create_body(&f.project, "other"))
+        .await
         .unwrap();
     let onto = |name: &str| -> wire::BackgroundCrewUpdate {
         serde_json::from_value(json!({ "name": name })).unwrap()
@@ -616,17 +911,22 @@ fn look_alike_names_are_not_two_names() {
     assert!(
         f.core
             .background_update(&other.id, &onto("FIX-CI"))
+            .await
             .is_err()
     );
-    f.core.background_update(&other.id, &onto("OTHER")).unwrap();
+    f.core
+        .background_update(&other.id, &onto("OTHER"))
+        .await
+        .unwrap();
 }
 
-#[test]
-fn a_spend_is_audited_and_a_person_s_disable_is_logged_as_the_person() {
+#[tokio::test]
+async fn a_spend_is_audited_and_a_person_s_disable_is_logged_as_the_person() {
     let f = fixture(true);
     let crew = f
         .core
         .background_create(&create_body(&f.project, "Audit"))
+        .await
         .unwrap();
     f.core.background_set_enabled(&crew.id, true).unwrap();
     let run = f.core.crew_background_start_run(&crew.id).unwrap();
@@ -664,12 +964,13 @@ fn a_spend_is_audited_and_a_person_s_disable_is_logged_as_the_person() {
     assert_eq!(stop[1].actor, "crew");
 }
 
-#[test]
-fn a_delete_removes_waiting_reviews_and_counts_them_in_the_audit_row() {
+#[tokio::test]
+async fn a_delete_removes_waiting_reviews_and_counts_them_in_the_audit_row() {
     let f = fixture(true);
     let crew = f
         .core
         .background_create(&create_body(&f.project, "Gone"))
+        .await
         .unwrap();
     f.core.background_set_enabled(&crew.id, true).unwrap();
     let first = f.core.crew_background_start_run(&crew.id).unwrap();
@@ -692,6 +993,7 @@ fn a_delete_removes_waiting_reviews_and_counts_them_in_the_audit_row() {
     let busy = f
         .core
         .background_create(&create_body(&f.project, "Busy"))
+        .await
         .unwrap();
     f.core.background_set_enabled(&busy.id, true).unwrap();
     f.core.crew_background_start_run(&busy.id).unwrap();
@@ -701,12 +1003,13 @@ fn a_delete_removes_waiting_reviews_and_counts_them_in_the_audit_row() {
     ));
 }
 
-#[test]
-fn idle_means_nothing_running_nothing_waiting_and_nothing_left_for_the_person() {
+#[tokio::test]
+async fn idle_means_nothing_running_nothing_waiting_and_nothing_left_for_the_person() {
     let f = fixture(true);
     let crew = f
         .core
         .background_create(&create_body(&f.project, "State"))
+        .await
         .unwrap();
     let state = || f.core.background_get(&crew.id).unwrap().state;
     assert_eq!(state(), wire::BackgroundState::Idle, "never ran");
