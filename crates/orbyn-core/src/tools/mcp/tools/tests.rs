@@ -778,9 +778,9 @@ async fn tools_list_names_all_five_issue_tools_with_their_effects() {
 /// A real `Core`, trusted project and MCP token like `issue_world`, without a tracker:
 /// the pull request tools read the project's forge, never its issues.
 ///
-/// The forge fixture is task-local, while the pull reads run on the cache's own task, so a
-/// faked forge cannot answer a pull tool call here. These tests pin the answer shapes and the
-/// MCP surface; the tools themselves are exercised by the argument refusals below.
+/// The forge fixture is task-local, while a pull read the cache runs on its own task needs
+/// `run_with_fixture` to drive it inside that fixture's scope. These tests pin the answer
+/// shapes and the MCP surface; the write tools are exercised below with the fake forge.
 async fn pull_world() -> IssueWorld {
     issue_world(false).await
 }
@@ -1132,6 +1132,60 @@ async fn tools_list_names_the_two_pull_write_tools_with_effect() {
 }
 
 #[tokio::test]
+async fn tools_list_names_the_two_pull_review_merge_tools_with_effect() {
+    let w = pull_world().await;
+    let names = w.tool_names().await;
+    for name in ["orbyn_pull_request_review", "orbyn_pull_request_merge"] {
+        assert!(
+            names.iter().any(|listed| listed.as_str() == name),
+            "{name} is not listed"
+        );
+        assert!(has_effect(name), "{name}");
+        let tool = TOOLS.iter().find(|tool| tool.name == name).expect(name);
+        assert!(tool.effect, "{name}");
+        assert!(
+            tool.description.contains("data from the forge"),
+            "{name} does not say its text is data"
+        );
+    }
+
+    let review = TOOLS
+        .iter()
+        .find(|tool| tool.name == "orbyn_pull_request_review")
+        .unwrap();
+    assert_eq!(
+        review.args,
+        &[
+            ("number", "number"),
+            ("event", "string"),
+            ("body", "string"),
+        ]
+    );
+    assert_eq!(review.required, &["number", "event"]);
+    let merge = TOOLS
+        .iter()
+        .find(|tool| tool.name == "orbyn_pull_request_merge")
+        .unwrap();
+    assert_eq!(
+        merge.args,
+        &[
+            ("number", "number"),
+            ("method", "string"),
+            ("head_sha", "string"),
+            ("delete_branch", "boolean"),
+        ]
+    );
+    assert_eq!(merge.required, &["number", "method", "head_sha"]);
+    assert!(
+        !merge
+            .args
+            .iter()
+            .any(|(name, _)| *name == "auto" || *name == "subject" || *name == "body"),
+        "the merge tool must not offer auto, a subject or a body"
+    );
+}
+
+#[tokio::test]
 async fn pull_write_tools_refuse_bad_arguments_before_the_forge() {
     let w = pull_world().await;
     let too_long_body = "x".repeat(MAX_PULL_COMMENT_BYTES + 1);
@@ -1183,6 +1237,78 @@ async fn pull_write_tools_refuse_bad_arguments_before_the_forge() {
             "orbyn_pull_request_update",
             json!({ "number": 7, "title": long_title }),
             "at most 256",
+        ),
+    ] {
+        let (text, error) = w.call_text(name, args).await;
+        assert!(error, "{name} answered {text}");
+        assert!(text.contains(wanted), "{name}: {text}");
+    }
+}
+
+#[tokio::test]
+async fn pull_review_and_merge_refuse_bad_arguments_before_the_forge() {
+    let w = pull_world().await;
+    let too_long_body = "x".repeat(MAX_PULL_COMMENT_BYTES + 1);
+    for (name, args, wanted) in [
+        (
+            "orbyn_pull_request_review",
+            json!({ "number": 7 }),
+            "event is required",
+        ),
+        (
+            "orbyn_pull_request_review",
+            json!({ "number": 7, "event": "approve_all" }),
+            "event must be",
+        ),
+        (
+            "orbyn_pull_request_review",
+            json!({ "number": 7, "event": "request_changes" }),
+            "body is required",
+        ),
+        (
+            "orbyn_pull_request_review",
+            json!({ "number": 7, "event": "comment" }),
+            "body is required",
+        ),
+        (
+            "orbyn_pull_request_review",
+            json!({ "number": 7, "event": "comment", "body": "   " }),
+            "body is required",
+        ),
+        (
+            "orbyn_pull_request_review",
+            json!({ "number": 7, "event": "approve", "body": too_long_body }),
+            "body is at most 64 KiB",
+        ),
+        (
+            "orbyn_pull_request_merge",
+            json!({ "method": "merge", "head_sha": "abc1234" }),
+            "number is required",
+        ),
+        (
+            "orbyn_pull_request_merge",
+            json!({ "number": 7, "method": "auto", "head_sha": "abc1234" }),
+            "method must be",
+        ),
+        (
+            "orbyn_pull_request_merge",
+            json!({ "number": 7, "method": "merge" }),
+            "head_sha is required",
+        ),
+        (
+            "orbyn_pull_request_merge",
+            json!({ "number": 7, "method": "merge", "head_sha": "not-a-sha" }),
+            "7 to 64 hex",
+        ),
+        (
+            "orbyn_pull_request_merge",
+            json!({ "number": 7, "method": "merge", "head_sha": "abc123" }),
+            "7 to 64 hex",
+        ),
+        (
+            "orbyn_pull_request_merge",
+            json!({ "number": 7, "method": "merge", "head_sha": "abc1234", "delete_branch": "yes" }),
+            "delete_branch must be",
         ),
     ] {
         let (text, error) = w.call_text(name, args).await;
@@ -1295,9 +1421,242 @@ async fn pull_update_reaches_the_forge_and_answers_the_updated_pull() {
     assert_eq!(row.target, "7");
 }
 
+#[tokio::test]
+async fn pull_review_reaches_the_forge_and_is_audited() {
+    let w = pull_world().await;
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (answer, error) = with_crew_fixture(fixture, async {
+        w.call_json(
+            "orbyn_pull_request_review",
+            json!({
+                "number": 7,
+                "event": "comment",
+                "body": "Please fix the flaky test",
+            }),
+        )
+        .await
+    })
+    .await;
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer,
+        json!({ "reviewed": true, "number": 7, "event": "comment" })
+    );
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(
+        calls[0],
+        strings(&["mr", "note", "7", "--message", "Please fix the flaky test"])
+    );
+    let audit = w.core.store.list_audit(None, 100).unwrap();
+    let row = audit
+        .iter()
+        .find(|row| row.action == "git.review")
+        .expect("the review is audited");
+    assert_eq!(row.actor, "engine:alpha");
+    assert_eq!(row.target, "7");
+}
+
+#[tokio::test]
+async fn pull_review_approves_without_a_body() {
+    let w = pull_world().await;
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (answer, error) = with_crew_fixture(fixture, async {
+        w.call_json(
+            "orbyn_pull_request_review",
+            json!({ "number": 7, "event": "approve" }),
+        )
+        .await
+    })
+    .await;
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer,
+        json!({ "reviewed": true, "number": 7, "event": "approve" })
+    );
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(calls[0], strings(&["mr", "approve", "7"]));
+}
+
+/// A pull request the fake forge answers as ready to merge.
+const PULL_HEAD: &str = "0123456789abcdef0123456789abcdef01234567";
+const OTHER_HEAD: &str = "fedcba9876543210fedcba9876543210fedcba98";
+
+fn merge_view() -> Value {
+    json!({
+        "iid": 7,
+        "title": "Merge me",
+        "state": "opened",
+        "source_branch": "feature",
+        "target_branch": "main",
+        "web_url": "https://gitlab.example.test/team/app/-/merge_requests/7",
+        "description": "",
+        "draft": false,
+        "sha": PULL_HEAD,
+        "diff_refs": { "base_sha": OTHER_HEAD },
+        "detailed_merge_status": "mergeable",
+        "reviewers": [],
+    })
+}
+
+#[test]
+fn a_merge_head_matches_its_full_id_or_prefix_ignoring_case() {
+    assert!(pull_head_matches("0123456", PULL_HEAD));
+    assert!(pull_head_matches(
+        &PULL_HEAD.to_ascii_uppercase(),
+        PULL_HEAD
+    ));
+    assert!(!pull_head_matches("012345", PULL_HEAD));
+    assert!(!pull_head_matches(OTHER_HEAD, PULL_HEAD));
+}
+
+/// A current-thread runtime: every task a pull read spawns runs on the thread that holds
+/// the task-local forge fixture, so a merge's fresh cache read reaches the fake forge.
+fn forge_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+/// Runs `future` with a fake forge visible to the pull cache's own task.
+fn run_with_fixture<T>(
+    runtime: &tokio::runtime::Runtime,
+    fixture: ForgeFixture,
+    future: impl std::future::Future<Output = T>,
+) -> T {
+    use std::task::{Context, Poll, Waker};
+    let scoped = with_crew_fixture(fixture, async move { runtime.block_on(future) });
+    let mut scoped = std::pin::pin!(scoped);
+    match std::future::Future::poll(scoped.as_mut(), &mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(value) => value,
+        Poll::Pending => panic!("the fake forge call did not finish in one poll"),
+    }
+}
+
+#[test]
+fn pull_merge_reaches_the_forge_and_is_audited() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), merge_view());
+    let (answer, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_json(
+            "orbyn_pull_request_merge",
+            json!({
+                "number": 7,
+                "method": "squash",
+                "head_sha": "0123456",
+                "delete_branch": true,
+            }),
+        )
+        .await
+    });
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer,
+        json!({ "merged": true, "number": 7, "method": "squash" })
+    );
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[0], strings(&["mr", "view", "7", "--output", "json"]));
+    assert_eq!(
+        calls[1],
+        strings(&[
+            "mr",
+            "merge",
+            "7",
+            "--yes",
+            "--squash",
+            "--remove-source-branch",
+            "--sha",
+            PULL_HEAD,
+        ])
+    );
+    assert!(
+        !calls[1]
+            .iter()
+            .any(|argument| argument.as_str() == "--auto-merge"),
+        "the merge is never automatic"
+    );
+    let audit = w.core.store.list_audit(None, 100).unwrap();
+    let row = audit
+        .iter()
+        .find(|row| row.action == "git.merge")
+        .expect("the merge is audited");
+    assert_eq!(row.actor, "engine:alpha");
+    assert_eq!(row.target, "7");
+}
+
+#[test]
+fn pull_merge_refuses_a_pull_request_that_is_not_ready_after_the_fresh_read() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(pull_world());
+    let mut closed = merge_view();
+    closed["state"] = json!("closed");
+    let mut draft = merge_view();
+    draft["draft"] = json!(true);
+    let mut conflicting = merge_view();
+    conflicting["detailed_merge_status"] = json!("conflict");
+    let mut failing = merge_view();
+    failing["statusCheckRollup"] = json!([{ "status": "COMPLETED", "conclusion": "FAILURE" }]);
+    let mut pending = merge_view();
+    pending["statusCheckRollup"] = json!([{ "status": "IN_PROGRESS" }]);
+    let mut changes_requested = merge_view();
+    changes_requested["reviewDecision"] = json!("CHANGES_REQUESTED");
+    let mut moved = merge_view();
+    moved["sha"] = json!(OTHER_HEAD);
+    let mut unreadable = merge_view();
+    assert!(unreadable.as_object_mut().unwrap().remove("sha").is_some());
+    for (case, view, wanted) in [
+        ("closed", closed, "Only an open pull request"),
+        ("draft", draft, "draft pull request"),
+        ("conflicting", conflicting, "conflicts"),
+        ("failing checks", failing, "failing checks"),
+        ("pending checks", pending, "pending checks"),
+        ("changes requested", changes_requested, "changes requested"),
+        ("moved head", moved, PULL_HEAD_MOVED),
+        ("unreadable head", unreadable, PULL_HEAD_MOVED),
+    ] {
+        let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+        let fixture = recording_forge(calls.clone(), view);
+        let (text, error) = run_with_fixture(&runtime, fixture, async {
+            w.call_text(
+                "orbyn_pull_request_merge",
+                json!({ "number": 7, "method": "merge", "head_sha": "0123456" }),
+            )
+            .await
+        });
+        assert!(error, "{case} merged: {text}");
+        assert!(text.contains(wanted), "{case}: {text}");
+        let calls = calls.lock().unwrap();
+        let merge = strings(&["mr", "merge"]);
+        assert!(
+            !calls.iter().any(|args| args.starts_with(&merge)),
+            "{case} reached the forge merge: {calls:?}"
+        );
+        assert_eq!(calls.len(), 1, "{case}: {calls:?}");
+        assert_eq!(
+            calls[0],
+            strings(&["mr", "view", "7", "--output", "json"]),
+            "{case}"
+        );
+    }
+}
+
 #[test]
 fn a_crew_worker_cannot_use_the_pull_write_tools() {
-    for name in ["orbyn_pull_request_comment", "orbyn_pull_request_update"] {
+    for name in [
+        "orbyn_pull_request_comment",
+        "orbyn_pull_request_update",
+        "orbyn_pull_request_review",
+        "orbyn_pull_request_merge",
+    ] {
         assert_eq!(
             crate::crew::worker_refusal(name, &json!({ "number": 7 }), "own-thread"),
             Some(format!("A crew worker cannot use {name}."))

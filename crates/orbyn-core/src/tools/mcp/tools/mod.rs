@@ -18,8 +18,8 @@ use crate::issues::IssueQuery;
 use crate::source_control::forge::PullFilter;
 use definitions::TOOLS;
 use orbyn_contracts::{
-    IssueLabel, IssueRef, IssueSummary, PullCheck, PullRequest, PullRequestDetail, TrackerKind,
-    UpdatePull,
+    IssueLabel, IssueRef, IssueSummary, PullCheck, PullRequest, PullRequestDetail, SubmitReview,
+    TrackerKind, UpdatePull,
 };
 
 /// Under the 45 seconds a tool has to answer, so the caller hears `ended: false`.
@@ -39,6 +39,11 @@ const MAX_PULL_LIMIT: u64 = 50;
 const MAX_PULL_COMMENT_BYTES: usize = 64 * 1024;
 const MAX_PULL_TITLE_CHARS: usize = 256;
 const MAX_REPLY_TO_CHARS: usize = 200;
+const MIN_PULL_HEAD_SHA: usize = 7;
+const MAX_PULL_HEAD_SHA: usize = 64;
+/// The one refusal for a merge whose head is not the commit the caller read.
+const PULL_HEAD_MOVED: &str =
+    "The pull request moved since you read it. Read it again before merging.";
 
 /// The tool list for `tools/list`.
 pub(crate) fn tool_specs() -> impl Iterator<Item = Value> {
@@ -223,6 +228,90 @@ fn pull_update_args(args: &Value) -> Result<UpdatePull> {
         ));
     }
     Ok(update)
+}
+
+/// A review: approve, request changes or comment, with its optional or required body.
+fn pull_review(args: &Value) -> Result<SubmitReview> {
+    let event = text(args, "event")?;
+    if !matches!(event, "approve" | "request_changes" | "comment") {
+        return Err(CoreError::Invalid(
+            "event must be approve, request_changes or comment.".into(),
+        ));
+    }
+    let body = if event == "approve" {
+        pull_update_body(args)?.unwrap_or_default()
+    } else {
+        pull_comment_body(args)?.to_owned()
+    };
+    Ok(SubmitReview {
+        event: event.to_owned(),
+        body,
+        comments: Vec::new(),
+    })
+}
+
+/// A merge's method, the head its caller read, and whether to delete the branch.
+fn pull_merge_args(args: &Value) -> Result<(String, String, bool)> {
+    let method = text(args, "method")?;
+    if !matches!(method, "merge" | "squash" | "rebase") {
+        return Err(CoreError::Invalid(
+            "method must be merge, squash or rebase.".into(),
+        ));
+    }
+    let head_sha = text(args, "head_sha")?;
+    if !(MIN_PULL_HEAD_SHA..=MAX_PULL_HEAD_SHA).contains(&head_sha.len())
+        || !head_sha
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(CoreError::Invalid(
+            "head_sha must be 7 to 64 hex characters.".into(),
+        ));
+    }
+    let delete_branch = match args.get("delete_branch").filter(|value| !value.is_null()) {
+        None => false,
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| CoreError::Invalid("delete_branch must be true or false.".into()))?,
+    };
+    Ok((method.to_owned(), head_sha.to_owned(), delete_branch))
+}
+
+/// Whether the fresh head is the commit the caller read: the whole id, or its prefix of at
+/// least seven characters, ignoring case.
+fn pull_head_matches(read: &str, fresh: &str) -> bool {
+    let read = read.to_ascii_lowercase();
+    let fresh = fresh.to_ascii_lowercase();
+    read.len() >= MIN_PULL_HEAD_SHA && fresh.starts_with(&read)
+}
+
+/// Why a fresh pull request cannot be merged, if it cannot: its state, draft flag,
+/// conflicts, checks, reviews or a head that moved. Every answer is this service's own,
+/// so no forge text reaches the caller.
+fn pull_merge_refusal(detail: &PullRequestDetail, head_sha: &str) -> Option<&'static str> {
+    let pull = &detail.pull;
+    if pull.state != "open" {
+        return Some("Only an open pull request can be merged.");
+    }
+    if pull.draft {
+        return Some("A draft pull request cannot be merged.");
+    }
+    if detail.mergeable.as_deref() == Some("conflicting") {
+        return Some("A pull request with conflicts cannot be merged.");
+    }
+    if pull.checks_state.as_deref() == Some("fail") {
+        return Some("A pull request with failing checks cannot be merged.");
+    }
+    if pull.checks_state.as_deref() == Some("pending") {
+        return Some("A pull request with pending checks cannot be merged.");
+    }
+    if pull.review_state.as_deref() == Some("changes_requested") {
+        return Some("A pull request with changes requested cannot be merged.");
+    }
+    match detail.head_sha.as_deref() {
+        Some(fresh) if pull_head_matches(head_sha, fresh) => None,
+        _ => Some(PULL_HEAD_MOVED),
+    }
 }
 
 /// What a pull request listing shows: the forge's fields an agent reads, and no check blob.
