@@ -47,6 +47,7 @@ import { createKeybindingsMock } from "./keybindings.ts";
 import { createLessonsMock } from "./lessons.ts";
 import { createSkillProposalsMock } from "./skillProposals.ts";
 import { boardMock } from "./board.ts";
+import { dashboardMock } from "./crewDashboard.ts";
 import { flowMock } from "./flow.ts";
 import { createReviewControlsMock } from "./reviewControls.ts";
 import { mapMock } from "./map.ts";
@@ -1694,7 +1695,7 @@ export function createMockApi(options: MockOptions = {}) {
       }
       if (parsed.pathname.startsWith("/api/account")) return accountMock.handle(method, parsed.pathname, body);
       if (parsed.pathname.startsWith("/api/settings/secrets")) return secretsMock.handle(method, parsed.pathname, body);
-      if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? backgroundMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? needsYouMock.handle(scenario, method, parsed.pathname, body) ?? escapesMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? lessonsMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? proposalsMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? backtestMock.handle(method, parsed.pathname) ?? capacityMock.handle(scenario, method, parsed.pathname, body) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
+      if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? dashboardMock.handle(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? backgroundMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? needsYouMock.handle(scenario, method, parsed.pathname, body) ?? escapesMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? lessonsMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? proposalsMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? backtestMock.handle(method, parsed.pathname) ?? capacityMock.handle(scenario, method, parsed.pathname, body) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
     /** The thread terminals and their command blocks: seed what the service lists, read it back after a write. */

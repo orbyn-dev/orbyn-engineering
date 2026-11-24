@@ -11,6 +11,7 @@
  */
 import { request } from "../../../api/client";
 import type { CrewDashboard } from "../../../generated/CrewDashboard";
+import type { CrewDashboardLive } from "../../../generated/CrewDashboardLive";
 import type { AutopilotAreaHistory } from "../../../generated/AutopilotAreaHistory";
 import type { AutopilotAreas } from "../../../generated/AutopilotAreas";
 import type { AutopilotThresholds } from "../../../generated/AutopilotThresholds";
@@ -85,6 +86,8 @@ export interface DashboardHistory {
   areas: HistoryArea[];
   reverts: HistoryRevert[];
   recent: HistoryMerge[];
+  /** The live "Right now" row (KC3). Absent from an older service: no row is drawn then, and nothing else changes. */
+  live?: CrewDashboardLive | null;
   truncated: boolean;
 }
 
