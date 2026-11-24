@@ -217,6 +217,11 @@ export function sourceBodyOf(source: SnapShotSource): AttachmentSource {
   };
 }
 
+/** The body to send for a fresh capture: the accessible text goes along only while "Include accessibility text" is on. */
+export function sourceBodyToSend(source: SnapShotSource, includeAccessibleText: boolean): AttachmentSource {
+  return sourceBodyOf(includeAccessibleText ? source : withoutAccessibleText(source));
+}
+
 /** A capture's source with its accessible text dropped and the image kept. */
 export function withoutAccessibleText(source: SnapShotSource): SnapShotSource {
   const { accessible_text: _text, ...rest } = source;

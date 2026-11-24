@@ -10,6 +10,7 @@ import { Dialog } from "../../../ui/Dialog";
 import { FolderBrowser } from "../../../product/ui/FolderBrowser";
 import { dropTrailingSlash, expandHome, homePrefix, pathName, replaceHomePrefix, shortenHome, splitPath, withSlash } from "./pathInput";
 import { trackClone } from "../app-chrome/CloneJobs";
+import { canPickFolder, pickFolder } from "../../repos";
 import "../addProject.css";
 
 export type AddProjectView = "folders" | "new" | "clone";
@@ -59,7 +60,8 @@ function Folders({
 }: {
   onNew(): void;
   onClone(): void;
-  onBrowse(): void;
+  /** Opens the in-app folder browser at `from`, the folder the palette field names (null when it is not known yet). */
+  onBrowse(from: string | null): void;
   onClose(): void;
   added: readonly Project[];
   onAdded?(project: Project): void;
@@ -103,7 +105,7 @@ function Folders({
   const actions = [
     { key: "new", run: onNew },
     { key: "clone", run: onClone },
-    { key: "browse", run: onBrowse },
+    { key: "browse", run: () => void browse() },
   ];
   const rows = folderRows + actions.length;
 
@@ -111,6 +113,23 @@ function Folders({
     setValue(withSlash(home ? shortenHome(path, home) : path));
     setActive(-1);
     setError(null);
+  };
+  // In the desktop app the native folder dialog is the browser: it reaches every drive the system shows. What it picks only fills
+  // the field, so adding is still the person's Enter; cancelling leaves the field and the location as they were. A plain browser
+  // tab has no dialog, so it gets the in-app browser, opened at the folder the field already names.
+  const browse = async () => {
+    if (!canPickFolder()) {
+      onBrowse(expanded);
+      return;
+    }
+    if (busy) return;
+    setError(null);
+    try {
+      const chosen = await pickFolder();
+      if (chosen !== null) enter(chosen);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "The folder dialog did not open. Type the path instead.");
+    }
   };
   const add = async (path: string) => {
     setBusy(true);
@@ -135,7 +154,7 @@ function Folders({
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "o") {
       event.preventDefault();
       event.stopPropagation();
-      onBrowse();
+      void browse();
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       setActive(Math.min(rows - 1, Math.max(-1, active + (event.key === "ArrowDown" ? 1 : -1))));
@@ -349,6 +368,7 @@ export function AddProjectPalette({
 }) {
   const [view, setView] = useState<AddProjectView>(initialView);
   const [browsing, setBrowsing] = useState(false);
+  const [browseFrom, setBrowseFrom] = useState<string | null>(null);
   const [browseError, setBrowseError] = useState<string | null>(null);
   const finishAdd = useFinish(onClose, onAdded);
   // A dialog that added something is done; where the flow goes on, the palette is what is left.
@@ -368,7 +388,7 @@ export function AddProjectPalette({
   const cancel = () => (initialView === "folders" ? setView("folders") : onClose());
   return (
     <>
-      <Folders onNew={() => setView("new")} onClone={() => setView("clone")} onBrowse={() => setBrowsing(true)} onClose={onClose} added={added} onAdded={onAdded} />
+      <Folders onNew={() => setView("new")} onClone={() => setView("clone")} onBrowse={(from) => { setBrowseFrom(from); setBrowsing(true); }} onClose={onClose} added={added} onAdded={onAdded} />
       {view === "new" ? (
         <AddDialog
           title="New project"
@@ -431,6 +451,7 @@ export function AddProjectPalette({
             </p>
           ) : null}
           <FolderBrowser
+            start={browseFrom}
             actionLabel="Add this folder"
             onChoose={(path) => {
               setBrowseError(null);

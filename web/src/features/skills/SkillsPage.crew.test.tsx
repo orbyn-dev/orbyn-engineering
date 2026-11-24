@@ -152,7 +152,7 @@ it("lists a skill approved from lessons under Added from lessons, as Personal", 
   expect(within(group).getByText("1")).toBeInTheDocument();
   expect(
     within(group).getByText(
-      "Available to engines through Orbyn's skills tools. Applies to all your projects. Saved in skills-local on this device, not in your repository.",
+      "Available to threads on the Default profile through Orbyn's skills tools. Saved in skills-local on this device, not in your repository.",
     ),
   ).toBeInTheDocument();
   expect(within(group).getByText("redirect-checks")).toBeInTheDocument();

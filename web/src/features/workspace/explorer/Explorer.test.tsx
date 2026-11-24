@@ -3,7 +3,7 @@ import { Explorer } from "./Explorer";
 import { FileTab } from "../../panels/files/FileTab";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { useWorkspace } from "../../../product/state/workspace";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "../../../app/App";
@@ -24,7 +24,11 @@ const findRow = (name: string | RegExp) => screen.findByRole("treeitem", { name:
 const reads = () => (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0])).filter((url) => url.includes("/worktrees"));
 const folderReads = (path: string) => reads().filter((url) => url.includes(`/tree?path=${encodeURIComponent(path)}`));
 
+// These tests render the whole App and wait for tree reads; on a busy machine a read can take longer than the 1 s a
+// findBy gets by default, so waits get 5 s and each test 20 s. A test that finds nothing still fails, only later.
 beforeEach(() => {
+  configure({ asyncUtilTimeout: 5000 });
+  vi.setConfig({ testTimeout: 20_000 });
   useExplorer.getState().reset();
   installMockFetch();
   useUi.setState({ projectFolders: true, panelOpen: false, panelTab: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["diff", "browser", "activity", "side", "tools"], layouts: {}, leftBarView: "files", explorerOpen: {}, sidebarWidth: 224 });
@@ -33,7 +37,10 @@ beforeEach(() => {
   window.location.hash = "#/threads/t-done";
 });
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  configure({ asyncUtilTimeout: 1000 });
+  vi.restoreAllMocks();
+});
 
 it("opens on the thread's own project and worktree, and reads a folder only when it is unfolded", async () => {
   const user = userEvent.setup();

@@ -124,6 +124,27 @@ describe("a finished capture", () => {
     expect(JSON.stringify(localStorage)).not.toContain("aGVsbG8=");
   });
 
+  it.each([
+    [true, "the accessible text goes along"],
+    [false, "no accessible text is sent"],
+  ] as const)("with Include accessibility text %s, %s", async (include, _what) => {
+    useUi.getState().setPrefs({ snapshotIncludeAccessibility: include });
+    mock.setTake(takeOf({ source: sourceOf({ accessible_text: "Sign in to continue" }) }));
+    vi.spyOn(api, "uploadAttachment").mockResolvedValue({
+      id: "a1", thread_id: "t1", name: "Snap Shot.png", mime: "image/png", size: 42n, created_at: "",
+    });
+    const source = vi.spyOn(api, "attachmentSource").mockResolvedValue();
+    const user = userEvent.setup();
+    view();
+    await user.click(await screen.findByRole("button", { name: "Snap Shot" }));
+    await waitFor(() => expect(useSnapshot.getState().capture?.id).toBeTruthy());
+    mock.emit("snapshot://ready", { id: useSnapshot.getState().capture!.id });
+    await waitFor(() => expect(source).toHaveBeenCalledTimes(1));
+    const body = source.mock.calls[0]![1];
+    if (include) expect(body.accessible_text).toBe("Sign in to continue");
+    else expect(body).not.toHaveProperty("accessible_text");
+  });
+
   it("shows app name, title and accessible text as text only", async () => {
     const hostile = "<img src=x onerror=\"window.__snapPwned=1\">";
     mock.setTake(takeOf({
