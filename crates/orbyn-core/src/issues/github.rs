@@ -3,7 +3,7 @@
 //! becomes empty, never an error that hides the other issues.
 
 use super::query::{AssigneeFilter, IssueQuery, StateFilter};
-use super::{IssueSource, ScopeList};
+use super::{DependencyFeed, DependencyUpdate, IssueSource, ScopeList};
 use crate::error::{CoreError, Result};
 use crate::source_control::forge::{Forge, call};
 use async_trait::async_trait;
@@ -15,6 +15,9 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 const LIST_FIELDS: &str = "number,title,url,author,state,stateReason,createdAt,updatedAt,closedAt,assignees,labels,comments";
+/// Open Dependabot alerts per `gh api` page, and the pages one read takes (1000 alerts).
+const DEPENDENCY_PAGE_SIZE: usize = 100;
+const DEPENDENCY_PAGES: u32 = 10;
 const DETAIL_FIELDS: &str = "number,title,url,author,state,stateReason,createdAt,updatedAt,closedAt,assignees,labels,comments,body";
 const MAX_COMMENTS: usize = 50;
 
@@ -104,6 +107,37 @@ pub(crate) fn summary(scope: &str, value: &Value) -> Option<IssueSummary> {
             .and_then(Value::as_array)
             .map_or(0, |c| u32::try_from(c.len()).unwrap_or(u32::MAX)),
     })
+}
+
+/// The ecosystem as a crew stores it: GitHub names Rust `rust`, a crew (and the Dependabot config) names it `cargo`.
+/// Every other name is GitHub's own, lowercased.
+fn ecosystem_name(name: &str) -> String {
+    let name = name.to_ascii_lowercase();
+    if name == "rust" { "cargo".into() } else { name }
+}
+
+/// The open Dependabot alerts in `gh api`'s answer: one update per alert, keyed by the alert's number. Only the
+/// number and the package ecosystem are read; no package name, advisory text or title is kept, so no alert text
+/// can reach a prompt. A missing or wrong-typed field is skipped or none.
+pub(crate) fn dependabot_updates(value: &Value) -> Vec<DependencyUpdate> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|alert| {
+            let number = alert.get("number").and_then(Value::as_u64)?;
+            let ecosystem = alert
+                .get("dependency")
+                .and_then(|dependency| dependency.get("package"))
+                .and_then(|package| package.get("ecosystem"))
+                .and_then(Value::as_str)
+                .map(ecosystem_name);
+            Some(DependencyUpdate {
+                key: number.to_string(),
+                ecosystem,
+            })
+        })
+        .collect()
 }
 
 fn comments(value: &Value) -> Vec<IssueComment> {
@@ -310,6 +344,46 @@ impl IssueSource for GitHub {
                 .map(|(open, closed)| IssueCounts { open, closed }),
             next: None,
         })
+    }
+
+    async fn dependency_updates(&self, scope: &str) -> Result<DependencyFeed> {
+        scope_ok(scope)?;
+        // Every page of open alerts through the person's own gh. Any failure (no access, alerts disabled, signed
+        // out, gh missing) means the tracker cannot answer, never a refusal, so no event is spent. A feed that still
+        // has a full last page after DEPENDENCY_PAGES pages is incomplete, and an incomplete feed cannot be a baseline:
+        // it answers "cannot" too.
+        let mut updates = Vec::new();
+        for page in 1..=DEPENDENCY_PAGES {
+            let args: Vec<String> = [
+                "api",
+                "-X",
+                "GET",
+                &format!("repos/{scope}/dependabot/alerts"),
+                "-f",
+                "state=open",
+                "-f",
+                &format!("per_page={DEPENDENCY_PAGE_SIZE}"),
+                "-f",
+                &format!("page={page}"),
+            ]
+            .map(str::to_owned)
+            .into();
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let Ok(out) = call(Forge::GitHub, &self.cwd, &refs).await else {
+                return Ok(DependencyFeed::Cannot);
+            };
+            let Ok(value) = serde_json::from_str::<Value>(&out) else {
+                return Ok(DependencyFeed::Cannot);
+            };
+            let Some(alerts) = value.as_array() else {
+                return Ok(DependencyFeed::Cannot);
+            };
+            updates.extend(dependabot_updates(&value));
+            if alerts.len() < DEPENDENCY_PAGE_SIZE {
+                return Ok(DependencyFeed::Updates(updates));
+            }
+        }
+        Ok(DependencyFeed::Cannot)
     }
 
     async fn get(&self, scope: &str, key: &str) -> Result<IssueDetail> {
@@ -529,5 +603,43 @@ mod tests {
         ] {
             assert!(scope_ok(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn dependabot_alerts_become_updates_with_only_their_number_and_ecosystem() {
+        let alerts = json!([
+            {
+                "number": 12,
+                "dependency": { "package": { "ecosystem": "npm", "name": "left-pad" } },
+                "security_advisory": { "summary": "never read" }
+            },
+            {
+                "number": 13,
+                "dependency": { "package": { "ecosystem": "Rust", "name": "serde" } }
+            },
+            { "title": "no number" },
+            { "number": 14 }
+        ]);
+        assert_eq!(
+            dependabot_updates(&alerts),
+            vec![
+                DependencyUpdate {
+                    key: "12".into(),
+                    ecosystem: Some("npm".into()),
+                },
+                DependencyUpdate {
+                    key: "13".into(),
+                    ecosystem: Some("cargo".into()),
+                },
+                DependencyUpdate {
+                    key: "14".into(),
+                    ecosystem: None,
+                },
+            ]
+        );
+        assert!(
+            dependabot_updates(&json!({ "not": "an array" })).is_empty(),
+            "a non-array answer reports no updates"
+        );
     }
 }

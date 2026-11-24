@@ -1,9 +1,10 @@
 //! The issue-reader background listeners (KC7): the issue-label listener baselines the labels already on its
 //! project's tracker on the first pass for a stored label, then starts one run per label-set change through the same
 //! seam as Run now; the readers expose no per-label event time, so an edit is inert and a removal and re-add is not a
-//! new event (a label feed is a follow-up). The dependency-update tick has the same claim, start and refusal path but
-//! no reader can answer it yet, so it spends no event. A fake tracker stands in for the issue readers; no real tracker
-//! is contacted.
+//! new event (a label feed is a follow-up). The dependency-update tick reads the project tracker's feed: a crew
+//! baselines its first feed (every selected update is claimed and nothing starts), then a later unclaimed update
+//! starts one run, while a `Cannot` answer keeps no marker and spends no event. A fake tracker stands in for the issue
+//! readers; no real tracker is contacted.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -97,7 +98,8 @@ fn labelled(key: &str, title: &str, labels: &[&str], updated: &str) -> IssueSumm
 }
 
 /// The issue reader a listener reads. It lists the issues that carry every asked label, with a count of the reads;
-/// the dependency feed stands in for one no real reader has today (follow-up #1360), and unreadable fails every read.
+/// the dependency feed stands in for the tracker's own feed (GitHub's is tested in `issues::github`), and unreadable
+/// fails every read.
 struct Issues {
     issues: Mutex<Vec<IssueSummary>>,
     dependency: Mutex<DependencyFeed>,
@@ -917,11 +919,10 @@ async fn a_dependency_update_crew_without_a_reader_feed_spends_nothing() {
 }
 
 #[tokio::test]
-async fn a_dependency_feed_the_tracker_does_not_have_would_claim_and_start_one_run() {
+async fn a_dependency_feed_baselines_on_its_first_pass_then_starts_one_run_for_a_new_update() {
     let w = world(true, good()).await;
     add_tracker_origin(&w).await;
-    // No real reader answers today (#1360); this fake feed proves the claim and start path a reader gains by
-    // answering Updates needs nothing else in the listener.
+    // The fake feed proves the claim, baseline and start path the listener uses for any reader that answers Updates.
     let reader = Issues::new(Vec::new());
     *reader.dependency.lock().unwrap() = DependencyFeed::Updates(vec![
         DependencyUpdate {
@@ -935,20 +936,217 @@ async fn a_dependency_feed_the_tracker_does_not_have_would_claim_and_start_one_r
     ]);
     connect_reader(&w, reader.clone()).await;
     let id = dependency_crew(&w, "Deps", Some("cargo"), true).await;
+
+    // The first feed is a baseline: the crew's own ecosystem is claimed, the marker is kept, and nothing starts.
     w.core.crew_background_listeners_tick(NOW).await.unwrap();
-    assert_eq!(runs_of(&w, &id).len(), 1);
+    assert!(runs_of(&w, &id).is_empty(), "a baseline starts nothing");
+    let mut expected = vec![
+        format!(
+            "dependency_update:{id}:gitlab:team/app:baseline:{}",
+            event_tag("cargo")
+        ),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:{}",
+            event_tag("alert-1")
+        ),
+    ];
+    expected.sort();
     assert_eq!(
         claims(&w),
-        [format!("dependency_update:{id}:{}", event_tag("alert-1"))],
+        expected,
         "the crew's ecosystem selects its own update only"
     );
-    // The alert is spent: a repeat starts nothing new.
+
+    // A repeat is inert: the update was claimed by the baseline.
     w.core
         .crew_background_listeners_tick(NOW + 60)
         .await
         .unwrap();
+    assert!(runs_of(&w, &id).is_empty());
+    assert_eq!(claims(&w).len(), 2);
+
+    // A new update on the crew's ecosystem starts exactly one run.
+    *reader.dependency.lock().unwrap() = DependencyFeed::Updates(vec![
+        DependencyUpdate {
+            key: "alert-1".into(),
+            ecosystem: Some("cargo".into()),
+        },
+        DependencyUpdate {
+            key: "alert-2".into(),
+            ecosystem: Some("npm".into()),
+        },
+        DependencyUpdate {
+            key: "alert-3".into(),
+            ecosystem: Some("cargo".into()),
+        },
+    ]);
+    w.core
+        .crew_background_listeners_tick(NOW + 120)
+        .await
+        .unwrap();
     assert_eq!(runs_of(&w, &id).len(), 1);
-    assert_eq!(claims(&w).len(), 1);
+    let mut expected = vec![
+        format!(
+            "dependency_update:{id}:gitlab:team/app:baseline:{}",
+            event_tag("cargo")
+        ),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:{}",
+            event_tag("alert-1")
+        ),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:{}",
+            event_tag("alert-3")
+        ),
+    ];
+    expected.sort();
+    assert_eq!(claims(&w), expected);
+}
+
+#[tokio::test]
+async fn a_cannot_feed_keeps_no_marker_and_spends_nothing() {
+    let w = world(true, hung()).await;
+    add_tracker_origin(&w).await;
+    let reader = Issues::new(Vec::new());
+    *reader.dependency.lock().unwrap() = DependencyFeed::Cannot;
+    connect_reader(&w, reader.clone()).await;
+    let id = dependency_crew(&w, "Deps", None, true).await;
+
+    w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    assert_eq!(reader.dependency_reads.load(Ordering::SeqCst), 1);
+    assert!(
+        claims(&w).is_empty(),
+        "a tracker that cannot answer keeps no marker and spends no event"
+    );
+    assert!(runs_of(&w, &id).is_empty());
+
+    // No marker was kept: the first feed this crew gets is still its baseline, so the open update starts nothing.
+    *reader.dependency.lock().unwrap() = DependencyFeed::Updates(vec![DependencyUpdate {
+        key: "alert-1".into(),
+        ecosystem: None,
+    }]);
+    w.core
+        .crew_background_listeners_tick(NOW + 60)
+        .await
+        .unwrap();
+    assert!(runs_of(&w, &id).is_empty(), "the first feed is a baseline");
+    let mut expected = vec![
+        format!(
+            "dependency_update:{id}:gitlab:team/app:baseline:{}",
+            event_tag("")
+        ),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:{}",
+            event_tag("alert-1")
+        ),
+    ];
+    expected.sort();
+    assert_eq!(claims(&w), expected);
+}
+
+#[tokio::test]
+async fn an_ecosystem_filtered_crew_baselines_only_its_own_ecosystem() {
+    let w = world(true, hung()).await;
+    add_tracker_origin(&w).await;
+    let reader = Issues::new(Vec::new());
+    *reader.dependency.lock().unwrap() = DependencyFeed::Updates(vec![
+        DependencyUpdate {
+            key: "alert-1".into(),
+            ecosystem: Some("cargo".into()),
+        },
+        DependencyUpdate {
+            key: "alert-2".into(),
+            ecosystem: Some("npm".into()),
+        },
+        DependencyUpdate {
+            key: "alert-3".into(),
+            ecosystem: None,
+        },
+    ]);
+    connect_reader(&w, reader.clone()).await;
+    let id = dependency_crew(&w, "Deps", Some("cargo"), true).await;
+
+    w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    assert!(runs_of(&w, &id).is_empty(), "a baseline starts nothing");
+    let mut expected = vec![
+        format!(
+            "dependency_update:{id}:gitlab:team/app:baseline:{}",
+            event_tag("cargo")
+        ),
+        format!(
+            "dependency_update:{id}:gitlab:team/app:{}",
+            event_tag("alert-1")
+        ),
+    ];
+    expected.sort();
+    assert_eq!(
+        claims(&w),
+        expected,
+        "only the crew's own ecosystem is claimed"
+    );
+}
+
+#[tokio::test]
+async fn a_crew_pointed_at_another_repository_baselines_that_repositorys_alerts() {
+    let w = world(true, good()).await;
+    add_tracker_origin(&w).await;
+    let reader = Issues::new(Vec::new());
+    *reader.dependency.lock().unwrap() = DependencyFeed::Updates(vec![DependencyUpdate {
+        key: "1".into(),
+        ecosystem: Some("cargo".into()),
+    }]);
+    connect_reader(&w, reader.clone()).await;
+    let id = dependency_crew(&w, "Deps", Some("cargo"), true).await;
+    w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    assert!(runs_of(&w, &id).is_empty(), "the first feed is a baseline");
+
+    // The project's remote moves to another repository whose open alerts reuse number 1 and add number 2.
+    run_git(
+        &w.repo,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://gitlab.example.test/team/other.git",
+        ],
+    );
+    *reader.dependency.lock().unwrap() = DependencyFeed::Updates(vec![
+        DependencyUpdate {
+            key: "1".into(),
+            ecosystem: Some("cargo".into()),
+        },
+        DependencyUpdate {
+            key: "2".into(),
+            ecosystem: Some("cargo".into()),
+        },
+    ]);
+    w.core.issues.clear_cache();
+    w.core
+        .crew_background_listeners_tick(NOW + 60)
+        .await
+        .unwrap();
+    assert!(
+        runs_of(&w, &id).is_empty(),
+        "the new repository is baselined, not replayed one alert per pass"
+    );
+    let claimed = claims(&w);
+    for key in ["1", "2"] {
+        assert!(claimed.contains(&format!(
+            "dependency_update:{id}:gitlab:team/other:{}",
+            event_tag(key)
+        )));
+    }
+
+    // An alert opened there after the baseline starts one run.
+    *reader.dependency.lock().unwrap() = DependencyFeed::Updates(vec![DependencyUpdate {
+        key: "3".into(),
+        ecosystem: Some("cargo".into()),
+    }]);
+    w.core
+        .crew_background_listeners_tick(NOW + 120)
+        .await
+        .unwrap();
+    assert_eq!(runs_of(&w, &id).len(), 1);
 }
 
 #[tokio::test]
@@ -989,4 +1187,53 @@ async fn the_baseline_reads_every_page_before_it_is_kept() {
         .await
         .unwrap();
     assert!(runs_of(&w, &id).is_empty(), "an edit is inert");
+}
+
+#[tokio::test]
+async fn changing_a_crews_ecosystem_baselines_the_alerts_already_open_there() {
+    let w = world(true, hung()).await;
+    add_tracker_origin(&w).await;
+    let reader = Issues::new(Vec::new());
+    *reader.dependency.lock().unwrap() = DependencyFeed::Updates(vec![
+        DependencyUpdate {
+            key: "alert-1".into(),
+            ecosystem: Some("cargo".into()),
+        },
+        DependencyUpdate {
+            key: "alert-2".into(),
+            ecosystem: Some("npm".into()),
+        },
+    ]);
+    connect_reader(&w, reader.clone()).await;
+    // The stored ecosystem is written in another case than the feed's: it still selects.
+    let id = dependency_crew(&w, "Deps", Some("Cargo"), true).await;
+    w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    assert!(runs_of(&w, &id).is_empty());
+    assert!(
+        claims(&w).contains(&format!(
+            "dependency_update:{id}:gitlab:team/app:{}",
+            event_tag("alert-1")
+        )),
+        "{:?}",
+        claims(&w)
+    );
+
+    // Pointed at npm, the crew baselines the npm alert that was already open instead of firing it.
+    let update: BackgroundCrewUpdate = serde_json::from_value(
+        json!({ "trigger": { "kind": "dependency_update", "ecosystem": "npm" } }),
+    )
+    .unwrap();
+    w.core.background_update(&id, &update).await.unwrap();
+    w.core
+        .crew_background_listeners_tick(NOW + 60)
+        .await
+        .unwrap();
+    assert!(
+        runs_of(&w, &id).is_empty(),
+        "an alert already open never fires"
+    );
+    assert!(claims(&w).contains(&format!(
+        "dependency_update:{id}:gitlab:team/app:{}",
+        event_tag("alert-2")
+    )));
 }

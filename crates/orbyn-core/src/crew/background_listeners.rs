@@ -20,16 +20,18 @@
 //! per-label event time; a label feed is a reader follow-up). Re-enabling a crew does not baseline again, so labels added
 //! while it was off fire once per pass, unless the issue's label set was already claimed. A project is read only through the one tracker reader that can answer for it (the connected
 //! tracker its origin remote names; Linear names no project and answers none), so a project with no reader, an
-//! untrusted folder and a crew that is off spend no event and start nothing. A `dependency_update` crew has its tick
-//! and the same claim, start and refusal path, but no reader can report a dependency or advisory update yet, so that
-//! tick answers [`DependencyFeed::Cannot`] and fires nothing (follow-up #1360). The start seam still refuses what Run now
-//! cannot start with a plain reason. A trigger declared in a project's
+//! untrusted folder and a crew that is off spend no event and start nothing. A `dependency_update` crew reads its
+//! project's tracker for dependency or advisory updates: GitHub answers from its open Dependabot alerts (up to 10 pages of
+//! 100) and every other tracker answers [`DependencyFeed::Cannot`], so those spend no event and start nothing. A crew
+//! baselines on its first pass that gets a feed: every update it selects is claimed and nothing starts, so alerts that
+//! were already open are never replayed; only a later unclaimed update starts a run. The start seam still refuses what
+//! Run now cannot start with a plain reason. A trigger declared in a project's
 //! `.orbyn/crew.json` that has no stored crew is ignored: nothing starts, nothing is adopted, and the most it earns is
 //! a diagnostic line ("found in .orbyn/crew.json, no matching crew") that no screen shows.
 //!
 //! **Event text never reaches a prompt (decision 6).** The only fields read from outside are: a check's name and state
-//! at a head commit, the head commit's sha, a tracker issue's scope and key, its labels, the key of a dependency update
-//! once a reader has that feed, and a `.orbyn/crew.json` trigger's name and kind. Each of them only *selects* what to
+//! at a head commit, the head commit's sha, a tracker issue's scope and key, its labels, the key of a dependency update,
+//! and a `.orbyn/crew.json` trigger's name and kind. Each of them only *selects* what to
 //! start: a name is compared with the crew's stored workflow filter, a sha decides which head is watched, a label
 //! decides which issue a crew watches, a file trigger's name decides only whether a diagnostic line is worth writing.
 //! They appear in the claim identity (the issue's raw scope and key, and hashes of its label and label set), the
@@ -504,11 +506,14 @@ impl Core {
     }
 
     /// The dependency-update listener: an enabled `dependency_update` crew fires on a dependency or advisory update
-    /// its project's tracker reader reports, narrowed by the crew's optional `ecosystem` setting. No reader has such a
-    /// feed yet ([`IssueSource::dependency_updates`]), so today every tracker answers [`DependencyFeed::Cannot`]:
-    /// the tick spends no event, starts nothing and writes no refusal for a tracker that cannot answer. It writes one
-    /// trace line per pass, only when at least one enabled dependency crew exists and none of the crews it read
-    /// answered with a feed; never one line per update.
+    /// its project's tracker reader reports, narrowed by the crew's optional `ecosystem` setting. GitHub answers from
+    /// its open Dependabot alerts and every other tracker answers [`DependencyFeed::Cannot`], which spends no event and
+    /// writes no refusal. On its first pass that gets a feed (no marker claim yet) a crew
+    /// claims every update it selects and starts nothing, then keeps the marker only when every claim succeeded, so the
+    /// alerts already open are never replayed. A later pass fires only an unclaimed update. The crew row is read again
+    /// at the start of its turn, like the issue-label tick, so a crew turned off or deleted meanwhile is not claimed on
+    /// the old row. It writes one trace line per pass, only when at least one enabled dependency crew exists and none
+    /// of the crews it read answered with a feed; never one line per update.
     async fn crew_background_dependency_update_tick(
         self: &Arc<Self>,
         rotation: usize,
@@ -531,10 +536,20 @@ impl Core {
                 "more dependency update crews than one pass reads; this pass reads {ISSUE_CREWS_MAX} and the rest come around on the next passes"
             );
         }
-        for crew in window(crews, rotation, ISSUE_CREWS_MAX) {
+        for listed in window(crews, rotation, ISSUE_CREWS_MAX) {
             if stop.is_cancelled() {
                 return;
             }
+            // The list was read before earlier crews of this pass were read from the tracker: read the crew again, so a
+            // crew the person turned off, deleted or changed meanwhile is not claimed on the old row.
+            let crew = match self.background_row(&listed.id) {
+                Ok(crew) if crew.enabled && crew.trigger_kind == "dependency_update" => crew,
+                Ok(_) => continue,
+                Err(error) => {
+                    tracing::debug!(%error, crew = %listed.id, "a dependency update crew could not be read again; nothing fired");
+                    continue;
+                }
+            };
             let Some(reader) = self.background_project_reader(&crew, stop).await else {
                 continue;
             };
@@ -555,37 +570,72 @@ impl Core {
             answered = true;
             let wanted = crew.trigger_settings["ecosystem"].as_str();
             updates.sort_by(|a, b| a.key.cmp(&b.key));
+            // The first sight of a (crew, feed) is a baseline: the updates already open are not events. The marker is
+            // kept only after every selected update is claimed, so a pass that could not claim them all baselines again.
+            // The marker is per stored ecosystem, so a crew pointed at another ecosystem baselines the alerts already open there
+            // instead of firing them one per pass.
+            let marker = dependency_baseline(
+                &crew.id,
+                tracker_name(reader.tracker),
+                &reader.scope,
+                wanted,
+            );
+            let baseline = match self.store.background_event_claimed(&marker) {
+                Ok(kept) => !kept,
+                Err(error) => {
+                    tracing::warn!(%error, crew = %crew.id, "a dependency update crew's baseline could not be read");
+                    continue;
+                }
+            };
+            let mut baseline_failed = false;
             for update in updates {
                 if stop.is_cancelled() {
                     return;
                 }
                 // The crew names an ecosystem: an update the feed does not place in it is not this crew's event.
-                if wanted.is_some_and(|wanted| update.ecosystem.as_deref() != Some(wanted)) {
+                if wanted.is_some_and(|wanted| {
+                    !update
+                        .ecosystem
+                        .as_deref()
+                        .is_some_and(|ecosystem| ecosystem.eq_ignore_ascii_case(wanted))
+                }) {
                     continue;
                 }
                 let tag = event_tag(&update.key);
-                let identity = format!("dependency_update:{}:{tag}", crew.id);
+                let identity =
+                    dependency_claim(&crew.id, tracker_name(reader.tracker), &reader.scope, &tag);
                 match self.store.claim_background_event(&identity) {
                     Ok(true) => {}
                     Ok(false) => continue,
                     Err(error) => {
                         tracing::warn!(%error, crew = %crew.id, "a dependency update firing could not be claimed");
+                        baseline_failed = true;
                         continue;
                     }
+                }
+                if baseline {
+                    // First sight of this crew: the update is claimed so it can never fire, and nothing starts.
+                    continue;
                 }
                 self.fire_background_event(
                     &crew.id,
                     "dependency_update",
-                    &format!("dependency_update:{tag}"),
+                    &format!("dependency_update:{}:{tag}", event_tag(&reader.scope)),
                 )
                 .await;
                 // One start attempt per crew per pass.
                 break;
             }
+            if baseline {
+                // The marker comes last: a pass that could not claim every update is a baseline again next time.
+                if !baseline_failed && let Err(error) = self.store.claim_background_event(&marker) {
+                    tracing::warn!(%error, crew = %crew.id, "a dependency update crew's baseline could not be kept");
+                }
+            }
         }
         if observed && !answered {
             tracing::trace!(
-                "no tracker reader reports dependency or advisory updates yet; the dependency update listeners fired nothing"
+                "no tracker reader answered with dependency or advisory updates this pass; the dependency update listeners fired nothing"
             );
         }
     }
@@ -812,6 +862,20 @@ fn refusal_reason(error: &CoreError) -> &'static str {
         CoreError::NotFound(_) => "crew_gone",
         _ => "refused",
     }
+}
+
+/// The baseline marker of a dependency-update crew for its tracker, repository scope and stored ecosystem (none means
+/// every ecosystem). The scope comes from the project's current remote, so a crew pointed at another repository
+/// baselines that repository's alerts instead of replaying them.
+fn dependency_baseline(crew: &str, tracker: &str, scope: &str, ecosystem: Option<&str>) -> String {
+    let tag = event_tag(&ecosystem.unwrap_or_default().to_ascii_lowercase());
+    format!("dependency_update:{crew}:{tracker}:{scope}:baseline:{tag}")
+}
+
+/// The claim of one dependency update: the crew, the tracker and scope, and a short hash of the update's key, so the
+/// same alert number in another repository is another event.
+fn dependency_claim(crew: &str, tracker: &str, scope: &str, tag: &str) -> String {
+    format!("dependency_update:{crew}:{tracker}:{scope}:{tag}")
 }
 
 /// A short hash of a check's name: 16 hex characters of its SHA-256. The name is outside text and can be any length, so
