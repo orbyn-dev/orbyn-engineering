@@ -6,7 +6,12 @@ import type { BackgroundStopReason } from "./BackgroundStopReason";
 /**
  * One run of a background crew: its state, what it spent and the budget it had.
  */
-export type BackgroundRun = { id: string, crew_id: string, state: BackgroundRunState, stop_reason?: BackgroundStopReason | null, turns_spent: number, minutes_spent: number, budget: BackgroundBudget, 
+export type BackgroundRun = { id: string, crew_id: string, state: BackgroundRunState, stop_reason?: BackgroundStopReason | null, 
+/**
+ * Why a run never started, such as `disk_low`, and absent once a run starts: a not-started run is `stopped`
+ * with this code and no stop reason.
+ */
+reason_code?: string | null, turns_spent: number, minutes_spent: number, budget: BackgroundBudget, 
 /**
  * The run is in the review queue, waiting for the person.
  */

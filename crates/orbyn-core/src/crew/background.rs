@@ -238,6 +238,7 @@ pub(super) fn run_wire(run: BackgroundRunRow) -> Result<wire::BackgroundRun> {
     Ok(wire::BackgroundRun {
         state: parse_wire(&run.state)?,
         stop_reason: run.stop_reason.as_deref().map(parse_wire).transpose()?,
+        reason_code: run.reason_code,
         budget: budget_wire(run.budget_turns, run.budget_minutes),
         id: run.id,
         crew_id: run.background_id,
@@ -273,20 +274,27 @@ impl Core {
         let (newest, waiting) = self.store.background_standing(&crew.id)?;
         // `idle`: nothing is running, nothing waits for the person, and the newest run did not stop for a reason that still needs them.
         // A run stopped by the person's own switch (`disabled`) needs nothing; a stop for the budget or a failure does. A run that
-        // finished with work needs the person only while its review waits: once the person acknowledges it, the crew reads idle.
-        let state = match newest
-            .as_ref()
-            .map(|run| (run.state.as_str(), run.stop_reason.as_deref()))
-        {
-            Some(("running", _)) => wire::BackgroundState::Running,
-            Some(("needs_review", _)) if waiting > 0 => wire::BackgroundState::NeedsReview,
-            Some(("needs_review", _)) => wire::BackgroundState::Idle,
-            Some(("stopped", Some("disabled"))) | None if waiting == 0 => {
+        // never started needs nothing either: the disk guard refused it, so it has a `reason_code` and no stop reason, the crew never
+        // ran, and only the history row shows the refusal. A run that finished with work needs the person only while its review
+        // waits: once the person acknowledges it, the crew reads idle.
+        let state = match newest.as_ref().map(|run| {
+            (
+                run.state.as_str(),
+                run.stop_reason.as_deref(),
+                run.reason_code.as_deref(),
+            )
+        }) {
+            Some(("running", _, _)) => wire::BackgroundState::Running,
+            Some(("needs_review", _, _)) if waiting > 0 => wire::BackgroundState::NeedsReview,
+            Some(("needs_review", _, _)) => wire::BackgroundState::Idle,
+            Some(("stopped", None, Some(_))) if waiting == 0 => wire::BackgroundState::Idle,
+            Some(("stopped", None, Some(_))) => wire::BackgroundState::NeedsReview,
+            Some(("stopped", Some("disabled"), _)) | None if waiting == 0 => {
                 wire::BackgroundState::Idle
             }
-            Some(("stopped", Some("disabled"))) | None => wire::BackgroundState::NeedsReview,
-            Some(("stopped", _)) => wire::BackgroundState::Stopped,
-            Some((other, _)) => {
+            Some(("stopped", Some("disabled"), _)) | None => wire::BackgroundState::NeedsReview,
+            Some(("stopped", _, _)) => wire::BackgroundState::Stopped,
+            Some((other, _, _)) => {
                 return Err(CoreError::Internal(format!(
                     "a stored background run state is unknown: {other}"
                 )));

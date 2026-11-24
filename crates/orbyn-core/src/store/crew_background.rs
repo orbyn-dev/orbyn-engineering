@@ -58,6 +58,8 @@ pub struct BackgroundRunRow {
     pub background_id: String,
     pub state: String,
     pub stop_reason: Option<String>,
+    /// Why the run never started (`disk_low`), when it is a start a guard refused rather than a run that stopped.
+    pub reason_code: Option<String>,
     pub turns_spent: u32,
     pub minutes_spent: u32,
     pub budget_turns: u32,
@@ -201,6 +203,7 @@ fn run_row(row: &Row<'_>) -> rusqlite::Result<BackgroundRunRow> {
         background_id: row.get("background_id")?,
         state: row.get("state")?,
         stop_reason: row.get("stop_reason")?,
+        reason_code: row.get("reason_code")?,
         turns_spent: row.get("turns_spent")?,
         minutes_spent: row.get("minutes_spent")?,
         budget_turns: row.get("budget_turns")?,
@@ -1091,6 +1094,63 @@ impl Store {
             self.hub.remove(id);
         }
         Ok(())
+    }
+
+    /// Ends a run whose start a guard refused before any task existed, keeping its row as the crew's history: the run
+    /// is left `stopped`, with no stop reason, `reason_code` naming the refusal and the one sentence in
+    /// `review_reason`, and it waits for nobody (`review_waiting` is false). Nothing ran, so any lead thread of the
+    /// run is removed in the same transaction and the person has only the history row to read; the row keeps the
+    /// thread's id. Audited as the refusal in the same transaction. A missing or already-ended run changes nothing and
+    /// returns `None`.
+    pub fn end_background_run_not_started(
+        &self,
+        run: &str,
+        code: &str,
+        why: &str,
+        actor: &str,
+    ) -> Result<Option<BackgroundRunRow>> {
+        let (kept, deleted_threads) = self.commit(|tx, _| {
+            let Some(current) = tx
+                .query_row(
+                    "SELECT * FROM crew_background_runs WHERE id = ?1",
+                    [run],
+                    run_row,
+                )
+                .optional()?
+            else {
+                return Ok((None, Vec::new()));
+            };
+            if current.state != "running" {
+                return Ok((None, Vec::new()));
+            }
+            audit(
+                tx,
+                actor,
+                "crew.background.run.refused",
+                &current.background_id,
+                json!({ "run": run, "reason_code": code, "why": why }),
+            )?;
+            let stamp = now();
+            tx.execute(
+                "UPDATE crew_background_runs SET state = 'stopped', stop_reason = NULL, reason_code = ?2,
+                     review_waiting = 0, review_reason = ?3, updated_at = ?4, ended_at = ?4
+                 WHERE id = ?1 AND state = 'running'",
+                params![run, code, why, stamp],
+            )?;
+            let deleted = discard_lead_in(tx, run)?;
+            let row = tx
+                .query_row(
+                    "SELECT * FROM crew_background_runs WHERE id = ?1",
+                    [run],
+                    run_row,
+                )
+                .optional()?;
+            Ok((row, deleted))
+        })?;
+        for id in &deleted_threads {
+            self.hub.remove(id);
+        }
+        Ok(kept)
     }
 
     /// Ends a running run: stopped for a reason, or finished with work for review. Audited in the same transaction.

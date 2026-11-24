@@ -764,3 +764,57 @@ async fn acknowledging_needs_the_person_key_and_changes_nothing_without_it() {
         .await;
     assert_eq!(crew["reviews_waiting"], json!(0));
 }
+
+/// A run the disk guard refused before it started reads over HTTP as a stopped run with its `reason_code`, so the
+/// web can draw "Not started · Disk"; a run that did start carries no code.
+#[tokio::test]
+async fn a_not_started_run_reads_its_reason_code_over_http() {
+    let app = serve("not-started").await;
+    let body: wire::BackgroundCrewCreate = serde_json::from_value(app.body("Refused")).unwrap();
+    let crew = app.core.background_create(&body).await.unwrap();
+    app.core.background_set_enabled(&crew.id, true).unwrap();
+    let running = app.core.crew_background_start_run(&crew.id).unwrap();
+    let why = "Not started: 3.1 GB free, Crew needs 5 GB. Free space and try again.";
+    let stopped = app
+        .core
+        .store
+        .end_background_run_not_started(&running.id, "disk_low", why, "crew")
+        .unwrap()
+        .expect("the running run");
+    assert_eq!(stopped.reason_code.as_deref(), Some("disk_low"));
+
+    let (status, listed) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/{}/runs", crew.id),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{listed}");
+    assert_eq!(listed["total"], 1);
+    let run = &listed["runs"][0];
+    assert_eq!(run["id"].as_str(), Some(running.id.as_str()));
+    assert_eq!(run["state"].as_str(), Some("stopped"));
+    assert_eq!(run["reason_code"].as_str(), Some("disk_low"));
+    assert!(run["stop_reason"].is_null());
+    assert_eq!(run["review_waiting"], false);
+    assert_eq!(run["review_reason"].as_str(), Some(why));
+    assert_eq!(
+        (run["turns_spent"].clone(), run["minutes_spent"].clone()),
+        (json!(0), json!(0))
+    );
+    assert_eq!(run["budget"], json!({ "turns": 8, "minutes": 20 }));
+
+    // A run that started reads no code, so the web only draws the row for a start that never happened.
+    app.core.crew_background_start_run(&crew.id).unwrap();
+    let (_, listed) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/{}/runs", crew.id),
+            None,
+        )
+        .await;
+    assert_eq!(listed["total"], 2);
+    assert_eq!(listed["runs"][0]["state"].as_str(), Some("running"));
+    assert!(listed["runs"][0]["reason_code"].is_null());
+}

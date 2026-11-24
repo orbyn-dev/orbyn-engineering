@@ -543,6 +543,130 @@ async fn a_project_that_is_not_trusted_is_refused_and_nothing_is_made() {
     assert_eq!(w.core.background_runs(&id, page).unwrap().total, 0);
 }
 
+/// The disk guard (KC4 PR B): a background start it refuses keeps one stopped history row and no thread, the person still
+/// gets the sentence, and the crew reads idle because it never ran. Faked free space lets this run on any machine.
+#[tokio::test]
+async fn a_background_start_refused_for_low_disk_keeps_one_stopped_history_row() {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w).await;
+    let path = w.repo.clone();
+    let threads_before = threads(&w);
+    crate::host::disk::set_free_for_test(&path, Some(7 * GIB / 2));
+
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
+    let CoreError::PolicyDenied(why) = &error else {
+        panic!("{error}");
+    };
+    assert_eq!(
+        why,
+        "Not started: 3.5 GB free, Crew needs 5 GB. Free space and try again."
+    );
+    // The run is the crew's history: stopped, the code and the sentence, nothing spent, nobody waiting, and no thread or
+    // task left behind (the disk gate sits before either is stored).
+    assert_eq!(threads(&w), threads_before);
+    let page = crate::crew::Page::new(None, None).unwrap();
+    let listed = w.core.background_runs(&id, page).unwrap();
+    assert_eq!(listed.total, 1);
+    let run = &listed.runs[0];
+    assert!(w.core.store.crew_tasks_in_crew(&run.id).unwrap().is_empty());
+    assert_eq!(run.state, wire::BackgroundRunState::Stopped);
+    assert_eq!(run.stop_reason, None);
+    assert_eq!(run.reason_code.as_deref(), Some("disk_low"));
+    assert!(!run.review_waiting);
+    assert_eq!(run.review_reason.as_deref(), Some(why.as_str()));
+    assert_eq!((run.turns_spent, run.minutes_spent), (0, 0));
+    assert_eq!((run.budget.turns, run.budget.minutes), (10, 30));
+    assert!(run.ended_at.is_some());
+    // The crew never ran, so it reads idle: the stopped row is only the history of the refused start.
+    assert_eq!(
+        w.core.background_get(&id).unwrap().state,
+        wire::BackgroundState::Idle
+    );
+    // The refusal is audited with its code in the same transaction.
+    let audits = w.core.store.list_audit(None, 500).unwrap();
+    let refusal = audits
+        .iter()
+        .find(|row| row.action == "crew.background.run.refused")
+        .expect("the refusal audit row");
+    assert_eq!(refusal.detail["run"].as_str(), Some(run.id.as_str()));
+    assert_eq!(refusal.detail["reason_code"], "disk_low");
+
+    // A later start on a volume with room runs, and the stopped row stays in the history.
+    crate::host::disk::set_free_for_test(&path, Some(20 * GIB));
+    let started = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    assert_eq!(started.state, wire::BackgroundRunState::Running);
+    assert_eq!(started.reason_code, None);
+    let listed = w.core.background_runs(&id, page).unwrap();
+    assert_eq!(listed.total, 2);
+    assert_eq!(listed.runs[0].id, started.id);
+    assert_eq!(listed.runs[1].id, run.id);
+    crate::host::disk::set_free_for_test(&path, None);
+}
+
+/// The refusals that are not the disk guard still take the run and its lead thread back: a start that never happened
+/// leaves no history row, and nothing changes about what the person could not start.
+#[tokio::test]
+async fn the_refusals_that_are_not_low_disk_still_leave_no_run_row() {
+    let page = || crate::crew::Page::new(None, None).unwrap();
+
+    // An untrusted folder is refused before a lead thread or a run row exists.
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w).await;
+    w.core
+        .store
+        .reader()
+        .execute_batch("UPDATE projects SET trusted = 0")
+        .unwrap();
+    let threads_before = threads(&w);
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CoreError::FolderUntrusted), "{error}");
+    assert_eq!(w.core.background_runs(&id, page()).unwrap().total, 0);
+    assert_eq!(threads(&w), threads_before);
+
+    // No usable engine is refused before a lead thread or a run row exists.
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w).await;
+    w.core
+        .set_preferences(
+            Some(&project(&w)),
+            &BTreeMap::from([("disabled_engines".to_owned(), json!(["alpha"]))]),
+        )
+        .unwrap();
+    let threads_before = threads(&w);
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CoreError::EngineUnavailable(_)), "{error}");
+    assert_eq!(w.core.background_runs(&id, page()).unwrap().total, 0);
+    assert_eq!(threads(&w), threads_before);
+
+    // A start held by review capacity (a not-authorized refusal) reaches the run row, and takes it and the thread back.
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w).await;
+    waiting_merges(&w, 3).await;
+    capacity(&w, 2, true);
+    let threads_before = threads(&w);
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CoreError::PolicyDenied(_)), "{error}");
+    assert_eq!(w.core.background_runs(&id, page()).unwrap().total, 0);
+    assert_eq!(threads(&w), threads_before);
+}
+
 #[tokio::test]
 async fn a_crew_with_no_engine_ready_is_refused_and_nothing_is_made() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;

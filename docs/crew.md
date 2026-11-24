@@ -1092,13 +1092,16 @@ background crew is per device and is not shared through git. A repository's own 
   visibly identical names built from different code points (for example a precomposed and a combining accent) are still two names.
 - **Budget:** `turns` 1 to 1000 and `minutes` 1 to 1440 per run, **set at creation and never changed**: an update takes only the name and
   the trigger, and the table refuses a change of budget, template or project, and (schema 42) a run's copy of the budget. A template and trigger kind may be combined freely.
-- **Runs and state:** a run is `running`, `stopped` (with a reason: `budget`, `repeated_failure`, `engine_error`, `disabled`) or
-  `needs_review`, with turns and minutes spent against the budget it was given. At most one run per crew is running, and a run opens only for
+- **Runs and state:** a run is `running`, `needs_review`, or `stopped` — with a stop reason (`budget`, `repeated_failure`,
+  `engine_error`, `disabled`) or, when the disk guard refused its start before it began, with `reason_code` `disk_low` and no stop
+  reason — with turns and minutes spent against the budget it was given. At most one run per crew is running, and a run opens only for
   an enabled crew. A crew's state, first match wins: `running` while a run is
   running; `needs_review` while its newest run waits for the person's review; `stopped` when its newest run stopped for the budget or a
-  failure (`budget`, `repeated_failure`, `engine_error`), even with older reviews waiting; `needs_review` when the crew has no run or its
-  newest run was stopped as `disabled` while an older review still waits; otherwise `idle` (never ran, the newest run was stopped by the
-  person's own switch and nothing waits, or the person acknowledged the newest run's review). Spending to either number of the budget
+  failure (`budget`, `repeated_failure`, `engine_error`), even with older reviews waiting; `needs_review` when the crew has no run, its
+  newest run was stopped as `disabled`, or its newest run never started because the disk guard refused it, while an older review still
+  waits; otherwise `idle` (never ran, the newest run was stopped by the
+  person's own switch and nothing waits, the newest run never started and nothing waits, or the person acknowledged the newest run's
+  review). Spending to either number of the budget
   stops the run with the reason `budget` and puts it in the review queue (`review_waiting`). Turning a crew off stops its run with the reason `disabled`, logged as the person. **Delete is
   refused only while a run is in progress**; a crew with waiting reviews can be deleted (a waiting review is settled by the person's acknowledgement), its runs
   and waiting reviews are removed with it, and the audit row records `runs_removed` and `reviews_waiting_removed`.
@@ -1113,7 +1116,8 @@ background crew is per device and is not shared through git. A repository's own 
   `GET /{id}`, `GET /{id}/runs`; writes, local only (a Person route: a remote viewer gets 403 `local_only`, an agent is refused by N1),
   `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`, and `/{id}/run-now`, which starts one run of an enabled
   crew by hand (the `manual` event: `crew_background_run_now`, one run and its lead thread, as a Low Crew-started task that the daily
-  budget and review capacity may refuse; a refusal stores no run), and `/runs/{id}/acknowledge`, which settles one waiting review
+  budget and review capacity may refuse; a disk refusal keeps one stopped history row with `reason_code` `disk_low` and no stop reason,
+  and every other refusal stores no run), and `/runs/{id}/acknowledge`, which settles one waiting review
   (`background_acknowledge_review`: one write clears `review_waiting` and returns the run with its reason, state, stop reason and spend
   unchanged; a run that is not waiting is refused plainly). There is no route that spends, merges or reverts.
 - **In the Review queue.** A run that stops without a merge waits on its own run row (`needs_review`, or `stopped` for the budget or a
@@ -1794,7 +1798,7 @@ worker, the secret scan on the way in and out) and builds no screen before its f
 | KC1 | Steer, never queue | A lead's follow-up to a busy worker reaches its running turn. The bus already does this (`hand_over` to `steer_live`, `held` otherwise); the work is tests per message kind | E2 | M21 |
 | KC2 | Closing the lead closes its workers | Closing or archiving a lead thread runs the person's cancel for each live task it started; the answer lists what closed and what did not | E3, E2 | M22 |
 | KC3 | One "needs you" | One service field says whether a task, run or merge waits for the person; the board, inbox, Review queue and dashboard read only it. A worker that owns live work reads Working | E3, E1 | M23 |
-| KC4 | Disk guard | A worker start is refused when the volume holding the lead's folder is under a floor (5 GB, person-settable), with the free space in the reason. No prune: tasks run in the lead's folder and correction checkouts are already retired | E3 | M24 |
+| KC4 | Disk guard | A worker start is refused when the volume holding the lead's folder is under a floor (5 GB, person-settable), with the free space in the reason. A background start it refuses leaves one stopped "not started" history row carrying `reason_code` `disk_low`, never vanishing. No prune: tasks run in the lead's folder and correction checkouts are already retired | E3 | M24 |
 | KC5 | Lessons | Repository or global lessons from a repeated failure fingerprint (2 tasks in 60 days), a confirmed escape or revert, and a person's typed correction. The person sees, edits, disables, deletes and promotes them; a "use lessons" switch per repository. At most 5 reach a brief as data; the key, route, lease and checks are proven unchanged. Recorded in `EvalHistory`, which the router does not read yet. Design: Eng 2's note, ruled 2026-11-23 | E2 | M25 |
 | KC6 | Watches | A background crew kind `watch`: a fixed command on a schedule with no model call; it acts once when the result turns failing | E4 | M26 |
 | KC7 | The missing listeners | `issue_label` and `dependency_update` background crews get listeners. Built: the listeners' shared tick, claim, start and refusal plumbing, and `issue_label` detection through a project's one tracker reader, with a per-label baseline on first sight (every page, up to ten) so the labels already there do not start a run, and a label-set claim so an edit is inert. Not built: `dependency_update` detection, which waits on a reader feed (follow-up #1360) and starts nothing today | E4 | M27 |
