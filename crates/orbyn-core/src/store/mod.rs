@@ -97,6 +97,7 @@ mod crew_worker_provider;
 mod hub;
 mod installs;
 mod issues;
+pub(crate) mod project_issue_trackers;
 pub(crate) mod project_repos;
 mod thread_import;
 pub(crate) mod thread_repos;
