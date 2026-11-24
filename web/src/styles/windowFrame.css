@@ -1,0 +1,146 @@
+/* The Windows integrated toolbar (Engineer Designs: windows-integrated-toolbar-menu-window,
+   windows-controls-states, windows-drag-regions and windows-high-contrast-dpi). The design's
+   --t1..--t3, --sel and --line2 names map to the app tokens here, as in the other window styles. */
+.titlebar[data-frame="windows"] {
+  --t1: var(--color-text);
+  --t2: var(--color-textSoft);
+  --t3: var(--color-muted);
+  --sel: var(--color-selected);
+  --line2: var(--color-borderStrong);
+  --window-controls-w: 138px;
+}
+/* The end block reaches the window corner. Its right padding is the controls' width and the 8 px
+   gap before them, so --bar-end-w counts the controls even though they are out of flow. */
+.titlebar[data-frame="windows"] > .titlebar-end {
+  right: 0;
+  padding-right: calc(var(--window-controls-w) + 8px);
+}
+.window-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--t2);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.window-menu-trigger:hover,
+.window-menu-trigger[aria-expanded="true"] {
+  background: var(--sel);
+  color: var(--t1);
+}
+.window-menu-trigger:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+/* Flush against one another and the top-right corner. The box is the whole bar height so the drag
+   layer treats the area under the controls as no-drag. */
+.window-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 7;
+  display: flex;
+  align-items: flex-start;
+  width: var(--window-controls-w);
+  height: var(--titlebar-h);
+}
+.window-control {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 46px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--t2);
+  cursor: pointer;
+}
+.window-control > svg {
+  width: 13px;
+  height: 13px;
+}
+.window-control:hover {
+  background: var(--sel);
+  color: var(--t1);
+}
+.window-control:active {
+  background: var(--line2);
+  color: var(--t1);
+}
+.window-control-close:hover {
+  background: var(--color-windowCloseHover);
+  color: var(--color-onDangerFill);
+}
+.window-control-close:active {
+  background: var(--color-windowClosePress);
+  color: var(--color-onDangerFill);
+}
+.window-controls[data-inactive] .window-control {
+  color: var(--t3);
+}
+.window-controls[data-inactive] .window-control-close:hover,
+.window-controls[data-inactive] .window-control-close:active {
+  color: var(--color-onDangerFill);
+}
+.window-control:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+/* Maximized, the window has no corner to round: the page draws no corner in any state, and
+   data-maximized is carried for the shell and the tests. */
+@media (forced-colors: active) {
+  .window-control {
+    border: 1px solid ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+  .window-control:hover:not(:disabled),
+  .window-control-close:hover:not(:disabled) {
+    background: Highlight;
+    color: HighlightText;
+    border-color: ButtonText;
+  }
+  .window-control:active:not(:disabled),
+  .window-control-close:active:not(:disabled) {
+    background: ButtonText;
+    color: ButtonFace;
+    border-color: ButtonText;
+  }
+  .window-control:disabled {
+    color: GrayText;
+    border-color: GrayText;
+  }
+  .window-controls[data-inactive] .window-control-close:hover:not(:disabled) {
+    color: HighlightText;
+  }
+  .window-controls[data-inactive] .window-control-close:active:not(:disabled) {
+    color: ButtonFace;
+  }
+  .window-control:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+@media (forced-colors: active) {
+  .window-menu-trigger {
+    border: 1px solid ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+  .window-menu-trigger:hover,
+  .window-menu-trigger[aria-expanded="true"] {
+    background: Highlight;
+    color: HighlightText;
+  }
+  .window-menu-trigger:focus-visible {
+    outline: 2px solid Highlight;
+  }
+}

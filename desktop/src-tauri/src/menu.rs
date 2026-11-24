@@ -134,6 +134,11 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
         app.exit(0);
         return;
     }
+    run(app, id);
+}
+
+/// Runs one menu item by id, for the native menu and the web Menu button.
+pub fn run(app: &AppHandle, id: &str) {
     let focused = focused_window(app);
     let window = match window_actions::target(id, focused.as_ref().map(|window| window.label())) {
         Target::MainCommand(command) => {

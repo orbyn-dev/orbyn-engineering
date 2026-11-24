@@ -390,6 +390,8 @@ mod tests {
                 "allow-snapshot-setup",
                 "allow-snapshot-state",
                 "allow-snapshot-take",
+                "allow-window-menu-run",
+                "allow-window-set-maximize-rect",
                 "core:event:allow-listen",
                 "core:event:allow-unlisten"
             ]
@@ -421,10 +423,13 @@ mod tests {
                 "snapshot::snapshot_capture",
                 "snapshot::snapshot_take",
                 "snapshot::snapshot_discard",
-                "snapshot::snapshot_setup"
+                "snapshot::snapshot_setup",
+                "window_frame::window_menu_run",
+                "window_frame::window_set_maximize_rect"
             ]
         );
-        // Dragging and zooming by the unified title bar is granted on macOS alone, where the system bar is gone.
+        // Dragging and zooming by the web title bar is granted where the system bar is gone: macOS's
+        // unified frame and Windows's drawn one.
         let macos: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/main-macos.json")).unwrap();
         assert_eq!(macos["platforms"], serde_json::json!(["macOS"]));
@@ -437,13 +442,29 @@ mod tests {
                 "core:window:allow-internal-toggle-maximize"
             ])
         );
+        let windows: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/main-windows.json")).unwrap();
+        assert_eq!(windows["platforms"], serde_json::json!(["windows"]));
+        assert_eq!(windows["windows"], serde_json::json!(["main"]));
+        assert!(windows.get("remote").is_none());
+        assert_eq!(
+            windows["permissions"],
+            serde_json::json!([
+                "core:window:allow-start-dragging",
+                "core:window:allow-internal-toggle-maximize",
+                "core:window:allow-minimize",
+                "core:window:allow-toggle-maximize",
+                "core:window:allow-close",
+                "core:window:allow-is-maximized"
+            ])
+        );
         // The config lists the capabilities that apply: one left out of `app.security.capabilities` is built but never
         // granted, which left the unified title bar unable to move the window.
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         assert_eq!(
             config["app"]["security"]["capabilities"],
-            serde_json::json!(["main", "main-macos"])
+            serde_json::json!(["main", "main-macos", "main-windows"])
         );
         // No other capability file grants any of them.
         let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
@@ -499,6 +520,8 @@ mod tests {
             "snapshot_take",
             "snapshot_discard",
             "snapshot_setup",
+            "window_menu_run",
+            "window_set_maximize_rect",
         ] {
             assert!(build.contains(&format!("\"{command}\"")), "{command}");
         }
