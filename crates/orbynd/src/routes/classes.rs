@@ -280,7 +280,10 @@ pub const FIELD_LEVEL: &[(&str, &str, &str)] = &[
 ];
 
 /// Whether a request for this method and matched route pattern needs the person key.
+/// A `HEAD` is answered by the route's `GET` handler (status and headers, no body), so it takes the `GET` row: otherwise a
+/// service-token agent could ask `HEAD` whether a protected pattern exists.
 fn needs_key(method: &str, pattern: &str) -> bool {
+    let method = if method == "HEAD" { "GET" } else { method };
     ENFORCED.iter().any(|(m, p)| (*m, *p) == (method, pattern))
         && PERSON.iter().any(|(m, p, _)| (*m, *p) == (method, pattern))
 }
