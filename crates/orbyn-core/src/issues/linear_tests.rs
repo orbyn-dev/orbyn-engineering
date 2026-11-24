@@ -1382,3 +1382,586 @@ async fn a_label_filter_is_counted_in_characters_not_bytes() {
     assert!(matches!(refused, Err(CoreError::Invalid(_))));
     assert_eq!(server.seen().len(), before, "refused before a request");
 }
+
+mod writes {
+    //! Linear's issue writes against the same local fake server: the fixed GraphQL documents and the variable values
+    //! they send, the issue a create answers, and the comment ownership a reaction checks.
+
+    use super::*;
+    use crate::issues::NewIssue;
+    use orbyn_contracts::{IssueReaction, IssueReactionCount};
+
+    fn new_issue<'a>(
+        title: &'a str,
+        body: &'a str,
+        labels: &'a [String],
+        assignees: &'a [String],
+    ) -> NewIssue<'a> {
+        NewIssue {
+            title,
+            body,
+            labels,
+            assignees,
+        }
+    }
+
+    /// The team and label reads every create makes first.
+    fn scope_reads(req: &Seen) -> Option<Reply> {
+        let query = query_of(req);
+        if query.contains("query OrbynTeamId") {
+            return Some(Reply::json(&json!({
+                "data": { "teams": { "nodes": [{ "id": "team-1", "key": "ENG" }] } }
+            })));
+        }
+        if query.contains("query OrbynLabels") {
+            return Some(Reply::json(&json!({
+                "data": { "issueLabels": { "nodes": [
+                    { "id": "label-1", "name": "bug", "team": { "key": "ENG" } },
+                    { "id": "label-2", "name": "shared", "team": null },
+                ] } }
+            })));
+        }
+        None
+    }
+
+    #[tokio::test]
+    async fn a_create_sends_the_teams_ids_and_answers_the_new_issue() {
+        let server = Server::start(|req| {
+            if let Some(reply) = scope_reads(req) {
+                return reply;
+            }
+            let query = query_of(req);
+            assert!(
+                query.contains("mutation OrbynIssueCreate"),
+                "only the create mutation follows the reads: {query}"
+            );
+            assert_eq!(
+                variables_of(req),
+                json!({ "input": {
+                    "teamId": "team-1",
+                    "title": "Crash on start",
+                    "description": "It breaks.",
+                    "labelIds": ["label-1", "label-2"],
+                    "assigneeId": "user-1",
+                } }),
+                "the person's text is a variable value, never part of the query"
+            );
+            Reply::json(&json!({
+                "data": { "issueCreate": { "success": true, "issue": row("ENG-7") } }
+            }))
+        })
+        .await;
+        assert!(reader(&server).can_write(), "Linear writes in this build");
+        let labels = vec!["bug".to_owned(), "shared".to_owned()];
+        let assignees = vec!["user-1".to_owned()];
+        let detail = reader(&server)
+            .create(
+                "ENG",
+                &new_issue("Crash on start", "It breaks.", &labels, &assignees),
+            )
+            .await
+            .unwrap();
+        assert_eq!(detail.summary.key, "ENG-7");
+        assert_eq!(detail.summary.title, "Issue ENG-7");
+        assert_eq!(detail.summary.labels[0].name, "bug");
+        assert_eq!(
+            detail.body, "Body",
+            "the create reply's description is the body"
+        );
+        assert!(detail.comments.is_empty());
+        assert_eq!(detail.reactions, None);
+    }
+
+    #[tokio::test]
+    async fn a_label_the_workspace_lacks_refuses_the_create_before_the_mutation() {
+        let server = Server::start(|req| {
+            if query_of(req).contains("query OrbynTeamId") {
+                return Reply::json(&json!({
+                    "data": { "teams": { "nodes": [{ "id": "team-1", "key": "ENG" }] } }
+                }));
+            }
+            Reply::json(&json!({ "data": { "issueLabels": { "nodes": [] } } }))
+        })
+        .await;
+        let labels = vec!["missing".to_owned()];
+        let refused = reader(&server)
+            .create("ENG", &new_issue("T", "", &labels, &[]))
+            .await
+            .map(|_| ());
+        assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
+        assert!(
+            !server
+                .seen()
+                .iter()
+                .any(|req| query_of(req).contains("OrbynIssueCreate")),
+            "no create mutation is sent"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_comment_resolves_the_issue_id_and_answers_the_stored_comment() {
+        let server = Server::start(|req| {
+            let query = query_of(req);
+            if query.contains("query OrbynIssueRef") {
+                return Reply::json(&json!({
+                    "data": { "issue": { "id": "issue-1", "identifier": "ENG-7", "team": { "key": "ENG" } } }
+                }));
+            }
+            assert!(query.contains("mutation OrbynCommentCreate"), "{query}");
+            assert_eq!(
+                variables_of(req),
+                json!({ "input": { "issueId": "issue-1", "body": "Looks good." } })
+            );
+            Reply::json(&json!({
+                "data": { "commentCreate": { "success": true, "comment": {
+                    "id": "comment-1",
+                    "body": "Looks good.",
+                    "createdAt": "2026-11-25T00:00:00Z",
+                    "user": { "name": "ann", "displayName": "Ann" },
+                } } }
+            }))
+        })
+        .await;
+        let comment = reader(&server)
+            .comment("ENG", "ENG-7", "Looks good.")
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                comment.id.as_str(),
+                comment.body.as_str(),
+                comment.created_at.as_str()
+            ),
+            ("comment-1", "Looks good.", "2026-11-25T00:00:00Z")
+        );
+        assert_eq!(comment.author.unwrap().login, "Ann");
+    }
+
+    #[tokio::test]
+    async fn an_issue_from_another_team_is_refused_before_a_comment_is_written() {
+        let server = Server::start(|_| {
+            Reply::json(&json!({
+                "data": { "issue": { "id": "issue-9", "identifier": "OPS-1", "team": { "key": "OPS" } } }
+            }))
+        })
+        .await;
+        let refused = reader(&server)
+            .comment("ENG", "OPS-1", "Looks good.")
+            .await
+            .map(|_| ());
+        assert!(
+            matches!(refused, Err(CoreError::NotFound(_))),
+            "{refused:?}"
+        );
+        assert!(
+            !server
+                .seen()
+                .iter()
+                .any(|req| query_of(req).contains("OrbynCommentCreate")),
+            "no comment mutation is sent"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_issue_reaction_is_created_with_its_emoji_and_answered_with_counts() {
+        let server = Server::start(|req| {
+            let query = query_of(req);
+            if query.contains("query OrbynIssueRef") {
+                return Reply::json(&json!({
+                    "data": { "issue": { "id": UUID, "identifier": "ENG-7", "team": { "key": "ENG" } } }
+                }));
+            }
+            if query.contains("mutation OrbynReactionCreate") {
+                assert_eq!(
+                    variables_of(req),
+                    json!({ "input": { "issueId": UUID, "emoji": "👍" } }),
+                    "the reaction travels as a variable value"
+                );
+                return Reply::json(&json!({ "data": { "reactionCreate": { "success": true } } }));
+            }
+            if query.contains("query OrbynIssueReactions") {
+                return Reply::json(&json!({
+                    "data": { "issue": { "reactions": [
+                        { "id": "r1", "emoji": "👍", "user": { "id": "u1" } },
+                    ] } }
+                }));
+            }
+            detail_reply(row("ENG-7"), vec![])
+        })
+        .await;
+        let detail = reader(&server)
+            .react("ENG", "ENG-7", None, IssueReaction::ThumbsUp, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            detail.reactions,
+            Some(vec![IssueReactionCount {
+                content: "👍".into(),
+                count: 1,
+            }]),
+            "the answer keeps Linear's own emoji word and its count"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_comment_reaction_removes_the_readers_own_reaction_by_id() {
+        let server = Server::start(|req| {
+            let query = query_of(req);
+            if query.contains("query OrbynIssueRef") {
+                return Reply::json(&json!({
+                    "data": { "issue": { "id": UUID, "identifier": "ENG-7", "team": { "key": "ENG" } } }
+                }));
+            }
+            if query.contains("query OrbynCommentRef") {
+                return Reply::json(&json!({
+                    "data": { "comment": { "id": "comment-1", "issue": { "id": UUID } } }
+                }));
+            }
+            if query.contains("query OrbynViewer") {
+                return Reply::json(&json!({ "data": { "viewer": { "id": "u1" } } }));
+            }
+            if query.contains("query OrbynCommentReactions") {
+                return Reply::json(&json!({
+                    "data": { "comment": { "issue": { "id": "issue-1" }, "reactions": [
+                        { "id": "r9", "emoji": "❤️", "user": { "id": "u1" } },
+                    ] } }
+                }));
+            }
+            if query.contains("mutation OrbynReactionDelete") {
+                assert_eq!(variables_of(req), json!({ "id": "r9" }));
+                return Reply::json(&json!({ "data": { "reactionDelete": { "success": true } } }));
+            }
+            if query.contains("query OrbynIssueReactions") {
+                return Reply::json(&json!({ "data": { "issue": { "reactions": [] } } }));
+            }
+            detail_reply(row("ENG-7"), vec![])
+        })
+        .await;
+        let detail = reader(&server)
+            .react(
+                "ENG",
+                "ENG-7",
+                Some("comment-1"),
+                IssueReaction::Heart,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(detail.reactions, Some(vec![]));
+        assert!(
+            server
+                .seen()
+                .iter()
+                .any(|req| query_of(req).contains("mutation OrbynReactionDelete")),
+            "the reader's own reaction was deleted by id"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_comment_from_another_issue_is_refused_before_a_reaction_is_written() {
+        let server = Server::start(|req| {
+            let query = query_of(req);
+            if query.contains("query OrbynIssueRef") {
+                return Reply::json(&json!({
+                    "data": { "issue": { "id": "issue-1", "identifier": "ENG-7", "team": { "key": "ENG" } } }
+                }));
+            }
+            Reply::json(&json!({
+                "data": { "comment": { "id": "comment-9", "issue": { "id": "issue-2" } } }
+            }))
+        })
+        .await;
+        let refused = reader(&server)
+            .react(
+                "ENG",
+                "ENG-7",
+                Some("comment-9"),
+                IssueReaction::Heart,
+                true,
+            )
+            .await
+            .map(|_| ());
+        assert!(
+            matches!(refused, Err(CoreError::NotFound(_))),
+            "{refused:?}"
+        );
+        assert!(
+            !server.seen().iter().any(|req| {
+                let query = query_of(req);
+                query.contains("mutation OrbynReactionCreate")
+                    || query.contains("mutation OrbynReactionDelete")
+            }),
+            "no reaction mutation is sent"
+        );
+    }
+
+    #[tokio::test]
+    async fn more_than_one_assignee_is_refused_before_a_request() {
+        let server = Server::start(|_| Reply::json(&json!({}))).await;
+        let assignees = vec!["user-1".to_owned(), "user-2".to_owned()];
+        let refused = reader(&server)
+            .create("ENG", &new_issue("T", "", &[], &assignees))
+            .await
+            .map(|_| ());
+        assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
+        assert!(server.seen().is_empty(), "{:?}", server.seen());
+    }
+
+    #[tokio::test]
+    async fn a_refused_write_keeps_the_contract_error_and_never_its_raw_body() {
+        let server = Server::start(|req| {
+            // The team read must answer, or the create never reaches the mutation this test is about.
+            if query_of(req).contains("query OrbynTeamId") {
+                return Reply::json(&json!({
+                    "data": { "teams": { "nodes": [{ "id": "team-1", "key": "ENG" }] } }
+                }));
+            }
+            assert!(
+                query_of(req).contains("mutation OrbynIssueCreate"),
+                "the refused call is the create mutation: {}",
+                query_of(req)
+            );
+            Reply::status(403)
+        })
+        .await;
+        let error = reader(&server)
+            .create("ENG", &new_issue("T", "", &[], &[]))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        match error {
+            CoreError::TrackerForbidden(message) => assert!(
+                !message.contains("raw-tracker-text") && !message.contains("secret-detail"),
+                "{message}"
+            ),
+            other => panic!("a 403 is forbidden, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_contract_reaction_has_one_emoji_word() {
+        for (reaction, emoji) in [
+            (IssueReaction::ThumbsUp, "👍"),
+            (IssueReaction::ThumbsDown, "👎"),
+            (IssueReaction::Laugh, "😄"),
+            (IssueReaction::Hooray, "🎉"),
+            (IssueReaction::Confused, "😕"),
+            (IssueReaction::Heart, "❤️"),
+            (IssueReaction::Rocket, "🚀"),
+            (IssueReaction::Eyes, "👀"),
+        ] {
+            assert_eq!(reaction_emoji(reaction), emoji);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_removal_that_finds_no_reaction_writes_nothing_and_is_still_success() {
+        let server = Server::start(|req| {
+            let query = query_of(req);
+            if query.contains("query OrbynIssueRef") {
+                return Reply::json(&json!({
+                    "data": { "issue": { "id": UUID, "identifier": "ENG-7", "team": { "key": "ENG" } } }
+                }));
+            }
+            if query.contains("query OrbynViewer") {
+                return Reply::json(&json!({ "data": { "viewer": { "id": "u1" } } }));
+            }
+            if query.contains("query OrbynIssueReactions") {
+                return Reply::json(&json!({ "data": { "issue": { "reactions": [] } } }));
+            }
+            detail_reply(row("ENG-7"), vec![])
+        })
+        .await;
+        let detail = reader(&server)
+            .react("ENG", "ENG-7", None, IssueReaction::Heart, false)
+            .await
+            .expect("taking back a reaction nobody left is a success");
+        assert_eq!(detail.reactions, Some(vec![]));
+        assert!(
+            !server
+                .seen()
+                .iter()
+                .any(|req| query_of(req).contains("mutation OrbynReactionDelete")),
+            "nothing is deleted when there is no own reaction"
+        );
+    }
+}
+
+mod limits {
+    //! Linear's post-write refresh: an issue that moved to another team still takes the reaction under the scope
+    //! that now owns it, but the caller's old key no longer names that scope; the refresh uses the resolved internal
+    //! id instead.
+
+    use super::*;
+    use orbyn_contracts::{IssueReaction, IssueReactionCount};
+
+    #[tokio::test]
+    async fn a_moved_issue_is_refreshed_by_its_internal_id() {
+        let server = Server::start(|req| {
+            let query = query_of(req);
+            if query.contains("query OrbynIssueRef") {
+                return Reply::json(&json!({
+                    "data": { "issue": { "id": UUID, "identifier": "ENG-7", "team": { "key": "ENG" } } }
+                }));
+            }
+            if query.contains("mutation OrbynReactionCreate") {
+                assert_eq!(
+                    variables_of(req),
+                    json!({ "input": { "issueId": UUID, "emoji": "👍" } })
+                );
+                return Reply::json(&json!({ "data": { "reactionCreate": { "success": true } } }));
+            }
+            if query.contains("query OrbynIssueReactions") {
+                assert_eq!(
+                    variables_of(req),
+                    json!({ "id": UUID }),
+                    "the reactions read names the internal id, not the caller's old key"
+                );
+                return Reply::json(&json!({
+                    "data": { "issue": { "reactions": [
+                        { "id": "r1", "emoji": "👍", "user": { "id": "u1" } },
+                    ] } }
+                }));
+            }
+            assert_eq!(
+                variables_of(req),
+                json!({ "id": UUID }),
+                "the detail refresh names the internal id, not the caller's old key"
+            );
+            detail_reply(row("ENG-7"), vec![])
+        })
+        .await;
+        // The caller names the issue by the key it was handed (from another team's old prefix); the scope that now
+        // owns it answers the write, and the refresh must still answer the issue.
+        let detail = reader(&server)
+            .react("ENG", "OPS-7", None, IssueReaction::ThumbsUp, true)
+            .await
+            .expect("the write and its answer use the issue's current team and internal id");
+        assert_eq!(
+            detail.summary.key, "ENG-7",
+            "the answer is the issue as the tracker now has it"
+        );
+        assert_eq!(
+            detail.reactions,
+            Some(vec![IssueReactionCount {
+                content: "👍".into(),
+                count: 1,
+            }])
+        );
+    }
+}
+
+mod templates {
+    //! Linear's team templates: only body-shaped `issue` templates travel in this shape (a form-shaped one renders
+    //! only on Linear's site), at most 50, each body cut to 16 KiB, with label ids turned into names.
+
+    use super::*;
+
+    fn labels_reply() -> Reply {
+        Reply::json(&json!({ "data": { "issueLabels": { "nodes": [
+            { "id": "l1", "name": "bug", "team": { "key": "ENG" } },
+            { "id": "l2", "name": "shared", "team": null },
+        ] } } }))
+    }
+
+    fn template_row(n: usize, body: &str) -> Value {
+        json!({
+            "id": format!("t{n}"),
+            "name": format!("Template {n}"),
+            "description": format!("About {n}"),
+            "content": body,
+            "type": "issue",
+            "hasFormFields": false,
+            "templateData": { "labelIds": ["l1", "l2"] },
+        })
+    }
+
+    #[tokio::test]
+    async fn templates_are_the_teams_body_shaped_ones_with_label_names() {
+        let server = Server::start(|req| {
+            let query = query_of(req);
+            if query.contains("OrbynTeamTemplates") {
+                assert_eq!(variables_of(req), json!({ "key": "ENG" }));
+                return Reply::json(&json!({ "data": { "teams": { "nodes": [{
+                    "templates": { "nodes": [
+                        {
+                            "id": "t1", "name": "Bug report", "description": "A crash",
+                            "content": "Steps:", "type": "issue", "hasFormFields": false,
+                            "templateData": { "labelIds": ["l1", "l2"] },
+                        },
+                        {
+                            "id": "t2", "name": "A form", "description": "",
+                            "content": null, "type": "issue", "hasFormFields": true,
+                            "templateData": {},
+                        },
+                        {
+                            "id": "t3", "name": "Not an issue template", "description": "",
+                            "content": "x", "type": "project", "hasFormFields": false,
+                            "templateData": {},
+                        },
+                    ] },
+                }] } } }));
+            }
+            assert!(query.contains("OrbynLabels"), "{query}");
+            labels_reply()
+        })
+        .await;
+        let templates = reader(&server).templates("ENG").await.unwrap();
+        assert_eq!(
+            templates.len(),
+            1,
+            "a form-shaped template and a non-issue template are not carried"
+        );
+        let bug = &templates[0];
+        assert_eq!(
+            (
+                bug.id.as_str(),
+                bug.name.as_str(),
+                bug.description.as_deref(),
+                bug.body.as_str(),
+            ),
+            ("t1", "Bug report", Some("A crash"), "Steps:")
+        );
+        assert_eq!(
+            bug.labels,
+            vec!["bug".to_owned(), "shared".to_owned()],
+            "template label ids become the names the create form shows"
+        );
+    }
+
+    #[tokio::test]
+    async fn at_most_fifty_templates_are_kept_and_bodies_are_cut() {
+        let long = "x".repeat(20_000);
+        let server = Server::start(move |req| {
+            let query = query_of(req);
+            if query.contains("OrbynTeamTemplates") {
+                let nodes: Vec<Value> = (0..60).map(|n| template_row(n, &long)).collect();
+                return Reply::json(&json!({ "data": { "teams": { "nodes": [{
+                    "templates": { "nodes": nodes },
+                }] } } }));
+            }
+            labels_reply()
+        })
+        .await;
+        let templates = reader(&server).templates("ENG").await.unwrap();
+        assert_eq!(templates.len(), 50, "at most fifty templates");
+        assert_eq!(templates[0].body.len(), 16 * 1024, "bodies cut to 16 KiB");
+    }
+
+    #[tokio::test]
+    async fn a_team_with_no_templates_answers_an_empty_list() {
+        let server = Server::start(|req| {
+            assert!(
+                query_of(req).contains("OrbynTeamTemplates"),
+                "no label read is made when no template is kept: {}",
+                query_of(req)
+            );
+            Reply::json(
+                &json!({ "data": { "teams": { "nodes": [{ "templates": { "nodes": [] } }] } } }),
+            )
+        })
+        .await;
+        assert!(reader(&server).templates("ENG").await.unwrap().is_empty());
+        assert_eq!(server.seen().len(), 1);
+    }
+}
