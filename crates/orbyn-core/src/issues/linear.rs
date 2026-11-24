@@ -11,12 +11,12 @@
 use super::frame::cut;
 use super::host::validate_host;
 use super::query::{AssigneeFilter, IssueQuery, StateFilter};
-use super::{IssueSource, NewIssue, ScopeList};
+use super::{IssueSource, MAX_TEMPLATE_BODY_BYTES, MAX_TEMPLATES, NewIssue, ScopeList};
 use crate::error::{CoreError, Result};
 use async_trait::async_trait;
 use orbyn_contracts::{
     IssueActor, IssueComment, IssueDetail, IssueReaction, IssueReactionCount, IssueState,
-    IssueStateCategory, IssueSummary, TrackerKind,
+    IssueStateCategory, IssueSummary, IssueTemplate, TrackerKind,
 };
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Client, StatusCode, Url, redirect};
@@ -64,6 +64,8 @@ const TEAMS_QUERY: &str = "query OrbynTeams { teams(first: 20) { nodes { key } }
 const TEAM_ID_QUERY: &str =
     "query OrbynTeamId($key:String!){teams(first:1,filter:{key:{eq:$key}}){nodes{id key}}}";
 const LABELS_QUERY: &str = "query OrbynLabels{issueLabels(first:250){nodes{id name team{key}}}}";
+/// The team's own issue templates: the same fixed document the team read uses, narrowed to the templates.
+const TEAM_TEMPLATES_QUERY: &str = "query OrbynTeamTemplates($key:String!){teams(first:1,filter:{key:{eq:$key}}){nodes{templates{nodes{id name description content type hasFormFields templateData}}{}}}}";
 const ISSUE_REF_QUERY: &str =
     "query OrbynIssueRef($id:String!){issue(id:$id){id identifier team{key}}}";
 const COMMENT_REF_QUERY: &str = "query OrbynCommentRef($id:String!){comment(id:$id){id issue{id}}}";
@@ -717,36 +719,38 @@ impl Linear {
 
     /// The label ids for these names: Linear writes labels by id, so a name the workspace lacks refuses the write
     /// rather than being dropped. A workspace label (one with no team) is offered in every team.
-    async fn label_ids(&self, scope: &str, names: &[String]) -> Result<Vec<String>> {
-        let mut found: Vec<(String, String)> = Vec::new();
-        if !names.is_empty() {
-            let value = self.graph(LABELS_QUERY, json!({}), false).await?;
-            let rows = value
-                .pointer("/data/issueLabels/nodes")
-                .and_then(Value::as_array)
-                .ok_or_else(unreadable)?;
-            for row in rows {
-                let Some(name) = row.get("name").and_then(Value::as_str) else {
-                    continue;
-                };
+    /// The labels this team and the workspace offer, as `(id, name)` pairs. Read once for a create's labels and
+    /// for a template's label names.
+    async fn label_names(&self, scope: &str) -> Result<Vec<(String, String)>> {
+        let value = self.graph(LABELS_QUERY, json!({}), false).await?;
+        let rows = value
+            .pointer("/data/issueLabels/nodes")
+            .and_then(Value::as_array)
+            .ok_or_else(unreadable)?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| {
+                let name = row.get("name").and_then(Value::as_str)?;
+                let id = row.get("id").and_then(Value::as_str)?;
                 let team = row.pointer("/team/key").and_then(Value::as_str);
-                let in_scope = team.is_none_or(|key| key.eq_ignore_ascii_case(scope));
-                if in_scope
-                    && names.iter().any(|wanted| wanted.eq_ignore_ascii_case(name))
-                    && let Some(id) = row.get("id").and_then(Value::as_str)
-                    && !found.iter().any(|(seen, _)| seen == name)
-                {
-                    found.push((name.to_owned(), id.to_owned()));
-                }
-            }
+                team.is_none_or(|key| key.eq_ignore_ascii_case(scope))
+                    .then(|| (id.to_owned(), name.to_owned()))
+            })
+            .collect())
+    }
+
+    async fn label_ids(&self, scope: &str, names: &[String]) -> Result<Vec<String>> {
+        if names.is_empty() {
+            return Ok(Vec::new());
         }
+        let labels = self.label_names(scope).await?;
         names
             .iter()
             .map(|name| {
-                found
+                labels
                     .iter()
-                    .find(|(seen, _)| seen.eq_ignore_ascii_case(name))
-                    .map(|(_, id)| id.clone())
+                    .find(|(_, seen)| seen.eq_ignore_ascii_case(name))
+                    .map(|(id, _)| id.clone())
                     .ok_or_else(|| {
                         CoreError::Invalid("Linear has no label by one of the names given.".into())
                     })
@@ -863,6 +867,81 @@ impl IssueSource for Linear {
     fn can_write(&self) -> bool {
         true
     }
+
+    /// The team's own issue templates: Linear's templates live on the team, and a form-shaped one renders only on
+    /// Linear's site (this shape carries no form), so only body-shaped issue templates are answered.
+    async fn templates(&self, scope: &str) -> Result<Vec<IssueTemplate>> {
+        team_key(scope)?;
+        let value = self
+            .graph(TEAM_TEMPLATES_QUERY, json!({ "key": scope }), true)
+            .await?;
+        let Some(nodes) = value
+            .pointer("/data/teams/nodes/0/templates/nodes")
+            .and_then(Value::as_array)
+        else {
+            return Err(CoreError::TrackerUnavailable(
+                "Linear has no team by that key.".into(),
+            ));
+        };
+        if nodes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let labels = self.label_names(scope).await.unwrap_or_default();
+        let mut templates = Vec::new();
+        for row in nodes.iter().take(MAX_TEMPLATES) {
+            if row.get("type").and_then(Value::as_str) != Some("issue")
+                || row.get("hasFormFields").and_then(Value::as_bool) == Some(true)
+            {
+                continue;
+            }
+            let Some(id) = row
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+            else {
+                continue;
+            };
+            let name = clip(&text(row, "name"), MAX_TITLE);
+            if name.is_empty() {
+                continue;
+            }
+            let content = text(row, "content");
+            let fallback = row
+                .pointer("/templateData/description")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let body = if content.is_empty() {
+                fallback.to_owned()
+            } else {
+                content
+            };
+            let label_ids: Vec<&str> = row
+                .pointer("/templateData/labelIds")
+                .and_then(Value::as_array)
+                .map(|ids| ids.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            let labels = label_ids
+                .into_iter()
+                .filter_map(|id| {
+                    labels
+                        .iter()
+                        .find(|(seen, _)| seen == id)
+                        .map(|(_, name)| clip(name, MAX_LABEL))
+                })
+                .take(MAX_LABELS)
+                .collect();
+            templates.push(IssueTemplate {
+                id: id.to_owned(),
+                name,
+                description: Some(clip(&text(row, "description"), MAX_LABEL))
+                    .filter(|description| !description.is_empty()),
+                body: cut(&body, MAX_TEMPLATE_BODY_BYTES).to_owned(),
+                labels,
+            });
+        }
+        Ok(templates)
+    }
+
 
     async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
         team_key(scope)?;

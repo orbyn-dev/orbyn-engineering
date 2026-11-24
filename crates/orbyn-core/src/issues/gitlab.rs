@@ -6,12 +6,14 @@
 use super::frame::cut;
 use super::host::validate_host;
 use super::query::{AssigneeFilter, IssueQuery, MAX_LIMIT, StateFilter};
-use super::{IssueSource, MAX_SCOPE_BYTES, NewIssue, ScopeList};
+use super::{
+    IssueSource, MAX_SCOPE_BYTES, MAX_TEMPLATE_BODY_BYTES, MAX_TEMPLATES, NewIssue, ScopeList,
+};
 use crate::error::{CoreError, Result};
 use async_trait::async_trait;
 use orbyn_contracts::{
     IssueActor, IssueComment, IssueCounts, IssueDetail, IssueLabel, IssueReaction,
-    IssueReactionCount, IssueState, IssueStateCategory, IssueSummary, TrackerKind,
+    IssueReactionCount, IssueState, IssueStateCategory, IssueSummary, IssueTemplate, TrackerKind,
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method, StatusCode, Url, redirect};
@@ -614,6 +616,17 @@ fn assignee_ids(assignees: &[String]) -> Result<Vec<u64>> {
         .collect()
 }
 
+/// A GitLab template key as one path segment: the tracker's own keys are plain, and anything else is skipped
+/// rather than steered into the path.
+fn template_segment(key: &str) -> Option<String> {
+    (!key.is_empty()
+        && key.len() <= 100
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)))
+    .then(|| key.to_owned())
+}
+
 #[async_trait]
 impl IssueSource for GitLab {
     fn can_write(&self) -> bool {
@@ -729,6 +742,56 @@ impl IssueSource for GitLab {
         let mut detail = self.get(scope, key).await?;
         detail.reactions = self.issue_reactions(&project, key).await;
         Ok(detail)
+    }
+
+    async fn templates(&self, scope: &str) -> Result<Vec<IssueTemplate>> {
+        let project = project_segment(scope)?;
+        // One page of 100 covers the 50 kept: GitLab pages this list at 20 by default, and a project with more
+        // than that would silently answer only the first page.
+        let listed = self
+            .fetch(
+                &format!("/api/v4/projects/{project}/templates/issues"),
+                &[("per_page", "100".to_owned())],
+                "project",
+            )
+            .await?;
+        let value = parse(&listed.body)?;
+        let entries = value.as_array().ok_or_else(unreadable)?;
+        let mut templates = Vec::new();
+        for entry in entries.iter().take(MAX_TEMPLATES) {
+            let Some(key) = entry
+                .get("key")
+                .and_then(Value::as_str)
+                .and_then(template_segment)
+            else {
+                continue;
+            };
+            let name = clip(
+                entry
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(&key),
+                MAX_TITLE,
+            );
+            // GitLab's project templates carry one markdown body and no labels or description of their own.
+            let content = self
+                .fetch(
+                    &format!("/api/v4/projects/{project}/templates/issues/{}", key),
+                    &[],
+                    "template",
+                )
+                .await?;
+            let value = parse(&content.body)?;
+            templates.push(IssueTemplate {
+                id: key,
+                name,
+                description: None,
+                body: cut(&text(&value, "content"), MAX_TEMPLATE_BODY_BYTES).to_owned(),
+                labels: Vec::new(),
+            });
+        }
+        Ok(templates)
     }
 
     async fn list(&self, scope: &str, query: &IssueQuery) -> Result<ScopeList> {

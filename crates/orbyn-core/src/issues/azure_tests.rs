@@ -1923,3 +1923,23 @@ mod writes {
             .expect("a ten-digit comment id is a valid Azure DevOps comment id");
     }
 }
+
+mod templates {
+    //! Azure DevOps has no issue template source in the API this reader uses (work item types are not templates):
+    //! this shape answers an empty list rather than inventing templates.
+
+    use super::*;
+
+    #[tokio::test]
+    async fn the_templates_read_answers_none_without_a_request() {
+        let server = Server::start(|_| Reply::json(&json!({}))).await;
+        assert!(
+            reader(&server)
+                .templates("org/proj")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(server.seen().is_empty());
+    }
+}

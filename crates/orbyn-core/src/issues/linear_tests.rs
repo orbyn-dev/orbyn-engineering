@@ -1850,3 +1850,118 @@ mod limits {
         );
     }
 }
+
+mod templates {
+    //! Linear's team templates: only body-shaped `issue` templates travel in this shape (a form-shaped one renders
+    //! only on Linear's site), at most 50, each body cut to 16 KiB, with label ids turned into names.
+
+    use super::*;
+
+    fn labels_reply() -> Reply {
+        Reply::json(&json!({ "data": { "issueLabels": { "nodes": [
+            { "id": "l1", "name": "bug", "team": { "key": "ENG" } },
+            { "id": "l2", "name": "shared", "team": null },
+        ] } } }))
+    }
+
+    fn template_row(n: usize, body: &str) -> Value {
+        json!({
+            "id": format!("t{n}"),
+            "name": format!("Template {n}"),
+            "description": format!("About {n}"),
+            "content": body,
+            "type": "issue",
+            "hasFormFields": false,
+            "templateData": { "labelIds": ["l1", "l2"] },
+        })
+    }
+
+    #[tokio::test]
+    async fn templates_are_the_teams_body_shaped_ones_with_label_names() {
+        let server = Server::start(|req| {
+            let query = query_of(req);
+            if query.contains("OrbynTeamTemplates") {
+                assert_eq!(variables_of(req), json!({ "key": "ENG" }));
+                return Reply::json(&json!({ "data": { "teams": { "nodes": [{
+                    "templates": { "nodes": [
+                        {
+                            "id": "t1", "name": "Bug report", "description": "A crash",
+                            "content": "Steps:", "type": "issue", "hasFormFields": false,
+                            "templateData": { "labelIds": ["l1", "l2"] },
+                        },
+                        {
+                            "id": "t2", "name": "A form", "description": "",
+                            "content": null, "type": "issue", "hasFormFields": true,
+                            "templateData": {},
+                        },
+                        {
+                            "id": "t3", "name": "Not an issue template", "description": "",
+                            "content": "x", "type": "project", "hasFormFields": false,
+                            "templateData": {},
+                        },
+                    ] },
+                }] } } }));
+            }
+            assert!(query.contains("OrbynLabels"), "{query}");
+            labels_reply()
+        })
+        .await;
+        let templates = reader(&server).templates("ENG").await.unwrap();
+        assert_eq!(
+            templates.len(),
+            1,
+            "a form-shaped template and a non-issue template are not carried"
+        );
+        let bug = &templates[0];
+        assert_eq!(
+            (
+                bug.id.as_str(),
+                bug.name.as_str(),
+                bug.description.as_deref(),
+                bug.body.as_str(),
+            ),
+            ("t1", "Bug report", Some("A crash"), "Steps:")
+        );
+        assert_eq!(
+            bug.labels,
+            vec!["bug".to_owned(), "shared".to_owned()],
+            "template label ids become the names the create form shows"
+        );
+    }
+
+    #[tokio::test]
+    async fn at_most_fifty_templates_are_kept_and_bodies_are_cut() {
+        let long = "x".repeat(20_000);
+        let server = Server::start(move |req| {
+            let query = query_of(req);
+            if query.contains("OrbynTeamTemplates") {
+                let nodes: Vec<Value> = (0..60).map(|n| template_row(n, &long)).collect();
+                return Reply::json(&json!({ "data": { "teams": { "nodes": [{
+                    "templates": { "nodes": nodes },
+                }] } } }));
+            }
+            labels_reply()
+        })
+        .await;
+        let templates = reader(&server).templates("ENG").await.unwrap();
+        assert_eq!(templates.len(), 50, "at most fifty templates");
+        assert_eq!(templates[0].body.len(), 16 * 1024, "bodies cut to 16 KiB");
+    }
+
+    #[tokio::test]
+    async fn a_team_with_no_templates_answers_an_empty_list() {
+        let server = Server::start(|req| {
+            assert!(
+                query_of(req).contains("OrbynTeamTemplates"),
+                "no label read is made when no template is kept: {}",
+                query_of(req)
+            );
+            Reply::json(
+                &json!({ "data": { "teams": { "nodes": [{ "templates": { "nodes": [] } }] } } }),
+            )
+        })
+        .await;
+        assert!(reader(&server).templates("ENG").await.unwrap().is_empty());
+        assert_eq!(server.seen().len(), 1);
+    }
+}

@@ -470,8 +470,8 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
 ## Create, comment, react, templates and project binding (contract)
 
 R15 rows `create`, `comment`, `react`, `templates` and `bindProject`. `create`, `comment` and `react` are built
-for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b); `templates` and `bindProject` are not built yet
-(PR2 and PR3), and the web keeps each unbuilt control as Planned. They follow the rules of "Issue writes and list
+for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b) and `templates` is built in R15 PR2; `bindProject`
+is not built yet (PR3), and the web keeps each unbuilt control as Planned. They follow the rules of "Issue writes and list
 controls": every write is Person-class and goes in `ENFORCED` and `PERSON_ROUTES`, answers the stored issue, and a
 tracker refusal answers the usual error (`forbidden`, `not_found`, `rate_limited`, `tracker_unavailable`) and changes
 nothing here. Issue text going in is sent as a field value, never in an argument position, and never rendered as markup
@@ -487,10 +487,10 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
 | `POST /api/projects/{id}/issue-tracker` | **yes** | `200 { tracker, scope }`, or `204` to unbind. Body `{ tracker, scope }` or `{ tracker: null }` |
 
 - `create` (**built, GitHub**): `title` is one line, 1 to 256 characters; `body` at most 64 KiB; `labels` (at most 50) are names, `assignees`
-  (at most 25) are candidate `id`s from `GET /api/issues/candidates`, as in `update`. `template` is the `id` of a template
-  from `templates`; when present, a missing `body` is filled from the template's body and an unknown id is `400 invalid`.
-  The templates read is not built yet (PR2), so no template id can be known and any present one is `400 invalid`
-  ("Unknown issue template."); the fill lands with that read.
+  (at most 25) are candidate `id`s from `GET /api/issues/candidates`, as in `update`. `template` is the `id` of a
+  template from `templates`: when present, a missing `body` is filled from the template's body, a body the person sent
+  wins, and an id the tracker does not report is `400 invalid` ("Unknown issue template."). The template's labels are
+  not merged into the create's: labels are the create body's own.
   One call creates one issue: no retry loop, and a timeout answers `tracker_unavailable` with the issue possibly created
   (the answer says so, and the page re-reads the list rather than sending again). A `scope` outside the connection is
   refused as everywhere else.
@@ -501,9 +501,16 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   A tracker with a smaller set refuses a value it lacks with `400 invalid` and names the ones it has; none is mapped to a
   near one. The answer is the issue with its reaction counts as the tracker reports them, in the tracker's own words
   (`IssueDetail.reactions`).
-- `templates` (not built, PR2): the tracker's own issue templates for the scope, read-only: `{ id, name, description?, body, labels[] }`,
-  at most 50, bodies cut at 16 KiB. A tracker with none answers `[]`, never `404`. Template text is the tracker's text and as
-  untrusted as any other (see "Issue text is untrusted"); it only ever fills the person's own create form.
+- `templates` (**built, PR2**): the tracker's own issue templates for the scope, read-only:
+  `{ id, name, description?, body, labels[] }`, at most 50, bodies cut at 16 KiB. A tracker with none answers `[]`,
+  never `404`: GitHub, Forgejo and Azure DevOps answer none. GitHub and Forgejo have no issue-template endpoint,
+  only repository files (`.github/ISSUE_TEMPLATE` on GitHub, `.gitea`/`.forgejo` `ISSUE_TEMPLATE` on Forgejo) that a
+  later row reads through the contents API (a `.yml` form needs a YAML reader; a `.md` template does not):
+  [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548). Azure DevOps has no issue template source at
+  all (its work item types are not templates).
+  GitLab and Linear answer their own.
+  Template text is the tracker's text and as untrusted as any other (see "Issue text is untrusted"); it only ever
+  fills the person's own create form.
 - `bindProject` (not built, PR3): stores which connected tracker and scope this project's issues come from, so the page and the engine
   tools default to it. `scope` must be one of the connection's scopes; a tracker that is not connected is
   `400 invalid`. It stores two names and no secret, writes one audit row (`issues.project.bind`, ids only), and never
@@ -592,12 +599,45 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   a success for a duplicate) with a removal that writes only when it finds the reader's own reaction. The older-`gh`
   shape is scripted too, not observed on a real old `gh`. No real `orbynd` service run exercises these routes.
 
+### As built (R15 PR2)
+
+`GET /api/issues/templates` exists behind the Issues flag and is a `Local` read (no Person key): query `tracker` and
+`scope`, answers `IssueTemplate[]`. The route, the Core read and each writer's lookup share one rule: a missing body
+is filled from the named template, a body the person sent wins, an id the tracker does not report is `400 invalid`,
+and the template's labels are never merged into the create's. Untrusted template text only ever fills the person's
+create form; nothing feeds it to an engine.
+
+- **GitLab**: project issue templates. One `GET /projects/{path}/templates/issues` lists the entries (`key`, `name`),
+  then one `GET .../templates/issues/{key}` per template for its markdown body. The list asks for 100 per page in
+  one page, which covers the 50 kept. At most 50 templates and 16 KiB of body are kept; a project template carries no
+  labels or description of its own, so those come back empty. Group-level templates are not read (a later row,
+  [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548)), so a project that inherits them answers only
+  its own. The read is one list call plus one body per template (at most 51 GETs), a templated create re-runs it, and
+  one failed body read fails the whole read; [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548) also
+  tracks that read cost.
+- **Linear**: the team's own templates, read from the team query (`templates { id name description content type
+  hasFormFields templateData }`). Only body-shaped `issue` templates travel: a form-shaped one renders on Linear's
+  site and this shape carries no form, so it is skipped; a template's `labelIds` become the label names the create
+  form shows. At most 50 and 16 KiB of body. A failed label read is swallowed: the templates answer with empty labels
+  rather than failing the read. [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548) tracks making that
+  visible.
+- **GitHub, Forgejo, Azure DevOps**: answer `[]`. GitHub and Forgejo have **no issue-template endpoint**: their
+  templates are repository files under `.github/ISSUE_TEMPLATE` and `.gitea`/`.forgejo` `ISSUE_TEMPLATE`, which their
+  contents APIs can list cheaply (GitHub through the person's own `gh`); a later row reads them, with a YAML reader
+  for GitHub's `.yml` forms: [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548). Azure DevOps has
+  no issue template source at all (work item types are not templates). None of the three invents a template.
+- **The web client does not call this read yet**: its template picker stays Planned until a web slice builds it;
+  [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548) tracks that picker too.
+- **Not verified.** No real GitLab or Linear template list was read; both are tested against their local fake server,
+  and the shapes (`templates/issues` entries and content, Linear's `templates` connection, `templateData` and
+  `hasFormFields`) are from the APIs as understood. No real `orbynd` service run exercises the route.
+
 ## What T3 has that this does not (Planned)
 
 The event timeline, "involved/mentioned"
 filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting and
-reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b); templates and project
-binding are specified above and not built (PR2 and PR3). The engine-facing
+reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b) and templates in R15 PR2;
+project binding is specified above and not built (PR3). The engine-facing
 issue tools (N24) list, read, link, unlink and list a thread's linked issues; they do not create, comment or
 change state.
 
