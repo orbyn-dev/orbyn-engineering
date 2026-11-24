@@ -689,6 +689,21 @@ pub fn shell_command(command: &str) -> (PathBuf, Vec<std::ffi::OsString>) {
     (shell, args)
 }
 
+/// The shell invocation for a library workflow run (docs/execution-profiles-and-library.md): a fixed
+/// `/bin/sh -lc` on macOS and Linux, never the person's `$SHELL`. The run's values are quoted for a
+/// POSIX shell, so a non-POSIX login shell would read them under another grammar; the shell is the
+/// app's choice for these runs, as it is not a terminal the person opened. Windows keeps `cmd /C`.
+pub fn library_shell_command(command: &str) -> (PathBuf, Vec<std::ffi::OsString>) {
+    #[cfg(windows)]
+    {
+        shell_command(command)
+    }
+    #[cfg(not(windows))]
+    {
+        ("/bin/sh".into(), vec!["-lc".into(), command.into()])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

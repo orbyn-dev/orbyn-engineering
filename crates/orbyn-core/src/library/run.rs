@@ -1,8 +1,9 @@
 //! Running a workflow (docs/execution-profiles-and-library.md, Part 2). It goes through the terminal machinery that typing the command
-//! in a thread's terminal uses: the same folder-trust rule, the same shell, an audit row first. It adds two things a typed command has
-//! not: the saved values of the sets the workflow lists, in the child's environment only, and a mask over the run's output that hides
-//! those exact values. A run with sets needs the person's acknowledgement of the `env_values` grant. Only a Person route reaches it;
-//! no Crew or Autopilot path calls it.
+//! in a thread's terminal uses: the same folder-trust rule, an audit row first, and a fixed POSIX `/bin/sh` rather than the person's own
+//! `$SHELL`, because the rendered command quotes each value for POSIX. It adds two things a typed command has not: the saved values of
+//! the sets the workflow lists, in the child's environment only, and a mask over the run's output that hides those exact values. A run
+//! with sets needs the person's acknowledgement of the `env_values` grant. Only a Person route reaches it; no Crew or Autopilot path
+//! calls it.
 
 use orbyn_contracts::{ProfileGrant, RunWorkflow, RunWorkflowAnswer};
 use serde_json::json;
@@ -11,7 +12,7 @@ use super::{keychain_error, params};
 use crate::app::Core;
 use crate::credentials::{EnvError, EnvSecret};
 use crate::error::{CoreError, Result};
-use crate::host::terminal::{PtySpec, RunSecrets, TerminalLabel, shell_command};
+use crate::host::terminal::{PtySpec, RunSecrets, TerminalLabel, library_shell_command};
 use crate::redaction::LiteralMasker;
 use crate::store::AuditRecord;
 use crate::util::new_id;
@@ -141,7 +142,7 @@ impl Core {
                 "env_sets": sets.iter().map(|set| set.fields.name.clone()).collect::<Vec<_>>(),
             }),
         })?;
-        let (program, args) = shell_command(&command);
+        let (program, args) = library_shell_command(&command);
         self.terminals.open_named_with(
             &thread.id,
             &terminal,

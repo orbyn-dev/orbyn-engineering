@@ -249,6 +249,8 @@ pub enum Incoming {
     RunDone(RunDone),
     Log {
         level: String,
+        /// The event the host attached, when it sent one: `envAdded`, `holdingResult`, `malformedFrame`, ...
+        event: Option<Value>,
     },
     Background {
         session_id: String,
@@ -412,6 +414,10 @@ pub fn decode(line: &str) -> Result<Incoming, FrameError> {
         "runDone" => Incoming::RunDone(run_done(&object)?),
         "log" => Incoming::Log {
             level: optional_string(&object, "level").unwrap_or_else(|| "info".into()),
+            event: object
+                .get("event")
+                .filter(|event| !event.is_null())
+                .cloned(),
         },
         "background" => Incoming::Background {
             session_id: string(&object, "sessionId")?,
