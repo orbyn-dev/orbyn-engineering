@@ -1226,7 +1226,7 @@ identity), its label, label set and label event id, the event key's hashes, a `.
 only decide whether a run starts; the brief, the worker's prompt, the lead thread and the audit stay code-owned. A
 stop is looked at between firings, never inside a start, and a run a crash leaves is settled when the core opens. A trigger in the file with no stored crew is ignored.
 At most 64 CI crews are watched per pass, and at most 64 issue-label crews and separately 64 dependency-update crews are read per pass, all from the pass's
-rotating start, so a store full of crews cannot turn one pass into unbounded forge or tracker traffic. The ticks of one pass run one after another: a slow watch command can hold them (each check is bounded by its five-minute cap, but a pass has no overall cap yet; a per-pass cap is a follow-up, #1354). `crew_background_events` is not pruned yet.
+rotating start, so a store full of crews cannot turn one pass into unbounded forge or tracker traffic. The ticks of one pass run one after another: a slow watch command can hold them (each check is bounded by its five-minute cap), and the watch tick runs at most 64 checks per pass, oldest claim first, so the watches it does not reach come first on the next pass. `crew_background_events` is not pruned yet.
 **A dependency-update crew that gets no feed** writes one trace line per pass only when at least one enabled dependency crew exists and none of the crews it read
 answered with a feed. The `gh` scopes these feeds need are unconfirmed on a real machine, so M27 stays unticked.
 

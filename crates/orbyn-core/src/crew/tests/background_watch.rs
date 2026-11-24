@@ -13,6 +13,7 @@ use serde_json::json;
 use super::harness::{Script, Turn, World, report, world};
 use super::review_support::commit_all;
 use crate::crew::background_daily::local_day_and_reset;
+use crate::crew::background_listeners::WATCH_CHECKS_PER_PASS;
 use crate::crew::checks::tail_lines_bytes;
 use crate::crew::fixtures::audit_actions;
 use crate::crew::watch::{CouldNotRun, WatchCheck, WatchFound, plan, refusal_sentence};
@@ -58,6 +59,15 @@ async fn watch(w: &World, name: &str, command: &str, on_failing: &str) -> String
     crew.id
 }
 
+/// A watch with the interval the test needs: the tick orders its rotation by the newest claimed bucket.
+async fn watch_at(w: &World, name: &str, hours: u32) -> String {
+    let mut body = watch_body(w, name, "git diff --exit-code", "needs_you");
+    body.trigger.every_hours = Some(hours);
+    let crew = w.core.background_create(&body).await.unwrap();
+    w.core.background_set_enabled(&crew.id, true).unwrap();
+    crew.id
+}
+
 fn status(w: &World, id: &str) -> wire::BackgroundWatchStatus {
     w.core.background_watch(id).unwrap()
 }
@@ -82,6 +92,19 @@ fn claims(w: &World) -> Vec<String> {
     let reader = w.core.store.reader();
     let mut statement = reader
         .prepare("SELECT identity FROM crew_background_events ORDER BY identity")
+        .unwrap();
+    statement
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<std::result::Result<Vec<String>, _>>()
+        .unwrap()
+}
+
+/// The watches with a stored state row, by id: one state row for each check that ran.
+fn checked(w: &World) -> Vec<String> {
+    let reader = w.core.store.reader();
+    let mut statement = reader
+        .prepare("SELECT background_id FROM crew_watch_state ORDER BY background_id")
         .unwrap();
     statement
         .query_map([], |row| row.get(0))
@@ -354,6 +377,100 @@ async fn a_watch_checks_once_per_bucket_and_keeps_the_watch_claim_key() {
     w.core.background_set_enabled(&id, false).unwrap();
     tick(&w, NOW + 2 * BUCKET).await;
     assert_eq!(claims(&w).len(), 2, "a crew that is off spends no claim");
+}
+
+#[tokio::test]
+async fn a_pass_runs_only_the_watch_check_cap_and_the_next_pass_reaches_the_rest() {
+    let w = world(true, hung()).await;
+    let mut all = Vec::new();
+    for n in 0..WATCH_CHECKS_PER_PASS + 3 {
+        all.push(
+            watch(
+                &w,
+                &format!("Watch {n}"),
+                "git diff --exit-code",
+                "needs_you",
+            )
+            .await,
+        );
+    }
+    all.sort();
+    let bucket = NOW.div_euclid(BUCKET) * BUCKET;
+    let claims_of = |ids: &[String]| {
+        let mut identities: Vec<String> = ids
+            .iter()
+            .map(|id| format!("watch:{id}:{bucket}"))
+            .collect();
+        identities.sort();
+        identities
+    };
+
+    // One pass runs exactly the cap and writes one state row for each check that ran.
+    tick(&w, NOW).await;
+    let first = checked(&w);
+    assert_eq!(first.len(), WATCH_CHECKS_PER_PASS);
+    assert_eq!(
+        claims(&w),
+        claims_of(&first),
+        "only the checks that ran were claimed"
+    );
+
+    // The watches left over were never claimed, so the next pass reaches them all.
+    tick(&w, NOW).await;
+    assert_eq!(
+        checked(&w),
+        all,
+        "the next pass reaches the watches left over"
+    );
+    assert_eq!(
+        claims(&w),
+        claims_of(&all),
+        "one check per watch in this bucket"
+    );
+    let checked_at = Some(crate::util::format_unix(NOW));
+    for id in &all {
+        assert_eq!(
+            status(&w, id).last_checked_at,
+            checked_at,
+            "{id} was not checked in this bucket"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_watch_that_is_not_due_does_not_spend_a_check() {
+    let w = world(true, hung()).await;
+    // A six-hour watch and the cap's worth of one-hour watches. Checked an hour before NOW, the six-hour watch's newest
+    // bucket is older than every one-hour watch's, so it comes first in the next pass's order and must not spend a check.
+    let not_due = watch_at(&w, "Not due", HOURS).await;
+    let mut due = Vec::new();
+    for n in 0..WATCH_CHECKS_PER_PASS {
+        due.push(watch_at(&w, &format!("Due {n}"), 1).await);
+    }
+    tick(&w, NOW - 3600).await;
+    tick(&w, NOW - 3600).await;
+    assert_eq!(claims(&w).len(), 1 + WATCH_CHECKS_PER_PASS);
+
+    tick(&w, NOW).await;
+    assert_eq!(
+        checked(&w).len(),
+        1 + WATCH_CHECKS_PER_PASS,
+        "the not-due watch costs no check"
+    );
+    let checked_at = Some(crate::util::format_unix(NOW));
+    for id in &due {
+        assert_eq!(
+            status(&w, id).last_checked_at,
+            checked_at,
+            "{id} did not run"
+        );
+    }
+    assert_eq!(
+        status(&w, &not_due).last_checked_at,
+        Some(crate::util::format_unix(NOW - 3600)),
+        "the not-due watch is not checked again in this bucket"
+    );
+    assert_eq!(claims(&w).len(), 1 + 2 * WATCH_CHECKS_PER_PASS);
 }
 
 #[tokio::test]
