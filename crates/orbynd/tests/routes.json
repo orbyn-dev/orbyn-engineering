@@ -70,6 +70,7 @@
     ["GET","/api/crew/classes/test","local"],
     ["GET","/api/crew/dashboard","local"],
     ["GET","/api/crew/escapes","local"],
+    ["GET","/api/crew/escapes/counts","local"],
     ["GET","/api/crew/escapes/possible","local"],
     ["GET","/api/crew/escapes/thresholds","local"],
     ["GET","/api/crew/escapes/{id}","local"],

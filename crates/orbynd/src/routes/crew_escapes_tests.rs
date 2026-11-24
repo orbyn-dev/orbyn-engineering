@@ -292,6 +292,7 @@ async fn a_remote_viewer_reads_and_the_flag_off_hides_every_route() {
         format!("/api/crew/escapes/{id}"),
         "/api/crew/escapes/thresholds".to_owned(),
         format!("/api/crew/escapes/possible?project={project}"),
+        format!("/api/crew/escapes/counts?project={project}&area=src%2Fapp"),
     ] {
         assert_eq!(remote.get(&path).await.0, 200, "{path}");
     }
@@ -301,6 +302,7 @@ async fn a_remote_viewer_reads_and_the_flag_off_hides_every_route() {
         "/api/crew/escapes/esc_one".to_owned(),
         "/api/crew/escapes/thresholds".to_owned(),
         "/api/crew/escapes/possible?project=p".to_owned(),
+        "/api/crew/escapes/counts?project=p&area=src%2Fapp".to_owned(),
     ] {
         let (status, body) = off.get(&path).await;
         let (missing_status, missing) = off.get("/api/crew/not-a-route").await;
@@ -704,6 +706,108 @@ async fn the_check_routes_map_a_stale_view_a_missing_check_and_bad_input_to_plai
     let (_, detail) = app.get(&format!("/api/crew/escapes/{id}")).await;
     assert!(detail["check"].is_null(), "{detail}");
     assert!(detail["escape"].is_object() && detail["events"].is_array());
+}
+
+#[tokio::test]
+async fn counts_answer_one_areas_engines_and_bad_input_is_refused() {
+    let app = serve("escapes-counts", true, false).await;
+    let (project, _id) = with_escape(&app, "The merge was reverted.");
+
+    let (status, counts) = app
+        .get(&format!(
+            "/api/crew/escapes/counts?project={project}&area=src%2Fapp"
+        ))
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        (
+            counts["project"].as_str(),
+            counts["area"].as_str(),
+            counts["merges"].as_u64(),
+            counts["truncated"].as_bool()
+        ),
+        (
+            Some(project.as_str()),
+            Some("src/app"),
+            Some(1),
+            Some(false)
+        )
+    );
+    assert_eq!(
+        (
+            counts["window_days"].as_u64(),
+            counts["min_merges"].as_u64()
+        ),
+        (Some(60), Some(10)),
+        "the log's own stored window and sample"
+    );
+    let engine = &counts["engines"][0];
+    assert_eq!(
+        (
+            engine["engine"].as_str(),
+            engine["merges"].as_u64(),
+            engine["possible"].as_u64(),
+            engine["confirmed"].as_u64(),
+            engine["dismissed"].as_u64(),
+            engine["low_sample"].as_bool()
+        ),
+        (
+            Some("claude"),
+            Some(1),
+            Some(1),
+            Some(0),
+            Some(0),
+            Some(true)
+        ),
+        "possible and confirmed are counted apart, and one merge is under the sample"
+    );
+
+    // An area the project never merged into is an empty answer, not another project's rows and not an error.
+    let (status, none) = app
+        .get(&format!(
+            "/api/crew/escapes/counts?project={project}&area=src%2Fother"
+        ))
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        (
+            none["merges"].as_u64(),
+            none["engines"].as_array().unwrap().len(),
+            none["truncated"].as_bool()
+        ),
+        (Some(0), 0, Some(false))
+    );
+
+    // Bad input is refused, never answered as an empty list.
+    for path in [
+        "/api/crew/escapes/counts".to_owned(),
+        "/api/crew/escapes/counts?project=p".to_owned(),
+        format!("/api/crew/escapes/counts?project={project}"),
+        format!("/api/crew/escapes/counts?project={project}&area="),
+        format!("/api/crew/escapes/counts?project={project}&area=%01"),
+    ] {
+        let (status, body) = app.get(&path).await;
+        assert_eq!(status, 400, "{path}");
+        assert_eq!(body["code"], "invalid_input", "{path}");
+    }
+    // An unknown project is refused, never served as nothing.
+    assert_eq!(
+        app.get(&format!(
+            "/api/crew/escapes/counts?project=nobody&area=src%2Fapp"
+        ))
+        .await
+        .0,
+        404
+    );
+    // A read never writes: the log is exactly as it was, and the counts route is not a state change.
+    let (_, log) = app
+        .get(&format!("/api/crew/escapes?project={project}"))
+        .await;
+    assert_eq!(
+        (log["total"].clone(), log["possible"].clone()),
+        (json!(1), json!(1))
+    );
+    assert!(!changes_crew_state("/api/crew/escapes/counts"));
 }
 
 #[tokio::test]
