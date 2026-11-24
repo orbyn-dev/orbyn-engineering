@@ -193,7 +193,7 @@ async fn a_create_that_is_refused_keeps_the_refusals_meaning() {
 }
 
 #[tokio::test]
-async fn a_comment_sends_the_body_as_a_field_and_answers_the_stored_comment() {
+async fn a_comment_answers_the_comments_node_id_so_a_client_can_react_to_it() {
     let calls = calls();
     let record = calls.clone();
     let fixture = Arc::new(
@@ -218,6 +218,7 @@ async fn a_comment_sends_the_body_as_a_field_and_answers_the_stored_comment() {
             assert_eq!(body, json!({ "body": "Looks good." }));
             Ok(json!({
                 "id": 99,
+                "node_id": "IC_kw99",
                 "user": { "login": "ann" },
                 "body": "Looks good.",
                 "created_at": "2026-11-24T01:00:00Z",
@@ -232,11 +233,33 @@ async fn a_comment_sends_the_body_as_a_field_and_answers_the_stored_comment() {
     .unwrap();
     assert_eq!(
         (comment.id.as_str(), comment.body.as_str()),
-        ("99", "Looks good.")
+        ("IC_kw99", "Looks good."),
+        "the answer carries the node id a reaction takes, not the numeric id"
     );
     assert_eq!(comment.author.unwrap().login, "ann");
     assert_eq!(comment.created_at, "2026-11-24T01:00:00Z");
     assert_eq!(seen(&calls).len(), 1);
+}
+
+#[tokio::test]
+async fn a_comment_answer_without_a_node_id_falls_back_to_its_numeric_id() {
+    let fixture = Arc::new(
+        |_forge: Forge, _cwd: &Path, _args: &[&str], _input: Option<&str>| -> Result<String> {
+            Ok(json!({
+                "id": 99,
+                "user": { "login": "ann" },
+                "body": "Looks good.",
+                "created_at": "2026-11-24T01:00:00Z",
+            })
+            .to_string())
+        },
+    );
+    let comment = with_crew_input_fixture(fixture, async {
+        github().comment("acme/app", "7", "Looks good.").await
+    })
+    .await
+    .unwrap();
+    assert_eq!(comment.id, "99");
 }
 
 /// The answer to a react: the node query, the mutation, the detail's two reads and the counts' optional read.
@@ -267,6 +290,18 @@ fn react_fixture(
                         json!({ "data": { "repository": { "issue": { "id": "I_issue_7" } } } })
                             .to_string(),
                     );
+                }
+                if query.contains("OrbynCommentScope") {
+                    assert!(query.contains("node(id:$id)"), "{query}");
+                    assert!(
+                        args.iter().any(|arg| arg == &format!("id={subject}")),
+                        "the comment id is resolved as a value: {args:?}"
+                    );
+                    return Ok(json!({ "data": { "node": {
+                        "__typename": "IssueComment",
+                        "issue": { "number": 7, "repository": { "nameWithOwner": "acme/app" } },
+                    } } })
+                    .to_string());
                 }
                 let wanted = if on {
                     "OrbynAddReaction"
@@ -367,14 +402,144 @@ async fn a_comment_reaction_uses_the_comments_node_id_and_removes_the_same_conte
     let calls = seen(&calls);
     assert_eq!(
         calls.len(),
-        4,
-        "a comment id needs no node lookup: the mutation, the detail's two reads and the counts read"
+        5,
+        "the comment's ownership read, the mutation, the detail's two reads and the counts read"
+    );
+    let scope_read = &calls[0].0;
+    assert!(
+        scope_read
+            .iter()
+            .any(|arg| arg.contains("OrbynCommentScope")),
+        "a comment react proves the comment belongs to the issue first: {scope_read:?}"
     );
     assert!(
         calls
             .iter()
             .all(|(args, _)| !args.iter().any(|arg| arg.contains("OrbynIssueNode"))),
         "a comment react never looks the issue's node id up"
+    );
+}
+
+/// A `gh` whose comment-ownership read says the comment is on another repository or issue. Its node id is global,
+/// so without that read a Person-authorized caller could write a reaction outside the scope the route checked.
+fn foreign_comment_fixture(calls: Calls, number: u64, repository: &'static str) -> GhAnswer {
+    let record = calls;
+    Arc::new(
+        move |_forge: Forge, _cwd: &Path, args: &[&str], _input: Option<&str>| -> Result<String> {
+            let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+            record.lock().unwrap().push((args.clone(), None));
+            let query = args
+                .iter()
+                .find(|arg| arg.starts_with("query="))
+                .map(String::as_str)
+                .unwrap_or_default();
+            assert!(
+                query.contains("OrbynCommentScope"),
+                "only the ownership read runs: {args:?}"
+            );
+            Ok(json!({ "data": { "node": {
+                "__typename": "IssueComment",
+                "issue": { "number": number, "repository": { "nameWithOwner": repository } },
+            } } })
+            .to_string())
+        },
+    )
+}
+
+#[tokio::test]
+async fn a_comment_reaction_outside_the_issue_is_refused_before_the_mutation() {
+    for (what, number, repository) in [
+        ("another repository", 7, "other/repo"),
+        ("another issue", 8, "acme/app"),
+    ] {
+        let calls = calls();
+        let fixture = foreign_comment_fixture(calls.clone(), number, repository);
+        let error = with_crew_input_fixture(fixture, async {
+            github()
+                .react(
+                    "acme/app",
+                    "7",
+                    Some("IC_elsewhere"),
+                    IssueReaction::Heart,
+                    true,
+                )
+                .await
+                .map(|_| ())
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, CoreError::NotFound(_)),
+            "{what} is refused as not_found: {error:?}"
+        );
+        let calls = seen(&calls);
+        assert_eq!(calls.len(), 1, "{what}: only the ownership read ran");
+        assert!(
+            calls.iter().all(|(args, _)| {
+                !args.iter().any(|arg| {
+                    arg.contains("OrbynAddReaction") || arg.contains("OrbynRemoveReaction")
+                })
+            }),
+            "{what}: no reaction mutation is sent: {calls:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_reaction_can_be_added_and_taken_back_twice() {
+    let mutations: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+    let record = mutations.clone();
+    let fixture = Arc::new(
+        move |_forge: Forge, _cwd: &Path, args: &[&str], _input: Option<&str>| -> Result<String> {
+            if args.first().is_some_and(|arg| *arg == "api") {
+                let query = args
+                    .iter()
+                    .find(|arg| arg.starts_with("query="))
+                    .map(|arg| (*arg).to_owned())
+                    .unwrap_or_default();
+                if query.contains("OrbynIssueNode") {
+                    return Ok(
+                        json!({ "data": { "repository": { "issue": { "id": "I_issue_7" } } } })
+                            .to_string(),
+                    );
+                }
+                let added = query.contains("OrbynAddReaction");
+                assert!(added || query.contains("OrbynRemoveReaction"), "{query}");
+                record
+                    .lock()
+                    .unwrap()
+                    .push(if added { "add" } else { "remove" });
+                return Ok(if added {
+                    json!({ "data": { "addReaction": { "reaction": { "content": "HEART" } } } })
+                } else {
+                    json!({ "data": { "removeReaction": { "reaction": { "content": "HEART" } } } })
+                }
+                .to_string());
+            }
+            if args.contains(&"closedByPullRequestsReferences") {
+                return Ok(json!({ "closedByPullRequestsReferences": [] }).to_string());
+            }
+            if names_field(args, "reactionGroups") {
+                return Ok(json!({ "reactionGroups": [{ "content": "HEART", "users": { "totalCount": 1 } }] })
+                    .to_string());
+            }
+            Ok(detail_json().to_string())
+        },
+    );
+    for on in [true, true, false, false] {
+        let detail = with_crew_input_fixture(fixture.clone(), async {
+            github()
+                .react("acme/app", "7", None, IssueReaction::Heart, on)
+                .await
+        })
+        .await
+        .unwrap();
+        assert_eq!(detail.reactions.as_ref().unwrap()[0].content, "HEART");
+    }
+    assert_eq!(
+        *mutations.lock().unwrap(),
+        ["add", "add", "remove", "remove"],
+        "a duplicate add and an absent remove are both answered without an error, as GitHub does"
     );
 }
 

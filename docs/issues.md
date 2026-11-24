@@ -522,13 +522,18 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
 - **GitHub is the only tracker that writes in this PR.** Create, comment and react run through the person's own `gh`
   (never a token Orbyn holds): create is one REST call whose JSON body carries the title, body, labels and assignees,
   and its answer is built from that call's own reply, so a successful create is never reported as a failure; comment
-  is one REST call and answers the comment GitHub stored; react is GitHub's GraphQL `addReaction`/`removeReaction`
+  is one REST call and answers the comment GitHub stored, with its node id as `IssueComment.id` (the id a reaction
+  takes; the numeric id only when the reply has no node id); react is GitHub's GraphQL `addReaction`/`removeReaction`
   with the issue's or the comment's node id, then a read of the issue, then one optional read of GitHub's
   `reactionGroups`, and the answer's `IssueDetail.reactions` is what that read reports (`THUMBS_UP`, `HEART`, ...
   in its own words), with a group nobody used dropped. The counts read is separate because an older `gh` does not know
   the field: named in the mandatory detail read it would fail that whole call, so when this read fails the answer is
-  the issue with `reactions: null`. A plain detail read (`GET /api/issues/item`) carries no reactions. A create whose
-  outcome is unknown answers `tracker_unavailable` saying the issue was possibly created; nothing retries.
+  the issue with `reactions: null`. A reaction on a comment first reads the comment and refuses it
+  (`not_found`, before any mutation) unless it belongs to the stated repository and issue: a comment node id is global,
+  so without that read a Person-authorized caller could have a reaction written outside the scope the guard checked.
+  That ownership read is made only when reacting to a comment. A plain detail read (`GET /api/issues/item`) carries no
+  reactions. A create whose outcome is unknown answers `tracker_unavailable` saying the issue was possibly created;
+  nothing retries.
 - **The routes' own caps, checked before anything is sent**: a title is one line of 1 to 256 characters; an issue body
   or a comment is at most 64 KiB and a comment is not blank; at most 50 labels, each a name of 1 to 200 characters; at
   most 25 assignee ids, each 1 to 200 characters; a comment id is 1 to 200 characters; no control characters in a

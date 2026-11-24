@@ -24,6 +24,9 @@ const DEPENDENCY_PAGES: u32 = 10;
 const DETAIL_FIELDS: &str = "number,title,url,author,state,stateReason,createdAt,updatedAt,closedAt,assignees,labels,comments,body";
 /// The one issue a reaction is added to, by its GraphQL node id: `addReaction` takes a node id, never a number.
 const ISSUE_NODE_QUERY: &str = "query OrbynIssueNode($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){id}}}";
+/// Proves a comment node id belongs to one issue before a reaction is written to it: node ids are global on GitHub,
+/// and a Person-authorized caller must not have a reaction written outside the scope the guard checked.
+const COMMENT_SCOPE_QUERY: &str = "query OrbynCommentScope($id:ID!){node(id:$id){__typename ... on IssueComment{issue{number repository{nameWithOwner}}}}}";
 /// Both directions are idempotent in GitHub: adding a reaction that is already there answers the stored one, and
 /// removing one that is not there answers no reaction without an error.
 const ADD_REACTION_MUTATION: &str = "mutation OrbynAddReaction($subject:ID!,$content:ReactionContent!){addReaction(input:{subjectId:$subject,content:$content}){reaction{content}}}";
@@ -438,14 +441,22 @@ fn possibly_created(error: CoreError) -> CoreError {
     }
 }
 
-/// The comment a REST answer stored: its numeric id as text, its author, its body as GitHub kept it and when.
+/// The comment a REST answer stored: its node id as text (the numeric id when the reply has none), its author, its
+/// body as GitHub kept it and when.
 fn stored_comment(value: &Value) -> Result<IssueComment> {
+    // The node id is what a reaction takes; the REST reply also carries its numeric id, which can only name the
+    // comment for an edit or a delete. A reply without a node id (an older shape) falls back to the numeric one.
     let id = value
-        .get("id")
-        .and_then(|id| {
-            id.as_u64()
-                .map(|id| id.to_string())
-                .or_else(|| id.as_str().map(str::to_owned))
+        .get("node_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            value.get("id").and_then(|id| {
+                id.as_u64()
+                    .map(|id| id.to_string())
+                    .or_else(|| id.as_str().map(str::to_owned))
+            })
         })
         .filter(|id| !id.is_empty())
         .ok_or_else(unreadable)?;
@@ -555,6 +566,44 @@ async fn optional_reactions(
     .into();
     let value = run(cwd, &args).await.ok()?;
     reaction_counts(&value)
+}
+
+/// Refuses a comment node id that is not on this repository and issue: one read, made only when a reaction names a
+/// comment. A node id from another issue or repository is `not_found` (the usual refusal wording) and no mutation is
+/// sent, so such a reaction can never be written outside the connection's scope.
+async fn comment_belongs(
+    cwd: &std::path::Path,
+    scope: &str,
+    key: &str,
+    comment: &str,
+) -> Result<()> {
+    let args = vec![
+        "api".to_owned(),
+        "graphql".to_owned(),
+        "-f".to_owned(),
+        format!("query={COMMENT_SCOPE_QUERY}"),
+        "-f".to_owned(),
+        format!("id={comment}"),
+    ];
+    let value = graphql(cwd, &args).await?;
+    let refused = || CoreError::NotFound("issue".into());
+    let node = value
+        .pointer("/data/node")
+        .filter(|node| !node.is_null())
+        .ok_or_else(refused)?;
+    let wants = key.parse::<u64>().map_err(|_| refused())?;
+    let repository = node
+        .pointer("/issue/repository/nameWithOwner")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let number = node.pointer("/issue/number").and_then(Value::as_u64);
+    if node.get("__typename").and_then(Value::as_str) != Some("IssueComment")
+        || number != Some(wants)
+        || !repository.eq_ignore_ascii_case(scope)
+    {
+        return Err(refused());
+    }
+    Ok(())
 }
 
 /// The GraphQL node id of one issue: `addReaction` and `removeReaction` take a node id, never a number.
@@ -753,10 +802,14 @@ impl IssueSource for GitHub {
     ) -> Result<IssueDetail> {
         scope_ok(scope)?;
         key_ok(key)?;
-        // A comment id is used as the subject exactly as the detail carried it: GitHub's node ids are what its
-        // reaction mutation takes, and it refuses one it cannot resolve. The issue itself is looked up by its node id.
+        // A comment id is the subject exactly as the detail carried it, but node ids are global: prove it belongs to
+        // this issue before writing to it, or the reaction could land outside the scope the route checked. The issue
+        // itself is looked up by its node id.
         let subject = match comment {
-            Some(comment) => comment.to_owned(),
+            Some(comment) => {
+                comment_belongs(&self.cwd, scope, key, comment).await?;
+                comment.to_owned()
+            }
             None => node_id(&self.cwd, scope, key).await?,
         };
         let mutation = if on {
