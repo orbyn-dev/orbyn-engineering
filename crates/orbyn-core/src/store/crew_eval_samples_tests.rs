@@ -458,7 +458,10 @@ fn migration_88_adds_the_samples_table_to_an_old_database() {
     let versions: Vec<i64> = migrations::MIGRATIONS.iter().map(|(v, _)| *v).collect();
     assert!(versions.windows(2).all(|w| w[1] == w[0] + 1));
     assert!(versions.contains(&88));
-    assert_eq!(migrations::MIGRATIONS.last().unwrap().0, 88);
+    // This test proves migration 88 applies to an at-87 database; the latest version moves with every new
+    // migration, so read it from the list rather than pinning a number that the next migration would break.
+    let latest = migrations::MIGRATIONS.last().unwrap().0;
+    assert!(latest >= 88);
 
     let dir = TempDir::new();
     let path = dir.path().join("at87.db");
@@ -498,7 +501,10 @@ fn migration_88_adds_the_samples_table_to_an_old_database() {
     let store = Store::open(&path, "a").unwrap();
     assert_eq!(
         store.upgrade(),
-        Some(orbyn_contracts::DatabaseUpgrade { from: 87, to: 88 })
+        Some(orbyn_contracts::DatabaseUpgrade {
+            from: 87,
+            to: migrations::MIGRATIONS.last().unwrap().0,
+        })
     );
     assert_eq!(store.crew_task(&old_id).unwrap().unwrap().id, old_id);
     let new = store.create_crew_task(&brief(), &key(), "run-01").unwrap();
