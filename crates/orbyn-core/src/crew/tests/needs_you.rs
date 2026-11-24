@@ -162,6 +162,36 @@ async fn a_question_that_holds_a_secret_is_hidden_and_no_part_of_it_is_shown() {
 }
 
 #[tokio::test]
+async fn a_refusal_that_holds_a_secret_is_not_a_hidden_question() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let secret = format!("ghp_{}", "a1B2c3D4e5".repeat(4));
+    let (answer, error) = w
+        .start(
+            brief(json!({ "engine": { "id": "ghost", "assigned_by": "lead" } })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    w.core
+        .record_result(
+            &w.task(&id),
+            orbyn_contracts::ResultState::NeedsPerson,
+            None,
+            &format!("It refused with {secret}."),
+            None,
+        )
+        .unwrap();
+
+    let item = item_of(&w, NeedsYouKind::CouldNotStart, &id);
+    // The latest refusal holds a secret, so the scan hid it: the reason is the fixed words, and the text is not shown.
+    assert_eq!(item.reason.as_deref(), Some("The worker never ran."));
+    // A could-not-start item has no question to hide.
+    assert!(item.question.is_none());
+    assert!(!item.question_hidden);
+}
+
+#[tokio::test]
 async fn a_task_waiting_on_a_manual_check_is_manual_check_and_not_dismissible() {
     let w = crew(arc(|_, _| Turn::Hang)).await;
     let id = needs_person_task(&w, "A manual check waits.").await;
