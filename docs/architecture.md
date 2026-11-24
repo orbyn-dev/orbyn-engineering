@@ -2872,7 +2872,9 @@ longer in the user-role prompt.
 A crew worker is refused every `orbyn_*` tool that makes a thread or schedule or reads another thread (H3, H1).
 The protected `.orbyn/crew.json` may lower H4/H5 through `bus: { exchanges, posts }`.
 Start validates this section before admission. Existing whole-document, class and pin failures keep
-the router's `needs_person` refusal and audit without launching a worker. Each post (including an ask) and board write reads
+the router's `needs_person` refusal and audit without launching a worker; the one exception is a start that would write
+and inherits the repository's checks, which reads `.orbyn/crew.json` at the commit it starts from, so a file that cannot
+be read there refuses the start before routing, with the reader's problem and no task stored. Each post (including an ask) and board write reads
 the lead checkout's committed HEAD and accepted default-branch rules through the bounded plain-blob
 reader and remembered ancestry check. The stricter repository values are combined with the current
 host ceilings, never written into the process-wide bus. Caller/lead/worker project bindings come from
