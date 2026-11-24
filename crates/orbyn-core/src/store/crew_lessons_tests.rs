@@ -623,6 +623,7 @@ fn the_use_lessons_switch_is_on_until_a_person_turns_it_off() {
     assert!(!store.crew_use_lessons("p1").unwrap());
 }
 
+#[test]
 fn a_write_keeps_at_most_five_evidence_ids_in_the_row_and_the_audit() {
     let (_dir, store) = open();
     let mut new = lesson("repo", Some("p1"), "person", "Use pnpm.", None);
