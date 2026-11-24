@@ -6,8 +6,10 @@ import type { MockResponse, Scenario } from "./api.ts";
  * that follow the design's states. It stands in for the service and ships nowhere: `mock/plugin.ts` loads it in the dev
  * server only, and the production build assertions check that no mock reached the output. Scenarios: "crew-lessons" (five
  * lessons: three in the repository and two for all of them, one disabled and one hidden), "crew-lessons-empty" (nothing
- * learned yet), "crew-lessons-unreadable" (every read answers 500, as a damaged store does) and "crew-lessons-off" (the
- * repository's switch is off, every lesson still readable). Every other scenario answers an empty list.
+ * learned yet), "crew-lessons-unreadable" (every read answers 500, as a damaged store does), "crew-lessons-off" (the
+ * repository's switch is off, every lesson still readable) and "crew-lessons-states" (one lesson left out of a brief,
+ * one over the five-lesson brief limit, one active confirmed escape and one repository revert). Every other scenario
+ * answers an empty list.
  */
 
 const T = "2026-11-07T17:00:00Z";
@@ -137,6 +139,16 @@ export function createLessonsMock() {
       rows = rows.map((one) => (one.id === "les-loginlink" ? { ...one, state: "disabled", in_next_brief: false } : one));
     if (scenario === "crew-proposals-approved")
       rows = rows.map((one) => ({ ...one, skill: { name: "redirect-checks" }, in_next_brief: false }));
+    // The remaining KC5 card states: one lesson left out of a brief, one over the five-lesson brief limit, one active
+    // confirmed escape and one revert on a repository lesson.
+    if (scenario === "crew-lessons-states")
+      rows = rows.map((one): Lesson => {
+        if (one.id === "les-returnto") return { ...one, left_out_of: 1 };
+        if (one.id === "les-cookies") return { ...one, hidden_by_cap: false, in_next_brief: false };
+        if (one.id === "les-session") return { ...one, state: "active", in_next_brief: true };
+        if (one.id === "les-return") return { ...one, scope: "repo", repo: "p-app" };
+        return one;
+      });
     useLessons = scenario !== "crew-lessons-off";
     // With the repository switch off, in_next_brief is false for every lesson of it, as the service says.
     if (!useLessons) rows = rows.map((one) => ({ ...one, in_next_brief: false }));

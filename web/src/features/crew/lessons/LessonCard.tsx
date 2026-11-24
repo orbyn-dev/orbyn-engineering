@@ -1,6 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { toFailure } from "../../../lib/useAsync";
-import { navigate } from "../../../product/state/route";
+import { navigate, routeHref } from "../../../product/state/route";
 import { ErrorState, Loading } from "../../../product/ui/states";
 import { ConfirmDialog } from "../../../ui/Dialog";
 import { Frame } from "../shared/Frame";
@@ -11,19 +11,19 @@ import {
   EVERY_REPOSITORY,
   SCOPE_WORD,
   SOURCE_CHIP,
-  SOURCE_WORD,
   briefsWord,
-  editedWords,
-  evidenceLine,
+  evidenceWord,
   happenedWords,
   moment,
+  sourceWordOf,
   usedWords,
 } from "./model";
 import { takeAdded } from "./saved";
-import type { Lesson, LessonDetail } from "./types";
+import type { Evidence, Lesson, LessonDetail } from "./types";
 import { UNDO_MS, showLessonUndo } from "./undo";
 import type { LessonReader } from "./useLesson";
 import { useLesson } from "./useLesson";
+import { useLessons } from "./useLessons";
 import {
   BackToLessons,
   FactsBox,
@@ -81,6 +81,10 @@ export function LessonCard({ id, repo, name }: { id: string; repo: string; name:
 function Loaded({ read, repo, name }: { read: LessonReader & { status: "ready" }; repo: string; name: string }) {
   const detail = read.detail;
   const lesson = detail.lesson;
+  // The repository's switch comes from the lessons list read. Until that read is ready it is unknown, not on: the card
+  // says neither the limit nor the switch-off sentence for a switch it has not seen.
+  const list = useLessons(repo, "all");
+  const switchOn = list.status === "ready" ? list.list.use_lessons : null;
   const [editing, setEditing] = useState(false);
   // A save's line depends on the read's own answer: a lesson the next brief will not carry does not claim it will.
   const [saved, setSaved] = useState<{ kind: "added" | "edited"; inNextBrief: boolean } | null>(null);
@@ -212,7 +216,7 @@ function Loaded({ read, repo, name }: { read: LessonReader & { status: "ready" }
         </button>
       </div>
       <WhereItCameFrom detail={detail} repo={repo} name={name} />
-      <HowItIsUsed lesson={lesson} />
+      <HowItIsUsed lesson={lesson} switchOn={switchOn} />
       {dialog === "promote" ? (
         <PromoteConfirm
           detail={detail}
@@ -255,33 +259,66 @@ function AppliesTo({ lesson, repo, name }: { lesson: Lesson; repo: string; name:
 
 /**
  * Where the lesson came from, as the read carries it: its source, the evidence ids only (never their content), what its
- * kind of lesson means, when it was learned, where it applies and whether the person edited it.
+ * kind of lesson means, when it was learned, where it applies and when it was last updated.
  */
 function WhereItCameFrom({ detail, repo, name }: { detail: LessonDetail; repo: string; name: string }) {
   const lesson = detail.lesson;
+  const sourceWord = sourceWordOf(lesson.source, detail.evidence);
   const rows: (readonly [string, ReactNode])[] = [
-    ["Learned from", <span className={SOURCE_CHIP[lesson.source]}>{SOURCE_WORD[lesson.source]}</span>],
+    ["Learned from", <span className={SOURCE_CHIP[lesson.source]}>{sourceWord}</span>],
   ];
-  const evidence = evidenceLine(detail.evidence);
-  // Evidence is ids only: a lesson with none (a person's correction, or one added by hand) has no Source row.
-  if (evidence) rows.push(["Source", evidence]);
-  rows.push(["What happened", happenedWords(lesson.source)]);
+  // Evidence is ids only. A person's lesson with none was added by hand, and says so; other sources always carry one.
+  if (detail.evidence.length > 0) rows.push(["Source", <EvidenceIds evidence={detail.evidence} />]);
+  else if (lesson.source === "person") rows.push(["Source", `${sourceWord} · no task, escape or revert behind it`]);
+  rows.push(["What happened", happenedWords(lesson)]);
   rows.push(["Learned", moment(lesson.created_at)]);
   rows.push(["Applies to", <AppliesTo lesson={lesson} repo={repo} name={name} />]);
-  rows.push(["Edited", editedWords(lesson)]);
+  rows.push(["Updated", moment(lesson.updated_at)]);
   return <FactsBox title="Where it came from" rows={rows} column={112} />;
 }
 
+/** The evidence ids as their own elements: a task opens its thread, an escape the Escapes page, and a revert is plain text. */
+function EvidenceIds({ evidence }: { evidence: readonly Evidence[] }) {
+  return (
+    <>
+      {evidence.map((one, index) => (
+        <Fragment key={`${one.kind}:${one.id}`}>
+          {index > 0 ? ", " : null}
+          <span>
+            {one.kind === "task" ? (
+              <a href={routeHref({ name: "thread", id: one.id })} style={{ color: "var(--color-text)" }}>
+                {evidenceWord(one)}
+              </a>
+            ) : one.kind === "escape" ? (
+              <a
+                href={routeHref({ name: "settings", section: "crew", crewPage: "escapes" })}
+                style={{ color: "var(--color-text)" }}
+              >
+                {evidenceWord(one)}
+              </a>
+            ) : (
+              evidenceWord(one)
+            )}
+          </span>
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 /**
- * A lesson's state as the card says it: off, on and in the next brief, or on and out of it for the read's own reason.
+ * A lesson's state as the card says it: off, on and in the next brief, or on and out of it for the reason it knows.
  * `in_next_brief` is the contract's answer, so the card never claims briefs a lesson the read says misses the next one.
+ * The switch is null until the list read is ready; an unknown switch says only that the lesson misses the next brief.
  */
-function stateWords(lesson: Lesson): string {
+function stateWords(lesson: Lesson, switchOn: boolean | null): string {
   if (lesson.state === "disabled") return "Off: stays here and does not go into a brief";
   if (lesson.in_next_brief) return "On: goes into briefs";
   if (lesson.hidden_by_cap) return "On, but over the cap: readable under Hidden, never in a brief";
-  if (lesson.skill) return "On, but it became a skill: it leaves briefs while that skill exists";
-  return "On, but not in the next brief right now: the repository’s switch, the newest five or the 1500-character cap.";
+  if (switchOn === false) return "On, not in the next brief: lessons are switched off for this repository.";
+  if (lesson.skill) return "On, not in the next brief: it is now a skill.";
+  if (switchOn === true) return "On, not in the next brief: this repository is over the 5-lesson limit for a brief.";
+  return "On, not in the next brief.";
 }
 
 /**
@@ -289,9 +326,9 @@ function stateWords(lesson: Lesson): string {
  * what a worker gets, the two checks on the way in and at start, what never reads it, whether it helped (not measured yet)
  * and where it is kept.
  */
-function HowItIsUsed({ lesson }: { lesson: Lesson }) {
+function HowItIsUsed({ lesson, switchOn }: { lesson: Lesson; switchOn: boolean | null }) {
   const rows: (readonly [string, ReactNode])[] = [
-    ["State", stateWords(lesson)],
+    ["State", stateWords(lesson, switchOn)],
     ["Used", usedWords(lesson)],
   ];
   if (lesson.left_out_of > 0) rows.push(["Left out", `${briefsWord(lesson.left_out_of)}. That task started without it`]);
@@ -412,7 +449,7 @@ function PromoteConfirm({
       <FactsBox
         rows={[
           ["Lesson", lesson.text],
-          ["Learned from", SOURCE_WORD[lesson.source]],
+          ["Learned from", sourceWordOf(lesson.source, detail.evidence)],
           ["Now applies to", `This repository (${name})`],
           ["Would apply to", "All repositories"],
         ]}
@@ -453,7 +490,7 @@ function MoveBackConfirm({
       <FactsBox
         rows={[
           ["Lesson", lesson.text],
-          ["Learned from", SOURCE_WORD[lesson.source]],
+          ["Learned from", sourceWordOf(lesson.source, detail.evidence)],
           ["Now applies to", "All repositories"],
           ["Would apply to", `This repository (${name})`],
         ]}

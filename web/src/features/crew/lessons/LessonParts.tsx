@@ -201,7 +201,7 @@ export function PromoteRefused({ onEdit }: { onEdit(): void }) {
       <Ic n="alert" sm style={{ marginTop: "1px", color: "var(--color-danger)" }} />
       <span className="cx-why">
         <b>Can’t promote this lesson</b>
-        <span>It names a path, and a lesson for all repositories may name a path class, never a path. Edit the text, then promote it.</span>
+        <span>It names a path, so it can’t apply to all repositories. Edit the text first.</span>
       </span>
       <span className="cx-acts">
         <button type="button" className="cx-ghost" onClick={onEdit}>
