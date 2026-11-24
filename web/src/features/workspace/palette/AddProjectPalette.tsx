@@ -21,21 +21,26 @@ export function cloneAddress(text: string): string {
   return /^[\w.-]+\/[\w.-]+$/.test(typed) && !/^\.{1,2}\//.test(typed) ? `https://github.com/${typed}.git` : typed;
 }
 
+/** A folder this dialog hands Git as typed: a drive path, home, the current folder or a UNC share. */
+const isLocalPath = (address: string) => /^(?:[A-Za-z]:[\\/]|\\\\|~[\\/]|\/|\.{1,2}[\\/])/.test(address);
+
 /**
  * Why the typed clone source cannot be sent, or null when it can. The Add project flow hands Git any
  * source it reads: an http(s), ssh or file URL, an scp-like address, an owner/name on GitHub or a local
- * path (the clone jobs take all of them), so only what cannot be a source at all is refused. The
- * Repositories dialog's check supplies the two rules every source shares, an empty address and one
- * with a space or control character in it; its https-or-ssh-only rule is that page's route, not this
- * flow's.
+ * path, so only what cannot be a source at all is refused. The Repositories dialog's check supplies its
+ * empty-address rule and its space-or-control-character one, which this flow applies to an address but
+ * not to a local path, spaces and all (Git takes a folder with spaces); its https-or-ssh-only rule is
+ * that page's route, not this flow's.
  */
 export function cloneProblem(text: string): string | null {
   const address = cloneAddress(text);
   const checked = checkCloneSource(address);
+  const local = isLocalPath(address);
   // eslint-disable-next-line no-control-regex
-  if (!checked.ok && (address === "" || /[\u0000-\u001f\u007f\s]/.test(address))) return checked.reason;
+  const bad = /[\u0000-\u001f\u007f]/.test(address) || (!local && /\s/.test(address));
+  if (!checked.ok && (address === "" || bad)) return checked.reason;
   // A scheme with nothing after it names no host and no path, so there is nothing to clone.
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\/*$/.test(address)) return "Enter the address to clone from.";
+  if (!local && /^[A-Za-z][A-Za-z0-9+.-]*:\/\/*$/.test(address)) return "Enter the address to clone from.";
   return null;
 }
 

@@ -7,9 +7,9 @@
 const INVALID_ADDRESS =
   /does not exist|does not appear to be a git repository|not a git repository|bad\/illegal format|bad url|no such file or directory|repository name is invalid/i;
 
-/** Git reached the server and the repository is absent, or this computer is not allowed to read it. */
+/** Git reached the server and the repository is absent, or this computer is not allowed to read it: a 401, 403 or 404 answer lands here. */
 const NO_ACCESS =
-  /not found|authentication|permission denied|publickey|could not read (username|from remote)|access denied|invalid username or password|\b40[13]\b/i;
+  /not found|authentication|permission denied|publickey|could not read (username|from remote)|access denied|invalid username or password|\b40[134]\b/i;
 
 /** Git could not reach the server: a name that does not resolve, a refused or timed-out connection. */
 const UNREACHABLE =

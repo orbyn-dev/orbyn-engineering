@@ -25,10 +25,25 @@ it("takes every Git source the Add project flow clones from", () => {
   }
 });
 
+it("takes a local path that holds spaces, and refuses an address that does", () => {
+  for (const path of [
+    "C:\\Users\\me\\My Projects\\repo",
+    "~/My Projects/repo",
+    "/Users/me/My Projects/repo",
+    "./My Projects/repo",
+  ]) {
+    expect(cloneProblem(path), path).toBeNull();
+  }
+  // The issue's repro: a sentence where an address belongs, and a relative path that is not one of
+  // the folder shapes the dialog takes.
+  for (const address of ["bad url with spaces", "My Projects/repo"]) {
+    expect(cloneProblem(address), address).toBe("The address cannot hold spaces or control characters.");
+  }
+});
+
 it("refuses only what cannot be a clone source, and says why", () => {
   expect(cloneProblem("")).toBe("Enter a Git URL.");
   expect(cloneProblem("   ")).toBe("Enter a Git URL.");
-  // The issue's repro: a sentence where an address belongs.
-  expect(cloneProblem("bad url with spaces")).toBe("The address cannot hold spaces or control characters.");
+  expect(cloneProblem("bad\u0000url")).toBe("The address cannot hold spaces or control characters.");
   expect(cloneProblem("https://")).toBe("Enter the address to clone from.");
 });

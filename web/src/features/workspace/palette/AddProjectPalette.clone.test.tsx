@@ -39,8 +39,9 @@ it("keeps the Clone dialog open with the reason for an address it cannot send, a
 });
 
 it.each([
-  // The flows the clone jobs take beyond a GitHub address: a local path and an http URL are sent as typed.
-  ["/Users/me/repo.git", "/Users/me/repo.git"],
+  // The flows the clone jobs take beyond a GitHub address: a local path (spaces and all) and an
+  // http URL are sent as typed.
+  ["/Users/me/My Projects/repo.git", "/Users/me/My Projects/repo.git"],
   ["http://127.0.0.1:1234/x.git", "http://127.0.0.1:1234/x.git"],
   ["orbyn-dev/orbyn-notes", "https://github.com/orbyn-dev/orbyn-notes.git"],
 ])("sends %s, without a validation stop", async (typed, sent) => {
