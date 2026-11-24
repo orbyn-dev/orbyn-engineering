@@ -1,5 +1,5 @@
-//! Crew lessons at rest (migrations 80, 81 and 84, KC5 slices 1 to 3): the short, device-local sentences the crew keeps
-//! about one repository or all of them, with where each came from.
+//! Crew lessons at rest (migrations 80, 81, 84 and 85, KC5 slices 1 to 3 and KC9): the short, device-local sentences the
+//! crew keeps about one repository or all of them, with where each came from.
 //!
 //! A lesson is data in a brief, never a rule: nothing here routes, verifies, holds a lease, reads an answer key or
 //! changes a check. The table holds ids, enums and one short text; evidence is ids only, never content. It is device
@@ -21,6 +21,10 @@
 //! is the 10 s Undo, and `crew_lessons_forgotten` keeps a purged lesson's fingerprint so it is never written again. A
 //! soft-deleted row is hidden from every public read except the undo's own; every public lesson read or write first
 //! purges the rows whose undo window ended, each with its own `crew.lesson.purge` audit row in the same transaction.
+//!
+//! KC9 adds the two grouping columns: `check_kind` is a fingerprint lesson's sorted, deduped failing kinds joined with
+//! `+`, and `path_class` is the path area of a fingerprint failure or an escape; both are set once at write time and a
+//! person lesson has neither. `store::crew_skill_proposals` reads them to group three or more active lessons.
 
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde::{Deserialize, Serialize};
@@ -56,6 +60,10 @@ pub struct CrewLesson {
     pub project_id: Option<String>,
     /// `fingerprint`, `escape`, `revert` or `person`.
     pub source: String,
+    /// The failing check kinds of a fingerprint lesson, sorted, deduped and joined with `+`; none for the other sources.
+    pub check_kind: Option<String>,
+    /// The path area a fingerprint failure or an escape names; none for a person's lesson.
+    pub path_class: Option<String>,
     pub text: String,
     /// The dedupe key, when the lesson has one (a person's lesson by hand has none).
     pub fingerprint: Option<String>,
@@ -86,6 +94,8 @@ pub struct NewCrewLesson {
     pub scope: String,
     pub project_id: Option<String>,
     pub source: String,
+    pub check_kind: Option<String>,
+    pub path_class: Option<String>,
     pub text: String,
     pub fingerprint: Option<String>,
     pub evidence: Vec<LessonEvidence>,
@@ -93,13 +103,15 @@ pub struct NewCrewLesson {
     pub names_path: bool,
 }
 
-fn lesson_row(row: &Row<'_>) -> rusqlite::Result<CrewLesson> {
+pub(super) fn lesson_row(row: &Row<'_>) -> rusqlite::Result<CrewLesson> {
     let evidence: String = row.get("evidence")?;
     Ok(CrewLesson {
         id: row.get("id")?,
         scope: row.get("scope")?,
         project_id: row.get("project_id")?,
         source: row.get("source")?,
+        check_kind: row.get("check_kind")?,
+        path_class: row.get("path_class")?,
         text: row.get("text")?,
         fingerprint: row.get("fingerprint")?,
         evidence: serde_json::from_str(&evidence).map_err(|error| {
@@ -579,14 +591,16 @@ fn write_lesson(tx: &Transaction<'_>, new: &NewCrewLesson) -> Result<Option<Crew
     )?;
     tx.execute(
         "INSERT INTO crew_lessons
-            (id, scope, project_id, source, text, fingerprint, evidence, state, hidden_by_cap,
-             edited_by_person, names_path, uses, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'active', 0, ?8, ?9, 0, ?10, ?10)",
+            (id, scope, project_id, source, check_kind, path_class, text, fingerprint, evidence, state,
+             hidden_by_cap, edited_by_person, names_path, uses, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'active', 0, ?10, ?11, 0, ?12, ?12)",
         params![
             id,
             new.scope,
             new.project_id,
             new.source,
+            new.check_kind,
+            new.path_class,
             new.text,
             new.fingerprint,
             serde_json::to_string(kept)?,

@@ -78,6 +78,7 @@ mod model_ids;
 mod needs_you;
 mod overrides;
 mod person_check;
+mod proposals;
 mod protect;
 mod provider_facts;
 mod resume;

@@ -247,6 +247,12 @@ impl SkillService {
         self.local.write(write, &reserved)
     }
 
+    /// Whether `skills-local` holds a readable skill of this name, so a lesson that became a skill can leave the
+    /// brief while that skill exists and return when its folder is removed. Reads the device only.
+    pub fn local_skill_exists(&self, name: &str) -> bool {
+        self.local.contains(name)
+    }
+
     pub fn search(&self, query: &str, allowed: &[String]) -> Result<Vec<Value>> {
         let terms: Vec<String> = query
             .to_lowercase()

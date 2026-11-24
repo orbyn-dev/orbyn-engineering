@@ -57,6 +57,9 @@ mod crew_lessons;
 mod crew_lessons_tests;
 mod crew_merge_corrections;
 mod crew_merge_forge;
+mod crew_skill_proposals;
+#[cfg(test)]
+mod crew_skill_proposals_tests;
 pub(crate) use crew_merge_corrections::ForgeCorrection;
 #[cfg(test)]
 mod code_run_waits_tests;
@@ -166,6 +169,9 @@ pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
 pub(crate) use crew_review_controls::{ReviewConsent, ReviewControl};
 pub(crate) use crew_review_publications::{Publication, PublicationState};
 pub use crew_runs::CrewRun;
+pub use crew_skill_proposals::{
+    CrewSkillProposal, NewCrewSkillProposal, PROPOSAL_TEXT_MAX, ReadyLessonGroup,
+};
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};

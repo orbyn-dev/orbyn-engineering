@@ -130,6 +130,7 @@ fn the_answer_key_lives_in_its_own_table() {
         "crew_results",
         "crew_lessons",
         "crew_lessons_forgotten",
+        "crew_skill_proposals",
     ] {
         let rows: Vec<String> = {
             let conn = store.reader();
@@ -397,6 +398,7 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_reviews",
             "crew_route_decisions",
             "crew_runs",
+            "crew_skill_proposals",
             "crew_tasks",
             "crew_watch_changes",
             "crew_watch_state"

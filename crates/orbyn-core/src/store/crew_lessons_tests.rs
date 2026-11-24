@@ -69,6 +69,8 @@ fn lesson(
         scope: scope.to_owned(),
         project_id: project.map(str::to_owned),
         source: source.to_owned(),
+        check_kind: None,
+        path_class: None,
         text: text.to_owned(),
         fingerprint: fingerprint.map(str::to_owned),
         evidence: vec![LessonEvidence {
