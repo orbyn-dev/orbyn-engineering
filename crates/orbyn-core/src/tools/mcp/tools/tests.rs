@@ -484,6 +484,7 @@ impl IssueSource for FakeIssues {
             comments: vec![],
             linked_pull_requests: vec![],
             linked_threads: vec![],
+            reactions: None,
         })
     }
 }
