@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../mock/api";
+import { MOCK_CREW } from "../../../../mock/flow";
 import { useConnection } from "../../../product/state/connection";
 import { installMockFetch } from "../../../test-support";
 import { useWrites } from "../writes/store";
@@ -22,10 +23,13 @@ beforeEach(() => {
 });
 
 const posts = () => vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST");
+const urls = () => vi.mocked(fetch).mock.calls.map(([url]) => String(url));
 const TITLE = "Add tests for the redirect, including //evil.com";
 
-async function open(scenario: "crew" | `crew-${string}`) {
+async function open(scenario: "crew" | `crew-${string}`, options: { boardFails?: boolean } = {}) {
   mock.reset(scenario);
+  // The row is described by its item alone, so a board that cannot be read changes nothing; the old read may be gone.
+  if (options.boardFails) mock.fail("/api/crew/flow/board", 4, 503, "unavailable");
   const user = userEvent.setup();
   render(<NeedsYouInbox />);
   const list = await screen.findByRole("list", { name: "Needs you" });
@@ -39,7 +43,8 @@ async function open(scenario: "crew" | `crew-${string}`) {
 
 describe("a task whose worker could not be stopped (kc2-close-lead-could-not-stop)", () => {
   it("is a row with the task's name, its engine and model, the service's sentence, Stop again and Open task, and no Dismiss", async () => {
-    const { row } = await open("crew-could-not-stop");
+    // The board is failing too: every one of those fields comes from the needs-you item.
+    const { row } = await open("crew-could-not-stop", { boardFails: true });
     expect(row).toHaveTextContent(`Could not stop: ${TITLE}`);
     expect(row).toHaveTextContent("codex · GPT-5.5");
     expect(row).toHaveTextContent("The worker could not be stopped. Stop it again.");
@@ -83,14 +88,21 @@ describe("a task whose worker could not be stopped (kc2-close-lead-could-not-sto
     expect(stop).toHaveAttribute("title", "Not available from another computer");
   });
 
-  it("names the task by its id when its board cannot be read, and is not an error", async () => {
-    mock.reset("crew-could-not-stop");
-    mock.fail("/api/crew/flow/board", 4, 503, "unavailable");
-    render(<NeedsYouInbox />);
-    const list = await screen.findByRole("list", { name: "Needs you" });
-    const row = await waitFor(() => within(list).getAllByRole("listitem").find((one) => one.getAttribute("data-kind") === "could_not_stop")!);
+  it("names an item with no name by its id, never by the board's card", async () => {
+    // The board still has a card named "Add tests for the redirect, including //evil.com"; the item has no name, so the id wins.
+    const { row } = await open("crew-could-not-stop-no-name");
     expect(row).toHaveTextContent("Could not stop: Task b-verifying");
-    expect(screen.queryByText(/Can’t read tasks that could not be stopped/)).toBeNull();
+    expect(within(row).getByRole("button", { name: "Stop again: Task b-verifying" })).toBeEnabled();
+    expect(within(row).getByRole("button", { name: "Open task: Task b-verifying" })).toBeEnabled();
+  });
+
+  it("makes no board read of its own for a stopped task", async () => {
+    await open("crew-could-not-stop");
+    // The could-not-start source reads the Needs you column; wait for that read, then look at every board read sent.
+    await waitFor(() => expect(urls().some((url) => url.startsWith("/api/crew/flow/board"))).toBe(true));
+    const boards = urls().filter((url) => url.startsWith("/api/crew/flow/board"));
+    expect(boards.filter((url) => !url.includes("column=needs_you"))).toEqual([]);
+    expect(urls()).not.toContain(`/api/crew/flow/board?crew=${MOCK_CREW}`);
   });
 
   it("keeps the could-not-stop row when the crew list that names the watches cannot be read", async () => {

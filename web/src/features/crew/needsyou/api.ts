@@ -2,7 +2,6 @@
 // Held commands and stops come from `approvals/api.ts`. Reads only: no write path is added here, and every answer goes through
 // the guards that already exist. Every Crew route answers 404 while Crew Preview is off.
 import { ApiFailure, request } from "../../../api/client";
-import { boardApi } from "../board/api";
 import type { AutopilotReviewItem } from "../../../generated/AutopilotReviewItem";
 import type { AutopilotReviewQueue } from "../../../generated/AutopilotReviewQueue";
 import type { BackgroundCrew } from "../../../generated/BackgroundCrew";
@@ -35,27 +34,13 @@ async function pages<T extends { next_offset?: number | null }, Item>(path: (off
 
 export interface SharedWaiting {
   watch: { items: NeedsYouItem[]; names: Record<string, string> };
-  stopped: { items: NeedsYouItem[]; cards: Record<string, FlowCard> };
+  stopped: { items: NeedsYouItem[] };
 }
 
 async function watchNames(items: NeedsYouItem[], signal?: AbortSignal): Promise<Record<string, string>> {
   if (items.length === 0) return {};
   const crews = await pages<BackgroundCrewList, BackgroundCrew>((offset) => `/api/crew/background?limit=${PAGE}&offset=${offset}`, (page) => page.crews, signal);
   return Object.fromEntries(crews.map((crew) => [crew.id, crew.name]));
-}
-
-async function stoppedCards(items: NeedsYouItem[], signal?: AbortSignal): Promise<Record<string, FlowCard>> {
-  const crews = [...new Set(items.flatMap((one) => (one.crew_id ? [one.crew_id] : [])))];
-  const boards = await Promise.all(
-    crews.map((crew) =>
-      boardApi.board({ crew, engine: null, kind: null }, signal).catch((failure: unknown) => {
-        if (signal?.aborted) throw failure;
-        return null;
-      }),
-    ),
-  );
-  const cards = boards.flatMap((board) => board?.columns.flatMap((column) => column.cards) ?? []);
-  return Object.fromEntries(cards.map((card) => [card.id, card]));
 }
 
 export const needsApi = {
@@ -72,30 +57,26 @@ export const needsApi = {
    * The shared Needs you read, once, for the kinds this inbox assembles from it: the watch rows (KC6: a watch that turned failing,
    * and one whose checks in a row could not run) and the tasks whose worker could not be stopped (KC2). Every other item is
    * assembled by its own source in `useNeedsYou`. A watch row names its crate through the background crew list, read for the name
-   * only. A stopped task's item names only ids, so its name and engine come from its crew's board when the board has the card; a
-   * board that cannot be read leaves the task named by its id, which is not a failed source. A service without the read answers 404
-   * and an older one never sends a kind: either way the rows are not drawn, which is not an error.
+   * only. A stopped task's item carries its own name, engine and model, so no board is read for it. A service without the read
+   * answers 404 and an older one never sends a kind: either way the rows are not drawn, which is not an error.
    */
   async sharedWaiting(signal?: AbortSignal): Promise<SharedWaiting> {
     let all: NeedsYouItem[];
     try {
       all = (await get<NeedsYouList>("/api/crew/needs-you", signal)).items;
     } catch (failure) {
-      if (failure instanceof ApiFailure && failure.status === 404) return { watch: { items: [], names: {} }, stopped: { items: [], cards: {} } };
+      if (failure instanceof ApiFailure && failure.status === 404) return { watch: { items: [], names: {} }, stopped: { items: [] } };
       throw failure;
     }
     const watchItems = all.filter((one) => one.kind === "watch_failing" || one.kind === "watch_could_not_run");
     const stoppedItems = all.filter((one) => one.kind === "could_not_stop");
     // A watch's name is enrichment: when the crew list cannot be read the row keeps its id (as `watchItems` does for an unknown crew),
     // and the stopped-task rows still draw. An abort still stops the read.
-    const [names, cards] = await Promise.all([
-      watchNames(watchItems, signal).catch((failure: unknown) => {
-        if (signal?.aborted) throw failure;
-        return {} as Record<string, string>;
-      }),
-      stoppedCards(stoppedItems, signal),
-    ]);
-    return { watch: { items: watchItems, names }, stopped: { items: stoppedItems, cards } };
+    const names = await watchNames(watchItems, signal).catch((failure: unknown) => {
+      if (signal?.aborted) throw failure;
+      return {} as Record<string, string>;
+    });
+    return { watch: { items: watchItems, names }, stopped: { items: stoppedItems } };
   },
   /** The background crews that have a run waiting for review, each with its runs. */
   async backgroundWaiting(signal?: AbortSignal): Promise<{ crew: BackgroundCrew; runs: BackgroundRun[] }[]> {
