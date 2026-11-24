@@ -18,6 +18,7 @@ import type { AcpSessionCapabilities } from "../../generated/AcpSessionCapabilit
 import type { EngineInstalls } from "../../generated/EngineInstalls";
 import type { HistoryScan } from "../../generated/HistoryScan";
 import type { HistorySessionImported } from "../../generated/HistorySessionImported";
+import type { KeybindingReset } from "../../generated/KeybindingReset";
 import type { ProjectScopeCatalog } from "../../generated/ProjectScopeCatalog";
 import type { ProviderList } from "../../generated/ProviderList";
 import type { RedactionPatternDetail } from "../../generated/RedactionPatternDetail";
@@ -74,6 +75,11 @@ export function readKeybindings(signal?: AbortSignal) {
 
 export function saveKeybinding(body: unknown) {
   return request<KeybindingsView>("POST", "/api/keybindings", body);
+}
+
+/** Drops the person's own rule for a command and context, so the built-in key shows again. */
+export function resetKeybinding(body: KeybindingReset) {
+  return request<KeybindingsView>("POST", "/api/keybindings/reset", body);
 }
 
 export function readDiagnostics(signal?: AbortSignal) {

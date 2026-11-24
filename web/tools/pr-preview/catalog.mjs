@@ -400,6 +400,31 @@ export const FRAMES = {
   "s-chat": { route: "#/settings/chat" },
   "s-diffs": { route: "#/settings/diffs" },
   "s-keybindings": { route: "#/settings/keybindings" },
+  // Keybindings Reset to default (Engineer designs v282): the scenarios move Command palette to mod+shift+p, and
+  // keybindings-reset-clash also puts Toggle sidebar on mod+k, so resetting Command palette creates the clash.
+  "s-x-keys-reset-menu": { route: "#/settings/keybindings", scenario: "keybindings-reset-moved", steps: [click("button", "More for Command palette")] },
+  "s-x-keys-reset-menu-default": { route: "#/settings/keybindings", scenario: "keybindings-reset-moved", steps: [click("button", "More for Toggle terminal")] },
+  "s-x-keys-reset-done": {
+    route: "#/settings/keybindings",
+    scenario: "keybindings-reset-moved",
+    steps: [click("button", "More for Command palette"), click("menuitem", "Reset to default")],
+  },
+  "s-x-keys-reset-undone": {
+    route: "#/settings/keybindings",
+    scenario: "keybindings-reset-moved",
+    steps: [click("button", "More for Command palette"), click("menuitem", "Reset to default"), click("button", "Undo")],
+  },
+  "s-x-keys-reset-clash": {
+    route: "#/settings/keybindings",
+    scenario: "keybindings-reset-clash",
+    steps: [click("button", "More for Command palette"), click("menuitem", "Reset to default")],
+  },
+  "s-x-keys-reset-narrow": {
+    route: "#/settings/keybindings",
+    scenario: "keybindings-reset-moved",
+    width: 640,
+    steps: [click("button", "More for Command palette")],
+  },
   "s-providers": { route: "#/settings/providers" },
   "s-threads": { route: "#/settings/threads" },
   "s-tasks": { route: "#/settings/tasks" },
