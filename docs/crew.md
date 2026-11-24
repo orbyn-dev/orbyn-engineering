@@ -1828,7 +1828,7 @@ On the web, one shared needs-you read draws the Inbox's watch and could-not-stop
 
 **As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342) and its service side is built (not run against a real service). KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
 
-**As built on 2026-11-24 (main `d84ebfa74`):** nothing below is ticked: no Kiro Crew feature has been run against a real service.
+**As built on 2026-11-24 (main `d84ebfa74`):** no Kiro Crew feature has been run against a real service, so only M21 and M24 are ticked (KC1 and KC4, on tests); the rest stay open or partial.
 
 | Feature | Service | Web | Still to build |
 |---|---|---|---|
