@@ -355,7 +355,7 @@ function AddedGroup({ items }: { items: AddedSkill[] }) {
 /**
  * One skill approved from Crew proposals, on its own page (KC9): what it does, where it came from, and how a worker gets it.
  * The read behind it carries the skill's name, its one line, the repository and how many lessons it came from; the approval
- * time, the lessons' own evidence and the files of skills-local are not in the contract, so those rows are left out.
+ * time and the files of skills-local are not in this read, so those rows are left out.
  */
 function PersonalSkill({ skill, heading }: { skill: AddedSkill; heading: RefObject<HTMLHeadingElement | null> }) {
   const summary: SkillSummary = { name: skill.name, category: "", description: skill.description, enabled: true };
