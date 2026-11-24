@@ -8,7 +8,6 @@ use super::autopilot_areas::{DAY, Rig, rig};
 use super::autopilot_watch::NOW;
 use super::harness::{Turn, brief, key, world};
 use crate::crew::Page;
-use crate::crew::escapes::ESCAPE_COUNT_ENGINES_MAX;
 use crate::error::CoreError;
 use orbyn_contracts as wire;
 
@@ -213,7 +212,6 @@ async fn a_cut_list_says_it_was_cut_and_keeps_the_busiest_engine() {
         cut.merges, 4,
         "the area's own total still counts every engine's merge, cut list or not"
     );
-    assert!(ESCAPE_COUNT_ENGINES_MAX >= 2);
 }
 
 #[tokio::test]

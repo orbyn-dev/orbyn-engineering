@@ -817,11 +817,9 @@ async fn counts_answer_one_areas_engines_and_bad_input_is_refused() {
     }
     // An unknown project is refused, never served as nothing.
     assert_eq!(
-        app.get(&format!(
-            "/api/crew/escapes/counts?project=nobody&area=src%2Fapp"
-        ))
-        .await
-        .0,
+        app.get("/api/crew/escapes/counts?project=nobody&area=src%2Fapp")
+            .await
+            .0,
         404
     );
     // A read never writes: the log is exactly as it was, and the counts route is not a state change.
