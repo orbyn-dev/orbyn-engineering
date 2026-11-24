@@ -1,9 +1,12 @@
-//! Windows and Linux build the shell state but cannot capture yet. Every capture is a capture error, and the page
-//! hides Snap Shot because `supported` is false.
+//! Windows and Linux build the shell state without support. Windows keeps the real capturer
+//! compiled and returns it from `capturer`, but `supported` stays false, so the flow never
+//! constructs it; Linux always answers a capture error. The page hides Snap Shot either way.
 
 #![cfg(not(target_os = "macos"))]
 
-use super::flow::{Captured, Capturer, Failure};
+use super::flow::Capturer;
+#[cfg(not(windows))]
+use super::flow::{Captured, Failure};
 use super::setup::SetupPlatform;
 use super::state::{Permissions, PlatformFacts};
 
@@ -35,12 +38,20 @@ impl SetupPlatform for StubSetup {
     fn open_screen_recording_settings(&self) {}
 }
 
-pub fn capturer(_own_bundle_id: &str) -> Box<dyn Capturer> {
+#[cfg(windows)]
+pub fn capturer(own_bundle_id: &str, include_accessibility: bool) -> Box<dyn Capturer> {
+    super::windows::capturer(own_bundle_id, include_accessibility)
+}
+
+#[cfg(not(windows))]
+pub fn capturer(_own_bundle_id: &str, _include_accessibility: bool) -> Box<dyn Capturer> {
     Box::new(StubCapturer)
 }
 
+#[cfg(not(windows))]
 struct StubCapturer;
 
+#[cfg(not(windows))]
 impl Capturer for StubCapturer {
     fn capture_frontmost(
         &self,
@@ -66,11 +77,19 @@ mod tests {
             if cfg!(windows) { "windows" } else { "linux" }
         );
         assert!(facts.message.is_none());
-        let capturer = capturer("com.example.own");
-        assert!(matches!(
-            capturer.capture_frontmost(&|_, _| false),
-            Err(Failure::CaptureError)
-        ));
+        #[cfg(not(windows))]
+        {
+            let capturer = capturer("com.example.own", true);
+            assert!(matches!(
+                capturer.capture_frontmost(&|_, _| false),
+                Err(Failure::CaptureError)
+            ));
+        }
+        #[cfg(windows)]
+        {
+            // The capturer is never reached: `supported` stays false on Windows.
+            assert!(!facts.supported);
+        }
     }
 
     #[test]

@@ -3169,6 +3169,12 @@ fields (title, summary, files with a path and note, questions) and are bounded: 
 stops, a stored size of 128 KiB. Neither tool checks that the number names a real pull
 request, and `head_sha` is the agent's own claim.
 
+`orbyn_pull_request_list`, `orbyn_pull_request_read` and `orbyn_pull_request_checks` read the
+caller's own project's pull requests without an effect, showing only the agent-facing
+fields, cutting the read's body at 16 KiB with the issue framing markers removed, keeping
+no raw comment or check blobs and dropping the forge's check `description`, so forge text
+is only ever a JSON string value.
+
 ## Computer gateway
 
 The order is fixed: resolve the target, evaluate policy, write audit, act. Browser

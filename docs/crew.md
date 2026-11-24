@@ -1817,7 +1817,8 @@ worker, the secret scan on the way in and out) and builds no screen before its f
 whose worker has no run and nothing queued resumes once in its life: it keeps the same worker thread, answer
 key and budget, its lost turn counts as an attempt, and it is told to read the repository and continue from
 its last verified round. Reviewer lanes never resume, and a second death or restart stops the task
-`engine_error` exactly as before. Time the app was off spends no budget: the timer counts only up to the
+`engine_error` exactly as before, with a typed `stop_detail: "worker_stopped_twice"` naming the second death while
+every old reader still sees `engine_error`. Time the app was off spends no budget: the timer counts only up to the
 task's last recorded event, and `downtime_secs` keeps that off time out of later budget checks. The resume
 writes `crew.task.resumed` in the same transaction as the state, attempt and resume counters; a stop writes
 `crew.task.restart_stopped` with `why` (`reviewer`, `already_resumed`, `not_resumable` or `send_failed`) in
@@ -1840,12 +1841,12 @@ On the web, one shared needs-you read draws the Inbox's watch and could-not-stop
 | Feature | Service | Web | Still to build |
 |---|---|---|---|
 | KC2 close the lead | merged (#1355); Stop again retries a failed worker stop (#1417, #1423) | dialog (#1342) and the Inbox could-not-stop row (#1415) | the Board's Needs you card needs a service field (#1416) |
-| KC3 one needs-you | `working` and every service reader merged (#1368) | Inbox watch and could-not-stop rows (#1363, #1415) | board column, Map words and dashboard tiles from the field; a writer for `worker_stopped_twice` |
+| KC3 one needs-you | `working` and every service reader merged (#1368) | Inbox watch and could-not-stop rows (#1363, #1415) | board column, Map words and dashboard tiles from the field |
 | KC4 disk guard | background "Not started · Disk" row, migration 82 (#1362) | drawn (#1414) | a real run; the Windows branch is unobserved |
 | KC5 lessons | store and write path with brief injection, migrations 80 and 81 (#1350, #1359) | list (#1345) and card (#1349), hidden on a 404 | the lessons routes (slice 3) and EvalHistory samples (slice 4) |
 | KC6 watches | slices 1 to 3 (#1343, #1353) | watch pages and Inbox rows (#1363) | a run route for "Open the run" |
 | KC7 listeners | plumbing and `issue_label` (#1364) | none needed | `dependency_update` needs a reader feed (#1360) |
-| KC8 resume | merged (#1344) | card line (#1340) | the Inbox row |
+| KC8 resume | merged (#1344); the second death's Inbox item names `stop_detail: worker_stopped_twice` (migration 86) | card line (#1340) | the web Inbox row |
 | KC9 skill proposals | the `skills-local` area and its one writer (#1366, #1411); native discovery of the local skills for Claude (per-run read-only copy, built after this snapshot) | Skills group, proposals, review page, read error (#1358, #1409), hidden on a 404 | the proposal store and the Approve/Dismiss routes; a Windows junction check (#1406) |
 | KC10 notifications | the once-per-item claim, migration 83 (#1418) | not built | the notification, its settings switch |
 

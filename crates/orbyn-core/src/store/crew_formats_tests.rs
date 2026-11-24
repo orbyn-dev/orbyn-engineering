@@ -683,6 +683,81 @@ fn migration_79_gives_an_old_run_no_resume_and_counts_the_one_after_it() {
     assert_eq!(count(&again, "crew_runs"), 1);
 }
 
+#[test]
+fn migration_86_adds_a_typed_stop_detail_without_a_rebuild() {
+    let dir = TempDir::new();
+    let old = format!("sha256:{}", "6".repeat(64));
+    let fresh = format!("sha256:{}", "7".repeat(64));
+    // A database an older install left at 85, with a stopped task an old restart wrote.
+    let (path, conn) = database(&dir, 85);
+    conn.execute(
+        "INSERT INTO crew_tasks (id, crew_id, run_id, state, stop_reason, created_at, updated_at)
+         VALUES (?1, 'crew-1', 'run-old', 'stopped', 'engine_error', 'created', 'updated')",
+        [&old],
+    )
+    .unwrap();
+    drop(conn);
+
+    let store = upgraded(&path, 85, "crew-stop-detail");
+    let row = store.crew_task(&old).unwrap().unwrap();
+    assert_eq!(
+        (
+            row.state.as_str(),
+            row.stop_reason.as_deref(),
+            row.stop_detail.as_deref()
+        ),
+        ("stopped", Some("engine_error"), None),
+        "an old stopped row survives and has no detail"
+    );
+
+    // A new row may take the typed detail.
+    store
+        .writer()
+        .execute(
+            "INSERT INTO crew_tasks
+                 (id, crew_id, run_id, state, stop_reason, stop_detail, created_at, updated_at)
+             VALUES (?1, 'crew-1', 'run-new', 'stopped', 'engine_error', 'worker_stopped_twice',
+                     'created', 'updated')",
+            [&fresh],
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .crew_task(&fresh)
+            .unwrap()
+            .unwrap()
+            .stop_detail
+            .as_deref(),
+        Some("worker_stopped_twice")
+    );
+
+    // Any other value is refused by the column's CHECK, with the exact SQLite error.
+    let error = store
+        .writer()
+        .execute(
+            "UPDATE crew_tasks SET stop_detail = 'tired' WHERE id = ?1",
+            [&old],
+        )
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "CHECK constraint failed: stop_detail IS NULL OR stop_detail IN ('worker_stopped_twice')"
+    );
+    drop(store);
+
+    let again = reopened(&path, "crew-stop-detail-reopen");
+    assert_eq!(again.crew_task(&old).unwrap().unwrap().stop_detail, None);
+    assert_eq!(
+        again
+            .crew_task(&fresh)
+            .unwrap()
+            .unwrap()
+            .stop_detail
+            .as_deref(),
+        Some("worker_stopped_twice")
+    );
+}
+
 fn tamper_brief(store: &Store, id: &str) {
     let body: String = store
         .reader()

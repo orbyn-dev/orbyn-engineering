@@ -943,6 +943,36 @@ fn a_task_moves_only_along_the_lifecycle_and_a_pass_needs_evidence() {
     assert!(again.is_err(), "the same brief is one task with one run");
 }
 
+/// KC8: a second death keeps `engine_error` for old readers and adds the typed detail; a person's re-run
+/// answers the wait and clears the detail, while the reason every old reader sees stays.
+#[test]
+fn a_later_move_clears_the_stop_reason_and_its_detail() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    store.add_crew_run(&id, "lead-1", "worker-01").unwrap();
+    for to in ["routed", "running"] {
+        store.move_crew_task(&id, to, None).unwrap();
+    }
+    store
+        .stop_crew_after_restart(&id, "already_resumed")
+        .unwrap()
+        .unwrap();
+    store
+        .writer()
+        .execute(
+            "UPDATE crew_tasks SET state = 'running' WHERE id = ?1",
+            [&id],
+        )
+        .unwrap();
+
+    let moved = store.move_crew_task(&id, "verifying", None).unwrap();
+    assert_eq!(moved.state, "verifying");
+    assert_eq!(
+        (moved.stop_reason.as_deref(), moved.stop_detail.as_deref()),
+        (None, None)
+    );
+}
+
 /// H8: a pass names the Evidence this attempt made, and each id must be the task's.
 #[test]
 fn a_pass_needs_the_attempts_own_evidence() {

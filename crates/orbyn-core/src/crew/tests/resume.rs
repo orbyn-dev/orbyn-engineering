@@ -3,14 +3,19 @@
 
 use std::sync::Arc;
 
-use orbyn_contracts::{AuditEvent, CreateThread};
+use orbyn_contracts::{AuditEvent, CreateThread, NeedsYouKind, StopDetail};
 use rusqlite::params;
 use serde_json::json;
 
 use super::harness::{Turn, World, brief, key, world};
+use crate::crew::{Page, WORKER_STOPPED_TWICE};
 use crate::store::ResumeOutcome;
 
 const DAY: i64 = 24 * 60 * 60;
+
+fn page() -> Page {
+    Page::new(None, None).unwrap()
+}
 
 /// An idle worker thread in the lead's project, as a restart leaves one.
 async fn idle_thread(w: &World, title: &str) -> String {
@@ -98,6 +103,7 @@ async fn a_running_builder_resumes_once_with_its_key_and_attempt() {
     let task = w.task(&id);
     assert_eq!(task.state, "running");
     assert_eq!(task.stop_reason, None);
+    assert_eq!(task.stop_detail, None);
     let run = w.core.store.crew_run(&id).unwrap().unwrap();
     assert_eq!((run.resume_count, run.attempts), (1, 1));
     assert!(run.resumed_at.is_some(), "the resume time is stored");
@@ -181,6 +187,60 @@ async fn a_second_restart_stops_the_task_without_another_resume() {
     assert_eq!(stopped[0].detail, json!({ "why": "already_resumed" }));
     assert_eq!(audits(&w, &id, "crew.task.resumed").len(), 1);
     assert!(w.sent_to(&second).is_empty(), "no second resume was sent");
+
+    // Old readers see the stop they always saw; the typed detail names the second death for the new readers.
+    assert_eq!(task.stop_detail.as_deref(), Some(WORKER_STOPPED_TWICE));
+    let old: (String, Option<String>) = w
+        .core
+        .store
+        .reader()
+        .query_row(
+            "SELECT state, stop_reason FROM crew_tasks WHERE id = ?1",
+            [&id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (old.0.as_str(), old.1.as_deref()),
+        ("stopped", Some("engine_error"))
+    );
+
+    // The Flow row and the board card carry the typed word.
+    let crew = task.crew_id.clone();
+    let rows = w
+        .core
+        .crew_flow_tasks(&crew, None, None, None, page())
+        .unwrap();
+    let row = rows
+        .tasks
+        .iter()
+        .find(|row| row.id == id)
+        .expect("the task's Flow row");
+    assert_eq!(row.stop_detail, Some(StopDetail::WorkerStoppedTwice));
+    let board = w
+        .core
+        .crew_flow_board(&crew, None, None, None, None, None, page())
+        .unwrap();
+    let card = board
+        .columns
+        .iter()
+        .flat_map(|column| &column.cards)
+        .find(|card| card.id == id)
+        .expect("the task's board card");
+    assert_eq!(card.stop_reason.as_deref(), Some("engine_error"));
+    assert_eq!(card.stop_detail, Some(StopDetail::WorkerStoppedTwice));
+
+    // One needs-you item names it, and only one.
+    let ours: Vec<_> = w
+        .core
+        .crew_needs_you()
+        .unwrap()
+        .items
+        .into_iter()
+        .filter(|item| item.id == id)
+        .collect();
+    assert_eq!(ours.len(), 1, "one item for the task");
+    assert_eq!(ours[0].kind, NeedsYouKind::WorkerStoppedTwice);
 }
 
 #[tokio::test]
@@ -192,6 +252,7 @@ async fn a_reviewer_lane_stops_without_a_resume() {
     let task = w.task(&id);
     assert_eq!(task.state, "stopped");
     assert_eq!(task.stop_reason.as_deref(), Some("engine_error"));
+    assert_eq!(task.stop_detail, None);
     let run = w.core.store.crew_run(&id).unwrap().unwrap();
     assert_eq!((run.resume_count, run.attempts), (0, 0));
     assert!(run.resumed_at.is_none());
@@ -200,6 +261,41 @@ async fn a_reviewer_lane_stops_without_a_resume() {
     assert_eq!(stopped[0].detail, json!({ "why": "reviewer" }));
     assert!(audits(&w, &id, "crew.task.resumed").is_empty());
     assert!(w.sent_to(&worker).is_empty());
+    assert!(
+        w.core
+            .crew_needs_you()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| item.id != id),
+        "a reviewer's stop is not the second-death wait"
+    );
+}
+
+#[tokio::test]
+async fn a_not_resumable_member_stops_without_a_stop_detail() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let (id, worker, _) = dead_task(&w, "member-01", 30).await;
+    w.core.recover_crew_tasks().await;
+
+    let task = w.task(&id);
+    assert_eq!(task.state, "stopped");
+    assert_eq!(task.stop_reason.as_deref(), Some("engine_error"));
+    assert_eq!(task.stop_detail, None);
+    let stopped = audits(&w, &id, "crew.task.restart_stopped");
+    assert_eq!(stopped.len(), 1);
+    assert_eq!(stopped[0].detail, json!({ "why": "not_resumable" }));
+    assert!(audits(&w, &id, "crew.task.resumed").is_empty());
+    assert!(w.sent_to(&worker).is_empty());
+    assert!(
+        w.core
+            .crew_needs_you()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| item.id != id),
+        "a stop with no typed detail is not the second-death wait"
+    );
 }
 
 #[tokio::test]
@@ -297,9 +393,19 @@ async fn a_resume_brief_that_cannot_be_sent_stops_send_failed() {
     let task = w.task(&id);
     assert_eq!(task.state, "stopped");
     assert_eq!(task.stop_reason.as_deref(), Some("engine_error"));
+    assert_eq!(task.stop_detail, None);
     let run = w.core.store.crew_run(&id).unwrap().unwrap();
     assert_eq!((run.resume_count, run.attempts), (1, 1));
     let stopped = audits(&w, &id, "crew.task.restart_stopped");
     assert_eq!(stopped.len(), 1);
     assert_eq!(stopped[0].detail, json!({ "why": "send_failed" }));
+    assert!(
+        w.core
+            .crew_needs_you()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| item.id != id),
+        "a resume that could not be sent is not the second-death wait"
+    );
 }

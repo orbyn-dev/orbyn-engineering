@@ -34,7 +34,7 @@ use self::cells::{cells, in_filter, is_security, latest_rounds, round};
 use self::facts::Facts;
 use self::scrub::{Scrub, TEXT_MAX};
 use super::lifecycle::is_final;
-use super::{Page, valid_id, wire_name};
+use super::{Page, WORKER_STOPPED_TWICE, valid_id, wire_name};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 
@@ -60,6 +60,15 @@ fn short(id: &str) -> String {
     id.chars().take(12).collect()
 }
 
+/// The typed word a stored stop detail names, for the Flow row and the board card. A word this code does not
+/// know (which the column's CHECK refuses) shows no detail rather than guessing one.
+fn stop_detail(word: Option<&str>) -> Option<wire::StopDetail> {
+    match word {
+        Some(WORKER_STOPPED_TWICE) => Some(wire::StopDetail::WorkerStoppedTwice),
+        _ => None,
+    }
+}
+
 fn flow_row(facts: &Facts, line: Vec<wire::FlowCell>, scrub: &Scrub) -> wire::FlowTaskRow {
     wire::FlowTaskRow {
         id: facts.task.id.clone(),
@@ -77,6 +86,7 @@ fn flow_row(facts: &Facts, line: Vec<wire::FlowCell>, scrub: &Scrub) -> wire::Fl
             .as_ref()
             .map_or_else(String::new, |r| scrub.text(&r.member, 60)),
         state: facts.task.state.clone(),
+        stop_detail: stop_detail(facts.task.stop_detail.as_deref()),
         could_not_start: facts.could_not_start(),
         round: round(facts),
         resumed: facts.run.as_ref().is_some_and(|run| run.resume_count > 0),

@@ -8,8 +8,9 @@
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::crew::{CrewTask, find_task};
-use super::crew_runs::{CrewRun, find_run, step};
+use super::crew_runs::{CrewRun, find_run, step, step_with_detail};
 use super::{AuditRecord, Store, insert_audit};
+use crate::crew::WORKER_STOPPED_TWICE;
 use crate::error::Result;
 
 /// What one attempt to resume a task found.
@@ -92,7 +93,8 @@ fn last_event(conn: &Connection, task_id: &str) -> Result<Option<i64>> {
     .max())
 }
 
-/// The stop a restart leaves: `stopped` with `engine_error`, and its audit row, together.
+/// The stop a restart leaves: `stopped` with `engine_error`, its audit row, and the typed detail a
+/// second death carries (`already_resumed`), all together.
 fn stop(tx: &Transaction<'_>, task: CrewTask, why: &'static str) -> Result<CrewTask> {
     audit(
         tx,
@@ -100,7 +102,8 @@ fn stop(tx: &Transaction<'_>, task: CrewTask, why: &'static str) -> Result<CrewT
         &task.id,
         serde_json::json!({ "why": why }),
     )?;
-    step(tx, &task, "stopped", Some("engine_error"), &[])
+    let detail = (why == "already_resumed").then_some(WORKER_STOPPED_TWICE);
+    step_with_detail(tx, &task, "stopped", Some("engine_error"), detail, &[])
 }
 
 impl Store {
@@ -183,7 +186,9 @@ impl Store {
 
     /// Stops a task the restart may not resume, or whose resume brief could not be sent: the
     /// `stopped`/`engine_error` move and its `crew.task.restart_stopped` row share one transaction.
-    /// A task that already ended meanwhile is left alone.
+    /// A second death (`why == "already_resumed"`) also writes `stop_detail = 'worker_stopped_twice'`
+    /// in that UPDATE, while `stop_reason` stays `engine_error` for every old reader. A task that
+    /// already ended meanwhile is left alone.
     pub fn stop_crew_after_restart(
         &self,
         task_id: &str,

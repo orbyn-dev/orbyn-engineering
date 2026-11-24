@@ -2,6 +2,7 @@
 import type { FlowChecks } from "./FlowChecks";
 import type { FlowWorking } from "./FlowWorking";
 import type { NeedsYouKind } from "./NeedsYouKind";
+import type { StopDetail } from "./StopDetail";
 
 /**
  * One work task as a card. The two flags are advisory: the write routes decide.
@@ -19,6 +20,10 @@ engine?: string | null, model?: string | null,
  * `low` or `medium`, as stored.
  */
 effort?: string | null, state: string, stop_reason?: string | null, 
+/**
+ * The typed detail of an `engine_error` stop, when it has one (KC8): `worker_stopped_twice`.
+ */
+stop_detail?: StopDetail | null, 
 /**
  * When the task last changed state.
  */

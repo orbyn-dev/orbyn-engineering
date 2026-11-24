@@ -107,12 +107,26 @@ pub(super) fn find_run(tx: &Transaction<'_>, task_id: &str) -> Result<CrewRun> {
 }
 
 /// Moves a task one step, or refuses with `InvalidTransition`. `stopped` names its reason and
-/// nothing else does; a task passes only with Evidence (H8).
+/// nothing else does; a task passes only with Evidence (H8). A move always clears the typed stop
+/// detail, which only a stop can set.
 pub(super) fn step(
     tx: &Transaction<'_>,
     task: &CrewTask,
     to: &str,
     stop_reason: Option<&str>,
+    evidence: &[String],
+) -> Result<CrewTask> {
+    step_with_detail(tx, task, to, stop_reason, None, evidence)
+}
+
+/// [`step`], with the typed stop detail a stop writes in the same UPDATE as its state and reason, so
+/// the two cannot diverge. Any other move passes `None` and clears it.
+pub(super) fn step_with_detail(
+    tx: &Transaction<'_>,
+    task: &CrewTask,
+    to: &str,
+    stop_reason: Option<&str>,
+    stop_detail: Option<&str>,
     evidence: &[String],
 ) -> Result<CrewTask> {
     if !allowed(&task.state, to) {
@@ -124,6 +138,11 @@ pub(super) fn step(
     if (to == "stopped") != stop_reason.is_some() {
         return Err(CoreError::Invalid(
             "a stopped task names its reason, and no other state has one".into(),
+        ));
+    }
+    if stop_detail.is_some() && to != "stopped" {
+        return Err(CoreError::Invalid(
+            "only a stopped task names a stop detail".into(),
         ));
     }
     if to == "passed" {
@@ -143,8 +162,9 @@ pub(super) fn step(
         }
     }
     tx.execute(
-        "UPDATE crew_tasks SET state = ?2, stop_reason = ?3, updated_at = ?4 WHERE id = ?1",
-        params![task.id, to, stop_reason, now()],
+        "UPDATE crew_tasks SET state = ?2, stop_reason = ?3, stop_detail = ?4, updated_at = ?5
+         WHERE id = ?1",
+        params![task.id, to, stop_reason, stop_detail, now()],
     )?;
     // A claim on a verification ends with the state it was for.
     tx.execute(
