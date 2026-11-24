@@ -14,13 +14,13 @@ use super::router;
 use crate::http::AppState;
 use crate::http::access::Access;
 
-struct Served {
-    port: u16,
-    core: Arc<Core>,
+pub(super) struct Served {
+    pub(super) port: u16,
+    pub(super) core: Arc<Core>,
     dir: std::path::PathBuf,
 }
 
-async fn serve(name: &str, preview: bool, remote: bool) -> Served {
+pub(super) async fn serve(name: &str, preview: bool, remote: bool) -> Served {
     let dir = std::env::temp_dir().join(format!("orbynd-lead-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("work")).unwrap();
@@ -42,7 +42,7 @@ async fn serve(name: &str, preview: bool, remote: bool) -> Served {
 }
 
 impl Served {
-    fn thread(&self, title: &str) -> String {
+    pub(super) fn thread(&self, title: &str) -> String {
         let work = self.dir.join("work");
         let project = self
             .core
@@ -74,7 +74,7 @@ impl Served {
     }
 
     /// A task of `thread`, `state` or briefed: the close's own tasks have no worker.
-    fn task(&self, label: &str, thread: &str, state: Option<&str>) -> String {
+    pub(super) fn task(&self, label: &str, thread: &str, state: Option<&str>) -> String {
         let (task, _) = seed_task(&self.core, label);
         self.core
             .store
@@ -86,7 +86,7 @@ impl Served {
         task
     }
 
-    async fn call(&self, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
+    pub(super) async fn call(&self, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
         let url = format!("http://127.0.0.1:{}{path}", self.port);
         let mut request = reqwest::Client::new().request(method.parse().unwrap(), url);
         request = request.bearer_auth("token");

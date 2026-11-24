@@ -76,3 +76,26 @@ pub struct NeedsYouDismissed {
     pub dismissed: bool,
 }
 }
+
+wire! {
+/// One item a window wants to announce: its kind and id, as the list names them.
+pub struct NeedsYouRef {
+    pub kind: NeedsYouKind,
+    pub id: String,
+}
+}
+
+wire! {
+/// A window asks to announce these items (at most 50) with a desktop notification.
+pub struct NeedsYouNotifyBody {
+    pub items: Vec<NeedsYouRef>,
+}
+}
+
+wire! {
+/// The items this window may announce: the ones that are current items of the list, not dismissed, and not announced yet at
+/// their current wait. Each is marked announced before the answer, so no other window is given the same item.
+pub struct NeedsYouNotified {
+    pub claimed: Vec<NeedsYouRef>,
+}
+}

@@ -2,7 +2,7 @@
 //! cannot be hidden, hides only the wait it saw, and the flag off hides the read. The tests seed the stored shapes the rules
 //! read, so no test depends on a real engine.
 
-use orbyn_contracts::{NeedsYouItem, NeedsYouKind};
+use orbyn_contracts::{NeedsYouItem, NeedsYouKind, NeedsYouRef};
 use serde_json::json;
 
 use super::harness::{Turn, World, brief, give_back_worker_run, key, take_worker_run, world};
@@ -431,4 +431,104 @@ async fn with_the_flag_off_the_inbox_and_its_dismissal_are_not_found() {
             .crew_needs_you_dismiss(NeedsYouKind::CouldNotStart, "sha256:abc", "user"),
         Err(CoreError::NotFound(_))
     ));
+    assert!(matches!(
+        w.core.crew_needs_you_notify(&[]),
+        Err(CoreError::NotFound(_))
+    ));
+}
+
+fn refer(kind: NeedsYouKind, id: &str) -> NeedsYouRef {
+    NeedsYouRef {
+        kind,
+        id: id.to_owned(),
+    }
+}
+
+/// The first window to ask for an item is given it and every later one is not, even after a restart; an id that is not a current
+/// item and a dismissed item are never given.
+#[tokio::test]
+async fn an_item_is_announced_once_to_the_first_window_that_asks() {
+    let w = crew(arc(|_, _| Turn::Hang)).await;
+    let waiting = needs_person_task(&w, "Which database?").await;
+    let asked = [
+        refer(NeedsYouKind::TaskNeedsPerson, &waiting),
+        refer(NeedsYouKind::TaskNeedsPerson, "sha256:unknown"),
+        // The right id with the wrong kind is not an item either.
+        refer(NeedsYouKind::MergeWaiting, &waiting),
+    ];
+
+    let first = w.core.crew_needs_you_notify(&asked).unwrap();
+    assert_eq!(
+        first.claimed,
+        [refer(NeedsYouKind::TaskNeedsPerson, &waiting)]
+    );
+    let second = w.core.crew_needs_you_notify(&asked).unwrap();
+    assert!(second.claimed.is_empty(), "{:?}", second.claimed);
+    // Asking does not touch the items.
+    assert_eq!(items(&w).len(), 1);
+}
+
+#[tokio::test]
+async fn a_dismissed_item_is_not_given_and_a_later_wait_is_announced_again() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let (answer, error) = w
+        .start(
+            brief(json!({ "engine": { "id": "ghost", "assigned_by": "lead" } })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    w.core
+        .crew_needs_you_dismiss(NeedsYouKind::CouldNotStart, &id, "user")
+        .unwrap();
+    // A dismissed item is not in the list, so nothing is given for it, and it is not marked either.
+    let asked = [refer(NeedsYouKind::CouldNotStart, &id)];
+    assert!(
+        w.core
+            .crew_needs_you_notify(&asked)
+            .unwrap()
+            .claimed
+            .is_empty()
+    );
+    // A wait with a later `since` is a new wait: it is announced once it is in the list again.
+    assert!(
+        w.core
+            .store
+            .claim_crew_needs_you_notice("task_needs_person", "t-1", "2026-11-01T00:00:00Z")
+            .unwrap()
+    );
+    assert!(
+        !w.core
+            .store
+            .claim_crew_needs_you_notice("task_needs_person", "t-1", "2026-11-01T00:00:00Z")
+            .unwrap()
+    );
+    assert!(
+        !w.core
+            .store
+            .claim_crew_needs_you_notice("task_needs_person", "t-1", "2026-10-01T00:00:00Z")
+            .unwrap(),
+        "an older wait is not announced again"
+    );
+    assert!(
+        w.core
+            .store
+            .claim_crew_needs_you_notice("task_needs_person", "t-1", "2026-11-02T00:00:00Z")
+            .unwrap(),
+        "a later wait of the same item is announced again"
+    );
+}
+
+#[tokio::test]
+async fn too_many_items_in_one_request_are_refused() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let many: Vec<NeedsYouRef> = (0..51)
+        .map(|n| refer(NeedsYouKind::TaskNeedsPerson, &format!("sha256:{n}")))
+        .collect();
+    assert!(matches!(
+        w.core.crew_needs_you_notify(&many),
+        Err(CoreError::Invalid(_))
+    ));
+    assert!(w.core.crew_needs_you_notify(&many[..50]).is_ok());
 }

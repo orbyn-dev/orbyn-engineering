@@ -215,6 +215,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/needs-you/notify",
+        "core crew_needs_you_notify: Preview, at most 50 item refs; answers the ones that are current, undismissed items not announced yet at their current wait and marks them announced before the answer (first window wins); touches nothing behind the item; local only",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/rerun-checks",
         "core crew_rerun_checks: the person's re-run of the key's checks only; the task must be passed, or stopped for a benign reason after its checks ran live (a safety stop is refused), with a key and a checkout, no live verification, no open worker run, no other re-run on the device and a 10 second gap per task (409 task_busy); the intent audit row before any command, every command screened by the always-denied list and the blast-radius guard (a refused check is not run), bounded in time, the outcome row after with counts only; no Evidence or Gate is stored; the answer has counts and the ids of refused checks, never a command, output or claim, and no state changes; optional reason 1 to 200 characters, redacted; no agent tool reaches it; local only",
     ),
@@ -388,6 +393,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
             post(retry_elsewhere),
         )
         .route("/api/crew/needs-you/dismiss", post(needs_you_dismiss))
+        .route("/api/crew/needs-you/notify", post(needs_you_notify))
         .route("/api/crew/lead/{thread_id}/close", post(lead_close))
         .route("/api/crew/tasks/{id}/merge", post(merge_request))
         .route_layer(from_fn_with_state(state.clone(), local_only));
@@ -1138,6 +1144,14 @@ async fn needs_you_dismiss(
             .core
             .crew_needs_you_dismiss(body.kind, &body.id, "user")?,
     ))
+}
+
+/// A window asks which items it may announce with a desktop notification; the ones it is given are marked announced.
+async fn needs_you_notify(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<wire::NeedsYouNotifyBody>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_needs_you_notify(&body.items)?))
 }
 
 /// The live Crew tasks a lead thread leads: exactly what closing or archiving it would cancel. Read-only.
