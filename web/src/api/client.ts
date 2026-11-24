@@ -383,7 +383,8 @@ export const api = {
     request<LimitsOverview>("GET", `/api/limits${force ? "?force=true" : ""}`, undefined, signal),
   /** `refresh` reads now, whatever the service has kept, for a check the person asked for. */
   updates: (signal?: AbortSignal, refresh = false) => request<UpdateStatus>("GET", `/api/updates${refresh ? "?refresh=1" : ""}`, undefined, signal),
-  shell: (signal?: AbortSignal) => request<ShellStatus>("GET", "/api/shell", undefined, signal),
+  shell: (signal?: AbortSignal, fresh = false) =>
+    request<ShellStatus>("GET", "/api/shell", undefined, signal, { share: true, fresh }),
   shellAction: (action: ShellAction) => request<void>("POST", "/api/shell/actions", { action }),
   checkUpdates: () => request<UpdateStatus>("POST", "/api/updates/check"),
   applyAppUpdate: (update: AppUpdateRequest) => request<void>("POST", "/api/updates/app/apply", update),

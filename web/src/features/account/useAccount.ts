@@ -8,7 +8,7 @@ import { onAccountChange } from "./changes";
  * (`account`) or this page changed it, and kept so a window shows the last status at once while it reads.
  */
 export function useAccount() {
-  const read = useAsync("account", (signal) => accountApi.view(signal), {
+  const read = useAsync("account", (signal, how) => accountApi.view(signal, how.force), {
     keep: true,
     refreshOn: (what) => what === "account",
   });
