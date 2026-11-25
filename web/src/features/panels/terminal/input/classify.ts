@@ -81,20 +81,14 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\b[0-9a-f]{32,}\b/i,
   // An assignment to a name that says it holds a secret, unless it only copies another variable. `PASS` names a secret only
-  // as a whole word, so `DB_PASS` counts and `BYPASS` does not. A quoted value is read inside its quotes: `"$VAR"` and
-  // `"$(command)"` copy or run and an empty or blank `""` holds nothing, while `"hunter2"` and `" hunter2"` are typed literals.
-  /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=(?:(?!["'$])(?!\s|$)\S+|"[ \t]*(?![$`"\s])\S|'[ \t]*(?!['\s])\S)/i,
+  // as a whole word, so `DB_PASS` counts and `BYPASS` does not, and `PASSPHRASE` is a name of its own. A quoted value is read
+  // inside its quotes: `"$VAR"` and `"$(command)"` copy or run and an empty or blank `""` holds nothing, while `"hunter2"` and
+  // `" hunter2"` are typed literals. An assignment whose value falls back to a default is read by `typedAssignment` below.
+  /\b[A-Z0-9_]*(?:PASSPHRASE|KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=(?:(?!["'$])(?!\s|$)\S+|"[ \t]*(?![$`"\s])\S|'[ \t]*(?!['\s])\S)/i,
   // A secret-named assignment with an ANSI-C or locale literal value (`API_TOKEN=$'hunter2'`, `API_TOKEN=$"hunter2"`): the literal is typed.
-  /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=["']?\$['"](?![$"'])/i,
-  // An assignment that copies a variable but falls back to a typed literal after `:-` or `:=` (`API_TOKEN=${TOKEN:-hunter2}`).
-  // The literal may start with spaces after an opening quote (`' hunter2'`) or follow a nested reference (`${PREFIX}hunter2`);
-  // either way it is what the person typed, so it is the secret. A bare copy (`TOKEN=${VAR}`), command substitution (backticked or
-  // `$(...)`, as in `TOKEN=$(gh auth token)`) and a fallback that is only a reference, a space or nothing (`TOKEN=${VAR:-$OTHER}`,
-  // `${TOKEN:-${OTHER}}`, `${TOKEN:- }`) carry no typed secret. Nested fallbacks (`${TOKEN:-${OTHER:-hunter2}}`) are the
-  // open follow-up.
-  /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=["']?\$\{[A-Za-z_0-9][A-Za-z0-9_]*(?::-|:=)(?:["']?[ \t]*(?![$}`\s"'])\S|["']?\$\{[A-Za-z_0-9][A-Za-z0-9_]*\}[ \t]*(?![$}`\s"'])\S)/i,
-  // A flag that names a secret and carries its value (`--password hunter2`, `--token=abc`); `--password-file x` names a file, not a value; a bare `$VAR` or `"${VAR}"` copies another variable, but `$'text'` and `${VAR:-text}` carry a literal.
-  /(?<![\w-])--?(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)(?!"?\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})"?(?:\s|$)|-)\S+/i,
+  /\b[A-Z0-9_]*(?:PASSPHRASE|KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=["']?\$['"](?![$"'])/i,
+  // A flag that names a secret and carries its value (`--password hunter2`, `--passphrase hunter2`, `--token=abc`); `--password-file x` names a file, not a value; a bare `$VAR` or `"${VAR}"` copies another variable, but `$'text'` and `${VAR:-text}` carry a literal.
+  /(?<![\w-])--?(?:password|passphrase|passwd|pass|token|secret|api-?key)(?:=|\s+)(?!"?\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})"?(?:\s|$)|-)\S+/i,
   // The database clients take the password glued to `-p` (`mysql -u root -pSecret`); `-p` alone or on other tools is a port or a path flag.
   /\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^|;&\n]*\s-p\S+/,
   // A password in a URL's user information (`https://user:pass@host`); the userinfo ends at `/`, `?` or `#`.
@@ -102,11 +96,84 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 ];
 
 /**
+ * The inside of the `${...}` whose `{` is at `open`, and the index just past its `}`. The braces nest, since a default can
+ * hold another reference (`API_TOKEN=${TOKEN:-${OTHER:-hunter2}}`); nothing is returned when they do not close.
+ */
+function bracesIn(text: string, open: number): { body: string; end: number } | null {
+  let depth = 0;
+  for (let at = open; at < text.length; at += 1) {
+    if (text[at] === "{") depth += 1;
+    else if (text[at] === "}") {
+      depth -= 1;
+      if (depth === 0) return { body: text.slice(open + 1, at), end: at + 1 };
+    }
+  }
+  return null;
+}
+
+/**
+ * The value written after an assignment's `=`, as one shell word: a whole quoted string or `${...}`, otherwise up to the
+ * next space. A `}` that closes nothing and a line break end it too, so the next line is never read as this value.
+ */
+function valueAt(line: string, from: number): string {
+  const rest = line.slice(from);
+  const quoted = /^"(?:[^"\\]|\\.)*"/.exec(rest) ?? /^'[^']*'/.exec(rest);
+  if (quoted) return quoted[0];
+  if (rest.startsWith("${")) {
+    const braced = bracesIn(rest, 1);
+    if (braced) return rest.slice(0, braced.end);
+  }
+  return /^[^\s}]*/.exec(rest)?.[0] ?? "";
+}
+
+/**
+ * Whether a value as written is text the person typed, rather than a copy or a command. Read the way the shell would: a
+ * quote wraps what it holds (`" hunter2"` is text, `"$VAR"` and `"$(command)"` are not), `$(...)` and a backtick run a
+ * command, `$'...'` and `$"..."` are ANSI-C and locale literals, `$NAME` and `${NAME}` copy a variable, and the default in
+ * `${NAME:-default}` or `${NAME:=default}` is what the shell substitutes when that variable is unset, so it is read the same
+ * way again. Anything left is text someone typed, which is the secret.
+ */
+function typedValue(raw: string): boolean {
+  const text = raw.replace(/^[ \t]+/, "");
+  if (text === "") return false;
+  if (text[0] === '"' || text[0] === "'") return typedValue(text.slice(1));
+  if (text[0] === "`" || text.startsWith("$(")) return false;
+  if (text.startsWith("$'") || text.startsWith('$"')) return typedValue(text.slice(2));
+  if (text.startsWith("${")) {
+    const braced = bracesIn(text, 1);
+    if (braced === null) return false;
+    const mark = braced.body.search(/:-|:=/);
+    if (mark >= 0 && typedValue(braced.body.slice(mark + 2))) return true;
+    // More of the value can follow the reference (`${PREFIX}hunter2`), and that part is text someone typed as well.
+    return typedValue(text.slice(braced.end));
+  }
+  // Any other `$` starts `$NAME`, `$1` or `$?`: a copy or a special parameter, never text of its own.
+  return text[0] !== "$";
+}
+
+/** A secret-named assignment on a line, with its `=`, so the value that follows can be read. */
+const SECRET_ASSIGNMENT = /\b[A-Z0-9_]*(?:PASSPHRASE|KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=/gi;
+
+/**
+ * Whether a secret-named assignment's value falls back to text someone typed: `API_TOKEN=${TOKEN:-hunter2}`, a fallback
+ * inside a fallback (`API_TOKEN=${TOKEN:-${OTHER:-hunter2}}`), and an ANSI-C or locale literal as the fallback
+ * (`API_TOKEN=${TOKEN:-$'hunter2'}`, `API_TOKEN=${TOKEN:-$"hunter2"}`). A default that only copies a variable, runs a
+ * command or is blank (`${TOKEN:-${OTHER}}`, `${TOKEN:-$OTHER}`, `${TOKEN:-$(gh auth token)}`, `${TOKEN:- }`) is not.
+ */
+function typedAssignment(line: string): boolean {
+  for (const found of line.matchAll(SECRET_ASSIGNMENT)) {
+    if (typedValue(valueAt(line, (found.index ?? 0) + found[0].length))) return true;
+  }
+  return false;
+}
+
+/**
  * Whether the text looks like a credential. This is a local heuristic, not the Settings › Secrets rules (those live in
  * the service); it is only used to keep such a line in the shell and out of any prompt.
  */
 export function looksSecret(text: string): boolean {
   if (SECRET_PATTERNS.some((pattern) => pattern.test(text))) return true;
+  if (typedAssignment(text)) return true;
   return text
     .split(/\s+/)
     .some((token) => token.length >= 40 && /^[A-Za-z0-9+_=-]+$/.test(token) && /\d/.test(token) && /[A-Za-z]/.test(token));
