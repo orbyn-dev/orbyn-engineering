@@ -120,7 +120,7 @@ describe("terminal drawer", () => {
   it("offers Clear, Copy and Watch from a tab's right-click menu, and End process only while it runs, after the split choices", async () => {
     const user = await show([terminal({})]);
     await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("tab", { name: /npm test/ }) });
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Split right", "Split down", "Clear output", "Copy all output", "Watch only", "End process"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Split right", "Split down", "Clear output", "Copy all output", "Clear all blocks…", "Watch only", "End process"]);
   });
 
   it("disables Clear and Copy for a tab that is not showing, and never says Output copied when nothing was copied", async () => {
