@@ -31,8 +31,11 @@ function useOwnWorktreeLocked(threadId: string): boolean {
 /**
  * A file of the thread's own checkout, named by a link in a message or by the thread's worktree in the
  * left bar. The path may be one inside the checkout or a full path outside it, which only reads.
+ * `repoName` and `primaryRepo` name the thread's primary repository of a multi-repository thread on that repository's
+ * tab: the read, the write and every failure stay the thread's own (the service's absent `repo_id` is the primary), and
+ * the chip, the copy path and the line comments say which repository the file is in.
  */
-function ThreadFile({ threadId, tabId, path, locked }: { threadId: string; tabId: string; path: string; locked?: boolean }) {
+function ThreadFile({ threadId, tabId, path, locked, repoName, primaryRepo }: { threadId: string; tabId: string; path: string; locked?: boolean; repoName?: string; primaryRepo?: boolean }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd);
   const own = useOwnWorktreeLocked(threadId);
   const reveal = useUi((state) => state.fileReveal);
@@ -47,7 +50,9 @@ function ThreadFile({ threadId, tabId, path, locked }: { threadId: string; tabId
   }, [reveal, threadId, path, consume]);
   const resolved = useResolvedThreadPath(threadId, cwd ? { threadId, cwd, path, basis: "thread", nonce: 0 } : null);
   const full = fullPathOf(path);
-  if (resolved.value?.checkout_path) return <Viewer threadId={threadId} tabId={tabId} path={resolved.value.checkout_path} line={line} locked={locked ?? own} />;
+  if (resolved.value?.checkout_path) {
+    return <Viewer threadId={threadId} tabId={tabId} path={resolved.value.checkout_path} line={line} locked={locked ?? own} {...(repoName === undefined ? {} : { repoName })} {...(primaryRepo === true ? { primaryRepo: true } : {})} />;
+  }
   if (resolved.value && isFullPath(full)) return <OutsideFileViewer threadId={threadId} path={full} />;
   if (resolved.value || resolved.error) return <Empty title={resolved.error?.message ?? "That path is outside this checkout."} />;
   return <Loading label="Loading file" rows={6} />;
@@ -178,14 +183,19 @@ function MissingWorktree({ target, threadId }: { target: Extract<FileTarget, { k
 }
 
 /** What a file tab shows. With no thread open only the explorer's own tabs can show: a thread file has no thread to name it. */
-export function FileTab({ id, threadId, repoName }: { id: FileTabId; threadId: string | null; /** The repository's name for a tab of another repository's file, as the panel reads it for the tab's own title. */ repoName?: string }) {
+export function FileTab({ id, threadId, repoName }: { id: FileTabId; threadId: string | null; /** The repository's name for a tab that names one of a multi-repository thread's, as the panel reads it for the tab's own title. */ repoName?: string }) {
   const target = parseFileTab(id);
   if (!target) return null;
   if (target.kind === "issue") return <IssuePanel tracker={target.tracker} scope={target.scope} issueKey={target.key} />;
   if (target.kind === "worktree") return <MissingWorktree target={target} threadId={threadId} />;
   if (target.kind === "thread") {
     if (threadId === null) return null;
-    return target.repoId === undefined ? <ThreadFile threadId={threadId} tabId={id} path={target.path} /> : <RepoFile threadId={threadId} tabId={id} path={target.path} repoId={target.repoId} {...(repoName === undefined ? {} : { repoName })} />;
+    // The primary repository's file is still the thread's own tab, which now names the repository; another repository's tab
+    // reads and writes with its repo_id.
+    if (target.repoId !== undefined && target.primary !== true) {
+      return <RepoFile threadId={threadId} tabId={id} path={target.path} repoId={target.repoId} {...(repoName === undefined ? {} : { repoName })} />;
+    }
+    return <ThreadFile threadId={threadId} tabId={id} path={target.path} {...(repoName === undefined ? {} : { repoName })} {...(target.primary === true ? { primaryRepo: true } : {})} />;
   }
   return <ExplorerFile threadId={threadId} tabId={id} target={target} />;
 }

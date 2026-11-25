@@ -225,6 +225,29 @@ it("a repository whose turn read fails is not counted as zero changes", async ()
   await waitFor(() => expect(within(picker).getByRole("menuitem")).toHaveTextContent("14:12 · +1 −0 · 1 file · 1 repo not counted"));
 });
 
+// #1060 follow-up: a changed file of the thread's primary repository opens as its tab too, which names the repository
+// and still resolves and reads as the thread's own: opening it sends no repo_id.
+it("opens a file of the primary repository as its own named tab, resolving it as the thread's own", async () => {
+  const user = userEvent.setup();
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  const binary: FileDiff = { path: "logo.png", status: "modified", additions: 0, deletions: 0, patch: ["diff --git a/logo.png b/logo.png", "index 1111111..2222222 100644", "Binary files a/logo.png and b/logo.png differ", ""].join("\n") };
+  const { diff } = setup();
+  // Only the primary repository's read answers, and its read is the one without a repo_id.
+  diff.mockImplementation(async (_t, _s, _scope, repoId) => (repoId === undefined ? [binary] : []));
+  const resolve = vi.spyOn(api, "resolveThreadPath");
+  resolve.mockResolvedValue({ cwd: "/repo", checkout_path: "logo.png", repository_path: "logo.png" });
+  useUi.setState({ panelTab: "diff", panelTabOrder: ["diff"], toasts: [] } as never);
+  render(<DiffPanel threadId="t" />);
+  await screen.findByRole("group", { name: "app changes" });
+  const [open] = await screen.findAllByRole("button", { name: "Open" });
+  await user.click(open!);
+  const id = fileTabId({ kind: "thread", path: "logo.png", repoId: "p", primary: true });
+  await waitFor(() => expect(useUi.getState().panelTab).toBe(id));
+  // The path resolves in the primary repository because none is named, as the thread's own file does.
+  await waitFor(() => expect(resolve).toHaveBeenCalledWith("t", expect.objectContaining({ path: "logo.png", basis: "repository" }), undefined));
+  expect(resolve.mock.calls.at(-1)![1]).not.toHaveProperty("repo_id");
+});
+
 it("an ordinary thread's turn totals read once, with the three arguments they always had", async () => {
   const user = userEvent.setup();
   setReposApi(createReposMock({ threads: {} }));

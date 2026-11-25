@@ -22,7 +22,7 @@ import { arrangeThreads, attentionRank } from "../sidebar/groups";
 import { ExplorerRow, type RowHandlers } from "./ExplorerRow";
 import { useExplorerWatch } from "./watch";
 import { LeftBarSwitch } from "./LeftBarSwitch";
-import { buildRows, threadPathOf, type Row, type ThreadCheckout } from "./model";
+import { buildRows, checkoutFileTarget, threadPathOf, type Row, type ThreadCheckout } from "./model";
 import { RepoChooser, repoLabel, usePickedRepo, useThreadRepos } from "../../repos";
 import { canStartThreadIn, startThreadIn } from "./startThread";
 import { levelKey, repoLevelKey, useExplorer } from "./store";
@@ -83,9 +83,10 @@ export function Explorer({ route }: { route: Route }) {
   const threadCheckout = useMemo<ThreadCheckout | null>(() => {
     const picked = repoChoice.selected;
     if (!currentThreadId || !repoChoice.multi || !picked) return null;
-    // The primary repository's files open as the thread's own tab; another repository's carry its id.
-    return { threadId: currentThreadId, readRepoId: repoChoice.repoId, tabRepoId: repoChoice.repoId, name: repoLabel(picked.name), branch: picked.branch };
-  }, [currentThreadId, repoChoice.multi, repoChoice.repoId, repoChoice.selected]);
+    // Every file of the chosen repository opens as its tab, named with the repository: the primary one's tab still reads and
+    // writes as the thread's own, another repository's carries its id.
+    return { threadId: currentThreadId, readRepoId: repoChoice.repoId, repoId: picked.repo_id, primary: repoChoice.primary?.repo_id === picked.repo_id, name: repoLabel(picked.name), branch: picked.branch };
+  }, [currentThreadId, repoChoice.multi, repoChoice.repoId, repoChoice.primary, repoChoice.selected]);
 
   const now = useNow(true, 30_000);
   const waitingTerminals = useWaitingThreadIds();
@@ -206,11 +207,11 @@ export function Explorer({ route }: { route: Route }) {
     return { kind: "explorer", projectId: row.projectId, worktreeId: row.worktree.id, path: row.path };
   };
   const openFile = (row: Row) => {
-    // A file of the open thread's chosen repository opens as the thread's file of that repository: its read and write
-    // name the repository, which is the only way the service resolves the path in that repository's worktree.
+    // A file of the open thread's chosen repository opens as the thread's file of that repository, named with it: the
+    // repository's tab is the only way the service resolves the path in that repository's worktree, and the primary's tab
+    // still reads and writes as the thread's own.
     if (row.checkout && row.path !== undefined) {
-      const repoId = row.checkout.tabRepoId;
-      useUi.getState().openFileTab(repoId === undefined ? { kind: "thread", path: row.path } : { kind: "thread", path: row.path, repoId });
+      useUi.getState().openFileTab(checkoutFileTarget(row.checkout, row.path));
       return;
     }
     const target = targetOf(row);
@@ -385,10 +386,7 @@ export function Explorer({ route }: { route: Route }) {
     if (row.kind === "thread") return row.thread?.id === currentThreadId;
     if (row.kind === "worktree" && row.missing && row.worktree) return selectedTab === fileTabId({ kind: "worktree", projectId: row.projectId, worktreeId: row.worktree.id });
     if (row.kind !== "file") return false;
-    if (row.checkout && row.path !== undefined) {
-      const repoId = row.checkout.tabRepoId;
-      return selectedTab === fileTabId(repoId === undefined ? { kind: "thread", path: row.path } : { kind: "thread", path: row.path, repoId });
-    }
+    if (row.checkout && row.path !== undefined) return selectedTab === fileTabId(checkoutFileTarget(row.checkout, row.path));
     const target = targetOf(row);
     return target !== null && selectedTab === fileTabId(target);
   };
