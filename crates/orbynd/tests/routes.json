@@ -1,11 +1,11 @@
 {
   "protected": [
     ["DELETE","/api/account/devices/{id}","person"],
-    ["DELETE","/api/acp/registry/{id}","local"],
+    ["DELETE","/api/acp/registry/{id}","person"],
     ["DELETE","/api/attachments/{id}","local"],
     ["DELETE","/api/browser-profiles/{id}","local"],
     ["DELETE","/api/crew/lessons/{id}","person"],
-    ["DELETE","/api/engines/custom/{id}","local"],
+    ["DELETE","/api/engines/custom/{id}","person"],
     ["DELETE","/api/library/env-sets/{id}","person"],
     ["DELETE","/api/library/env-sets/{id}/keys/{key}","person"],
     ["DELETE","/api/library/prompts/{id}","person"],
@@ -371,7 +371,7 @@
     ["POST","/api/engines/update-all","person"],
     ["POST","/api/engines/{id}/feedback","local"],
     ["POST","/api/engines/{id}/install-recommended","person"],
-    ["POST","/api/engines/{id}/native-sessions/delete","local"],
+    ["POST","/api/engines/{id}/native-sessions/delete","person"],
     ["POST","/api/engines/{id}/native-sessions/import","local"],
     ["POST","/api/engines/{id}/update","person"],
     ["POST","/api/history/import","local"],
