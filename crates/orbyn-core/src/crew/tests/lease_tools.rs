@@ -4,11 +4,12 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use orbyn_contracts::{CrewPathPattern, CrewRole, ErrorCode, LeaseMode, LeaseState};
 use serde_json::{Value, json};
 
-use super::harness::{Turn, World, bind, brief, key, report, world};
+use super::harness::{Turn, World, bind, brief, key, report, world, world_with};
 
 const DOCS: &str = "docs/**";
 /// Later than any clock this test runs on; whole seconds in UTC, as a lease expiry must be.
@@ -216,4 +217,92 @@ async fn a_request_refuses_what_the_core_may_not_grant() {
         .await;
     assert!(refused, "{answer}");
     assert_eq!(answer["code"], "lease_not_held");
+}
+
+/// H10: a request that reaches another member's lease is refused, and the lead is told. The duo's
+/// two briefs write `src/**` and `docs/**`, so the first member's read of `docs/**` reaches the
+/// second's write lease although the first has asked for nothing yet.
+#[tokio::test]
+async fn a_request_refuses_a_path_another_member_holds() {
+    let d = super::bus_support::duo().await;
+    let (answer, refused) = d
+        .call(
+            &d.ta,
+            crate::crew::LEASE_REQUEST_TOOL,
+            json!({ "paths": [DOCS], "mode": "read", "expires_at": FUTURE }),
+        )
+        .await;
+    assert!(refused, "{answer}");
+    assert_eq!(answer["code"], "lease_conflict");
+    let notices = d.lead_notices();
+    assert!(
+        notices
+            .iter()
+            .any(|notice| notice.contains("LeaseConflict")),
+        "{notices:?}"
+    );
+}
+
+/// H10: the live-lease check and the grant are one step. While one grant holds the lock, a
+/// member's request and a start's grants both wait: each would pass its check against the store as
+/// it stands, and both would then be stored.
+#[tokio::test]
+async fn a_grant_waits_for_the_one_in_flight() {
+    fn engine(id: &str) -> Value {
+        json!({ "id": id, "assigned_by": "person" })
+    }
+    let w = world_with(
+        true,
+        Arc::new(|_, _| Turn::Hang),
+        &[("alpha", false), ("beta", false)],
+    )
+    .await;
+    let (first, error) = w
+        .start(brief(json!({ "engine": engine("alpha") })), key())
+        .await;
+    assert!(!error, "{first}");
+    let first_id = first["task"].as_str().unwrap().to_owned();
+    let token = worker_token(&w, &first_id);
+
+    let held = w.core.crew_lease_grants.lock().await;
+    // Neither reaches a live lease: the read names no write lease, and the start writes a path no
+    // other brief holds.
+    let mut request = Box::pin(w.call(
+        &token,
+        crate::crew::LEASE_REQUEST_TOOL,
+        json!({ "paths": [DOCS], "mode": "read", "expires_at": FUTURE }),
+    ));
+    let mut start = Box::pin(w.start(
+        brief(json!({
+            "engine": engine("beta"),
+            "outcome": "Document it.",
+            "files": [{ "path": "web/**", "mode": "write" }],
+        })),
+        key(),
+    ));
+    tokio::select! {
+        biased;
+        answer = &mut request => panic!("the request ran while a grant held the lock: {answer:?}"),
+        answer = &mut start => panic!("a start ran while a grant held the lock: {answer:?}"),
+        _ = tokio::time::sleep(Duration::from_millis(300)) => {}
+    }
+    drop(held);
+    let (answer, refused) = request.await;
+    assert!(!refused, "{answer}");
+    assert_eq!(answer["state"], "granted");
+    let (second, error) = start.await;
+    assert!(!error, "{second}");
+    let second_id = second["task"].as_str().unwrap().to_owned();
+    assert!(
+        w.core
+            .store
+            .crew_leases(&second_id)
+            .unwrap()
+            .iter()
+            .any(|lease| {
+                lease.state == LeaseState::Granted
+                    && lease.paths.iter().any(|path| path.as_str() == "web/**")
+            }),
+        "the start's grant was stored"
+    );
 }

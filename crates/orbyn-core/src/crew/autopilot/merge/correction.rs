@@ -422,6 +422,8 @@ impl Core {
             .crew_brief(&task.id)?
             .ok_or_else(|| CoreError::NotFound("corrective brief".into()))?;
         let member = CrewMember::new("core-correction").map_err(CoreError::Invalid)?;
+        // H10: the live-lease check below and the grants it allows are one step with every other grant.
+        let _granting = self.crew_lease_grants.lock().await;
         self.refuse_lease_conflict(&brief, &member, now)
             .map_err(core_error)?;
         let _leases = Leases {
@@ -440,6 +442,7 @@ impl Core {
             self.store
                 .add_crew_object(&task.id, &CrewObject::Lease(lease))?;
         }
+        drop(_granting);
         let flags = crate::crew::index_flags::flagged(Path::new(&correction.checkout))
             .await
             .ok_or_else(|| CoreError::Invalid("the corrective index cannot be read".into()))?;

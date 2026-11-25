@@ -527,7 +527,7 @@ impl Core {
     }
 
     /// Runs a member lease tool for the MCP service.
-    pub(super) fn crew_lease_tool(
+    pub(super) async fn crew_lease_tool(
         self: &std::sync::Arc<Self>,
         binding: &McpBinding,
         tool: &str,
@@ -537,7 +537,7 @@ impl Core {
             return Err(CrewError::new(ErrorCode::UnknownTool, tool));
         }
         if tool == LEASE_REQUEST_TOOL {
-            self.crew_lease_request_tool(binding, args)
+            self.crew_lease_request_tool(binding, args).await
         } else {
             self.crew_lease_release_tool(binding, args)
         }
@@ -546,7 +546,7 @@ impl Core {
     /// `crew_lease_request`: a member asks for a lease it is allowed (H10, H11). The member is the
     /// caller, never the draft; a write lease must lie inside the brief, off the protected paths, and
     /// a lease overlapping another member's is refused and the lead is told.
-    fn crew_lease_request_tool(
+    async fn crew_lease_request_tool(
         self: &std::sync::Arc<Self>,
         binding: &McpBinding,
         args: &Value,
@@ -620,7 +620,9 @@ impl Core {
         let lease = grant.lease(paths, mode, LeaseState::Granted, expires_at, None)?;
         // H2: nothing an object holds is a secret, a path included.
         refuse_secret(&CrewObject::Lease(lease.clone()).to_value())?;
-        // H10: one writer per path; the same member holding both is no conflict.
+        // H10: the live read, the conflict check and the insert are one step. A start and a
+        // correction take the same lock for their check and grants, so no two grants can both pass.
+        let _granting = self.crew_lease_grants.lock().await;
         let live = self.live_crew_leases(who.crew_id.as_str(), now)?;
         if let Some((_, held)) = live.iter().find(|(_, held)| lease.conflicts_with(held)) {
             let error = CrewError::new(

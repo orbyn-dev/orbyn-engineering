@@ -428,6 +428,9 @@ impl Core {
             &machine.views,
             &thread.project_id,
         )?;
+        // H10: the live-lease check below and the grants it allows are one step with every other
+        // grant, so a member's request cannot slip between them.
+        let _lease_granting = self.crew_lease_grants.lock().await;
         self.refuse_lease_conflict(&brief, &member, now)?;
         // The commit the worker starts from is read once, before anything is stored, and the repository's data classes are
         // read at it: the classes and the worker's base are one commit, and an edit made after this has no effect on the
@@ -640,6 +643,7 @@ impl Core {
                 .add_crew_object(&task.id, &CrewObject::Lease(lease))
                 .map_err(internal)?;
         }
+        drop(_lease_granting);
         // A fix uses up its finding's one only once the start is accepted (routed, and its files granted).
         if let Some(fix) = &links.fix {
             self.store.add_crew_fix(fix).map_err(internal)?;

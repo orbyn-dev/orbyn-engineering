@@ -194,6 +194,9 @@ pub struct Core {
     pub(crate) cleanup_policy_gate: tokio::sync::RwLock<()>,
     /// Crew Preview: one `crew_start` at a time, so two briefs cannot both be granted a path.
     pub(crate) crew_starts: tokio::sync::Mutex<()>,
+    /// Crew Preview: one lease grant write at a time, so the live-lease check and the grant it
+    /// allows are one step, whether a member's request, a start or a correction writes it.
+    pub(crate) crew_lease_grants: tokio::sync::Mutex<()>,
     /// Crew Preview: the bus's guards, its wake-up for a waiting `crew_ask` and who is waited on.
     pub(crate) crew_bus: crate::crew::Bus,
     /// Code Mode: the live and finished script runs (`tools::mcp::code`).
@@ -380,6 +383,7 @@ impl Core {
             tool_probes: Mutex::new(Default::default()),
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
             crew_starts: tokio::sync::Mutex::new(()),
+            crew_lease_grants: tokio::sync::Mutex::new(()),
             crew_bus: crate::crew::Bus::default(),
             code_runs: crate::tools::mcp::code::CodeRuns::new(),
             issues: crate::issues::IssueDesk::new(Self::system_credentials()),

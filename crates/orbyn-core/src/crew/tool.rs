@@ -186,7 +186,7 @@ impl Core {
                 self.crew_merge_tool(binding, merge, args).await
             }
             lease if super::LEASE_TOOLS.contains(&lease) => {
-                self.crew_lease_tool(binding, lease, args)
+                self.crew_lease_tool(binding, lease, args).await
             }
             bus if super::BUS_TOOLS.contains(&bus) => self.crew_bus_tool(binding, bus, args).await,
             review if super::REVIEW_TOOLS.contains(&review) => {
