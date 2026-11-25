@@ -404,10 +404,13 @@ impl AccountCenter {
     /// closes the sign-in, which starts again from the password.
     pub async fn second_factor(&self, code: &str) -> Result<()> {
         let backend = self.backend()?;
+        // The closed check comes after the cancel gate: a cancel either cleared the sign-in
+        // before this read (refused here), or waits until this answer is in, so the backend is
+        // never asked to finish a challenge the person already ended.
+        let _one_at_a_time = self.cancelling.lock().await;
         if self.inner.lock().await.second_factor.is_none() {
             return Err(invalid("sign_in_closed", "Start signing in again."));
         }
-        let _one_at_a_time = self.cancelling.lock().await;
         match backend.account.second_factor(code).await {
             Ok(SignInOutcome::Signed(session)) => self.established(session, true).await,
             Ok(SignInOutcome::AwaitingApproval(pending)) => {
@@ -422,7 +425,13 @@ impl AccountCenter {
             }
             Err(DeviceError::InvalidCode) => {
                 let mut inner = self.inner.lock().await;
-                let wrong = inner.second_factor.map_or(1, |n| n + 1);
+                // A cancel that ran while the backend answered cleared the sign-in: its answer is
+                // not a wrong code, and it must not reopen the sign-in (which the old
+                // `map_or(1, ...)` did).
+                let Some(wrong_so_far) = inner.second_factor else {
+                    return Err(invalid("sign_in_closed", "Start signing in again."));
+                };
+                let wrong = wrong_so_far + 1;
                 if wrong >= SECOND_FACTOR_TRIES {
                     inner.second_factor = None;
                     drop(inner);
@@ -454,18 +463,21 @@ impl AccountCenter {
     pub async fn cancel_second_factor(&self) -> Result<()> {
         let backend = self.backend()?.clone();
         let _one_at_a_time = self.cancelling.lock().await;
-        let open = {
+        let (factor_open, open) = {
             let inner = self.inner.lock().await;
             if inner.second_factor.is_none() && inner.approval.is_none() {
                 return Ok(());
             }
             // Only a request that is still open needs the service's help to end; a sign-in
             // waiting for its code, or a request that already has its answer, is ours alone.
-            inner
-                .approval
-                .as_ref()
-                .filter(|approval| approval.answer.is_none())
-                .map(|approval| (approval.request_id.clone(), approval.serial))
+            (
+                inner.second_factor.is_some(),
+                inner
+                    .approval
+                    .as_ref()
+                    .filter(|approval| approval.answer.is_none())
+                    .map(|approval| (approval.request_id.clone(), approval.serial)),
+            )
         };
         if let Some((id, _)) = &open {
             match backend.account.cancel_approval(id).await {
@@ -474,6 +486,11 @@ impl AccountCenter {
                 Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {}
                 Err(error) => return Err(refusal(&error)),
             }
+        }
+        // A code challenge is the service's too: clear it here so a code typed after this cancel
+        // cannot finish a sign-in the person ended (the engine keeps its handle in the client).
+        if factor_open {
+            backend.account.cancel_second_factor().await;
         }
         let mut inner = self.inner.lock().await;
         // Only the request that was cancelled is cleared: a sign-in started meanwhile stays,

@@ -47,7 +47,9 @@ pub(super) async fn run_protocol(
                     Some(status) => {
                         EngineOutcome::Failed(exit_message(Some(status), &process.stderr).await)
                     }
-                    None => EngineOutcome::Failed(error.to_string()),
+                    None => EngineOutcome::Failed(crate::agents::driver::diagnostics::outward(
+                        &error.to_string(),
+                    )),
                 }
             };
             let _ = events.send(EngineEvent::Finished(outcome)).await;
