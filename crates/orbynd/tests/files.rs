@@ -364,6 +364,24 @@ async fn metadata_in(
     (status, response.json().await.unwrap_or(Value::Null))
 }
 
+/// One file's content, for `repo`: absent is the primary repository.
+async fn content_in(
+    service: &Service,
+    thread: &str,
+    path: &str,
+    repo: Option<&str>,
+) -> (u16, Value) {
+    let mut request = service
+        .get(&format!("/api/threads/{thread}/files/content"))
+        .query(&[("path", path)]);
+    if let Some(repo) = repo {
+        request = request.query(&[("repo_id", repo)]);
+    }
+    let response = request.send().await.unwrap();
+    let status = response.status().as_u16();
+    (status, response.json().await.unwrap_or(Value::Null))
+}
+
 /// The file names of a tree answer, in order; anything but `200` fails here.
 fn names((status, body): (u16, Value)) -> Vec<String> {
     assert_eq!(status, 200, "{body}");
@@ -527,6 +545,127 @@ async fn a_repo_id_reads_the_named_repositories_tree_and_metadata() {
             .0,
         404
     );
+}
+
+/// Hunk revert, its undo and the inline line edit are one read and one write of a file
+/// (`docs/multi-repo.md`, "File reads and writes name their repository"): both take `repo_id`,
+/// so the same relative path is never read from, or written to, another repository's worktree.
+#[tokio::test]
+async fn a_repo_id_names_the_repository_a_file_read_and_write() {
+    let fixture = repo_thread().await;
+    // The same file name with its own text in each worktree. Untracked files need no commit,
+    // and the write a hunk edit makes is the whole file, as this one is.
+    std::fs::write(fixture.primary_root.join("same.txt"), "primary\n").unwrap();
+    std::fs::write(fixture.other_root.join("same.txt"), "other\n").unwrap();
+
+    // No repo_id is the primary repository, and naming it explicitly reads the same file.
+    for repo in [None, Some(fixture.project.as_str())] {
+        let (code, body) = content_in(&fixture.service, &fixture.thread, "same.txt", repo).await;
+        assert_eq!(code, 200, "{repo:?}: {body}");
+        assert_eq!(body["content"], "primary\n", "{repo:?}");
+    }
+    // The other repository's file is that repository's, at the same relative path.
+    let (code, other) = content_in(
+        &fixture.service,
+        &fixture.thread,
+        "same.txt",
+        Some(&fixture.other),
+    )
+    .await;
+    assert_eq!(code, 200, "{other}");
+    assert_eq!(other["content"], "other\n");
+
+    // A hunk revert or line edit writes the file back through this route: the write lands in
+    // the named repository only, with the revision read from that repository.
+    let (code, saved) = write(
+        &fixture.service,
+        &fixture.thread,
+        json!({
+            "path": "same.txt",
+            "content": "edited in the other\n",
+            "base_revision": other["revision"],
+            "repo_id": fixture.other.clone(),
+        }),
+    )
+    .await;
+    assert_eq!(code, 200, "{saved}");
+    assert_eq!(
+        std::fs::read_to_string(fixture.other_root.join("same.txt")).unwrap(),
+        "edited in the other\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.primary_root.join("same.txt")).unwrap(),
+        "primary\n",
+        "the primary repository's file is untouched"
+    );
+
+    // A revision belongs to the repository's file: the other repository's revision on the same
+    // path is a changed file, not a silent overwrite of the primary.
+    let (code, refused) = write(
+        &fixture.service,
+        &fixture.thread,
+        json!({
+            "path": "same.txt",
+            "content": "mine\n",
+            "base_revision": saved["revision"],
+            "repo_id": fixture.project.clone(),
+        }),
+    )
+    .await;
+    assert_eq!(code, 409, "{refused}");
+    assert_eq!(refused["code"], "file_conflict", "{refused}");
+    assert_eq!(
+        std::fs::read_to_string(fixture.other_root.join("same.txt")).unwrap(),
+        "edited in the other\n"
+    );
+
+    // A path that leaves the named repository is refused even when the same spelling lands in
+    // a sibling worktree: no request falls back to another repository's checkout.
+    let primary_name = fixture
+        .primary_root
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let escaped = format!("../{primary_name}/same.txt");
+    let (code, refused) = content_in(
+        &fixture.service,
+        &fixture.thread,
+        &escaped,
+        Some(&fixture.other),
+    )
+    .await;
+    assert_eq!(code, 400, "{refused}");
+    let (code, refused) = write(
+        &fixture.service,
+        &fixture.thread,
+        json!({
+            "path": escaped,
+            "content": "x\n",
+            "base_revision": null,
+            "repo_id": fixture.other.clone(),
+        }),
+    )
+    .await;
+    assert_eq!(code, 400, "{refused}");
+
+    // A repository that is not the thread's, and any repo_id on an ordinary thread, is not found.
+    let (code, unknown) = content_in(
+        &fixture.service,
+        &fixture.thread,
+        "same.txt",
+        Some("no-such-repository"),
+    )
+    .await;
+    assert_eq!(code, 404, "{unknown}");
+    assert_eq!(unknown["code"], "not_found", "{unknown}");
+    let plain = fixture.service.thread(&fixture.project, "codex").await;
+    let (code, refused) =
+        content_in(&fixture.service, &plain, "same.png", Some(&fixture.project)).await;
+    assert_eq!(code, 404, "{refused}");
+    // Only the repo_id is refused: the ordinary thread's own read is unchanged.
+    let (code, _) = content_in(&fixture.service, &plain, "same.png", None).await;
+    assert_eq!(code, 200);
 }
 
 #[cfg(unix)]

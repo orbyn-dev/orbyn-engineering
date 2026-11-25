@@ -203,6 +203,11 @@ export function createBrowserProfile(name: string) {
   return request<BrowserProfile>("POST", "/api/browser-profiles", { name });
 }
 
+/** Changes the stored name only, so a profile open in a tab can be renamed. */
+export function renameBrowserProfile(id: string, name: string) {
+  return request<BrowserProfile>("POST", `/api/browser-profiles/${q(id)}/rename`, { name });
+}
+
 /** Empties cookies, storage and history; the profile and its name stay. */
 export function clearBrowserProfile(id: string) {
   return request<void>("POST", `/api/browser-profiles/${q(id)}/clear`);

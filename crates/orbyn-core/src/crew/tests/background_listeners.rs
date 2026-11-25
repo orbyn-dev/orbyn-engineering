@@ -80,9 +80,10 @@ pub(super) fn threads(w: &World) -> i64 {
 
 /// The task a run started: the one task of its lead thread.
 pub(super) fn task_of(w: &World, run: &wire::BackgroundRun) -> String {
-    let tasks = w.core.store.crew_tasks_in_crew(&run.id).unwrap();
+    let mut tasks = w.core.store.crew_tasks_in_crew(&run.id).unwrap();
     assert_eq!(tasks.len(), 1, "one task per run");
-    tasks[0].0.id.clone()
+    let (task, _) = tasks.pop().expect("the run's one task");
+    task.id.clone()
 }
 
 pub(super) async fn until_run(
@@ -96,6 +97,8 @@ pub(super) async fn until_run(
             .is_some_and(|run| run.state == state)
     })
     .await;
+    // The runs read is newest first, and the wait watched that front row: the run a firing just started is the
+    // one at the front, so order is the contract this read keeps.
     let mut runs = runs_of(w, crew);
     runs.remove(0)
 }
@@ -238,16 +241,15 @@ async fn a_failed_check_at_the_watched_head_starts_one_run_and_a_repeat_starts_n
     }));
     with_crew_fixture(remote_fixture(remote.clone()), async {
         w.core.crew_background_listeners_tick(NOW).await.unwrap();
-        let runs = runs_of(&w, &id);
+        let mut runs = runs_of(&w, &id);
         assert_eq!(runs.len(), 1, "the failed check at the head fired once");
-        let task = task_of(&w, &runs[0]);
+        let run = runs.pop().expect("the run the failed check fired");
+        let task = task_of(&w, &run);
         let route = w.core.store.crew_route_decisions(&task).unwrap();
         assert_eq!(
-            runs[0].state,
+            run.state,
             wire::BackgroundRunState::Running,
-            "the run ended at once: {:?} route: {:?}",
-            runs[0],
-            route
+            "the run ended at once: {run:?} route: {route:?}"
         );
         assert_eq!(
             w.core.store.crew_task_capacity(&task).unwrap(),
@@ -730,9 +732,13 @@ async fn a_very_long_check_name_still_makes_a_held_row_and_never_appears_in_it()
         1,
         "the start was held, not lost to a key too long"
     );
-    assert_eq!(rows[0].key, format!("{ci}:ci:{head}:{}", event_tag(&name)));
-    assert!(rows[0].key.len() <= 128);
-    assert!(!rows[0].key.contains(&name));
+    let row = rows
+        .iter()
+        .find(|row| row.kind == PausedKind::Background)
+        .expect("the held start's row");
+    assert_eq!(row.key, format!("{ci}:ci:{head}:{}", event_tag(&name)));
+    assert!(row.key.len() <= 128);
+    assert!(!row.key.contains(&name));
     assert!(claims(&w).iter().all(|claim| !claim.contains(&name)));
 }
 
@@ -751,14 +757,14 @@ async fn outside_event_text_selects_the_run_and_never_becomes_its_prompt() {
         w.core.crew_background_listeners_tick(NOW).await.unwrap();
     })
     .await;
-    let runs = runs_of(&w, &id);
+    let mut runs = runs_of(&w, &id);
     assert_eq!(runs.len(), 1, "the failure still selected a run");
-    let task = task_of(&w, &runs[0]);
+    let run = runs.pop().expect("the run the failure selected");
+    let task = task_of(&w, &run);
     assert_eq!(
-        runs[0].state,
+        run.state,
         wire::BackgroundRunState::Running,
-        "the run ended at once: {:?} task: {:?}",
-        runs[0],
+        "the run ended at once: {run:?} task: {:?}",
         w.task(&task).state
     );
     w.until_state(&task, "passed").await;
@@ -784,7 +790,7 @@ async fn outside_event_text_selects_the_run_and_never_becomes_its_prompt() {
         );
     }
     assert!(
-        w.sent_to(&runs[0].id).is_empty(),
+        w.sent_to(&run.id).is_empty(),
         "the run's lead thread is never prompted"
     );
 
