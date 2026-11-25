@@ -211,8 +211,11 @@ describe("the quick refresh", () => {
     const b = { ...projects[0]!, id: "b" };
     useWorkspace.setState({ projects: { data: [a, b], error: null, loading: false }, threadIds: {}, threads: {} });
     const spies = stub();
+    // refreshAll reads the projects first and replaces the seeded ones with the answer, so the answer carries both.
+    spies.projects.mockResolvedValue([a, b]);
     try {
       await useWorkspace.getState().refreshAll();
+      expect(Object.keys(useWorkspace.getState().threadIds).sort()).toEqual(["a", "b"]);
       expect(spies.allThreads).toHaveBeenCalledTimes(1);
       expect(spies.threads).not.toHaveBeenCalled();
     } finally {
