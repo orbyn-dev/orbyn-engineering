@@ -22,18 +22,23 @@ interface Where {
   cwd: string;
   path: string;
   revision: string;
+  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout. */
+  repoId?: string;
+  /** That repository's name, so the comment says where the file is. */
+  repoName?: string;
 }
 export type LineSelection = { anchor: number; end: number };
 
 /** The comment box for a chosen range: it only adds a chip to the next message, and leaves the source bytes alone. */
-export function CommentForm({ threadId, cwd, path, revision, text, selection, onDone }: Where & { text: string; selection: LineSelection; onDone(): void }) {
+export function CommentForm({ threadId, cwd, path, revision, repoId, repoName, text, selection, onDone }: Where & { text: string; selection: LineSelection; onDone(): void }) {
   const [comment, setComment] = useState("");
   const [error, setError] = useState<string | null>(null);
   const range = fileCommentRange(text, selection.anchor, selection.end);
   const submit = () => {
     if (!range || !comment.trim()) return;
     const chip = { id: chipId(), kind: "review" as const, path, ...range,
-      comment: comment.trim(), sourceRevision: revision, sourceCwd: cwd };
+      comment: comment.trim(), sourceRevision: revision, sourceCwd: cwd,
+      ...(repoId === undefined ? {} : { repoId }), ...(repoName === undefined ? {} : { repoName }) };
     const chips = useComposerChips.getState().chips[threadId] ?? [];
     if (charactersOver(promptWithChips(useUi.getState().drafts[threadId] ?? "", [...chips, chip]))) {
       setError("This comment would make your message too long. Shorten it before adding it.");
@@ -54,10 +59,11 @@ export function CommentForm({ threadId, cwd, path, revision, text, selection, on
 }
 
 /** The comments already added for this file and revision, each removable before the message is sent. */
-export function CommentList({ threadId, cwd, path, revision }: Where) {
+export function CommentList({ threadId, cwd, path, revision, repoId }: Where) {
   const all = useComposerChips((state) => state.chips[threadId]);
+  // A comment belongs to one file of one checkout, and to the repository whose file it was made on.
   const comments = (all ?? []).filter((chip) => chip.kind === "review" && chip.path === path
-    && chip.sourceRevision === revision && chip.sourceCwd === cwd);
+    && chip.sourceRevision === revision && chip.sourceCwd === cwd && chip.repoId === repoId);
   return comments.length ? <ul className="file-comment-list" aria-label="File comments">
     {comments.map((chip) => {
       const stale = chip.kind === "review" && chip.stale === true;
@@ -73,7 +79,7 @@ export function CommentList({ threadId, cwd, path, revision }: Where) {
 }
 
 /** Line annotations only change composer context; source bytes remain untouched. */
-export function FileComments({ threadId, cwd, path, revision, text, revealedLine }: Where & { text: string; revealedLine: number | null }) {
+export function FileComments({ threadId, cwd, path, revision, repoId, repoName, text, revealedLine }: Where & { text: string; revealedLine: number | null }) {
   const [selection, setSelection] = useState<LineSelection | null>(null);
   const source = useRef<HTMLPreElement>(null);
   // Scroll only when the reveal or the source changes, never on a selection or keystroke.
@@ -93,7 +99,7 @@ export function FileComments({ threadId, cwd, path, revision, text, revealedLine
         </span>;
       })}
     </pre>
-    {selection ? <CommentForm {...{ threadId, cwd, path, revision, text }} selection={selection} onDone={() => setSelection(null)} /> : null}
-    <CommentList {...{ threadId, cwd, path, revision }} />
+    {selection ? <CommentForm {...{ threadId, cwd, path, revision, repoId, repoName, text }} selection={selection} onDone={() => setSelection(null)} /> : null}
+    <CommentList {...{ threadId, cwd, path, revision, repoId }} />
   </>;
 }

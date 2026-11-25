@@ -123,12 +123,30 @@ fn only_proposal(w: &World, project: &str) -> ProposalView {
     views.pop().unwrap()
 }
 
+/// The proposal of `project` a read returned, found by the repository it records rather than by the place the read
+/// put it: the store's ordering is not a fixture a test can rely on.
+fn proposed<'a>(views: &'a [ProposalView], project: &str) -> &'a ProposalView {
+    views
+        .iter()
+        .find(|view| view.proposal.project_id == project)
+        .unwrap_or_else(|| panic!("no proposal for {project}: {views:?}"))
+}
+
 fn sources(w: &World, view: &ProposalView) -> Vec<CrewLesson> {
     view.proposal
         .lessons
         .iter()
         .map(|id| w.core.store.crew_lesson(id).unwrap().unwrap())
         .collect()
+}
+
+/// A source lesson that says `text`, found by what it records rather than by the place the proposal put it: the
+/// sources' order is not a fixture a test can rely on.
+fn saying<'a>(lessons: &'a [CrewLesson], text: &str) -> &'a CrewLesson {
+    lessons
+        .iter()
+        .find(|lesson| lesson.text.contains(text))
+        .unwrap_or_else(|| panic!("no source lesson saying {text:?}: {lessons:?}"))
 }
 
 fn group_of(w: &World, view: &ProposalView) -> (String, Option<String>, Option<String>) {
@@ -300,7 +318,7 @@ async fn two_lessons_make_no_proposal_and_the_third_makes_one_from_the_fixed_tem
         1,
         "the third lesson makes exactly one proposal"
     );
-    let view = &views[0];
+    let view = proposed(&views, &project);
     assert_eq!(
         (view.proposal.state.as_str(), view.proposal.rev),
         ("open", 1)
@@ -341,7 +359,7 @@ async fn two_lessons_make_no_proposal_and_the_third_makes_one_from_the_fixed_tem
     let views = all_proposals(&w, &project);
     assert_eq!(views.len(), 1, "one proposal per group, ever");
     assert_eq!(
-        views[0].proposal.lessons.len(),
+        proposed(&views, &project).proposal.lessons.len(),
         3,
         "its sources stay the three"
     );
@@ -449,9 +467,10 @@ async fn groups_need_the_same_source_check_kind_and_path_class() {
         "2024-01-01T00:00:03Z",
     );
     learn_escape(&w, &project, "trigger-two", "trigger-two", "Two.");
-    assert_eq!(all_proposals(&w, &project).len(), 1);
+    let views = all_proposals(&w, &project);
+    assert_eq!(views.len(), 1);
     assert_eq!(
-        group_of(&w, &all_proposals(&w, &project)[0]),
+        group_of(&w, proposed(&views, &project)),
         ("escape".to_owned(), None, Some("src".to_owned()))
     );
 
@@ -649,8 +668,12 @@ async fn a_dismissed_pattern_is_not_proposed_again_even_with_a_fifth_lesson() {
     learn_escape(&w, &project, "escape-fifth", "src", "A fifth escape.");
     let views = all_proposals(&w, &project);
     assert_eq!(views.len(), 1, "the dismissed row is remembered");
-    assert_eq!(views[0].proposal.state, "dismissed");
-    assert_eq!(views[0].proposal.lessons.len(), 3);
+    let kept = views
+        .iter()
+        .find(|view| view.proposal.id == dismissed.proposal.id)
+        .expect("the remembered row is the dismissed proposal itself");
+    assert_eq!(kept.proposal.state, "dismissed");
+    assert_eq!(kept.proposal.lessons.len(), 3);
 }
 
 #[tokio::test]
@@ -660,11 +683,13 @@ async fn can_approve_is_false_after_a_source_lesson_is_disabled_or_deleted_and_t
     let project = project_of(&w);
     let view = make_proposal(&w, &project);
     let lessons = sources(&w, &view);
+    let to_disable = saying(&lessons, "The third escape happened.");
+    let to_delete = saying(&lessons, "Seeded escape two.");
     assert!(view.can_approve);
 
     let disabled = w
         .core
-        .crew_lesson_set_enabled(&lessons[0].id, false, lessons[0].rev)
+        .crew_lesson_set_enabled(&to_disable.id, false, to_disable.rev)
         .unwrap();
     let view_now = only_proposal(&w, &project);
     assert!(!view_now.can_approve, "a disabled source cannot approve");
@@ -682,7 +707,7 @@ async fn can_approve_is_false_after_a_source_lesson_is_disabled_or_deleted_and_t
         .reader()
         .execute(
             "UPDATE crew_lessons SET hidden_by_cap = 1 WHERE id = ?1",
-            [&lessons[0].id],
+            [&to_disable.id],
         )
         .unwrap();
     assert!(
@@ -694,14 +719,14 @@ async fn can_approve_is_false_after_a_source_lesson_is_disabled_or_deleted_and_t
         .reader()
         .execute(
             "UPDATE crew_lessons SET hidden_by_cap = 0 WHERE id = ?1",
-            [&lessons[0].id],
+            [&to_disable.id],
         )
         .unwrap();
     assert!(only_proposal(&w, &project).can_approve);
 
     let deleted = w
         .core
-        .crew_lesson_delete(&lessons[1].id, lessons[1].rev)
+        .crew_lesson_delete(&to_delete.id, to_delete.rev)
         .unwrap();
     assert!(deleted.0.starts_with("les_"));
     let view_now = only_proposal(&w, &project);
@@ -918,6 +943,7 @@ async fn approved_lessons_leave_the_brief_and_return_when_the_skill_folder_is_re
     let lessons = sources(&w, &view);
     let texts: Vec<String> = lessons.iter().map(|lesson| lesson.text.clone()).collect();
     let revs: Vec<u32> = lessons.iter().map(|lesson| lesson.rev).collect();
+    let source = saying(&lessons, "The third escape happened.");
     let approved = w
         .core
         .crew_skill_proposal_approve(&view.proposal.id, &view.proposal.text, view.proposal.rev)
@@ -940,7 +966,7 @@ async fn approved_lessons_leave_the_brief_and_return_when_the_skill_folder_is_re
     }
     let detail = w
         .core
-        .crew_lesson_detail(&lessons[0].id, Some(&project))
+        .crew_lesson_detail(&source.id, Some(&project))
         .unwrap();
     assert_eq!(detail.lesson.skill.as_deref(), Some(name.as_str()));
     assert!(!detail.lesson.in_next_brief);
@@ -970,7 +996,7 @@ async fn approved_lessons_leave_the_brief_and_return_when_the_skill_folder_is_re
     }
     let detail = w
         .core
-        .crew_lesson_detail(&lessons[0].id, Some(&project))
+        .crew_lesson_detail(&source.id, Some(&project))
         .unwrap();
     assert!(detail.lesson.skill.is_none());
     assert!(detail.lesson.in_next_brief);
