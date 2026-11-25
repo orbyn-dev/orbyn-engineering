@@ -323,7 +323,8 @@ test("the Sort menu asks the service for each order and each list comes back in 
   await expect(rows(page).first()).toContainText("Retry the queue");
   // The service spells the order qualifier out to gh and sorts its own answer (the stand-in ignores the qualifier).
   const listed = service.ghCalls().filter((args) => args[0] === "issue" && args[1] === "list").at(-1)!;
-  expect(listed[listed.indexOf("--search") + 1]).toBe("sort:created-desc");
+  // The text filter rides in the same --search value as the order qualifier (the service appends it).
+  expect(listed[listed.indexOf("--search") + 1]).toBe("sort:created-desc the");
   // Back to Updated: this key's first read was after the write, so its cached answer holds the post-write order.
   const back = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/issues" && new URL(response.url()).searchParams.get("q") === "the" && new URL(response.url()).searchParams.get("sort") === "updated");
   await page.getByRole("button", { name: "Sort: Created" }).click();

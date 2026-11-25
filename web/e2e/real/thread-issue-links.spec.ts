@@ -210,6 +210,8 @@ test("the chip links and unlinks with its own form, refuses an unknown issue, an
   const prow = sheet.locator(".iss-prow").filter({ has: open });
   const unlink = sheet.getByRole("button", { name: "Unlink #7" });
   await expect(prow).not.toHaveAttribute("data-armed", "true");
+  // hover() waits for the row to be stable (the sheet is still rising), so the raw mouse press cannot land off it.
+  await open.hover();
   const at = await open.boundingBox();
   const head = await sheet.getByText("1 linked issue").boundingBox();
   if (at === null || head === null) throw new Error("the phone sheet did not lay its row out");
