@@ -45,6 +45,10 @@ const CREW_BYTE_EXACT: &[&str] = &[
     "core.untrackedCache=false",
 ];
 
+/// The Git release that started honouring `GIT_ATTR_SOURCE`. Older Git reads the checkout's own
+/// `.gitattributes` instead, which could normalize a byte change away from a byte-exact read.
+const ATTR_SOURCE_FROM: (u32, u32) = (2, 40);
+
 /// The repository's own empty tree. Reading attributes from it hides `.gitattributes`.
 async fn no_attributes(cwd: &Path) -> Result<String> {
     Ok(text(
@@ -142,6 +146,23 @@ async fn hardened(cwd: &Path, extra: &[&str], args: &[&str]) -> Result<Vec<u8>> 
         ));
     }
     Ok(output.stdout)
+}
+
+/// The major and minor version in `git version` output, such as `git version 2.39.3 (Apple Git-146)` or
+/// `git version 2.45.1.windows.1`.
+pub(crate) fn git_version(output: &str) -> Option<(u32, u32)> {
+    let version = output.trim().strip_prefix("git version ")?;
+    let mut parts = version.split(|c: char| !c.is_ascii_digit());
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// Whether this Git honours `GIT_ATTR_SOURCE`, which keeps the checkout's own `.gitattributes` out of a read.
+/// A byte-exact read needs that: otherwise a text attribute could normalize a byte change away.
+pub(crate) async fn reads_attributes_from_source(cwd: &Path) -> bool {
+    let Ok(out) = git_raw(cwd, &["version"]).await else {
+        return false;
+    };
+    git_version(&text(&out.stdout)).is_some_and(|version| version >= ATTR_SOURCE_FROM)
 }
 
 /// `git_hardened` that never holds more than `cap` bytes of output: past the cap the process tree is stopped and the call is an
@@ -823,6 +844,23 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(text(&exact), "false", "{key} is off for byte-exact checks");
+        }
+    }
+
+    #[test]
+    fn the_byte_exact_checks_need_attr_source_from_git_2_40() {
+        for (output, supported) in [
+            ("git version 2.39.5 (Apple Git-154)\n", false),
+            ("git version 2.40.0\n", true),
+            ("git version 2.45.1.windows.1\n", true),
+            ("git version 3.0.0\n", true),
+            ("not git", false),
+        ] {
+            assert_eq!(
+                git_version(output).is_some_and(|version| version >= ATTR_SOURCE_FROM),
+                supported,
+                "{output}"
+            );
         }
     }
 

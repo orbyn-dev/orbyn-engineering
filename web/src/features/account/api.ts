@@ -21,7 +21,8 @@ const post = (path: string, body?: unknown, signal?: AbortSignal) =>
 const confirmed = (nonce: string): { headers: Record<string, string> } => ({ headers: { "x-orbyn-confirm": nonce } });
 
 export const accountApi = {
-  view: (signal?: AbortSignal) => request<AccountView>("GET", "/api/account", undefined, signal),
+  view: (signal?: AbortSignal, fresh = false) =>
+    request<AccountView>("GET", "/api/account", undefined, signal, { share: true, fresh }),
   checkInvite: (invite: string) => post("/sign-up/invite", { invite }),
   /**
    * The password step: it creates the account and emails the code, and sends the invite and the email with it because
