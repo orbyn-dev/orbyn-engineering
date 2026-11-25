@@ -272,6 +272,24 @@ const text = (value: unknown, limit = CHIP_EXCERPT_LIMIT * 4): string | null =>
 const number = (value: unknown): number | null =>
   typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 
+/** One half of a chip's repository identity: a non-blank string, or null when it is missing or the wrong shape. */
+const repositoryField = (value: unknown): string | null => {
+  const found = text(value, 256);
+  return found !== null && found.trim() !== "" ? found : null;
+};
+
+/**
+ * The repository a file or review chip names: both halves, or neither. The path
+ * is relative to that repository's worktree, so one half alone would name the
+ * file as the thread's own and read the wrong copy of it; such a chip is refused.
+ */
+const repositoryOf = (chip: Record<string, unknown>): { repoId?: string; repoName?: string } | null => {
+  const repoId = repositoryField(chip.repoId);
+  const repoName = repositoryField(chip.repoName);
+  if (repoId === null && repoName === null) return {};
+  return repoId === null || repoName === null ? null : { repoId, repoName };
+};
+
 /** One stored chip, or null when a field is missing or the wrong shape. */
 export function asChip(value: unknown, id: string = chipId()): ComposerChip | null {
   if (typeof value !== "object" || value === null) return null;
@@ -280,8 +298,8 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
     case "file": {
       const path = text(chip.path, 4096);
       if (!path) return null;
-      const repoId = text(chip.repoId, 256);
-      const repoName = text(chip.repoName, 256);
+      const repo = repositoryOf(chip);
+      if (repo === null) return null;
       return {
         id,
         kind: "file",
@@ -289,8 +307,7 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
         line: number(chip.line),
         ...(number(chip.endLine) !== null ? { endLine: number(chip.endLine)! } : {}),
         ...(chip.fromDiff === true ? { fromDiff: true } : {}),
-        ...(repoId === null ? {} : { repoId }),
-        ...(repoName === null ? {} : { repoName }),
+        ...repo,
         excerpt: text(chip.excerpt),
         language: text(chip.language, 64),
       };
@@ -320,13 +337,12 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
       const line = number(chip.line);
       const endLine = number(chip.endLine);
       if (chip.endLine !== undefined && (line === null || endLine === null || endLine < line)) return null;
-      const repoId = text(chip.repoId, 256);
-      const repoName = text(chip.repoName, 256);
+      const repo = repositoryOf(chip);
+      if (repo === null) return null;
       return {
         id, kind: "review", path, line, comment, excerpt: text(chip.excerpt),
         ...(endLine === null ? {} : { endLine }),
-        ...(repoId === null ? {} : { repoId }),
-        ...(repoName === null ? {} : { repoName }),
+        ...repo,
         ...(typeof chip.sourceRevision === "string" ? { sourceRevision: text(chip.sourceRevision, 256) ?? undefined } : {}),
         ...(typeof chip.sourceCwd === "string" ? { sourceCwd: text(chip.sourceCwd, 4096) ?? undefined } : {}),
         ...(chip.stale === true ? { stale: true } : {}),

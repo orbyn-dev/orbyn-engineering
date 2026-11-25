@@ -76,6 +76,22 @@ describe("composer context", () => {
     expect(chipLabel(asChip({ kind: "file", path: "notes.txt", line: null })!)).toBe("notes.txt");
   });
 
+  it("refuses a chip whose repository is only half known", () => {
+    // A foreign file's path is relative to its own repository's worktree, so one
+    // half alone would name it, or read it, as the thread's own copy of the path.
+    expect(asChip({ kind: "file", path: "notes.txt", line: 2, repoName: "orbyn-planner" })).toBeNull();
+    expect(asChip({ kind: "file", path: "notes.txt", line: 2, repoId: "planner" })).toBeNull();
+    expect(asChip({ kind: "review", path: "notes.txt", line: 2, comment: "why?", repoName: "orbyn-planner" })).toBeNull();
+    expect(asChip({ kind: "review", path: "notes.txt", line: 2, comment: "why?", repoId: "planner" })).toBeNull();
+    // A blank half is no half, and a chip with neither stays the thread's own.
+    expect(asChip({ kind: "file", path: "notes.txt", repoId: "planner", repoName: "" })).toBeNull();
+    expect(asChip({ kind: "file", path: "notes.txt", line: 2 })).not.toHaveProperty("repoId");
+    expect(asChip({ kind: "review", path: "notes.txt", line: 2, comment: "why?" })).not.toHaveProperty("repoName");
+    expect(asChip({ kind: "file", path: "notes.txt", repoId: "planner", repoName: "orbyn-planner" })).toMatchObject({
+      repoId: "planner", repoName: "orbyn-planner",
+    });
+  });
+
   it("renders each kind as a readable prompt block", () => {
     expect(chipPrompt(chip({ kind: "file" }))).toBe("File `src/main.rs:12`\n```rust\nlet a = 1;\n```");
     expect(chipPrompt(chip({ kind: "terminal" }))).toContain("Terminal selection");
