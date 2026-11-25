@@ -790,7 +790,8 @@ impl IssueSource for Forgejo {
                 Some(&payload),
                 "repository",
             )
-            .await?;
+            .await
+            .map_err(|error| super::possibly_created("Forgejo", error))?;
         let value = parse(&got.body)?;
         let summary = summary(&self.host, scope, &value)
             .ok_or_else(|| CoreError::NotFound("issue".into()))?;
