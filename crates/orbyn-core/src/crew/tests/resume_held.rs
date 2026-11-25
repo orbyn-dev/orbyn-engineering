@@ -125,9 +125,14 @@ async fn a_lead_resumes_a_held_task_and_its_worker_is_told() {
         w.core.store.thread(&worker).unwrap().active_run.is_some()
     })
     .await;
+    // The worker's turns in order: the brief, then the resumed turn. The pair is unpacked with its count, so the
+    // assertions name the resumed turn rather than a place in the list.
     let prompts = w.sent_to(&worker);
-    assert!(prompts[1].contains("resumed"), "{}", prompts[1]);
-    assert!(prompts[1].contains("crew_report"), "{}", prompts[1]);
+    let [_, resumed] = prompts.as_slice() else {
+        panic!("the brief and then the resumed turn: {prompts:?}");
+    };
+    assert!(resumed.contains("resumed"), "{resumed}");
+    assert!(resumed.contains("crew_report"), "{resumed}");
 
     // The call is the audited action every Crew tool gets; the state and the worker's result are the record.
     let calls = w
