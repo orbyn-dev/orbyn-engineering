@@ -180,10 +180,16 @@ pub trait ActionReview: Send + Sync {
     async fn review(&self, scope: &RunScope, ask: &ActionAsk) -> Review;
 }
 
+/// How many approvals one run may have waiting at once. A stalled or hostile engine gets a plain denial past
+/// this instead of growing the gate and the store's pending list without bound.
+const MAX_WAITING_APPROVALS: usize = 32;
+
 pub struct ApprovalGate {
     store: Arc<Store>,
     review: std::sync::OnceLock<Arc<dyn ActionReview>>,
     waiters: Mutex<HashMap<String, oneshot::Sender<ApprovalState>>>,
+    /// Approvals currently waiting, counted per run.
+    waiting_runs: Mutex<HashMap<String, usize>>,
     /// Words for the engine, between a denial and its waiter reading them.
     feedback: Mutex<HashMap<String, String>>,
     timeout: Duration,
@@ -195,6 +201,7 @@ impl ApprovalGate {
             store,
             review: std::sync::OnceLock::new(),
             waiters: Mutex::new(HashMap::new()),
+            waiting_runs: Mutex::new(HashMap::new()),
             feedback: Mutex::new(HashMap::new()),
             timeout,
         }
@@ -384,6 +391,26 @@ impl ApprovalGate {
             });
         }
 
+        // A run cannot heap approvals without bound: past the cap the engine gets a plain denial and the gate (and
+        // the store's pending list) stays bounded. The guard below counts this run's waiting approvals.
+        {
+            let mut waiting = self
+                .waiting_runs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let count = waiting.entry(scope.run_id.clone()).or_insert(0);
+            if *count >= MAX_WAITING_APPROVALS {
+                return Ok(Verdict::Deny(
+                    "Too many approvals are waiting for this run. Decide them or stop the run first."
+                        .to_owned(),
+                ));
+            }
+            *count += 1;
+        }
+        let _waiting = WaitingGuard {
+            gate: self,
+            run: scope.run_id.clone(),
+        };
         // The waiter must exist before the row does, or a fast decision is lost.
         let id = new_id();
         let (sender, receiver) = oneshot::channel();
@@ -492,6 +519,28 @@ fn policy_verb(effect: PolicyEffect) -> &'static str {
         PolicyEffect::Allow => "allow",
         PolicyEffect::Ask => "ask",
         PolicyEffect::Deny => "deny",
+    }
+}
+
+/// Holds this run's waiting-approval count for as long as one request is in flight.
+struct WaitingGuard<'a> {
+    gate: &'a ApprovalGate,
+    run: String,
+}
+
+impl Drop for WaitingGuard<'_> {
+    fn drop(&mut self) {
+        let mut waiting = self
+            .gate
+            .waiting_runs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(count) = waiting.get_mut(&self.run) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                waiting.remove(&self.run);
+            }
+        }
     }
 }
 
@@ -963,6 +1012,52 @@ mod tests {
         let approval = next_pending(&f.store, &f.scope.thread_id).await;
         gate.decide(&approval.id, true, false, "person").unwrap();
         assert_eq!(waiting.await.unwrap(), Verdict::Allow);
+    }
+
+    #[tokio::test]
+    async fn a_run_cannot_heap_up_approvals_past_the_cap() {
+        let f = fixture();
+        let gate = Arc::new(ApprovalGate::new(f.store.clone(), Duration::from_secs(30)));
+        let mut waiting = Vec::new();
+        for _ in 0..MAX_WAITING_APPROVALS {
+            let (gate, scope) = (gate.clone(), f.scope.clone());
+            waiting.push(tokio::spawn(async move { gate.request(&scope, ask()).await }));
+        }
+        for _ in 0..500 {
+            if f.store
+                .pending_for_thread(&f.scope.thread_id)
+                .unwrap()
+                .len()
+                == MAX_WAITING_APPROVALS
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        assert_eq!(
+            f.store
+                .pending_for_thread(&f.scope.thread_id)
+                .unwrap()
+                .len(),
+            MAX_WAITING_APPROVALS,
+            "the cap is reached"
+        );
+        let refused = gate.request(&f.scope, ask()).await;
+        assert!(
+            matches!(&refused, Verdict::Deny(why) if why.contains("Too many approvals")),
+            "{refused:?}"
+        );
+        assert_eq!(
+            f.store
+                .pending_for_thread(&f.scope.thread_id)
+                .unwrap()
+                .len(),
+            MAX_WAITING_APPROVALS,
+            "the refused request writes no row"
+        );
+        for task in waiting {
+            task.abort();
+        }
     }
 
     #[tokio::test]

@@ -164,6 +164,30 @@ pub fn is_sign_in_failure(text: &str) -> bool {
     .any(|phrase| lower.contains(phrase))
 }
 
+/// The patterns a URL uses to carry a login or a credential: `scheme://user:pass@` and the values of
+/// credential-named query parameters. Compiled once; both are matched without regard to case.
+fn outward_patterns() -> &'static (regex::Regex, regex::Regex) {
+    static PATTERNS: std::sync::OnceLock<(regex::Regex, regex::Regex)> = std::sync::OnceLock::new();
+    PATTERNS.get_or_init(|| {
+        (
+            regex::Regex::new(r"(?i)\b(https?://)[^/\s@]+@").expect("a fixed URL login pattern"),
+            regex::Regex::new(
+                r"(?i)([?&](?:token|access_token|api[_-]?key|auth|secret|password|sig|signature|code)=)[^&#\s]*",
+            )
+            .expect("a fixed URL credential-query pattern"),
+        )
+    })
+}
+
+/// Engine or endpoint error text fit to show: [`clean`] plus the login and credential values a URL in it
+/// carries are removed, so an endpoint that answers with its own address cannot leak one.
+pub fn outward(text: &str) -> String {
+    let (userinfo, query) = outward_patterns();
+    let without_login = userinfo.replace_all(text, "$1");
+    let without_tokens = query.replace_all(&without_login, "$1[hidden]");
+    clean(&without_tokens)
+}
+
 /// The message for a failed run: clean, and pointing at the vendor's own sign-in when
 /// that is the cause. Orbyn never runs that command for anyone.
 pub fn failure_message(text: &str, sign_in: Option<&str>) -> String {
@@ -182,6 +206,21 @@ pub fn failure_message(text: &str, sign_in: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_endpoint_error_loses_its_url_login_and_query_credentials() {
+        let shown =
+            outward("Could not reach https://user:pass@agent.test/run?token=abc&x=1: denied");
+        assert!(
+            !shown.contains("user:pass") && !shown.contains("abc"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("agent.test") && shown.contains("denied"),
+            "{shown}"
+        );
+        assert!(shown.contains("?token=[hidden]"), "{shown}");
+    }
 
     #[test]
     fn terminal_codes_are_removed() {

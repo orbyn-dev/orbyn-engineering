@@ -440,8 +440,10 @@ Agent-published HTML renders retain their separate publishing boundary.
 
 ## Engine failures
 
-Failure text is cleaned before anyone sees it: terminal codes go, and a line that looks
-like a credential, by key name, vendor prefix or shape, is dropped whole. A run that
+Failure text is cleaned before anyone sees it: terminal codes go, a line that looks
+like a credential, by key name, vendor prefix or shape, is dropped whole, and a URL's login
+(`user:pass@`) and credential-named query values are removed so an endpoint that answers with
+its own address cannot leak one. A run that
 failed for want of a login says so and names the vendor's command, such as `claude auth
 login`, and logs `CUSTOM engine.sign_in_required`. Orbyn only names the command, under
 rule 1. A run that failed because its engine host stopped carries the stable `RUN_ERROR`
@@ -2143,7 +2145,9 @@ existing outcome with `409 already_decided`. Run cancellation and driver exit
 expire open approvals, and the engine receives a denial. Policy is evaluated
 first: `deny` wins over `ask`, `ask` wins over `allow`, and no matching rule means
 `ask`. Policy and audit are internal safety: the product surface is the permission
-mode, and no client offers rule editing or an audit log. A timed-out approval expires and denies. A wildcard `allow` on a `command`
+mode, and no client offers rule editing or an audit log. A run holds at most 32 approvals
+waiting at once; past that the engine is denied plainly, so a stalled or hostile engine cannot
+grow the gate or the store's pending list without bound. A timed-out approval expires and denies. A wildcard `allow` on a `command`
 never matches a compound command (`;`, `|`, `&`, redirection, substitution), so
 `git *` cannot grant `git log; rm -rf /`. `remember` stores an exact rule, written
 `=<target>`, so a target containing `*` does not become a wildcard.
@@ -2185,7 +2189,11 @@ endpoint `POST /agui/threads/:id` projects the same pause as
 `RUN_FINISHED(outcome: interrupt)` and maps `resume[]` to approval decisions while
 holding the engine process. A resume must answer every open interrupt, replaying
 one is safe, and new input on a paused thread gets `RUN_ERROR`. `payload.approved`
-carries the decision and anything but `true` denies.
+carries the decision and anything but `true` denies. The endpoint's response is read as
+SSE with an 8 MiB cap on a line and on one event's data: a stream that passes it fails the run
+with a plain sentence instead of buffering without bound. Each engine's stdio is read through a
+bounded queue, so a flooding engine waits on its own pipe rather than growing the service's
+memory.
 
 ## Instant reads
 

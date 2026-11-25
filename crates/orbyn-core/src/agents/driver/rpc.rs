@@ -22,6 +22,10 @@ use crate::error::{CoreError, Result};
 type RpcResult = std::result::Result<Value, RpcCallError>;
 type Pending = Arc<Mutex<HashMap<i64, oneshot::Sender<RpcResult>>>>;
 
+/// How many engine frames may wait for the driver to handle them. A bounded queue pushes the backpressure to
+/// the engine's stdout (its own write blocks) instead of growing the service's memory without bound.
+pub(crate) const INBOUND_QUEUE: usize = 256;
+
 /// Protocol error identity is kept separate from its human-readable diagnostic.
 #[derive(Debug)]
 pub(crate) struct RpcCallError {
@@ -72,10 +76,10 @@ impl RpcClient {
         stdin: ChildStdin,
         stdout: ChildStdout,
         header: bool,
-    ) -> (Self, mpsc::UnboundedReceiver<Inbound>) {
+    ) -> (Self, mpsc::Receiver<Inbound>) {
         let (out, mut outgoing) = mpsc::channel::<String>(256);
         let pending: Pending = Arc::default();
-        let (inbound_tx, inbound) = mpsc::unbounded_channel();
+        let (inbound_tx, inbound) = mpsc::channel(INBOUND_QUEUE);
         tokio::spawn(async move {
             let mut stdin = stdin;
             while let Some(line) = outgoing.recv().await {
@@ -99,7 +103,10 @@ impl RpcClient {
                     tracing::debug!("skipping a non-JSON engine line");
                     continue;
                 };
-                route(message, &router, &inbound_tx);
+                // A full queue waits here: the engine's next write is the backpressure, not our memory.
+                if !route(message, &router, &inbound_tx).await {
+                    break;
+                }
             }
             lock(&router).clear();
         });
@@ -192,26 +199,39 @@ fn lock(pending: &Pending) -> std::sync::MutexGuard<'_, HashMap<i64, oneshot::Se
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn route(message: Value, pending: &Pending, inbound: &mpsc::UnboundedSender<Inbound>) {
+/// Sends one engine line to the driver; false once the driver's queue is gone.
+async fn route(message: Value, pending: &Pending, inbound: &mpsc::Sender<Inbound>) -> bool {
     let method = message.get("method").and_then(Value::as_str);
     let id = message.get("id").filter(|id| !id.is_null());
     match (method, id) {
         (Some(method), Some(id)) => {
-            let _ = inbound.send(Inbound::Request {
-                id: id.clone(),
-                method: method.to_owned(),
-                params: message.get("params").cloned().unwrap_or(Value::Null),
-            });
+            if inbound
+                .send(Inbound::Request {
+                    id: id.clone(),
+                    method: method.to_owned(),
+                    params: message.get("params").cloned().unwrap_or(Value::Null),
+                })
+                .await
+                .is_err()
+            {
+                return false;
+            }
         }
         (Some(method), None) => {
-            let _ = inbound.send(Inbound::Notification {
-                method: method.to_owned(),
-                params: message.get("params").cloned().unwrap_or(Value::Null),
-            });
+            if inbound
+                .send(Inbound::Notification {
+                    method: method.to_owned(),
+                    params: message.get("params").cloned().unwrap_or(Value::Null),
+                })
+                .await
+                .is_err()
+            {
+                return false;
+            }
         }
         (None, Some(id)) => {
             let Some(sender) = id.as_i64().and_then(|id| lock(pending).remove(&id)) else {
-                return;
+                return true;
             };
             let result = match message.get("error") {
                 Some(error) => Err(RpcCallError {
@@ -230,27 +250,55 @@ fn route(message: Value, pending: &Pending, inbound: &mpsc::UnboundedSender<Inbo
         }
         (None, None) => {}
     }
+    true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn structured_errors_preserve_code_without_classifying_text() {
+    #[tokio::test]
+    async fn structured_errors_preserve_code_without_classifying_text() {
         let pending: Pending = Arc::default();
         let (tx, rx) = oneshot::channel();
         lock(&pending).insert(1, tx);
-        let (inbound, _) = mpsc::unbounded_channel();
+        let (inbound, _inbound_rx) = mpsc::channel(1);
         route(
             json!({"id":1,"error":{"code":-32002,"message":"arbitrary diagnostic"}}),
             &pending,
             &inbound,
-        );
-        let error = rx.blocking_recv().unwrap().unwrap_err();
+        )
+        .await;
+        let error = rx.await.unwrap().unwrap_err();
         assert_eq!(error.code, Some(-32002));
         assert!(matches!(error.error, CoreError::EngineUnavailable(_)));
         assert!(lock(&pending).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_flooding_engine_waits_on_the_bounded_inbound_queue() {
+        let (inbound, mut receiver) = mpsc::channel(2);
+        let pending: Pending = Arc::default();
+        let flood = tokio::spawn(async move {
+            for at in 0..8 {
+                route(
+                    json!({"method":"notice","params":{"at":at}}),
+                    &pending,
+                    &inbound,
+                )
+                .await;
+            }
+        });
+        // Two frames fit; the third send is waiting, so the flood task itself has not finished.
+        receiver.recv().await.unwrap();
+        receiver.recv().await.unwrap();
+        tokio::task::yield_now().await;
+        assert!(!flood.is_finished(), "backpressure holds the engine's next line");
+        for _ in 2..8 {
+            receiver.recv().await.unwrap();
+        }
+        flood.await.unwrap();
+        assert!(receiver.try_recv().is_err());
     }
 
     #[tokio::test]

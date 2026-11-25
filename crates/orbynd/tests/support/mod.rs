@@ -284,7 +284,7 @@ impl Service {
                 .expect("event stream stalled")
                 .expect("event stream ended")
                 .unwrap();
-            for frame in parser.push(&chunk) {
+            for frame in parser.push(&chunk).expect("test SSE frames fit the cap") {
                 let event: Value = serde_json::from_str(&frame).unwrap();
                 let done = stop(&event);
                 events.push(event);
@@ -392,7 +392,7 @@ impl SseReader {
                 .await
                 .expect("stream stalled")
                 .unwrap_or(None)?;
-            for frame in self.parser.push(&chunk) {
+            for frame in self.parser.push(&chunk).expect("test SSE frames fit the cap") {
                 self.pending
                     .push_back(serde_json::from_str(&frame).unwrap());
             }
