@@ -6,6 +6,7 @@ mod scope;
 mod source;
 mod threads;
 
+pub(crate) use scope::repo_asked;
 pub use scope::in_repo;
 
 use crate::app::Core;

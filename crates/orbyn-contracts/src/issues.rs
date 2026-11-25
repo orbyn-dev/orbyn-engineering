@@ -6,6 +6,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 use ts_rs::TS;
 
+use crate::PullChecks;
+
 wire_enum! {
 pub enum TrackerKind {
     Github,
@@ -181,6 +183,11 @@ pub struct IssueLinkedPull {
     pub state: LinkedPullState,
     pub is_draft: bool,
     pub closes_issue: bool,
+    /// Where its CI checks stand, the same counts the pull request list carries. Absent when the tracker does
+    /// not report them or the read did not answer: absent is unknown, never "no checks" (docs/issues.md).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub checks: Option<PullChecks>,
 }
 }
 

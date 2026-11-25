@@ -103,10 +103,15 @@ pub async fn open_file(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<OpenPreviewFile>,
 ) -> ApiResult<impl IntoResponse> {
-    let tab = state
-        .core
-        .open_preview_file(&id, &body.path, LOCAL_USER)
-        .await?;
+    // Core resolves the file inside the chosen repository's worktree and refuses one that
+    // leaves it; an absent, unknown or ordinary-thread `repo_id` is that resolver's answer.
+    let tab = orbyn_core::in_repo(body.repo_id.clone(), async {
+        state
+            .core
+            .open_preview_file(&id, &body.path, LOCAL_USER)
+            .await
+    })
+    .await?;
     Ok((StatusCode::CREATED, Json(tab)))
 }
 
