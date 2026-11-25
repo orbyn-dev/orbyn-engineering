@@ -80,8 +80,19 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/i,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\b[0-9a-f]{32,}\b/i,
-  // An assignment to a name that says it holds a secret, unless it only copies another variable.
-  /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Z0-9_]*=(?!\$|\s|$)\S+/i,
+  // An assignment to a name that says it holds a secret, unless it only copies another variable. `PASS` names a secret only
+  // as a whole word, so `DB_PASS` counts and `BYPASS` does not. A quoted value is read inside its quotes: `"$VAR"` and
+  // `"$(command)"` copy or run and an empty or blank `""` holds nothing, while `"hunter2"` and `" hunter2"` are typed literals.
+  /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=(?:(?!["'$])(?!\s|$)\S+|"[ \t]*(?![$`"\s])\S|'[ \t]*(?!['\s])\S)/i,
+  // A secret-named assignment with an ANSI-C or locale literal value (`API_TOKEN=$'hunter2'`, `API_TOKEN=$"hunter2"`): the literal is typed.
+  /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=["']?\$['"](?![$"'])/i,
+  // An assignment that copies a variable but falls back to a typed literal after `:-` or `:=` (`API_TOKEN=${TOKEN:-hunter2}`).
+  // The literal may start with spaces after an opening quote (`' hunter2'`) or follow a nested reference (`${PREFIX}hunter2`);
+  // either way it is what the person typed, so it is the secret. A bare copy (`TOKEN=${VAR}`), command substitution (backticked or
+  // `$(...)`, as in `TOKEN=$(gh auth token)`) and a fallback that is only a reference, a space or nothing (`TOKEN=${VAR:-$OTHER}`,
+  // `${TOKEN:-${OTHER}}`, `${TOKEN:- }`) carry no typed secret. Nested fallbacks (`${TOKEN:-${OTHER:-hunter2}}`) are the
+  // open follow-up.
+  /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=["']?\$\{[A-Za-z_0-9][A-Za-z0-9_]*(?::-|:=)(?:["']?[ \t]*(?![$}`\s"'])\S|["']?\$\{[A-Za-z_0-9][A-Za-z0-9_]*\}[ \t]*(?![$}`\s"'])\S)/i,
   // A flag that names a secret and carries its value (`--password hunter2`, `--token=abc`); `--password-file x` names a file, not a value; a bare `$VAR` or `"${VAR}"` copies another variable, but `$'text'` and `${VAR:-text}` carry a literal.
   /(?<![\w-])--?(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)(?!"?\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})"?(?:\s|$)|-)\S+/i,
   // The database clients take the password glued to `-p` (`mysql -u root -pSecret`); `-p` alone or on other tools is a port or a path flag.
