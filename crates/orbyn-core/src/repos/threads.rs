@@ -360,13 +360,16 @@ impl Core {
             }
         };
         let stamp = crate::util::now();
-        for (position, (repo, (_, worktree))) in chosen.iter().zip(&made).enumerate() {
+        for (position, ((repo, base), (_, worktree))) in
+            chosen.iter().zip(&bases).zip(&made).enumerate()
+        {
             let record = ThreadRepoRecord {
                 thread_id: thread.id.clone(),
                 repo_id: repo.repo_id.clone(),
                 position: u32::try_from(position).unwrap_or(0),
                 name: repo.name.clone(),
                 branch: branch.clone(),
+                base_branch: Some(base.clone()),
                 worktree_path: worktree.to_string_lossy().into_owned(),
             };
             if let Err(error) = self.store.thread_repo_insert(&record, &stamp) {
@@ -464,6 +467,8 @@ impl Core {
             position: u32::try_from(records.len()).unwrap_or(0),
             name,
             branch,
+            // The branch the worktree above was cut from: the one checked out in that repository.
+            base_branch: Some(base),
             worktree_path: target,
         };
         if let Err(error) = self.store.thread_repo_insert(&record, &crate::util::now()) {
