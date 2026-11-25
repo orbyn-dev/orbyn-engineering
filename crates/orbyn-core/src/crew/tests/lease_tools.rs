@@ -6,7 +6,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use orbyn_contracts::{CrewPathPattern, CrewRole, ErrorCode, LeaseMode, LeaseState};
+use orbyn_contracts::{
+    CrewPathPattern, CrewRole, ErrorCode, LeaseMode, LeaseState, ResultState, StopReason,
+};
 use serde_json::{Value, json};
 
 use super::harness::{Turn, World, bind, brief, key, report, world, world_with};
@@ -447,5 +449,127 @@ async fn a_request_and_a_start_race_for_the_same_path() {
             .count(),
         1,
         "exactly one grant on {DOCS} is live: {live:?}"
+    );
+}
+
+/// H10: a request that waited for a grant in flight stores nothing after the task ended. The task
+/// state is read again in the grant's own transaction, so the run-end cleanup that reads the live
+/// leases after the move to a final state cannot be overtaken by a waiting grant.
+#[tokio::test]
+async fn a_request_waiting_for_a_grant_stores_nothing_after_the_run_end() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let (started, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{started}");
+    let id = started["task"].as_str().unwrap().to_owned();
+    let crew = w.task(&id).crew_id;
+    let token = worker_token(&w, &id);
+
+    // The request passes the run's live check, then waits here for a grant in flight.
+    let held = w.core.crew_lease_grants.lock().await;
+    let mut request = Box::pin(w.call(
+        &token,
+        crate::crew::LEASE_REQUEST_TOOL,
+        json!({ "paths": [DOCS], "mode": "read", "expires_at": FUTURE }),
+    ));
+    tokio::select! {
+        biased;
+        answer = &mut request => panic!("the request ran while a grant held the lock: {answer:?}"),
+        _ = tokio::time::sleep(Duration::from_millis(300)) => {}
+    }
+    // The task ends while the request waits: it goes final, then its run-end cleanup reads the
+    // live leases and writes the brief's own grant released.
+    let stopped = w
+        .core
+        .store
+        .move_crew_task(&id, "stopped", Some("budget"))
+        .unwrap();
+    w.core.end_crew_task(
+        &stopped,
+        ResultState::Stopped,
+        Some(StopReason::Budget),
+        "The task ran past its time budget.",
+        None,
+    );
+    drop(held);
+    let (answer, refused) = request.await;
+    assert!(refused, "{answer}");
+    assert_eq!(answer["code"], "run_ended");
+    assert!(
+        docs_leases(&w, &id, LeaseState::Granted).is_empty(),
+        "a waiting request stored a grant after the run-end cleanup"
+    );
+    assert!(
+        w.core
+            .live_crew_leases(&crew, crate::util::unix_now())
+            .unwrap()
+            .is_empty(),
+        "a grant survived the run end"
+    );
+}
+
+/// H10: a member's request for a narrower write lease, and its release, leave the brief's own
+/// write grant live for the brief's other files: the two grants are separate lineages (one per
+/// path set), so neither the request nor the release replaces the brief's grant.
+#[tokio::test]
+async fn a_path_scoped_lease_leaves_the_briefs_write_grant_live() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let (started, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{started}");
+    let id = started["task"].as_str().unwrap().to_owned();
+    let token = worker_token(&w, &id);
+    let member = w.core.store.crew_run(&id).unwrap().unwrap().member;
+    let pattern = |path: &str| CrewPathPattern::new(path).unwrap();
+
+    // The brief grants src/**; the worker asks for one file inside it, then releases it.
+    let (answer, refused) = w
+        .call(
+            &token,
+            crate::crew::LEASE_REQUEST_TOOL,
+            json!({ "paths": ["src/one.rs"], "mode": "write", "expires_at": FUTURE }),
+        )
+        .await;
+    assert!(!refused, "{answer}");
+    assert_eq!(answer["state"], "granted");
+    assert!(
+        w.core
+            .crew_check_lease(&id, &member, &pattern("src/two.rs"), LeaseMode::Write)
+            .is_ok(),
+        "the path-scoped request hid the brief's write grant"
+    );
+
+    let (answer, refused) = w
+        .call(
+            &token,
+            crate::crew::LEASE_RELEASE_TOOL,
+            json!({ "paths": ["src/one.rs"] }),
+        )
+        .await;
+    assert!(!refused, "{answer}");
+    assert!(
+        w.core
+            .crew_check_lease(&id, &member, &pattern("src/two.rs"), LeaseMode::Write)
+            .is_ok(),
+        "the release dropped the brief's write grant"
+    );
+    assert!(
+        w.core
+            .crew_check_lease(&id, &member, &pattern("src/one.rs"), LeaseMode::Write)
+            .is_ok(),
+        "the released path is still inside the brief's grant"
+    );
+
+    // The brief's grant stays granted for its files, and the scoped lease is the one released.
+    let leases = w.core.store.crew_leases(&id).unwrap();
+    assert!(
+        leases.iter().any(|lease| lease.state == LeaseState::Granted
+            && lease.paths.iter().any(|path| path.as_str() == "src/**")),
+        "{leases:?}"
+    );
+    assert!(
+        leases
+            .iter()
+            .any(|lease| lease.state == LeaseState::Released
+                && lease.paths.iter().any(|path| path.as_str() == "src/one.rs")),
+        "{leases:?}"
     );
 }

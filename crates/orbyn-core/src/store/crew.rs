@@ -493,6 +493,21 @@ impl Store {
         self.commit(|tx, _| insert_object(tx, task_id, object, &body))
     }
 
+    /// Appends the grant a member's lease request asked for, only while the task's run is live
+    /// (H10). The state read and the insert are one transaction: a request that waited for a
+    /// grant in flight cannot store a grant after the run-end cleanup has released the task's
+    /// leases, because the cleanup reads them after the move to a final state this checks.
+    pub fn add_crew_lease_grant(&self, task_id: &str, lease: &Lease) -> Result<()> {
+        let object = CrewObject::Lease(lease.clone());
+        let body = checked(&object)?;
+        self.commit(|tx, _| {
+            if crate::crew::lifecycle::is_final(&find_task(tx, task_id)?.state) {
+                return Err(CoreError::RunClosed);
+            }
+            insert_object(tx, task_id, &object, &body)
+        })
+    }
+
     pub(super) fn crew_objects(
         &self,
         table: &'static str,

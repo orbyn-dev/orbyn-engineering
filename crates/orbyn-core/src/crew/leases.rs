@@ -284,13 +284,22 @@ impl Core {
         now: i64,
     ) -> Result<Vec<(String, Lease)>, CrewError> {
         let all = self.store.crew_leases_in_crew(crew_id).map_err(internal)?;
-        // The newest object of each lineage says where the lease stands.
-        let mut newest: HashMap<(String, String, bool), (String, Lease)> = HashMap::new();
+        // The newest object of each lineage says where the lease stands. A lineage is one path
+        // set in one mode, so the brief's own grant and a member's request for a narrower set
+        // are separate grants: a request or a release never hides the brief's files, and the
+        // check below still reads both.
+        let mut newest: HashMap<(String, String, bool, Vec<String>), (String, Lease)> =
+            HashMap::new();
         for (task, lease) in all {
             let key = (
                 task.clone(),
                 lease.holder.as_str().to_owned(),
                 lease.mode == LeaseMode::Write,
+                lease
+                    .paths
+                    .iter()
+                    .map(|path| path.as_str().to_owned())
+                    .collect(),
             );
             newest.insert(key, (task, lease));
         }
@@ -645,9 +654,16 @@ impl Core {
             self.tell_lead_of(&who, &error);
             return Err(error);
         }
+        // H10: the run can end while the request waits, and the run-end cleanup reads the live
+        // leases after the task moved to its final state. The grant is stored only if that state
+        // still stands when its own transaction reads it, so a waiting request cannot store a
+        // grant the cleanup has already passed.
         self.store
-            .add_crew_object(&task.id, &CrewObject::Lease(lease.clone()))
-            .map_err(internal)?;
+            .add_crew_lease_grant(&task.id, &lease)
+            .map_err(|error| match error {
+                CoreError::RunClosed => CrewError::new(ErrorCode::RunEnded, "this run has ended"),
+                other => internal(other),
+            })?;
         Ok(json!({ "id": lease.id, "state": lease.state }))
     }
 
