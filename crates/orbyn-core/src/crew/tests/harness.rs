@@ -420,11 +420,10 @@ pub async fn world_refusing_steers_after(
         preview,
         script,
         engines,
-        false,
-        false,
-        Vec::new(),
-        None,
-        Some(accepted),
+        WorldKnobs {
+            refuses_after: Some(accepted),
+            ..WorldKnobs::default()
+        },
     )
     .await
 }
@@ -441,11 +440,10 @@ pub async fn world_tiered(
         preview,
         script,
         engines,
-        tiered,
-        false,
-        Vec::new(),
-        None,
-        None,
+        WorldKnobs {
+            tiered,
+            ..WorldKnobs::default()
+        },
     )
     .await
 }
@@ -455,11 +453,11 @@ pub async fn world_publication(script: Script, timeout: Option<std::time::Durati
         true,
         script,
         &[("alpha", false), ("beta", false)],
-        true,
-        false,
-        Vec::new(),
-        timeout,
-        None,
+        WorldKnobs {
+            tiered: true,
+            approval_timeout: timeout,
+            ..WorldKnobs::default()
+        },
     )
     .await
 }
@@ -471,11 +469,10 @@ pub async fn world_confined(script: Script) -> World {
         true,
         script,
         &[("alpha", false)],
-        false,
-        true,
-        Vec::new(),
-        None,
-        None,
+        WorldKnobs {
+            confine: true,
+            ..WorldKnobs::default()
+        },
     )
     .await
 }
@@ -483,7 +480,16 @@ pub async fn world_confined(script: Script) -> World {
 #[cfg(target_os = "macos")]
 /// `world_confined`, with these fake engines (an id ending in `codex` is of the Codex family).
 pub async fn world_confined_with(script: Script, engines: &[(&str, bool)]) -> World {
-    world_full(true, script, engines, false, true, Vec::new(), None, None).await
+    world_full(
+        true,
+        script,
+        engines,
+        WorldKnobs {
+            confine: true,
+            ..WorldKnobs::default()
+        },
+    )
+    .await
 }
 
 pub async fn world_forge(script: Script) -> World {
@@ -491,11 +497,10 @@ pub async fn world_forge(script: Script) -> World {
         true,
         script,
         &[("alpha", false)],
-        false,
-        false,
-        vec!["ci".into()],
-        None,
-        None,
+        WorldKnobs {
+            merge_checks: vec!["ci".into()],
+            ..WorldKnobs::default()
+        },
     )
     .await
 }
@@ -505,25 +510,38 @@ pub async fn world_forge_review(script: Script) -> World {
         true,
         script,
         &[("alpha", false), ("beta", false)],
-        true,
-        false,
-        vec!["ci".into()],
-        None,
-        None,
+        WorldKnobs {
+            tiered: true,
+            merge_checks: vec!["ci".into()],
+            ..WorldKnobs::default()
+        },
     )
     .await
+}
+
+/// The rarely changed parts of a test world, so a new one adds a field here and no argument to every call.
+#[derive(Default)]
+struct WorldKnobs {
+    tiered: bool,
+    confine: bool,
+    merge_checks: Vec<String>,
+    approval_timeout: Option<std::time::Duration>,
+    refuses_after: Option<usize>,
 }
 
 async fn world_full(
     preview: bool,
     script: Script,
     engines: &[(&str, bool)],
-    tiered: bool,
-    confine: bool,
-    merge_checks: Vec<String>,
-    approval_timeout: Option<std::time::Duration>,
-    refuses_after: Option<usize>,
+    knobs: WorldKnobs,
 ) -> World {
+    let WorldKnobs {
+        tiered,
+        confine,
+        merge_checks,
+        approval_timeout,
+        refuses_after,
+    } = knobs;
     let dir = TempDir::new();
     let library = crate::testing::library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
