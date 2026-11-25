@@ -254,11 +254,14 @@ export function DocumentViewer({
   path,
   kind,
   size,
+  repoId,
   run = runInWorker,
 }: {
   threadId: string;
   path: string;
   kind: OfficeKind;
+  /** Another repository of a multi-repository thread; absent is the thread's own checkout. */
+  repoId?: string;
   /**
    * The file's size, as the panel already knows it. A document past the archive
    * cap is refused from that number, before any of it is downloaded.
@@ -268,7 +271,7 @@ export function DocumentViewer({
   run?: OfficeRun;
 }) {
   const noun = kind === "docx" ? "document" : "spreadsheet";
-  const document = useAsync(`office:${threadId}:${path}:${kind}`, async (signal): Promise<OfficeResponse> => {
+  const document = useAsync(`office:${threadId}:${path}:${kind}${repoId === undefined ? "" : `:${repoId}`}`, async (signal): Promise<OfficeResponse> => {
     if (size !== undefined && size > MAX_ARCHIVE_BYTES) {
       return {
         ok: false,
@@ -276,7 +279,7 @@ export function DocumentViewer({
         message: `This ${noun} is ${formatBytes(size)}; the viewer opens at most ${formatBytes(MAX_ARCHIVE_BYTES)}.`,
       };
     }
-    const response = await fetch(rawUrl(threadId, path), { credentials: "same-origin", signal });
+    const response = await fetch(rawUrl(threadId, path, false, repoId), { credentials: "same-origin", signal });
     if (!response.ok) {
       throw new ApiFailure(`http_${response.status}`, `The service answered ${response.status}.`, response.status);
     }
@@ -303,7 +306,7 @@ export function DocumentViewer({
     return (
       <div className="office-refusal">
         {refusal}
-        <BytesFallback threadId={threadId} path={path} size={size} />
+        <BytesFallback threadId={threadId} path={path} size={size} repoId={repoId} />
       </div>
     );
   }

@@ -26,9 +26,10 @@ const folderReads = (path: string) => reads().filter((url) => url.includes(`/tre
 
 // These tests render the whole App and wait for tree reads; on a busy machine a read can take longer than the 1 s a
 // findBy gets by default, so waits get 5 s and each test 20 s. A test that finds nothing still fails, only later.
+// At the file's top, where the timeout is read: set from a beforeEach it does not reach the first test.
+vi.setConfig({ testTimeout: 20_000 });
 beforeEach(() => {
   configure({ asyncUtilTimeout: 5000 });
-  vi.setConfig({ testTimeout: 20_000 });
   useExplorer.getState().reset();
   installMockFetch();
   useUi.setState({ projectFolders: true, panelOpen: false, panelTab: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["diff", "browser", "activity", "side", "tools"], layouts: {}, leftBarView: "files", explorerOpen: {}, sidebarWidth: 224 });
