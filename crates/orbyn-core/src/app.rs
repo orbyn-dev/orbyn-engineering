@@ -634,7 +634,7 @@ impl Core {
     }
 
     pub async fn thread_diff(&self, thread_id: &str) -> Result<Vec<orbyn_contracts::FileDiff>> {
-        let thread = self.store.thread(thread_id)?;
+        let thread = self.scoped_thread(thread_id)?;
         let project = self.store.project(&thread.project_id)?;
         if !project.is_git {
             let Some(root) =
@@ -663,7 +663,7 @@ impl Core {
         &self,
         thread_id: &str,
     ) -> Result<Option<orbyn_contracts::JjStatus>> {
-        let thread = self.store.thread(thread_id)?;
+        let thread = self.scoped_thread(thread_id)?;
         let project = self.store.project(&thread.project_id)?;
         if project.is_git {
             return Ok(None);
