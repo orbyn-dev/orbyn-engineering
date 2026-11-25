@@ -14,6 +14,7 @@ import { Presence } from "../../../ui/Presence";
 import { CommandBlocks } from "./blocks/CommandBlocks";
 import { useWaitingTerminals } from "./attention/store";
 import { EndDialog } from "./EndDialog";
+import { useClearAllBlocks } from "./useClearAllBlocks";
 import { TerminalPanel } from "./TerminalPanel";
 import { controlsOf, terminalKey, watchTerminal } from "./terminalControls";
 import { captureFocusReturn } from "../../../ui/focusReturn";
@@ -32,7 +33,6 @@ export function groupTerminals(terminals: readonly TerminalInfo[]): TerminalInfo
   for (const terminal of terminals) groups.set(terminal.group, [...(groups.get(terminal.group) ?? []), terminal]);
   return [...groups.values()];
 }
-
 
 /** What a terminal's tab marks: a spinner while a script runs, a check or a red cross once it has ended. */
 function Marker({ terminal }: { terminal: TerminalInfo }) {
@@ -207,6 +207,7 @@ export function TerminalDrawerBody({
     (failure: unknown) => pushToast(`Couldn't do that. ${toFailure(failure).message}`),
     [pushToast],
   );
+  const clearAll = useClearAllBlocks({ threadId, fail, pushToast });
 
   useEffect(() => {
     if (active !== MAIN && terminals.status === "ready" && !terminals.refreshing && !shown) setActive(MAIN);
@@ -370,6 +371,7 @@ export function TerminalDrawerBody({
       ...(mainHidden ? [{ label: "Show Terminal", onSelect: () => { setMainHidden(false); setActive(MAIN); } }] : []),
       { label: "Clear output", disabled: !there, separatorBefore: true, onSelect: () => keysOf(group).forEach((key) => controlsOf(key)?.clear()) },
       { label: "Copy all output", disabled: !there, onSelect: () => copyAll(group) },
+      ...clearAll.itemsFor(group),
       { label: "Watch only", selected: watching, onSelect: () => setWatching(!watching) },
       ...(first && first.id !== MAIN && group.some((pane) => pane.alive)
         ? [{ label: "End process", icon: <Square size={14} aria-hidden />, destructive: true, separatorBefore: true, onSelect: () => endTab(group) }]
@@ -516,6 +518,7 @@ export function TerminalDrawerBody({
                 <CommandBlocks
                   threadId={threadId}
                   terminalId={terminal.id}
+                  cleared={clearAll.clears[terminal.id] ?? 0}
                   write={watching ? undefined : (text) => controlsOf(keyOf(terminal))?.write(text)}
                   interrupt={watching ? undefined : () => controlsOf(keyOf(terminal))?.interrupt()}
                 />
@@ -591,6 +594,7 @@ export function TerminalDrawerBody({
           rememberFocus(ending[0]!.group);
           await close(ending);
         }} onClose={() => setEnding(null)} /> : null}
+      {clearAll.dialog}
     </div>
   );
 }
