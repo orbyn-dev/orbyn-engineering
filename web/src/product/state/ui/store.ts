@@ -58,9 +58,9 @@ interface UiState extends Prefs {
   closeFoldersNotice(undo: boolean): void;
   setTheme(theme: ThemeChoice): void;
   /** Opens `tab`, or closes its surface if `tab` is already showing. */
-  /** A file the Files surface should open next, with the line to reveal. */
-  fileReveal: ThreadNavigationOrigin & { path: string; line: number | null; nonce: number } | null;
-  revealFile(path: string, line: number | null, origin: ThreadNavigationOrigin): void;
+  /** A file the Files surface should open next, with the line to reveal and the repository of a multi-repository thread it is in. */
+  fileReveal: ThreadNavigationOrigin & { path: string; line: number | null; nonce: number; repoId?: string } | null;
+  revealFile(path: string, line: number | null, origin: ThreadNavigationOrigin, repoId?: string): void;
   consumeFileReveal(nonce: number): void;
   /** A message to scroll to when its thread is showing. */
   messageReveal: { threadId: string; messageId: string } | null;
@@ -194,10 +194,10 @@ export const useUi = create<UiState>((set, get) => {
     clearMessageReveal() {
       set({ messageReveal: null });
     },
-    revealFile(path, line, origin) {
-      const id = fileTabId({ kind: "thread", path });
+    revealFile(path, line, origin, repoId) {
+      const id = fileTabId(repoId === undefined ? { kind: "thread", path } : { kind: "thread", path, repoId });
       set({
-        fileReveal: { ...origin, path, line, nonce: ++navigationNonce },
+        fileReveal: { ...origin, path, line, ...(repoId === undefined ? {} : { repoId }), nonce: ++navigationNonce },
         diffReveal: null,
         panelOpen: true,
         panelTab: id,
