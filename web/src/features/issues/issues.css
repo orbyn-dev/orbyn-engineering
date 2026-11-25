@@ -188,7 +188,7 @@
 .iss-pr-sub { display: flex; flex-wrap: wrap; gap: 6px; color: var(--color-muted); overflow-wrap: anywhere; }
 .iss-pr-state { color: var(--color-muted); }
 
-/* Inline editors: the description, and the label and assignee pickers. Minimal: no frame draws them yet. */
+/* Inline editors: the description (issue-write-description), and the label and assignee pickers (issue-write-labels, -assignees). */
 .iss-edit { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
 .iss-edit-label { font-size: var(--text-label); color: var(--color-muted); }
 .iss-edit textarea, .iss-edit input[type="search"] { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--color-borderStrong); border-radius: 6px; background: var(--color-surface); color: var(--color-text); font: inherit; font-size: var(--text-meta); }
@@ -199,6 +199,29 @@
 .iss-edit-over, .iss-edit-error { color: var(--color-danger, var(--color-text)); }
 .iss-edit-error { margin: 0; font-size: var(--text-meta); }
 .iss-pick-form { padding: 8px; border: 1px solid var(--color-divider); border-radius: 8px; }
+/* The comment box under an issue's comments: the page's minimal inline form, on the activity column's gap and four rows
+   tall (the description editor's 160px floor belongs to the description, not to a comment). */
+.iss-comment { margin: 0; }
+.iss-comment textarea { min-height: 0; }
 .iss-pick-items { display: flex; flex-direction: column; gap: 2px; max-height: 220px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
 .iss-pick-items label { display: flex; align-items: center; gap: 8px; padding: 3px 4px; border-radius: 4px; font-size: var(--text-meta); overflow-wrap: anywhere; }
 .iss-pick-items label:hover { background: var(--color-rowHover); }
+
+/* The create dialog (issue-write-new): the five rows the frame draws, the tracker and template selectors, and its error line. */
+.iss-new { display: flex; flex-direction: column; gap: 12px; }
+.iss-new-label { font-size: var(--text-meta); font-weight: 500; color: var(--color-muted); }
+.iss-new-select { display: flex; align-items: center; gap: 8px; width: 100%; min-height: var(--control-h); padding: 0 var(--control-pad-x); border: 1px solid var(--color-borderStrong); border-radius: var(--radius-sm); background: var(--color-raised); color: var(--color-text); font-size: var(--control-fs); text-align: left; cursor: pointer; }
+.iss-new-select:hover:not(:disabled) { background: var(--color-rowHover); }
+.iss-new-select:disabled { opacity: 0.6; cursor: default; }
+.iss-new-select-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iss-new-chosen { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: var(--control-h); }
+.iss-new-chosen .iss-pick-form { flex-basis: 100%; }
+.iss-new-error { margin: 0; color: var(--color-danger); font-size: var(--text-meta); }
+
+/* The reaction bar under the description (issue-write-reactions): the counts as text, then the one control that adds another. */
+.iss-react { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--color-divider); }
+.iss-react-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border: 1px solid var(--color-divider); border-radius: 12px; font-size: var(--text-label); }
+.iss-react-chip b { font-weight: 500; color: var(--color-text); }
+.iss-react-add { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border: 0; border-radius: 6px; background: none; color: var(--color-muted); font: inherit; font-size: var(--text-meta); cursor: pointer; }
+.iss-react-add:hover:not(:disabled) { background: var(--color-rowHover); color: var(--color-text); }
+.iss-react-add:disabled { opacity: 0.6; cursor: default; }
