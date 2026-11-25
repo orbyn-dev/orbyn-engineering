@@ -23,8 +23,10 @@ clap = { version = "4", features = ["derive", "env"] }
 ed25519-dalek = "3.0.0"
 futures-util = "0.3"
 getrandom = "0.3"
-# The JPEG and PNG codecs photo conversion writes with. WebP and HEIC are their own decision.
-image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png"] }
+# The JPEG, PNG and WebP codecs photo conversion writes with. WebP is the pure-Rust
+# `image-webp` crate (MIT OR Apache-2.0) behind this feature; HEIC is its own decision
+# (a C decoder, which this build does not carry).
+image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 libc = "0.2"
 portable-pty = "0.9"
 regex = "1"
