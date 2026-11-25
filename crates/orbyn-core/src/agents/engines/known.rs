@@ -169,7 +169,7 @@ pub const KNOWN_ENGINES: &[KnownEngine] = &[
         programs: &["kiro-cli"],
         args: &["acp", "--agent-engine=v3", "--auth-method=cli"],
         env: &[],
-        // Kiro starts a session in autopilot, which acts without asking, until a client turns it off; Orbyn's ACP driver does not yet, so it stays labelled. The arguments are T3 Code's (packages/provider-kiro, commit 9168ca73d). `--auth-method=cli` keeps tokens inside Kiro; V3 is the engine T3 Code speaks.
+        // Kiro starts a session in autopilot, which acts without asking, until a client turns it off; both Orbyn paths write its supervised value now (the ACP driver at session setup and on a later advert, the host family likewise), so this stays labelled only because Kiro asks nothing through ACP. The arguments are T3 Code's (packages/provider-kiro, commit 9168ca73d). `--auth-method=cli` keeps tokens inside Kiro; V3 is the engine T3 Code speaks.
         asks: false,
         not_from: &[],
     },
