@@ -58,6 +58,7 @@ import { createFoldersMock } from "./folders.ts";
 import { createQuestionsMock } from "./questions.ts";
 import { createTerminalsMock } from "./terminals.ts";
 import * as fixtures from "./fixtures.ts";
+import { multiRepoRepos, multiRepoTaskFolder, projectReposView } from "./multiRepo.ts";
 import { acpRegistry, historyScan } from "./history.ts";
 import { customModels, instanceEngines, providerInstances } from "./instances.ts";
 import { cleanupPreview, cleanupSummary, diagnostics } from "./maintenance.ts";
@@ -1204,6 +1205,11 @@ export function createMockApi(options: MockOptions = {}) {
           return project ? { status: 200, body: { project_id: project.id, project_path: project.path, image: null } }
             : err(404, "not_found", "Project not found.");
         }
+        // The project's repositories (docs/multi-repo.md): a ReposView, not the plain project list the fallthrough answers.
+        if (seg[3] === "repos" && !seg[4]) {
+          const project = projects.find((entry) => entry.id === seg[2]);
+          return project ? { status: 200, body: projectReposView(project) } : err(404, "not_found", "Project not found.");
+        }
         return { status: 200, body: projects };
       }
       case "POST /api/projects": {
@@ -1338,6 +1344,16 @@ export function createMockApi(options: MockOptions = {}) {
           }
           if (seg[3] === "queue") return { status: 200, body: queued.filter((q) => q.thread_id === seg[2]) };
           if (seg[3] === "commands") return { status: 200, body: fixtures.slashCommands };
+          // The multi-repository reads of docs/multi-repo.md. A subpath must never fall back to the thread object: the
+          // client reads a non-list as "nothing", so the Repos chip would not draw (and once crashed on `repos.map`).
+          if (seg[3] === "repos") {
+            const repos = multiRepoRepos(seg[2] ?? "");
+            return repos === null ? err(404, "not_found", "This thread is not a multi-repository thread.") : { status: 200, body: repos };
+          }
+          if (seg[3] === "task-folder") {
+            const folder = multiRepoTaskFolder(seg[2] ?? "");
+            return folder === null ? err(404, "not_found", "This thread has no task folder.") : { status: 200, body: folder };
+          }
           // The Files surface: a small checkout tree, and text for any file in it.
           if (seg[3] === "files" && seg[4] === "content") {
             const file = query.get("path") ?? "";
