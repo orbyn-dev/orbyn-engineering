@@ -1433,9 +1433,10 @@ export function createMockApi(options: MockOptions = {}) {
       if (seg[1] === "browser-profiles" && seg[3] === "clear") return { status: 204 };
       if (seg[1] === "browser-profiles" && seg[3] === "rename") {
         const name = typeof data.name === "string" ? data.name.trim() : "";
-        if (!name || name.length > 64) return err(400, "invalid_input", "A profile name is 1 to 64 characters.");
+        // Like the service: trim, then count Unicode characters (code points), not UTF-16 units.
+        if (!name || [...name].length > 64) return err(400, "invalid_input", "A profile name is 1 to 64 characters.");
         const row = browserProfiles.find((entry) => entry.id === seg[2]);
-        if (!row) return err(404, "not_found", "Profile not found.");
+        if (!row) return err(404, "not_found", "browser profile not found");
         row.name = name;
         return { status: 200, body: row };
       }

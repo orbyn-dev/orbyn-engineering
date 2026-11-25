@@ -132,8 +132,15 @@ describe("Settings › Browser", () => {
   it("the dev mock validates a rename like the service: 1 to 64 characters and a known id", () => {
     expect(mock.handle("POST", "/api/browser-profiles/p1/rename", { name: "x".repeat(70) })).toEqual({ status: 400, body: { code: "invalid_input", message: "A profile name is 1 to 64 characters." } });
     expect(mock.handle("POST", "/api/browser-profiles/p1/rename", { name: "  " })).toEqual({ status: 400, body: { code: "invalid_input", message: "A profile name is 1 to 64 characters." } });
-    expect(mock.handle("POST", "/api/browser-profiles/missing/rename", { name: "Home" })).toEqual({ status: 404, body: { code: "not_found", message: "Profile not found." } });
+    expect(mock.handle("POST", "/api/browser-profiles/missing/rename", { name: "Home" })).toEqual({ status: 404, body: { code: "not_found", message: "browser profile not found" } });
     expect(mock.handle("POST", "/api/browser-profiles/p1/rename", { name: " Home " })).toEqual({ status: 200, body: { id: "p1", name: "Home", in_use: false } });
+  });
+
+  it("the dev mock counts Unicode characters after trimming, so 64 emoji are a valid name", () => {
+    // 64 emoji are 128 UTF-16 units: the service trims, then counts characters (profiles.rs:20 chars().count()), and accepts them.
+    const boundary = "🦀".repeat(64);
+    expect(mock.handle("POST", "/api/browser-profiles/p1/rename", { name: `\u2003${boundary}\u3000` })).toEqual({ status: 200, body: { id: "p1", name: boundary, in_use: false } });
+    expect(mock.handle("POST", "/api/browser-profiles/p1/rename", { name: `${boundary}🦀` })).toEqual({ status: 400, body: { code: "invalid_input", message: "A profile name is 1 to 64 characters." } });
   });
 
   it("shows the service’s refusal of a bad name in the dialog, keeps the old name and lets Save try again", async () => {
