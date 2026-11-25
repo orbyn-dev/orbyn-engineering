@@ -434,7 +434,7 @@ jobs:
           need() { if [ "$2" = true ]; then [ "$1" = success ]; else [ "$1" = success ] || [ "$1" = skipped ]; fi; }
           [ "$CHANGES" = success ] && [ "$LINT" = success ] && need "$BUILD" "$SCOPE"
 
-  # The browser suite's service, built once. Every shard downloads these two binaries
+  # The browser suite's service and engine host, built once. Every shard downloads these
   # instead of compiling them again (about a minute each, six times over).
   e2e-build:
     name: E2E service build
@@ -452,12 +452,32 @@ jobs:
           shared-key: e2e-shard
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build -p orbynd --bin orbynd --bin orbyn-fake-engine
+      # The host-actions spec runs a real `orbyn-engine-host` (web/e2e/real/engine-host.spec.ts), so the
+      # one-file host is built here too. Node 22 is the runtime scripts/build-sea.mjs targets (its own
+      # postject and esbuild devDependencies, its own lockfile for the npm cache).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: engine-host/package-lock.json
+      - run: npm ci
+        working-directory: engine-host
+      - run: npm run build:sea
+        working-directory: engine-host
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-service
           path: |
             target/debug/orbynd
             target/debug/orbyn-fake-engine
+          compression-level: 1
+          if-no-files-found: error
+          retention-days: 7
+      # A second artifact because the shards unpack it somewhere other than target/debug.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-engine-host
+          path: engine-host/dist/orbyn-engine-host
           compression-level: 1
           if-no-files-found: error
           retention-days: 7
@@ -485,8 +505,13 @@ jobs:
         with:
           name: e2e-service
           path: target/debug
-      # The artifact does not keep the executable bit; the specs find both binaries here.
-      - run: chmod +x target/debug/orbynd target/debug/orbyn-fake-engine
+      # The engine host the e2e-build job made, at the path the host-actions spec reads.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-engine-host
+          path: engine-host/dist
+      # The artifacts do not keep the executable bit; the specs find the binaries here.
+      - run: chmod +x target/debug/orbynd target/debug/orbyn-fake-engine engine-host/dist/orbyn-engine-host
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -499,8 +524,11 @@ jobs:
       # No apt step: the runner image already carries Chrome's libraries, and
       # `playwright install-deps` took from 10 seconds to over 8 minutes on the apt
       # mirrors. If the headless shell ever lacks a library, it fails at launch.
+      # The host is downloaded above, so it is here: the host-actions spec reads
+      # ORBYN_REQUIRE_SEA_HOST and fails, never skips, when the binary is missing (#1588).
       - shell: bash
         env:
+          ORBYN_REQUIRE_SEA_HOST: "1"
           PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ github.workspace }}/e2e-timing/shard-${{ matrix.shard }}.json
         run: |
           files=$(node scripts/e2e-shards.mjs ${{ matrix.shard }} 6)
