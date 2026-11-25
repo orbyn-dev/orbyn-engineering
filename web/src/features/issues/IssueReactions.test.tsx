@@ -119,6 +119,22 @@ it("a write in flight takes the choice once: a second add while it runs sends no
   expect(mock.writes).toEqual(["react:412:thumbs_up:on"]);
 });
 
+it("keeps the counts it showed when another control's write answers without them", async () => {
+  const mock = createIssuesMock({ reactions: { "412": [{ content: "THUMBS_UP", count: 3 }] } });
+  // A plain detail read carries no reactions, so a state write's answer carries none either: the bar must not go blank.
+  const state = mock.setState;
+  mock.setState = async (ref, next) => ({ ...(await state(ref, next)), reactions: undefined });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  open();
+  const reactions = await bar();
+  await waitFor(() => expect(chips(reactions)).toEqual(["Thumbs up3"]));
+  await user.click(await screen.findByRole("button", { name: "State: Open" }));
+  await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Closed" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "State: Closed" })).toBeVisible());
+  expect(chips(reactions)).toEqual(["Thumbs up3"]);
+});
+
 it("does not offer the Person-class reaction bar in a browser tab with no desktop shell", async () => {
   shell.canSend = false;
   setIssuesApi(createIssuesMock());

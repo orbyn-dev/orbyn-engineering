@@ -95,7 +95,8 @@ export interface IssueTemplate {
   /** The one-line description the tracker gives the template, when it gives one. */
   description?: string | null;
   body: string;
-  labels: IssueLabel[];
+  /** The label names the template suggests, as the wire type carries them. They are never merged into the create's labels. */
+  labels: string[];
 }
 
 /** A pull request the tracker reports against an issue, of its own accord. Read only. */

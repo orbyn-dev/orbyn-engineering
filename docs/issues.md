@@ -666,7 +666,11 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   first answer that is a 404 or 405 that is not `not_found` puts the control back to Planned. The issue page's
   description card carries the reaction bar (`IssueReactions.tsx`): the counts the last write reported drawn as the
   tracker's words and counts, and one `POST /api/issues/item/react` per choice through the page-wide one-write guard;
-  it adds only, because the counts carry no "did this person react", and a first "no such route" hides the bar.
+  a first "no such route" hides the bar. Three contract gaps shape it: a plain detail read carries no reactions, so
+  the bar is only as fresh as the last write — the page keeps the counts it showed when another write's answer leaves
+  them out, and a reload starts without any; the counts carry no "did this person react", so the bar adds only and
+  cannot take the person's own reaction back; and a reaction on a comment is supported by the service, but its answer
+  carries no comment counts, so comment reactions are not drawn.
   `web/src/api/personKey.ts` lists all three routes, so the key goes with them.
 - **Not verified.** No real GitHub, GitLab, Forgejo, Azure DevOps or Linear issue was created, commented on or
   reacted to; every writer is tested against its own local fake server, and the REST/GraphQL shapes (field names,

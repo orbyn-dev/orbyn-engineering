@@ -153,7 +153,8 @@ function NewIssueDialog({ rows, preferred, onClose, onCheckList }: { rows: Track
       current={current}
       mine={{ labels: [], assignees: [] }}
       offered
-      busy={busy}
+      // A create whose outcome is unknown has no write left to make: the picks stay on screen and no picker opens.
+      busy={busy || unknown !== null}
       label={kind === "labels" ? "Choose labels" : "Choose assignees"}
       heading={kind === "labels" ? "Choose labels" : "Choose assignees"}
       save={save}

@@ -161,7 +161,7 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
   });
   const waited = useWaited(read.status === "loading");
   // One write at a time on this page, whichever control makes it: a second click, or another control, while one is in flight is
-  // refused and calls nothing. The answer is the updated issue and replaces what is shown; the state a write leaves out is kept.
+  // refused and calls nothing. The answer is the updated issue and replaces what is shown; the fields a write leaves out are kept.
   const [writing, setWriting] = useState(false);
   const locked = useRef(false);
   const shown = useRef(read.data);
@@ -172,7 +172,9 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
     setWriting(true);
     try {
       const next = await call();
-      read.setData({ ...next, states: next.states ?? shown.current?.states });
+      // States and the reaction counts come from some answers only (a plain detail read carries no reactions), so a write must not
+      // empty what the page already showed: the bar would blink off after an unrelated edit.
+      read.setData({ ...next, states: next.states ?? shown.current?.states, reactions: next.reactions ?? shown.current?.reactions });
       void reloadIssueLinks(version);
       return next;
     } finally {

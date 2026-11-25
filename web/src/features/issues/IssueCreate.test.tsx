@@ -16,7 +16,7 @@ vi.mock("../../api/personKey", async (importOriginal) => {
 
 const REPO = "orbyn-dev/orbyn-engineering";
 const GITLAB = "group/app";
-const TEMPLATES = [{ id: "bug", name: "Bug report", description: "Something is broken", body: "Steps to reproduce:", labels: [{ name: "bug" }] }];
+const TEMPLATES = [{ id: "bug", name: "Bug report", description: "Something is broken", body: "Steps to reproduce:", labels: ["bug"] }];
 const trackers = (): TrackerRow[] => [
   { tracker: "github", connected: true, scope: REPO },
   { tracker: "gitlab", connected: true, scope: GITLAB },
@@ -128,6 +128,9 @@ it("a create whose outcome is unknown offers Check the list, which re-reads the 
   expect(within(dialog).getByRole("button", { name: "Check the list" })).toBeVisible();
   expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeVisible();
   expect(within(dialog).getByRole("textbox", { name: "Title" })).toBeDisabled();
+  // No write is left to make, so the label and assignee pickers are off too, with the picks they already hold.
+  expect(within(dialog).getByRole("button", { name: "Choose labels" })).toBeDisabled();
+  expect(within(dialog).getByRole("button", { name: "Choose assignees" })).toBeDisabled();
   await user.click(within(dialog).getByRole("button", { name: "Check the list" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   await waitFor(() => expect(mock.listed.length).toBeGreaterThan(before));

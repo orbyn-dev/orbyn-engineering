@@ -154,11 +154,14 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
   );
   // The page bar's one action (issue-write-new): it reads the trackers the list already has, and Check the list re-reads this list.
   const newIssue = <NewIssue trackers={trackers} preferred={query.tracker} onCheckList={() => void read.reload()} />;
+  // The no-issues block says issues are created in the tracker itself, and no pass-186 frame draws a create control there, so the
+  // page bar's is not drawn until the list has a row. (A no-match result keeps it: the list is not empty, the filter is.)
+  const noIssues = read.status === "ready" && !filtered && issues.length === 0;
   const status = loading ? "Loading" : read.refreshing ? "Refreshing" : loadedAt ? `Updated ${relativeTime(new Date(loadedAt).toISOString(), now).toLowerCase()}` : "";
 
   return (
     <>
-      <PageBar actions={phone ? refresh : <>{newIssue}<span className="iss-upd" role="status">{status}</span>{refresh}</>}>
+      <PageBar actions={phone ? refresh : <>{noIssues ? null : newIssue}<span className="iss-upd" role="status">{status}</span>{refresh}</>}>
         <h1 tabIndex={-1} data-page-title>Issues</h1>
       </PageBar>
       <IssuesToolbar

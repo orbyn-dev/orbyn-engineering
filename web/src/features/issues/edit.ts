@@ -106,10 +106,11 @@ export function readTemplates(value: unknown): IssueTemplate[] {
     const id = asText(row.id, 200);
     const name = asText(row.name, 200);
     if (!id || !name) continue;
+    // The wire type carries the label names as plain strings (crates/orbyn-contracts `IssueTemplate`); anything else is dropped.
     const labels: IssueTemplate["labels"] = [];
     for (const label of (Array.isArray(row.labels) ? row.labels : []).slice(0, LABELS_MAX)) {
-      const labelName = typeof label === "object" && label !== null ? asText((label as Record<string, unknown>).name, 200) : null;
-      if (labelName) labels.push({ name: labelName });
+      const name = asText(label, 200);
+      if (name) labels.push(name);
     }
     templates.push({ id, name, body: (asText(row.body, TEMPLATE_BODY_MAX) ?? ""), labels, ...(asText(row.description, 500) ? { description: asText(row.description, 500) } : {}) });
   }

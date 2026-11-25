@@ -289,7 +289,7 @@ export function createIssuesMock(init: {
     templates: async (target) => {
       await wait();
       take("templates");
-      return templatesOf(target.tracker).map((one) => ({ ...one, labels: one.labels.map((label) => ({ ...label })) }));
+      return templatesOf(target.tracker).map((one) => ({ ...one, labels: [...one.labels] }));
     },
     // One POST /api/issues/item/create: one call creates one issue, and the answer is the stored issue. A tracker with no candidate
     // read is still writable here; a template fills a missing body and its labels are never merged in (docs/issues.md).
