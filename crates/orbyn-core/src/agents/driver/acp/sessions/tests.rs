@@ -511,8 +511,8 @@ async fn a_kiro_session_is_opened_supervised_and_a_later_autopilot_on_advert_is_
         })
         .cloned()
         .collect();
-    // One write at session setup, and one after the agent re-advertised autopilot on mid-prompt.
-    assert!(writes.len() >= 2, "expected both writes: {writes:?}");
+    // Exactly one write at session setup and one after the agent re-advertised autopilot on mid-prompt.
+    assert_eq!(writes.len(), 2, "expected both writes: {writes:?}");
     for write in &writes {
         assert_eq!(write["params"]["configId"], json!("autopilot"), "{write}");
         assert_eq!(write["params"]["value"], json!("off"), "{write}");
@@ -542,6 +542,73 @@ async fn a_kiro_agent_that_offers_no_supervised_value_is_refused_before_the_prom
         f.methods()
     );
     clear_start_issue("kiro");
+}
+
+#[tokio::test]
+async fn a_kiro_session_without_an_autopilot_option_is_opened_without_a_correction() {
+    let f = Fixture::with_id("kiro", "kiro-no-autopilot");
+    let events = f.run(None).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(EngineEvent::Finished(EngineOutcome::Completed))
+        ),
+        "{events:?}"
+    );
+    assert!(
+        f.methods().contains(&"session/prompt".to_owned()),
+        "the session still ran"
+    );
+    assert!(
+        !f.methods()
+            .contains(&"session/set_config_option".to_owned()),
+        "nothing to write without the option: {:?}",
+        f.methods()
+    );
+}
+
+#[tokio::test]
+async fn a_kiro_autopilot_that_is_not_a_select_is_left_alone() {
+    let f = Fixture::with_id("kiro", "kiro-autopilot-text");
+    let events = f.run(None).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(EngineEvent::Finished(EngineOutcome::Completed))
+        ),
+        "{events:?}"
+    );
+    assert!(
+        !f.methods()
+            .contains(&"session/set_config_option".to_owned()),
+        "a non-select option is never written: {:?}",
+        f.methods()
+    );
+}
+
+#[tokio::test]
+async fn another_engines_autopilot_advert_is_left_untouched() {
+    // The same advert shapes on an engine that is not Kiro: no supervised write is made, ever.
+    let f = Fixture::with_id("droid", "kiro-autopilot");
+    let events = f.run(None).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(EngineEvent::Finished(EngineOutcome::Completed))
+        ),
+        "{events:?}"
+    );
+    assert!(
+        f.methods().contains(&"session/prompt".to_owned()),
+        "the session ran: {:?}",
+        f.methods()
+    );
+    assert!(
+        !f.methods()
+            .contains(&"session/set_config_option".to_owned()),
+        "another engine's autopilot is not ours to write: {:?}",
+        f.methods()
+    );
 }
 
 #[test]

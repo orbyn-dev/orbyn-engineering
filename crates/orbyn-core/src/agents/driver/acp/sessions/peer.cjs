@@ -31,10 +31,15 @@ readline.createInterface({input:process.stdin}).on("line", line => {
     // -32000 is ACP's auth-required code; the words are deliberately unrelated, so
     // only the code can say a sign-in is needed.
     if (scenario === "auth-new") return send({id,error:{code:-32000,message:"Unknown session"}});
-    // Kiro starts with autopilot on; the "no-off" variant offers no supervised value, which cannot be made safe.
-    const autopilot = { id: "autopilot", name: "Autopilot", type: "select", currentValue: "on",
+    // Kiro starts with autopilot on; the "no-off" variant offers no supervised value, which cannot be made safe,
+    // "text" is not a select, and "no-autopilot" offers no option at all.
+    const autopilotSelect = { id: "autopilot", name: "Autopilot", type: "select", currentValue: "on",
       options: scenario === "kiro-autopilot-no-off" ? [{ value: "on", name: "On" }] : [{ value: "on", name: "On" }, { value: "off", name: "Off" }] };
-    const kiro = scenario.startsWith("kiro-autopilot") ? { configOptions: [autopilot] } : {};
+    const kiro =
+      scenario === "kiro-no-autopilot" ? {}
+      : scenario === "kiro-autopilot-text" ? { configOptions: [{ id: "autopilot", name: "Autopilot", type: "text", currentValue: "on" }] }
+      : scenario.startsWith("kiro-autopilot") ? { configOptions: [autopilotSelect] }
+      : {};
     return send({id,result:{sessionId:scenario === "oversize-id" ? "x".repeat(1025) : "new-native", ...kiro}});
   }
   if (msg.method === "session/set_config_option") return result(id);

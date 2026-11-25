@@ -104,12 +104,22 @@ pub(super) async fn enforce_kiro_autopilot(
     let Some(option) = config_options(session).find(|option| {
         option.get("id").and_then(Value::as_str) == Some(super::KIRO_AUTOPILOT_CONFIG_ID)
     }) else {
+        // Nothing to write: the session may be unsupervised, so say so in the log rather than silently pass.
+        tracing::warn!(
+            "Kiro offers no autopilot option, so this session cannot be made supervised"
+        );
         return Ok(());
     };
     let current = option.get("currentValue").and_then(Value::as_str);
-    if option.get("type").and_then(Value::as_str) != Some("select")
-        || current == Some(super::KIRO_AUTOPILOT_OFF)
-    {
+    if option.get("type").and_then(Value::as_str) != Some("select") {
+        tracing::warn!(
+            ?current,
+            "Kiro's autopilot option is not a select, so this session cannot be made supervised"
+        );
+        return Ok(());
+    }
+    if current == Some(super::KIRO_AUTOPILOT_OFF) {
+        tracing::debug!("Kiro's autopilot is already its supervised value");
         return Ok(());
     }
     let supervised = config_values(option)
@@ -122,6 +132,10 @@ pub(super) async fn enforce_kiro_autopilot(
                 "Kiro offers autopilot without its supervised value.".into(),
             ));
         }
+        tracing::debug!(
+            ?current,
+            "Kiro's autopilot has no supervised value to write, so this session cannot be made supervised"
+        );
         return Ok(());
     }
     let params = json!({

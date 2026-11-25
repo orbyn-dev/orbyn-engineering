@@ -58,6 +58,9 @@ const CONFIG_PREFIX: &str = "config:";
 const KIRO_ENGINE_ID: &str = "kiro";
 const KIRO_AUTOPILOT_CONFIG_ID: &str = "autopilot";
 const KIRO_AUTOPILOT_OFF: &str = "off";
+/// A re-advert correction is fire-and-forget, but a Kiro that never answers it must not hold resources: the
+/// write gives up after this long and the failure is logged.
+const KIRO_CORRECTION_TIMEOUT: Duration = Duration::from_secs(5);
 /// The longest reason the core puts in a failed-start message.
 const MAX_REASON_CHARS: usize = 160;
 
@@ -518,6 +521,8 @@ async fn run_protocol(
     let mut mapper = UpdateMapper::default();
     let mut sent = 0usize;
     let mut cancel_sent = false;
+    // The re-advert correction in flight, joined before the run acts on the prompt's answer (see below).
+    let mut correction: Option<tokio::task::JoinHandle<()>> = None;
     let outcome = loop {
         tokio::select! {
             biased;
@@ -535,7 +540,13 @@ async fn run_protocol(
                     Some(Inbound::Notification { method, params }) => {
                         if method == "session/update" && about_session(&params, &session) {
                             let update = params.get("update").unwrap_or(&Value::Null);
-                            correct_kiro_autopilot(&rpc, &session, &notes.id, update).await;
+                            start_kiro_autopilot_correction(
+                                &rpc,
+                                &session,
+                                &notes.id,
+                                update,
+                                &mut correction,
+                            );
                             for event in mapper.on_update(update) {
                                 if events.send(event).await.is_err() {
                                     return;
@@ -565,12 +576,24 @@ async fn run_protocol(
                         && about_session(&params, &session)
                     {
                         let update = params.get("update").unwrap_or(&Value::Null);
-                        correct_kiro_autopilot(&rpc, &session, &notes.id, update).await;
+                        start_kiro_autopilot_correction(
+                            &rpc,
+                            &session,
+                            &notes.id,
+                            update,
+                            &mut correction,
+                        );
                         for event in mapper.on_update(update) {
                             let _ = events.send(event).await;
                             sent += 1;
                         }
                     }
+                }
+                // A correction fired from an advert must land before the run acts on (or ends with) the prompt's
+                // answer, so it is joined here, bounded: no later prompt step can race ahead of it, and an
+                // unresponsive Kiro costs this one bounded wait, not the stream.
+                if let Some(correction) = correction.take() {
+                    let _ = tokio::time::timeout(KIRO_CORRECTION_TIMEOUT, correction).await;
                 }
                 break match result {
                     Ok(reply) => stop_outcome_after(&reply, sent, &agent_label),
@@ -614,20 +637,47 @@ fn advertises_kiro_autopilot_on(update: &Value) -> bool {
             })
 }
 
-/// A supervised session never keeps autopilot on, so a later advert that says on is corrected before the
-/// next prompt step. Only the supervised value is ever written.
-async fn correct_kiro_autopilot(rpc: &RpcClient, session: &str, engine: &str, update: &Value) {
-    if engine != KIRO_ENGINE_ID || !advertises_kiro_autopilot_on(update) {
+/// A supervised session never keeps autopilot on: when an advert says on, the supervised write is fired here,
+/// where the advert is handled and before the update is mapped or the prompt's answer is acted on. It is not
+/// awaited inline (one unresponsive Kiro must not stall the delta stream), and at most one correction is in
+/// flight; the run loop joins it before it acts on the prompt's answer, so no later prompt step can race ahead
+/// of the correction. A failed or unanswered write is logged, never fatal.
+fn start_kiro_autopilot_correction(
+    rpc: &RpcClient,
+    session: &str,
+    engine: &str,
+    update: &Value,
+    in_flight: &mut Option<tokio::task::JoinHandle<()>>,
+) {
+    if in_flight
+        .as_ref()
+        .is_some_and(|handle| handle.is_finished())
+    {
+        *in_flight = None;
+    }
+    if engine != KIRO_ENGINE_ID || !advertises_kiro_autopilot_on(update) || in_flight.is_some() {
         return;
     }
+    let rpc = rpc.clone();
     let params = json!({
         "sessionId": session,
         "configId": KIRO_AUTOPILOT_CONFIG_ID,
         "value": KIRO_AUTOPILOT_OFF,
     });
-    let _ = rpc
-        .call_detailed("session/set_config_option", params, CALL_TIMEOUT)
+    *in_flight = Some(tokio::spawn(async move {
+        let asked = tokio::time::timeout(
+            KIRO_CORRECTION_TIMEOUT,
+            rpc.call_detailed("session/set_config_option", params, CALL_TIMEOUT),
+        )
         .await;
+        match asked {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(?error, "the Kiro autopilot correction was refused")
+            }
+            Err(_) => tracing::warn!("the Kiro autopilot correction did not answer in time"),
+        }
+    }));
 }
 
 async fn open_session(
