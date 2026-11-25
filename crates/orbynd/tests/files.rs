@@ -1147,11 +1147,19 @@ struct RepoThread {
 }
 
 async fn repo_thread() -> RepoThread {
+    repo_thread_with(Vec::new()).await
+}
+
+/// The same fixture with extra service environment, for a route that needs something the raw
+/// tests do not (a browser path, or a PATH holding a fake editor).
+async fn repo_thread_with(extra_env: Vec<(String, String)>) -> RepoThread {
     let dir = TempDir::new();
+    let mut env = vec![("ORBYN_MULTI_REPO".into(), "1".into())];
+    env.extend(extra_env);
     let service = Service::start(
         &dir.path().join("data"),
         Options {
-            env: vec![("ORBYN_MULTI_REPO".into(), "1".into())],
+            env,
             ..Options::default()
         },
     );
@@ -1377,4 +1385,218 @@ async fn raw_bytes_stay_inside_the_repository_a_multi_repo_thread_names() {
     .await;
     assert_eq!(own.status(), 200);
     assert_eq!(own.bytes().await.unwrap().as_ref(), b"other");
+}
+
+#[tokio::test]
+async fn a_repo_id_opens_the_preview_in_the_named_repositorys_worktree() {
+    // A browser path that does not exist: a preview reaches the browser only after its file
+    // resolved, so a resolved file answers the launch's 500 instead of opening a real browser.
+    let fixture = repo_thread_with(vec![(
+        "ORBYN_BROWSER".to_owned(),
+        std::env::temp_dir()
+            .join("orbyn-no-such-browser")
+            .to_string_lossy()
+            .into_owned(),
+    )])
+    .await;
+    let service = &fixture.service;
+    let other = fixture.other.clone();
+    let preview = format!("/api/threads/{}/previews/file", fixture.thread);
+    std::fs::write(fixture.other_root.join("only.html"), "<title>only</title>").unwrap();
+    std::fs::write(fixture.other_root.join("page.html"), "<title>two</title>").unwrap();
+    std::fs::write(fixture.primary_root.join("base.txt"), "base\n").unwrap();
+
+    // The primary's preview does not see the second repository's file, and a named repository
+    // does: the file resolved in that worktree, so the failure after it is the browser's.
+    let (code, body) = service.send(&preview, json!({ "path": "only.html" })).await;
+    assert_eq!(code, 404, "{body}");
+    let (code, body) = service
+        .send(
+            &preview,
+            json!({ "path": "only.html", "repo_id": other.clone() }),
+        )
+        .await;
+    // The path resolved, so the configured browser is what failed: it does not exist, and the
+    // launch's I/O error is the service's 500 (`internal`), never the file resolver's 404.
+    assert_eq!(
+        code, 500,
+        "the named repository's file resolved and the browser failed after it: {body}"
+    );
+
+    // The same name is each repository's own file: a file only the primary has is not found in
+    // the second repository, and the second's own page resolves.
+    let (code, body) = service
+        .send(
+            &preview,
+            json!({ "path": "base.txt", "repo_id": other.clone() }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+    let (code, body) = service
+        .send(
+            &preview,
+            json!({ "path": "page.html", "repo_id": other.clone() }),
+        )
+        .await;
+    assert_eq!(code, 500, "{body}");
+
+    // A path that leaves the named repository is not found, even when it names the primary's file.
+    let primary_name = fixture
+        .primary_root
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let (code, body) = service
+        .send(
+            &preview,
+            json!({
+                "path": format!("../{primary_name}/same.png"),
+                "repo_id": other,
+            }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+
+    // A repository that is not the thread's, and an ordinary thread, are 404 as everywhere else.
+    let (code, body) = service
+        .send(
+            &preview,
+            json!({ "path": "same.png", "repo_id": "no-such" }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+    let plain = service.thread(&fixture.project, "codex").await;
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{plain}/previews/file"),
+            json!({ "path": "same.png", "repo_id": fixture.other }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+}
+
+#[tokio::test]
+async fn a_repo_id_on_the_outside_editor_is_not_found_for_an_unknown_repository_or_an_ordinary_thread()
+ {
+    let fixture = repo_thread().await;
+    let service = &fixture.service;
+    let other = fixture.other.clone();
+    let open = format!("/api/threads/{}/files/open", fixture.thread);
+
+    // An unknown repository is not found before the editor is chosen.
+    let (code, body) = service
+        .send(
+            &open,
+            json!({ "path": "same.png", "editor": "no-such-editor", "repo_id": "no-such" }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+    // An ordinary thread has one checkout and no repositories, so any repo_id is 404.
+    let plain = service.thread(&fixture.project, "codex").await;
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{plain}/files/open"),
+            json!({ "path": "same.png", "editor": "no-such-editor", "repo_id": other.clone() }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+    // A path that leaves the named repository is refused before the editor is chosen.
+    let primary_name = fixture
+        .primary_root
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let (code, body) = service
+        .send(
+            &open,
+            json!({
+                "path": format!("../{primary_name}/same.png"),
+                "editor": "no-such-editor",
+                "repo_id": other,
+            }),
+        )
+        .await;
+    assert_eq!(code, 400, "{body}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_repo_id_opens_the_named_repositorys_file_in_the_configured_editor() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let record = dir.path().join("opened");
+    let code = bin.join("code");
+    std::fs::write(
+        &code,
+        format!("#!/bin/sh\necho \"$1\" > '{}'\n", record.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&code, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let fixture = repo_thread_with(vec![("PATH".to_owned(), path)]).await;
+    let service = &fixture.service;
+    assert!(
+        service
+            .json("/api/editors")
+            .await
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|editor| editor["id"] == "vscode")
+    );
+    let open = format!("/api/threads/{}/files/open", fixture.thread);
+    let other = fixture.other.clone();
+    let opened_for = |path: &std::path::Path| path.to_str().unwrap().to_owned();
+    let wait_for_record = || async {
+        for _ in 0..6000 {
+            if let Ok(seen) = std::fs::read_to_string(&record)
+                && !seen.trim().is_empty()
+            {
+                return seen.trim().to_owned();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("the editor never ran");
+    };
+
+    // The named repository's worktree file, not the primary's file of the same relative name.
+    let (code, body) = service
+        .send(
+            &open,
+            json!({ "path": "same.png", "editor": "vscode", "repo_id": other }),
+        )
+        .await;
+    assert_eq!(code, 202, "{body}");
+    assert_eq!(
+        wait_for_record().await,
+        opened_for(&fixture.other_root.join("same.png"))
+    );
+
+    // No repo_id is the primary repository, as before: the same relative path is its worktree's. The first
+    // answer is cleared so the wait cannot read it instead of this one.
+    std::fs::remove_file(&record).unwrap();
+    let (code, body) = service
+        .send(&open, json!({ "path": "same.png", "editor": "vscode" }))
+        .await;
+    assert_eq!(code, 202, "{body}");
+    assert_eq!(
+        wait_for_record().await,
+        opened_for(&fixture.primary_root.join("same.png"))
+    );
+
+    // An unknown repository opens nothing.
+    std::fs::remove_file(&record).unwrap();
+    let (code, _) = service
+        .send(
+            &open,
+            json!({ "path": "same.png", "editor": "vscode", "repo_id": "no-such" }),
+        )
+        .await;
+    assert_eq!(code, 404);
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(!record.exists(), "no editor ran for an unknown repository");
 }

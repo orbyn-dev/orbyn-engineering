@@ -1,5 +1,5 @@
 use crate::store::thread_repos::ThreadRepoRecord;
-use orbyn_contracts::{GitAction, WriteFile};
+use orbyn_contracts::{GitAction, OpenInEditor, WriteFile};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -459,6 +459,104 @@ async fn a_repo_id_names_the_repository_a_file_call_reads_and_writes() {
 }
 
 #[tokio::test]
+async fn a_repo_id_opens_previews_and_the_outside_editor_in_the_named_repositorys_worktree() {
+    let dir = TempDir::new();
+    let core = core(&dir, true).await;
+    let (main, other) = two_repos(&dir);
+    let project = core.add_project(&path_text(&main)).await.unwrap().id;
+    core.store.trust_project(&project, "user").unwrap();
+    let added = core
+        .add_repo_folder(
+            &project,
+            AddRepoFolder {
+                path: path_text(&other),
+            },
+        )
+        .await
+        .unwrap();
+    core.trust_repo(&project, &added.id).await.unwrap();
+    let thread = multi_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&added.id, "other", &other)],
+    );
+    // A file only the second repository has: the primary's preview does not see it, the named
+    // repository's preview is that repository's file on disk.
+    std::fs::write(other.join("only.txt"), "other only\n").unwrap();
+    assert!(matches!(
+        core.preview_file(&thread, "only.txt"),
+        Err(CoreError::NotFound(_))
+    ));
+    let previewed = crate::in_repo(Some(added.id.clone()), async {
+        core.preview_file(&thread, "only.txt")
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        previewed,
+        crate::util::canonicalize(&other.join("only.txt")).unwrap()
+    );
+    // The same name in the two repositories is two files, and each preview is its own.
+    // With no repository named, a path is the thread's own folder's (the task folder), as a terminal
+    // link's is: the primary's file is `<its folder name>/a.txt`, and a bare name is not found.
+    let main_name = main.file_name().unwrap().to_string_lossy().into_owned();
+    assert_eq!(
+        core.preview_file(&thread, &format!("{main_name}/a.txt"))
+            .unwrap(),
+        crate::util::canonicalize(&main.join("a.txt")).unwrap()
+    );
+    assert!(matches!(
+        core.preview_file(&thread, "a.txt"),
+        Err(CoreError::NotFound(_))
+    ));
+    let in_other = crate::in_repo(Some(added.id.clone()), async {
+        core.preview_file(&thread, "a.txt")
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        in_other,
+        crate::util::canonicalize(&other.join("a.txt")).unwrap()
+    );
+    assert_eq!(std::fs::read_to_string(&in_other).unwrap(), "other\n");
+    // A previewed path that leaves the named repository reads as not found, through `..` or
+    // as an absolute path; its own file is still not a folder.
+    for path in ["../main/a.txt", "/etc/passwd", ""] {
+        assert!(
+            matches!(
+                crate::in_repo(Some(added.id.clone()), async {
+                    core.preview_file(&thread, path)
+                })
+                .await,
+                Err(CoreError::NotFound(_))
+            ),
+            "{path:?}"
+        );
+    }
+    // The outside editor resolves the same file the same way; the editor itself is chosen
+    // after the path, so an unknown one is refused only once the named repository's file
+    // resolved, and a path outside that repository is refused before it.
+    let edit = |path: &str| {
+        let body = OpenInEditor {
+            path: path.to_owned(),
+            editor: "no-such-editor".into(),
+            line: None,
+            column: None,
+            repo_id: None,
+        };
+        let core = core.clone();
+        let thread = thread.clone();
+        let repo = added.id.clone();
+        async move { crate::in_repo(Some(repo), core.open_in_editor(&thread, &body, "user")).await }
+    };
+    assert!(matches!(edit("only.txt").await, Err(CoreError::Invalid(_))));
+    assert!(matches!(
+        edit("../main/a.txt").await,
+        Err(CoreError::Invalid(_))
+    ));
+}
+
+#[tokio::test]
 async fn a_git_action_commits_in_the_named_repository_only() {
     let dir = TempDir::new();
     let core = core(&dir, true).await;
@@ -544,6 +642,46 @@ async fn an_unknown_untrusted_or_flagged_off_repository_is_refused_at_every_entr
         Err(CoreError::RepoUntrusted(_))
     ));
     assert!(matches!(read("no-such").await, Err(CoreError::NotFound(_))));
+    // The preview opener and the outside editor read a file through the same resolver, so
+    // they refuse the untrusted repository and an unknown one before anything else runs.
+    let preview = |repo: &str| {
+        let core = core.clone();
+        let thread = thread.clone();
+        let repo = repo.to_owned();
+        async move {
+            crate::in_repo(
+                Some(repo),
+                async move { core.preview_file(&thread, "a.txt") },
+            )
+            .await
+        }
+    };
+    assert!(matches!(
+        preview(&added.id).await,
+        Err(CoreError::RepoUntrusted(_))
+    ));
+    assert!(matches!(
+        preview("no-such").await,
+        Err(CoreError::NotFound(_))
+    ));
+    let edit = |repo: &str| {
+        let core = core.clone();
+        let thread = thread.clone();
+        let repo = repo.to_owned();
+        let body = OpenInEditor {
+            path: "a.txt".into(),
+            editor: "no-such-editor".into(),
+            line: None,
+            column: None,
+            repo_id: None,
+        };
+        async move { crate::in_repo(Some(repo), core.open_in_editor(&thread, &body, "user")).await }
+    };
+    assert!(matches!(
+        edit(&added.id).await,
+        Err(CoreError::RepoUntrusted(_))
+    ));
+    assert!(matches!(edit("no-such").await, Err(CoreError::NotFound(_))));
     let action = GitAction {
         commit_message: Some("x".into()),
         push: false,
@@ -585,6 +723,14 @@ async fn an_unknown_untrusted_or_flagged_off_repository_is_refused_at_every_entr
             .is_err()
     );
     assert!(core.read_file(&plain, "a.txt").await.is_ok());
+    assert!(core.preview_file(&plain, "a.txt").is_ok());
+    assert!(matches!(
+        crate::in_repo(Some(project.clone()), async {
+            core.preview_file(&plain, "a.txt")
+        })
+        .await,
+        Err(CoreError::NotFound(_))
+    ));
     assert!(matches!(
         core.thread_repos(&plain).await,
         Err(CoreError::NotFound(_))
@@ -1090,6 +1236,132 @@ async fn a_repository_leaves_a_thread_only_when_it_is_not_primary_and_holds_noth
             .unwrap()
             .is_empty()
     );
+}
+
+/// A navigation request for one repository of a multi-repository thread. Which repository is the
+/// scope's question: a route sets it with `in_repo`, so the body's own `repo_id` is not read here.
+fn navigation(cwd: &str, path: &str, repo_id: Option<&str>) -> orbyn_contracts::ResolveThreadPath {
+    orbyn_contracts::ResolveThreadPath {
+        path: path.to_owned(),
+        basis: orbyn_contracts::ThreadPathBasis::Repository,
+        cwd: cwd.to_owned(),
+        repo_id: repo_id.map(str::to_owned),
+    }
+}
+
+#[tokio::test]
+async fn navigation_coordinates_are_resolved_in_the_repository_its_scope_names() {
+    use orbyn_contracts::ResolveThreadPath;
+
+    let dir = TempDir::new();
+    let (core, project, other_id, _main, _other) = two_trusted(&dir).await;
+    let thread = core
+        .start_repo_thread(
+            &project,
+            start_input(&[(&project, "main"), (&other_id, "main")]),
+        )
+        .await
+        .unwrap();
+    let folder = core.task_folder(&thread.id).await.unwrap();
+    let primary = Path::new(&thread.cwd).join(&folder.repos[0].name);
+    let second = Path::new(&thread.cwd).join(&folder.repos[1].name);
+    // A file of each repository, so the answer says which worktree the path was resolved in.
+    std::fs::write(primary.join("primary.txt"), "primary\n").unwrap();
+    std::fs::write(second.join("second.txt"), "second\n").unwrap();
+    // No repository named is the primary one, and the answer's cwd stays the thread's own folder.
+    let resolved = core
+        .resolve_thread_path(&thread.id, &navigation(&thread.cwd, "primary.txt", None))
+        .await
+        .unwrap();
+    assert_eq!(resolved.cwd, thread.cwd);
+    assert_eq!(resolved.checkout_path.as_deref(), Some("primary.txt"));
+    assert_eq!(resolved.repository_path.as_deref(), Some("primary.txt"));
+    // The second repository's file is not in the primary one; it resolves when the scope names it.
+    let unresolved = core
+        .resolve_thread_path(&thread.id, &navigation(&thread.cwd, "second.txt", None))
+        .await
+        .unwrap();
+    assert_eq!(unresolved.checkout_path, None);
+    let resolved = crate::in_repo(
+        Some(other_id.clone()),
+        core.resolve_thread_path(
+            &thread.id,
+            &navigation(&thread.cwd, "second.txt", Some(&other_id)),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        resolved.cwd, thread.cwd,
+        "the task folder is still what the caller fenced against"
+    );
+    assert_eq!(resolved.checkout_path.as_deref(), Some("second.txt"));
+    assert_eq!(resolved.repository_path.as_deref(), Some("second.txt"));
+    // A repository that is not the thread's is not found.
+    assert!(matches!(
+        crate::in_repo(
+            Some("no-such-repo".into()),
+            core.resolve_thread_path(
+                &thread.id,
+                &navigation(&thread.cwd, "primary.txt", Some("no-such-repo")),
+            ),
+        )
+        .await,
+        Err(CoreError::NotFound(_))
+    ));
+    // The fence is the thread's stored folder, not a worktree inside it.
+    let moved = ResolveThreadPath {
+        cwd: path_text(&primary),
+        ..navigation(&thread.cwd, "primary.txt", None)
+    };
+    assert!(matches!(
+        core.resolve_thread_path(&thread.id, &moved).await,
+        Err(CoreError::StaleOwner)
+    ));
+}
+
+#[tokio::test]
+async fn navigation_coordinates_of_an_untrusted_repository_are_refused() {
+    let dir = TempDir::new();
+    let core = core(&dir, true).await;
+    let (main, other) = two_repos(&dir);
+    let project = core.add_project(&path_text(&main)).await.unwrap().id;
+    core.store.trust_project(&project, "user").unwrap();
+    let added = core
+        .add_repo_folder(
+            &project,
+            AddRepoFolder {
+                path: path_text(&other),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!added.trusted);
+    // A task folder over both, as a started thread has, without the start's trust check.
+    let thread = multi_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&added.id, "other", &other)],
+    );
+    let stored = core.store.thread(&thread).unwrap();
+    let request = navigation(&stored.cwd, "a.txt", None);
+    // The trusted primary still resolves; the untrusted repository is refused before it is read.
+    assert_eq!(
+        core.resolve_thread_path(&thread, &request)
+            .await
+            .unwrap()
+            .checkout_path
+            .as_deref(),
+        Some("a.txt")
+    );
+    assert!(matches!(
+        crate::in_repo(
+            Some(added.id.clone()),
+            core.resolve_thread_path(&thread, &request)
+        )
+        .await,
+        Err(CoreError::RepoUntrusted(_))
+    ));
 }
 
 /// A multi-repository thread whose folder is a task folder outside every repository: one worktree of each

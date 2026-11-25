@@ -1135,12 +1135,16 @@ restoring a child leaves sibling changes and untracked files untouched.
 repository coordinate basis and expected cwd into optional checkout and repository
 paths. It returns no file content. Thread links prefer an existing safe file after
 stripping the longest repeated workspace suffix, then try the literal thread path.
-Only existing safe files inside cwd receive a checkout path; missing tracked files
-and sibling Git patches may retain repository coordinates for diff navigation.
-Ordinary file reads/writes and engine scope remain bounded to thread cwd. File and
-diff reveal intents are transient, capture thread/cwd before resolution, and consume
-only their own nonce. Route/cwd changes and newer navigation invalidate stale
-responses, including when an older request completes last.
+Only existing safe files inside the checkout receive a checkout path; missing tracked
+files and sibling Git patches may retain repository coordinates for diff navigation.
+A multi-repository thread resolves the reference in the repository its `repo_id`
+names, the primary repository when it is absent, so a worktree is the checkout and
+the task folder is never one; the request's and the answer's `cwd` stay the thread's
+stored folder, so a thread that moved meanwhile is still refused as stale. Ordinary
+file reads/writes and engine scope remain bounded to thread cwd. File and diff reveal
+intents are transient, capture thread/cwd before resolution, and consume only their
+own nonce. Route/cwd changes and newer navigation invalidate stale responses,
+including when an older request completes last.
 
 `POST /api/settings/preferences/query` resolves environment, logical-project or
 physical-checkout rows from one SQLite read snapshot. Effective values that differ
@@ -2923,7 +2927,8 @@ needs a person. A turn that ends with no report is a failed attempt; an engine t
 brief's minutes or turns are spent stops on its next failed attempt with the reason `budget`: the turns are the worker's runs and
 the approvals reserved against the same budget, and a result counts them. A crew's turns are the same tally summed over its tasks:
 a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; set in Settings › General) refuses a new task once its crew
-has spent them, before anything is stored or sent, and never stops a task already running. A worker's file change is checked
+has spent them, before anything is stored or sent, and never stops a task already running. That budget fails closed: a budget or a spend
+no read can settle refuses the start, so an unknown count is never read as under budget. A worker's file change is checked
 against its lease at the gate, before the write, and refused with the lease's own refusal; a command it runs is not read.
 After a run ends, member tools refuse (H7), but the core can verify again and add Evidence and Gates; no state reopens.
 A lease's expiry is read when it is used and a lapsed lease is recorded `expired` and blocks nobody. Its refusals use the Crew Protocol's error codes
@@ -3330,8 +3335,9 @@ profile. A named profile lives in `<data>/browser-profiles`, survives restarts, 
 one tab at a time because a browser locks its profile folder. A profile can be renamed
 while a tab has it open: only the stored name changes, never the folder, so its cookies
 and history stay. A private tab only stays
-out of the UI's history. `/previews/file` opens a file inside the checkout as `file:`,
-which agents and the address bar cannot reach. Picking an element reads it and changes
+out of the UI's history. `/previews/file` opens a file inside the checkout as `file:`, or the
+worktree of the repository `repo_id` names (docs/multi-repo.md), which agents and the address
+bar cannot reach. Picking an element reads it and changes
 nothing, and what it returns comes from the page, so the UI quotes it into the draft for a
 person to read before sending. A browser that dies is started again on the same profile and
 page, up to three times in 30 seconds after 1, 2 and 4 seconds, and then the tab reports
@@ -3929,7 +3935,7 @@ every method, path and which routes need a credential.
 | `GET, PUT /api/threads/:id/files/content` | `FileContent`; a stale `base_revision` is `409 file_conflict` |
 | `POST /api/threads/:id/files/mutate` | `ExplorerFileAction`: create, move (rename) or nonrecursive delete in the thread's checkout; `204`, `403` active session/untrusted, `404` unknown thread, `400` invalid path or destination |
 | `GET /api/threads/:id/files/raw?path=&download=` | Bytes with `Range`, `If-Range` and `If-None-Match`; `206`, `304`, `413 file_too_large`, `416`; `download` forces an attachment |
-| `POST /api/threads/:id/files/open`, `GET /api/editors` | `OpenInEditor` with optional `line` and `column`; `file_manager` reveals the file |
+| `POST /api/threads/:id/files/open`, `GET /api/editors` | `OpenInEditor` with optional `line` and `column`, and `repo_id` for another repository of a multi-repository thread; `file_manager` reveals the file |
 | `POST /api/threads/:id/git/action` | `GitAction` to `GitActionResult`: commit, push, pull request |
 | `GET, POST /api/threads/:id/branches`, `POST .../branches/switch` | List, create and switch |
 | `POST /api/threads/:id/vcs/refresh-status` | `VcsStatus`: branch or detached HEAD, HEAD, tracking ref, ahead/behind and working-tree change counts, read from Git now; `400` outside Git, `403 folder_untrusted` |
@@ -3984,7 +3990,7 @@ every method, path and which routes need a credential.
 | `POST .../previews/:tab/navigate`, `/control`, `/input` | `NavigatePreview`; `PreviewControl`; `PreviewInput`, `400` until a person holds the page |
 | `POST .../previews/:tab/history`, `/resize` | `StepPreview`; `ResizePreview`, `400` outside 100 to 4096; both to `PreviewTab` |
 | `POST, DELETE .../previews/:tab/recording` | Start with optional `PreviewRecordingOptions` query; stop, to `PreviewRecording` with successful frame count and optional error |
-| `POST .../previews/file` | `OpenPreviewFile` to `PreviewTab`, inside the checkout |
+| `POST .../previews/file` | `OpenPreviewFile` to `PreviewTab`, inside the checkout or the worktree of the repository `repo_id` names |
 | `POST .../previews/:tab/view`, `/reload`, `/clear`, `/pick` | `PreviewView`; `ReloadPreview`; `ClearPreview`; `PickPreview` to `PickedElement` |
 | `GET, POST /api/browser-profiles` | `BrowserProfile[]`; `CreateBrowserProfile` |
 | `DELETE /api/browser-profiles/:id`, `POST .../clear` | Remove, or empty, a profile no tab has open |

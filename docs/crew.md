@@ -363,7 +363,10 @@ retries with the reason. The same failure twice means one change of approach, an
     (`crew_turn_budget`; unset or 0 is no crew budget), set in Settings › General (`Crew turn budget`). A crew's spend is the same per-task tally summed over its
     tasks, so the crew's budget and a task's own cannot disagree. Once the crew's turns are spent, a new task is
     refused with `not_authorized` and "The crew has spent its turn budget, so no new task can start."; nothing is
-    stored, routed or sent. A task already running keeps its retries, approvals and verification, and may spend past
+    stored, routed or sent. **It fails closed:** a budget or a spend that cannot be read refuses the start too
+    (`not_authorized`, with a sentence saying the read failed), because the budget is what allows a start, so an
+    unknown one is never read as no budget. The background crews' daily budget answers a failed read the same way.
+    A task already running keeps its retries, approvals and verification, and may spend past
     the number. There is no reset: a new crew starts at zero because its count is read from its tasks. Every new
     task counts, including review lanes and fixes, except Autopilot's merge corrections, which create their task
     directly (deterministic, no worker turns). A task whose worker thread exists or whose first prompt is still queued
@@ -910,9 +913,10 @@ be approved). The person answers from the app's window, local only: `POST /api/c
   binding: the key lives only in the service process, and the holds it binds never outlive a restart.
 
 Known limits: an unauthenticated caller gets 401, not 404, on a Crew route even with the flag off, like every protected route. The
-ledger rows hold the lead's and second key's reasons but not the asker's model, a risk tier or a title; an injected text is kept as its
-class only. The risk, review and queue views read the whole table and then page, which is fine for one person's repositories. A
-comment is kept and is not yet a fix brief.
+ledger rows hold the lead's and second key's reasons, the tier the action needed, the task's title as it stood at the write, and the
+asking run's engine and model; an injected text is kept as its class only. A row no run asked for (a merge the queue took) carries no
+asker, and an asking thread with no model recorded carries none either. The risk, review and queue views read the whole table and then
+page, which is fine for one person's repositories. A comment is kept and is not yet a fix brief.
 
 Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g), and
 background crews' triggers and runs (4h; their stored state is below).
