@@ -12,8 +12,21 @@ const MAC_MODIFIER = /[⌘⌥⌃⇧]/;
 /** Lines that start a comment are not shown; only a comment on its own line is skipped. */
 const COMMENT = /^\s*(?:\/\/|\/\*|\*)/;
 
-/** A line that picks its text by platform cannot show a Mac glyph to Windows. */
-const PICKS_PLATFORM = /navigator\.platform|clientPlatform\(|isMac(?:Client|Platform)?\b|platform === "macos"/;
+/** A line that tests the platform. */
+const TESTS_PLATFORM = /navigator\.platform|clientPlatform\(|isMac(?:Client|Platform)?\b|platform === "macos"/;
+
+/**
+ * A line that picks its text by platform cannot show a Mac glyph to Windows, but only when the glyph sits in the Mac branch:
+ * after the test's `?` and before the branch's ` : `. A glyph in the other branch, or on a line that only mentions the platform, is shown to Windows.
+ */
+function picksPlatform(line: string): boolean {
+  const test = TESTS_PLATFORM.exec(line);
+  if (!test) return false;
+  const question = line.indexOf("?", test.index);
+  if (question === -1) return false;
+  const otherBranch = line.indexOf(" : ", question);
+  return otherBranch === -1 || !MAC_MODIFIER.test(line.slice(otherBranch));
+}
 
 /** The files where a Mac modifier glyph is written literally. */
 const LITERAL_ALLOWED = new Set([
@@ -41,7 +54,7 @@ function unguardedMacGlyphs(files: readonly SourceFile[]): string[] {
     .filter((file) => !/\.test\.tsx?$/.test(file.path) && !LITERAL_ALLOWED.has(file.path))
     .flatMap((file) =>
       file.text.split("\n").flatMap((line, at) =>
-        MAC_MODIFIER.test(line) && !COMMENT.test(line) && !PICKS_PLATFORM.test(line) ? [`${file.path}:${at + 1}: ${line.trim()}`] : [],
+        MAC_MODIFIER.test(line) && !COMMENT.test(line) && !picksPlatform(line) ? [`${file.path}:${at + 1}: ${line.trim()}`] : [],
       ),
     );
 }
@@ -67,10 +80,14 @@ describe("macOS-only labels", () => {
     const files: SourceFile[] = [
       { path: "features/x/Window.tsx", text: '<button title="Save ⌘S">Save</button>' },
       { path: "features/x/Platform.tsx", text: '<button title={isMacClient() ? "Save ⌘S" : "Save Ctrl+S"}>Save</button>' },
+      { path: "features/x/Reversed.tsx", text: '<button title={isMacClient() ? "Save Ctrl+S" : "Save ⌘S"}>Save</button>' },
       { path: "features/x/Note.tsx", text: "// A ⌘S in a comment is never drawn." },
       { path: "features/workspace/app-chrome/QuitConfirmation.tsx", text: "<b>Press ⌘Q again to quit</b>" },
     ];
-    expect(unguardedMacGlyphs(files)).toEqual(['features/x/Window.tsx:1: <button title="Save ⌘S">Save</button>']);
+    expect(unguardedMacGlyphs(files)).toEqual([
+      'features/x/Window.tsx:1: <button title="Save ⌘S">Save</button>',
+      'features/x/Reversed.tsx:1: <button title={isMacClient() ? "Save Ctrl+S" : "Save ⌘S"}>Save</button>',
+    ]);
   });
 
   it("keeps every literal Mac modifier glyph in a helper, a macOS-only surface or a platform choice", () => {
