@@ -9,8 +9,8 @@ import { capText, reasonOf } from "./model";
 import { PlannedControl } from "./Planned";
 
 /**
- * The editors of an issue page: the description, and the label and assignee pickers. They are the minimal inline forms (no frame
- * draws them yet). Every one of them follows the same rules:
+ * The editors of an issue page (issue-write-description, -description-refused, -labels, -assignees, -not-offered): the description, and
+ * the label and assignee pickers the create dialog shares. Every one of them follows the same rules:
  *
  * - The text is the tracker's, and what the person types goes back as a field value. It is shown only through React text and a
  *   controlled `textarea`, never as markup.
@@ -97,30 +97,65 @@ export function useDescriptionEditor({ issue, offered, write, writing }: EditPro
 
 type Kind = "labels" | "assignees";
 
-interface Item { id: string; name: string; unresolved: boolean }
+/** One row of a picker: the key the list checks it by, the words it shows, and an assignee the candidates cannot address. */
+interface Item {
+  /** A label's name, or an assignee's login. */
+  id: string;
+  name: string;
+  /** An assignee's login, when the row is a person. */
+  login?: string;
+  /** An assignee the candidates do not carry an id for: kept and checked, and Apply waits until it is unchecked. */
+  unresolved: boolean;
+}
 
-/** Every choice a picker lists: what the issue has now, first, then the candidates, each name once. Assignees keep the id a write needs. */
-function itemsFor(kind: Kind, issue: IssueDetail, candidates: IssueCandidates | null): Item[] {
+/** What a picker hands back on Apply: the labels' names, or the assignees with the candidate id a write needs. */
+export interface PickChoice {
+  labels?: string[];
+  assignees?: { login: string; id: string }[];
+}
+
+/** Every choice a picker lists: what is already chosen first, then the candidates, each name once. */
+function itemsFor(kind: Kind, mine: { labels: string[]; assignees: { login: string }[] }, candidates: IssueCandidates | null): Item[] {
   const seen = new Set<string>();
   const items: Item[] = [];
   const add = (item: Item) => { if (!seen.has(item.id)) { seen.add(item.id); items.push(item); } };
   if (kind === "labels") {
-    for (const label of issue.labels) add({ id: label.name, name: label.name, unresolved: false });
+    for (const name of mine.labels) add({ id: name, name, unresolved: false });
     for (const label of candidates?.labels ?? []) add({ id: label.name, name: label.name, unresolved: false });
     return items;
   }
   // A `Map`, not an object: a login comes from the tracker and could be `__proto__`.
   const ids = new Map((candidates?.assignees ?? []).map((who) => [who.login, who.id] as const));
-  for (const who of issue.assignees) add({ id: who.login, name: who.login, unresolved: !ids.has(who.login) });
-  for (const who of candidates?.assignees ?? []) add({ id: who.login, name: who.name ? `${who.login} · ${who.name}` : who.login, unresolved: false });
+  for (const who of mine.assignees) add({ id: who.login, name: who.login, login: who.login, unresolved: !ids.has(who.login) });
+  for (const who of candidates?.assignees ?? []) add({ id: who.login, name: who.name ? `${who.login} · ${who.name}` : who.login, login: who.login, unresolved: false });
   return items;
 }
 
+interface PickerProps {
+  kind: Kind;
+  /** The tracker and scope the candidates are read for: an issue, or the scope a new issue goes into. */
+  target: Pick<IssueDetail, "tracker" | "scope">;
+  /** The items chosen now, by their key (a label's name, an assignee's login). */
+  current: string[];
+  /** What is already chosen, drawn first and checked: the issue's own labels and people, or nothing for a new issue. */
+  mine: { labels: string[]; assignees: { login: string }[] };
+  /** Whether the service offers the writes; otherwise the plus is the Planned pill. */
+  offered: boolean;
+  /** A write in flight: the picker's own controls are off. */
+  busy: boolean;
+  /** The plus's accessible name and the picker's heading, in the frame's words ("Change labels", "Choose labels"). */
+  label: string;
+  heading: string;
+  /** Called with the whole new set on Apply; a rejection is shown as the page does and keeps the picker open. */
+  save(choice: PickChoice): Promise<boolean> | boolean;
+}
+
 /**
- * The plus button of the Labels or Assignees row and the picker it opens. The candidates are read when it opens, one read at a time
- * (a reopen drops the one still on its way), and the whole new set goes in one `update` when the person presses Apply.
+ * The plus of a Labels or Assignees row and the picker it opens. The candidates are read when it opens, one read at a time (a
+ * reopen drops the one still on its way), and the whole new set goes to `save` on Apply. The issue page writes it and the
+ * new-issue dialog holds it, so the reading, filtering, limits and refusals live in one place.
  */
-export function PickerEditor({ kind, issue, offered, write, writing }: EditProps & { kind: Kind }) {
+export function Picker({ kind, target, current, mine, offered, busy, label, heading, save }: PickerProps) {
   const [open, setOpen] = useState(false);
   const [read, setRead] = useState<{ status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: IssueCandidates }>({ status: "loading" });
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -130,7 +165,6 @@ export function PickerEditor({ kind, issue, offered, write, writing }: EditProps
   const group = useId();
   const noun = kind === "labels" ? "labels" : "assignees";
   const limit = kind === "labels" ? LABELS_MAX : ASSIGNEES_MAX;
-  const current = kind === "labels" ? issue.labels.map((label) => label.name) : issue.assignees.map((who) => who.login);
   useEffect(() => () => request.current?.abort(), []);
 
   const load = () => {
@@ -138,7 +172,7 @@ export function PickerEditor({ kind, issue, offered, write, writing }: EditProps
     const asked = new AbortController();
     request.current = asked;
     setRead({ status: "loading" });
-    issuesApi().candidates(issue, asked.signal).then(
+    issuesApi().candidates(target, asked.signal).then(
       (data) => { if (!asked.signal.aborted) setRead({ status: "ready", data }); },
       (failure: unknown) => { if (!asked.signal.aborted) setRead({ status: "error", message: failureWords(failure).replace(/ Nothing changed\.$/, "") }); },
     );
@@ -153,36 +187,35 @@ export function PickerEditor({ kind, issue, offered, write, writing }: EditProps
   const close = () => { request.current?.abort(); setOpen(false); };
 
   if (!offered && !open) {
-    return <PlannedControl label={kind === "labels" ? "Change labels" : "Change assignees"} what={kind === "labels" ? "Changing labels" : "Changing assignees"}><Plus size={13} aria-hidden /></PlannedControl>;
+    return <PlannedControl label={label} what={kind === "labels" ? "Changing labels" : "Changing assignees"}><Plus size={13} aria-hidden /></PlannedControl>;
   }
   const button = (
-    <button type="button" className="iss-icb" aria-label={kind === "labels" ? "Change labels" : "Change assignees"} aria-expanded={open} disabled={open || writing} onClick={openIt}>
+    <button type="button" className="iss-icb" aria-label={label} aria-expanded={open} disabled={open || busy} onClick={openIt}>
       <Plus size={13} aria-hidden />
     </button>
   );
   if (!open) return button;
 
   const candidates = read.status === "ready" ? read.data : null;
-  const items = itemsFor(kind, issue, candidates);
+  const items = itemsFor(kind, mine, candidates);
   const wanted = filter.trim().toLowerCase();
   const shown = items.filter((item) => item.name.toLowerCase().includes(wanted)).slice(0, 250);
   const ids = new Map((candidates?.assignees ?? []).map((who) => [who.login, who.id] as const));
-  const unresolved = items.filter((item) => item.unresolved && picked.has(item.id));
+  const chosen = items.filter((item) => picked.has(item.id));
+  const unresolved = kind === "assignees" ? chosen.filter((item) => item.unresolved) : [];
   const tooMany = picked.size > limit;
-  const unchanged = picked.size === current.length && current.every((name) => picked.has(name));
-  const problem = tooMany ? `An issue can have at most ${limit} ${noun}.` : unresolved.length > 0 ? `Orbyn cannot address ${unresolved.map((item) => capText(item.name, 40)).join(", ")} yet. Uncheck ${unresolved.length === 1 ? "it" : "them"} to continue.` : null;
+  const unchanged = picked.size === current.length && current.every((id) => picked.has(id));
+  const problem = tooMany ? `An issue can have at most ${limit} ${noun}.` : unresolved.length > 0 ? `Orbyn cannot address ${unresolved.map((item) => capText(item.login ?? item.name, 40)).join(", ")} yet. Uncheck ${unresolved.length === 1 ? "it" : "them"} to continue.` : null;
   const toggle = (id: string) => setPicked((now) => { const next = new Set(now); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const apply = async () => {
-    if (writing || problem || unchanged || read.status !== "ready") return;
+    if (busy || problem || unchanged || read.status !== "ready") return;
     setError(null);
-    const chosen = [...picked];
-    const input = kind === "labels" ? { labels: chosen } : { assignees: chosen.map((login) => ids.get(login)).filter((id): id is string => id !== undefined) };
-    // Over a limit is refused here, before anything is sent.
-    const refused = updateProblem(input);
-    if (refused) { setError(refused); return; }
+    const choice: PickChoice = kind === "labels"
+      ? { labels: chosen.map((item) => item.name) }
+      // A person goes out by the candidate's id, never by a login typed by hand; an unaddressable one blocked Apply above.
+      : { assignees: chosen.flatMap((item) => { const id = item.login === undefined ? undefined : ids.get(item.login); return item.login === undefined || id === undefined ? [] : [{ login: item.login, id }]; }) };
     try {
-      const done = await write(() => issuesApi().update(issue, input));
-      if (done) setOpen(false);
+      if (await save(choice)) setOpen(false);
     } catch (failure) {
       setError(failureWords(failure));
     }
@@ -190,8 +223,8 @@ export function PickerEditor({ kind, issue, offered, write, writing }: EditProps
   return (
     <>
       {button}
-      <form className="iss-edit iss-pick-form" role="group" aria-labelledby={group} onSubmit={(event) => { event.preventDefault(); void apply(); }} onKeyDown={(event) => { if (event.key === "Escape" && !writing) { event.stopPropagation(); close(); } }}>
-        <b id={group}>{kind === "labels" ? "Change labels" : "Change assignees"}</b>
+      <form className="iss-edit iss-pick-form" role="group" aria-labelledby={group} onSubmit={(event) => { event.preventDefault(); void apply(); }} onKeyDown={(event) => { if (event.key === "Escape" && !busy) { event.stopPropagation(); close(); } }}>
+        <b id={group}>{heading}</b>
         {read.status === "loading" ? <p className="iss-quiet" role="status">Loading {noun}…</p> : null}
         {read.status === "error" ? (
           <div className="iss-start-fail" role="alert">
@@ -206,7 +239,7 @@ export function PickerEditor({ kind, issue, offered, write, writing }: EditProps
               {shown.length === 0 ? <li className="iss-quiet">{items.length === 0 ? `No ${noun} to choose from.` : `No ${noun} match.`}</li> : shown.map((item) => (
                 <li key={item.id}>
                   <label>
-                    <input type="checkbox" checked={picked.has(item.id)} disabled={writing} onChange={() => toggle(item.id)} />
+                    <input type="checkbox" checked={picked.has(item.id)} disabled={busy} onChange={() => toggle(item.id)} />
                     <span>{capText(item.name, 80)}</span>
                   </label>
                 </li>
@@ -218,10 +251,30 @@ export function PickerEditor({ kind, issue, offered, write, writing }: EditProps
         {problem ? <p className="iss-edit-error" role="alert">{problem}</p> : null}
         {error ? <p className="iss-edit-error" role="alert">{error}</p> : null}
         <div className="iss-edit-foot">
-          <Button small onClick={close} disabled={writing}>Cancel</Button>
-          <Button small tone="primary" type="submit" busy={writing} disabled={read.status !== "ready" || problem !== null || unchanged}>Apply</Button>
+          <Button small onClick={close} disabled={busy}>Cancel</Button>
+          <Button small tone="primary" type="submit" busy={busy} disabled={read.status !== "ready" || problem !== null || unchanged}>Apply</Button>
         </div>
       </form>
     </>
+  );
+}
+
+/** The Labels or Assignees plus of an issue page: the whole new set goes in one `POST /api/issues/item/update`. */
+export function PickerEditor({ kind, issue, offered, write, writing }: EditProps & { kind: Kind }) {
+  return (
+    <Picker
+      kind={kind}
+      target={issue}
+      current={kind === "labels" ? issue.labels.map((one) => one.name) : issue.assignees.map((who) => who.login)}
+      mine={{ labels: issue.labels.map((one) => one.name), assignees: issue.assignees.map((who) => ({ login: who.login })) }}
+      offered={offered}
+      busy={writing}
+      label={kind === "labels" ? "Change labels" : "Change assignees"}
+      heading={kind === "labels" ? "Change labels" : "Change assignees"}
+      save={async (choice) => {
+        const input = kind === "labels" ? { labels: choice.labels ?? [] } : { assignees: (choice.assignees ?? []).map((who) => who.id) };
+        return (await write(() => issuesApi().update(issue, input))) !== null;
+      }}
+    />
   );
 }
