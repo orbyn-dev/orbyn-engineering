@@ -6,9 +6,10 @@
 :root[data-theme="dark"] .settings-page {
   --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-opacity='.94' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 10l5 5 5-5'/%3E%3C/svg%3E");
 }
-.settings-page .settings-title {
-  font-size: var(--text-section);
-}
+/* The page title is the shared one from pages.css: Settings draws it in a span instead of the page's h1 (which
+   stays for the screen reader), so the title's size comes from .settings-title there, as every other page's does.
+   Sizing it in this file drew Settings one step below the other pages; docs/design.md gives the page
+   heading and the open Settings section the same 22px title. */
 .settings-page .setting-group h2 {
   padding: 12px 0 6px;
 }

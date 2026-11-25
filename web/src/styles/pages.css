@@ -109,7 +109,11 @@
   flex: none;
   padding: 8px 28px 6px;
 }
-.settings-title {
+/* The one page-title rule. Settings draws its title twice: the visible .settings-title span and the page's own
+   h1, which stays for the screen reader. Both are the page title, so both take this rule and a measuring tool
+   reads one size for the title whichever of them it lands on. */
+.settings-title,
+.settings-main > h1 {
   font-size: var(--text-page);
   font-weight: 500;
   letter-spacing: -0.015em;
