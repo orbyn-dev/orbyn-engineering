@@ -4,6 +4,7 @@
  * a test or a screen seeds what the service would list, and the mock keeps the list as the service does, so a closed terminal is
  * gone from the next read.
  */
+import type { BlockClear } from "../src/generated/BlockClear.ts";
 import type { BlockList } from "../src/generated/BlockList.ts";
 import type { CommandBlock } from "../src/generated/CommandBlock.ts";
 import type { ProjectFileView } from "../src/generated/ProjectFileView.ts";
@@ -86,6 +87,15 @@ export function createTerminalsMock() {
         if (!list(threadId).some((entry) => entry.id === terminalId)) return notFound();
         lists.set(threadId, list(threadId).filter((entry) => entry.id !== terminalId));
         return { status: 204 };
+      }
+      if (seg[5] === "blocks" && method === "DELETE") {
+        if (!list(threadId).some((entry) => entry.id === terminalId)) return notFound();
+        const recorded = blocks.get(`${threadId}/${terminalId}`);
+        if (!recorded) return { status: 200, body: { cleared: 0, kept_running: 0 } satisfies BlockClear };
+        const running = recorded.blocks.filter((entry) => entry.ended_at === null);
+        const outputs = Object.fromEntries(running.map((entry) => [entry.id, recorded.outputs[entry.id] ?? ""]));
+        blocks.set(`${threadId}/${terminalId}`, { blocks: running, outputs });
+        return { status: 200, body: { cleared: recorded.blocks.length - running.length, kept_running: running.length > 0 ? 1 : 0 } satisfies BlockClear };
       }
       if (seg[5] === "blocks" && method === "GET") {
         const kept = blocks.get(`${threadId}/${terminalId}`);
