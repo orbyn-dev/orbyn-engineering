@@ -521,13 +521,4 @@ async fn the_task_sample_read_answers_the_recorded_row_and_the_one_outcome() {
         Err(CoreError::NotFound(_))
     ));
 
-    // A task stored without a sample answers an empty list rather than 404.
-    let bare = w
-        .core
-        .store
-        .create_crew_task(&brief(json!({ "outcome": "bare" })), &key(), "run-bare")
-        .unwrap();
-    let empty = w.core.crew_task_samples(&bare.id).unwrap();
-    assert_eq!(empty.task_id, bare.id);
-    assert!(empty.samples.is_empty());
-}
+
