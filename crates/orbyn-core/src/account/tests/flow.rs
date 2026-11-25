@@ -346,6 +346,34 @@ async fn five_wrong_second_factor_codes_close_the_sign_in() {
 }
 
 #[tokio::test]
+async fn a_cancel_ends_the_second_factor_challenge_on_the_backend_too() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "2fa-cancel");
+    let a = &core.account;
+    assert_eq!(
+        a.sign_in("two@example.com", pw(PASSWORD)).await.unwrap(),
+        AccountSignInOutcome::SecondFactor
+    );
+    a.cancel_second_factor().await.unwrap();
+    // The flow's own state is closed...
+    assert_eq!(
+        code(a.second_factor("123456").await.unwrap_err()),
+        "sign_in_closed"
+    );
+    // ...and the backend no longer holds the challenge, so a code aimed straight at it cannot
+    // sign the person in after the cancel (the old code left it open on the stand-in).
+    let backend = core
+        .account
+        .backend
+        .as_ref()
+        .expect("the development backend is present");
+    assert!(
+        backend.account.second_factor("123456").await.is_err(),
+        "the cancelled challenge is cleared"
+    );
+}
+
+#[tokio::test]
 async fn a_recovery_code_works_with_any_case_and_a_hyphen() {
     let dir = TempDir::new();
     let core = dev(&dir, "recovery");

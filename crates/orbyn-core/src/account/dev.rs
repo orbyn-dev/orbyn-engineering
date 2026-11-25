@@ -598,6 +598,10 @@ impl AccountApi for DevAccount {
         }
     }
 
+    async fn cancel_second_factor(&self) {
+        self.lock().pending_second_factor = None;
+    }
+
     async fn approval_status(&self, request_id: &str) -> Result<ApprovalStatus, DeviceError> {
         let life = self.incoming_life();
         let mut state = self.lock();

@@ -1,5 +1,5 @@
 //! Subscription snapshots have no validated current account/workspace cache key.
-//! Read afresh, and fence responses that a forget (account change or sign-out) has superseded.
+//! Read afresh, and fence responses that an explicit usage refresh has superseded.
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -23,8 +23,9 @@ impl LimitsReads {
         self.generation.load(Ordering::SeqCst)
     }
 
-    /// Fences reads in flight across an account change or sign-out. Overlapping
-    /// reads do not fence one another.
+    /// Fences reads in flight across an explicit usage refresh (`POST /api/usage/refresh`),
+    /// the only caller. Overlapping reads do not fence one another, and an engine
+    /// configuration change does not fence either.
     pub(super) fn forget(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         if let Some(notify) = self.notify.get() {
