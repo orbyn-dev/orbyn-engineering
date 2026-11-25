@@ -306,3 +306,146 @@ async fn a_grant_waits_for_the_one_in_flight() {
         "the start's grant was stored"
     );
 }
+
+/// A lease expiry for later, as the request tool takes it: whole seconds in UTC.
+fn expiry_in(seconds: i64) -> String {
+    time::OffsetDateTime::from_unix_timestamp(crate::util::unix_now() + seconds)
+        .unwrap()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap()
+}
+
+/// H10: the request reads the clock again once it has the grant lock, so a request whose expiry
+/// passed while it waited is refused, not stored already lapsed.
+#[tokio::test]
+async fn a_request_rechecks_its_expiry_after_the_wait() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let (started, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{started}");
+    let id = started["task"].as_str().unwrap().to_owned();
+    let token = worker_token(&w, &id);
+
+    let held = w.core.crew_lease_grants.lock().await;
+    let expires_at = expiry_in(2);
+    let mut request = Box::pin(w.call(
+        &token,
+        crate::crew::LEASE_REQUEST_TOOL,
+        json!({ "paths": [DOCS], "mode": "read", "expires_at": expires_at }),
+    ));
+    tokio::select! {
+        biased;
+        answer = &mut request => panic!("the request ran while a grant held the lock: {answer:?}"),
+        // Past the expiry the request carried in: it must read the clock again before it stores.
+        _ = tokio::time::sleep(Duration::from_millis(2_200)) => {}
+    }
+    drop(held);
+    let (answer, refused) = request.await;
+    assert!(refused, "{answer}");
+    assert_eq!(answer["code"], "lease_expired");
+    assert!(
+        docs_leases(&w, &id, LeaseState::Granted).is_empty(),
+        "a lapsed request stored a grant"
+    );
+}
+
+/// H10: a release takes the same grant lock before it reads the live leases, so a grant that lands
+/// between its read and the objects it writes cannot be hidden by them.
+#[tokio::test]
+async fn a_release_waits_for_the_grant_in_flight() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let (started, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{started}");
+    let id = started["task"].as_str().unwrap().to_owned();
+    let token = worker_token(&w, &id);
+    let (answer, refused) = w
+        .call(
+            &token,
+            crate::crew::LEASE_REQUEST_TOOL,
+            json!({ "paths": [DOCS], "mode": "read", "expires_at": FUTURE }),
+        )
+        .await;
+    assert!(!refused, "{answer}");
+
+    let held = w.core.crew_lease_grants.lock().await;
+    let mut release = Box::pin(w.call(
+        &token,
+        crate::crew::LEASE_RELEASE_TOOL,
+        json!({ "paths": [DOCS] }),
+    ));
+    tokio::select! {
+        biased;
+        answer = &mut release => panic!("the release ran while a grant held the lock: {answer:?}"),
+        _ = tokio::time::sleep(Duration::from_millis(300)) => {}
+    }
+    drop(held);
+    let (answer, refused) = release.await;
+    assert!(!refused, "{answer}");
+    assert!(
+        !docs_leases(&w, &id, LeaseState::Released).is_empty(),
+        "the release did not end the lease"
+    );
+}
+
+/// H10: a read request and a write start that name the same path race under one lock: exactly one
+/// takes the path and the other is refused with `lease_conflict`. The test above shows both wait;
+/// this one shows the guarantee they wait for.
+#[tokio::test]
+async fn a_request_and_a_start_race_for_the_same_path() {
+    fn engine(id: &str) -> Value {
+        json!({ "id": id, "assigned_by": "person" })
+    }
+    let w = world_with(
+        true,
+        Arc::new(|_, _| Turn::Hang),
+        &[("alpha", false), ("beta", false)],
+    )
+    .await;
+    let (first, error) = w
+        .start(brief(json!({ "engine": engine("alpha") })), key())
+        .await;
+    assert!(!error, "{first}");
+    let first_id = first["task"].as_str().unwrap().to_owned();
+    let crew = w.task(&first_id).crew_id;
+    let token = worker_token(&w, &first_id);
+
+    let held = w.core.crew_lease_grants.lock().await;
+    let mut request = Box::pin(w.call(
+        &token,
+        crate::crew::LEASE_REQUEST_TOOL,
+        json!({ "paths": [DOCS], "mode": "read", "expires_at": FUTURE }),
+    ));
+    let mut start = Box::pin(w.start(
+        brief(json!({
+            "engine": engine("beta"),
+            "outcome": "Document it.",
+            "files": [{ "path": DOCS, "mode": "write" }],
+        })),
+        key(),
+    ));
+    tokio::select! {
+        biased;
+        answer = &mut request => panic!("the request ran while a grant held the lock: {answer:?}"),
+        answer = &mut start => panic!("a start ran while a grant held the lock: {answer:?}"),
+        _ = tokio::time::sleep(Duration::from_millis(300)) => {}
+    }
+    drop(held);
+    let (answer, request_refused) = request.await;
+    let (second, start_refused) = start.await;
+    assert!(
+        request_refused ^ start_refused,
+        "exactly one takes the path: {answer} / {second}"
+    );
+    let refused = if request_refused { &answer } else { &second };
+    assert_eq!(refused["code"], "lease_conflict", "{refused}");
+    let live = w
+        .core
+        .live_crew_leases(&crew, crate::util::unix_now())
+        .unwrap();
+    assert_eq!(
+        live.iter()
+            .filter(|(_, lease)| lease.paths.iter().any(|path| path.as_str() == DOCS))
+            .count(),
+        1,
+        "exactly one grant on {DOCS} is live: {live:?}"
+    );
+}

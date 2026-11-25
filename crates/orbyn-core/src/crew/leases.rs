@@ -539,7 +539,7 @@ impl Core {
         if tool == LEASE_REQUEST_TOOL {
             self.crew_lease_request_tool(binding, args).await
         } else {
-            self.crew_lease_release_tool(binding, args)
+            self.crew_lease_release_tool(binding, args).await
         }
     }
 
@@ -611,6 +611,19 @@ impl Core {
             }
         }
         let run_id = CrewId::new(task.run_id.clone()).map_err(invalid)?;
+        // H10: the live read, the conflict check and the insert are one step. A start and a
+        // correction take the same lock for their check and grants, so no two grants can both pass.
+        let _granting = self.crew_lease_grants.lock().await;
+        // H10: the request can wait here for a grant in flight, so the clock is read again: the
+        // grant is stamped and its expiry checked after the wait, never before it, and a request
+        // whose expiry passed meanwhile is refused rather than stored already lapsed.
+        let now = crate::util::unix_now();
+        if expires_at.as_str() <= timestamp(now)?.as_str() {
+            return Err(CrewError::new(
+                ErrorCode::LeaseExpired,
+                "expires_at is not later than the request",
+            ));
+        }
         let grant = Grant {
             brief: &brief,
             run_id: &run_id,
@@ -620,9 +633,6 @@ impl Core {
         let lease = grant.lease(paths, mode, LeaseState::Granted, expires_at, None)?;
         // H2: nothing an object holds is a secret, a path included.
         refuse_secret(&CrewObject::Lease(lease.clone()).to_value())?;
-        // H10: the live read, the conflict check and the insert are one step. A start and a
-        // correction take the same lock for their check and grants, so no two grants can both pass.
-        let _granting = self.crew_lease_grants.lock().await;
         let live = self.live_crew_leases(who.crew_id.as_str(), now)?;
         if let Some((_, held)) = live.iter().find(|(_, held)| lease.conflicts_with(held)) {
             let error = CrewError::new(
@@ -643,7 +653,7 @@ impl Core {
 
     /// `crew_lease_release`: a member releases its own leases on exactly `paths`. A path it does not
     /// hold is `lease_not_held`; a release writes a new object, so the object table stays append-only.
-    fn crew_lease_release_tool(
+    async fn crew_lease_release_tool(
         &self,
         binding: &McpBinding,
         args: &Value,
@@ -663,6 +673,9 @@ impl Core {
             .crew_brief(&task_id)
             .map_err(internal)?
             .ok_or_else(|| invalid("no such brief"))?;
+        // H10: the live read and the terminal objects it writes are one step with every grant, so a
+        // release cannot read past a grant that lands before its write and then hide that grant.
+        let _granting = self.crew_lease_grants.lock().await;
         let live = self.live_crew_leases(who.crew_id.as_str(), now)?;
         let mine: Vec<(String, Lease)> = live
             .into_iter()
