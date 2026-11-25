@@ -96,6 +96,17 @@ describe("idle approval polling", () => {
     expect(approvals).not.toHaveBeenCalled();
   });
 
+  it("reads approvals when the thread list fails, since a run elsewhere may be waiting", async () => {
+    useWorkspace.setState({ projects: ready([a]), threadIds: {}, threads: {}, approvals: ready([]) });
+    vi.spyOn(api, "projects").mockResolvedValue([a]);
+    vi.spyOn(api, "allThreads").mockRejectedValue(new Error("unavailable"));
+    vi.spyOn(api, "threads").mockResolvedValue([]);
+    const approvals = vi.spyOn(api, "pendingApprovals").mockResolvedValue([{ id: "ap" } as Approval]);
+    await useWorkspace.getState().refreshAll({ quick: true });
+    expect(approvals).toHaveBeenCalledTimes(1);
+    expect(useWorkspace.getState().approvals.data?.map((entry) => entry.id)).toEqual(["ap"]);
+  });
+
   it("keeps one approvals read a poll while a run known from the last poll can wait on one", async () => {
     const one = active(thread("one", "a"));
     useWorkspace.setState({ projects: ready([a]), threadIds: {}, threads: { one }, approvals: ready([]) });

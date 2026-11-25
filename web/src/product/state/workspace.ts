@@ -66,8 +66,8 @@ interface WorkspaceState {
   refreshProjects(): Promise<void>;
   refreshThreads(projectId: string): Promise<void>;
   refreshThread(id: string): Promise<void>;
-  /** One global list read supplies every project's threads and the scratch threads. */
-  refreshPolledThreads(projectIds: string[]): Promise<void>;
+  /** One global list read supplies every project's threads and the scratch threads; false when it failed. */
+  refreshPolledThreads(projectIds: string[]): Promise<boolean>;
   refreshApprovals(): Promise<void>;
   refreshEngines(): Promise<void>;
   /**
@@ -384,7 +384,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     } catch {
       // Preserve independent project failures and keep scratch on a global-read failure.
       await Promise.all(projectIds.filter((id) => current.get(id)?.()).map((id) => get().refreshThreads(id)));
-      return;
+      return false;
     }
     for (const id of projectIds) {
       if (!current.get(id)?.()) continue;
@@ -405,6 +405,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const merged = reuseThreads(get().threads, scratch);
       if (merged.changed) set({ threads: merged.threads });
     }
+    return true;
   },
 
   async refreshThread(id) {
@@ -477,11 +478,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     // One global read: the per-project lists are a slice of it, so reading them separately
     // would only repeat the same thread rows on every full load.
     const threads = get().refreshPolledThreads(projects.map((p) => p.id));
-    // A run known from the last poll is watched at once, as before; otherwise this poll's thread
-    // list decides, so a run that started since is seen before the approvals are skipped.
-    const approvals = approvalsToWatch(get().threads, get().approvals)
-      ? get().refreshApprovals()
-      : threads.then(() => approvalsToWatch(get().threads, get().approvals) ? get().refreshApprovals() : undefined);
+    // A run known from the last poll is watched at once; otherwise this poll's thread list decides, and
+    // a list read that failed cannot rule a run out, so approvals are read then too.
+    const watching = approvalsToWatch(get().threads, get().approvals);
+    const approvals = watching ? get().refreshApprovals()
+      : threads.then((observed) => !observed || approvalsToWatch(get().threads, get().approvals) ? get().refreshApprovals() : undefined);
     await Promise.all([
       threads,
       approvals,
