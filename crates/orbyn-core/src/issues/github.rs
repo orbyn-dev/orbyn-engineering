@@ -8,12 +8,13 @@ use super::{
     ScopeList,
 };
 use crate::error::{CoreError, Result};
-use crate::source_control::forge::{Forge, call, call_input};
+use crate::source_control::forge::{Forge, call, call_input, github_checks};
 use async_trait::async_trait;
 use orbyn_contracts::{
     IssueActor, IssueAssigneeCandidate, IssueCandidateLabel, IssueCandidates, IssueCloseReason,
     IssueComment, IssueCounts, IssueDetail, IssueLabel, IssueLinkedPull, IssueReaction,
-    IssueReactionCount, IssueState, IssueStateCategory, IssueSummary, LinkedPullState, TrackerKind,
+    IssueReactionCount, IssueState, IssueStateCategory, IssueSummary, LinkedPullState, PullChecks,
+    TrackerKind,
 };
 use serde_json::Value;
 use std::path::PathBuf;
@@ -347,9 +348,39 @@ fn linked_pulls(value: &Value) -> Vec<IssueLinkedPull> {
                 state,
                 is_draft: p.get("isDraft").and_then(Value::as_bool).unwrap_or(false),
                 closes_issue: true,
+                // The link list carries no CI: `linked_checks` reads it beside the link, and absent is unknown.
+                checks: None,
             })
         })
         .collect()
+}
+
+/// How many linked pull requests one issue read asks `gh` about. A link past it is still shown, with no `checks`
+/// (unknown, over the read limit): each read is an API call against the account's shared hourly limit.
+pub(crate) const LINKED_CHECKS_READ_LIMIT: usize = 20;
+
+/// Where one linked pull request's checks stand, read beside the link: the same rollup counts the pull request
+/// list carries. One `gh pr view` per link, best effort — a pull request that is gone, a repository the person
+/// cannot read or a `gh` that does not answer leaves `checks` absent (unknown, never zero checks), and the other
+/// links are still shown. Nothing here fails the detail read (docs/issues.md).
+async fn linked_checks(cwd: &std::path::Path, repository: &str, number: u32) -> Option<PullChecks> {
+    // The repository is the tracker's text: it is checked like a scope before it becomes a `--repo` argument, so a
+    // link that names none, or names something that is not `owner/repo`, is not read at all.
+    scope_ok(repository).ok()?;
+    let number = number.to_string();
+    let args: Vec<String> = [
+        "pr",
+        "view",
+        &number,
+        "--repo",
+        repository,
+        "--json",
+        "statusCheckRollup",
+    ]
+    .map(str::to_owned)
+    .into();
+    let answer = run(cwd, &args).await.ok()?;
+    github_checks(&answer)
 }
 
 /// A failure of `gh`, in the service's own words. Raw output is never passed on.
@@ -1073,10 +1104,24 @@ impl IssueSource for GitHub {
         ]
         .map(str::to_owned)
         .into();
-        let linked = run(&self.cwd, &links)
+        let mut linked = run(&self.cwd, &links)
             .await
             .map(|v| linked_pulls(&v))
             .unwrap_or_default();
+        // The link list carries no CI, so each linked pull request is read once for it. The reads go together, so
+        // one repository that is slow or refused does not hold up the others, and none of them can fail the issue.
+        // Each read is one `gh` call against the account's shared hourly API limit, so only the first
+        // `LINKED_CHECKS_READ_LIMIT` links are read; the rest stay shown with `checks` absent (unknown).
+        let checks = futures_util::future::join_all(
+            linked
+                .iter()
+                .take(LINKED_CHECKS_READ_LIMIT)
+                .map(|pull| linked_checks(&self.cwd, &pull.repository, pull.number)),
+        )
+        .await;
+        for (pull, checks) in linked.iter_mut().zip(checks) {
+            pull.checks = checks;
+        }
         Ok(IssueDetail {
             summary,
             body: text(&value, "body"),
@@ -1231,6 +1276,52 @@ mod tests {
     }
 
     #[test]
+    fn a_link_carries_no_checks_until_its_own_read_answers() {
+        let mut pulls = linked_pulls(&json!({ "closedByPullRequestsReferences": [
+            { "number": 7, "state": "OPEN", "repository": { "nameWithOwner": "o/r" } },
+            { "number": 7, "state": "OPEN", "repository": { "nameWithOwner": "o/other" } }] }));
+        assert_eq!(
+            pulls.len(),
+            2,
+            "one number in two repositories is two links"
+        );
+        assert!(
+            pulls.iter().all(|pull| pull.checks.is_none()),
+            "the tracker's link list reports no CI"
+        );
+        // A read is one repository and one number, so one repository's counts never land on another's link.
+        pulls[0].checks = github_checks(&json!({ "statusCheckRollup": [
+            { "name": "ci", "status": "COMPLETED", "conclusion": "FAILURE" }] }));
+        assert_eq!(pulls[0].checks.as_ref().map(|c| c.failing), Some(1));
+        assert_eq!(pulls[0].repository, "o/r");
+        assert_eq!(pulls[1].checks, None, "o/other's link was not read");
+    }
+
+    #[test]
+    fn a_linked_pull_reads_its_check_counts_and_one_without_them_still_reads() {
+        let with = json!({ "repository": "o/r", "number": 12, "title": "T", "url": "u", "state": "open",
+            "is_draft": false, "closes_issue": true,
+            "checks": { "total": 3, "passing": 1, "failing": 1, "running": 1, "failing_names": ["ci"] } });
+        let read: IssueLinkedPull = serde_json::from_value(with.clone()).expect("a link with CI");
+        let checks = read.checks.as_ref().expect("the counts");
+        assert_eq!(
+            (checks.total, checks.passing, checks.failing, checks.running),
+            (3, 1, 1, 1)
+        );
+        assert_eq!(checks.failing_names, ["ci"]);
+        assert_eq!(
+            serde_json::to_value(&read).unwrap(),
+            with,
+            "the counts travel back out"
+        );
+        // A tracker that reports no CI for a link, and a link read before this field existed: both still read.
+        let mut without = with;
+        without.as_object_mut().unwrap().remove("checks");
+        let read: IssueLinkedPull = serde_json::from_value(without).expect("a link without CI");
+        assert_eq!(read.checks, None, "absent is unknown, never zero checks");
+    }
+
+    #[test]
     fn a_gh_failure_is_named_without_its_raw_text() {
         let git = |m: &str| classify(CoreError::Git(m.into()));
         assert!(matches!(
@@ -1380,6 +1471,10 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "github_linked_checks_tests.rs"]
+mod linked_checks_tests;
 
 #[cfg(test)]
 #[path = "github_write_tests.rs"]
