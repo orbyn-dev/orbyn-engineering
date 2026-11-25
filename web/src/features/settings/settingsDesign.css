@@ -1095,9 +1095,13 @@
 @media (prefers-reduced-motion: reduce) {
   .settings-page [data-anchored="true"] { animation: none; }
 }
-/* The global [tabindex]:focus-visible ring has the same specificity and wins the tie in the cascade, so the row an
-   address names drew the native focus ring around its designed one. The blue inset ring is this row's focus indicator. */
+/* The anchored row above declares outline: none, but base.css's [tabindex]:focus-visible ring has the same specificity
+   and comes later in the cascade, so it applied anyway: this rule wins the tie. The blue inset ring is the focus
+   indicator, and forced colors gets a real outline below because that mode drops the inset shadow. */
 .settings-page [data-anchored="true"]:focus-visible { outline: none; }
+@media (forced-colors: active) {
+  .settings-page [data-anchored="true"]:focus-visible { outline: 2px solid CanvasText; outline-offset: -2px; }
+}
 
 /* Theme editor: the element inspector (parity K15). Settings is hidden while picking so the app behind it can be pointed at. */
 html[data-inspecting] .settings-page { display: none; }

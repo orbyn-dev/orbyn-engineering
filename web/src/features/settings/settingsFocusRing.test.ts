@@ -50,10 +50,16 @@ describe("the row an address names (pb-k55-row-anchor)", () => {
   });
 
   it("suppresses the native [tabindex] focus ring that ties the anchored row's specificity", () => {
-    // base.css draws a 2px ring for [tabindex]:focus-visible. That selector has the same specificity as
-    // .settings-page [data-anchored="true"] and comes later in the cascade, so the row drawn by an address wore the
-    // native ring around its designed one; the :focus-visible rule wins the tie and keeps the designed ring the marker.
+    // The anchored row declares outline: none, and base.css draws a 2px ring for [tabindex]:focus-visible with the same
+    // specificity; that ring comes later in the cascade, so it applied anyway. The :focus-visible rule wins the tie and
+    // keeps the designed inset ring as the only indicator.
+    expect(rule(settings, '.settings-page [data-anchored="true"]')).toMatch(/outline:\s*none/);
     expect(rule(settings, '.settings-page [data-anchored="true"]:focus-visible')).toMatch(/outline:\s*none/);
+  });
+
+  it("draws a real focus outline in forced colors, where the inset shadow is dropped", () => {
+    const forced = /@media\s*\(forced-colors:\s*active\)\s*\{([^}]*)\}/.exec(settings)?.[1] ?? "";
+    expect(forced).toMatch(/\.settings-page \[data-anchored="true"\]:focus-visible \{\s*outline: 2px solid CanvasText;\s*outline-offset: -2px;/);
   });
 
   it("leaves the halo out with reduced motion and keeps the ring", () => {

@@ -54,6 +54,8 @@ test("a row an address names draws its ring and halo, without the native focus r
   const row = page.locator("#chat-search-engine");
   await expect(row).toHaveAttribute("data-anchored", "true");
   await expect(row).toBeFocused();
+  // The row really is keyboard-visible, so "outline: none" below is the designed ring replacing a ring, not a vacuous pass.
+  await expect(row.evaluate((element) => element.matches(":focus-visible"))).resolves.toBe(true);
   await expect.poll(() => anchor(page)).not.toBeNull();
   const seen = (await anchor(page))!;
   // The native focus ring base.css draws for [tabindex] is gone: the designed ring is this row's focus indicator.
@@ -169,4 +171,26 @@ test("the unknown-page note wraps in a phone window and stays on one row above i
   expect(note.spanWidth).toBeGreaterThan(note.noteWidth * 0.9);
   await page.setViewportSize({ width: 600, height: 768 });
   expect(await page.locator(".settings-note").evaluate((element) => getComputedStyle(element).flexWrap)).toBe("nowrap");
+});
+test("forced colors keeps a visible focus outline on the row an address names", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.emulateMedia({ forcedColors: "active" });
+  await openSettings(page, "/settings/chat/search-engine");
+  const row = page.locator("#chat-search-engine");
+  await expect(row).toHaveAttribute("data-anchored", "true");
+  await expect(row).toBeFocused();
+  const measured = await row.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      focusVisible: element.matches(":focus-visible"),
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+      outlineOffset: style.outlineOffset,
+    };
+  });
+  // The inset box-shadow ring is forced to none, so the row must keep a real outline drawn inside its bounds.
+  expect(measured.focusVisible).toBe(true);
+  expect(measured.outlineStyle).toBe("solid");
+  expect(measured.outlineWidth).toBe("2px");
+  expect(measured.outlineOffset).toBe("-2px");
 });
