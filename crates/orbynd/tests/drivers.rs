@@ -659,6 +659,94 @@ async fn claude_cancel_closes_the_process() {
     drop(pids);
 }
 
+/// The documented run command line, read from the fake's launch record: a run passes the flags
+/// a turn and an approval rely on, in order, and never `--bare` or `--plugin-dir`. The unit test
+/// `command_line_matches_the_contract_and_never_uses_bare` pins the same contract for one spec;
+/// this is the same claim through the real service. Session flags (`--resume`, `--session-id`)
+/// are not pinned here.
+#[tokio::test]
+async fn a_claude_run_launches_with_the_documented_flags_and_never_bare() {
+    let dir = TempDir::new();
+    let file = dir.path().join("launches");
+    let options = Options {
+        env: vec![(
+            "ORBYN_FAKE_LAUNCH_FILE".into(),
+            file.to_string_lossy().into_owned(),
+        )],
+        ..Options::default()
+    };
+    let (service, thread) = setup(&dir, options, "claude").await;
+    service.admit(&thread, "say hi").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+
+    let launches: Vec<Value> = std::fs::read_to_string(&file)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let run = launches
+        .iter()
+        .find(|entry| {
+            entry["mode"] == "claude"
+                && entry["args"]
+                    .as_array()
+                    .is_some_and(|args| args.iter().any(|arg| arg == "--permission-prompt-tool"))
+        })
+        .unwrap_or_else(|| panic!("the run's launch was not recorded: {launches:?}"));
+    let args: Vec<&str> = run["args"]
+        .as_array()
+        .expect("args are recorded as an array")
+        .iter()
+        .map(|arg| arg.as_str().expect("argv entries are strings"))
+        .collect();
+
+    // The flags a turn, an approval and a resumed session rely on, in the order they are passed.
+    let order = [
+        "-p",
+        "--output-format",
+        "--input-format",
+        "--verbose",
+        "--include-partial-messages",
+        "--replay-user-messages",
+        "--permission-mode",
+        "--mcp-config",
+        "--permission-prompt-tool",
+        "--settings",
+    ];
+    let position = |flag: &str| {
+        args.iter()
+            .position(|arg| *arg == flag)
+            .unwrap_or_else(|| panic!("{flag} is missing from {args:?}"))
+    };
+    let mut last = 0;
+    for flag in order {
+        let at = position(flag);
+        assert!(at >= last, "{flag} is out of order in {args:?}");
+        last = at;
+    }
+    let value = |flag: &str| args[position(flag) + 1];
+    assert_eq!(value("--output-format"), "stream-json");
+    assert_eq!(value("--input-format"), "stream-json");
+    assert_eq!(value("--permission-mode"), "default");
+    assert_eq!(
+        value("--permission-prompt-tool"),
+        "mcp__orbyn_engineering__approve"
+    );
+    for (flag, filename) in [("--mcp-config", "mcp.json"), ("--settings", "settings.json")] {
+        let path = std::path::Path::new(value(flag));
+        assert!(path.is_absolute(), "{flag} is not an absolute path: {args:?}");
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some(filename),
+            "{flag} points elsewhere: {args:?}"
+        );
+    }
+    assert!(
+        !args.iter().any(|arg| *arg == "--bare" || *arg == "--plugin-dir"),
+        "the run took a flag it must never take: {args:?}"
+    );
+}
+
 async fn custom_engine(service: &Service, tier: &str, target: &str, args: Value) {
     let (status, body) = service
         .send(
