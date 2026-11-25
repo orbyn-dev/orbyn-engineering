@@ -547,7 +547,9 @@ merge).
     that began under the old guard (which only failed flags added since the start) now fails verification on an existing
     flag. Re-run that task after clearing the flag.
   - The scope, size and changed-path checks read Git without line-ending conversion or the untracked cache, so those settings
-    cannot hide a byte change. Other Git reads keep their normal settings.
+    cannot hide a byte change. They also need Git 2.40 or later, where `GIT_ATTR_SOURCE` keeps the checkout's own
+    `.gitattributes` out of the read; older Git errors the check rather than let an attribute hide a byte change. Other Git
+    reads keep their normal settings.
 - #450 adds source contracts for person once consent, a persistent same-engine route badge, per-lane code-owned
   `review` Gates and reasoned unlocked-lane removal. Migration 46 follows forge migration 45; launch and merge admission
   are covered by focused fake-engine, store and HTTP tests. The live Flow task includes the reasoned removal dialog;
@@ -587,20 +589,24 @@ stay in the [review README](../crates/orbyn-core/src/crew/review/README.md#decis
 - **Hidden paths and index flags — index flags closed; ignored new files accepted.** Any `assume-unchanged` or
   `skip-worktree` entry, sparse checkouts included, refuses admission and fails verification whenever it appears. A new file
   hidden by `.gitignore`, `.git/info/exclude` or `core.excludesFile` stays invisible to the Git-based scope and size checks:
-  counting every ignored file would charge pre-existing caches and local data to a narrow task. A crafted `.git/index` with
-  matching file times, a `.git` file pointing at another folder and a writable `.git` are the same class. Unblocked by isolated
-  checkouts (#436) or a task-start byte baseline; `ignored_new_files_remain_an_accepted_blind_spot`,
-  `an_index_flag_does_not_hide_a_reviewers_edit` and `a_flag_that_was_there_at_the_start_refuses_admission` cover today's
-  behaviour.
+  counting every ignored file would charge pre-existing caches and local data to a narrow task. A tracked `.gitattributes` rule
+  cannot hide a change: the byte-exact reads keep it out on Git 2.40 or later, and an older Git errors the check. A crafted
+  `.git/index` with matching file times, a `.git` file pointing at another folder and a writable `.git` are the same class.
+  Unblocked by isolated checkouts (#436) or a task-start byte baseline; `ignored_new_files_remain_an_accepted_blind_spot`,
+  `an_index_flag_does_not_hide_a_reviewers_edit`, `a_flag_that_was_there_at_the_start_refuses_admission` and
+  `an_in_tree_attributes_rule_cannot_hide_a_byte_change_from_scope_or_size` cover today's behaviour.
 - **The clearing repro runs at the current checkout — blocked on #436.** It must pass now, is not shown to have failed before
   the fix (the Gate says so), and its Evidence records the commit it ran on. Fail-before/pass-after at the finding's exact
   commit needs a throwaway checkout and process ownership in #436. Unblocked by #436.
 - **Byte-exact Git is scoped to the checks that decide — accepted.** Crew's scope, size and changed-path checks run
   `git_byte_exact` (line-ending conversion and the untracked cache off) and refuse a nonempty or unreadable `info/attributes`;
-  `git_hardened` keeps its previous behaviour for every other caller. Adding the flags to every hardened read would change
-  file explorer and merge reads too, and real Windows `core.autocrlf=true` behaviour is unverified ([handoff](handoff.md)).
-  Repository metadata remains writable. Unblocked by auditing every caller and recording Windows evidence;
-  `autocrlf_cannot_hide_a_byte_change_from_scope_or_size` and `only_the_byte_exact_helper_carries_the_crew_flags` cover it.
+  those checks also need Git 2.40 or later, where `GIT_ATTR_SOURCE` keeps the checkout's own `.gitattributes` out of the read,
+  and errors on older Git instead of passing bytes it did not compare. `git_hardened` keeps its previous behaviour for every other
+  caller. Adding the flags to every hardened read would change file explorer and merge reads too, and real Windows
+  `core.autocrlf=true` behaviour is unverified ([handoff](handoff.md)). Repository metadata remains writable. Unblocked by
+  auditing every caller and recording Windows evidence; `autocrlf_cannot_hide_a_byte_change_from_scope_or_size`,
+  `an_in_tree_attributes_rule_cannot_hide_a_byte_change_from_scope_or_size`,
+  `the_byte_exact_checks_need_attr_source_from_git_2_40` and `only_the_byte_exact_helper_carries_the_crew_flags` cover it.
 - **The touched guard and HEAD reads — closed.** `chk-fix-touched` is a core byte comparison in the immutable key, run only for
   a stored fix task, never a shell command; a missing, unreadable or nonregular file cannot pass. The two plain
   `rev-parse HEAD` reads the issue named use `git_hardened`, in `review/lanes.rs` and the start path. Covered by
