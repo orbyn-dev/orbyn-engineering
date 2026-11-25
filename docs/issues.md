@@ -1,9 +1,9 @@
 # Issues
 
 Issue trackers beside the code: a list of issues from GitHub, GitLab, Azure DevOps, Forgejo and Linear, a
-thread started from an issue, and a link between a thread and the issues it works on. Beta: read-only
-against the tracker, with Orbyn's own writes only (connect, disconnect, link, start a thread, and — through
-the person's own account — create, comment and react).
+thread started from an issue, and a link between a thread and the issues it works on. Beta: reads are
+`Local`; create, comment and react are `Person` writes through the person's own account, beside Orbyn's own
+connection writes (connect, disconnect, bind a project's tracker, link, start a thread).
 Behind a flag until it ships; with the flag off every route here answers `404` and the web app hides Issues.
 
 Field names follow the T3 Code issue schema (MIT, `9168ca73d`, names only) in snake_case. The web side's
@@ -126,7 +126,13 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   `assignee_username`, `assignee_id=None`, `scope=assigned_to_me`, `order_by=updated_at`, `per_page` up to 100,
   `page`), `.../issues_statistics` for `counts` (best effort: no answer means `counts: null`, never a failed
   list), `.../issues/{iid}` and `.../issues/{iid}/notes` for a detail. `{path}` is the project path with every `/`
-  sent as `%2F`, so `group/sub/project` is one path segment. Reads only: every request is a `GET`.
+  sent as `%2F`, so `group/sub/project` is one path segment. Reads are `Local`; the three writes are
+  `Person` routes under `POST /api/issues/item/{create,comment,react}`: create `POST .../projects/{path}/issues`,
+  comment `POST .../issues/{iid}/notes`, and react `POST`/`DELETE .../award_emoji` (a comment's award by its own
+  id). They travel in the JSON body through the same client, token, host, redirect, timeout and cap rules, and the
+  core validates every write field and checks the scope (`issues/mod.rs`). Tests: `a_create_sends_every_field_and_answers_the_new_issue`,
+  `a_comment_sends_the_body_and_answers_the_stored_note`, `a_reaction_is_added_once_taken_back_by_its_award_id_and_answered_with_counts`,
+  `a_refused_create_keeps_the_contract_error_and_never_its_raw_body`.
 - **Credentials and host.** The token is read from the keychain for each source and sent only as the
   `PRIVATE-TOKEN` header to the connection's own host, which must be `https://` (re-checked when the reader is
   built, and the HTTP client itself refuses plain `http`). No proxy, no referer, 10 second timeout, an answer
@@ -176,7 +182,12 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   `limit=1` reads for the open and closed totals from `X-Total-Count` (best effort: no answer means `counts: null`,
   never a failed list), `GET .../issues/{number}` and `GET .../issues/{number}/comments` for a detail. `owner` and
   `repo` are validated to plain characters, so nothing needs encoding, and are sent as two separate path segments.
-  Reads only: every request is a `GET`.
+  Reads are `Local`; the three writes are `Person` routes under `POST /api/issues/item/{create,comment,react}`:
+  create `POST {host}/api/v1/repos/{owner}/{repo}/issues`, comment `POST .../issues/{number}/comments`, and react
+  `POST`/`DELETE .../reactions`. They travel through the same client, token, host, redirect, timeout and cap rules,
+  and the core validates every write field and checks the scope. Tests: `a_create_resolves_label_ids_and_answers_the_new_issue`,
+  `a_comment_sends_the_body_and_answers_the_stored_comment`, `a_reaction_is_added_once_taken_back_once_and_answered_with_counts`,
+  `a_refused_write_keeps_the_contract_error_and_never_its_raw_body`.
 - **Credentials and host.** The token is read from the keychain for each source (`tracker:forgejo`) and sent only as
   the `Authorization: token <token>` header to the connection's own host, which must be `https://` (re-checked when
   the reader is built, and the HTTP client itself refuses plain `http`). No proxy, no referer, 10 second timeout, an
@@ -238,18 +249,27 @@ DevOps (Planned).
   first, and the answer's order is kept). The `fields` value is
   `System.Id`, `System.Title`, `System.State`, `System.CreatedBy`, `System.AssignedTo`, `System.CreatedDate`,
   `System.ChangedDate`, `System.Tags` and `Microsoft.VSTS.Common.ClosedDate`, so a large description is never read
-  for a listing. The POST is a query, not a write: WIQL only reads, the body is fixed text plus validated filter
-  values, and every other request is a `GET`. `counts` is always `null`: Azure DevOps has no cheap total before
-  filters. `{host}` is the stored connection host without a `dev.azure.com/{organization}` path: every
+  for a listing. The WIQL POST only reads (fixed text plus validated filter values), and the other list and
+  detail requests are `GET`s. `counts` is always `null`: Azure DevOps has no cheap total before filters. `{host}` is the stored connection host without a `dev.azure.com/{organization}` path: every
   `dev.azure.com` host, with or without an organization in the stored host, appends `/{org}/{project}`; a
   `{org}.visualstudio.com` host appends `/{project}` only, because the organization is its subdomain. The org and
   project are validated to ASCII letters, digits, space, `.`, `_` and `-`, each at most 128 bytes (they cannot
   start with `-`, `.` or a space or end with a space), and each path segment is percent-encoded, so the project
   `My Project` travels as `My%20Project`.
+- **Writes.** Reads are `Local`; the three writes are `Person` routes under `POST /api/issues/item/{create,comment,react}`:
+  create `POST {base}/_apis/wit/workitems/$<type>` with a JSON-Patch body, comment
+  `POST {base}/_apis/wit/workItems/{id}/comments`, and react `PUT`/`DELETE`
+  `{base}/_apis/wit/workItems/{id}/comments/{comment}/reactions/{kind}`. They travel through the same client, token,
+  host, redirect, timeout and cap rules, and the core validates every write field and checks the scope. Tests:
+  `a_create_picks_the_work_item_type_and_sends_the_fields_as_a_json_patch`,
+  `a_comment_sends_markdown_and_answers_the_stored_comment`,
+  `a_comment_reaction_is_put_and_taken_back_on_the_comments_reaction_path`,
+  `a_refused_create_keeps_the_contract_error_and_never_its_raw_body`.
 - **Credentials and host.** The PAT is read from the keychain (`tracker:azure_devops`) for each source and sent
   only as the `Authorization: Basic base64(":" + PAT)` header to the connection's own host, which must be
-  `https://dev.azure.com` (or a `dev.azure.com/{organization}` path) or `https://{organization}.visualstudio.com`
-  (re-checked when the reader is built, and the HTTP client itself refuses plain `http`). No proxy, no
+  `https://dev.azure.com` (or a `dev.azure.com/{organization}` path) or `https://{organization}.visualstudio.com`,
+  with no explicit port (re-checked when the reader is built and at connect, and the HTTP client itself refuses plain
+  `http`). No proxy, no
   referer, 10 second timeout, an answer over 2 MiB is refused, and a redirect is followed only within the same
   scheme, host and port (at most three); any other redirect ends the request as `tracker_unavailable`. The token
   is in no log line, address or error.
@@ -339,8 +359,14 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   never selects `description` or comments (the text filter may test `description`), so 100 issues cannot push the
   answer past 2 MiB. The detail is `issue(id: $id)` with the same fields, `description`, and `comments(first: 50)`.
   A connection with no scope first reads `teams(first: 20) { nodes { key } }`. Every query is a fixed string and a
-  filter or key is only a GraphQL variable, so no user text is ever spliced into the query. Reads only: every
-  request body holds a query, never a mutation. `first` is at most 100.
+  filter or key is only a GraphQL variable, so no user text is ever spliced into the query. Reads are `Local`;
+  the three writes are `Person` routes under `POST /api/issues/item/{create,comment,react}` with fixed mutation
+  strings (`issueCreate`, `commentCreate`, `reactionCreate`/`reactionDelete`) and values only in variables, through
+  the same client and token rules with the core validating every field and checking the team scope. Tests:
+  `a_create_sends_the_teams_ids_and_answers_the_new_issue`,
+  `a_comment_resolves_the_issue_id_and_answers_the_stored_comment`,
+  `an_issue_reaction_is_created_with_its_emoji_and_answered_with_counts`,
+  `a_refused_write_keeps_the_contract_error_and_never_its_raw_body`. `first` is at most 100.
 - **Credentials and host.** The token is read from the keychain for each source (`tracker:linear`) and sent only as the
   `Authorization` header, with the personal API key itself (no `Bearer` prefix), to `https://api.linear.app/graphql`.
   The connection's host is fixed to that origin: `connect` refuses a host, the reader re-checks it when built (a stored
@@ -515,8 +541,13 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   page and the engine tools can default to it. `scope` must be one of the connection's scopes; a tracker that is not
   connected is `400 invalid`. It stores two names and no secret, writes one audit row (`issues.project.bind`, ids
   and names only), and never changes the connection, the project or any issue.
-- **Engines.** The engine-facing issue tools (N24) stay read, link and unlink. These five do not give an engine any new
-  power: create, comment and react are the person's own actions from the page; an engine that wants one asks the person.
+- **Engines.** The engine-facing issue tools (N24) are list, read, create, comment, link, unlink and thread list:
+  create and comment call the same Core functions, in the project's own connected tracker and scope, as the Person
+  routes do, so they take the same inputs and answer the same refusals (a tracker that is not connected answers the
+  one "no connected issue tracker" refusal). They are acting tools, so a run's tool approval policy gates each call
+  as it gates every other acting tool; a Crew worker cannot use them (its allow list refuses an unlisted tool by
+  default). Engine tools never use the person key and add no Person-class authority; react is not an engine tool, and
+  set_state is not built because the service has no update/state route (a separate row).
 - **Tests when built.** Each write against the local fake server of each tracker that supports it: exact status and `code`,
   the exact field sent, no token in the answer or the audit row; `403 desktop_required` without the person key and
   nothing sent; a refusal changes nothing here; the route table and class tests pass without special cases.
@@ -659,14 +690,35 @@ The tracker field is required: a body without it is `400 invalid_input`, never r
   route is tested through the real service with a stand-in `gh` and a local fake tracker connection. No real
   `orbynd` service run with a real connected tracker exercises it.
 
+### As built (N24 engine issue tools)
+
+Seven engine-facing tools over the project's own connected tracker and scope, alongside the existing routes: before
+this row they were list, read, link, unlink and thread list; now `orbyn_issue_create` and `orbyn_issue_comment` join
+them.
+
+- `orbyn_issue_create`: `{ title, body?, labels?, assignees?, template? }` — the same `CreateIssue` fields, caps and
+  validation as `POST /api/issues/item/create`, in the project's tracker/scope from its own git remote (never from an
+  argument). It answers the created issue as the issue-read tool does: the summary fields, the body cleaned of the
+  framing markers and cut at 16 KiB, and the tracker-text-is-data note. The tracker's refusal keeps its contract error;
+  an unknown template id is the same `400 invalid` the route answers.
+- `orbyn_issue_comment`: `{ key, body }` — the same `CommentIssue` fields and 1-64 KiB not-blank rule as
+  `POST /api/issues/item/comment`. It answers the stored comment (`id`, `author`, `created_at`, `body` cleaned and cut,
+  and the note).
+- **Permission and approval.** Both are acting tools: each call goes through the run's own tool approval policy
+  (`ActionKind::Tool`) exactly as the project and pull acting tools do, and no tool uses the person key. A Crew
+  worker's allow list names no issue tool, so a worker is refused by default; the allow list was not widened.
+- **Not built.** `set_state` stays out: the service has no update/state route yet (its own parity row), and a tool
+  cannot be backed by a core function that does not exist. React is not in this row. No real tracker was contacted:
+  the tool tests use a local fake issue reader over a fake project remote.
+
 ## What T3 has that this does not (Planned)
 
 The event timeline, "involved/mentioned"
 filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting and
 reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b), templates in R15 PR2 and
 project binding in R15 PR3. The engine-facing
-issue tools (N24) list, read, link, unlink and list a thread's linked issues; they do not create, comment or
-change state.
+issue tools (N24) list, read, create, comment, link, unlink and list a thread's linked issues; they do not change
+state (the service has no state route).
 
 ## Differences from the web side's guessed contract
 
