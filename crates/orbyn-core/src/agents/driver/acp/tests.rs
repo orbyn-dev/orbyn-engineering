@@ -96,6 +96,17 @@ fn deny_picks_reject_and_missing_option_never_allows() {
 }
 
 #[test]
+fn an_allow_never_becomes_a_permanent_grant() {
+    // The agent offers only "always": Orbyn's one-time allow is not that, so the request is
+    // answered cancelled instead of remembered for good.
+    let only_always = json!({ "options": [{ "optionId": "y-always", "kind": "allow_always" }] });
+    assert_eq!(
+        permission_outcome(&only_always, &Verdict::Allow, false),
+        json!({ "outcome": "cancelled" })
+    );
+}
+
+#[test]
 fn cancellation_answers_cancelled() {
     assert_eq!(
         permission_outcome(&options(), &Verdict::Allow, true),
@@ -671,6 +682,42 @@ fn a_move_is_checked_at_every_location() {
     let (kind, _, _) = classify(&params);
     assert_eq!(kind, ActionKind::FileChange);
     assert_eq!(gate_paths(&params, kind), ["src/a", "/Users/x/.ssh/config"]);
+}
+
+#[test]
+fn a_move_destination_only_in_raw_input_is_checked_too() {
+    for raw in [
+        json!({ "destination": "/Users/x/.ssh/config" }),
+        json!({ "filePath": "/Users/x/.ssh/config" }),
+        json!({ "path": "/Users/x/.ssh/config" }),
+    ] {
+        let params = json!({ "toolCall": { "title": "Move file", "kind": "move",
+            "locations": [{ "path": "src/a" }], "rawInput": raw }});
+        let (kind, _, _) = classify(&params);
+        assert_eq!(
+            gate_paths(&params, kind),
+            ["src/a", "/Users/x/.ssh/config"],
+            "{raw}"
+        );
+    }
+}
+
+#[test]
+fn a_file_change_named_only_in_raw_input_is_gated_on_that_path() {
+    let params = json!({ "toolCall": { "title": "Edit", "kind": "edit",
+        "rawInput": { "filePath": "src/a" } }});
+    let (kind, _, _) = classify(&params);
+    assert_eq!(kind, ActionKind::FileChange);
+    assert_eq!(gate_paths(&params, kind), ["src/a"]);
+}
+
+#[test]
+fn a_repeated_path_is_gated_once() {
+    let params = json!({ "toolCall": { "title": "Edit", "kind": "edit",
+        "locations": [{ "path": "src/a" }],
+        "rawInput": { "path": "src/a", "destination": "src/b" } }});
+    let (kind, _, _) = classify(&params);
+    assert_eq!(gate_paths(&params, kind), ["src/a", "src/b"]);
 }
 
 #[test]
