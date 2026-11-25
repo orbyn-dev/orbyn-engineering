@@ -50,6 +50,16 @@ it("leaves Font smoothing out for an iPhone user agent that says like Mac OS X",
   expect(searchSettings("font smoothing", true)).toEqual([]);
 });
 
+it("finds Open links from other apps here on a Mac client", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  expect(searchSettings("links from other apps", true).map((item) => item.id)).toEqual(["chat-open-links-from-other-apps"]);
+});
+
+it("leaves Open links from other apps here out on a Windows client", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  expect(searchSettings("links from other apps", true)).toEqual([]);
+});
+
 it("navigates from an exact result to an asynchronously loaded row", async () => {
   const user = userEvent.setup();
   installMockFetch();
