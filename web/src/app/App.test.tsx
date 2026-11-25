@@ -6,6 +6,7 @@ import { ApiFailure, api } from "../api/client";
 import { useWorkspace } from "../product/state/workspace";
 import { installMockFetch, setViewportWidth } from "../test-support";
 import { useUi } from "../product/state/ui";
+import "./routeScreens.test-support";
 import { App } from "./App";
 
 let mock: MockApi;

@@ -2,9 +2,9 @@ import { useClearSelectionOnLeave } from "../../lib/clearSelection";
 import { CloseLeadDialog, useCrewNotifications } from "../../features/crew";
 import { CloneJobs, CommandPalette, FoldersNotice, GitHubStarPrompt, QuitConfirmation, Sidebar } from "../../features/workspace";
 import { ChevronLeft } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
-import { SettingsPage } from "../../features/settings";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { TranscriptImportHost } from "../../features/thread";
+import { Loading } from "../../product/ui/states";
 import { Toasts } from "../../product/ui/Toasts";
 import { usePanelMotionRoot } from "../../product/panels/panelAnimations";
 import { useTaskRunNotifications } from "../taskNotifications";
@@ -26,7 +26,10 @@ import { POLL_MS, quickFocus, quickTick } from "../pollSchedule";
 import { useGlobalKeys } from "./keys";
 import { BackgroundAnnouncer, useThreadNotifications } from "./notifications";
 import { useRouteFocus, useToastClearance } from "./focus";
-import { RouteView, type PageRoute } from "./routes";
+import { RouteView, ScreenPainted, type PageRoute } from "./routes";
+
+/** Settings is a route screen too, drawn by the shell over the page it covers. */
+const SettingsPage = lazy(() => import("../../features/settings").then((module) => ({ default: module.SettingsPage })));
 
 export function Shell() {
   const route = useRoute();
@@ -37,6 +40,11 @@ export function Shell() {
   const behindSettings = useRef<PageRoute>({ name: "home" });
   const main = useRef<HTMLElement>(null);
   const routeKey = routeHref(route);
+  // The address whose screen is on the page: the routed page's, and Settings' own. Focus waits for the
+  // screen itself, never for the chunk it loads from; two slots, so Settings never stands in for the
+  // page it covers and closing it needs no second report from a page that never left.
+  const [screenOnPage, setScreenOnPage] = useState<string | null>(null);
+  const [settingsOnPage, setSettingsOnPage] = useState<string | null>(null);
   const threadReady = useWorkspace((state) => route.name !== "thread" || state.threads[route.id] !== undefined);
   const phone = layout === "phone";
   const drawerOpen = useSidebarDrawer((state) => state.open);
@@ -54,10 +62,6 @@ export function Shell() {
   useCrewNotifications();
   useTerminalAttention(route.name === "thread" ? route.id : null);
   usePanelMotionRoot(routeKey);
-  // The phone's sheet takes the page's place (it is `hidden` under it), so the new screen only takes
-  // focus once the sheet is out of the way: a chosen destination's title, never a node the sheet took
-  // with it, and never the page while it is still hidden.
-  useRouteFocus(routeKey, route.name, threadReady && !(phone && drawerOpen), main);
   useClearSelectionOnLeave(routeKey);
   useToastClearance(`${routeKey}:${threadReady}`);
 
@@ -96,6 +100,15 @@ export function Shell() {
   const small = layout === "small";
   const closeDrawer = useSidebarDrawer((state) => state.close);
   const home = underneath.name === "home" && !needsProject && !overlay;
+  // The phone's sheet takes the page's place (it is `hidden` under it), so the new screen only takes
+  // focus once the sheet is out of the way: a chosen destination's title, never a node the sheet took
+  // with it, and never the page while it is still hidden. A screen whose chunk is still arriving is
+  // not the page yet either — only its chrome is drawn — so focus waits for the screen itself. The
+  // phone's home page (the sidebar is the page there) draws no routed screen, so it waits for nothing.
+  const screenKey = overlay ? routeKey : routeHref(underneath);
+  const painted = overlay ? settingsOnPage : screenOnPage;
+  const waitsForScreen = overlay || !(phone && home);
+  useRouteFocus(routeKey, route.name, threadReady && !(phone && drawerOpen) && (!waitsForScreen || painted === screenKey), main);
   const showNav = phone ? home || drawerOpen : small ? drawerOpen : reading ? readingNav : !collapsed;
   // A docked sidebar stays mounted while collapsed: showing it again must not rebuild every row.
   const docked = !small && !phone && !reading;
@@ -198,12 +211,17 @@ export function Shell() {
       ) : (
         // The page under the phone's sheet stays mounted, so its scroll and its terminal survive.
         <main id="main" ref={main} tabIndex={-1} className="main" hidden={phone && drawerOpen}>
-          {route.name === "settings" ? <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} row={route.row} onClose={() => closeSettings(underneath)} /> : null}
+          {route.name === "settings" ? (
+            <Suspense fallback={<Loading label="Opening Settings" />}>
+              <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} row={route.row} onClose={() => closeSettings(underneath)} />
+              <ScreenPainted screenKey={routeKey} onScreen={setSettingsOnPage} />
+            </Suspense>
+          ) : null}
           {/* The page behind settings stays mounted, so a terminal, preview or scroll position survives. `hidden` takes it out of the
               accessibility tree and the tab order while Settings is open, so the open page owns the only h1. Not `inert`: the theme
               editor's element picker shows this page again (`html[data-inspecting]`) and inert content cannot be pointed at. */}
           <div className="main-view" hidden={route.name === "settings"}>
-            <RouteView route={underneath} needsProject={needsProject} />
+            <RouteView route={underneath} needsProject={needsProject} onScreen={setScreenOnPage} />
           </div>
         </main>
       )}

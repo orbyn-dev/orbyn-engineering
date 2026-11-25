@@ -1,7 +1,6 @@
-import { Suspense, useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { ApiFailure, api, setUnauthorizedHandler } from "../api/client";
 import { followShell, readShellStatus } from "../api/shell";
-import { SignIn } from "../features/onboarding";
 import { adoptEnvironmentTheme } from "./environmentTheme";
 import { toFailure } from "../lib/useAsync";
 import { useUi, applyTheme } from "../product/state/ui";
@@ -14,6 +13,9 @@ import { CrewPreview, crewPreviewRoute } from "../features/crew";
 import { PreviewScreen, previewScreenRoute } from "../features/platform";
 import { SnapshotPreview, SnapshotRuntime, snapshotPreviewRoute } from "../features/snapshot";
 import { DevicesPreview, devicesPreviewRoute } from "../features/devices";
+
+/** The sign-in screen is a boot screen as well as a page: it is fetched when a service asks for a key. */
+const SignIn = lazy(() => import("../features/onboarding").then((module) => ({ default: module.SignIn })));
 
 type Boot =
   | { state: "loading" }
@@ -154,7 +156,12 @@ function BootedApp() {
         <Splash label="Connecting to Orbyn" />
       );
     case "sign-in":
-      return <SignIn onSignedIn={start} />;
+      // Sign-in is its own chunk, so the boot screen keeps the splash until its code arrives.
+      return (
+        <Suspense fallback={<Splash label="Connecting to Orbyn" />}>
+          <SignIn onSignedIn={start} />
+        </Suspense>
+      );
     case "failed":
       return (
         <main className="boot">
