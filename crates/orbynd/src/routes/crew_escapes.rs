@@ -23,6 +23,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/crew/escapes", get(log))
         .route("/api/crew/escapes/thresholds", get(thresholds))
         .route("/api/crew/escapes/possible", get(possible))
+        .route("/api/crew/escapes/counts", get(counts))
         .route("/api/crew/escapes/{id}", get(detail))
 }
 
@@ -76,6 +77,20 @@ async fn detail(
 
 async fn thresholds(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.crew_escape_thresholds()?))
+}
+
+/// `project` and `area` (both required): one area's per-engine counts. Display only, and a read: the Router reads no escape count in
+/// v1. An unknown project or an empty area is refused, never served as an empty list.
+async fn counts(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
+    let project = query
+        .0
+        .get("project")
+        .ok_or_else(|| CoreError::Invalid("project is required".into()))?;
+    let area = query
+        .0
+        .get("area")
+        .ok_or_else(|| CoreError::Invalid("area is required".into()))?;
+    Ok(Json(state.core.crew_escape_counts(project, area)?))
 }
 
 async fn mark(

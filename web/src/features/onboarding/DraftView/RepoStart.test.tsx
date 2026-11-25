@@ -1,15 +1,32 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { MockApi } from "../../../../mock/api";
 import { createReposMock } from "../../../../mock/repos";
-import type { EngineStatus } from "../../../api/types";
+import type { EngineModels, EngineStatus } from "../../../api/types";
+import { useModelStore } from "../../../product/state/modelStore";
 import { setReposApi } from "../../repos";
+import { installMockFetch } from "../../../test-support";
 import { RepoStart } from "./RepoStart";
 
-vi.mock("../../../product/state/modelStore", () => ({ useEngineModels: () => null, resolveModel: () => null }));
-vi.mock("../../thread/composer/ModelPicker", async (original) => ({ ...(await original<typeof import("../../thread/composer/ModelPicker")>()), ModelPickerTrigger: ({ selected, engines, onPick }: {
-  selected: { engine: string; model: string | null }; engines: { id: string }[]; onPick(choice: { engine: string; model: string | null }): void;
-}) => <button type="button" onClick={() => onPick({ engine: engines.at(-1)!.id, model: "composer-2" })}>Engine {selected.engine}/{selected.model ?? "automatic"}</button> }));
+const model = (id: string, label: string, isDefault = false) => ({ id, label, description: null, is_default: isDefault, custom: false, options: [] });
+const claudeModels: EngineModels = {
+  engine: "claude", source: "engine", checked_at: "fixture", error: null, fallback: false,
+  models: [model("opus", "Opus 5.5", true), model("sonnet", "Sonnet 5.5")],
+};
+const cursorModels: EngineModels = {
+  engine: "cursor", source: "engine", checked_at: "fixture", error: null, fallback: false,
+  models: [model("composer-2", "Composer 2", true)],
+};
+let mock: MockApi;
+beforeEach(() => {
+  // The repository dialog's engine control is the composer's own picker: its model list is the model store's,
+  // read from the faked service rather than replaced in the test.
+  mock = installMockFetch();
+  mock.setEngineModels("claude", claudeModels);
+  mock.setEngineModels("cursor", cursorModels);
+  useModelStore.setState({ byEngine: { claude: claudeModels, cursor: cursorModels }, loading: {}, errors: {} });
+});
 
 afterEach(() => { setReposApi(null); window.location.hash = ""; });
 
@@ -36,29 +53,33 @@ it("draws nothing for a project with one repository, which keeps today's New thr
 });
 
 it("opens the repository dialog with the composer's own engine and permission, and starts with them", async () => {
-  const mock = createReposMock();
-  setReposApi(mock);
+  const repos = createReposMock();
+  setReposApi(repos);
   draw();
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Repositories: 4" }));
   const dialog = await screen.findByRole("dialog", { name: /New thread in orbyn/ });
   expect(within(dialog).getByText("Engine")).toBeVisible();
-  expect(within(dialog).getByRole("button", { name: "Engine claude/opus" })).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Opus 5.5" })).toBeVisible();
   expect(within(dialog).getByText("Permission")).toBeVisible();
   expect(within(dialog).getByRole("button", { name: "Permissions: Supervised" })).toBeVisible();
   await user.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
-  await waitFor(() => expect(mock.writes).toHaveLength(1));
-  expect(mock.starts).toEqual([{ engine: "claude", model: "opus", permission_mode: "supervised" }]);
+  await waitFor(() => expect(repos.writes).toHaveLength(1));
+  expect(repos.starts).toEqual([{ engine: "claude", model: "opus", permission_mode: "supervised" }]);
 });
 
 it("hands a picked engine back to the composer and the next start uses it", async () => {
   const onModel = vi.fn();
-  const mock = createReposMock();
-  setReposApi(mock);
+  const repos = createReposMock();
+  setReposApi(repos);
   draw(claude, onModel);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Repositories: 4" }));
-  await user.click(await screen.findByRole("button", { name: "Engine claude/opus" }));
+  const dialog = await screen.findByRole("dialog", { name: /New thread in orbyn/ });
+  await user.click(within(dialog).getByRole("button", { name: "Opus 5.5" }));
+  const picker = await screen.findByRole("dialog", { name: "Choose a model" });
+  await user.click(within(picker).getByRole("button", { name: "Cursor" }));
+  await user.click(within(picker).getByRole("option", { name: /Composer 2/ }));
   expect(onModel).toHaveBeenCalledWith({ engine: "cursor", model: "composer-2" });
 });
 
