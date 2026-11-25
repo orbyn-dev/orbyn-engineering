@@ -7,10 +7,16 @@ import { settled, startProject, threadIdOf, type Service } from "./service";
  *
  * Covered: the list with its tracker, counts, state tabs and the label, assignee and text filters, no-match and closed rows,
  * and the absence of a Load more row; the detail page with body, comments, facts and its linked pull requests card absent
- * (the fixture reports none); and Start a thread, the service's framed draft read and one write that creates, links and queues.
- * `update`, `state` and the `candidates` read are not on this service (create, comment and react are, but the client does not
- * call them); the client's not-offered probe reads this service's fallback 404 as a live route, so Sort starts live and is
- * exercised: a chosen sort is refused 400 invalid and the control then returns to the disabled Planned pill.
+ * (the fixture reports none); the comment box's one write; the description pencil's one update; the label picker's candidates
+ * read and one update of the whole set, and an assignee the candidates cannot address; the State menu closing and reopening
+ * the issue; the Sort menu's two orders; and Start a thread, the service's framed draft read and one write that creates,
+ * links and queues. The issue-edit routes are served for GitHub (#1593), so the candidates probe answers 400 invalid (a live
+ * route) and the edit and Sort controls are live; the stand-in `gh` answers the PATCH, comment POST and assignees read the
+ * service makes, so every write in this file arrives at a tracker.
+ *
+ * Not covered, and why: the four other trackers keep update, state and candidates Planned (422 unsupported) and need a
+ * keychain token to connect at all (an owner action); a "no such route" write (the routes exist on this build); paging (the
+ * fixture issues no cursor); the empty, loading and error list states; and phone width.
  */
 
 test.setTimeout(60_000);
@@ -53,10 +59,8 @@ test("the list shows the tracker's issues with counts, state tabs and the filter
   await expect(retry.locator(".iss-state")).toHaveText("Open");
   await expect(retry.locator(".iss-avatar")).toHaveAttribute("title", "me");
   await expect(rows(page).filter({ hasText: "Tidy the docs" })).toContainText("#12 · GitHub · opened by ada");
-  // The update and state writes and the candidates read are not on this service, and the client's not-offered probe reads this
-  // service's SPA fallback 404 as a live route, so Sort starts enabled and a chosen sort is refused 400 (#1530). That is a bug,
-  // not behaviour to pin, so this spec asserts nothing about Sort until #1530 is fixed: the intended case (Sort stays the
-  // disabled Planned pill while the route is absent) belongs here then.
+  // The issue-edit routes are served for GitHub (#1593), so the candidates probe answers 400 invalid (a live route) and the
+  // edit and Sort controls are live; the two Sort orders are driven in the Sort test below.
   // Search: the text goes to the tracker as gh --search, one row, a removable chip and the shown line.
   await search(page).fill("queue");
   await search(page).press("Enter");
@@ -147,4 +151,153 @@ test("one issue opens as a page with its body, comments and facts, and a thread 
   const messages = JSON.stringify(await service.api("GET", `/api/threads/${threadId}/messages?limit=20`));
   expect(messages).toContain("Work on #7");
   expect(messages).toContain("The queue stalls when the worker restarts.");
+});
+
+test("the comment box posts one comment through the real route", async ({ page }) => {
+  await page.goto(`${service.page}#/issues/github/o%2Fr/7`);
+  await expect(page.getByRole("heading", { name: "Retry the queue", exact: true })).toBeVisible({ timeout: 30_000 });
+  // The tracker's own comment is the activity so far.
+  await expect(page.getByText("I can reproduce it.", { exact: false })).toBeVisible();
+  const form = page.getByRole("form", { name: "Comment" });
+  const box = form.getByRole("textbox", { name: "Comment" });
+  const body = "Checked against the stand-in.";
+  await box.fill(body);
+  const written = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/issues/item/comment");
+  await form.getByRole("button", { name: "Comment", exact: true }).click();
+  const answer = await written;
+  expect(answer.status()).toBe(200);
+  expect(answer.request().postDataJSON()).toEqual({ tracker: "github", scope: "o/r", key: "7", body });
+  const stored = (await answer.json()) as { id: string; author: { login: string } | null; body: string; created_at: string };
+  expect(stored).toMatchObject({ author: { login: "me" }, body });
+  expect(stored.id).not.toBe("");
+  // One write: the box empties, the answered comment joins the activity, and a detail read of the tracker has it.
+  await expect(box).toHaveValue("");
+  await expect(page.getByText(body, { exact: true })).toBeVisible();
+  const detail = await service.api<{ comments: { author: { login: string } | null; body: string }[] }>("GET", "/api/issues/item?tracker=github&scope=o%2Fr&key=7");
+  expect(detail.comments.at(-1)).toMatchObject({ author: { login: "me" }, body });
+});
+
+test("the description pencil saves one update through the real route", async ({ page }) => {
+  await page.goto(`${service.page}#/issues/github/o%2Fr/7`);
+  await expect(page.getByRole("heading", { name: "Retry the queue", exact: true })).toBeVisible({ timeout: 30_000 });
+  const pencil = page.getByRole("button", { name: "Edit description" });
+  await expect(pencil).toBeEnabled();
+  await pencil.click();
+  const box = page.getByRole("textbox", { name: "Description" });
+  await expect(box).toHaveValue("The queue stalls when the worker restarts.");
+  const body = "The queue stalls when the worker restarts. Re-read on the stand-in.";
+  await box.fill(body);
+  const written = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/issues/item/update");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  const answer = await written;
+  expect(answer.status()).toBe(200);
+  expect(answer.request().postDataJSON()).toEqual({ tracker: "github", scope: "o/r", key: "7", body });
+  // The editor closes and the page shows the issue the service answered.
+  await expect(page.getByRole("textbox", { name: "Description" })).toHaveCount(0);
+  await expect(page.locator(".iss-body").first()).toContainText("Re-read on the stand-in.");
+  // The write went through gh: the stand-in recorded the one PATCH the route makes, and a detail read has the new body.
+  expect(service.ghCalls()).toContainEqual(["api", "-X", "PATCH", "repos/o/r/issues/7", "--input", "-"]);
+  const detail = await service.api<{ body: string }>("GET", "/api/issues/item?tracker=github&scope=o%2Fr&key=7");
+  expect(detail.body).toBe(body);
+});
+
+test("the label picker reads the real candidates and applies the whole set, and an unaddressable assignee blocks Apply", async ({ page }) => {
+  await page.goto(`${service.page}#/issues/github/o%2Fr/7`);
+  await expect(page.getByRole("heading", { name: "Retry the queue", exact: true })).toBeVisible({ timeout: 30_000 });
+  const facts = page.getByRole("group", { name: "Facts" });
+  const change = page.getByRole("button", { name: "Change labels" });
+  await expect(change).toBeEnabled();
+  const asked = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/issues/candidates");
+  await change.click();
+  const answer = await asked;
+  expect(answer.status()).toBe(200);
+  expect(new URL(answer.url()).searchParams.get("tracker")).toBe("github");
+  expect(new URL(answer.url()).searchParams.get("scope")).toBe("o/r");
+  // The stand-in's labels and assignable people, as the real candidates route answers them.
+  expect(await answer.json()).toEqual({
+    labels: [{ name: "bug", color: null }, { name: "docs", color: null }],
+    assignees: [{ login: "ada", name: null, id: "ada" }, { login: "grace", name: null, id: "grace" }],
+    truncated: false,
+  });
+  const picker = page.getByRole("group", { name: "Change labels" });
+  await expect(picker.getByRole("checkbox", { name: "bug" })).toBeChecked();
+  await expect(picker.getByRole("checkbox", { name: "docs" })).not.toBeChecked();
+  await picker.getByRole("checkbox", { name: "docs" }).check();
+  const written = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/issues/item/update");
+  await picker.getByRole("button", { name: "Apply" }).click();
+  const update = await written;
+  expect(update.status()).toBe(200);
+  expect(update.request().postDataJSON()).toEqual({ tracker: "github", scope: "o/r", key: "7", labels: ["bug", "docs"] });
+  await expect(page.getByRole("group", { name: "Change labels" })).toHaveCount(0);
+  await expect(facts.locator(".iss-label")).toHaveCount(2);
+  await expect(facts).toContainText("docs");
+  // The issue's own assignee "me" is not among the stand-in's assignable people, so the picker says it cannot address it
+  // and blocks Apply rather than dropping it silently.
+  const people = page.getByRole("button", { name: "Change assignees" });
+  await expect(people).toBeEnabled();
+  await people.click();
+  const who = page.getByRole("group", { name: "Change assignees" });
+  await expect(who.getByRole("checkbox", { name: "ada" })).toBeVisible();
+  await expect(who.getByRole("checkbox", { name: "me" })).toBeChecked();
+  await expect(who.getByRole("alert")).toHaveText("Orbyn cannot address me yet. Uncheck it to continue.");
+  await expect(who.getByRole("button", { name: "Apply" })).toBeDisabled();
+  await who.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("the State menu closes and reopens the issue, one write each way", async ({ page }) => {
+  await page.goto(`${service.page}#/issues/github/o%2Fr/7`);
+  await expect(page.getByRole("heading", { name: "Retry the queue", exact: true })).toBeVisible({ timeout: 30_000 });
+  // The state is a menu because the detail carries GitHub's own states, in its own order, with the current one marked.
+  await page.getByRole("button", { name: "State: Open" }).click();
+  const first = page.getByRole("menu", { name: "Change the state" });
+  await expect(first.getByRole("menuitem")).toHaveText(["Open", "Closed", "Closed as not planned"]);
+  await expect(first.getByRole("menuitem", { name: "Open" })).toHaveAttribute("aria-current", "true");
+  const closing = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/issues/item/state");
+  await first.getByRole("menuitem", { name: "Closed", exact: true }).click();
+  const closed = await closing;
+  expect(closed.status()).toBe(200);
+  expect(closed.request().postDataJSON()).toEqual({ tracker: "github", scope: "o/r", key: "7", state: "Closed", close_reason: "completed" });
+  await expect(page.getByRole("button", { name: "State: Closed" })).toBeVisible();
+  expect((await service.api<{ state: { category: string; name: string } }>("GET", "/api/issues/item?tracker=github&scope=o%2Fr&key=7")).state).toMatchObject({ category: "closed", name: "Closed" });
+  // Reopening is one write again, and the stand-in recorded the one PATCH each way.
+  await page.getByRole("button", { name: "State: Closed" }).click();
+  const reopening = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/issues/item/state");
+  await page.getByRole("menu", { name: "Change the state" }).getByRole("menuitem", { name: "Open", exact: true }).click();
+  const reopened = await reopening;
+  expect(reopened.status()).toBe(200);
+  expect(reopened.request().postDataJSON()).toEqual({ tracker: "github", scope: "o/r", key: "7", state: "Open" });
+  await expect(page.getByRole("button", { name: "State: Open" })).toBeVisible();
+  expect((await service.api<{ state: { category: string } }>("GET", "/api/issues/item?tracker=github&scope=o%2Fr&key=7")).state.category).toBe("open");
+  expect(service.ghCalls().filter((args) => args[1] === "-X" && args[2] === "PATCH").at(-1)).toEqual(["api", "-X", "PATCH", "repos/o/r/issues/7", "--input", "-"]);
+});
+
+test("the Sort menu re-reads the list in the chosen order", async ({ page }) => {
+  // Make the two orders differ through the real route: this write moves #12's updatedAt past #7's, while #7 was created after
+  // #12 (the fixture's dates), so Updated and Created lead with different issues.
+  await service.api("POST", "/api/issues/item/update", { tracker: "github", scope: "o/r", key: "12", body: "The Getting started page names the old command. Re-read on the stand-in." });
+  await page.goto(`${service.page}#/issues`);
+  await expect(page.getByRole("heading", { name: "Issues", exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(rows(page)).toHaveCount(2);
+  // The first list is the service's own default, newest update first: the issue just written leads.
+  await expect(rows(page).first()).toContainText("Tidy the docs");
+  // Sort is live because the candidates probe answered 400 invalid (a live route), not "no such route".
+  const sort = page.getByRole("button", { name: "Sort: Updated" });
+  await expect(sort).toBeEnabled();
+  await sort.click();
+  const menu = page.getByRole("menu", { name: "Sort issues" });
+  await expect(menu.getByRole("menuitem")).toHaveText(["Updated", "Created"]);
+  await expect(menu.getByRole("menuitem", { name: "Updated" })).toHaveAttribute("aria-current", "true");
+  const byCreated = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/issues" && new URL(response.url()).searchParams.get("sort") === "created");
+  await menu.getByRole("menuitem", { name: "Created", exact: true }).click();
+  expect((await byCreated).status()).toBe(200);
+  await expect(rows(page).first()).toContainText("Retry the queue");
+  // The service sorts its own answer by the date and spells the order qualifier out to gh.
+  const listed = service.ghCalls().filter((args) => args[0] === "issue" && args[1] === "list").at(-1)!;
+  expect(listed[listed.indexOf("--search") + 1]).toBe("sort:created-desc");
+  // Back to Updated: the other order.
+  const back = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/issues" && new URL(response.url()).searchParams.get("sort") === "updated");
+  await page.getByRole("button", { name: "Sort: Created" }).click();
+  await page.getByRole("menu", { name: "Sort issues" }).getByRole("menuitem", { name: "Updated", exact: true }).click();
+  expect((await back).status()).toBe(200);
+  await expect(rows(page).first()).toContainText("Tidy the docs");
 });
