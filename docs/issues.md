@@ -711,6 +711,19 @@ them.
   cannot be backed by a core function that does not exist. React is not in this row. No real tracker was contacted:
   the tool tests use a local fake issue reader over a fake project remote.
 
+## Not done
+
+Found in the post-merge review of the create, comment, react, template and binding work; each is a later change.
+
+- Forgejo comment reactions are scoped to the repository, not the issue: a comment id from another issue of the same
+  repository is accepted while the answer describes issue `key`. GitHub and Linear check that the comment belongs to the
+  issue; Forgejo should read the comment first and require its `issue_url` to end in `/issues/{key}`.
+- GitLab template keys that contain a space (file names such as "Bug Report") are skipped by the plain-segment check
+  and silently missing from the list; the key should be percent-encoded as one path segment instead.
+- A project binding is not removed when the project is removed softly (`removed_at`), so the row comes back if the
+  project is restored. Nothing reads the binding yet; the soft-remove path should delete the row, or the contract should
+  stop saying a removed project takes its binding with it.
+
 ## What T3 has that this does not (Planned)
 
 The event timeline, "involved/mentioned"
