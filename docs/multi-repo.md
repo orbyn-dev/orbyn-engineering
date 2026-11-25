@@ -332,14 +332,20 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
 Behind the same flag. Migration 66 adds `thread_repos` (thread, repo id, position, name, branch, worktree path); a thread with no rows is
 an ordinary thread and nothing below changes for it. The rows are written by thread creation in the next slice.
 
-- **Where `repo_id` goes.** Body: `POST /api/threads/{id}/git/action`, `POST .../branches`, `POST .../branches/switch`, and
-  `PUT .../files/content` (`GitAction`, `CreateBranch`, `SwitchBranch`, `WriteFile`). Query: `GET .../commits`, `GET .../diff`,
-  `GET .../branches` and `GET .../files/content`. Absent is the primary repository (position 0).
+- **Where `repo_id` goes.** Body: `POST /api/threads/{id}/git/action`, `POST .../branches`, `POST .../branches/switch`,
+  `PUT .../files/content` and `POST .../paths/resolve` (`GitAction`, `CreateBranch`, `SwitchBranch`, `WriteFile`,
+  `ResolveThreadPath`). Query: `GET .../commits`, `GET .../diff`, `GET .../branches` and `GET .../files/content`. Absent is
+  the primary repository (position 0).
 - **One resolver.** Every thread Git and file call reads the thread through one function that, for a multi-repository thread,
   returns it with its `cwd` set to the chosen repository's worktree. So the repository is the only thing that changes: the path of a
   file is resolved inside that worktree by the usual guard (a path that leaves it, an absolute path or a link out is refused), and a
   file `revision` belongs to that repository's file. In Core the route sets the repository with `orbyn_core::in_repo(repo_id, work)`;
   work spawned from inside does not inherit it.
+- **Navigation coordinates are one repository's too.** `POST /api/threads/{id}/paths/resolve` resolves the reference in the
+  repository its `repo_id` names, the primary one when absent, so a link to a repository's file is never looked for in the task
+  folder and the answer's `checkout_path` is relative to that repository's worktree. The request's `cwd` is the thread's own
+  stored folder (the task folder) and so is the answer's: the thread's move is still `409 stale_owner`, and it is that folder,
+  not a worktree, that a client fences against.
 - **Refusals.** A `repo_id` on an ordinary thread, one that is not the thread's, or any `repo_id` with the flag off is `404 not_found`. A
   repository whose row in the project is untrusted is `409 repo_untrusted` for every call; a repository removed from the project keeps
   working in a thread that already has its worktree.
@@ -350,7 +356,8 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
 ## As built: repository threads and the task folder
 
 Behind the same flag; no new migration (`thread_repos` is from the slice above). Built: `POST /api/projects/{id}/repo-threads`,
-`GET /api/threads/{id}/task-folder`, `POST /api/threads/{id}/repos`, and `repo_id` on the file tree and metadata reads.
+`GET /api/threads/{id}/task-folder`, `POST /api/threads/{id}/repos`, and `repo_id` on the file tree and metadata reads and on
+navigation coordinates.
 
 - **Start.** `StartThreadInput { repos, engine, model, permission_mode, message?, branch_name? }`, answered with the `Thread`. Two to eight
   repositories (`409 repo_limit` past 8; fewer than two is `400`, one repository uses the normal start); each `base_branch` must be a
@@ -366,7 +373,8 @@ Behind the same flag; no new migration (`thread_repos` is from the slice above).
   primary repository (the project's own folder, when chosen) is position 0; `permission_mode` is applied after creation and the optional
   `message` is queued as the first turn.
 - **Reads.** `GET .../task-folder` answers `TaskFolder { root, branch, repos: ThreadRepo[], max_per_thread }`, `404` for an ordinary
-  thread. `GET .../files` and `.../files/metadata` take `repo_id` too, so the tree of one repository can be shown.
+  thread. `GET .../files` and `.../files/metadata` take `repo_id` too, so the tree of one repository can be shown;
+  `POST .../paths/resolve` takes it on the body, so a link to one repository's file resolves in that repository.
 - **Adding a repository** (`POST /api/threads/{id}/repos` `{ repo_id }`, `ThreadRepo`): a trusted repository of the project that is not
   in the thread, on the thread's branch cut from that repository's current branch (`400` when none is checked out, when it already has
   the branch name or is already in the thread; `409 repo_limit` at 8, `409 repo_untrusted`). Both writes are Person-class.
@@ -428,4 +436,6 @@ over the limit is refused; each write route needs the person key; a failed clone
 does not offer is refused before anything is created; a scan never follows a symlink, caps its results
 and adds nothing; a workspace folder outside the file's folder is listed `refused` and not added; a
 `repo_id` on a file write never resolves a path in another repository; a task folder uses one branch name in
-every repository and a taken name creates nothing.
+every repository and a taken name creates nothing; navigation coordinates resolve in the repository their `repo_id` names, the
+primary when it is absent, so a repository's file is found in its own worktree and the task folder is never the checkout; a thread
+that moved answers `409 stale_owner`, an unknown repository is `404` and an untrusted one is refused.
