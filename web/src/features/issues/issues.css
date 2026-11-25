@@ -196,6 +196,10 @@
 .iss-edit-over, .iss-edit-error { color: var(--color-danger, var(--color-text)); }
 .iss-edit-error { margin: 0; font-size: var(--text-meta); }
 .iss-pick-form { padding: 8px; border: 1px solid var(--color-divider); border-radius: 8px; }
+/* The comment box under an issue's comments: the page's minimal inline form, on the activity column's gap and four rows
+   tall (the description editor's 160px floor belongs to the description, not to a comment). */
+.iss-comment { margin: 0; }
+.iss-comment textarea { min-height: 0; }
 .iss-pick-items { display: flex; flex-direction: column; gap: 2px; max-height: 220px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
 .iss-pick-items label { display: flex; align-items: center; gap: 8px; padding: 3px 4px; border-radius: 4px; font-size: var(--text-meta); overflow-wrap: anywhere; }
 .iss-pick-items label:hover { background: var(--color-rowHover); }
