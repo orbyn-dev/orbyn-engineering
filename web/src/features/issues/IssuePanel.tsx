@@ -7,8 +7,9 @@ import { ApiFailure } from "../../api/client";
 import { routeHref } from "../../product/state/route";
 import { Button } from "../../ui/controls";
 import { issuesApi, useApiVersion } from "./api";
-import { Body, Person } from "./IssueDetail";
+import { Body } from "./IssueDetail";
 import { IssueGlyph } from "./IssueGlyph";
+import { Person } from "./IssuePerson";
 import { isIssueKey, isTracker, stateWord, trackerName } from "./model";
 
 /**

@@ -80,6 +80,26 @@ export interface IssueComment {
   created_at: string;
 }
 
+/** One reaction the tracker reports on an issue, as a count. `content` is the tracker's own word for it (`HEART` on GitHub). */
+export interface IssueReactionCount {
+  content: string;
+  count: number;
+}
+
+/** The reaction a person adds: one of the eight the service's react route takes. A tracker with fewer refuses one it lacks. */
+export type IssueReaction = "thumbs_up" | "thumbs_down" | "laugh" | "hooray" | "confused" | "heart" | "rocket" | "eyes";
+
+/** One starting point the tracker offers for a new issue (`GET /api/issues/templates`): tracker text, shown as text. */
+export interface IssueTemplate {
+  id: string;
+  name: string;
+  /** The one-line description the tracker gives the template, when it gives one. */
+  description?: string | null;
+  body: string;
+  /** The label names the template suggests, as the wire type carries them. They are never merged into the create's labels. */
+  labels: string[];
+}
+
 /** A pull request the tracker reports against an issue, of its own accord. Read only. */
 export interface LinkedPullRequest {
   repository: string;
@@ -110,6 +130,26 @@ export interface IssueDetail extends IssueSummary {
    * this tracker has no state to offer. The real client keeps only well-formed entries.
    */
   states?: IssueState[];
+  /**
+   * The reactions on the issue in the tracker's own words, absent or `null` when the tracker does not report them. A plain detail
+   * read carries none, so the bar is only as fresh as the last write; a write answer carries the counts the tracker reports.
+   */
+  reactions?: IssueReactionCount[] | null;
+}
+
+/**
+ * The body of `POST /api/issues/item/create` (docs/issues.md, "Create, comment, react, templates and project binding").
+ * `title` is one line of 1 to 256 characters and `body` at most 64 KiB, both the person's own text; `labels` are names (at most
+ * 50), `assignees` the `id`s a candidate gives (at most 25), and `template` the id of one template the templates read answered.
+ */
+export interface CreateIssueInput {
+  tracker: TrackerKind;
+  scope: string;
+  title: string;
+  body?: string;
+  labels?: string[];
+  assignees?: string[];
+  template?: string;
 }
 
 /** What a thread's link keeps of an issue: enough for the chip, the list and the row marker. */
@@ -223,8 +263,8 @@ export interface IssuesApi {
    * is known the answer is `false`, and the controls stay Planned. A State change is discovered per issue, by `IssueDetail.states`.
    */
   offers(signal?: AbortSignal): Promise<boolean>;
-  /** The labels and people a picker can offer for this issue's scope. Read when a picker opens, never with the issue. */
-  candidates(issue: IssueTarget, signal?: AbortSignal): Promise<IssueCandidates>;
+  /** The labels and people a picker can offer for this tracker and scope. Read when a picker opens, never with the issue. */
+  candidates(target: Pick<IssueTarget, "tracker" | "scope">, signal?: AbortSignal): Promise<IssueCandidates>;
   /** One write per call, Person-class: `POST /api/issues/item/update`. Answers the updated issue. */
   update(issue: IssueTarget, input: IssueUpdateInput): Promise<IssueDetail>;
   /** One write per call, Person-class: `POST /api/issues/item/state`, `state` (plus `close_reason` when the entry has one) one of the issue's `states`. Answers the updated issue. */
@@ -235,6 +275,19 @@ export interface IssuesApi {
    * tracker stored, which the issue page appends to its comments.
    */
   comment(issue: IssueTarget, body: string): Promise<IssueComment>;
+  /** The tracker's own issue templates for this scope, a read (no person key). A tracker with none answers `[]`, never a 404. */
+  templates(target: Pick<IssueTarget, "tracker" | "scope">, signal?: AbortSignal): Promise<IssueTemplate[]>;
+  /**
+   * One write per call, Person-class: `POST /api/issues/item/create`. One call creates one issue, and nothing here retries it:
+   * a timeout answers `tracker_unavailable` with the issue possibly created, and the caller re-reads the list instead. Answers
+   * the stored issue.
+   */
+  create(input: CreateIssueInput): Promise<IssueDetail>;
+  /**
+   * One write per call, Person-class: `POST /api/issues/item/react`, adding (`on: true`) or taking back (`on: false`) one of
+   * the eight reactions on the issue itself. Answers the issue with the counts the tracker reports.
+   */
+  react(issue: IssueTarget, reaction: IssueReaction, on: boolean): Promise<IssueDetail>;
 }
 
 export const TRACKER_NAMES: Record<TrackerKind, string> = {
