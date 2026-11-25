@@ -482,13 +482,14 @@ async fn a_rewritten_default_branch_blocks_until_a_person_confirms_that_commit()
         .crew_class_test(None, Some(&project), &["src/a.rs".to_owned()])
         .await
         .unwrap();
-    assert!(test.paths[0].route_card.contains("default branch changed"));
-    assert!(
-        test.paths[0]
-            .allowed_engines
-            .as_ref()
-            .is_some_and(Vec::is_empty)
-    );
+    // The read's row is found by the path the test asked for, not by the place the read lists it in.
+    let hit = test
+        .paths
+        .iter()
+        .find(|row| row.path == "src/a.rs")
+        .expect("the read's row for the path the test asked for");
+    assert!(hit.route_card.contains("default branch changed"));
+    assert!(hit.allowed_engines.as_ref().is_some_and(Vec::is_empty));
 
     // The view showed the rewritten commit; confirming the old one, or anything else, is stale.
     let stale = w

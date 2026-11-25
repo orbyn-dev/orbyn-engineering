@@ -70,6 +70,16 @@ fn project(w: &World) -> String {
     w.core.store.thread(&w.lead).unwrap().project_id
 }
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list: a read that returns
+/// none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
 /// A stored background crew with one turn a day, on: the cap `background_daily` uses.
 async fn crew_daily(w: &World, name: &str, runs: u32, turns: u32) -> String {
     let body: wire::BackgroundCrewCreate = serde_json::from_value(json!({
@@ -93,24 +103,38 @@ fn good() -> Script {
     })
 }
 
-fn run_of(w: &World, crew: &str) -> wire::BackgroundRun {
+/// The crew's run `id`, found by id: its run list is newest first, but a test means the run a start returned
+/// rather than the place the list put it in.
+fn run_of(w: &World, crew: &str, id: &str) -> wire::BackgroundRun {
     let page = crate::crew::Page::new(None, None).unwrap();
-    w.core.background_runs(crew, page).unwrap().runs.remove(0)
+    w.core
+        .background_runs(crew, page)
+        .unwrap()
+        .runs
+        .into_iter()
+        .find(|run| run.id == id)
+        .unwrap_or_else(|| panic!("the crew's run {id} in its run list"))
 }
 
-async fn until_run(w: &World, crew: &str, state: wire::BackgroundRunState) -> wire::BackgroundRun {
+/// Waits for the run `run` to reach `state`, then returns it as the list now holds it.
+async fn until_run(
+    w: &World,
+    crew: &str,
+    run: &wire::BackgroundRun,
+    state: wire::BackgroundRunState,
+) -> wire::BackgroundRun {
     w.until("the run reaches its state", |w| {
-        run_of(w, crew).state == state
+        run_of(w, crew, &run.id).state == state
     })
     .await;
-    run_of(w, crew)
+    run_of(w, crew, &run.id)
 }
 
 /// The engine of the run's one task, read from the worker thread the task stored.
 fn worker_engine(w: &World, run: &wire::BackgroundRun) -> String {
     let tasks = w.core.store.crew_tasks_in_crew(&run.id).unwrap();
-    assert_eq!(tasks.len(), 1, "one task per run");
-    let run = w.core.store.crew_run(&tasks[0].0.id).unwrap().unwrap();
+    let (task, _) = one(&tasks, "task of the run");
+    let run = w.core.store.crew_run(&task.id).unwrap().unwrap();
     w.core
         .store
         .thread(run.worker_thread_id.as_deref().unwrap())
@@ -161,7 +185,7 @@ async fn an_engine_at_its_daily_cap_does_not_refuse_another_engines_run() {
     // Alpha takes its one turn of the day and passes: the run ends waiting for a person, and alpha is at its cap.
     let first = w.core.crew_background_run_now(&id, "user").await.unwrap();
     assert_eq!(worker_engine(&w, &first), "alpha");
-    let first = until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+    let first = until_run(&w, &id, &first, wire::BackgroundRunState::NeedsReview).await;
     assert_eq!(first.turns_spent, 1);
 
     // Alpha's cap must not refuse bravo: the router now gives bravo the run, whose day is unspent, and its one
@@ -169,7 +193,7 @@ async fn an_engine_at_its_daily_cap_does_not_refuse_another_engines_run() {
     choose("bravo");
     let second = w.core.crew_background_run_now(&id, "user").await.unwrap();
     assert_eq!(worker_engine(&w, &second), "bravo");
-    let second = until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+    let second = until_run(&w, &id, &second, wire::BackgroundRunState::NeedsReview).await;
     assert_eq!(second.turns_spent, 1);
 
     // Bravo's own one turn is spent now: the next start is refused, naming bravo and nobody else.
@@ -186,8 +210,8 @@ async fn an_engine_at_its_daily_cap_does_not_refuse_another_engines_run() {
     assert!(!why.contains("alpha"), "{why}");
     assert!(why.contains(&reset), "{why}");
     let refused = audits(&w, "crew.background.daily.refused");
-    assert_eq!(refused.len(), 1, "{refused:?}");
-    assert_eq!(refused[0]["engine"], json!("bravo"), "{refused:?}");
+    let row = one(&refused, "refused daily audit row");
+    assert_eq!(row["engine"], json!("bravo"), "{refused:?}");
     let page = crate::crew::Page::new(None, None).unwrap();
     assert_eq!(
         w.core.background_runs(&id, page).unwrap().total,
@@ -260,8 +284,7 @@ async fn a_resume_prompt_holds_no_check_command_no_protected_path_and_one_resume
     .await;
 
     let prompts = w.sent_to(&worker);
-    assert_eq!(prompts.len(), 1, "one resume prompt");
-    let prompt = &prompts[0];
+    let prompt = one(&prompts, "resume prompt");
 
     let stored = w.core.store.crew_answer_key(&id).unwrap().unwrap();
     let needles = crate::crew::guard::check_needles(&stored.checks);
