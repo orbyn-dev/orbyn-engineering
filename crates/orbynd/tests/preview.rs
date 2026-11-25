@@ -1103,8 +1103,10 @@ fn kill_browser(id: &str) {
         let script = format!(
             "$found = @(Get-CimInstance Win32_Process | Where-Object {{ $_.ProcessId \
              -ne $PID -and $_.CommandLine -like '*preview-profiles*{id}*' }}); \
-             $found | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force \
-             -ErrorAction SilentlyContinue }}; if ($found.Count -eq 0) {{ exit 1 }}"
+             if ($found.Count -eq 0) {{ exit 1 }}; \
+             $found | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop }}; \
+             foreach ($p in $found) {{ try {{ Wait-Process -Id $p.ProcessId -Timeout 10 -ErrorAction Stop }} \
+             catch [Microsoft.PowerShell.Commands.ProcessCommandException] {{ }} }}"
         );
         let ended = std::process::Command::new("powershell.exe")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])

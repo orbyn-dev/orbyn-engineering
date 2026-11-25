@@ -32,7 +32,8 @@ pub fn browser() -> Option<PathBuf> {
             "ORBYN_BROWSER is not a file: {}",
             path.display()
         );
-        return Some(path);
+        // The service starts in another folder, so a relative override would name a different file there.
+        return Some(std::path::absolute(&path).expect("ORBYN_BROWSER has an absolute form"));
     }
     if let Some(path) = e2e_headless_shell() {
         return Some(path);
