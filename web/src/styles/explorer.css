@@ -50,6 +50,20 @@
 .x2scroll {
   padding: 0 4px 4px;
 }
+/* The repository the multi-repository thread's checkout row shows, under the explorer's title line. */
+.x2repo-bar {
+  display: flex;
+  align-items: center;
+  flex: none;
+  min-width: 0;
+  padding: 0 8px 5px;
+}
+.x2repo-bar .repos-chip {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
 .x2tree {
   display: flex;
   flex-direction: column;

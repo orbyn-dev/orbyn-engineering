@@ -29,6 +29,16 @@ use crate::tools::mcp::McpBinding;
 /// frame draws a start refusal, and the owner's ruling asks for a plain reason (2026-11-20).
 const CREW_TURNS_SPENT: &str = "The crew has spent its turn budget, so no new task can start.";
 
+/// What a person and the lead read when the crew-wide turn budget itself cannot be read. The same
+/// code-owned text as the spend refusal, for the same reason: a refusal with no frame that draws it.
+const CREW_TURN_BUDGET_UNREADABLE: &str =
+    "The crew's turn budget could not be read, so no new task can start. Try again.";
+
+/// What a person and the lead read when the crew's spend cannot be read. Kept apart from the
+/// budget's own sentence so a person can tell which read failed.
+const CREW_TURNS_UNREADABLE: &str =
+    "The crew's turns could not be read, so no new task can start. Try again.";
+
 /// What a launch adds to a plain start: the rows that make the task a review run or a fix.
 #[derive(Default)]
 pub(super) struct Links {
@@ -389,7 +399,8 @@ impl Core {
         // One start at a time, so two briefs cannot both be granted the same paths.
         let _one_at_a_time = self.crew_starts.lock().await;
         // Before anything is stored, routed or started: a crew that spent its turn budget starts
-        // no new task. It never stops a task already running.
+        // no new task, and one whose budget or spend cannot be read starts none either. It never
+        // stops a task already running.
         self.refuse_spent_crew_budget(&brief)?;
         // Before anything is stored, routed or started: a lead whose volume is low on disk starts no worker.
         self.refuse_low_disk(thread).await?;
@@ -677,27 +688,40 @@ impl Core {
     }
 
     /// The crew-wide turn budget from Settings (`crew_turn_budget`, device-local): whole turns per
-    /// crew, 0 or unset meaning no budget. A read failure lets the start go, as the per-task
-    /// budget's own read does.
-    fn crew_turn_budget(&self) -> Option<u64> {
-        match self.preference(CREW_TURN_BUDGET, None) {
-            Ok(value) => value.as_u64().filter(|turns| *turns > 0),
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    "the crew's turn budget could not be read, so the start goes ahead"
-                );
-                None
-            }
+    /// crew, 0 or unset meaning no budget. It fails closed: a budget no read can settle refuses the
+    /// start, because the budget is what decides whether a task may start, so treating an unknown
+    /// one as "no budget" would let every task through exactly when the app cannot tell. The
+    /// background crews' daily budget reads the same way (see `refuse_background_daily`).
+    fn crew_turn_budget(&self) -> Result<Option<u64>, CrewError> {
+        let unreadable = |error: &dyn std::fmt::Display| {
+            tracing::warn!(
+                %error,
+                "the crew's turn budget could not be read, so no new task can start"
+            );
+            CrewError::new(ErrorCode::NotAuthorized, CREW_TURN_BUDGET_UNREADABLE)
+        };
+        let value = self
+            .preference(CREW_TURN_BUDGET, None)
+            .map_err(|error| unreadable(&error))?;
+        if value.is_null() {
+            return Ok(None);
+        }
+        // A stored value the setting cannot hold (a text, a fraction) is not read as no budget
+        // either: the setting only ever writes whole turns, so anything else is a count nobody
+        // can settle.
+        match value.as_u64() {
+            Some(turns) => Ok((turns > 0).then_some(turns)),
+            None => Err(unreadable(&format!("a non-whole turn budget: {value}"))),
         }
     }
 
     /// Refuses a new task once its crew has spent the crew-wide turn budget. The spend is the same
     /// per-task tally the brief's own budget reads, summed over the crew, so the two cannot
     /// disagree. Checked before anything is stored or sent; a task already running keeps its turns
-    /// (owner ruling, 2026-11-20).
+    /// (owner ruling, 2026-11-20). A spend no read can settle refuses the start as the budget's own
+    /// unreadable case does: an unknown spend is never read as under budget.
     fn refuse_spent_crew_budget(&self, brief: &Brief) -> Result<(), CrewError> {
-        let Some(limit) = self.crew_turn_budget() else {
+        let Some(limit) = self.crew_turn_budget()? else {
             return Ok(());
         };
         let spent = match self.store.crew_turns_spent_in_crew(brief.crew_id.as_str()) {
@@ -705,9 +729,12 @@ impl Core {
             Err(error) => {
                 tracing::warn!(
                     %error,
-                    "the crew's turns could not be read, so the start goes ahead"
+                    "the crew's turns could not be read, so no new task can start"
                 );
-                return Ok(());
+                return Err(CrewError::new(
+                    ErrorCode::NotAuthorized,
+                    CREW_TURNS_UNREADABLE,
+                ));
             }
         };
         if spent < limit {
