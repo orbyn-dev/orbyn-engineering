@@ -193,14 +193,15 @@ async fn invalid_bodies_and_an_unknown_project_are_refused() {
         .send(&path, json!({ "tracker": null, "scope": "acme/app" }))
         .await;
     assert_eq!(status, 400, "an unbind names no scope");
-    let (status, _) = service
-        .send(&path, json!({ "tracker": "github" }))
-        .await;
+    let (status, _) = service.send(&path, json!({ "tracker": "github" })).await;
     assert_eq!(status, 400, "a binding needs a scope");
     // A body that does not name the tracker must not unbind by accident.
     for body in [json!({}), json!({ "scope": "acme/app" })] {
         let (status, refusal) = service.send(&path, body.clone()).await;
-        assert_eq!(status, 400, "a body without the tracker is refused: {body} {refusal}");
+        assert_eq!(
+            status, 400,
+            "a body without the tracker is refused: {body} {refusal}"
+        );
         assert_eq!(refusal["code"], "invalid_input");
     }
     let (status, body) = service.send(&path, json!({ "tracker": null })).await;

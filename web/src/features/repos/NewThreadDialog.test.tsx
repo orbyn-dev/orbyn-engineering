@@ -128,6 +128,22 @@ it("starts without a branch name when the field is empty", async () => {
   await waitFor(() => expect(mock.branchNames).toEqual([undefined]));
 });
 
+it("sends the first message it is given, trimmed, in the same start", async () => {
+  const { mock, dialog } = await open();
+  await userEvent.type(within(dialog).getByRole("textbox", { name: "First message" }), "  Fix the login redirect  ");
+  expect(mock.writes).toEqual([]);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  await waitFor(() => expect(mock.starts).toEqual([{ engine: "claude", model: "opus", permission_mode: "auto_edits", message: "Fix the login redirect" }]));
+});
+
+it("starts without a first message when the field is left empty", async () => {
+  const { mock, dialog } = await open();
+  expect(within(dialog).getByRole("textbox", { name: "First message" })).toHaveValue("");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  await waitFor(() => expect(mock.writes).toHaveLength(1));
+  expect(mock.starts).toEqual([{ engine: "claude", model: "opus", permission_mode: "auto_edits" }]);
+});
+
 it("refuses a branch name Git would refuse, in words, and does not start", async () => {
   const { mock, dialog } = await open();
   await userEvent.type(within(dialog).getByRole("textbox", { name: "Branch name" }), "bad name");
