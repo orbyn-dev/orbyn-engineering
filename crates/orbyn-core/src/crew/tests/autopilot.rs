@@ -1,7 +1,10 @@
 //! Autopilot through a real `Core` and the real gate, with scripted approvers: slice 4f's approval chain, two
 //! keys and trip wires. The worker never ends its turn, so each test plays its requests.
 
-use orbyn_contracts::{ActionKind, CreatePolicyRule, PolicyEffect, ResultState, StopReason};
+use orbyn_contracts::{
+    ActionKind, CreatePolicyRule, CrewPathPattern, ErrorCode, LeaseMode, PolicyEffect, ResultState,
+    StopReason,
+};
 
 use super::autopilot_support::{
     Scripted, approvers, ask, events, kinds, request, running, scope, words,
@@ -862,4 +865,191 @@ async fn a_lease_check_that_cannot_read_the_task_refuses() {
         &ask(ActionKind::FileChange, "src/new.txt", &["src/new.txt"]),
     );
     assert!(refused.is_some(), "a failed read let the write through");
+}
+
+/// #439, before the report: a worker's write to a protected path is refused at the gate, before the
+/// write and before its report, so it never reaches the store or the ledger as an accepted change.
+/// The refusal is recorded as a denial like any other, so it counts toward the trip wires, and the
+/// worker's turn goes on until they stop the task.
+#[tokio::test]
+async fn a_protected_path_write_is_refused_at_the_gate_before_the_report() {
+    let (w, id) = running().await;
+    let worker = w.worker(&id);
+    // The brief reaches the worker when its first turn starts; wait for it, so the count below is
+    // about the refusal and not about a start still in flight.
+    w.until("the worker is sent its brief", |w| {
+        !w.sent_to(&worker).is_empty()
+    })
+    .await;
+    let member = w.core.store.crew_run(&id).unwrap().unwrap().member;
+    let patterns = w
+        .core
+        .store
+        .crew_answer_key(&id)
+        .unwrap()
+        .unwrap()
+        .protected_paths;
+    let protected = "tests/check.rs";
+    let started = w
+        .core
+        .store
+        .crew_run(&id)
+        .unwrap()
+        .unwrap()
+        .protected
+        .expect("the task's start recorded the protected files");
+    // The request under test writes nothing: the checkout holds exactly what the task started with,
+    // so no protected change can reach the verifier after a report.
+    let unchanged = || {
+        serde_json::to_string(&crate::crew::protect::snapshot(&w.repo, &patterns)).unwrap()
+            == started
+    };
+    assert!(unchanged(), "the checkout differed from the start already");
+
+    // The lease reads the protected path first too (H11 before the brief's files, H10). The gate
+    // never gets that far: its always-denied list refuses a protected path even earlier.
+    let pattern = CrewPathPattern::new(protected).expect("a path pattern");
+    assert_eq!(
+        w.core
+            .crew_check_lease(&id, &member, &pattern, LeaseMode::Write)
+            .unwrap_err()
+            .code,
+        ErrorCode::ProtectedPathConflict,
+        "the lease read the brief's files before the protected path"
+    );
+    let refused = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(ActionKind::FileChange, protected, &[protected]),
+        )
+        .await;
+    assert!(matches!(refused, Verdict::Deny(_)), "{}", words(&refused));
+    assert!(
+        words(&refused).contains("N7"),
+        "the protected-path rule did not refuse first: {}",
+        words(&refused)
+    );
+    assert!(
+        !words(&refused).contains(OUTSIDE_THE_LEASE),
+        "the lease's refusal was reached before the protected-path rule: {}",
+        words(&refused)
+    );
+
+    // Nothing was written, and the store and the ledger hold the refusal, never an accepted change.
+    assert!(
+        !w.repo.join(protected).exists(),
+        "the refused write reached the checkout"
+    );
+    assert!(unchanged(), "a protected file changed before the report");
+    assert!(
+        events(&w, &id, "allowed").is_empty(),
+        "the refused write was recorded as allowed"
+    );
+    assert_eq!(kinds(&w, &id), ["denied"]);
+    let denied = events(&w, &id, "denied");
+    assert_eq!(denied.len(), 1);
+    let row = &denied[0].body;
+    assert_eq!(row["action"]["kind"], "file_change");
+    assert_eq!(row["action"]["target"], protected);
+    assert_eq!(row["decided_by"], "hard_rule");
+    assert_eq!(row["rule"], "N7");
+    let audit = w.core.store.list_audit(Some(worker.as_str()), 20).unwrap();
+    assert!(
+        audit
+            .iter()
+            .any(|event| event.action == "action.deny" && event.target == protected),
+        "the store did not record the refusal"
+    );
+    assert!(
+        !audit
+            .iter()
+            .any(|event| event.action == "action.allow" && event.target == protected),
+        "the store recorded the write as accepted"
+    );
+
+    // The refusal came before the report: no attempt, no check and no report was stored yet.
+    assert!(
+        w.core.store.crew_reports(&id).unwrap().is_empty(),
+        "a report was stored before the write was refused"
+    );
+    assert!(
+        w.core.store.crew_results(&id).unwrap().is_empty(),
+        "an attempt was stored before the report"
+    );
+    assert!(
+        w.core.store.crew_evidence(&id).unwrap().is_empty(),
+        "a check ran before the report"
+    );
+    // One refusal leaves the worker's turn and its lease as they were: nothing stopped.
+    assert_eq!(w.task(&id).state, "running");
+    assert_eq!(w.task(&id).stop_reason, None);
+    assert_eq!(
+        w.sent_to(&worker).len(),
+        1,
+        "the refusal ended the turn or queued a retry"
+    );
+    assert!(
+        w.core
+            .crew_check_lease(
+                &id,
+                &member,
+                &CrewPathPattern::new("src/new.txt").unwrap(),
+                LeaseMode::Write
+            )
+            .is_ok(),
+        "one refusal ended the worker's lease"
+    );
+
+    // The same refusal on the run's real write scope, where the gate sees an absolute path, and
+    // then the third in a row: as any denial, they count toward the trip wires.
+    let second = w
+        .core
+        .gate
+        .request(
+            &production(&w, &id),
+            ask(ActionKind::FileChange, protected, &[protected]),
+        )
+        .await;
+    assert!(
+        words(&second).contains("N7"),
+        "the protected-path rule did not refuse on the run's write scope: {}",
+        words(&second)
+    );
+    assert_eq!(w.task(&id).state, "running");
+    let third = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(
+                ActionKind::FileChange,
+                "tests/check2.rs",
+                &["tests/check2.rs"],
+            ),
+        )
+        .await;
+    assert!(
+        words(&third).contains("too many denials"),
+        "{}",
+        words(&third)
+    );
+    assert_eq!(w.task(&id).state, "stopped");
+    assert_eq!(w.task(&id).stop_reason.as_deref(), Some("too_many_denials"));
+    let tripwire = events(&w, &id, "tripwire");
+    assert_eq!(tripwire.len(), 1);
+    assert_eq!(tripwire[0].body["wire"], "denials");
+    assert_eq!(tripwire[0].body["in_a_row"], 3);
+    let denied = events(&w, &id, "denied");
+    assert_eq!(denied.len(), 3);
+    for event in &denied {
+        assert_eq!(event.body["decided_by"], "hard_rule");
+        assert_eq!(event.body["rule"], "N7");
+    }
+    assert!(
+        events(&w, &id, "allowed").is_empty(),
+        "a refused protected write was accepted"
+    );
+    assert!(unchanged(), "a refused write reached the checkout");
 }

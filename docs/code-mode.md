@@ -543,7 +543,7 @@ card draws from the engine's own reply, and nothing shows an error. The dev mock
   "Runs are kept for 7 days") from `GET /api/threads/{id}/code-runs` (`CodeRunList`) and opens a run as the same
   block the thread draws. It sits under the Tools tab, not in a tab of its own, because where it opens is not settled. The service
   has the Person cancel route; this list draws no Stop yet. An unknown status is shown as Unknown and cannot be opened.
-- **Not built.** The Tools tab for a Crew worker ("allowed for this worker") has no data behind it; the three tools are marked Planned in
+- **Not built.** The Tools tab for a Crew worker ("allowed for this worker") has no data behind it. The three tools are listed plainly in
   the Orbyn group when an engine reports them.
 - **The switch write.** `PUT /api/engines/{id}/code-mode` changes what an engine may call, so it is a Person-class write
   (`web/src/api/personKey.ts`, already listed with the route). One click is one write.
