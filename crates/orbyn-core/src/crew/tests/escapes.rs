@@ -12,6 +12,16 @@ fn page() -> Page {
     Page::new(Some(200), None).unwrap()
 }
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list: a read that returns
+/// none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
 #[tokio::test]
 async fn a_revert_is_one_possible_escape_counted_apart_and_idempotent() {
     let mut rig = rig().await;
@@ -38,7 +48,11 @@ async fn a_revert_is_one_possible_escape_counted_apart_and_idempotent() {
         (log.possible, log.confirmed, log.dismissed, log.total),
         (1, 0, 0, 1)
     );
-    let engine = &log.engines[0];
+    let engine = log
+        .engines
+        .iter()
+        .find(|engine| engine.engine == "alpha")
+        .expect("the alpha engine's counts");
     assert_eq!(
         (
             engine.engine.as_str(),
@@ -48,7 +62,11 @@ async fn a_revert_is_one_possible_escape_counted_apart_and_idempotent() {
         ),
         ("alpha", 2, 1, 0)
     );
-    let row = &log.rows[0];
+    let row = log
+        .rows
+        .iter()
+        .find(|row| row.merge_task_id == a)
+        .expect("the reverted merge's possible escape");
     assert_eq!(
         (
             row.merge_task_id.as_str(),
@@ -66,9 +84,9 @@ async fn a_revert_is_one_possible_escape_counted_apart_and_idempotent() {
     assert!(row.line.contains("has not confirmed"), "{}", row.line);
 
     let detail = core.crew_escape_detail(&row.id).unwrap();
-    assert_eq!(detail.events.len(), 1);
-    assert_eq!(detail.events[0].kind, wire::EscapeEventKind::Detected);
-    assert!(detail.events[0].cause.starts_with("revert:"));
+    let event = one(&detail.events, "escape event");
+    assert_eq!(event.kind, wire::EscapeEventKind::Detected);
+    assert!(event.cause.starts_with("revert:"));
 
     // A merge nobody reverted is not an escape, and no read wrote anything.
     assert!(core.store.crew_escape_of_merge(&b).unwrap().is_none());
@@ -93,15 +111,14 @@ async fn a_revert_is_one_possible_escape_counted_apart_and_idempotent() {
 #[tokio::test]
 async fn the_log_is_display_only_a_possible_escape_changes_no_area_mode() {
     let mut rig = rig().await;
-    let tasks = [
-        rig.merge_recorded(&["src/a"], NOW - 5 * DAY).await,
-        rig.merge_recorded(&["src/a"], NOW - 4 * DAY).await,
-    ];
+    let reverted = rig.merge_recorded(&["src/a"], NOW - 5 * DAY).await;
+    // A second merge stays a merge: only the revert logs an escape.
+    rig.merge_recorded(&["src/a"], NOW - 4 * DAY).await;
     let before = rig.mode("src/a");
     rig.w
         .core
         .store
-        .set_merge_reverted(&tasks[0], "feed01")
+        .set_merge_reverted(&reverted, "feed01")
         .unwrap();
     assert_eq!(
         rig.w
@@ -163,22 +180,26 @@ fn decide(project: &str, state: wire::EscapeState) -> wire::EscapeDecide {
 #[tokio::test]
 async fn nothing_automatic_confirms_and_a_persons_confirm_moves_only_the_escape_counts() {
     let mut rig = rig().await;
-    let tasks = [
-        rig.merge_recorded(&["src/a"], NOW - 5 * DAY).await,
-        rig.merge_recorded(&["src/a"], NOW - 4 * DAY).await,
-    ];
+    let reverted = rig.merge_recorded(&["src/a"], NOW - 5 * DAY).await;
+    // A second merge no automatic path touches: only the revert logs an escape.
+    rig.merge_recorded(&["src/a"], NOW - 4 * DAY).await;
     // A revert, a second revert write, a watch that reads broken: every automatic path writes `possible` and no more.
-    rig.revert(&tasks[0], NOW);
-    rig.revert(&tasks[0], NOW + 5);
+    rig.revert(&reverted, NOW);
+    rig.revert(&reverted, NOW + 5);
     rig.w
         .core
         .store
-        .set_merge_reverted(&tasks[0], "feed99")
+        .set_merge_reverted(&reverted, "feed99")
         .unwrap();
     let core = &rig.w.core;
     let log = core.crew_escape_log(&rig.project, None, page()).unwrap();
     assert_eq!((log.possible, log.confirmed, log.dismissed), (1, 0, 0));
-    let id = log.rows[0].id.clone();
+    let escape = log
+        .rows
+        .iter()
+        .find(|row| row.merge_task_id == reverted)
+        .expect("the reverted merge's possible escape");
+    let id = escape.id.clone();
     let mode = rig.mode("src/a");
 
     let row = core
@@ -194,7 +215,12 @@ async fn nothing_automatic_confirms_and_a_persons_confirm_moves_only_the_escape_
     assert!(row.line.contains("Confirmed by a person"), "{}", row.line);
     let log = core.crew_escape_log(&rig.project, None, page()).unwrap();
     assert_eq!((log.possible, log.confirmed, log.dismissed), (0, 1, 0));
-    assert_eq!((log.engines[0].possible, log.engines[0].confirmed), (0, 1));
+    let engine = log
+        .engines
+        .iter()
+        .find(|engine| engine.engine == "alpha")
+        .expect("the alpha engine's counts");
+    assert_eq!((engine.possible, engine.confirmed), (0, 1));
     // The detail trail names the person's act, oldest first.
     let detail = core.crew_escape_detail(&id).unwrap();
     let kinds: Vec<_> = detail.events.iter().map(|e| e.kind).collect();
@@ -205,13 +231,18 @@ async fn nothing_automatic_confirms_and_a_persons_confirm_moves_only_the_escape_
             wire::EscapeEventKind::Confirmed
         ]
     );
-    assert_eq!(detail.events[1].decided_by, wire::EscapeActor::Person);
+    let confirmed = detail
+        .events
+        .iter()
+        .find(|event| event.kind == wire::EscapeEventKind::Confirmed)
+        .expect("the person's confirm event");
+    assert_eq!(confirmed.decided_by, wire::EscapeActor::Person);
     // Display only: no area mode moved, and a later revert of the same merge keeps it confirmed.
     assert_eq!(rig.mode("src/a"), mode, "a confirm feeds no breaker");
     rig.w
         .core
         .store
-        .set_merge_reverted(&tasks[0], "feed98")
+        .set_merge_reverted(&reverted, "feed98")
         .unwrap();
     let again = core
         .crew_escape_confirm(&id, &decide(&rig.project, wire::EscapeState::Possible))
