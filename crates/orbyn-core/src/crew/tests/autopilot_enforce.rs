@@ -162,7 +162,7 @@ async fn a_lowered_area_makes_a_high_risk_diff_wait_while_the_others_still_merge
             .unwrap();
     assert_eq!(review.items.len(), 1);
     assert_eq!(
-        review_item(&review.items, &high).area_modes.len(),
+        review_item(&review.items, &medium).area_modes.len(),
         1,
         "a lowered area is marked"
     );
