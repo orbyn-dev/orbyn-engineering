@@ -59,6 +59,21 @@ it("draws the chooser with the primary selected, switches on a pick and checks t
   expect(screen.getByRole("status")).toHaveTextContent("planner");
 });
 
+it("shows nothing of the old thread's repositories while the next thread's read is on its way", async () => {
+  const mock = createReposMock({ threads: { a: two } });
+  const waiting: ((repos: ThreadRepo[] | null) => void)[] = [];
+  mock.threadRepos = (threadId) => (threadId === "a" ? Promise.resolve(two) : new Promise((resolve) => waiting.push(resolve)));
+  setReposApi(mock);
+  const { result, rerender } = renderHook(({ id }: { id: string }) => useRepoChoice(id), { initialProps: { id: "a" } });
+  await waitFor(() => expect(result.current.repos).toHaveLength(2));
+
+  rerender({ id: "b" });
+  // Nothing of the old thread's list is drawn for the new one, and no chooser: the new thread's answer is still on its way.
+  expect(result.current).toMatchObject({ multi: false, selected: null, repoId: undefined, repos: [] });
+  await act(async () => { waiting[0]!([repo("r2", "other")]); });
+  expect(result.current).toMatchObject({ multi: false, selected: null, repos: [repo("r2", "other")] });
+});
+
 it("draws nothing when the repositories answer 404", async () => {
   setReposApi(createReposMock({ threads: {} }));
   render(<Harness />);

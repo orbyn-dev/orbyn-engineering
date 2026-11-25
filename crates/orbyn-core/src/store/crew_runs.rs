@@ -462,14 +462,30 @@ impl Store {
 
     /// Tasks a worker is on or that are being verified, for a restart to pick up.
     pub fn crew_tasks_in_flight(&self) -> Result<Vec<(CrewTask, CrewRun)>> {
+        self.crew_tasks_in(&["running", "verifying", "changed_approach"])
+    }
+
+    /// Tasks waiting for a person, with their runs, for a restart to credit their off time: a held task has no timer
+    /// across a restart, and a later resume must not count the window the app was off as spent.
+    pub fn crew_tasks_held(&self) -> Result<Vec<(CrewTask, CrewRun)>> {
+        self.crew_tasks_in(&["needs_person"])
+    }
+
+    /// The tasks in one of `states` that have a run, oldest first.
+    fn crew_tasks_in(&self, states: &[&str]) -> Result<Vec<(CrewTask, CrewRun)>> {
+        let marks = vec!["?"; states.len()].join(",");
+        let args: Vec<rusqlite::types::Value> = states
+            .iter()
+            .map(|state| rusqlite::types::Value::from((*state).to_owned()))
+            .collect();
         let ids: Vec<String> = {
             let conn = self.reader();
-            let mut statement = conn.prepare(
+            let mut statement = conn.prepare(&format!(
                 "SELECT t.id FROM crew_tasks t JOIN crew_runs r ON r.task_id = t.id
-                 WHERE t.state IN ('running', 'verifying', 'changed_approach')",
-            )?;
+                 WHERE t.state IN ({marks})"
+            ))?;
             statement
-                .query_map([], |row| row.get(0))?
+                .query_map(rusqlite::params_from_iter(args.iter()), |row| row.get(0))?
                 .collect::<rusqlite::Result<_>>()?
         };
         let mut found = Vec::new();
