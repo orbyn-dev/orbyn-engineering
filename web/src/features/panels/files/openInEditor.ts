@@ -3,12 +3,12 @@ import { toFailure } from "../../../lib/useAsync";
 import { primaryEditor } from "../../../product/composer/editorPreferences";
 import { useUi } from "../../../product/state/ui";
 
-/** Opens a path of the thread's checkout in the person's editor, through the service's own route. Says so when it can't. */
-export async function openInEditor(threadId: string, path: string, line?: number | null) {
+/** Opens a path of the thread's checkout, or of the named repository it holds, in the person's editor, through the service's own route. Says so when it can't. */
+export async function openInEditor(threadId: string, path: string, line?: number | null, repoId?: string) {
   try {
     const editor = primaryEditor(await api.editors(), useUi.getState().preferredEditor);
     if (!editor) return;
-    await api.openInEditor(threadId, { path, editor: editor.id, ...(line ? { line } : {}) });
+    await api.openInEditor(threadId, { path, editor: editor.id, ...(line ? { line } : {}), ...(repoId === undefined ? {} : { repo_id: repoId }) });
   } catch (failure) {
     useUi.getState().pushToast(`Couldn't open it. ${toFailure(failure).message}`);
   }

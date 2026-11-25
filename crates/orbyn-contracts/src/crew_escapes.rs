@@ -123,6 +123,30 @@ pub struct EscapeLog {
 }
 
 wire! {
+/// Per-engine escape counts for one area of one project (`GET /api/crew/escapes/counts`), in the log's own report window: the merges
+/// that touched the area and the escapes logged against them. Display only: the Router reads no escape count in v1, so nothing here
+/// decides an engine. `possible`, `confirmed` and `dismissed` are never added together and there is no rate.
+pub struct EscapeCounts {
+    pub project: String,
+    /// The area asked for, redacted. A name with `/` in it, as a project's areas have.
+    pub area: String,
+    #[ts(type = "number")]
+    pub as_of: i64,
+    /// The window the counts cover, in days (the stored `report_days`).
+    pub window_days: u32,
+    /// Merges an engine needs in the area before a rate would be honest.
+    pub min_merges: u32,
+    /// Merges in the window that touched the area, whatever their engine.
+    pub merges: u32,
+    /// One row per engine with a merge in the area, busiest first. At most 16 rows.
+    pub engines: Vec<EscapeEngineCounts>,
+    /// True when more engines had a merge in the area than `engines` lists: the rest are left out and said to be, never dropped
+    /// silently.
+    pub truncated: bool,
+}
+}
+
+wire! {
 /// The possible escapes of one project (`GET /api/crew/escapes/possible`), newest found first: what the scan found and a person has
 /// not decided. Each row says why in its `line` and `reason`; none is confirmed, and none counts as an escape until a person confirms it.
 /// A dismissed escape is not listed and is not offered again.
