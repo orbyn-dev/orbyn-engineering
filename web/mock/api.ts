@@ -1346,6 +1346,11 @@ export function createMockApi(options: MockOptions = {}) {
           if (seg[3] === "commands") return { status: 200, body: fixtures.slashCommands };
           // The multi-repository reads of docs/multi-repo.md. A subpath must never fall back to the thread object: the
           // client reads a non-list as "nothing", so the Repos chip would not draw (and once crashed on `repos.map`).
+          // The sample's fixture id alone is not enough: a deleted or reset thread is gone, so both reads 404 as any
+          // missing thread's do.
+          if ((seg[3] === "repos" || seg[3] === "task-folder") && !threads.some((t) => t.id === seg[2])) {
+            return err(404, "not_found", "Thread not found.");
+          }
           if (seg[3] === "repos") {
             const repos = multiRepoRepos(seg[2] ?? "");
             return repos === null ? err(404, "not_found", "This thread is not a multi-repository thread.") : { status: 200, body: repos };

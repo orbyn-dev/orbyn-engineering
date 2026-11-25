@@ -47,6 +47,21 @@ it("answers the multi-repository thread's repositories and task folder, and 404 
   expect(api.handle("GET", "/api/threads/missing/repos").status).toBe(404);
 });
 
+it("stops answering the sample thread's repositories once the thread is deleted or reset", () => {
+  const api = createMockApi();
+  expect(api.handle("DELETE", `/api/threads/${multiRepoThreadId}`).status).toBe(204);
+  // The fixture id alone would keep answering: both reads ask the live thread list, as any missing thread's do.
+  for (const route of ["repos", "task-folder"]) {
+    const gone = api.handle("GET", `/api/threads/${multiRepoThreadId}/${route}`);
+    expect(gone).toMatchObject({ status: 404, body: { code: "not_found" } });
+  }
+
+  // A reset leaves no threads at all, though the fixture id still names the sample.
+  api.reset("empty");
+  expect(api.handle("GET", `/api/threads/${multiRepoThreadId}/repos`).status).toBe(404);
+  expect(api.handle("GET", `/api/threads/${multiRepoThreadId}/task-folder`).status).toBe(404);
+});
+
 it("draws the preview mock's Repos chip on the dev mock's multi-repository thread", async () => {
   expect(fixtures.threads().some((thread) => thread.id === multiRepoThreadId)).toBe(true);
   const preview = createReposMock();

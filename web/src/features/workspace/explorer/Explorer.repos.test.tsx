@@ -68,8 +68,7 @@ function serveTrees() {
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const url = String(input);
     if (/^\/api\/threads\/[^/?]+\/files\?/.test(url)) {
-      // Only this thread's reads are counted: the dev mock's own multi-repository thread (t-multi-repo) is read too.
-      if (url.startsWith(`/api/threads/${THREAD}/`)) reads.push(url);
+      reads.push(url);
       const query = new URL(url, "http://x").searchParams;
       return new Response(JSON.stringify(levelOf(query.get("path") ?? "", query.get("repo_id"))), { status: 200 });
     }
@@ -77,6 +76,9 @@ function serveTrees() {
   }));
   return reads;
 }
+
+/** The tree reads of the thread under test: the dev mock's own multi-repository thread is read too. */
+const threadReads = (reads: string[]) => reads.filter((url) => url.startsWith(`/api/threads/${THREAD}/`));
 
 // Whole-App renders that wait for the tree reads: at the file's top, so the first test gets the longer timeout too.
 vi.setConfig({ testTimeout: 30_000 });
@@ -111,12 +113,12 @@ it("offers the repository chooser, opens the primary repository's tree, and send
   expect(within(checkout).getByRole("img", { name: "This thread’s repository" })).toBeInTheDocument();
   // Its root is read through the thread's file tree route, with no repo_id: the primary repository.
   expect(await findRow(/^main\.ts/)).toBeInTheDocument();
-  await waitFor(() => expect(reads).toHaveLength(1));
-  const asked = new URL(reads[0]!, "http://x");
+  await waitFor(() => expect(threadReads(reads)).toHaveLength(1));
+  const asked = new URL(threadReads(reads)[0]!, "http://x");
   expect(asked.pathname).toBe(`/api/threads/${THREAD}/files`);
   expect(asked.searchParams.get("path")).toBe("");
   expect(asked.searchParams.has("repo_id")).toBe(false);
-  expect(reads.every((url) => !url.includes("repo_id="))).toBe(true);
+  expect(threadReads(reads).every((url) => !url.includes("repo_id="))).toBe(true);
 });
 
 it("switching loads the other repository's tree with repo_id, and each file opens as its repository's tab", async () => {
@@ -133,15 +135,15 @@ it("switching loads the other repository's tree with repo_id, and each file open
   // The other repository's tree replaces the checkout row's: its own files, none of the primary's.
   expect(await findRow(/^planner\.ts/)).toBeInTheDocument();
   expect(maybeRow(/^main\.ts/)).toBeNull();
-  expect(reads.some((url) => url.includes(`repo_id=${OTHER}`) && url.includes("path="))).toBe(true);
-  const other = new URL(reads.find((url) => url.includes(`repo_id=${OTHER}`))!, "http://x");
+  expect(threadReads(reads).some((url) => url.includes(`repo_id=${OTHER}`) && url.includes("path="))).toBe(true);
+  const other = new URL(threadReads(reads).find((url) => url.includes(`repo_id=${OTHER}`))!, "http://x");
   expect(other.pathname).toBe(`/api/threads/${THREAD}/files`);
   expect(other.searchParams.get("repo_id")).toBe(OTHER);
   expect(other.searchParams.get("path")).toBe("");
 
   // A folder of that repository is one level deeper, with the same repo_id ...
   await user.click(await findRow(/^plans/));
-  await waitFor(() => expect(reads.some((url) => url.includes("path=plans") && url.includes(`repo_id=${OTHER}`))).toBe(true));
+  await waitFor(() => expect(threadReads(reads).some((url) => url.includes("path=plans") && url.includes(`repo_id=${OTHER}`))).toBe(true));
   // ... and its file opens as the thread's tab of that repository.
   await user.click(await findRow(/^plan\.md/));
   expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "plans/plan.md", repoId: OTHER }));
@@ -203,17 +205,17 @@ it("reads the thread's repository tree again on re-entry", async () => {
   const reads = serveTrees();
   render(<App />);
   await findRow(/^main\.ts/);
-  await waitFor(() => expect(reads).toHaveLength(1));
+  await waitFor(() => expect(threadReads(reads)).toHaveLength(1));
 
   await user.click(await findRow("Tool call states"));
   await waitFor(() => expect(window.location.hash).toBe("#/threads/t-tools"));
 
-  const before = reads.length;
+  const before = threadReads(reads).length;
   await user.click(await findRow("Explain how the event log resumes"));
   await waitFor(() => expect(window.location.hash).toBe(`#/threads/${THREAD}`));
 
   expect(await findRow(/^main\.ts/)).toBeInTheDocument();
-  await waitFor(() => expect(reads.length).toBeGreaterThan(before));
+  await waitFor(() => expect(threadReads(reads).length).toBeGreaterThan(before));
 });
 
 it("reads the thread's repository tree again when the project's files change", async () => {
@@ -222,10 +224,10 @@ it("reads the thread's repository tree again when the project's files change", a
   const reads = serveTrees();
   render(<App />);
   await findRow(/^main\.ts/);
-  await waitFor(() => expect(reads).toHaveLength(1));
+  await waitFor(() => expect(threadReads(reads)).toHaveLength(1));
 
   act(() => dataChanged("explorer:p-app"));
-  await waitFor(() => expect(reads).toHaveLength(2));
+  await waitFor(() => expect(threadReads(reads)).toHaveLength(2));
   stop();
 });
 
