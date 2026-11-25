@@ -1472,32 +1472,50 @@ async fn a_turn_diff_reads_the_checkpoint_in_the_repository_its_scope_names() {
         &[(&project, "main", &main), (&other_id, "other", &other)],
     );
     let index = dir.path().join("checkpoint-index");
-    // A checkpoint of the primary repository, read with no repository named.
-    let start = git::snapshot(&folder.join("main"), None, &index)
+    // A checkpoint of the primary repository, read with no repository named. Capture keeps the repository's own
+    // ends, and the run's row keeps the first repository's, which is this one.
+    let primary_start = git::snapshot(&folder.join("main"), None, &index)
         .await
         .unwrap();
     std::fs::write(folder.join("main/primary.txt"), "primary\n").unwrap();
-    let end = git::snapshot(&folder.join("main"), None, &index)
+    let primary_end = git::snapshot(&folder.join("main"), None, &index)
         .await
         .unwrap();
     core.store
-        .add_checkpoint(&thread, "run-primary", &start)
+        .add_repository_checkpoint(&thread, "run-primary", &project, &primary_start)
         .unwrap();
-    core.store.finish_checkpoint("run-primary", &end).unwrap();
+    core.store
+        .finish_repository_checkpoint("run-primary", &project, &primary_end)
+        .unwrap();
+    core.store
+        .add_checkpoint(&thread, "run-primary", &primary_start)
+        .unwrap();
+    core.store
+        .finish_checkpoint("run-primary", &primary_end)
+        .unwrap();
     let files = core.turn_diff(&thread, "run-primary").await.unwrap();
     assert_eq!(diff_paths(&files), ["primary.txt"]);
-    // A checkpoint of the second repository, read through its scope.
-    let start = git::snapshot(&folder.join("other"), None, &index)
+    // A checkpoint of the second repository, read through its scope. The run's own row still holds the first
+    // repository's ends, so a read in the second repository has to take its own row.
+    let second_start = git::snapshot(&folder.join("other"), None, &index)
         .await
         .unwrap();
     std::fs::write(folder.join("other/second.txt"), "second\n").unwrap();
-    let end = git::snapshot(&folder.join("other"), None, &index)
+    let second_end = git::snapshot(&folder.join("other"), None, &index)
         .await
         .unwrap();
     core.store
-        .add_checkpoint(&thread, "run-second", &start)
+        .add_repository_checkpoint(&thread, "run-second", &other_id, &second_start)
         .unwrap();
-    core.store.finish_checkpoint("run-second", &end).unwrap();
+    core.store
+        .finish_repository_checkpoint("run-second", &other_id, &second_end)
+        .unwrap();
+    core.store
+        .add_checkpoint(&thread, "run-second", &primary_start)
+        .unwrap();
+    core.store
+        .finish_checkpoint("run-second", &primary_end)
+        .unwrap();
     let files = crate::in_repo(Some(other_id), core.turn_diff(&thread, "run-second"))
         .await
         .unwrap();

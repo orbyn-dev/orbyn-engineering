@@ -22,6 +22,22 @@ fn checkpoint_row(row: &Row<'_>) -> rusqlite::Result<Checkpoint> {
     })
 }
 
+/// The ends a run was snapshotted to in one repository of a multi-repository thread. That repository's Git objects
+/// hold both commits, so a read has to run there (docs/multi-repo.md).
+pub(crate) struct RepositoryCheckpoint {
+    pub start: String,
+    pub end: Option<String>,
+    pub created_at: String,
+}
+
+fn repository_checkpoint_row(row: &Row<'_>) -> rusqlite::Result<RepositoryCheckpoint> {
+    Ok(RepositoryCheckpoint {
+        start: row.get("start_sha")?,
+        end: row.get("end_sha")?,
+        created_at: row.get("created_at")?,
+    })
+}
+
 impl Store {
     pub fn add_checkpoint(&self, thread_id: &str, run_id: &str, sha: &str) -> Result<()> {
         self.commit(|tx, _| {
@@ -34,11 +50,46 @@ impl Store {
         })
     }
 
+    /// Records one repository's start checkpoint of a run in a multi-repository thread. A repository that fails
+    /// to snapshot costs that repository (and the run-level row, when it is the first one) its checkpoint, never
+    /// the run.
+    pub fn add_repository_checkpoint(
+        &self,
+        thread_id: &str,
+        run_id: &str,
+        repo_id: &str,
+        sha: &str,
+    ) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "INSERT INTO checkpoint_repositories (thread_id, run_id, repo_id, start_sha, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![thread_id, run_id, repo_id, sha, now()],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn finish_checkpoint(&self, run_id: &str, sha: &str) -> Result<()> {
         self.commit(|tx, _| {
             tx.execute(
                 "UPDATE checkpoints SET end_sha = ?2 WHERE run_id = ?1",
                 params![run_id, sha],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn finish_repository_checkpoint(
+        &self,
+        run_id: &str,
+        repo_id: &str,
+        sha: &str,
+    ) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "UPDATE checkpoint_repositories SET end_sha = ?3 WHERE run_id = ?1 AND repo_id = ?2",
+                params![run_id, repo_id, sha],
             )?;
             Ok(())
         })
@@ -61,6 +112,53 @@ impl Store {
             conn.prepare("SELECT * FROM checkpoints WHERE thread_id = ?1 ORDER BY rowid")?;
         let rows = statement.query_map([thread_id], checkpoint_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// One repository's ends for a run of a multi-repository thread.
+    pub(crate) fn repository_checkpoint(
+        &self,
+        run_id: &str,
+        repo_id: &str,
+    ) -> Result<Option<RepositoryCheckpoint>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT * FROM checkpoint_repositories WHERE run_id = ?1 AND repo_id = ?2",
+                [run_id, repo_id],
+                repository_checkpoint_row,
+            )
+            .optional()?)
+    }
+
+    /// The earliest checkpoint a thread took in one repository: where the thread's whole diff starts.
+    pub(crate) fn first_repository_checkpoint(
+        &self,
+        thread_id: &str,
+        repo_id: &str,
+    ) -> Result<Option<RepositoryCheckpoint>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT * FROM checkpoint_repositories WHERE thread_id = ?1 AND repo_id = ?2
+                 ORDER BY rowid LIMIT 1",
+                [thread_id, repo_id],
+                repository_checkpoint_row,
+            )
+            .optional()?)
+    }
+
+    /// Whether a run kept any checkpoint at all, in the engine's folder or in a repository's worktree.
+    pub(crate) fn run_has_checkpoint(&self, run_id: &str) -> Result<bool> {
+        let row: Option<i64> = self
+            .reader()
+            .query_row(
+                "SELECT 1 FROM checkpoints WHERE run_id = ?1
+                 UNION ALL SELECT 1 FROM checkpoint_repositories WHERE run_id = ?1 LIMIT 1",
+                [run_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(row.is_some())
     }
 
     /// Other live threads working in the same folder as `thread`.

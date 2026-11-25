@@ -6,9 +6,10 @@
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::source_control::git::{git_hardened, text};
+use crate::store::Store;
 use orbyn_contracts::{Thread, ThreadRepo};
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 tokio::task_local! {
     static REPO_SCOPE: Option<String>;
@@ -158,4 +159,21 @@ async fn changes(worktree: &Path) -> (u32, u32, Option<Vec<String>>) {
         }
     }
     (added, deleted, Some(files))
+}
+
+/// The worktrees of a thread's trusted repositories, each with its repository id: where a Git read, a checkpoint
+/// and a restore act, because a task folder is not a repository. Empty for an ordinary thread, whose one checkout
+/// is the engine's own folder (docs/multi-repo.md). An untrusted repository is left out: nothing runs in it.
+pub(crate) fn trusted_worktrees(store: &Store, thread: &Thread) -> Result<Vec<(String, PathBuf)>> {
+    let mut worktrees = Vec::new();
+    for record in store.thread_repos(&thread.id)? {
+        let trusted = record.repo_id == thread.project_id
+            || store
+                .repo(&thread.project_id, &record.repo_id)?
+                .is_none_or(|row| row.trusted);
+        if trusted {
+            worktrees.push((record.repo_id, PathBuf::from(record.worktree_path)));
+        }
+    }
+    Ok(worktrees)
 }

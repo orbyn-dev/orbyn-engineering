@@ -86,7 +86,8 @@ impl RunManager {
             }
         };
         if !retry {
-            self.checkpoint_start(scope, &checkout, run_dir).await;
+            self.checkpoint_start(thread, scope, &checkout, run_dir)
+                .await;
         }
         if let Some(token) = token.take() {
             self.mcp.revoke(&token);

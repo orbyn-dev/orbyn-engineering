@@ -293,8 +293,9 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   totals sum `GET .../diff?scope=turn&run=` over the thread's trusted repositories, one read per repository with its own `repo_id`.
   An untrusted repository is not read and a repository whose read fails is left out, and the row says "N repo not counted" instead of
   counting them as zero changes; if no repository could be read the row has no figures. `ThreadRepo.added`, `deleted` and `files` are
-  against `HEAD`, not per turn, so they are not used. An ordinary thread reads once, as before. Whether the service keeps a turn's
-  checkpoint in a repository other than the primary is not known; a refusal there shows as "not counted".
+  against `HEAD`, not per turn, so they are not used. An ordinary thread reads once, as before. A run keeps a
+  checkpoint in every trusted repository's worktree, so each repository's turn read answers; an untrusted repository
+  keeps none and is not read.
 - **The 200-file cap.** A repository's `ThreadRepo.files` is cut at 200 by the service. A repository group whose list holds 200
   says "200 shown" quietly on its header.
 - **Still primary only.** Pull request screens, Publish repository (a quiet disabled item with a title when another repository is
@@ -390,13 +391,19 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
 - **Refusals.** A `repo_id` on an ordinary thread, one that is not the thread's, or any `repo_id` with the flag off is `404 not_found`. A
   repository whose row in the project is untrusted is `409 repo_untrusted` for every call; a repository removed from the project keeps
   working in a thread that already has its worktree.
+- **Known limit: Jujutsu status is the primary project's.** `GET /api/threads/{id}/jj` takes no `repo_id`. A Jujutsu checkout Orbyn
+  reads is a `.jj` folder with no `.git` of its own, so it is not a Git repository and cannot be a repository of a
+  multi-repository thread (`409 not_git`), and the thread's other repositories are Git ones with no jj state to ask for:
+  the primary project is the whole answer, and a `repo_id` here would always be `404`.
 - **`GET /api/threads/{id}/repos`** answers `ThreadRepo[]` (`repo_id`, `name`, `branch`, `added`, `deleted`, `trusted`, `files` at most
   200 repo-relative paths): lines and files changed against `HEAD`, read with the hardened Git. `404` for an ordinary thread.
 - **Pull requests per repository.** See "As built: pull requests and removal" below.
 
 ## As built: repository threads and the task folder
 
-Behind the same flag; no new migration (`thread_repos` is from the slice above). Built: `POST /api/projects/{id}/repo-threads`,
+Behind the same flag; migration 90 adds `checkpoint_repositories`, one row per repository a run was snapshotted
+in, so a turn or thread diff can read in the repository it names (the run's own `checkpoints` row keeps the
+first repository's ends). Built: `POST /api/projects/{id}/repo-threads`,
 `GET /api/threads/{id}/task-folder`, `POST /api/threads/{id}/repos`, and `repo_id` on the file tree and metadata reads and on
 navigation coordinates.
 
@@ -483,7 +490,9 @@ path outside its worktree, and is `404` for an unknown or ordinary-thread `repo_
 one branch name in every repository and a taken name creates nothing; a diff, commits, a commit or branch
 comparison and a turn's checkpoint read the repository their `repo_id` names, the primary (the first
 stored repository) when it is absent, and run Git in that repository's worktree rather than the task
-folder; checkpoint capture and a file restore still use the engine's task folder; navigation coordinates
+folder; a run keeps a checkpoint in every trusted repository's worktree, so its turn and thread diffs read there
+instead of answering `404` from the task folder, and a restore moves every trusted worktree while an ordinary
+thread's restore stays in the engine's own folder; navigation coordinates
 resolve in the repository their `repo_id` names too, the primary when absent, so a repository's file is found in
 its own worktree and the task folder is never the checkout, and a thread that moved answers `409 stale_owner`;
 an unknown repository is `404` and an untrusted one is refused.

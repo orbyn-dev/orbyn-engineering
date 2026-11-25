@@ -3,7 +3,7 @@
 //! follow a fork or a switch, so each leaves a budgeted handoff for the next run; a
 //! rewind keeps the session when the engine can roll it back natively.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use orbyn_contracts::{
@@ -54,6 +54,35 @@ fn restore_failed_before_changes() -> CoreError {
 }
 
 const MAX_CHANGED_PATHS: usize = 200;
+
+/// One folder a restore makes match: the ends it has to match, and the safety snapshot of what stands there now, so
+/// every change it overwrites can be brought back.
+struct Restoring {
+    repo_id: Option<String>,
+    worktree: PathBuf,
+    target: String,
+    safety: String,
+}
+
+/// What a restore's audit row says it did. A single folder keeps the shape it always had; a multi-repository thread
+/// names each repository, because one row now moves several worktrees.
+fn restore_detail(restores: &[Restoring]) -> Value {
+    if let [one] = restores
+        && one.repo_id.is_none()
+    {
+        return json!({ "target": one.target, "safety": one.safety });
+    }
+    json!({
+        "repositories": restores
+            .iter()
+            .map(|one| json!({
+                "repo_id": one.repo_id,
+                "target": one.target,
+                "safety": one.safety,
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
 
 /// Paths a raw engine item says were written: Codex's `fileChange` and Claude's own
 /// file tools.
@@ -117,21 +146,64 @@ impl Core {
         Ok(dir.join(format!("index-{}", new_id())))
     }
 
+    /// The folders a restore moves, each with its repository: every trusted repository's worktree of a
+    /// multi-repository thread, or the engine's own folder for an ordinary one. A task folder is never one, so a
+    /// restore used to fail there; an ordinary thread's restore stays in its own folder as it always did.
+    fn restore_roots(&self, thread: &Thread) -> Result<Vec<(Option<String>, PathBuf)>> {
+        let worktrees = crate::repos::trusted_worktrees(&self.store, thread)?;
+        Ok(if worktrees.is_empty() {
+            vec![(None, PathBuf::from(&thread.cwd))]
+        } else {
+            worktrees
+                .into_iter()
+                .map(|(repo_id, worktree)| (Some(repo_id), worktree))
+                .collect()
+        })
+    }
+
+    /// The repository a checkpoint read of this thread is in: the one its stored `cwd` names, because a read
+    /// resolves the thread to a worktree and a task folder is not a checkout. `None` for an ordinary thread, whose
+    /// checkpoint is its own folder (docs/multi-repo.md).
+    fn checkpoint_repo(&self, thread: &Thread) -> Result<Option<String>> {
+        let repos = self.store.thread_repos(&thread.id)?;
+        let cwd = Path::new(&thread.cwd);
+        Ok(repos
+            .iter()
+            .find(|repo| Path::new(&repo.worktree_path) == cwd)
+            .or_else(|| repos.first())
+            .map(|repo| repo.repo_id.clone()))
+    }
+
     fn thread_checkpoint(
         &self,
         thread_id: &str,
         run_id: &str,
+        repo: Option<&str>,
     ) -> Result<orbyn_contracts::Checkpoint> {
-        self.store
-            .checkpoints(thread_id)?
-            .into_iter()
-            .find(|checkpoint| checkpoint.run_id == run_id)
-            .ok_or_else(|| CoreError::NotFound("checkpoint".into()))
+        let found = match repo {
+            // A repository's ends are commits in its own Git objects, so its row is the one to read.
+            Some(repo_id) => self
+                .store
+                .repository_checkpoint(run_id, repo_id)?
+                .map(|ends| orbyn_contracts::Checkpoint {
+                    run_id: run_id.to_owned(),
+                    start: ends.start,
+                    end: ends.end,
+                    created_at: ends.created_at,
+                }),
+            None => self
+                .store
+                .checkpoints(thread_id)?
+                .into_iter()
+                .find(|checkpoint| checkpoint.run_id == run_id),
+        };
+        found.ok_or_else(|| CoreError::NotFound("checkpoint".into()))
     }
 
     pub async fn turn_diff(&self, thread_id: &str, run_id: &str) -> Result<Vec<FileDiff>> {
         let thread = self.trusted_thread(thread_id)?;
-        let checkpoint = self.thread_checkpoint(thread_id, run_id)?;
+        let repo = self.checkpoint_repo(&thread)?;
+        let checkpoint = self.thread_checkpoint(thread_id, run_id, repo.as_deref())?;
         let end = checkpoint
             .end
             .ok_or_else(|| CoreError::Invalid("This turn is still running.".into()))?;
@@ -141,12 +213,25 @@ impl Core {
     /// Everything the thread has changed, up to the files as they are now.
     pub async fn full_thread_diff(&self, thread_id: &str) -> Result<Vec<FileDiff>> {
         let thread = self.trusted_thread(thread_id)?;
-        let Some(first) = self.store.checkpoints(thread_id)?.into_iter().next() else {
+        let repo = self.checkpoint_repo(&thread)?;
+        let first = match repo.as_deref() {
+            Some(repo_id) => self
+                .store
+                .first_repository_checkpoint(thread_id, repo_id)?
+                .map(|ends| ends.start),
+            None => self
+                .store
+                .checkpoints(thread_id)?
+                .into_iter()
+                .next()
+                .map(|checkpoint| checkpoint.start),
+        };
+        let Some(start) = first else {
             return Ok(Vec::new());
         };
         let cwd = Path::new(&thread.cwd);
         let now = git::snapshot(cwd, None, &self.scratch_index()?).await?;
-        git::diff_between(cwd, &first.start, &now).await
+        git::diff_between(cwd, &start, &now).await
     }
 
     pub async fn branch_diff(&self, thread_id: &str, base: &str) -> Result<Vec<FileDiff>> {
@@ -178,26 +263,35 @@ impl Core {
         if !shared.is_empty() {
             return Err(CoreError::SharedDirectory(shared.len()));
         }
-        let checkpoint = self.thread_checkpoint(thread_id, &request.run_id)?;
-        let target = match request.point {
-            RestorePoint::Start => checkpoint.start,
-            RestorePoint::End => checkpoint
-                .end
-                .ok_or_else(|| CoreError::Invalid("This turn never finished.".into()))?,
-        };
-        let cwd = Path::new(&thread.cwd);
-        let safety = checkpoint_ref(thread_id, &new_id(), "before-restore");
-        let current = git::snapshot(cwd, Some(&safety), &self.scratch_index()?).await?;
+        let mut restores = Vec::new();
+        for (repo_id, worktree) in self.restore_roots(&thread)? {
+            let checkpoint =
+                self.thread_checkpoint(thread_id, &request.run_id, repo_id.as_deref())?;
+            let target = match request.point {
+                RestorePoint::Start => checkpoint.start,
+                RestorePoint::End => checkpoint
+                    .end
+                    .ok_or_else(|| CoreError::Invalid("This turn never finished.".into()))?,
+            };
+            let safety = checkpoint_ref(thread_id, &new_id(), "before-restore");
+            let current = git::snapshot(&worktree, Some(&safety), &self.scratch_index()?).await?;
+            restores.push(Restoring {
+                repo_id,
+                worktree,
+                target,
+                safety: current,
+            });
+        }
         self.audit_thread(
             actor,
             "workspace.restore",
             thread_id,
-            json!({
-                "target": target,
-                "safety": current,
-            }),
+            restore_detail(&restores),
         )?;
-        git::restore_worktree(cwd, &current, &target).await
+        for one in &restores {
+            git::restore_worktree(&one.worktree, &one.safety, &one.target).await?;
+        }
+        Ok(())
     }
 
     fn audit_record(
@@ -269,8 +363,10 @@ impl Core {
         if !shared.is_empty() {
             return Err(CoreError::SharedDirectory(shared.len()));
         }
-        let checkpoint =
-            self.thread_checkpoint(&thread.id, run_id)
+        let mut restores = Vec::new();
+        for (repo_id, worktree) in self.restore_roots(thread)? {
+            let checkpoint = self
+                .thread_checkpoint(&thread.id, run_id, repo_id.as_deref())
                 .map_err(|error| match error {
                     CoreError::NotFound(_) => refused(
                         404,
@@ -279,35 +375,40 @@ impl Core {
                     ),
                     other => other,
                 })?;
-        let target = checkpoint.start;
-        let cwd = Path::new(&thread.cwd);
-        let safety = checkpoint_ref(&thread.id, &new_id(), "before-restore");
-        let index = self.scratch_index().map_err(|error| {
-            tracing::warn!(%error, thread = %thread.id, "rewind could not prepare a checkpoint");
-            restore_failed_before_changes()
-        })?;
-        let current = git::snapshot(cwd, Some(&safety), &index)
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, thread = %thread.id, "rewind could not snapshot the workspace");
+            let target = checkpoint.start;
+            let safety = checkpoint_ref(&thread.id, &new_id(), "before-restore");
+            let index = self.scratch_index().map_err(|error| {
+                tracing::warn!(%error, thread = %thread.id, "rewind could not prepare a checkpoint");
                 restore_failed_before_changes()
             })?;
-        git::restore_worktree(cwd, &current, &target)
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, thread = %thread.id, "rewind could not restore the workspace");
-                CoreError::Git(
-                    "Your files may have changed. The thread was not rewound.".into(),
-                )
-            })?;
+            let current = git::snapshot(&worktree, Some(&safety), &index)
+                .await
+                .map_err(|error| {
+                    tracing::warn!(%error, thread = %thread.id, "rewind could not snapshot the workspace");
+                    restore_failed_before_changes()
+                })?;
+            restores.push(Restoring {
+                repo_id,
+                worktree,
+                target,
+                safety: current,
+            });
+        }
+        for one in &restores {
+            git::restore_worktree(&one.worktree, &one.safety, &one.target)
+                .await
+                .map_err(|error| {
+                    tracing::warn!(%error, thread = %thread.id, "rewind could not restore the workspace");
+                    CoreError::Git(
+                        "Your files may have changed. The thread was not rewound.".into(),
+                    )
+                })?;
+        }
         self.audit_thread(
             actor,
             "workspace.restore",
             &thread.id,
-            json!({
-                "target": target,
-                "safety": current,
-            }),
+            restore_detail(&restores),
         )
     }
 
