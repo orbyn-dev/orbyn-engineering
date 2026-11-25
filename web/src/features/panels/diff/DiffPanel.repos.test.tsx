@@ -17,8 +17,8 @@ const FILE: FileDiff = { path: "auth/redirect.ts", status: "modified", additions
   patch: "diff --git a/auth/redirect.ts b/auth/redirect.ts\nindex 1111111..2222222 100644\n--- a/auth/redirect.ts\n+++ b/auth/redirect.ts\n@@ -14,3 +14,4 @@ after(req)\n export function after(req) {\n-  return \"/home\"\n+  const next = req.query.next\n+  return inside(next) ? next : \"/\"\n }\n" };
 const DISK = `${"// filler\n".repeat(13)}export function after(req) {\n  const next = req.query.next\n  return inside(next) ? next : "/"\n}\n`;
 const repos: ThreadRepo[] = [
-  { repo_id: "p", name: "app", branch: "fix/login", added: 1, deleted: 0, trusted: true, files: ["auth/redirect.ts"] },
-  { repo_id: "planner", name: "orbyn-planner", branch: "fix/plan", added: 2, deleted: 1, trusted: true, files: ["auth/redirect.ts"] },
+  { repo_id: "p", name: "app", branch: "fix/login", base_branch: "main", added: 1, deleted: 0, trusted: true, files: ["auth/redirect.ts"] },
+  { repo_id: "planner", name: "orbyn-planner", branch: "fix/plan", base_branch: "develop", added: 2, deleted: 1, trusted: true, files: ["auth/redirect.ts"] },
 ];
 const row = (id: string, over: Partial<RepoRow> = {}): RepoRow => ({ id, name: id === "p" ? "app" : "orbyn-planner", path: `~/Github/${id}`, is_git: true, trusted: true,
   branch: "main", branches: ["main"], has_remote: false, primary: id === "p", clone: null, ...over });
@@ -259,8 +259,45 @@ it("creates the pull request in the chosen repository, whose links and branches 
   await waitFor(() => expect(branches.mock.calls.some((call) => call[2] === "planner")).toBe(true));
   await user.click(within(dialog).getByRole("button", { name: "Create pull request" }));
   await waitFor(() => expect(action).toHaveBeenCalledWith("t", expect.objectContaining({ push: true, pull_request: expect.any(Object), repo_id: "planner" })));
-  // The branch-ahead check, which decides whether there is anything to carry, is that repository's read too.
-  expect(diff.mock.calls.some((call) => String(call[2]).startsWith("branch&base=") && call[3] === "planner")).toBe(true);
+  // The branch-ahead check, which decides whether there is anything to carry, is that repository's read too, against
+  // the base that repository's worktree was cut from.
+  expect(diff.mock.calls.some((call) => call[2] === "branch&base=develop" && call[3] === "planner")).toBe(true);
+});
+
+it("compares the branch-ahead check against each selected repository's own base", async () => {
+  // The primary's worktree was cut from trunk and the planner's from develop. A multi-repository thread has no single
+  // worktree base, so before migration 90 both were compared against "main".
+  const based: ThreadRepo[] = [{ ...repos[0]!, base_branch: "trunk" }, { ...repos[1]!, base_branch: "develop" }];
+  setReposApi(createReposMock({ threads: { t: based } }));
+  const { diff } = setup([FILE], "planner");
+  render(<DiffPanel threadId="t" />);
+  // The primary repository's own base, read without a repo_id as the primary's calls are.
+  await waitFor(() => expect(diff.mock.calls.some((call) => call[2] === "branch&base=trunk" && call.length === 3)).toBe(true));
+  // The chosen repository's own base, read with its repo_id.
+  act(() => chooseRepo("t", "planner"));
+  await waitFor(() => expect(diff.mock.calls.some((call) => call[2] === "branch&base=develop" && call[3] === "planner")).toBe(true));
+});
+
+it("falls back to the older base when the repository's base was not recorded", async () => {
+  // A repository stored before migration 90 serves no base, so the thread's worktree base stays the comparison base,
+  // as it was before the service recorded one per repository.
+  const unrecorded: ThreadRepo[] = repos.map((repo) => ({ ...repo, base_branch: null }));
+  setReposApi(createReposMock({ threads: { t: unrecorded } }));
+  const { diff } = setup([FILE], "planner");
+  useWorkspace.setState({ threads: { t: { id: "t", project_id: "p", cwd: "/repo", active_run: null, worktree: { path: "/repo", branch: "fix/login", base: "release" } } as never } });
+  chooseRepo("t", "planner");
+  render(<DiffPanel threadId="t" />);
+  await waitFor(() => expect(diff.mock.calls.some((call) => call[2] === "branch&base=release" && call[3] === "planner")).toBe(true));
+  expect(diff.mock.calls.some((call) => String(call[2]).startsWith("branch&base=main"))).toBe(false);
+});
+
+it("an ordinary thread keeps comparing ahead against its worktree base, with no repository", async () => {
+  setReposApi(createReposMock({ threads: {} }));
+  const { diff } = setup();
+  useWorkspace.setState({ threads: { t: { id: "t", project_id: "p", cwd: "/repo", active_run: null, worktree: { path: "/repo", branch: "fix/login", base: "release" } } as never } });
+  render(<DiffPanel threadId="t" />);
+  await waitFor(() => expect(diff.mock.calls.some((call) => call[2] === "branch&base=release" && call.length === 3)).toBe(true));
+  expect(diff.mock.calls.filter((call) => String(call[2]).startsWith("branch&")).every((call) => call.length === 3)).toBe(true);
 });
 
 // The offer follows the chosen repository's Git availability: a primary checkout whose Git read fails is not the

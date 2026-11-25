@@ -152,6 +152,11 @@ export function DiffPanel({ threadId }: { threadId: string }) {
     setPicked(null);
   }, [repoId]); // eslint-disable-line react-hooks/exhaustive-deps
   const base = pickedBase ?? thread?.worktree?.base ?? "main";
+  // The branch-ahead check compares the selected repository against the base that repository's worktree was cut from,
+  // which the service serves per repository (`ThreadRepo.base_branch`, migration 90). A repository stored before that
+  // column has none (null), so it keeps the base above: the picked one, the thread's worktree base, or main. An
+  // ordinary thread has no repositories and keeps that base too.
+  const aheadBase = choice.selected?.base_branch ?? base;
   const scope =
     source === "turn"
       ? latestRun
@@ -194,9 +199,9 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   // Whether a pull request has anything to carry is the branch's question, not this view's:
   // a clean working tree after a commit, or Hide test files filtering a test-only change, still
   // leaves commits ahead of the base. The branch diff is read only where a pull could be made.
-  const branchAhead = useAsync(`diff-branch-any:${threadId}:${base}:${canCreate}${repoSuffix}`, (signal) => {
+  const branchAhead = useAsync(`diff-branch-any:${threadId}:${aheadBase}:${canCreate}${repoSuffix}`, (signal) => {
     if (!canCreate) return Promise.resolve([]);
-    const scope = `branch&base=${encodeURIComponent(base)}`;
+    const scope = `branch&base=${encodeURIComponent(aheadBase)}`;
     return repoId === undefined ? api.diff(threadId, signal, scope) : api.diff(threadId, signal, scope, repoId);
   });
   const ignoreSpace = useUi((state) => state.diffIgnoreWhitespace);
