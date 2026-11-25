@@ -43,12 +43,13 @@ Built: `POST /api/threads/{id}/attachments/convert?name=<label>` with the photo 
 `orbyn-core`'s `conversation/photo_conversion.rs`, route in `orbynd`'s `routes/composer.rs`, class `local`).
 
 - Web: `web/src/features/thread/composer/photoConversion.ts` answers the real client (`photoConversionClient.ts`) by default.
-  The composer sends HEIC and HEIF (including a file whose system type is empty and whose name carries the ending) and WebP to
-  this route, so the service's deferral message is shown instead of the file being silently uploaded, and it sends a PNG or JPEG
-  over 10 MiB here to be shrunk. An ordinary PNG or JPEG within the limit still uploads by `POST /api/threads/{id}/attachments`,
-  as before. A failed conversion turns the chip red with Retry and Remove, and send stays held until every chip has an id. The web
-  shows its own sentence for `unreadable_image` and `still_too_large`, and the service's message for `file_too_large` and
-  `unsupported_type`; `size` and `original_size` are read as numbers although the generated type says bigint. The mock stays behind
+  The composer sends HEIC and HEIF (including a file whose system type is empty and whose name carries the ending) to this
+  route, so the service's refusal message is shown instead of the file being silently uploaded; it sends WebP here so the
+  service decodes it and writes it again from pixels, and it sends a PNG or JPEG over 10 MiB here to be shrunk. An ordinary
+  PNG or JPEG within the limit still uploads by `POST /api/threads/{id}/attachments`, as before. A failed conversion turns
+  the chip red with Retry and Remove, and send stays held until every chip has an id. The web shows its own sentence for
+  `unreadable_image` and `still_too_large`, and the service's message for `file_too_large` and `unsupported_type`; `size`
+  and `original_size` are read as numbers although the generated type says bigint. The mock stays behind
   `__ORBYN_PREVIEWS__`. Not observed against a real service.
 - Allowed input types: `image/png`, `image/jpeg` and `image/webp`, decided from the bytes and never from the claimed
   one. WebP is decoded in process by the pure-Rust `image-webp` crate behind `image`'s `webp` feature (MIT OR

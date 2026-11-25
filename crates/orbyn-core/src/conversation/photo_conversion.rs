@@ -386,21 +386,25 @@ mod tests {
     /// of a small photo: the shape of a decompression bomb, small on disk and huge to decode.
     fn webp_declaring(image: &DynamicImage, width: u32, height: u32) -> Vec<u8> {
         let mut bytes = webp(image);
+        // The `VP8L` chunk is "VP8L", its u32 payload length, then the payload: the 0x2F
+        // signature byte and a u32 of width-1 (14 bits), height-1 (14 bits), an alpha bit and a
+        // 3-bit version. Only that u32 changes, so the chunk length and payload stay valid.
         let tag = bytes
             .windows(4)
             .position(|window| window == b"VP8L")
             .expect("a lossless WebP chunk");
-        // After the `VP8L` tag: the 0x2F signature byte, then width-1 (14 bits), height-1
-        // (14 bits), an alpha bit and a 3-bit version. The payload and chunk lengths stay.
-        let header = u32::from_le_bytes([
-            bytes[tag + 5],
-            bytes[tag + 6],
-            bytes[tag + 7],
-            bytes[tag + 8],
+        let header = tag + 9;
+        assert_eq!(bytes[header - 1], 0x2F, "the VP8L signature byte");
+        let packed = u32::from_le_bytes([
+            bytes[header],
+            bytes[header + 1],
+            bytes[header + 2],
+            bytes[header + 3],
         ]);
-        let kept = header & 0xF000_0000;
+        // Keep the alpha bit and the version bits; rewrite the two 14-bit dimensions.
+        let kept = packed & 0xF000_0000;
         let packed = ((width - 1) & 0x3FFF) | (((height - 1) & 0x3FFF) << 14) | kept;
-        bytes[tag + 5..tag + 9].copy_from_slice(&packed.to_le_bytes());
+        bytes[header..header + 4].copy_from_slice(&packed.to_le_bytes());
         bytes
     }
 
@@ -521,23 +525,26 @@ mod tests {
         assert_eq!(kind.mime(), "image/webp");
         assert_eq!(kind.ending(), "webp");
         let decoded = decode(&bytes, kind.format()).unwrap();
-        assert_eq!(decoded.dimensions(), (64, 48));
+        assert_eq!((decoded.width(), decoded.height()), (64, 48));
         let (stored, action) = write_within(decoded, kind, MAX_IMAGE_BYTES, false).unwrap();
         assert_eq!(action, PhotoAction::None);
         assert_eq!(kind_of(&stored).unwrap(), PhotoKind::WebP);
         let pixels = image::load_from_memory_with_format(&stored, ImageFormat::WebP)
             .unwrap_or_else(|error| panic!("the answer is a WebP: {error}"));
-        assert_eq!(pixels.dimensions(), (64, 48));
+        assert_eq!((pixels.width(), pixels.height()), (64, 48));
     }
 
     #[test]
     fn an_oversized_webp_is_shrunk_until_it_fits() {
         let kind = PhotoKind::WebP;
         let bytes = webp(&photo(512, 512));
-        let limit = 16 * 1024;
+        // Lossless WebP compresses this fixture harder than PNG does, so the limit is taken from
+        // the fixture: half its size starts it over the limit and a 1x1 photo fits under it.
+        let limit = (bytes.len() as u64 / 2).max(64);
         assert!(
             bytes.len() as u64 > limit,
-            "the fixture starts over the limit"
+            "the {} byte fixture starts over the limit",
+            bytes.len()
         );
         let (stored, action) =
             write_within(decode(&bytes, kind.format()).unwrap(), kind, limit, true).unwrap();
