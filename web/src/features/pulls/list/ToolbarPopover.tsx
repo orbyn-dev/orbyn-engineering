@@ -136,11 +136,11 @@ export function ToolbarPopover({
       element.style.right = `${left < 8 ? Math.max(8, window.innerWidth - element.offsetWidth - 8) : right}px`;
       element.style.transformOrigin = "top right";
     }
-    const first = element.querySelector<HTMLElement>("button:not(:disabled), input");
+    const first = element.querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled)");
     if (first) first.focus();
     else {
-      // A panel that holds only links has no button or input: the panel itself takes focus, so its label is announced on open and
-      // Tab moves to the first row. tabIndex -1 keeps it out of the tab order.
+      // A panel that holds only links, or only disabled fields, has no enabled button or input: the panel itself takes focus, so
+      // its label is announced on open and Tab moves to the first row. tabIndex -1 keeps it out of the tab order.
       element.tabIndex = -1;
       element.focus();
     }

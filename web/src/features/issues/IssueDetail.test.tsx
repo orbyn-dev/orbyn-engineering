@@ -238,6 +238,33 @@ it("reads the links after the link, not an answer that was already in flight", a
   expect(within(card).getAllByRole("link")).toHaveLength(2);
 });
 
+it("keeps the listed threads visible and retries only the links read when the read after a link fails", async () => {
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  useWorkspace.setState({ threads: { "thread-1": thread("thread-1", "Fix login redirect"), "thread-2": thread("thread-2", "Try cookie-based redirect") } });
+  const user = userEvent.setup();
+  at("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
+  const card = await screen.findByRole("group", { name: "Linked threads" });
+  expect(await within(card).findByRole("link", { name: /Fix login redirect/ })).toBeVisible();
+  await user.click(within(card).getByRole("button", { name: "Link to a thread…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Link a thread" });
+  await user.click(within(dialog).getByRole("option", { name: /Try cookie-based redirect/ }));
+  // The write lands; the read that follows it fails. The issue's own read refreshes the header count, so the chip counts
+  // the thread the card has not listed yet, and the card says so rather than hiding the failure behind its known rows.
+  mock.failNext("links");
+  await user.click(within(dialog).getByRole("button", { name: "Link" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Linked threads" })).toHaveTextContent("Linked from 2 threads"));
+  expect(within(card).getAllByRole("link")).toHaveLength(1);
+  expect(await within(card).findByRole("alert")).toHaveTextContent("Couldn’t refresh the linked threads. The list may be out of date.");
+  // Retry reads the links again; the successful link write is not sent a second time.
+  expect(mock.writes).toEqual(["link:thread-2:412"]);
+  await user.click(within(card).getByRole("button", { name: "Retry" }));
+  expect(await within(card).findByRole("link", { name: /Try cookie-based redirect/ })).toBeVisible();
+  await waitFor(() => expect(within(card).queryByRole("alert")).toBeNull());
+  expect(within(card).getAllByRole("link")).toHaveLength(2);
+  expect(mock.writes).toEqual(["link:thread-2:412"]);
+});
+
 it("keeps a closed issue's page and says how it closed", async () => {
   setIssuesApi(createIssuesMock());
   at("#/issues/github/orbyn-dev%2Forbyn-engineering/377");

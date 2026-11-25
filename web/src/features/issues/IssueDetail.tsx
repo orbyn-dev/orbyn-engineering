@@ -54,6 +54,15 @@ function LinkedThreads({ issue, onStart, link, onLinked }: { issue: Detail; onSt
           ))}
         </ul>
       )}
+      {failed && known.length > 0 ? (
+        // The read after a link failed while the card still lists what it knew: the header counts the linked threads from
+        // the issue's own read and can already show the new one, so the card says it is behind and Retry reads it again
+        // (the link write itself already succeeded and is not repeated).
+        <div className="iss-start-fail" role="alert">
+          <span className="iss-quiet">Couldn’t refresh the linked threads. The list may be out of date.</span>
+          <Button onClick={() => void retry()}>Retry</Button>
+        </div>
+      ) : null}
       <div className="iss-thread-acts">
         <Button icon={<Plus size={14} aria-hidden />} onClick={onStart}>Start a thread from this issue</Button>
         <Button onClick={() => setLinking(true)}>Link to a thread…</Button>
