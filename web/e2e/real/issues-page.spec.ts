@@ -11,8 +11,13 @@ import { settled, startProject, threadIdOf, type Service } from "./service";
  * read and one update of the whole set, and an assignee the candidates cannot address; the State menu closing and reopening
  * the issue; the Sort menu's two orders; and Start a thread, the service's framed draft read and one write that creates,
  * links and queues. The issue-edit routes are served for GitHub (#1593), so the candidates probe answers 400 invalid (a live
- * route) and the edit and Sort controls are live; the stand-in `gh` answers the PATCH, comment POST and assignees read the
- * service makes, so every write in this file arrives at a tracker.
+ * route) and the edit and Sort controls are live; the stand-in `gh` answers the PATCH, comment POST and assignees read those
+ * edits make, so they arrive at a tracker (Start a thread, the connect route and the project preferences PUT stay inside
+ * the service).
+ *
+ * The listing is cached per connection scope and full query for 30 s, and a write does not clear it (crates/orbyn-core/src/
+ * issues, `CACHE_FOR` and `scope_list`), so a query key an earlier test already read can answer with the pre-write order. The
+ * Sort test therefore reads filter+sort keys first requested after its own write and asserts no order on the default list.
  *
  * Not covered, and why: the four other trackers keep update, state and candidates Planned (422 unsupported) and need a
  * keychain token to connect at all (an owner action); a "no such route" write (the routes exist on this build); paging (the
@@ -162,10 +167,13 @@ test("the comment box posts one comment through the real route", async ({ page }
   const box = form.getByRole("textbox", { name: "Comment" });
   const body = "Checked against the stand-in.";
   await box.fill(body);
+  let comments = 0;
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/issues/item/comment") comments += 1; });
   const written = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/issues/item/comment");
   await form.getByRole("button", { name: "Comment", exact: true }).click();
   const answer = await written;
   expect(answer.status()).toBe(200);
+  expect(comments).toBe(1);
   expect(answer.request().postDataJSON()).toEqual({ tracker: "github", scope: "o/r", key: "7", body });
   const stored = (await answer.json()) as { id: string; author: { login: string } | null; body: string; created_at: string };
   expect(stored).toMatchObject({ author: { login: "me" }, body });
@@ -187,16 +195,21 @@ test("the description pencil saves one update through the real route", async ({ 
   await expect(box).toHaveValue("The queue stalls when the worker restarts.");
   const body = "The queue stalls when the worker restarts. Re-read on the stand-in.";
   await box.fill(body);
+  const patches = () => service.ghCalls().filter((call) => call.join(" ") === "api -X PATCH repos/o/r/issues/7 --input -").length;
+  const before = patches();
+  let updates = 0;
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/issues/item/update") updates += 1; });
   const written = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/issues/item/update");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   const answer = await written;
   expect(answer.status()).toBe(200);
   expect(answer.request().postDataJSON()).toEqual({ tracker: "github", scope: "o/r", key: "7", body });
+  expect(updates).toBe(1);
   // The editor closes and the page shows the issue the service answered.
   await expect(page.getByRole("textbox", { name: "Description" })).toHaveCount(0);
   await expect(page.locator(".iss-body").first()).toContainText("Re-read on the stand-in.");
-  // The write went through gh: the stand-in recorded the one PATCH the route makes, and a detail read has the new body.
-  expect(service.ghCalls()).toContainEqual(["api", "-X", "PATCH", "repos/o/r/issues/7", "--input", "-"]);
+  // The write went through gh: exactly one PATCH is recorded, never a hidden second, and a detail read has the new body.
+  expect(patches()).toBe(before + 1);
   const detail = await service.api<{ body: string }>("GET", "/api/issues/item?tracker=github&scope=o%2Fr&key=7");
   expect(detail.body).toBe(body);
 });
@@ -215,7 +228,7 @@ test("the label picker reads the real candidates and applies the whole set, and 
   expect(new URL(answer.url()).searchParams.get("scope")).toBe("o/r");
   // The stand-in's labels and assignable people, as the real candidates route answers them.
   expect(await answer.json()).toEqual({
-    labels: [{ name: "bug", color: null }, { name: "docs", color: null }],
+    labels: [{ name: "bug", color: "d73a4a" }, { name: "docs", color: "0075ca" }],
     assignees: [{ login: "ada", name: null, id: "ada" }, { login: "grace", name: null, id: "grace" }],
     truncated: false,
   });
@@ -223,11 +236,14 @@ test("the label picker reads the real candidates and applies the whole set, and 
   await expect(picker.getByRole("checkbox", { name: "bug" })).toBeChecked();
   await expect(picker.getByRole("checkbox", { name: "docs" })).not.toBeChecked();
   await picker.getByRole("checkbox", { name: "docs" }).check();
+  let updates = 0;
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/issues/item/update") updates += 1; });
   const written = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/issues/item/update");
   await picker.getByRole("button", { name: "Apply" }).click();
   const update = await written;
   expect(update.status()).toBe(200);
   expect(update.request().postDataJSON()).toEqual({ tracker: "github", scope: "o/r", key: "7", labels: ["bug", "docs"] });
+  expect(updates).toBe(1);
   await expect(page.getByRole("group", { name: "Change labels" })).toHaveCount(0);
   await expect(facts.locator(".iss-label")).toHaveCount(2);
   await expect(facts).toContainText("docs");
@@ -247,6 +263,10 @@ test("the label picker reads the real candidates and applies the whole set, and 
 test("the State menu closes and reopens the issue, one write each way", async ({ page }) => {
   await page.goto(`${service.page}#/issues/github/o%2Fr/7`);
   await expect(page.getByRole("heading", { name: "Retry the queue", exact: true })).toBeVisible({ timeout: 30_000 });
+  const patches = () => service.ghCalls().filter((call) => call.join(" ") === "api -X PATCH repos/o/r/issues/7 --input -").length;
+  const before = patches();
+  let states = 0;
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/issues/item/state") states += 1; });
   // The state is a menu because the detail carries GitHub's own states, in its own order, with the current one marked.
   await page.getByRole("button", { name: "State: Open" }).click();
   const first = page.getByRole("menu", { name: "Change the state" });
@@ -268,17 +288,26 @@ test("the State menu closes and reopens the issue, one write each way", async ({
   expect(reopened.request().postDataJSON()).toEqual({ tracker: "github", scope: "o/r", key: "7", state: "Open" });
   await expect(page.getByRole("button", { name: "State: Open" })).toBeVisible();
   expect((await service.api<{ state: { category: string } }>("GET", "/api/issues/item?tracker=github&scope=o%2Fr&key=7")).state.category).toBe("open");
-  expect(service.ghCalls().filter((args) => args[1] === "-X" && args[2] === "PATCH").at(-1)).toEqual(["api", "-X", "PATCH", "repos/o/r/issues/7", "--input", "-"]);
+  // Two route writes, two PATCHes: a click that sent a second write each way is caught here.
+  expect(states).toBe(2);
+  expect(patches()).toBe(before + 2);
 });
 
-test("the Sort menu re-reads the list in the chosen order", async ({ page }) => {
-  // Make the two orders differ through the real route: this write moves #12's updatedAt past #7's, while #7 was created after
-  // #12 (the fixture's dates), so Updated and Created lead with different issues.
+test("the Sort menu asks the service for each order and each list comes back in it", async ({ page }) => {
+  // This write moves #12's updatedAt past #7's; both orders are then observable (#7 was created after #12). The default
+  // list key was read by earlier tests and the listing cache is not cleared by a write, so the default read below may be the
+  // pre-write answer: its order is not asserted. Setting the text filter writes no query; its submit is the first read of a
+  // key that holds this filter and the default (Updated) sort, requested after the write.
   await service.api("POST", "/api/issues/item/update", { tracker: "github", scope: "o/r", key: "12", body: "The Getting started page names the old command. Re-read on the stand-in." });
   await page.goto(`${service.page}#/issues`);
   await expect(page.getByRole("heading", { name: "Issues", exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(rows(page)).toHaveCount(2);
-  // The first list is the service's own default, newest update first: the issue just written leads.
+  const filtered = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/issues" && new URL(response.url()).searchParams.get("q") === "the" && new URL(response.url()).searchParams.get("sort") === null);
+  await search(page).fill("the");
+  await search(page).press("Enter");
+  expect((await filtered).status()).toBe(200);
+  await expect(rows(page)).toHaveCount(2);
+  // Updated is the default sort: the issue written last leads.
   await expect(rows(page).first()).toContainText("Tidy the docs");
   // Sort is live because the candidates probe answered 400 invalid (a live route), not "no such route".
   const sort = page.getByRole("button", { name: "Sort: Updated" });
@@ -287,15 +316,16 @@ test("the Sort menu re-reads the list in the chosen order", async ({ page }) => 
   const menu = page.getByRole("menu", { name: "Sort issues" });
   await expect(menu.getByRole("menuitem")).toHaveText(["Updated", "Created"]);
   await expect(menu.getByRole("menuitem", { name: "Updated" })).toHaveAttribute("aria-current", "true");
-  const byCreated = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/issues" && new URL(response.url()).searchParams.get("sort") === "created");
+  // Created is the other order, and this filter+sort key was never requested before the write either.
+  const byCreated = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/issues" && new URL(response.url()).searchParams.get("q") === "the" && new URL(response.url()).searchParams.get("sort") === "created");
   await menu.getByRole("menuitem", { name: "Created", exact: true }).click();
   expect((await byCreated).status()).toBe(200);
   await expect(rows(page).first()).toContainText("Retry the queue");
-  // The service sorts its own answer by the date and spells the order qualifier out to gh.
+  // The service spells the order qualifier out to gh and sorts its own answer (the stand-in ignores the qualifier).
   const listed = service.ghCalls().filter((args) => args[0] === "issue" && args[1] === "list").at(-1)!;
   expect(listed[listed.indexOf("--search") + 1]).toBe("sort:created-desc");
-  // Back to Updated: the other order.
-  const back = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/issues" && new URL(response.url()).searchParams.get("sort") === "updated");
+  // Back to Updated: this key's first read was after the write, so its cached answer holds the post-write order.
+  const back = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/issues" && new URL(response.url()).searchParams.get("q") === "the" && new URL(response.url()).searchParams.get("sort") === "updated");
   await page.getByRole("button", { name: "Sort: Created" }).click();
   await page.getByRole("menu", { name: "Sort issues" }).getByRole("menuitem", { name: "Updated", exact: true }).click();
   expect((await back).status()).toBe(200);

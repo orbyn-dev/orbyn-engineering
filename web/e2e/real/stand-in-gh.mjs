@@ -225,9 +225,17 @@ switch (route) {
     save();
     out(`https://github.com/o/${args[2]}`);
     break;
-  case "label list":
-    out(state.labels.map((name) => ({ name, description: `About ${name}` })));
+  // The labels as the fixture holds them: a name, a real GitHub colour and a description, narrowed to the fields the
+  // call asked for, as `gh label list --json` does (the Issues candidates read asks name,color; a pull request asks
+  // name,description).
+  case "label list": {
+    const asked = (flag("--json") ?? "").split(",").map((name) => name.trim()).filter(Boolean);
+    out(state.labels.map((entry) => {
+      const label = typeof entry === "string" ? { name: entry } : entry;
+      return asked.length === 0 ? label : Object.fromEntries(asked.filter((name) => name in label).map((name) => [name, label[name]]));
+    }));
     break;
+  }
   // The issue reads the service makes through `gh`: a listing with its four filters, and one issue as a detail.
   case "issue list": {
     const labels = args.reduce((all, arg, at) => (arg === "--label" && at + 1 < args.length ? [...all, args[at + 1]] : all), []);

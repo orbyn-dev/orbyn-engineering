@@ -125,7 +125,7 @@ test("the project bind route binds and unbinds a stored scope, and the GitHub ed
   // The issue-edit routes are served for GitHub (#1593). The candidates read answers the stand-in's labels and assignable
   // people; an update writes the present fields; one state write closes and one reopens, keeping GitHub's own close reason.
   expect(await service.api("GET", "/api/issues/candidates?tracker=github&scope=o%2Fr")).toEqual({
-    labels: [{ name: "bug", color: null }, { name: "docs", color: null }],
+    labels: [{ name: "bug", color: "d73a4a" }, { name: "docs", color: "0075ca" }],
     assignees: [{ login: "ada", name: null, id: "ada" }, { login: "grace", name: null, id: "grace" }],
     truncated: false,
   });

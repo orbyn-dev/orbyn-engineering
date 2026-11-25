@@ -203,16 +203,31 @@ test("the chip links and unlinks with its own form, refuses an unknown issue, an
   await expect(sheet.getByRole("button", { name: "#7 Retry the queue" })).toBeVisible();
   await expect(sheet.getByRole("button", { name: "Close" })).toBeVisible();
 
-  // A press and hold is what arms a row on a phone: its Unlink is not drawn before that, and then it unlinks.
-  const prow = sheet.locator(".iss-prow").filter({ has: sheet.getByRole("button", { name: "#7 Retry the queue" }) });
+  // A held press is what arms a row on a phone: down, hold past 500 ms, then off the row before letting go (a release on
+  // the row is its open click, which navigates to the issue). Playwright's mouse also hovers, so the hold is proven by the
+  // row's own data-armed attribute, not by hover; the Unlink is then one route write.
+  const open = sheet.getByRole("button", { name: "#7 Retry the queue" });
+  const prow = sheet.locator(".iss-prow").filter({ has: open });
   const unlink = sheet.getByRole("button", { name: "Unlink #7" });
   await expect(prow).not.toHaveAttribute("data-armed", "true");
-  await sheet.getByRole("button", { name: "#7 Retry the queue" }).dispatchEvent("pointerdown");
+  const at = await open.boundingBox();
+  const head = await sheet.getByText("1 linked issue").boundingBox();
+  if (at === null || head === null) throw new Error("the phone sheet did not lay its row out");
+  await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
+  await page.mouse.down();
   await expect(prow).toHaveAttribute("data-armed", "true");
+  await page.mouse.move(head.x + head.width / 2, head.y + head.height / 2);
   await expect(unlink).toHaveCSS("opacity", "1");
+  await page.mouse.up();
+  // The release landed off the row, so the open click did not run: still on the thread, and the row is still armed.
+  expect(new URL(page.url()).hash).toBe(`#/threads/${threadId}`);
+  await expect(unlink).toHaveCSS("opacity", "1");
+  let unlinks = 0;
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === `/api/threads/${threadId}/issue-links/remove`) unlinks += 1; });
   const unlinked = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/threads/${threadId}/issue-links/remove`);
   await unlink.click();
   expect((await unlinked).status()).toBe(204);
+  expect(unlinks).toBe(1);
   await expect(chip(page)).toHaveCount(0);
   expect((await links())[threadId] ?? []).toEqual([]);
 });
@@ -247,9 +262,12 @@ test("the chip's own form links a second issue through the real find route", asy
   // Choosing writes nothing; Link is the one write, and the service keeps the link with its issue snapshot.
   await expect(list.getByRole("button", { name: "Link", exact: true })).toBeEnabled();
   expect((await links())[threadId] ?? []).toHaveLength(1);
+  let linkPosts = 0;
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === `/api/threads/${threadId}/issue-links`) linkPosts += 1; });
   const written = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/threads/${threadId}/issue-links`);
   await list.getByRole("button", { name: "Link", exact: true }).click();
   expect((await written).status()).toBe(204);
+  expect(linkPosts).toBe(1);
   expect((await links())[threadId]!.map((ref) => ref.key)).toEqual(["7", "12"]);
   // The chip reloads the thread's links: two now, both named in the open list.
   await expect(chip(page)).toContainText("Issues 2");
