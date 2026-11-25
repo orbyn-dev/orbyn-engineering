@@ -1095,6 +1095,9 @@
 @media (prefers-reduced-motion: reduce) {
   .settings-page [data-anchored="true"] { animation: none; }
 }
+/* The global [tabindex]:focus-visible ring has the same specificity and wins the tie in the cascade, so the row an
+   address names drew the native focus ring around its designed one. The blue inset ring is this row's focus indicator. */
+.settings-page [data-anchored="true"]:focus-visible { outline: none; }
 
 /* Theme editor: the element inspector (parity K15). Settings is hidden while picking so the app behind it can be pointed at. */
 html[data-inspecting] .settings-page { display: none; }
