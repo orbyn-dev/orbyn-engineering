@@ -1,7 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useConnection } from "../../product/state/connection";
 import { installMockFetch } from "../../test-support";
+import { holdFetch } from "../../wire.test-support";
 import { SettingsPage } from "./SettingsPage";
 
 beforeEach(() => {
@@ -131,6 +133,45 @@ describe("an address naming a page that is off on this device (pb-k55-gated)", (
   it("shows no note for a page that is on", async () => {
     render(<SettingsPage section="chat" onClose={() => undefined} />);
     await screen.findByRole("navigation", { name: "Breadcrumb" });
+    expect(screen.queryByText(/off on this device/)).toBeNull();
+  });
+
+  it("holds the Crew note until the connection info answers, then shows it", async () => {
+    installMockFetch();
+    // The app's start-time read has not answered: the Crew flag is still its false start value.
+    useConnection.setState({ remote: false, crewPreview: false });
+    const info = holdFetch("GET", "/api/info");
+    render(<SettingsPage section="crew" onClose={() => undefined} />);
+    expect(await screen.findByRole("link", { name: "General" })).toHaveAttribute("aria-current", "page");
+    await waitFor(() => expect(info.signals.length).toBeGreaterThan(0));
+    // Nothing says the page is off while the connection info is in flight.
+    expect(screen.queryByText(/off on this device/)).toBeNull();
+    expect(screen.queryByText(/There is no setting called/)).toBeNull();
+    await act(async () => {
+      info.release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // It answered Crew is off: the note says so, once.
+    expect(await screen.findByText(/off on this device/)).toHaveTextContent("That page is off on this device: “Crew”.");
+  });
+
+  it("never calls a Crew page off when the connection info says Crew is on, even before the flag catches up", async () => {
+    const mock = installMockFetch();
+    mock.reset("crew");
+    // What the app's flag holds until its start-time read answers, while the service is in fact running Crew Preview.
+    useConnection.setState({ remote: false, crewPreview: false });
+    const info = holdFetch("GET", "/api/info");
+    render(<SettingsPage section="crew" onClose={() => undefined} />);
+    expect(await screen.findByRole("link", { name: "General" })).toHaveAttribute("aria-current", "page");
+    await waitFor(() => expect(info.signals.length).toBeGreaterThan(0));
+    expect(screen.queryByText(/off on this device/)).toBeNull();
+    await act(async () => {
+      info.release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // The answer says Crew is on: no note, in or after the loading state. Only the flag (the app's own read) draws the page.
+    expect(screen.queryByText(/off on this device/)).toBeNull();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(screen.queryByText(/off on this device/)).toBeNull();
   });
 });

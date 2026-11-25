@@ -21,7 +21,7 @@ const names = () => screen.getAllByRole("tab").map((tab) => tab.getAttribute("ar
 /** Closes the open tab from the line under the strip. */
 async function closeOpenTab(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Tab menu" }));
-  await user.click(screen.getByRole("menuitem", { name: "Close tab" }));
+  await user.click(screen.getByRole("menuitem", { name: /^Close tab/ }));
 }
 
 beforeEach(() => {
@@ -304,7 +304,7 @@ describe("surface tabs", () => {
     useUi.setState({ panelTab: "browser" });
     panel();
     await user.click(screen.getByRole("button", { name: "Tab menu" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Close tab", "Close other tabs", "Close all tabs", "Maximise panel"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Close tabCtrl+W", "Close other tabs", "Close all tabs", "Maximise panel"]);
     await user.click(screen.getByRole("menuitem", { name: "Close other tabs" }));
     expect(names()).toEqual(["Browser"]);
     expect(screen.getByRole("status")).toHaveTextContent("Other tabs closed");
@@ -610,7 +610,7 @@ describe("tabs that do not fit", () => {
     useUi.setState({ panelTab: "browser" });
     panel();
     await user.click(screen.getByRole("button", { name: "Tab menu" }));
-    await user.click(screen.getByRole("menuitem", { name: "Close tab" }));
+    await user.click(screen.getByRole("menuitem", { name: /^Close tab/ }));
     await waitFor(() => expect(screen.getByRole("tab", { selected: true })).toHaveFocus());
     expect(screen.getByRole("tab", { selected: true })).toHaveAttribute("aria-label", "Activity");
   });
@@ -714,6 +714,33 @@ describe("unsaved files and the tab menu", () => {
     await user.click(screen.getByRole("tab", { name: "notes.md" }));
     await user.click(screen.getByRole("button", { name: "Tab menu" }));
     const items = screen.getAllByRole("menuitem").map((item) => item.textContent);
-    expect(items).toEqual(expect.arrayContaining(["Copy path", "Copy relative path", "Close tab", "Close other tabs", "Close all tabs", "Maximise panel"]));
+    expect(items).toEqual(expect.arrayContaining(["Copy path", "Copy relative path", "Close tabCtrl+W", "Close other tabs", "Close all tabs", "Maximise panel"]));
+  });
+});
+
+describe("the Close tab shortcut in the tab menu", () => {
+  afterEach(() => vi.restoreAllMocks());
+  /** The one Close tab item: the tab menu's own, or the file menu's when a file is the only tab. */
+  const closeItem = () => screen.getByRole("menuitem", { name: /^Close tab/ });
+
+  it("writes Ctrl+W on Windows and ⌘W on a Mac", async () => {
+    const user = userEvent.setup();
+    const platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+    panel();
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    expect(closeItem().querySelector(".menu-shortcut")).toHaveTextContent("Ctrl+W");
+    await user.keyboard("{Escape}");
+    platform.mockReturnValue("");
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X)");
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    expect(closeItem().querySelector(".menu-shortcut")).toHaveTextContent("⌘W");
+  });
+
+  it("shows it on the file menu's own Close tab when a file is the only tab", async () => {
+    const user = userEvent.setup();
+    useUi.setState({ panelTabOrder: [FILE], panelTab: FILE });
+    panel();
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    expect(closeItem().querySelector(".menu-shortcut")).toHaveTextContent("Ctrl+W");
   });
 });

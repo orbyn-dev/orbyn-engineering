@@ -3,17 +3,19 @@ import { ApiFailure } from "../../api/client";
 import { Button, Field } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
 import { Segmented } from "../../ui/Segmented";
+import { routeHref } from "../../product/state/route";
 import { profilesApi } from "./api";
 import { DESCRIPTION_MAX, NAME_MAX, type Profile, type ProfileDraft, type ProfileWarning } from "./contract";
 import { AUTOPILOT_HINTS, AUTOPILOT_IN_ORDER, autopilotLabel, checkDraft, MODE_HINTS, MODES_IN_ORDER, modeLabel, plain, TIERS_IN_ORDER, tierLabel } from "./model";
 
-export interface EngineOption { id: string; name: string }
+/** One engine the editor may name. `signedOut` is its own login state: the engine's report, not the profile's. */
+export interface EngineOption { id: string; name: string; signedOut: boolean }
 
 /**
  * Create or edit one profile (frames `profile-editor`, `profile-duplicate`). Four settings and a name: no effort, no model id, no
  * options, and no read-only mode (the service refuses one). The person's text is kept on every failure and Save stays off while a
- * field has a problem. One click, one write: a second click while the write is in flight does nothing. Not drawn: "Use for new
- * threads" (the contract has no default profile) and the engine's Sign in link; both are Planned.
+ * field has a problem. One click, one write: a second click while the write is in flight does nothing. A signed-out engine keeps its
+ * Sign in link to Settings › Providers. Not drawn: "Use for new threads" (the contract has no default profile), which is Planned.
  */
 export function ProfileEditor({ profile, seed, others, engines, onSaved, onClose, onReload }: {
   /** The profile being edited, or `null` for a new one. */
@@ -73,6 +75,8 @@ export function ProfileEditor({ profile, seed, others, engines, onSaved, onClose
   const set = <K extends keyof ProfileDraft>(key: K, value: ProfileDraft[K]) => setDraft((held) => ({ ...held, [key]: value }));
   const engineValue = draft.engine ?? "";
   const known = engines.some((engine) => engine.id === draft.engine);
+  // The engine's own login state, so the one thing that fixes it is a link away rather than a different engine.
+  const signedOutEngine = engines.find((engine) => engine.id === draft.engine && engine.signedOut) ?? null;
   return (
     <Dialog
       title={profile ? `Edit profile · ${plain(profile.name, 40)}` : "New profile"}
@@ -100,6 +104,11 @@ export function ProfileEditor({ profile, seed, others, engines, onSaved, onClose
             </select>
           )}
         </Field>
+        {signedOutEngine ? (
+          <p className="prf-note" role="note">
+            {plain(signedOutEngine.name, 40)} is signed out. <a href={routeHref({ name: "settings", section: "providers" })}>Sign in</a> from Settings › Providers.
+          </p>
+        ) : null}
         <div className="field">
           <span className="prf-label" id="prf-tier">Model tier</span>
           <Segmented label="Model tier" value={draft.model_tier} options={TIERS_IN_ORDER.map((value) => ({ value, label: tierLabel(value) }))} onChange={(value) => set("model_tier", value)} />
