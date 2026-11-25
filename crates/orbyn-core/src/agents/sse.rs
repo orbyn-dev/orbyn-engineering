@@ -1,17 +1,39 @@
 //! Incremental `text/event-stream` parser for engines that speak SSE.
 
+/// The largest line or frame the parser keeps. A remote agent must not grow the buffer without bound: a line
+/// with no newline, a single over-long line, or many `data:` lines adding up past this are refused.
+pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+
+/// Why a stream was refused: one of its lines or frames grew past [`MAX_FRAME_BYTES`] before it completed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("The agent's stream sent a frame over 8 MiB.")]
+pub struct FrameTooLarge;
+
 #[derive(Default)]
 pub struct SseParser {
     buffer: Vec<u8>,
     data: Vec<String>,
+    /// The bytes the frame's `data:` lines hold, kept as they arrive so the cap check stays linear.
+    data_len: usize,
 }
 
 impl SseParser {
-    /// Feeds a network chunk and returns the `data` of each completed frame.
-    pub fn push(&mut self, chunk: &[u8]) -> Vec<String> {
+    /// Feeds a network chunk and returns the `data` of each completed frame, or refuses a frame that grows
+    /// past [`MAX_FRAME_BYTES`] instead of buffering it.
+    pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<String>, FrameTooLarge> {
         self.buffer.extend_from_slice(chunk);
         let mut frames = Vec::new();
-        while let Some(end) = self.buffer.iter().position(|byte| *byte == b'\n') {
+        loop {
+            let Some(end) = self.buffer.iter().position(|byte| *byte == b'\n') else {
+                // No complete line yet: a line that grows past the cap is refused instead of kept.
+                if self.buffer.len() > MAX_FRAME_BYTES {
+                    return Err(FrameTooLarge);
+                }
+                break;
+            };
+            if end + 1 > MAX_FRAME_BYTES {
+                return Err(FrameTooLarge);
+            }
             let line: Vec<u8> = self.buffer.drain(..=end).collect();
             let text = String::from_utf8_lossy(&line);
             let text = text.trim_end_matches(['\n', '\r']);
@@ -19,13 +41,20 @@ impl SseParser {
                 if !self.data.is_empty() {
                     frames.push(self.data.join("\n"));
                     self.data.clear();
+                    self.data_len = 0;
                 }
             } else if let Some(value) = text.strip_prefix("data:") {
-                self.data
-                    .push(value.strip_prefix(' ').unwrap_or(value).to_owned());
+                let value = value.strip_prefix(' ').unwrap_or(value);
+                // One byte per line stands for the newline the join adds; counting as the lines arrive keeps
+                // the check linear, so a frame split into very many lines cannot make the parser quadratic.
+                self.data_len += value.len() + 1;
+                if self.data_len > MAX_FRAME_BYTES {
+                    return Err(FrameTooLarge);
+                }
+                self.data.push(value.to_owned());
             }
         }
-        frames
+        Ok(frames)
     }
 }
 
@@ -38,8 +67,41 @@ mod tests {
         let mut parser = SseParser::default();
         let body = "id: 1\ndata: {\"a\":\"é\"}\n\n: keep\n\ndata: x\r\ndata: y\r\n\r\n".as_bytes();
         let (left, right) = body.split_at(14);
-        let mut frames = parser.push(left);
-        frames.extend(parser.push(right));
+        let mut frames = parser.push(left).unwrap();
+        frames.extend(parser.push(right).unwrap());
         assert_eq!(frames, vec!["{\"a\":\"é\"}", "x\ny"]);
+    }
+
+    #[test]
+    fn a_stream_with_no_newline_is_refused_once_it_passes_the_cap() {
+        let mut parser = SseParser::default();
+        let chunk = vec![b'a'; 1024 * 1024];
+        for _ in 0..8 {
+            parser.push(&chunk).unwrap();
+        }
+        // Exactly at the cap a chunk that carries no newline is still accepted; one more byte refuses it.
+        assert_eq!(parser.push(b"a"), Err(FrameTooLarge));
+    }
+
+    #[test]
+    fn a_single_line_over_the_cap_is_refused() {
+        let mut parser = SseParser::default();
+        let mut line = b"data: ".to_vec();
+        line.extend(std::iter::repeat_n(b'a', MAX_FRAME_BYTES));
+        line.push(b'\n');
+        assert_eq!(parser.push(&line), Err(FrameTooLarge));
+    }
+
+    #[test]
+    fn a_frame_whose_data_lines_add_up_past_the_cap_is_refused() {
+        let mut parser = SseParser::default();
+        // Two lines pass the cap and keep the test linear: a cap check that re-summed the frame per line would
+        // itself be a denial of service, so this case must stay cheap.
+        let mut body = b"data: ".to_vec();
+        body.extend(std::iter::repeat_n(b'a', MAX_FRAME_BYTES / 2));
+        body.push(b'\n');
+        let mut lines = body.clone();
+        lines.extend_from_slice(&body);
+        assert_eq!(parser.push(&lines), Err(FrameTooLarge));
     }
 }
