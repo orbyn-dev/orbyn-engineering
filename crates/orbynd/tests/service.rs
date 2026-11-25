@@ -1707,10 +1707,12 @@ async fn desktop_action_passes_through_the_sidecar_envelope() {
     );
 }
 
-/// Drives an installed Chrome or Edge. Run with `--ignored` where one exists.
+/// Drives a real browser: `support::browser_env` finds one, or says why the test skips.
 #[tokio::test]
-#[ignore = "needs an installed browser"]
 async fn real_browser_navigates_reads_clicks_and_captures() {
+    let Some(env) = support::browser_env(&[("ORBYN_BROWSER_HEADLESS", "1")]) else {
+        return;
+    };
     let dir = TempDir::new();
     let ui = dir.path().join("ui");
     write(
@@ -1726,7 +1728,7 @@ async fn real_browser_navigates_reads_clicks_and_captures() {
         &dir,
         Options {
             args: vec!["--ui-dir".into(), ui.to_string_lossy().into_owned()],
-            env: vec![("ORBYN_BROWSER_HEADLESS".into(), "1".into())],
+            env,
         },
         "codex",
     )
