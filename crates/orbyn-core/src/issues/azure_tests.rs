@@ -578,6 +578,31 @@ fn a_host_that_is_not_https_is_refused_before_anything_is_sent() {
     );
 }
 
+#[tokio::test]
+async fn a_port_on_a_cloud_host_is_refused_before_anything_is_sent() {
+    // A server that would record any request; the refused readers never exist, so none can reach it.
+    let server = Server::start(|_| Reply::json(&json!({ "workItems": [] }))).await;
+    for bad in [
+        "https://dev.azure.com:8443",
+        "https://dev.azure.com:8443/org",
+        "https://acme.visualstudio.com:8443",
+        "https://acme.visualstudio.com:443",
+    ] {
+        assert!(
+            matches!(
+                Azure::new(bad, Zeroizing::new(TOKEN.to_owned())),
+                Err(CoreError::Invalid(_))
+            ),
+            "{bad:?} was accepted"
+        );
+        assert!(check_connect_host(bad).is_err(), "{bad:?} at connect");
+    }
+    assert!(check_connect_host("https://dev.azure.com").is_ok());
+    assert!(check_connect_host("https://dev.azure.com/org").is_ok());
+    assert!(check_connect_host("https://acme.visualstudio.com").is_ok());
+    assert!(server.seen().is_empty(), "nothing reached any server");
+}
+
 #[test]
 fn another_https_host_is_not_an_azure_devops_host() {
     assert!(matches!(
