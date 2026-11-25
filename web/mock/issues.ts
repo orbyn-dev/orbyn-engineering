@@ -114,8 +114,9 @@ export function createIssuesMock(init: {
   pageSize?: number;
   /** The pull requests the tracker reports against an issue, by the issue's key. Absent: none. */
   pullRequests?: Record<string, LinkedPullRequest[]>;
-  /** The tracker's own issue templates. Absent or empty: the tracker answers none (GitHub, Forgejo, Azure DevOps). */
-  templates?: IssueTemplate[];
+  /** The tracker's own issue templates, by tracker. A tracker absent or empty here answers none: GitHub, Forgejo and Azure DevOps
+   * have no issue-template endpoint, so the create dialog draws no Template row for them. */
+  templates?: Partial<Record<TrackerKind, IssueTemplate[]>>;
   /** A service that has no create route: `POST /api/issues/item/create` answers the 404 a missing route gives. */
   noCreate?: boolean;
   /** A service that has no react route: `POST /api/issues/item/react` answers the 404 a missing route gives. */
@@ -149,7 +150,7 @@ export function createIssuesMock(init: {
   const commentKey = (one: Pick<IssueSummary, "tracker" | "scope" | "key">) => `${one.tracker}:${one.scope}:${one.key}`;
   // A plain detail read carries no reactions (docs/issues.md): only a react write puts counts here, as the write answer reports them.
   const reactions = new Map<string, IssueReactionCount[]>(Object.entries(init.reactions ?? {}));
-  const templates: IssueTemplate[] = init.templates ?? [];
+  const templatesOf = (tracker: TrackerKind): IssueTemplate[] => init.templates?.[tracker] ?? [];
   /** The tracker's comments for one issue: the fixtures until someone comments here, oldest first. */
   const commentsOf = (one: IssueSummary): IssueComment[] => comments.get(commentKey(one)) ?? [
     { id: "c1", author: { login: "sam" }, body: "Reproduced. The redirect reads `next` but never uses it.", created_at: ago(1440) },
@@ -285,10 +286,10 @@ export function createIssuesMock(init: {
       return stored;
     },
     // The tracker's own templates for the scope; a tracker with none answers [] (GitHub, Forgejo and Azure DevOps).
-    templates: async () => {
+    templates: async (target) => {
       await wait();
       take("templates");
-      return templates.map((one) => ({ ...one, labels: one.labels.map((label) => ({ ...label })) }));
+      return templatesOf(target.tracker).map((one) => ({ ...one, labels: one.labels.map((label) => ({ ...label })) }));
     },
     // One POST /api/issues/item/create: one call creates one issue, and the answer is the stored issue. A tracker with no candidate
     // read is still writable here; a template fills a missing body and its labels are never merged in (docs/issues.md).
@@ -301,7 +302,7 @@ export function createIssuesMock(init: {
       if (init.createUnknown) throw new ApiFailure("tracker_unavailable", `${TRACKER_NAMES[input.tracker]} did not answer, so the issue was possibly created. Re-read the list before writing it again.`, 502);
       const problem = createProblem(input);
       if (problem) throw new ApiFailure("invalid", problem, 400);
-      const held = templates.find((one) => one.id === input.template);
+      const held = templatesOf(input.tracker).find((one) => one.id === input.template);
       if (input.template !== undefined && !held) throw new ApiFailure("invalid", "Unknown issue template.", 400);
       const row = trackers?.find((one) => one.tracker === input.tracker);
       if (!row?.connected) throw new ApiFailure("tracker_not_connected", "That tracker is not connected.", 409);

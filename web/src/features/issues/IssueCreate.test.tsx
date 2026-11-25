@@ -152,7 +152,7 @@ it("a first create that meets no such route puts New issue back to Planned and s
 });
 
 it("draws the Template row only where the service offers templates, fills a missing description, and never merges the template's labels", async () => {
-  const mock = createIssuesMock({ trackers: trackers(), templates: TEMPLATES, unsupportedCandidates: ["gitlab"] });
+  const mock = createIssuesMock({ trackers: trackers(), templates: { gitlab: TEMPLATES }, unsupportedCandidates: ["gitlab"] });
   setIssuesApi(mock);
   const user = userEvent.setup();
   list();
@@ -176,11 +176,11 @@ it("draws the Template row only where the service offers templates, fills a miss
   await waitFor(() => expect(mock.creates).toHaveLength(1));
   expect(mock.creates[0]).toMatchObject({ tracker: "gitlab", scope: GITLAB, title: "Template issue", body: "Steps to reproduce:", template: "bug" });
   // The template's own labels are never merged into the create's.
-  expect(mock.creates[0].labels).toBeUndefined();
+  expect(mock.creates[0]!.labels).toBeUndefined();
 });
 
 it("a template fills only a missing description: text the person typed is never replaced", async () => {
-  const mock = createIssuesMock({ trackers: trackers(), templates: TEMPLATES, unsupportedCandidates: ["gitlab"] });
+  const mock = createIssuesMock({ trackers: trackers(), templates: { gitlab: TEMPLATES }, unsupportedCandidates: ["gitlab"] });
   setIssuesApi(mock);
   const user = userEvent.setup();
   list();

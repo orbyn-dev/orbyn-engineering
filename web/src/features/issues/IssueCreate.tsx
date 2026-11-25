@@ -249,6 +249,8 @@ function NewIssueDialog({ rows, preferred, onClose, onCheckList }: { rows: Track
             }))}
           />
         ) : null}
+      </Presence>
+      <Presence>
         {templateMenu ? (
           <Menu
             x={templateMenu.x}
