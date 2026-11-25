@@ -37,6 +37,10 @@ const KIND_ICONS: Record<CallKind, LucideIcon> = {
 const failedExit = (item: ToolItem): string =>
   item.exitCode !== null && item.exitCode !== 0 ? ` · exit code ${item.exitCode}` : "";
 
+/** True only when the run stopped the call before it answered; an answered older-log call keeps the bare word. */
+const interruptedCall = (item: ToolItem, interrupted: boolean): boolean =>
+  interrupted && !(item.done && item.result !== null);
+
 /** The right side of a row as the design words it: the duration, or the outcome the engine did not report as success. */
 function CallResult({ item, outcome, interrupted, ms }: { item: ToolItem; outcome: CallOutcome | null; interrupted: boolean; ms: number | null }) {
   if (outcome === "failed") {
@@ -48,8 +52,8 @@ function CallResult({ item, outcome, interrupted, ms }: { item: ToolItem; outcom
     );
   }
   if (outcome === "no-result") return <span className="du">No result reported · ended without one</span>;
-  // An interrupted run names its cause; an older log or a lost state has none to name.
-  if (outcome === "unknown") return <span className="du">{interrupted ? "Outcome unknown · run interrupted" : "Outcome unknown"}</span>;
+  // An interrupted call names its cause; an answered older log or a lost state has none to name.
+  if (outcome === "unknown") return <span className="du">{interruptedCall(item, interrupted) ? "Outcome unknown · run interrupted" : "Outcome unknown"}</span>;
   const text = ms === null ? null : callDuration(ms);
   return <span className="du">{text ?? ""}</span>;
 }
@@ -58,7 +62,7 @@ function CallResult({ item, outcome, interrupted, ms }: { item: ToolItem; outcom
 function resultText(item: ToolItem, outcome: CallOutcome | null, interrupted: boolean, ms: number | null): string {
   if (outcome === "failed") return `Failed${failedExit(item)}`;
   if (outcome === "no-result") return "No result reported · ended without one";
-  if (outcome === "unknown") return interrupted ? "Outcome unknown · run interrupted" : "Outcome unknown";
+  if (outcome === "unknown") return interruptedCall(item, interrupted) ? "Outcome unknown · run interrupted" : "Outcome unknown";
   return ms === null ? "" : callDuration(ms);
 }
 

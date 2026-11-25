@@ -51,6 +51,12 @@ const cancelRun = () =>
     logs: { ...state.logs, t1: { ...emptyLog, runs: { r: { startedAt: "2026-11-08T10:00:00.000Z", endedAt: "2026-11-08T10:00:09.000Z", outcome: "cancelled" } } } },
   }));
 
+/** The thread's one run is still going, so its unfinished calls are not missing yet. */
+const startRun = () =>
+  useThreadLogs.setState((state) => ({
+    logs: { ...state.logs, t1: { ...emptyLog, runs: { r: { startedAt: "2026-11-08T10:00:00.000Z", endedAt: null, outcome: null } } } },
+  }));
+
 beforeEach(() => {
   forgetOpenState();
   useThreadLogs.setState({ logs: {} });
@@ -104,6 +110,13 @@ describe("the trail of tool calls", () => {
   });
 
   it("reads a finished call that reported no outcome as outcome unknown", () => {
+    render(<Trail items={[make("Bash", { command: "npm run build" }, { exitCode: null, result: "built" })]} />);
+    expect(rows()[0]).toHaveAccessibleName("npm run build Outcome unknown");
+    expect(rows()[0]!.querySelector(".du")).toHaveTextContent(/^Outcome unknown$/);
+  });
+
+  it("keeps the bare outcome word for an answered older-log call in a cancelled run", () => {
+    interrupt();
     render(<Trail items={[make("Bash", { command: "npm run build" }, { exitCode: null, result: "built" })]} />);
     expect(rows()[0]).toHaveAccessibleName("npm run build Outcome unknown");
     expect(rows()[0]!.querySelector(".du")).toHaveTextContent(/^Outcome unknown$/);
@@ -474,12 +487,12 @@ describe("Expand all and Collapse all", () => {
     ...items,
     { kind: "message" as const, key: "a", seq: 99, runId: "r", ts: "", role: "assistant", text: "done", done: true },
   ];
-  const renderTurn = (items: ToolItem[]) =>
+  const renderTurn = (items: ToolItem[], live = false) =>
     render(
       <TimelineThread value="t1">
         <OpenStateScope value="t1">
           {arrangeTimeline(turn(items), {}, null).map((entry) => (
-            <TimelineRow key={entry.key} entry={entry} live={false} tools={[]} />
+            <TimelineRow key={entry.key} entry={entry} live={live} tools={[]} />
           ))}
         </OpenStateScope>
       </TimelineThread>,
@@ -530,6 +543,46 @@ describe("Expand all and Collapse all", () => {
     ]);
     await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
     expect(screen.getByText("4 tool calls · 3 succeeded · 1 outcome unknown")).toBeInTheDocument();
+  });
+
+  it("draws the count line under an open single-group trail, without the bulk controls", async () => {
+    renderTurn([
+      make("Bash", { command: "npm test" }, { exitCode: 0 }),
+      make("Bash", { command: "npm run lint" }, { exitCode: 1, result: "1 failed" }),
+      make("Bash", { command: "git fetch" }, { result: null, done: false, endedAt: undefined }),
+      make("Bash", { command: "npm run build" }, { exitCode: null, result: "built" }),
+    ]);
+    await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
+    expect(screen.getByText("4 tool calls · 1 succeeded · 1 failed · 1 no result reported · 1 outcome unknown")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Expand all" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Collapse all" })).toBeNull();
+  });
+
+  it("reads an older interrupted turn from its own ended run, not the page's later run", async () => {
+    cancelRun();
+    // The page reports a live run (a later one); this fold's run ended cancelled.
+    renderTurn([
+      make("Bash", { command: "npm test" }, { exitCode: 0 }),
+      make("Read", { file_path: "/p/a.ts" }, { result: null, done: false, endedAt: undefined }),
+      make("Grep", { pattern: "q" }, { outcome: "success" }),
+      make("Edit", { file_path: "/p/b.ts", old_string: "a", new_string: "b" }, { outcome: "success" }),
+    ], true);
+    await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
+    // The fold's run is over, so its missing call is unknown; it is not still running.
+    expect(screen.getByText("4 tool calls · 3 succeeded · 1 outcome unknown")).toBeInTheDocument();
+    expect(screen.queryByText("4 tool calls · 3 succeeded")).toBeNull();
+  });
+
+  it("keeps a genuinely running turn's unfinished call in the total, not in the missing counts", async () => {
+    startRun();
+    renderTurn([
+      make("Bash", { command: "npm test" }, { exitCode: 0 }),
+      make("Read", { file_path: "/p/a.ts" }, { result: null, done: false, endedAt: undefined }),
+      make("Grep", { pattern: "q" }, { outcome: "success" }),
+      make("Edit", { file_path: "/p/b.ts", old_string: "a", new_string: "b" }, { outcome: "success" }),
+    ], true);
+    await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
+    expect(screen.getByText("4 tool calls · 3 succeeded")).toBeInTheDocument();
   });
 
   it("is not offered for a turn with fewer than four groups", async () => {

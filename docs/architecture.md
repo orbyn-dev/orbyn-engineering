@@ -407,11 +407,15 @@ actions, list failures separately, and use neutral wording for missing results.
 A single call's row says what the engine reported in the place where a succeeded call
 shows its duration: `Failed · exit code N` (the code only when the engine sent a
 nonzero one), `No result reported · ended without one`, or `Outcome unknown · run
-interrupted` (`Outcome unknown` alone for an older log or a lost state). The red
-cross marks a failure; the muted minus marks a call with no result or an unknown
-outcome. A turn with its Expand all row counts every call it ran, then lists only the
-outcomes present: `N tool calls · S succeeded · F failed · P no result reported · U
-outcome unknown`; a call still running is counted in the total but not as missing.
+interrupted` (only when the run stopped the call before it answered; `Outcome
+unknown` alone for an answered older log or a lost state). The red cross marks a
+failure; the muted minus marks a call with no result or an unknown outcome. A
+finished turn's count line counts every call it ran, then lists only the outcomes
+present: `N tool calls · S succeeded · F failed · P no result reported · U outcome
+unknown`; a call still running is counted in the total but not as missing, and a fold
+reads running from its own run span, not from whether another run is live. The line
+draws under the turn's trail even with one group; Expand all and Collapse all join it
+once the turn has four or more groups.
 
 Consecutive work groups contain at most five tool calls and at most thirty
 activities including reasoning. The live view retains whole recent groups within

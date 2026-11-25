@@ -138,19 +138,31 @@ projects; no service read, contract or route changed.
   of the duration, with the code only when a nonzero one was sent. An engine-reported
   failure with no code reads `Failed`.
 - A call the engine never answered reads `No result reported · ended without one` on
-  a muted minus. When its run was interrupted it reads `Outcome unknown · run
-  interrupted`; a finished call whose older log reported no outcome reads `Outcome
-  unknown`.
+  a muted minus. Only a call the run stopped before it answered reads `Outcome
+  unknown · run interrupted`; an answered call whose older log reported no outcome,
+  or a lost state, reads `Outcome unknown`.
 - The turn-level count line replaces `N tool calls in M groups` with `N tool calls ·
   S succeeded · F failed · P no result reported · U outcome unknown`, listing only the
-  outcomes the turn has. A call still running is counted in the total, not as missing.
+  outcomes the turn has. It draws under a finished turn's trail even when that trail
+  has one group; Expand all and Collapse all join it only from four groups. A call
+  still running is counted in the total, not as missing, and a fold reads running from
+  its own run span (`runs[runId].endedAt == null`), never from the page's live flag,
+  so a later live run cannot turn an older turn's missing calls into running ones.
 
 Tests: `web/src/features/thread/toolCalls.test.ts` covers the turn counts, an
 interrupted and a normally ended run, plurals and a call still running;
 `web/src/features/thread/trail/ToolTrail.test.tsx` renders the failed row with and
-without a code, the no-result, interrupted and older-log rows, and the count line with
-and without an interrupted run. Each new case failed before its code (15 assertions
-red), and the web type-check, lint, architecture check and both files pass.
+without a code, the no-result, interrupted and answered older-log rows, the count line
+with and without an interrupted run and under a single group, an older interrupted
+fold while the page reports a later live run, and a genuinely running turn. The web
+type-check, lint, architecture check and both files pass (71 tests).
+
+Break-check: the four count cases in `toolCalls.test.ts` work against a count function
+that does not exist on the unchanged code, so their first run failed with a
+missing-symbol error, not on an assertion. The component cases failed on the intended
+strings: 15 in the first round, and 3 in the correction (the single-group line, the
+fold's own-run liveness and the answered older-log word); the genuinely running case
+is a pin that passes both ways.
 
 Not run: no real-service browser observation of the new rows or count line, and no
 packaged-app turn. The shared build box was unreachable on 26 November 2026, so C4

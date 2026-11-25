@@ -420,7 +420,7 @@ function Fold({ fold, live }: { fold: TurnFold; live: boolean }) {
           {(open || loaded) && fold.entries.map((entry) => (
             <TimelineRow key={entry.key} entry={entry} live={false} tools={NO_TOOLS} />
           ))}
-          {open || loaded ? <GroupControls entries={fold.entries} live={live} /> : null}
+          {open || loaded ? <GroupControls entries={fold.entries} /> : null}
         </div>
       </Collapsible>
       </SurfacedWorkflows>
@@ -455,26 +455,36 @@ function groupIds(entries: readonly TimelineEntry[]): { ids: string[]; groups: n
   return { ids, groups };
 }
 
-/** A long turn: its calls by the outcome the engine reported, and two quiet buttons to open or fold them all. */
-function GroupControls({ entries, live }: { entries: readonly TimelineEntry[]; live: boolean }) {
+/**
+ * A finished turn's calls by the outcome the engine reported. The count line belongs to every
+ * turn with tool calls; the bulk controls join it only once there are four or more groups.
+ */
+function GroupControls({ entries }: { entries: readonly TimelineEntry[] }) {
   const { setMany } = useOpenControl();
   const threadId = useThreadOfTimeline();
   const { ids, groups } = useMemo(() => groupIds(entries), [entries]);
   const tools = useMemo(() => foldTools(entries).filter((item): item is ToolItem => item.kind === "tool"), [entries]);
   const runId = tools[0]?.runId ?? null;
-  const interrupted = useThreadLogs((state) => (threadId && runId ? state.logs[threadId]?.runs[runId]?.outcome === "cancelled" : false));
-  const count = useMemo(() => turnOutcomeText(tools, live, interrupted), [tools, live, interrupted]);
-  if (groups < 4) return null;
+  // The fold's own run says whether its calls are still running; the page's live flag also covers
+  // a later run, so it must not decide this. A run with no recorded span has ended.
+  const run = useThreadLogs((state) => (threadId && runId ? (state.logs[threadId]?.runs[runId] ?? null) : null));
+  const live = run !== null && run.endedAt === null;
+  const count = useMemo(() => turnOutcomeText(tools, live, run?.outcome === "cancelled"), [tools, live, run?.outcome]);
+  if (tools.length === 0) return null;
   return (
     <div className="tcmini">
       <span className="cnt">{count}</span>
-      <button type="button" className="lk" onClick={() => setMany(ids, true)}>
-        Expand all
-      </button>
-      <span className="sep" aria-hidden />
-      <button type="button" className="lk" onClick={() => setMany(ids, false)}>
-        Collapse all
-      </button>
+      {groups >= 4 ? (
+        <>
+          <button type="button" className="lk" onClick={() => setMany(ids, true)}>
+            Expand all
+          </button>
+          <span className="sep" aria-hidden />
+          <button type="button" className="lk" onClick={() => setMany(ids, false)}>
+            Collapse all
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }
