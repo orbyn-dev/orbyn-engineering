@@ -6,6 +6,14 @@ export type PullFile = { path: string, previous_path: string | null,
  */
 status: string, additions: bigint, deletions: bigint, patch: string | null, 
 /**
- * Marked viewed in Orbyn. Marks are kept by this service, per project.
+ * Marked viewed. On a GitHub pull request this is GitHub's own `viewerViewedState` for the
+ * file; on a forge without viewed files, or while GitHub cannot be asked, it is this
+ * service's mark, kept per project.
  */
-viewed: boolean, };
+viewed: boolean, 
+/**
+ * The mark is GitHub's own. False when this service keeps the mark itself: on a forge with no
+ * viewed files, while GitHub's state cannot be read, or when GitHub did not save a mark the
+ * person made here (the mark is then still shown, never dropped).
+ */
+viewed_synced: boolean, };

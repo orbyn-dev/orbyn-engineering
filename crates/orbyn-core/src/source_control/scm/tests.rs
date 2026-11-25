@@ -34,6 +34,7 @@ fn a_change_breakdown_counts_kinds_and_lines() {
         deletions,
         patch: None,
         viewed: false,
+        viewed_synced: false,
     };
     let breakdown = pulls::change_breakdown(&[
         file("added", 3, 0),
