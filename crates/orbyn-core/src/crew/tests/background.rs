@@ -619,11 +619,12 @@ async fn a_run_needs_an_enabled_crew_and_one_at_a_time() {
     let error = f.core.crew_background_spend(&run.id, 1, 1).unwrap_err();
     assert!(matches!(error, CoreError::RunClosed), "{error}");
     let runs = f.core.background_runs(&crew.id, page()).unwrap();
-    assert_eq!(runs.total, 2);
+    assert_eq!(runs.total, 2, "the ended run and the second");
+    // Order is the contract here: the runs read is newest first, so the second run is the front row.
     assert_eq!(
         runs.runs[0].state,
         wire::BackgroundRunState::Running,
-        "newest first"
+        "newest first: only the second run is running"
     );
 }
 
@@ -742,12 +743,17 @@ async fn turning_a_crew_off_stops_its_run_and_deleting_needs_it_idle() {
         "the person's own switch leaves nothing for them"
     );
     let runs = f.core.background_runs(&crew.id, page()).unwrap();
-    assert_eq!(runs.runs[0].id, run.id);
+    assert_eq!(runs.total, 1, "the crew has one run");
+    let stopped = runs
+        .runs
+        .iter()
+        .find(|row| row.id == run.id)
+        .expect("the crew's run, found by its id");
     assert_eq!(
-        runs.runs[0].stop_reason,
+        stopped.stop_reason,
         Some(wire::BackgroundStopReason::Disabled)
     );
-    assert!(!runs.runs[0].review_waiting);
+    assert!(!stopped.review_waiting);
     f.core.background_delete(&crew.id).unwrap();
     assert!(matches!(
         f.core.background_get(&crew.id).unwrap_err(),
@@ -931,37 +937,47 @@ async fn a_spend_is_audited_and_a_person_s_disable_is_logged_as_the_person() {
     f.core.background_set_enabled(&crew.id, true).unwrap();
     let run = f.core.crew_background_start_run(&crew.id).unwrap();
     f.core.crew_background_spend(&run.id, 3, 7).unwrap();
-    let spends = audit_rows(&f.core, "crew.background.run.spend");
-    assert_eq!(spends.len(), 1);
+    let mut spends = audit_rows(&f.core, "crew.background.run.spend");
+    assert_eq!(spends.len(), 1, "the one spend row");
+    let spend = spends.pop().expect("the spend audit row");
     assert_eq!(
-        (spends[0].actor.as_str(), spends[0].source.as_str()),
+        (spend.actor.as_str(), spend.source.as_str()),
         ("crew", "core")
     );
-    assert_eq!(spends[0].target, crew.id);
-    assert_eq!(spends[0].detail["run"], run.id);
+    assert_eq!(spend.target, crew.id);
+    assert_eq!(spend.detail["run"], run.id);
     assert_eq!(
         (
-            spends[0].detail["turns"].as_u64(),
-            spends[0].detail["minutes_spent"].as_u64()
+            spend.detail["turns"].as_u64(),
+            spend.detail["minutes_spent"].as_u64()
         ),
         (Some(3), Some(7))
     );
     f.core.background_set_enabled(&crew.id, false).unwrap();
-    let disable = audit_rows(&f.core, "crew.background.disable");
-    let stop = audit_rows(&f.core, "crew.background.run.stop");
-    assert_eq!(disable[0].actor, "user");
+    let mut disable_rows = audit_rows(&f.core, "crew.background.disable");
+    assert_eq!(disable_rows.len(), 1, "the one disable row");
+    let disable = disable_rows.pop().expect("the disable audit row");
+    assert_eq!(disable.actor, "user");
+    let mut stops = audit_rows(&f.core, "crew.background.run.stop");
+    assert_eq!(stops.len(), 1, "the person's disable stopped the only run");
+    let stopped = stops.pop().expect("the person's stop row");
     assert_eq!(
-        (stop[0].actor.as_str(), stop[0].source.as_str()),
+        (stopped.actor.as_str(), stopped.source.as_str()),
         ("user", "user"),
         "the stop the person caused is the person's"
     );
-    assert_eq!(stop[0].detail["reason"], "disabled");
+    assert_eq!(stopped.detail["reason"], "disabled");
     // A stop the crew caused stays the crew's.
     f.core.background_set_enabled(&crew.id, true).unwrap();
     let second = f.core.crew_background_start_run(&crew.id).unwrap();
     f.core.crew_background_spend(&second.id, 10, 0).unwrap();
-    let stop = audit_rows(&f.core, "crew.background.run.stop");
-    assert_eq!(stop[1].actor, "crew");
+    let stops = audit_rows(&f.core, "crew.background.run.stop");
+    assert_eq!(stops.len(), 2, "the person's stop and the budget stop");
+    let budget = stops
+        .iter()
+        .find(|row| row.detail["run"].as_str() == Some(second.id.as_str()))
+        .expect("the budget stop audit row, found by the run it stopped");
+    assert_eq!(budget.actor, "crew");
 }
 
 #[tokio::test]
@@ -985,10 +1001,11 @@ async fn a_delete_removes_waiting_reviews_and_counts_them_in_the_audit_row() {
     assert_eq!(f.core.background_get(&crew.id).unwrap().reviews_waiting, 1);
     f.core.background_delete(&crew.id).unwrap();
     assert!(f.core.background_get(&crew.id).is_err());
-    let deletes = audit_rows(&f.core, "crew.background.delete");
-    assert_eq!(deletes.len(), 1);
-    assert_eq!(deletes[0].detail["runs_removed"], 2);
-    assert_eq!(deletes[0].detail["reviews_waiting_removed"], 1);
+    let mut deletes = audit_rows(&f.core, "crew.background.delete");
+    assert_eq!(deletes.len(), 1, "the crew's one delete row");
+    let delete = deletes.pop().expect("the delete audit row");
+    assert_eq!(delete.detail["runs_removed"], 2);
+    assert_eq!(delete.detail["reviews_waiting_removed"], 1);
     // A run in progress still refuses it.
     let busy = f
         .core
