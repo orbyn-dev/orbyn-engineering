@@ -10,6 +10,38 @@ use super::review_support::{
     arc, built, commit_all, crew, finding, fixed, lead_binding, repro, reviewed,
 };
 
+/// The review task of the one lane a test asks for. A review answer lists its lanes in start order, not in a
+/// fixture's order, and a lane a repo rule adds must not become the lane the test waits on.
+fn one_lane(mut lanes: Vec<String>) -> String {
+    assert_eq!(
+        lanes.len(),
+        1,
+        "the test asks for one lane, and no rule adds another: {lanes:?}"
+    );
+    lanes.pop().expect("the lane's review task")
+}
+
+/// The status row of the lane called `lane`, found by name: the status orders its lanes by name, so an index is not
+/// the lane the test asked for, and a lane a repo rule adds must not stand in for it.
+fn lane_row<'a>(status: &'a serde_json::Value, lane: &str) -> &'a serde_json::Value {
+    status["lanes"]
+        .as_array()
+        .expect("the review status lists its lanes")
+        .iter()
+        .find(|row| row["lane"].as_str() == Some(lane))
+        .unwrap_or_else(|| panic!("the review status has the {lane} lane"))
+}
+
+/// The status row of the finding with this id, found by id so a reordered findings list cannot stand in for it.
+fn finding_row<'a>(status: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
+    status["findings"]
+        .as_array()
+        .expect("the review status lists its findings")
+        .iter()
+        .find(|row| row["id"].as_str() == Some(id))
+        .unwrap_or_else(|| panic!("the review status has the finding {id}"))
+}
+
 fn passing_repro() -> serde_json::Value {
     json!({ "id": "repro-ok", "kind": "command", "params": { "run": "exit 0" }, "proves": "The claim does not hold." })
 }
@@ -27,15 +59,15 @@ async fn an_unconfirmed_finding_does_not_block() {
     }))
     .await;
     let subject = w.built_work().await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+    let lane = one_lane(w.review(&subject, &["correctness"]).await);
+    w.until_state(&lane, "passed").await;
 
     // The lane is its own run, routed by role to the other vendor. `correctness` is the lane a medium or high risk merge is owed
     // and no merge entry says low yet, so it keeps the lead tier.
     let decision = w
         .core
         .store
-        .crew_route_decisions(&lanes[0])
+        .crew_route_decisions(&lane)
         .unwrap()
         .pop()
         .unwrap();
@@ -52,9 +84,9 @@ async fn an_unconfirmed_finding_does_not_block() {
     // The finding is typed and stamped by the core, and blocks nothing until a check confirms it.
     let status = w.status(&subject);
     assert_eq!(status["findings"].as_array().unwrap().len(), 1);
-    assert_eq!(status["findings"][0]["check"], "unchecked");
-    assert_eq!(status["blocked"], false);
     let id = w.first_finding(&subject);
+    assert_eq!(finding_row(&status, &id)["check"], "unchecked");
+    assert_eq!(status["blocked"], false);
     let stored = w.core.store.crew_finding(&id).unwrap().unwrap();
     assert_eq!(
         stored.finding.author.role,
@@ -84,27 +116,27 @@ async fn an_unconfirmed_finding_does_not_block() {
         "a gate decided by code cites evidence"
     );
     let status = w.status(&subject);
-    assert_eq!(status["findings"][0]["check"], "unconfirmed");
+    assert_eq!(finding_row(&status, &id)["check"], "unconfirmed");
     assert_eq!(status["blocked"], false);
     assert!(w.core.store.crew_fixes_of(&subject).unwrap().is_empty());
     assert_eq!(w.core.store.crew_tasks_in_crew(&w.lead).unwrap().len(), 2);
 
     // The finding check's Evidence is not the work's: a later lane is told the same count and reads the same commit.
-    let later = w.review(&subject, &["security"]).await;
-    w.until_state(&later[0], "passed").await;
-    let prompts = w.sent_to(&w.worker(&later[0])).join("\n");
+    let later = one_lane(w.review(&subject, &["security"]).await);
+    w.until_state(&later, "passed").await;
+    let prompts = w.sent_to(&w.worker(&later)).join("\n");
     assert!(
         prompts.contains("2 of 3 checks passed"),
         "the count changed"
     );
-    let review = w.core.store.crew_review(&later[0]).unwrap().unwrap();
+    let review = w.core.store.crew_review(&later).unwrap().unwrap();
     assert_eq!(
         review.commit,
-        w.core.store.crew_review(&lanes[0]).unwrap().unwrap().commit
+        w.core.store.crew_review(&lane).unwrap().unwrap().commit
     );
 
     // The reviewer was never shown the key, and its run is over (H7), so it can file nothing more.
-    let thread = w.worker(&lanes[0]);
+    let thread = w.worker(&lane);
     for prompt in w.sent_to(&thread) {
         assert!(!prompt.contains(KEY_MARKER) && !prompt.contains("chk-run"));
     }
@@ -126,8 +158,8 @@ async fn a_confirmed_finding_sends_a_fix_brief_and_the_re_review_shows_it_fixed(
     }))
     .await;
     let subject = w.built_work().await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+    let lane = one_lane(w.review(&subject, &["correctness"]).await);
+    w.until_state(&lane, "passed").await;
     let id = w.first_finding(&subject);
 
     let (done, error) = w
@@ -145,10 +177,18 @@ async fn a_confirmed_finding_sends_a_fix_brief_and_the_re_review_shows_it_fixed(
     // The fix brief answers the finding, may write its file only, and is checked like crew_start's. Its key holds the
     // reviewed task's checks, the repro, a check that the file changed and a scope check; the builder is told none.
     let brief = w.core.store.crew_brief(&fix).unwrap().unwrap();
-    assert_eq!(brief.refs.as_deref().map(<[_]>::len), Some(1));
-    assert_eq!(brief.refs.unwrap()[0].as_str(), id);
-    assert_eq!(brief.files.len(), 1);
-    assert_eq!(brief.files[0].path.as_str(), "src/lib.txt");
+    let refs = brief
+        .refs
+        .as_deref()
+        .expect("the brief answers the finding");
+    assert_eq!(refs.len(), 1, "the brief answers one finding");
+    assert_eq!(refs.first().expect("the finding id").as_str(), id);
+    let files: Vec<&str> = brief.files.iter().map(|file| file.path.as_str()).collect();
+    assert_eq!(
+        files,
+        ["src/lib.txt"],
+        "the brief may write the finding's file only"
+    );
     assert_eq!(
         w.core
             .store
@@ -170,13 +210,14 @@ async fn a_confirmed_finding_sends_a_fix_brief_and_the_re_review_shows_it_fixed(
     // The lanes run again on the fix, and the finding shows as fixed.
     w.until("the re-review finishes", |w| {
         let status = w.status(&subject);
-        status["lanes"][0]["rounds"]
+        // The round's own order is the contract: the re-review is the second round.
+        lane_row(&status, "correctness")["rounds"]
             .as_array()
             .is_some_and(|r| r.len() == 2 && r[1]["state"] == "passed")
     })
     .await;
     let status = w.status(&subject);
-    assert_eq!(status["findings"][0]["status"], "fixed");
+    assert_eq!(finding_row(&status, &id)["status"], "fixed");
     assert_eq!(status["blocked"], false);
 }
 
@@ -197,8 +238,8 @@ async fn the_same_place_twice_stops_the_loop() {
     }))
     .await;
     let subject = w.built_work().await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+    let lane = one_lane(w.review(&subject, &["correctness"]).await);
+    w.until_state(&lane, "passed").await;
     let first = w.first_finding(&subject);
     let (done, _) = w
         .lead(
@@ -208,12 +249,20 @@ async fn the_same_place_twice_stops_the_loop() {
         .await;
     assert_eq!(done["fix"]["started"], true, "{done}");
     w.until("the re-review reports it again", |w| {
-        w.status(&subject)["findings"].as_array().unwrap().len() == 2
-            && w.status(&subject)["lanes"][0]["rounds"][1]["state"] == "passed"
+        let status = w.status(&subject);
+        // The round's own order is the contract: the re-review is the second round.
+        status["findings"].as_array().unwrap().len() == 2
+            && lane_row(&status, "correctness")["rounds"][1]["state"] == "passed"
     })
     .await;
     let status = w.status(&subject);
-    let again = &status["findings"][1];
+    // The re-review files the reworded claim at the same place, so its row is the one that is not the first finding.
+    let again = status["findings"]
+        .as_array()
+        .expect("the review status lists its findings")
+        .iter()
+        .find(|row| row["id"].as_str() != Some(first.as_str()))
+        .unwrap_or_else(|| panic!("the re-review's new finding"));
     assert_eq!(again["status"], "open");
     assert_eq!(
         again["check"], "confirmed",
@@ -222,7 +271,8 @@ async fn the_same_place_twice_stops_the_loop() {
     assert_eq!(again["blocks"], true);
     assert_eq!(again["loop_stopped"], true);
     assert_eq!(
-        status["findings"][0]["status"], "unreported",
+        finding_row(&status, &first)["status"],
+        "unreported",
         "a reworded claim is not a fix"
     );
 
@@ -250,8 +300,8 @@ async fn a_lane_added_after_a_pass_runs() {
     .await;
     let subject = w.built_work().await;
     assert_eq!(w.task(&subject).state, "passed");
-    let first = w.review(&subject, &["correctness"]).await;
-    w.until_state(&first[0], "passed").await;
+    let first = one_lane(w.review(&subject, &["correctness"]).await);
+    w.until_state(&first, "passed").await;
     // Later, with the task long final, more lanes. Each call starts its lanes one after the other inside the tool's
     // 45 second budget, and a call that runs out is an error naming its lanes (#628); a lane takes seconds on a slow
     // Windows runner, so the five still come in short calls.
@@ -270,9 +320,9 @@ async fn a_lane_added_after_a_pass_runs() {
     let status = w.status(&subject);
     assert_eq!(status["lanes"].as_array().unwrap().len(), 6);
     // A lane named again is its next round.
-    let again = w.review(&subject, &["security"]).await;
-    w.until_state(&again[0], "passed").await;
-    let review = w.core.store.crew_review(&again[0]).unwrap().unwrap();
+    let again = one_lane(w.review(&subject, &["security"]).await);
+    w.until_state(&again, "passed").await;
+    let review = w.core.store.crew_review(&again).unwrap().unwrap();
     assert_eq!(review.round, 2);
 }
 
@@ -389,9 +439,14 @@ async fn a_review_call_paced_by_the_mcp_timer_names_its_lanes() {
         "{reply}"
     );
     assert!(!text.contains("did not finish in time"));
-    let reviews = w.core.store.crew_reviews_of(&subject).unwrap();
+    let mut reviews = w.core.store.crew_reviews_of(&subject).unwrap();
     assert_eq!(reviews.len(), 1, "only the first lane started");
-    w.until_state(&reviews[0].task_id, "passed").await;
+    let started = reviews.pop().expect("the lane the cut call started");
+    assert_eq!(
+        started.lane, "correctness",
+        "the call starts its first lane"
+    );
+    w.until_state(&started.task_id, "passed").await;
 }
 
 fn commit_rules(w: &super::harness::World, text: &str) {
@@ -616,8 +671,8 @@ async fn second_review(line: u32) -> (super::harness::World, String, String) {
     }))
     .await;
     let subject = w.built_work().await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+    let lane = one_lane(w.review(&subject, &["correctness"]).await);
+    w.until_state(&lane, "passed").await;
     let id = w.first_finding(&subject);
     let (done, error) = w.lead("crew_check_finding", json!({ "finding": id })).await;
     assert!(!error, "{done}");
@@ -664,10 +719,18 @@ async fn a_second_review_that_agrees_confirms_a_finding() {
             .iter()
             .any(|e| e.check.as_str() == "finding-agreement" && gate.evidence.contains(&e.id))
     );
+    let review = w
+        .core
+        .store
+        .crew_reviews_of(&subject)
+        .unwrap()
+        .into_iter()
+        .find(|review| review.role == "review" && review.lane == "correctness")
+        .expect("the fixture asks for the correctness lane");
     let first = w
         .core
         .store
-        .crew_route_decisions(&w.core.store.crew_reviews_of(&subject).unwrap()[0].task_id)
+        .crew_route_decisions(&review.task_id)
         .unwrap()
         .pop()
         .unwrap();
@@ -722,8 +785,8 @@ async fn a_reviewer_reads_and_reports() {
     }))
     .await;
     let subject = w.built_work().await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    let thread = w.worker(&lanes[0]);
+    let lane = one_lane(w.review(&subject, &["correctness"]).await);
+    let thread = w.worker(&lane);
     w.until("the reviewer runs", |w| {
         w.core.store.thread(&thread).unwrap().active_run.is_some()
     })
