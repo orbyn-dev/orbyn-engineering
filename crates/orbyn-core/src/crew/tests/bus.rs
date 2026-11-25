@@ -12,6 +12,34 @@ fn shape(value: &str, base_rev: u64) -> Value {
     json!({ "key": "api.shape", "class": "decision", "value": { "route": value }, "base_rev": base_rev })
 }
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list: a
+/// read that returns none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
+/// The delivery row a post to one member answers with, found by the recipient it names: one post
+/// answers one row per target, so a second row or a row for another member is a bug, not a place
+/// a test may read.
+fn delivered_to<'a>(sent: &'a Value, to: &str) -> &'a Value {
+    let delivered = sent["delivered"]
+        .as_array()
+        .expect("a post answers with its delivery rows");
+    assert_eq!(
+        delivered.len(),
+        1,
+        "one post to one member answers one delivery row: {sent}"
+    );
+    delivered
+        .iter()
+        .find(|row| row["to"].as_str() == Some(to))
+        .unwrap_or_else(|| panic!("no delivery to {to}: {sent}"))
+}
+
 /// Slice 4, done when (1): two engines exchange a board fact in the middle of their turns.
 #[tokio::test]
 async fn two_engines_exchange_a_board_fact_mid_turn() {
@@ -31,8 +59,9 @@ async fn two_engines_exchange_a_board_fact_mid_turn() {
         )
         .await;
     assert!(!error, "{sent}");
-    assert_eq!(sent["delivered"][0]["to"], json!(d.mb));
-    assert_eq!(sent["delivered"][0]["mode"], "held");
+    let delivered = delivered_to(&sent, &d.mb);
+    assert_eq!(delivered["to"], json!(d.mb));
+    assert_eq!(delivered["mode"], "held");
     assert!(d.queued(&wb).is_empty() && d.steered_to(&wb).is_empty());
 
     // B reads what A wrote, with its author and revision, and builds on it.
@@ -58,12 +87,13 @@ async fn two_engines_exchange_a_board_fact_mid_turn() {
         )
         .await;
     assert!(!error, "{sent}");
-    assert_eq!(sent["delivered"][0]["mode"], "live");
+    assert_eq!(delivered_to(&sent, &d.ma)["mode"], "live");
     d.w.until("the turn is handed the text", |_| {
         !d.steered_to(&wa).is_empty()
     })
     .await;
-    let text = &d.steered_to(&wa)[0];
+    let steered = d.steered_to(&wa);
+    let text = one(&steered, "steer handed to A's running turn");
     assert!(
         text.contains(&format!("from=\"{}\"", d.mb)) && text.contains("trust=\"data\""),
         "{text}"
@@ -88,14 +118,16 @@ async fn two_engines_exchange_a_board_fact_mid_turn() {
 
     // How each message got there is on record, per recipient; the messages hold no mode.
     let by_a = d.w.core.store.crew_deliveries(&d.a).unwrap();
-    assert_eq!(
-        (by_a[0].recipient.as_str(), by_a[0].mode.as_str()),
-        (d.mb.as_str(), "held")
+    assert!(
+        by_a.iter()
+            .any(|row| (row.recipient.as_str(), row.mode.as_str()) == (d.mb.as_str(), "held")),
+        "no held delivery to B: {by_a:?}"
     );
     let by_b = d.w.core.store.crew_deliveries(&d.b).unwrap();
-    assert_eq!(
-        (by_b[0].recipient.as_str(), by_b[0].mode.as_str()),
-        (d.ma.as_str(), "live")
+    assert!(
+        by_b.iter()
+            .any(|row| (row.recipient.as_str(), row.mode.as_str()) == (d.ma.as_str(), "live")),
+        "no live delivery to A: {by_b:?}"
     );
 
     // What B may read is the brief, what was sent to it and the board: not what A sent to others.
@@ -294,7 +326,7 @@ async fn an_ask_goes_pending_or_returns_the_answer() {
         )
         .await;
     assert!(!error, "{late}");
-    assert_eq!(late["delivered"][0]["mode"], "live");
+    assert_eq!(delivered_to(&late, &d.ma)["mode"], "live");
     d.w.until("A is handed the answer", |_| d.steered_to(&wa).len() == 1)
         .await;
 
@@ -422,8 +454,7 @@ async fn a_lead_message_to_one_member_is_recorded_with_every_pair_it_re_armed() 
     assert!(!error, "{all}");
 
     let events = d.w.core.store.crew_bus_events(&crew).unwrap();
-    assert_eq!(events.len(), 1, "{events:?}");
-    let row = &events[0];
+    let row = one(&events, "hop reset event");
     assert_eq!(row.kind, "hop_reset");
     assert_eq!(row.body["to"], json!(d.ma));
     assert_eq!(row.body["message"], lead["id"]);
