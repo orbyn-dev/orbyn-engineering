@@ -127,6 +127,7 @@ impl Core {
                 repo_id: record.repo_id,
                 name: record.name,
                 branch: record.branch,
+                base_branch: record.base_branch,
                 added,
                 deleted,
                 trusted,

@@ -101,6 +101,8 @@ pub(crate) mod project_issue_trackers;
 pub(crate) mod project_repos;
 mod thread_import;
 pub(crate) mod thread_repos;
+#[cfg(test)]
+mod thread_repos_tests;
 pub use issues::TrackerConnection;
 pub(crate) use issues::{tracker_of, tracker_text as tracker_name};
 mod migrations;
