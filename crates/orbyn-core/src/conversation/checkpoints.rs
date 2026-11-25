@@ -88,16 +88,23 @@ pub(crate) fn claude_write_paths(block: &Value) -> Vec<String> {
 }
 
 impl Core {
+    /// The thread a checkpoint read diffs the checkout of: the repository asked for, else the primary, with
+    /// its worktree as the folder. A multi-repository task folder is never handed to Git.
     fn trusted_thread(&self, id: &str) -> Result<Thread> {
-        let thread = self.store.thread(id)?;
+        let thread = self.scoped_thread(id)?;
         if !self.store.project(&thread.project_id)?.trusted {
             return Err(CoreError::FolderUntrusted);
         }
         Ok(thread)
     }
 
+    /// The thread a write to its own files acts in. A multi-repository thread's engine works in the task folder,
+    /// so a file restore stays relative to it; only the reads above resolve one repository.
     pub(crate) fn idle_thread(&self, id: &str) -> Result<Thread> {
-        let thread = self.trusted_thread(id)?;
+        let thread = self.store.thread(id)?;
+        if !self.store.project(&thread.project_id)?.trusted {
+            return Err(CoreError::FolderUntrusted);
+        }
         if thread.active_run.is_some() {
             return Err(CoreError::ThreadBusy);
         }
