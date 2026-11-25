@@ -1,8 +1,10 @@
 //! Real Crew admission and engine-event approval completion, without provider processes.
 use std::sync::Arc;
 
-use orbyn_contracts::{ActionKind, ModelSelection};
-use serde_json::json;
+use orbyn_contracts::{
+    ActionKind, AutopilotSecondEngineNotice, AutopilotSecondEngineNotices, ModelSelection,
+};
+use serde_json::{Value, json};
 
 use super::autopilot_support::{events, request, words};
 use super::harness::{ApprovalTurn, KEY_MARKER, Turn, World, brief, key, world_tiered};
@@ -29,15 +31,51 @@ fn short_spec() -> ApprovalSpec {
     }
 }
 
+/// The body of the one event of `kind` the task recorded: the read filters by kind, so a test asserts a
+/// single row instead of reading a place in the list.
+fn one_event_body(w: &World, task: &str, kind: &str) -> Value {
+    let rows = events(w, task, kind);
+    assert_eq!(rows.len(), 1, "one {kind} event: {rows:?}");
+    rows.into_iter().next().unwrap().body
+}
+
+/// The approval spec the engine was handed for the task's request, found by engine id: a request asks
+/// every configured approver, so a test names the one it means instead of a place in the list.
+fn spec_of(w: &World, engine: &str) -> ApprovalSpec {
+    w.approval_specs
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(id, _)| id == engine)
+        .map(|(_, spec)| spec.clone())
+        .unwrap_or_else(|| panic!("the {engine} engine's approval spec"))
+}
+
+/// The one notice a notice read returned: the read lists notices newest first, and a test that expects one
+/// pending notice or a page of one names the item it means instead of a place in the list.
+fn only_notice(page: &AutopilotSecondEngineNotices) -> &AutopilotSecondEngineNotice {
+    match &page.items[..] {
+        [notice] => notice,
+        [] => panic!("no pending notice"),
+        notices => panic!(
+            "{} notices where one page holds one: {notices:?}",
+            notices.len()
+        ),
+    }
+}
+
 async fn running(engines: &[(&str, bool)]) -> (World, String) {
     let w = world_tiered(true, Arc::new(|_, _| Turn::Hang), engines, true).await;
+    // The world starts its lead thread on the first engine; read that engine back by thread id so the
+    // helper never depends on a place in the argument.
+    let lead = w.core.store.thread(&w.lead).unwrap().engine;
     w.core
         .store
         .switch_thread_engine(
             &w.lead,
-            engines[0].0,
+            &lead,
             &ModelSelection {
-                model: Some(format!("{}-lead", engines[0].0)),
+                model: Some(format!("{lead}-lead")),
                 effort: None,
                 options: Default::default(),
             },
@@ -95,7 +133,7 @@ async fn two_live_protocol_runs_approve_without_sharing_tools_key_or_transcript(
         );
     }
     assert!(w.steered.lock().unwrap().is_empty());
-    assert_eq!(events(&w, &id, "allowed")[0].body["decided_by"], "two_keys");
+    assert_eq!(one_event_body(&w, &id, "allowed")["decided_by"], "two_keys");
 }
 
 #[tokio::test]
@@ -106,7 +144,7 @@ async fn a_missing_second_vendor_denies_and_retains_the_notice_signal() {
         Verdict::Deny(_)
     ));
     assert_eq!(
-        events(&w, &id, "denied")[0].body["needs_second_engine"],
+        one_event_body(&w, &id, "denied")["needs_second_engine"],
         true
     );
     assert_eq!(w.task(&id).state, "running");
@@ -158,11 +196,11 @@ async fn a_task_ending_during_an_approval_cancels_it_and_cannot_apply_a_late_ans
     let (verdict, ()) = tokio::join!(decide, end);
     assert!(matches!(verdict, Verdict::Deny(_)));
     assert!(events(&w, &id, "allowed").is_empty());
-    let denied = events(&w, &id, "denied");
-    assert_eq!(denied.len(), 1, "a stale approval leaves one denied row");
-    assert_eq!(denied[0].body["rule"], "approval_stale");
-    assert_eq!(denied[0].body["decided_by"], "hard_rule");
-    let spec = w.approval_specs.lock().unwrap()[0].1.clone();
+    // A stale approval leaves one denied row.
+    let denied = one_event_body(&w, &id, "denied");
+    assert_eq!(denied["rule"], "approval_stale");
+    assert_eq!(denied["decided_by"], "hard_rule");
+    let spec = spec_of(&w, "alpha");
     assert!(w.core.store.run(&spec.run_id).unwrap().state.is_terminal());
     assert_eq!(w.task(&id).stop_reason.as_deref(), Some("budget"));
 }
@@ -222,7 +260,7 @@ async fn timeout_and_requester_drop_close_the_admitted_approval_run() {
         } else {
             assert!(pending.await.is_err());
         }
-        let spec = w.approval_specs.lock().unwrap()[0].1.clone();
+        let spec = spec_of(&w, "alpha");
         assert!(w.core.store.run(&spec.run_id).unwrap().state.is_terminal());
     }
 }
@@ -302,8 +340,8 @@ async fn ordinary_notices_persist_and_dismiss_once_without_granting_an_action() 
         .autopilot_second_engine_notices(None, None)
         .await
         .unwrap();
-    assert_eq!(first.items.len(), 1);
-    assert_eq!(first.items[0].lead_family.as_deref(), Some("alpha"));
+    let notice = only_notice(&first);
+    assert_eq!(notice.lead_family.as_deref(), Some("alpha"));
     assert_eq!(
         w.core
             .autopilot_second_engine_notices(None, None)
@@ -312,10 +350,10 @@ async fn ordinary_notices_persist_and_dismiss_once_without_granting_an_action() 
         first
     );
     w.core
-        .autopilot_dismiss_second_engine_notice(first.items[0].id)
+        .autopilot_dismiss_second_engine_notice(notice.id)
         .unwrap();
     w.core
-        .autopilot_dismiss_second_engine_notice(first.items[0].id)
+        .autopilot_dismiss_second_engine_notice(notice.id)
         .unwrap();
     assert!(
         w.core
@@ -347,27 +385,29 @@ async fn notice_cursor_is_stable_across_dismissal_and_unrelated_recent_rows() {
             )
             .unwrap();
     }
+    // The cursor reads newest first: each page of one names the next older notice.
     let page = w
         .core
         .autopilot_second_engine_notices(None, Some(1))
         .await
         .unwrap();
-    assert_eq!(page.items[0].target, "third");
+    let notice = only_notice(&page);
+    assert_eq!(notice.target, "third");
     w.core
-        .autopilot_dismiss_second_engine_notice(page.items[0].id)
+        .autopilot_dismiss_second_engine_notice(notice.id)
         .unwrap();
     let next = w
         .core
         .autopilot_second_engine_notices(page.next_before, Some(1))
         .await
         .unwrap();
-    assert_eq!(next.items[0].target, "second");
+    assert_eq!(only_notice(&next).target, "second");
     let last = w
         .core
         .autopilot_second_engine_notices(next.next_before, Some(1))
         .await
         .unwrap();
-    assert_eq!(last.items[0].target, "first");
+    assert_eq!(only_notice(&last).target, "first");
     assert!(last.next_before.is_none());
 }
 
@@ -391,11 +431,11 @@ async fn an_available_other_vendor_resolves_a_notice_once_without_retrying() {
             .items
             .is_empty()
     );
-    let resolved = events(&w, &id, "second_engine_resolved");
-    assert_eq!(resolved.len(), 1);
-    assert_eq!(resolved[0].body["notice"], row);
-    assert_eq!(resolved[0].body["engine"], "beta");
-    assert_eq!(resolved[0].body["family"], "beta");
+    // The notice resolves once, so the task recorded one resolution event.
+    let resolved = one_event_body(&w, &id, "second_engine_resolved");
+    assert_eq!(resolved["notice"], row);
+    assert_eq!(resolved["engine"], "beta");
+    assert_eq!(resolved["family"], "beta");
     assert!(w.approval_specs.lock().unwrap().is_empty());
 }
 
@@ -450,7 +490,7 @@ async fn an_ordinary_parent_run_stop_also_stops_the_owned_approval_pump() {
             !w.approval_specs.lock().unwrap().is_empty()
         })
         .await;
-        let run = w.approval_specs.lock().unwrap()[0].1.run_id.clone();
+        let run = spec_of(&w, "alpha").run_id;
         w.core.store.request_stop(&run).unwrap();
     };
     let (answer, ()) = tokio::join!(pending, stop);
