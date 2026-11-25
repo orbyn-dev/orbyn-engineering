@@ -287,6 +287,9 @@ fn log_row(event: &AutopilotEvent, scrub: &Scrub) -> wire::AutopilotLogRow {
         tier: str_of(&body, "tier"),
         rule: str_of(&body, "rule"),
         mode: str_of(&body, "mode"),
+        title: str_of(&body, "title"),
+        asker_engine: str_of(&action, "asker_engine"),
+        asker_model: str_of(&action, "asker_model"),
         action_kind: str_of(&action, "kind"),
         target: str_of(&action, "target"),
         paths: action

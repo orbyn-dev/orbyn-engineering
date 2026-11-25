@@ -62,12 +62,14 @@ impl Drop for PhotoPermit {
 /// Quality of a JPEG written again: high enough that a photo shown to the engine still looks right.
 const JPEG_QUALITY: u8 = 82;
 
-/// The input kinds this route writes again, decided from the bytes alone. `image` is built with the
-/// JPEG and PNG codecs only (Cargo.toml), so those are the two kinds it can decode.
+/// The input kinds this route writes again, decided from the bytes alone. `image` is built
+/// with the JPEG, PNG and WebP codecs (Cargo.toml); WebP is decoded by the pure-Rust
+/// `image-webp` crate behind that feature, not by a C library.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PhotoKind {
     Jpeg,
     Png,
+    WebP,
 }
 
 impl PhotoKind {
@@ -75,6 +77,7 @@ impl PhotoKind {
         match self {
             Self::Jpeg => ImageFormat::Jpeg,
             Self::Png => ImageFormat::Png,
+            Self::WebP => ImageFormat::WebP,
         }
     }
 
@@ -82,6 +85,7 @@ impl PhotoKind {
         match self {
             Self::Jpeg => "image/jpeg",
             Self::Png => "image/png",
+            Self::WebP => "image/webp",
         }
     }
 
@@ -89,6 +93,7 @@ impl PhotoKind {
         match self {
             Self::Jpeg => "jpg",
             Self::Png => "png",
+            Self::WebP => "webp",
         }
     }
 }
@@ -131,18 +136,19 @@ fn heic_brand(bytes: &[u8]) -> bool {
 }
 
 /// The kind from the bytes, never from the claimed type. A recognised image this route does not
-/// write (a WebP or GIF would need a codec this build does not carry, and shrinking a GIF would drop
-/// its frames) and a HEIC or HEIF are refused with their own code; anything that is not an image at
+/// write (a GIF would need a codec this build does not carry, and shrinking one would drop its
+/// frames) and a HEIC or HEIF are refused with their own code; anything that is not an image at
 /// all is unreadable.
 fn kind_of(bytes: &[u8]) -> Result<PhotoKind> {
     match image::guess_format(bytes) {
         Ok(ImageFormat::Jpeg) => Ok(PhotoKind::Jpeg),
         Ok(ImageFormat::Png) => Ok(PhotoKind::Png),
+        Ok(ImageFormat::WebP) => Ok(PhotoKind::WebP),
         Ok(_) => Err(unsupported(
-            "This image type cannot be converted here. Send a JPEG or PNG.",
+            "This image type cannot be converted here. Send a JPEG, PNG or WebP.",
         )),
         Err(_) if heic_brand(bytes) => Err(unsupported(
-            "HEIC photos cannot be converted yet. Save it as JPEG or PNG first.",
+            "HEIC photos need a decoder this build does not carry. Save it as JPEG, PNG or WebP first.",
         )),
         Err(_) => Err(unreadable()),
     }
@@ -190,7 +196,9 @@ fn encode(image: &DynamicImage, kind: PhotoKind) -> Result<Vec<u8>> {
         // A JPEG has no alpha channel, so the colour is what the engine should see.
         PhotoKind::Jpeg => JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY)
             .encode_image(&DynamicImage::ImageRgb8(image.to_rgb8())),
-        PhotoKind::Png => image.to_rgba8().write_to(&mut out, kind.format()),
+        // PNG and WebP keep alpha; both encoders are lossless, so a photo is not degraded
+        // by being written again.
+        PhotoKind::Png | PhotoKind::WebP => image.to_rgba8().write_to(&mut out, kind.format()),
     };
     written.map_err(|error| CoreError::Internal(format!("photo could not be written: {error}")))?;
     Ok(out.into_inner())
@@ -362,11 +370,42 @@ mod tests {
         let mut out = Cursor::new(Vec::new());
         match kind {
             PhotoKind::Jpeg => DynamicImage::ImageRgb8(image.to_rgb8()),
-            PhotoKind::Png => DynamicImage::ImageRgba8(image.to_rgba8()),
+            PhotoKind::Png | PhotoKind::WebP => DynamicImage::ImageRgba8(image.to_rgba8()),
         }
         .write_to(&mut out, kind.format())
         .unwrap();
         out.into_inner()
+    }
+
+    /// A lossless WebP fixture, written here so no binary is committed.
+    fn webp(image: &DynamicImage) -> Vec<u8> {
+        written(image, PhotoKind::WebP)
+    }
+
+    /// A lossless WebP whose header declares `width` x `height` while its bitstream stays that
+    /// of a small photo: the shape of a decompression bomb, small on disk and huge to decode.
+    fn webp_declaring(image: &DynamicImage, width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = webp(image);
+        // The `VP8L` chunk is "VP8L", its u32 payload length, then the payload: the 0x2F
+        // signature byte and a u32 of width-1 (14 bits), height-1 (14 bits), an alpha bit and a
+        // 3-bit version. Only that u32 changes, so the chunk length and payload stay valid.
+        let tag = bytes
+            .windows(4)
+            .position(|window| window == b"VP8L")
+            .expect("a lossless WebP chunk");
+        let header = tag + 9;
+        assert_eq!(bytes[header - 1], 0x2F, "the VP8L signature byte");
+        let packed = u32::from_le_bytes([
+            bytes[header],
+            bytes[header + 1],
+            bytes[header + 2],
+            bytes[header + 3],
+        ]);
+        // Keep the alpha bit and the version bits; rewrite the two 14-bit dimensions.
+        let kept = packed & 0xF000_0000;
+        let packed = ((width - 1) & 0x3FFF) | (((height - 1) & 0x3FFF) << 14) | kept;
+        bytes[header..header + 4].copy_from_slice(&packed.to_le_bytes());
+        bytes
     }
 
     /// A structurally valid EXIF APP1 segment with a GPS IFD, inserted after the JPEG's SOI the way a
@@ -449,6 +488,7 @@ mod tests {
             kind_of(&written(&photo(8, 8), PhotoKind::Jpeg)).unwrap(),
             PhotoKind::Jpeg
         );
+        assert_eq!(kind_of(&webp(&photo(8, 8))).unwrap(), PhotoKind::WebP);
         let plain = b"this is not an image, whatever the browser said";
         assert_eq!(code(&kind_of(plain).unwrap_err()), "unreadable_image");
     }
@@ -475,10 +515,61 @@ mod tests {
         let error = kind_of(&gif).unwrap_err();
         assert_eq!(code(&error), "unsupported_type");
         assert_eq!(error.status(), 415);
-        // WebP would need a codec this build does not carry yet (see docs/attachments-transcripts.md).
-        let mut webp = b"RIFF\0\0\0\0WEBPVP8 ".to_vec();
-        webp.extend_from_slice(&[0u8; 16]);
-        assert_eq!(code(&kind_of(&webp).unwrap_err()), "unsupported_type");
+    }
+
+    #[test]
+    fn a_webp_is_decoded_and_written_again() {
+        let bytes = webp(&photo(64, 48));
+        let kind = kind_of(&bytes).unwrap();
+        assert_eq!(kind, PhotoKind::WebP);
+        assert_eq!(kind.mime(), "image/webp");
+        assert_eq!(kind.ending(), "webp");
+        let decoded = decode(&bytes, kind.format()).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (64, 48));
+        let (stored, action) = write_within(decoded, kind, MAX_IMAGE_BYTES, false).unwrap();
+        assert_eq!(action, PhotoAction::None);
+        assert_eq!(kind_of(&stored).unwrap(), PhotoKind::WebP);
+        let pixels = image::load_from_memory_with_format(&stored, ImageFormat::WebP)
+            .unwrap_or_else(|error| panic!("the answer is a WebP: {error}"));
+        assert_eq!((pixels.width(), pixels.height()), (64, 48));
+    }
+
+    #[test]
+    fn an_oversized_webp_is_shrunk_until_it_fits() {
+        let kind = PhotoKind::WebP;
+        let bytes = webp(&photo(512, 512));
+        // Lossless WebP compresses this fixture harder than PNG does, so the limit is taken from
+        // the fixture: half its size starts it over the limit and a 1x1 photo fits under it.
+        let limit = (bytes.len() as u64 / 2).max(64);
+        assert!(
+            bytes.len() as u64 > limit,
+            "the {} byte fixture starts over the limit",
+            bytes.len()
+        );
+        let (stored, action) =
+            write_within(decode(&bytes, kind.format()).unwrap(), kind, limit, true).unwrap();
+        assert_eq!(action, PhotoAction::Shrunk);
+        assert!(stored.len() as u64 <= limit, "{} bytes", stored.len());
+        assert_eq!(kind_of(&stored).unwrap(), PhotoKind::WebP);
+    }
+
+    #[test]
+    fn a_damaged_webp_fails_cleanly() {
+        let mut bytes = webp(&photo(64, 64));
+        bytes.truncate(bytes.len() / 2);
+        let kind = kind_of(&bytes).unwrap();
+        assert_eq!(kind, PhotoKind::WebP);
+        let error = decode(&bytes, kind.format()).unwrap_err();
+        assert_eq!(code(&error), "unreadable_image");
+    }
+
+    #[test]
+    fn a_webp_that_declares_too_many_pixels_is_refused_before_a_decode() {
+        let bytes = webp_declaring(&photo(8, 8), 12_000, 12_000);
+        assert!(bytes.len() < 100_000, "the fixture is small on disk");
+        let error = decode(&bytes, ImageFormat::WebP).unwrap_err();
+        assert_eq!(code(&error), "unreadable_image");
+        assert!(error.to_string().contains("megapixels"), "{error}");
     }
 
     #[test]
