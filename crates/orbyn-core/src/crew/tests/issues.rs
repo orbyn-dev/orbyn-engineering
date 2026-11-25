@@ -8,8 +8,8 @@ use crate::issues::{IssueQuery, IssueSource, ScopeList};
 use crate::store::TrackerConnection;
 use async_trait::async_trait;
 use orbyn_contracts::{
-    ConnectTracker, IssueCounts, IssueDetail, IssueKey, IssueState, IssueStateCategory,
-    IssueSummary, IssueTemplate, StartIssueThread, TrackerKind,
+    ConnectTracker, IssueCounts, IssueDetail, IssueKey, IssueList, IssueListFailure, IssueState,
+    IssueStateCategory, IssueSummary, IssueTemplate, StartIssueThread, TrackerKind,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -189,6 +189,15 @@ async fn ready() -> (super::harness::World, Arc<Fake>, Arc<Fake>) {
     (w, gitlab, forgejo)
 }
 
+/// The failure the list reports for `tracker`, found by the tracker it names: a test states which
+/// tracker failed, never where its row sits among the others.
+fn failure(list: &IssueList, tracker: TrackerKind) -> &IssueListFailure {
+    list.failed
+        .iter()
+        .find(|row| row.tracker == tracker)
+        .expect("the tracker that failed")
+}
+
 #[tokio::test]
 async fn a_connection_keeps_its_host_and_never_the_token() {
     let (w, _, _) = ready().await;
@@ -355,8 +364,10 @@ async fn a_tracker_that_fails_is_reported_while_another_answers() {
         .unwrap();
     assert_eq!(list.issues.len(), 2, "GitLab still answered");
     assert_eq!(list.failed.len(), 1);
-    assert_eq!(list.failed[0].tracker, TrackerKind::Forgejo);
-    assert_eq!(list.failed[0].message, "The tracker did not answer.");
+    assert_eq!(
+        failure(&list, TrackerKind::Forgejo).message,
+        "The tracker did not answer."
+    );
     assert_eq!(
         list.counts, None,
         "totals are not claimed when one tracker could not say"
@@ -374,8 +385,13 @@ async fn a_link_is_added_read_back_and_removed_from_that_thread_only() {
     w.core.link_issue(&w.lead, &key).await.unwrap();
     w.core.link_issue(&w.lead, &key).await.unwrap();
     let links = w.core.issue_links().unwrap();
-    assert_eq!(links[&w.lead].len(), 1, "linking twice is one link");
-    assert_eq!(links[&w.lead][0].display_key, "#1");
+    let lead_links = links.get(&w.lead).expect("the lead's links");
+    assert_eq!(lead_links.len(), 1, "linking twice is one link");
+    let link = lead_links
+        .iter()
+        .find(|link| link.key == "1")
+        .expect("the link to issue 1");
+    assert_eq!(link.display_key, "#1");
     assert_eq!(
         w.core.issue(&key).await.unwrap().linked_threads,
         std::slice::from_ref(&w.lead)
@@ -572,8 +588,10 @@ mod gitlab {
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
         assert!(list.issues.is_empty());
         assert_eq!(list.failed.len(), 1);
-        assert_eq!(list.failed[0].tracker, TrackerKind::Gitlab);
-        assert_eq!(list.failed[0].message, "GitLab did not answer.");
+        assert_eq!(
+            failure(&list, TrackerKind::Gitlab).message,
+            "GitLab did not answer."
+        );
         let limited = Server::start(|_| Reply::status(429).header("retry-after", "42")).await;
         w.core.issues.set_source(
             TrackerKind::Gitlab,
@@ -584,7 +602,8 @@ mod gitlab {
             )),
         );
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
-        assert!(list.failed[0].message.contains("42 seconds"), "{list:?}");
+        let failed = failure(&list, TrackerKind::Gitlab);
+        assert!(failed.message.contains("42 seconds"), "{list:?}");
         let text = format!("{list:?}");
         assert!(!text.contains("secret"), "{text}");
         let one = w.core.issue(&key("team/app")).await;
@@ -606,7 +625,9 @@ mod gitlab {
         .await;
         let w = connected(&server).await;
         let first = w.core.list_issues(&IssueQuery::default()).await.unwrap();
-        assert_eq!(first.issues[0].key, "1");
+        assert_eq!(first.issues.len(), 1, "the first page holds one issue");
+        let page = first.issues.first().expect("the first page's issue");
+        assert_eq!(page.key, "1");
         assert!(first.next_cursors.contains_key("gitlab team/app"));
         let second = w
             .core
@@ -617,7 +638,8 @@ mod gitlab {
             .await
             .unwrap();
         assert_eq!(second.issues.len(), 1);
-        assert_eq!(second.issues[0].key, "2");
+        let page = second.issues.first().expect("the carried-on page's issue");
+        assert_eq!(page.key, "2");
         assert!(second.next_cursors.is_empty());
         let before = server.seen().len();
         let other = w
@@ -812,8 +834,10 @@ mod forgejo {
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
         assert!(list.issues.is_empty());
         assert_eq!(list.failed.len(), 1);
-        assert_eq!(list.failed[0].tracker, TrackerKind::Forgejo);
-        assert_eq!(list.failed[0].message, "Forgejo did not answer.");
+        assert_eq!(
+            failure(&list, TrackerKind::Forgejo).message,
+            "Forgejo did not answer."
+        );
         let limited = Server::start(|_| Reply::status(429).header("retry-after", "42")).await;
         w.core.issues.set_source(
             TrackerKind::Forgejo,
@@ -824,7 +848,8 @@ mod forgejo {
             )),
         );
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
-        assert!(list.failed[0].message.contains("42 seconds"), "{list:?}");
+        let failed = failure(&list, TrackerKind::Forgejo);
+        assert!(failed.message.contains("42 seconds"), "{list:?}");
         let text = format!("{list:?}");
         assert!(!text.contains("secret"), "{text}");
         let one = w.core.issue(&key("team/app")).await;
@@ -1147,8 +1172,10 @@ mod azure {
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
         assert!(list.issues.is_empty());
         assert_eq!(list.failed.len(), 1);
-        assert_eq!(list.failed[0].tracker, TrackerKind::AzureDevops);
-        assert_eq!(list.failed[0].message, "Azure DevOps did not answer.");
+        assert_eq!(
+            failure(&list, TrackerKind::AzureDevops).message,
+            "Azure DevOps did not answer."
+        );
         let limited = Server::start(|_| Reply::status(429).header("retry-after", "42")).await;
         w.core.issues.set_source(
             TrackerKind::AzureDevops,
@@ -1159,7 +1186,8 @@ mod azure {
             )),
         );
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
-        assert!(list.failed[0].message.contains("42 seconds"), "{list:?}");
+        let failed = failure(&list, TrackerKind::AzureDevops);
+        assert!(failed.message.contains("42 seconds"), "{list:?}");
         let text = format!("{list:?}");
         assert!(!text.contains("secret"), "{text}");
     }
@@ -1424,8 +1452,10 @@ mod linear {
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
         assert!(list.issues.is_empty());
         assert_eq!(list.failed.len(), 1);
-        assert_eq!(list.failed[0].tracker, TrackerKind::Linear);
-        assert_eq!(list.failed[0].message, "Linear did not answer.");
+        assert_eq!(
+            failure(&list, TrackerKind::Linear).message,
+            "Linear did not answer."
+        );
         let text = format!("{list:?}");
         assert!(!text.contains("secret"), "{text}");
 
@@ -1433,7 +1463,8 @@ mod linear {
         w.core.issues.set_linear_test_base(&limited.base);
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
         assert_eq!(list.failed.len(), 1);
-        assert!(list.failed[0].message.contains("42 seconds"), "{list:?}");
+        let failed = failure(&list, TrackerKind::Linear);
+        assert!(failed.message.contains("42 seconds"), "{list:?}");
         let one = w.core.issue(&key("ENG", "ENG-1")).await;
         assert!(matches!(one, Err(CoreError::TrackerRateLimited(_))));
     }
@@ -1872,7 +1903,13 @@ mod writes {
             .react_issue(react(TrackerKind::Gitlab, "team/app"))
             .await
             .unwrap();
-        assert_eq!(detail.reactions.unwrap()[0].count, 1);
+        let reactions = detail.reactions.expect("the write route reports reactions");
+        assert_eq!(reactions.len(), 1, "one reaction per write");
+        let heart = reactions
+            .iter()
+            .find(|reaction| reaction.content == "Heart")
+            .expect("the Heart reaction");
+        assert_eq!(heart.count, 1);
         assert_eq!(source.writes(), 1);
         for comment_id in ["bad\nid".to_owned(), String::new()] {
             let refused = w
@@ -2102,9 +2139,10 @@ mod binding {
             .filter(|event| event.action == "issues.project.bind")
             .collect();
         assert_eq!(rows.len(), 1, "one audit row");
-        assert_eq!(rows[0].target, project);
+        let row = rows.first().expect("the one audit row");
+        assert_eq!(row.target, project);
         assert_eq!(
-            rows[0].detail,
+            row.detail,
             serde_json::json!({ "project": project, "tracker": "gitlab", "scope": "team/app" })
         );
         // Unbinding is idempotent: the desired end state is "no binding".
