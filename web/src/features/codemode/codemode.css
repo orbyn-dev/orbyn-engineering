@@ -335,33 +335,6 @@
   font-size: 0.95em;
 }
 
-/* The Planned mark beside a Code Mode tool in the Tools tab: the design's Planned pill, until Code Mode ships. */
-.cm-name-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.cm-planned {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: none;
-  height: 20px;
-  padding: 0 8px;
-  border-radius: var(--radius-pill);
-  box-shadow: inset 0 0 0 1px var(--color-borderStrong);
-  color: var(--planned-text);
-  font-size: var(--text-label);
-}
-.cm-planned::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
 /* The list of runs for a thread (Engineer frame codemode-runs-list). */
 .cm-runs {
   display: flex;
