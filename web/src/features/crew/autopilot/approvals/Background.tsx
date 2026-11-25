@@ -231,7 +231,8 @@ export function BackgroundTab() {
   if (repo === "loading") return <Loading label="Reading background crews" rows={4} />;
   if (!repo) return <BackgroundPageView view={{ crews: [], runs: [] }} noRepo />;
   const chosen = picked ? visible?.find((one) => one.id === picked && one.is_git) : undefined;
-  return <Background project={chosen?.id ?? repo.id} repo={chosen?.name ?? repo.name} />;
+  // Keyed by project: a run or watch page opened in one project never shows over another.
+  return <Background key={chosen?.id ?? repo.id} project={chosen?.id ?? repo.id} repo={chosen?.name ?? repo.name} />;
 }
 
 function Background({ project, repo }: { project: string; repo: string }) {

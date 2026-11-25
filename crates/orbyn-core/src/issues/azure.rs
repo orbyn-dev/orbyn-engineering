@@ -138,10 +138,14 @@ fn shared_client() -> Result<Client> {
 fn host_shape(host: &str) -> Result<(String, Option<String>, bool)> {
     let rest = host.strip_prefix("https://").ok_or_else(host_refused)?;
     let (authority, path) = rest.split_once('/').map_or((rest, ""), |(a, p)| (a, p));
+    // The cloud-host allowlist names bare hosts (`dev.azure.com`, `{org}.visualstudio.com`); a port would send the
+    // PAT to `host:port`, which it does not name. (GitLab and Forgejo accept a port for self-managed hosts by
+    // design; Linear's fixed host is the one other reader that refuses one.)
+    if authority.contains(':') {
+        return Err(host_refused());
+    }
     let authority = authority.to_ascii_lowercase();
-    let name = authority
-        .rsplit_once(':')
-        .map_or(authority.as_str(), |(name, _)| name);
+    let name = authority.as_str();
     let path = path.trim_matches('/');
     if name == "dev.azure.com" {
         if path.is_empty() {
@@ -374,13 +378,16 @@ fn cursor_tag(scope: &str, query: &IssueQuery, offset: u32) -> String {
     let assignee = format!("{:?}", query.assignee);
     let limit = query.limit.to_string();
     let offset = offset.to_string();
-    let parts: [&str; 8] = [
+    // The order is part of the filter: a cursor issued for one order is not accepted for another.
+    let sort = format!("{:?}", query.sort);
+    let parts: [&str; 9] = [
         "azure-cursor",
         scope,
         state,
         &labels,
         &assignee,
         &query.text,
+        &sort,
         &limit,
         &offset,
     ];
@@ -1205,7 +1212,8 @@ impl IssueSource for Azure {
                 "application/json-patch+json",
                 "project",
             )
-            .await?;
+            .await
+            .map_err(|error| super::possibly_created("Azure DevOps", error))?;
         let value = parse(&got.body)?;
         let summary = summary(&self.host, &base, scope, &value)?;
         let fields = value.get("fields").ok_or_else(unreadable)?;
@@ -1227,6 +1235,7 @@ impl IssueSource for Azure {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
+            states: None,
         })
     }
 
@@ -1381,6 +1390,7 @@ impl IssueSource for Azure {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
+            states: None,
         })
     }
 }

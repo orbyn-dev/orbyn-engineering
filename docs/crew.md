@@ -282,7 +282,10 @@ a `review_lane_tier` reason, and the `route` in a `crew_start` or `crew_review` 
    writes. The brief's `needs` (for example `image`, `mcp`) must match capabilities.
    - **One source for the state facts:** the first three checks and the write check read `ProviderFacts`
      (`agents/provider_facts.rs`), the same facts the Settings Providers list reads for its Not found, Can't start
-     (a `Broken` version) and Unmanaged (no `managed` or no `approvals`) labels, and for the Signed out state.
+     (a `Broken` version), Unmanaged (no `managed` or no `approvals`) and Limited support labels. Signed out is
+     not one of them: the list draws it from the engine's own login state and last start issue
+     (`provider_list.rs`, `ProviderTable.tsx`), and the router's SignedOut filter reads the same login state
+     through `ProviderFacts.unavailable()`.
      A test runs every combination of those facts through the router and the list and fails if they disagree.
      A sign-in that could not be confirmed has no designed label, so the list shows none for it while the router
      still refuses. Limited support (an `Unsupported` or `Graceful` version) is list-only and never keeps an engine out.
@@ -360,7 +363,10 @@ retries with the reason. The same failure twice means one change of approach, an
     (`crew_turn_budget`; unset or 0 is no crew budget), set in Settings › General (`Crew turn budget`). A crew's spend is the same per-task tally summed over its
     tasks, so the crew's budget and a task's own cannot disagree. Once the crew's turns are spent, a new task is
     refused with `not_authorized` and "The crew has spent its turn budget, so no new task can start."; nothing is
-    stored, routed or sent. A task already running keeps its retries, approvals and verification, and may spend past
+    stored, routed or sent. **It fails closed:** a budget or a spend that cannot be read refuses the start too
+    (`not_authorized`, with a sentence saying the read failed), because the budget is what allows a start, so an
+    unknown one is never read as no budget. The background crews' daily budget answers a failed read the same way.
+    A task already running keeps its retries, approvals and verification, and may spend past
     the number. There is no reset: a new crew starts at zero because its count is read from its tasks. Every new
     task counts, including review lanes and fixes, except Autopilot's merge corrections, which create their task
     directly (deterministic, no worker turns). A task whose worker thread exists or whose first prompt is still queued
@@ -441,9 +447,19 @@ Guards, all enforced in code:
     next bus tool result, or inside a prompt the core already sends: the worker's retry prompt and the lead's result
     notice. Those prompts are admitted with the source label `user` (slice 3's channel), so held text rides in a
     prompt the queue shows as the person's, inside the data wrapper, at most 10 messages and 20,000 characters at a
-    time. A worker being verified is never handed anything. A message nobody ever collects stays `held`. Only fake
-    engines ran, so "live" is not tested against real Claude or Codex, which may read it after the tool call it is
-    in. A board write counts as a post, and a key has 16 revisions.
+    time. A worker being verified is never handed anything. A message nobody ever collects stays `held`. A board
+    write counts as a post, and a key has 16 revisions. `live` means the text entered the running turn's input, not
+    that the engine read it: the Claude CLI folds a mid-turn message into the turn it is in, so it may read it only
+    after the tool call it is in, and Codex is handed it through `turn/steer` at its next step. An engine that
+    refuses the steer reports `SteerFailed` (a failed Codex `turn/steer`, a host steering request answered
+    `rejected`): the bus appends one more delivery row, `next_turn`, for the same message and recipient, whose note
+    says the engine refused the live steer and the text comes with the next turn, and the text is requeued for that
+    turn. Rows are append-only, so the `live` row stays and the newest row says where the message stands. A bounded
+    in-memory map (64 hand-overs, 30 minutes, dropped when the run ends) pairs the thread and masked text with the
+    message and recipient by the engine's own steer id, never by the text, so a person's steer with the same words
+    cannot consume a crew hand-over; a refusal it cannot match writes nothing rather than guess. Only fake engines
+    ran: no real Claude or Codex run has yet shown how a live steer is read or refused, so both stay unqualified
+    (#444).
   - The hop count is H4 as written: a lead message to a member starts every pair of that member again. The count
     is read from the stored messages. The lead is told once per distinct refusal by a message from the core.
   - Sizes: a body up to 4000 characters, a fact value up to 8 KiB, 128 keys per board. A repo rule can lower the
@@ -534,7 +550,9 @@ merge).
     that began under the old guard (which only failed flags added since the start) now fails verification on an existing
     flag. Re-run that task after clearing the flag.
   - The scope, size and changed-path checks read Git without line-ending conversion or the untracked cache, so those settings
-    cannot hide a byte change. Other Git reads keep their normal settings.
+    cannot hide a byte change. They also need Git 2.40 or later, where `GIT_ATTR_SOURCE` keeps the checkout's own
+    `.gitattributes` out of the read; older Git errors the check rather than let an attribute hide a byte change. Other Git
+    reads keep their normal settings.
 - #450 adds source contracts for person once consent, a persistent same-engine route badge, per-lane code-owned
   `review` Gates and reasoned unlocked-lane removal. Migration 46 follows forge migration 45; launch and merge admission
   are covered by focused fake-engine, store and HTTP tests. The live Flow task includes the reasoned removal dialog;
@@ -574,20 +592,24 @@ stay in the [review README](../crates/orbyn-core/src/crew/review/README.md#decis
 - **Hidden paths and index flags — index flags closed; ignored new files accepted.** Any `assume-unchanged` or
   `skip-worktree` entry, sparse checkouts included, refuses admission and fails verification whenever it appears. A new file
   hidden by `.gitignore`, `.git/info/exclude` or `core.excludesFile` stays invisible to the Git-based scope and size checks:
-  counting every ignored file would charge pre-existing caches and local data to a narrow task. A crafted `.git/index` with
-  matching file times, a `.git` file pointing at another folder and a writable `.git` are the same class. Unblocked by isolated
-  checkouts (#436) or a task-start byte baseline; `ignored_new_files_remain_an_accepted_blind_spot`,
-  `an_index_flag_does_not_hide_a_reviewers_edit` and `a_flag_that_was_there_at_the_start_refuses_admission` cover today's
-  behaviour.
+  counting every ignored file would charge pre-existing caches and local data to a narrow task. A tracked `.gitattributes` rule
+  cannot hide a change: the byte-exact reads keep it out on Git 2.40 or later, and an older Git errors the check. A crafted
+  `.git/index` with matching file times, a `.git` file pointing at another folder and a writable `.git` are the same class.
+  Unblocked by isolated checkouts (#436) or a task-start byte baseline; `ignored_new_files_remain_an_accepted_blind_spot`,
+  `an_index_flag_does_not_hide_a_reviewers_edit`, `a_flag_that_was_there_at_the_start_refuses_admission` and
+  `an_in_tree_attributes_rule_cannot_hide_a_byte_change_from_scope_or_size` cover today's behaviour.
 - **The clearing repro runs at the current checkout — blocked on #436.** It must pass now, is not shown to have failed before
   the fix (the Gate says so), and its Evidence records the commit it ran on. Fail-before/pass-after at the finding's exact
   commit needs a throwaway checkout and process ownership in #436. Unblocked by #436.
 - **Byte-exact Git is scoped to the checks that decide — accepted.** Crew's scope, size and changed-path checks run
   `git_byte_exact` (line-ending conversion and the untracked cache off) and refuse a nonempty or unreadable `info/attributes`;
-  `git_hardened` keeps its previous behaviour for every other caller. Adding the flags to every hardened read would change
-  file explorer and merge reads too, and real Windows `core.autocrlf=true` behaviour is unverified ([handoff](handoff.md)).
-  Repository metadata remains writable. Unblocked by auditing every caller and recording Windows evidence;
-  `autocrlf_cannot_hide_a_byte_change_from_scope_or_size` and `only_the_byte_exact_helper_carries_the_crew_flags` cover it.
+  those checks also need Git 2.40 or later, where `GIT_ATTR_SOURCE` keeps the checkout's own `.gitattributes` out of the read,
+  and errors on older Git instead of passing bytes it did not compare. `git_hardened` keeps its previous behaviour for every other
+  caller. Adding the flags to every hardened read would change file explorer and merge reads too, and real Windows
+  `core.autocrlf=true` behaviour is unverified ([handoff](handoff.md)). Repository metadata remains writable. Unblocked by
+  auditing every caller and recording Windows evidence; `autocrlf_cannot_hide_a_byte_change_from_scope_or_size`,
+  `an_in_tree_attributes_rule_cannot_hide_a_byte_change_from_scope_or_size`,
+  `the_byte_exact_checks_need_attr_source_from_git_2_40` and `only_the_byte_exact_helper_carries_the_crew_flags` cover it.
 - **The touched guard and HEAD reads — closed.** `chk-fix-touched` is a core byte comparison in the immutable key, run only for
   a stored fix task, never a shell command; a missing, unreadable or nonregular file cannot pass. The two plain
   `rev-parse HEAD` reads the issue named use `git_hardened`, in `review/lanes.rs` and the start path. Covered by
@@ -891,9 +913,10 @@ be approved). The person answers from the app's window, local only: `POST /api/c
   binding: the key lives only in the service process, and the holds it binds never outlive a restart.
 
 Known limits: an unauthenticated caller gets 401, not 404, on a Crew route even with the flag off, like every protected route. The
-ledger rows hold the lead's and second key's reasons but not the asker's model, a risk tier or a title; an injected text is kept as its
-class only. The risk, review and queue views read the whole table and then page, which is fine for one person's repositories. A
-comment is kept and is not yet a fix brief.
+ledger rows hold the lead's and second key's reasons, the tier the action needed, the task's title as it stood at the write, and the
+asking run's engine and model; an injected text is kept as its class only. A row no run asked for (a merge the queue took) carries no
+asker, and an asking thread with no model recorded carries none either. The risk, review and queue views read the whole table and then
+page, which is fine for one person's repositories. A comment is kept and is not yet a fix brief.
 
 Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g), and
 background crews' triggers and runs (4h; their stored state is below).
@@ -1578,7 +1601,7 @@ elapsed time; usage; worktree and branch; file lease; unread messages.
 | Needs you inbox | Questions, approvals, reviews and conflicting board writes, each with the one action it needs. Order: risk first, then the items that block nothing (a demotion) last within a risk tier, then oldest first. An **Autonomy** row appears when the circuit breaker demotes an area from Full to On; it blocks nothing, shows the trip's record, and offers Review, Override… and Dismiss (Dismiss is remembered per browser and repository, and returns only after a new trip). It reads the first Git repository only; with several repositories the inbox says so |
 | Task report | What changed (the diff), what was verified, what was not, risks, cost, and a timeline the person can replay |
 
-**As built (slice 5, the wide Map tree and the swim lanes, Crew Designs' `crew-map` and `lanes-main`):** `web/src/features/crew/map/MapView.tsx` draws the wide tree of frame `crew-map` from `GET /api/crew/flow/map`: the lead in the first column, every worker whose node names the lead as `started_by` under it with a solid line, every `FlowEdge` between members as a dashed line labelled with its kind and its newest delivery (never a message's text), and each worker's subagent report beside it (reported engines say "Subagents reported"; ACP and the rest say "Subagents not reported", "Not an empty tree: not reported."). A node shows the engine, model and effort, the task's state (the lead says Lead), Quiet or May be stuck, the engine's registry word when it is not Ready, the brief's outcome, elapsed time, the lease and unread; the details also say when it was updated. Selecting a node opens the details beside the tree (under it below 640 px) exactly as `crew-map-list` draws them. `web/src/features/crew/map/LanesView.tsx` draws the swim lanes of frame `lanes-main` from the map and message reads: one lane per member, the lead first, with the engine and model; the time axis is taken from the messages' own times (the 10-minute mark at or before the earliest and at or after the newest, widening the step rather than crowding it); every message is an arrow from its sender's lane to its receiver's, labelled with how it arrived and its fixed kind, and a message to everyone is drawn to each other lane and labelled once; each worker's brief outcome is a bar over its run. The shared board's facts stay beside them and the beta's message list stays under them. What no read carries is a Planned chip naming the missing read, never a value: per-worker tokens and a worker's branch on the tree ("no Map route reports per-worker tokens yet", "… a branch"), the subagent rows ("no Map route names a worker's subagents"), and a lane's level ("no route reports a lane's level"). The design frames `crew-map` and `lanes-main` still carry the designer's "Planned" note for the beta's nested list and message list; the next design version should drop it, since the app now builds both from the reads. The Flow task's artifacts, artifact diff and check results have their read (`GET /api/crew/flow/tasks/{id}/artifacts`, `orbyn_core::crew::flow::artifacts`): the evidence rows of the build under way, each with its check's id, kind, outcome, exit code, duration and the commit the checks read, the artifacts that row named, and the change the checks read as a file list with added and removed counts, pinned to the base commit the task started from (read-only git on the task's own checkout, tracked files only; a task with no checkout answers with the reason instead). It never carries the key's command, output, `proves` text or an Evidence id, and a check the task's key does not name has no kind. No web screen reads it yet, so the frames `flow-artifacts`, `flow-artifact-diff` and `flow-check-failed` stay samples, and three of their parts still have no source: no check producer stores an artifact, so a row names none; nothing records that an artifact's bytes were pruned, so `flow-artifact-pruned` has no answer; and a readable check name is the key's own text, so a row is labelled by its kind and id. `flow-gates` needs no new read: its gates are already in the Flow task zoom. A reviewer lane has no page of its own either: `lane-anatomy`, `lane-finding`, `lane-finding-states`, `lane-locked`, `lane-rules`, `lane-security`, `lane-add` and `lane-after-pass` need a per-lane read and route (what the lane was given: the diff and the check results; its findings' evidence, repro and confirmation) that no route serves, so a lane stays a row of the Flow zoom with its tier, the commit it read, the same-engine flag and its findings under it.
+**As built (slice 5, the wide Map tree and the swim lanes, Crew Designs' `crew-map` and `lanes-main`):** `web/src/features/crew/map/MapView.tsx` draws the wide tree of frame `crew-map` from `GET /api/crew/flow/map`: the lead in the first column, every worker whose node names the lead as `started_by` under it with a solid line, every `FlowEdge` between members as a dashed line labelled with its kind and its newest delivery (never a message's text), and each worker's subagent report beside it (reported engines say "Subagents reported"; ACP and the rest say "Subagents not reported", "Not an empty tree: not reported."). A node shows the engine, model and effort, the task's state (the lead says Lead), Quiet or May be stuck, the engine's registry word when it is not Ready, the brief's outcome, elapsed time, the lease and unread; the details also say when it was updated. Selecting a node opens the details beside the tree (under it below 640 px) exactly as `crew-map-list` draws them. `web/src/features/crew/map/LanesView.tsx` draws the swim lanes of frame `lanes-main` from the map and message reads: one lane per member, the lead first, with the engine and model; the time axis is taken from the messages' own times (the 10-minute mark at or before the earliest and at or after the newest, widening the step rather than crowding it); every message is an arrow from its sender's lane to its receiver's, labelled with how it arrived and its fixed kind, and a message to everyone is drawn to each other lane and labelled once; each worker's brief outcome is a bar over its run. The shared board's facts stay beside them and the beta's message list stays under them. What no read carries is a Planned chip naming the missing read, never a value: per-worker tokens and a worker's branch on the tree ("no Map route reports per-worker tokens yet", "… a branch"), the subagent rows ("no Map route names a worker's subagents"), and a lane's level ("no route reports a lane's level"). The design frames `crew-map` and `lanes-main` still carry the designer's "Planned" note for the beta's nested list and message list; the next design version should drop it, since the app now builds both from the reads. The Flow task's artifacts, artifact diff and check results have their read (`GET /api/crew/flow/tasks/{id}/artifacts`, `orbyn_core::crew::flow::artifacts`): the evidence rows of the build under way, each with its check's id, kind, outcome, exit code, duration and the commit the checks read, the artifacts that row named, and the change the checks read as a file list with added and removed counts, pinned to the base commit the task started from (read-only git on the task's own checkout, tracked files only; a task with no checkout answers with the reason instead). It never carries the key's command, output, `proves` text or an Evidence id, and a check the task's key does not name has no kind. The artifacts view of the Flow task zoom reads it (`web/src/features/crew/flow/live/TaskArtifacts.tsx`, opened with the zoom's Artifacts button): the checks bar, each row labelled by its kind and id (never by the key's own text for the check) with the artifacts that row named and the hash kept, and the change pinned to the base commit as its file and line counts, read from git when the view opens. A 404 (an older service, or one with Crew Preview off) reads as no artifacts read and says the checks, the artifacts they named and the change they read stay Planned; any other failure is reported beside the task with Retry; and a build with no check yet or a task with no checkout reads as empty. Brief, Findings and the pull request stay Planned, each chip naming that this read does not carry it, and so do the diff's author, branch and lease, the artifact bytes and a pruned mark, and the stale mark (no read reports the checkout's head). The frames `flow-artifact-diff` and `flow-check-failed` stay samples: the read carries per-file counts and never a patch for the diff to open, and a failed check's name and command stay the answer key's own text. Three parts still have no source: no check producer stores an artifact yet, so a row names none; nothing records that an artifact's bytes were pruned, so `flow-artifact-pruned` has no answer; and a readable check name is the key's own text, so a row is labelled by its kind and id. The artifacts frame's own footer, which says the app has no artifact view, is now stale and should go in the next design version. The view is tested against fixtures and the mock, not against a live service. `flow-gates` needs no new read: its gates are already in the Flow task zoom. A reviewer lane has no page of its own either: `lane-anatomy`, `lane-finding`, `lane-finding-states`, `lane-locked`, `lane-rules`, `lane-security`, `lane-add` and `lane-after-pass` are not drawn in the app (the next paragraph names the read a lane has), so a lane stays a row of the Flow zoom with its tier, the commit it read, the same-engine flag and its findings under it.
 
 A reviewer lane has a read of its own — `GET /api/crew/flow/tasks/{id}/lanes?lane=<lane>`, `FlowLaneDetail` — but no page yet: it serves the row the zoom shows, what the lane was given (the work's purpose, the commit it read, the checks its brief named and how many of them passed) and the findings the lane filed in every round, each with the reviewer's own evidence. The pages `lane-anatomy`, `lane-finding`, `lane-finding-states`, `lane-locked`, `lane-rules`, `lane-security`, `lane-add` and `lane-after-pass` stay Planned until they are drawn, and a lane stays a row of the Flow zoom with its tier, the commit it read, the same-engine flag and its findings under it. Three parts of those pages are still not served: the diff the lane read (no commit-pinned diff read exists), and a finding's repro and confirmation (the lead's repro check is key material under H1, and a check's name and result need the artifacts route), so `lane-finding` stays Planned.
 
@@ -1847,7 +1870,10 @@ the same transaction as its `stopped`/`engine_error` move.
 - **Review queue digest:** `crew_review_queue` reads the field for what waits elsewhere — the Inbox's items this queue does not answer, by kind, `waiting_elsewhere` on `GET /api/crew/autopilot/review` — so a page can say "N more wait for you in the Inbox" from the same field the Inbox and Taskboard read, not from a second rule; the waits the queue itself answers are not counted as elsewhere, and the counts need not be equal (the board cards only work tasks).
 - **Dashboard live count:** the `live` field on `GET /api/crew/dashboard` is a "Right now" row that ignores the 30/60/90 day window while the figures beside it are windowed: what waits for this repository now, from the same field, by kind (dismissals included; the same field's items, not a count that must equal the Inbox's), and the workers that own live work now, from the same `working` function, by why. Idle is not served: the store keeps no crew member that holds no task, so a genuinely idle worker cannot be told from one that never joined, and the tile stays Planned.
 - **Dashboard needed-kind:** `tripwire` joins `DASHBOARD_KINDS`, so a task a trip wire stopped and a person then merged by hand is no longer counted as a merge that needed nothing from the person.
-On the web, one shared needs-you read draws the Inbox's watch and could-not-stop rows (#1363, #1415); the board column, the Map words and the dashboard tiles are not drawn from it yet. Tests: the truth table in `working.rs`, the board field tests in `crew::tests::flow_board` (the field's column, a dismissed could-not-start card, the refusal it carries, a fix in flight), the dashboard live-row tests in `crew::tests::dashboard` (the same field, dismissals, the window, another project's workers filtered out), and the Review queue digest test in `crew::tests::background_review`. One needs-you read, not necessarily one count: the board cards only work tasks, a background run's wait has no card, and the dashboard narrows to one repository.
+- **Autopilot digest:** the daily digest's `needs_person` count on `GET /api/crew/autopilot/digest` is the same field, read across the device (the Inbox's items, dismissals included), not a recount of its own merge records: a task waiting on a person counts even with no merge at all, and the day is not quiet while the field holds a wait.
+- **Flow You cell:** the tenth cell of a task's line reads the field's kind for that task: a merge waiting on a person (`MergeWaiting`) is Needs you from that one field, while a merged change waiting for the person's ordinary review is `ReviewWaiting` (the Review queue's own list, which the field does not carry) and a reverted merge is Failed.
+- **Scoped reads:** the Taskboard reads one crew and the dashboard one repository, and both narrow their needs-you reads to it in SQL (`Scope::Crew`/`Scope::Project`), so a screen's refresh never loads every crew's records; the Inbox, the Review queue and the digest read the whole device.
+On the web, one shared needs-you read draws the Inbox's watch and could-not-stop rows (#1363, #1415); the board column, the Map words and the dashboard tiles are not drawn from it yet. Tests: the truth table in `working.rs`, the board field tests in `crew::tests::flow_board` (the field's column, a dismissed could-not-start card, the refusal it carries, a fix in flight, a wait past the Inbox's cap), the dashboard live-row tests in `crew::tests::dashboard` (the same field, dismissals, the window, another project's workers filtered out), the Review queue digest test in `crew::tests::background_review`, the digest count test and the scoped read test in `crew::tests::needs_you`, and the Flow You-cell test in `crew::tests::flow`. One needs-you read, not necessarily one count: the board cards only work tasks, a background run's wait has no card, and the dashboard narrows to one repository.
 
 **As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342) and its service side is built (not run against a real service). KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
 
@@ -2140,7 +2166,9 @@ the person key were merged first (#1342).
 
 ## Open risks
 
-- Steering differs by engine. A Claude message may land mid-tool-call. Test with real engines before claiming "live".
+- Steering differs by engine. A Claude message may land mid-tool-call, and a refusal (SteerFailed) is recorded as
+  next_turn and requeued. Both are tested on fake engines only; the real Claude and Codex runs that would qualify them
+  are still to do (#444).
 - Login and quota are per engine on the person's machine. The router must fail clearly ("Codex isn't signed in") rather
   than silently falling back.
 - Cost: several engines at once multiply usage. The crew-wide turn budget (slice 3 above) refuses new tasks and

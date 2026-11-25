@@ -488,13 +488,16 @@ fn cursor_tag(scope: &str, query: &IssueQuery, page: u32) -> String {
     let assignee = format!("{:?}", query.assignee);
     let limit = query.limit.to_string();
     let page = page.to_string();
-    let parts: [&str; 8] = [
+    // The order is part of the filter: a cursor issued for one order is not accepted for another.
+    let sort = format!("{:?}", query.sort);
+    let parts: [&str; 9] = [
         "forgejo-cursor",
         scope,
         state,
         &labels,
         &assignee,
         &query.text,
+        &sort,
         &limit,
         &page,
     ];
@@ -790,7 +793,8 @@ impl IssueSource for Forgejo {
                 Some(&payload),
                 "repository",
             )
-            .await?;
+            .await
+            .map_err(|error| super::possibly_created("Forgejo", error))?;
         let value = parse(&got.body)?;
         let summary = summary(&self.host, scope, &value)
             .ok_or_else(|| CoreError::NotFound("issue".into()))?;
@@ -803,6 +807,7 @@ impl IssueSource for Forgejo {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
+            states: None,
         })
     }
 
@@ -967,6 +972,7 @@ impl IssueSource for Forgejo {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
+            states: None,
         })
     }
 }

@@ -66,8 +66,7 @@ interface WorkspaceState {
   refreshProjects(): Promise<void>;
   refreshThreads(projectId: string): Promise<void>;
   refreshThread(id: string): Promise<void>;
-  /** Scratch threads sit behind hidden projects, which project lists leave out. */
-  refreshScratch(): Promise<void>;
+  /** One global list read supplies every project's threads and the scratch threads. */
   refreshPolledThreads(projectIds: string[]): Promise<void>;
   refreshApprovals(): Promise<void>;
   refreshEngines(): Promise<void>;
@@ -360,19 +359,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }));
     }
   },
-  async refreshScratch() {
-    const current = claim("scratch");
-    try {
-      const list = (await api.allThreads()).filter((thread) => thread.scratch);
-      if (!current()) return;
-      const merged = reuseThreads(get().threads, list);
-      if (merged.changed) set({ threads: merged.threads });
-    } catch {
-      // Project threads still load; the next poll tries again.
-    }
-  },
-
-  /** One global read supplies the project lists and the scratch threads during polling. */
+  /** One global read supplies the project lists and the scratch threads. */
   async refreshPolledThreads(projectIds) {
     const current = new Map(projectIds.map((id) => [id, claim(`threads:${id}`)]));
     const scratchCurrent = claim("scratch");
@@ -475,15 +462,16 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   async refreshAll(options) {
-    const { refreshProjects, refreshThreads, refreshApprovals, refreshManaged, refreshUpdates } = get();
+    const { refreshProjects, refreshApprovals, refreshManaged, refreshUpdates } = get();
     const quick = options?.quick === true;
     // The workspace status names each project's branch, so it starts with the projects.
     const managed = quick ? Promise.resolve() : refreshManaged();
     await refreshProjects();
     const projects = get().projects.data ?? [];
     await Promise.all([
-      ...(quick ? [get().refreshPolledThreads(projects.map((p) => p.id))]
-        : [...projects.map((p) => refreshThreads(p.id)), get().refreshScratch()]),
+      // One global read: the per-project lists are a slice of it, so reading them separately
+      // would only repeat the same thread rows on every full load.
+      get().refreshPolledThreads(projects.map((p) => p.id)),
       refreshApprovals(),
       managed,
       quick ? Promise.resolve() : refreshUpdates(),

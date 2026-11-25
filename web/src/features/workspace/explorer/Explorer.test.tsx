@@ -315,6 +315,29 @@ it("offers Open and the path copies on a file, and no worktree removal", async (
   expect(within(worktree).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["New thread here", "Copy path"]);
 });
 
+const OUTSIDE_EDITOR = [{ id: "code", name: "VS Code", launch_style: "goto", file_manager: false }];
+
+it("writes the outside-editor chord the way a Windows platform does", async () => {
+  vi.spyOn(api, "editors").mockResolvedValue(OUTSIDE_EDITOR);
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  const user = userEvent.setup();
+  render(<App />);
+  await user.pointer({ keys: "[MouseRight]", target: await findRow(/^README\.md/) });
+  const menu = await screen.findByRole("menu", { name: "File actions" });
+  expect(within(menu).getByRole("menuitem", { name: /^Open in an outside editor/ })).toHaveTextContent("Open in an outside editorAlt+↵");
+  expect(within(menu).queryByText("⌥↵")).toBeNull();
+});
+
+it("keeps the outside-editor chord as ⌥↵ on macOS", async () => {
+  vi.spyOn(api, "editors").mockResolvedValue(OUTSIDE_EDITOR);
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  const user = userEvent.setup();
+  render(<App />);
+  await user.pointer({ keys: "[MouseRight]", target: await findRow(/^README\.md/) });
+  const menu = await screen.findByRole("menu", { name: "File actions" });
+  expect(within(menu).getByRole("menuitem", { name: /^Open in an outside editor/ })).toHaveTextContent("Open in an outside editor⌥↵");
+});
+
 it("reads a project's files again, quietly, when the service says they changed", async () => {
   const stop = startDataRefresh();
   render(<App />);

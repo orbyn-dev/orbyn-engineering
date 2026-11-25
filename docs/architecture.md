@@ -35,7 +35,13 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    name (`app.orbyn.engineering.env-sets`, `.dev` in an unsigned build), one item per key, written through
    `PUT /api/library/env-sets/{id}/keys/{key}` (`Person`) and read back only as the environment of one workflow run the
    person starts, never an engine spawn. They are in no SQLite row, log, audit row, answer or export, and a run's terminal
-   output is masked for them by exact match.
+   output is masked for them by exact match. A third owner-approved keychain use is the **API token of an issue-tracker
+   connection** (`docs/issues.md`, "Trackers and credentials"): `orbyn-core` `credentials::TRACKERS` gives each
+   tracker its own keychain item (`tracker:<tracker>`), written through
+   `POST /api/issues/trackers/{tracker}/connect` (`Person`) and removed through `.../disconnect`. It is never
+   returned by any route (the GET trackers route reads it only to report whether one is saved): it is fetched for the
+   reader that makes that tracker's own requests, leaves the keychain only as that tracker's authorization header to
+   the connection's own host, and is in no SQLite row, frame, log, audit row, answer or error.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
 3. Claude runs through the person's own installed `claude`. The default path is the engine host with the Claude Agent SDK
    (a dependency used as shipped, never copied or modified); the CLI driver stays a path the person can choose. Both
@@ -246,12 +252,13 @@ and size, so a transcript shows what the message carried without asking the engi
 
 A photo can be converted before it is stored: `POST /api/threads/:id/attachments/convert?name=`
 takes the photo as its body and answers `ConvertedPhoto`, the stored attachment the run
-sends instead. A PNG or JPEG over 10 MiB is written smaller until it fits, and one within
-the limit is written again at its own size, so the stored bytes never carry the original's
-EXIF location. The input is capped at 50 MiB, refused from the declared length before the
-body is read, and at 100 megapixels with a 512 MiB decoder allocation, checked from the
-header before a decoder allocates. A HEIC, HEIF or WebP is refused as `415 unsupported_type`
-until a decoder this build can carry is chosen, and the route reads no path from the request.
+sends instead. A PNG, JPEG or WebP over 10 MiB is written smaller until it fits, and one
+within the limit is written again at its own size, so the stored bytes never carry the
+original's EXIF location. The input is capped at 50 MiB, refused from the declared length
+before the body is read, and at 100 megapixels with a 512 MiB decoder allocation, checked
+from the header before a decoder allocates. WebP is decoded by the pure-Rust `image-webp`
+crate; a HEIC or HEIF is refused as `415 unsupported_type` until a decoder this build can
+carry is chosen, and the route reads no path from the request.
 At most two photo conversions decode and encode at once across the service; others wait.
 
 The composer edits a fenced code block as plain text: Tab and Shift+Tab move the
@@ -1129,12 +1136,16 @@ restoring a child leaves sibling changes and untracked files untouched.
 repository coordinate basis and expected cwd into optional checkout and repository
 paths. It returns no file content. Thread links prefer an existing safe file after
 stripping the longest repeated workspace suffix, then try the literal thread path.
-Only existing safe files inside cwd receive a checkout path; missing tracked files
-and sibling Git patches may retain repository coordinates for diff navigation.
-Ordinary file reads/writes and engine scope remain bounded to thread cwd. File and
-diff reveal intents are transient, capture thread/cwd before resolution, and consume
-only their own nonce. Route/cwd changes and newer navigation invalidate stale
-responses, including when an older request completes last.
+Only existing safe files inside the checkout receive a checkout path; missing tracked
+files and sibling Git patches may retain repository coordinates for diff navigation.
+A multi-repository thread resolves the reference in the repository its `repo_id`
+names, the primary repository when it is absent, so a worktree is the checkout and
+the task folder is never one; the request's and the answer's `cwd` stay the thread's
+stored folder, so a thread that moved meanwhile is still refused as stale. Ordinary
+file reads/writes and engine scope remain bounded to thread cwd. File and diff reveal
+intents are transient, capture thread/cwd before resolution, and consume only their
+own nonce. Route/cwd changes and newer navigation invalidate stale responses,
+including when an older request completes last.
 
 `POST /api/settings/preferences/query` resolves environment, logical-project or
 physical-checkout rows from one SQLite read snapshot. Effective values that differ
@@ -1441,7 +1452,8 @@ else `session/load` with its replay discarded; an unknown session ends the run a
 session. The session link is the thread's engine session, so no table or migration exists.
 A cancelled request stops that process and releases the instance for the next request.
 
-A new worktree uses `branch_name_prefix`, `base_branch` or the origin's head when
+A new single-repository worktree's branch name follows `branch_naming_mode` and `branch_name_prefix` (a multi-repository task folder uses its own one branch name in every repository)
+([Text generators](#text-generators)); it starts from `base_branch` or the origin's head when
 `new_worktrees_start_from_origin` is on, falling back to HEAD, and
 `worktree_submodules` through the shared preference resolver. Checkout mode and
 submodule behavior resolve Project override → Environment override → the actual
@@ -1542,8 +1554,10 @@ are refused before a request is sent.
 
 The local environment publishes a theme in `GET /api/info` as `environment_theme`:
 the `default_theme` preference and `default_theme_set_at`, the Unix milliseconds when
-it was last written. Every write of `default_theme`, from settings or `orbyn theme`,
-stamps that time, and clearing the theme clears it; a client cannot write the time.
+it was last written. Every write of `default_theme` the service accepts, from settings
+or `orbyn theme`, stamps that time, and clearing the theme clears it; a client cannot
+write the time. A shipped `orbyn` CLI holds only the service token, so the enforced
+`Person` route refuses its `theme set` and `clear` ([the CLI reference](cli.md)).
 A theme is `system`, `light`, `dark` or a theme id. Each viewer applies a published
 theme once, when its `set_at` is newer than the one it last applied, at startup and
 when the window takes focus; after that the viewer's own choice stays. An unknown id
@@ -1647,9 +1661,15 @@ at either scope; at project scope the engine then inherits the global choice. A 
 (`PUT /api/preferences`, `PUT /api/projects/{id}/preferences` or the scoped settings
 route); there is no text-generator write route.
 
-Branch names and cleanup have no generator in the service yet: branch names come from
-`branch_name_prefix`, and the stored `branch_naming_mode` semantic and custom modes are
-not called, so no branch or cleanup call reaches the resolver.
+A new worktree's branch name is chosen deterministically, without the resolver or an
+engine call: static mode keeps `<branch_name_prefix>/<purpose>`; semantic mode makes a
+lowercase slug from the thread's real title, or the purpose when it has none, capped at
+64 characters and suffixed `-2`, `-3` and so on until it is not one of the project's
+branches; custom mode uses the purpose as the complete branch name. An unusable seed
+falls back to the static name, and a name Git refuses is `invalid_input`, never
+replaced. The stored `branch_name_instructions` is not sent anywhere, so the
+model-written custom name its setting describes is not built, and cleanup has no
+generator either, so neither a branch nor a cleanup call reaches the resolver.
 
 ## Automatic requests
 
@@ -2915,7 +2935,8 @@ needs a person. A turn that ends with no report is a failed attempt; an engine t
 brief's minutes or turns are spent stops on its next failed attempt with the reason `budget`: the turns are the worker's runs and
 the approvals reserved against the same budget, and a result counts them. A crew's turns are the same tally summed over its tasks:
 a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; set in Settings › General) refuses a new task once its crew
-has spent them, before anything is stored or sent, and never stops a task already running. A worker's file change is checked
+has spent them, before anything is stored or sent, and never stops a task already running. That budget fails closed: a budget or a spend
+no read can settle refuses the start, so an unknown count is never read as under budget. A worker's file change is checked
 against its lease at the gate, before the write, and refused with the lease's own refusal; a command it runs is not read.
 After a run ends, member tools refuse (H7), but the core can verify again and add Evidence and Gates; no state reopens.
 A lease's expiry is read when it is used and a lapsed lease is recorded `expired` and blocks nobody. Its refusals use the Crew Protocol's error codes
@@ -2926,7 +2947,9 @@ Unchanged ignored caches do not require broader scope or data removal; ignored n
 remain an accepted blind spot, pending isolated-checkout work (#436).
 Admission refuses an index with assume-unchanged or skip-worktree entries, including sparse
 checkouts; verification fails if either flag appears. Crew's scope, size and changed-path checks read Git without line-ending conversion;
-other Git reads keep their settings.
+other Git reads keep their settings. Those checks need Git 2.40 or later, which
+honours `GIT_ATTR_SOURCE`, so a checkout's own `.gitattributes` stays out of the
+read; older Git errors them rather than pass bytes it did not compare.
 Scope and size checks error on nonempty, unreadable or nonregular `info/attributes` overrides,
 which Git still reads independently of the tree attribute source; absent/empty readable files are accepted.
 A fix's touched-file guard compares the file's exact byte digest with the digest the core
@@ -3320,8 +3343,9 @@ profile. A named profile lives in `<data>/browser-profiles`, survives restarts, 
 one tab at a time because a browser locks its profile folder. A profile can be renamed
 while a tab has it open: only the stored name changes, never the folder, so its cookies
 and history stay. A private tab only stays
-out of the UI's history. `/previews/file` opens a file inside the checkout as `file:`,
-which agents and the address bar cannot reach. Picking an element reads it and changes
+out of the UI's history. `/previews/file` opens a file inside the checkout as `file:`, or the
+worktree of the repository `repo_id` names (docs/multi-repo.md), which agents and the address
+bar cannot reach. Picking an element reads it and changes
 nothing, and what it returns comes from the page, so the UI quotes it into the draft for a
 person to read before sending. A browser that dies is started again on the same profile and
 page, up to three times in 30 seconds after 1, 2 and 4 seconds, and then the tab reports
@@ -3919,7 +3943,7 @@ every method, path and which routes need a credential.
 | `GET, PUT /api/threads/:id/files/content` | `FileContent`; a stale `base_revision` is `409 file_conflict` |
 | `POST /api/threads/:id/files/mutate` | `ExplorerFileAction`: create, move (rename) or nonrecursive delete in the thread's checkout; `204`, `403` active session/untrusted, `404` unknown thread, `400` invalid path or destination |
 | `GET /api/threads/:id/files/raw?path=&download=` | Bytes with `Range`, `If-Range` and `If-None-Match`; `206`, `304`, `413 file_too_large`, `416`; `download` forces an attachment |
-| `POST /api/threads/:id/files/open`, `GET /api/editors` | `OpenInEditor` with optional `line` and `column`; `file_manager` reveals the file |
+| `POST /api/threads/:id/files/open`, `GET /api/editors` | `OpenInEditor` with optional `line` and `column`, and `repo_id` for another repository of a multi-repository thread; `file_manager` reveals the file |
 | `POST /api/threads/:id/git/action` | `GitAction` to `GitActionResult`: commit, push, pull request |
 | `GET, POST /api/threads/:id/branches`, `POST .../branches/switch` | List, create and switch |
 | `POST /api/threads/:id/vcs/refresh-status` | `VcsStatus`: branch or detached HEAD, HEAD, tracking ref, ahead/behind and working-tree change counts, read from Git now; `400` outside Git, `403 folder_untrusted` |
@@ -3974,7 +3998,7 @@ every method, path and which routes need a credential.
 | `POST .../previews/:tab/navigate`, `/control`, `/input` | `NavigatePreview`; `PreviewControl`; `PreviewInput`, `400` until a person holds the page |
 | `POST .../previews/:tab/history`, `/resize` | `StepPreview`; `ResizePreview`, `400` outside 100 to 4096; both to `PreviewTab` |
 | `POST, DELETE .../previews/:tab/recording` | Start with optional `PreviewRecordingOptions` query; stop, to `PreviewRecording` with successful frame count and optional error |
-| `POST .../previews/file` | `OpenPreviewFile` to `PreviewTab`, inside the checkout |
+| `POST .../previews/file` | `OpenPreviewFile` to `PreviewTab`, inside the checkout or the worktree of the repository `repo_id` names |
 | `POST .../previews/:tab/view`, `/reload`, `/clear`, `/pick` | `PreviewView`; `ReloadPreview`; `ClearPreview`; `PickPreview` to `PickedElement` |
 | `GET, POST /api/browser-profiles` | `BrowserProfile[]`; `CreateBrowserProfile` |
 | `DELETE /api/browser-profiles/:id`, `POST .../clear` | Remove, or empty, a profile no tab has open |

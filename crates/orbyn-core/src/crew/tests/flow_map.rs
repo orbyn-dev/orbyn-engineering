@@ -62,7 +62,17 @@ async fn the_map_has_a_lead_and_the_workers_and_says_how_each_message_was_delive
     let map = d.w.core.crew_flow_map(&crew).await.unwrap();
 
     assert_eq!(map.nodes.len(), 3, "the lead and two workers");
-    assert_eq!(map.nodes[0].role, FlowRole::Lead);
+    let lead = map
+        .nodes
+        .iter()
+        .find(|n| n.role == FlowRole::Lead)
+        .expect("the map has its lead");
+    // That order is product order, not fixture order: the map puts the lead first, then the newest workers.
+    assert_eq!(
+        map.nodes.first().map(|n| n.role),
+        Some(FlowRole::Lead),
+        "the lead first, then the newest workers"
+    );
     let workers: Vec<_> = map
         .nodes
         .iter()
@@ -70,10 +80,7 @@ async fn the_map_has_a_lead_and_the_workers_and_says_how_each_message_was_delive
         .collect();
     assert_eq!(workers.len(), 2);
     for node in &workers {
-        assert_eq!(
-            node.started_by.as_deref(),
-            Some(map.nodes[0].member.as_str())
-        );
+        assert_eq!(node.started_by.as_deref(), Some(lead.member.as_str()));
         assert!(node.task.is_some() && node.state.as_deref() == Some("running"));
         assert!(!node.outcome.is_empty() && node.lease.len() <= 3);
     }
@@ -98,7 +105,7 @@ async fn the_map_has_a_lead_and_the_workers_and_says_how_each_message_was_delive
 
     // The fields are exactly these: a field added to a type fails here until it is reviewed.
     assert_eq!(
-        keys(&map.nodes[1]),
+        keys(alpha),
         [
             "created_at",
             "effort",
@@ -121,10 +128,15 @@ async fn the_map_has_a_lead_and_the_workers_and_says_how_each_message_was_delive
         ]
     );
     assert_eq!(
-        keys(&map.edges[0]),
+        keys(to_beta),
         ["count", "delivery", "from", "kind", "label", "to"]
     );
-    assert_eq!(keys(&map.engines[0]), ["engine", "status"]);
+    let alpha_engine = map
+        .engines
+        .iter()
+        .find(|e| e.engine == "alpha")
+        .expect("the alpha engine row");
+    assert_eq!(keys(alpha_engine), ["engine", "status"]);
     assert_eq!(
         keys(&map),
         ["crew", "edges", "engines", "nodes", "truncated"]
@@ -146,9 +158,16 @@ async fn messages_and_facts_are_read_by_labels_and_never_by_their_words() {
         (list.messages.len(), list.total, list.next_offset),
         (2, 2, None)
     );
+    // The read's own order is newest first, so the newest message is the one that shows it.
     assert_eq!(list.messages[0].from, d.ma, "newest first");
-    assert_eq!(list.messages[0].delivery, Some(FlowDeliveryMode::Held));
-    assert_eq!(list.messages[1].delivery, Some(FlowDeliveryMode::Live));
+    let by_sender = |member: &str| {
+        list.messages
+            .iter()
+            .find(|m| m.from == member)
+            .unwrap_or_else(|| panic!("no message from {member}"))
+    };
+    assert_eq!(by_sender(&d.ma).delivery, Some(FlowDeliveryMode::Held));
+    assert_eq!(by_sender(&d.mb).delivery, Some(FlowDeliveryMode::Live));
     assert!(
         list.messages
             .iter()
@@ -160,7 +179,7 @@ async fn messages_and_facts_are_read_by_labels_and_never_by_their_words() {
             .all(|m| !m.at.is_empty() && m.delivered_at.is_some())
     );
     assert_eq!(
-        keys(&list.messages[0]),
+        keys(by_sender(&d.ma)),
         [
             "at",
             "delivered_at",
@@ -197,7 +216,11 @@ async fn messages_and_facts_are_read_by_labels_and_never_by_their_words() {
         (facts.facts.len(), facts.total, facts.truncated),
         (1, 1, false)
     );
-    let fact = &facts.facts[0];
+    let fact = facts
+        .facts
+        .iter()
+        .find(|f| f.key == "api.shape")
+        .expect("the crew's fact");
     assert_eq!(
         (fact.key.as_str(), fact.class.as_str(), fact.rev),
         ("api.shape", "decision", 2)
@@ -273,23 +296,36 @@ async fn a_delivery_is_reported_only_when_every_recipient_agrees() {
             .messages
     };
     let messages = read(&d);
-    let (held, live) = (messages[0].id.clone(), messages[1].id.clone());
+    let by_sender = |member: &str| {
+        messages
+            .iter()
+            .find(|m| m.from == member)
+            .unwrap_or_else(|| panic!("no message from {member}"))
+    };
+    let (held, live) = (by_sender(&d.ma).id.clone(), by_sender(&d.mb).id.clone());
     // One recipient each: its own state.
-    assert_eq!(messages[0].delivery, Some(FlowDeliveryMode::Held));
-    assert_eq!(messages[1].delivery, Some(FlowDeliveryMode::Live));
+    assert_eq!(by_sender(&d.ma).delivery, Some(FlowDeliveryMode::Held));
+    assert_eq!(by_sender(&d.mb).delivery, Some(FlowDeliveryMode::Live));
 
     // The newest row of a recipient is the one that counts: the held message goes out with the recipient's next tool result.
     let store = &d.w.core.store;
     store
         .record_crew_delivery(&held, &d.mb, "thread-b", "tool_result", None)
         .unwrap();
-    assert_eq!(read(&d)[0].delivery, Some(FlowDeliveryMode::ToolResult));
+    let delivery_of = |id: &str| {
+        read(&d)
+            .into_iter()
+            .find(|m| m.id == id)
+            .unwrap_or_else(|| panic!("no message {id}"))
+            .delivery
+    };
+    assert_eq!(delivery_of(&held), Some(FlowDeliveryMode::ToolResult));
 
     // Every recipient delivered the same way: that way.
     store
         .record_crew_delivery(&live, "member-extra", "thread-extra", "live", None)
         .unwrap();
-    assert_eq!(read(&d)[1].delivery, Some(FlowDeliveryMode::Live));
+    assert_eq!(delivery_of(&live), Some(FlowDeliveryMode::Live));
 
     // One recipient live and one failed: no delivery is reported, not either one's.
     store
@@ -299,28 +335,39 @@ async fn a_delivery_is_reported_only_when_every_recipient_agrees() {
         .record_crew_delivery(&live, "member-late", "thread-late", "failed", None)
         .unwrap();
     let mixed = read(&d);
+    let of = |id: &str| {
+        mixed
+            .iter()
+            .find(|m| m.id == id)
+            .unwrap_or_else(|| panic!("no message {id}"))
+    };
     assert_eq!(
-        (mixed[0].delivery, mixed[0].delivered_at.clone()),
+        (of(&held).delivery, of(&held).delivered_at.clone()),
         (None, None)
     );
-    assert_eq!(mixed[1].delivery, None);
+    assert_eq!(of(&live).delivery, None);
     let map = d.w.core.crew_flow_map(&crew).await.unwrap();
     assert!(
         map.edges.iter().all(|e| e.delivery.is_none()),
         "an edge says nothing its newest message does not"
     );
 
-    // A message with no delivery row has none.
+    // A message with no delivery row has none. Any stored message is a template: the body and id
+    // below replace what identifies it.
     let mut message =
         CrewObject::Message(d.w.core.store.crew_messages(&d.a).unwrap().remove(0)).to_value();
     message["body"] = json!(format!("unsent {marker}"));
     message["id"] = json!(object_id(&message).unwrap());
+    let unsent = message["id"].as_str().unwrap().to_owned();
     d.w.core
         .store
         .add_crew_member_object(&d.a, &CrewObject::parse(&message).unwrap())
         .unwrap();
-    let newest = read(&d).remove(0);
-    assert_eq!((newest.delivery, newest.delivered_at), (None, None));
+    let grafted = read(&d)
+        .into_iter()
+        .find(|m| m.id == unsent)
+        .expect("the message with no delivery row");
+    assert_eq!((grafted.delivery, grafted.delivered_at), (None, None));
 }
 
 #[tokio::test]
@@ -434,6 +481,7 @@ fn other_crews_traffic(d: &Duo, count: usize) {
         .add_crew_run(&task.id, "lead-thread-2", "worker-other")
         .unwrap();
     let crew = d.w.task(&d.a).crew_id;
+    // Any message of the crew is a template: each copy below replaces its identity fields.
     let (_, template) = store.crew_messages_in_crew(&crew).unwrap().remove(0);
     for n in 0..count {
         let mut value = CrewObject::Message(template.clone()).to_value();
@@ -477,7 +525,11 @@ async fn another_crews_traffic_never_cuts_a_crews_window_and_a_cut_is_reported()
     // A window of one cuts the crew's older message, and the read says so: the newest message's edge is the one left.
     let (edges, cut) = store.crew_message_edges(&crew, 200, 1).unwrap();
     assert_eq!((edges.len(), cut), (1, true));
-    assert_eq!(edges[0].sender, d.ma);
+    let newest = edges
+        .iter()
+        .find(|e| e.sender == d.ma)
+        .expect("the newest message's edge is the one left");
+    assert_eq!(newest.count, 1);
     let (_, cut) = store.crew_held_counts(&crew, 1).unwrap();
     assert!(cut, "the delivery window cut the crew's older rows");
     // The map reads with the real windows, which these few rows do not reach.
@@ -510,6 +562,7 @@ async fn a_fan_out_that_has_not_reached_every_recipient_reports_no_delivery() {
     let object = CrewObject::parse(&value).unwrap();
     store.add_crew_member_object(&task, &object).unwrap();
     let id = object.id().as_str().to_owned();
+    // The read is newest first, so the row under test is at the front of it.
     let newest = |d: &Duo| {
         d.w.core
             .crew_flow_messages(&crew, None, page())
@@ -574,6 +627,7 @@ async fn delivered_broadcast(marker: &str) -> (Duo, String) {
 #[tokio::test]
 async fn a_crew_with_more_tasks_than_were_read_reports_no_broadcast_delivery() {
     let (d, crew) = delivered_broadcast(&nonce("cap")).await;
+    // The read is newest first, so the row under test is at the front of it.
     let newest = |cap: u32| {
         d.w.core
             .flow_messages_with(&crew, None, page(), cap)

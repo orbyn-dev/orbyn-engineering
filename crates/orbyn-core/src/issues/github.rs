@@ -2,17 +2,19 @@
 //! `gh` prints is the tracker's text and is read defensively: a field that is missing or the wrong type
 //! becomes empty, never an error that hides the other issues.
 
-use super::query::{AssigneeFilter, IssueQuery, StateFilter};
+use super::query::{AssigneeFilter, IssueQuery, IssueSort, StateFilter};
 use super::{
-    DependencyFeed, DependencyUpdate, IssueSource, LabelEvent, LabelFeed, NewIssue, ScopeList,
+    DependencyFeed, DependencyUpdate, IssueEdit, IssueSource, LabelEvent, LabelFeed, NewIssue,
+    ScopeList,
 };
 use crate::error::{CoreError, Result};
 use crate::source_control::forge::{Forge, call, call_input, github_checks};
 use async_trait::async_trait;
 use orbyn_contracts::{
-    IssueActor, IssueCloseReason, IssueComment, IssueCounts, IssueDetail, IssueLabel,
-    IssueLinkedPull, IssueReaction, IssueReactionCount, IssueState, IssueStateCategory,
-    IssueSummary, LinkedPullState, PullChecks, TrackerKind,
+    IssueActor, IssueAssigneeCandidate, IssueCandidateLabel, IssueCandidates, IssueCloseReason,
+    IssueComment, IssueCounts, IssueDetail, IssueLabel, IssueLinkedPull, IssueReaction,
+    IssueReactionCount, IssueState, IssueStateCategory, IssueSummary, LinkedPullState, PullChecks,
+    TrackerKind,
 };
 use serde_json::Value;
 use std::path::PathBuf;
@@ -32,6 +34,9 @@ const COMMENT_SCOPE_QUERY: &str = "query OrbynCommentScope($id:ID!){node(id:$id)
 const ADD_REACTION_MUTATION: &str = "mutation OrbynAddReaction($subject:ID!,$content:ReactionContent!){addReaction(input:{subjectId:$subject,content:$content}){reaction{content}}}";
 const REMOVE_REACTION_MUTATION: &str = "mutation OrbynRemoveReaction($subject:ID!,$content:ReactionContent!){removeReaction(input:{subjectId:$subject,content:$content}){reaction{content}}}";
 const MAX_COMMENTS: usize = 50;
+/// The most labels and the most people one candidates read answers (docs/issues.md, "Issue writes and list
+/// controls"); the route caps the answer again, so a reader cannot exceed it.
+const MAX_CANDIDATES: usize = 200;
 
 pub(crate) struct GitHub {
     /// Where `gh` runs. With `--repo` it needs no repository, so any folder will do.
@@ -87,6 +92,45 @@ fn state(value: &Value) -> IssueState {
         text(value, "state").eq_ignore_ascii_case("closed"),
         &text(value, "stateReason"),
     )
+}
+
+/// The states a GitHub issue can move to, in GitHub's own words (docs/issues.md, "Issue writes and list
+/// controls"). GitHub has one closed state with two reasons, and the two are named apart here so a closed issue's
+/// row reads as the state it is in: `Closed` for a completed close, `Closed as not planned` for the other.
+fn github_states() -> Vec<IssueState> {
+    vec![
+        IssueState {
+            category: IssueStateCategory::Open,
+            name: "Open".into(),
+            close_reason: None,
+        },
+        IssueState {
+            category: IssueStateCategory::Closed,
+            name: "Closed".into(),
+            close_reason: Some(IssueCloseReason::Completed),
+        },
+        IssueState {
+            category: IssueStateCategory::Closed,
+            name: "Closed as not planned".into(),
+            close_reason: Some(IssueCloseReason::NotPlanned),
+        },
+    ]
+}
+
+/// The close GitHub is asked for, from the state name the issue offered it (`None` reopens). A name GitHub does
+/// not offer is refused rather than guessed at.
+fn closing(
+    state: &str,
+    close_reason: Option<IssueCloseReason>,
+) -> Result<Option<IssueCloseReason>> {
+    match state {
+        "Open" => Ok(None),
+        "Closed as not planned" => Ok(Some(IssueCloseReason::NotPlanned)),
+        "Closed" => Ok(Some(close_reason.unwrap_or(IssueCloseReason::Completed))),
+        _ => Err(CoreError::Invalid(
+            "That state is not one GitHub offers.".into(),
+        )),
+    }
 }
 
 fn rest_state(value: &Value) -> IssueState {
@@ -403,7 +447,19 @@ pub(crate) fn list_args(scope: &str, query: &IssueQuery) -> Vec<String> {
         args.push("--label".into());
         args.push(label.clone());
     }
-    let mut search = query.text.clone();
+    // `gh issue list` has no order flag: the order is a search qualifier, so it is spelled out rather than left
+    // to gh's own default. The person's own text follows it, and is still one value of `--search`.
+    let mut search = format!(
+        "sort:{}",
+        match query.sort {
+            IssueSort::Updated => "updated-desc",
+            IssueSort::Created => "created-desc",
+        }
+    );
+    if !query.text.is_empty() {
+        search.push(' ');
+        search.push_str(&query.text);
+    }
     match &query.assignee {
         AssigneeFilter::Any => {}
         AssigneeFilter::Me => args.extend(["--assignee".to_owned(), "@me".to_owned()]),
@@ -412,10 +468,8 @@ pub(crate) fn list_args(scope: &str, query: &IssueQuery) -> Vec<String> {
             search = format!("{search} no:assignee").trim().to_owned();
         }
     }
-    if !search.is_empty() {
-        args.push("--search".into());
-        args.push(search);
-    }
+    args.push("--search".into());
+    args.push(search);
     args
 }
 
@@ -530,7 +584,26 @@ fn created_detail(scope: &str, value: &Value) -> Result<IssueDetail> {
         linked_pull_requests: Vec::new(),
         linked_threads: Vec::new(),
         reactions: None,
+        states: Some(github_states()),
     })
+}
+
+/// One PATCH of the issue's own fields, the person's text in the body's field values and never in an argument. The
+/// answer is not read here: the caller reads the issue back for the shape a detail read has.
+async fn patch_issue(cwd: &std::path::Path, scope: &str, key: &str, payload: &Value) -> Result<()> {
+    let args: Vec<String> = vec![
+        "api".to_owned(),
+        "-X".to_owned(),
+        "PATCH".to_owned(),
+        format!("repos/{scope}/issues/{key}"),
+        "--input".to_owned(),
+        "-".to_owned(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    call_input(Forge::GitHub, cwd, &refs, &payload.to_string())
+        .await
+        .map_err(classify)?;
+    Ok(())
 }
 
 /// The tracker's own word for one reaction, as its GraphQL `ReactionContent` spells it.
@@ -774,6 +847,144 @@ impl IssueSource for GitHub {
         true
     }
 
+    fn can_edit(&self) -> bool {
+        true
+    }
+
+    /// Writes the present fields in one PATCH and answers the issue as `gh` reads it back, so the reply carries the
+    /// comments, the linked pull requests and the states a detail read does (docs/issues.md, "Issue writes and
+    /// list controls"). GitHub takes `labels` and `assignees` as the whole new set.
+    async fn update(&self, scope: &str, key: &str, edit: &IssueEdit<'_>) -> Result<IssueDetail> {
+        scope_ok(scope)?;
+        key_ok(key)?;
+        let mut payload = serde_json::Map::new();
+        if let Some(title) = edit.title {
+            payload.insert("title".into(), serde_json::json!(title));
+        }
+        if let Some(body) = edit.body {
+            payload.insert("body".into(), serde_json::json!(body));
+        }
+        if let Some(labels) = edit.labels {
+            payload.insert("labels".into(), serde_json::json!(labels));
+        }
+        if let Some(assignees) = edit.assignees {
+            payload.insert("assignees".into(), serde_json::json!(assignees));
+        }
+        patch_issue(&self.cwd, scope, key, &Value::Object(payload)).await?;
+        self.get(scope, key).await
+    }
+
+    /// Closes or reopens the issue with the reason its state name carries, then answers it as it is now stored.
+    async fn set_state(
+        &self,
+        scope: &str,
+        key: &str,
+        state: &str,
+        close_reason: Option<IssueCloseReason>,
+    ) -> Result<IssueDetail> {
+        scope_ok(scope)?;
+        key_ok(key)?;
+        let closed = closing(state, close_reason)?;
+        let mut payload = serde_json::Map::new();
+        payload.insert(
+            "state".into(),
+            serde_json::json!(if closed.is_some() { "closed" } else { "open" }),
+        );
+        if let Some(reason) = closed {
+            payload.insert(
+                "state_reason".into(),
+                serde_json::json!(match reason {
+                    IssueCloseReason::Completed => "completed",
+                    IssueCloseReason::NotPlanned => "not_planned",
+                }),
+            );
+        }
+        patch_issue(&self.cwd, scope, key, &Value::Object(payload)).await?;
+        self.get(scope, key).await
+    }
+
+    /// The repository's labels and assignable people, at most 200 of each through `gh` (docs/issues.md, "Issue
+    /// writes and list controls"). GitHub addresses a person by login, so an assignee candidate's `id` is its login.
+    async fn candidates(&self, scope: &str) -> Result<IssueCandidates> {
+        scope_ok(scope)?;
+        let label_args: Vec<String> = [
+            "label",
+            "list",
+            "--repo",
+            scope,
+            "--json",
+            "name,color",
+            "--limit",
+            "200",
+        ]
+        .map(str::to_owned)
+        .into();
+        let listed = run(&self.cwd, &label_args).await?;
+        let mut labels = Vec::new();
+        let mut truncated = false;
+        for row in listed.as_array().into_iter().flatten() {
+            let Some(name) = row
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+            else {
+                continue;
+            };
+            if labels.len() >= MAX_CANDIDATES {
+                truncated = true;
+                break;
+            }
+            labels.push(IssueCandidateLabel {
+                name: name.to_owned(),
+                color: row
+                    .get("color")
+                    .and_then(Value::as_str)
+                    .filter(|color| !color.is_empty())
+                    .map(str::to_owned),
+            });
+        }
+        // The assignable people, 100 a page: two pages cover the 200 the route keeps, and a full second page may
+        // have more behind it.
+        let mut assignees: Vec<IssueAssigneeCandidate> = Vec::new();
+        for page in 1..=2u32 {
+            let args: Vec<String> = vec![
+                "api".to_owned(),
+                format!("repos/{scope}/assignees?per_page=100&page={page}"),
+            ];
+            let value = run(&self.cwd, &args).await?;
+            let rows = value.as_array().ok_or_else(unreadable)?;
+            for row in rows {
+                let Some(login) = row
+                    .get("login")
+                    .and_then(Value::as_str)
+                    .filter(|login| !login.is_empty())
+                else {
+                    continue;
+                };
+                if assignees.len() >= MAX_CANDIDATES {
+                    truncated = true;
+                    break;
+                }
+                assignees.push(IssueAssigneeCandidate {
+                    login: login.to_owned(),
+                    name: None,
+                    id: login.to_owned(),
+                });
+            }
+            if rows.len() < 100 {
+                break;
+            }
+            if page == 2 {
+                truncated = true;
+            }
+        }
+        Ok(IssueCandidates {
+            labels,
+            assignees,
+            truncated,
+        })
+    }
+
     async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
         scope_ok(scope)?;
         // The person's text travels as the JSON body's field values, never as an argument position.
@@ -912,6 +1123,7 @@ impl IssueSource for GitHub {
             linked_threads: Vec::new(),
             // Counts are the react answer's alone: a detail read keeps them absent (docs/issues.md, "As built").
             reactions: None,
+            states: Some(github_states()),
         })
     }
 }
@@ -1001,8 +1213,23 @@ mod tests {
                 at("--assignee"),
                 at("--search")
             ),
-            (Some("all"), Some("bug"), Some("@me"), Some("crash"))
+            (
+                Some("all"),
+                Some("bug"),
+                Some("@me"),
+                Some("sort:updated-desc crash")
+            ),
+            "the order is a search qualifier, and the person's text follows it"
         );
+        let created = list_args(
+            "o/r",
+            &IssueQuery {
+                sort: IssueSort::Created,
+                ..IssueQuery::default()
+            },
+        );
+        let i = created.iter().position(|a| a == "--search").unwrap();
+        assert_eq!(created[i + 1], "sort:created-desc");
         let none = list_args(
             "o/r",
             &IssueQuery {
@@ -1011,7 +1238,7 @@ mod tests {
                 ..IssueQuery::default()
             },
         );
-        assert!(none.contains(&"x no:assignee".to_owned()));
+        assert!(none.contains(&"sort:updated-desc x no:assignee".to_owned()));
         // A text that looks like an option is a value of --search, never an option.
         let odd = list_args(
             "o/r",
@@ -1021,7 +1248,7 @@ mod tests {
             },
         );
         let i = odd.iter().position(|a| a == "--search").unwrap();
-        assert_eq!(odd[i + 1], "--web");
+        assert_eq!(odd[i + 1], "sort:updated-desc --web");
     }
 
     #[test]
