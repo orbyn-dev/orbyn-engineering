@@ -3,7 +3,7 @@ import { Button } from "../../../ui/controls";
 import { Dialog } from "../../../ui/Dialog";
 
 /**
- * editor-close-confirm: closing a file with unsaved changes asks once. Save is the default, ⌘↵ confirms it and Esc cancels.
+ * editor-close-confirm: closing a file with unsaved changes asks once. Save is the default, the platform's modifier with Enter confirms it and Esc cancels.
  * With several unsaved files the caller asks again for each, naming the file.
  */
 export function SaveChangesDialog({ path, onSave, onDiscard, onCancel }: { path: string; onSave(): void; onDiscard(): void; onCancel(): void }) {

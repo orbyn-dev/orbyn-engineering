@@ -45,7 +45,9 @@ describe("a clone that fails", () => {
     mock.failClone();
     const user = await clone("https://example.com/team/repo.git");
     const toast = await failure();
-    expect(toast).toHaveTextContent("fatal: repository 'bad url with spaces' does not exist");
+    // The body is one plain sentence: Git's own stderr stays out of the toast.
+    expect(toast).toHaveTextContent("That address is not a Git repository.");
+    expect(toast).not.toHaveTextContent("fatal:");
     // The app's one announcement primitive for toasts: the stack is a polite status region, so the
     // failure is read out instead of sitting in a silent group.
     const region = toast.closest('[role="status"]');
@@ -54,6 +56,26 @@ describe("a clone that fails", () => {
     expect(region).toHaveAttribute("aria-live", "polite");
     // The stack exists before the failure, so the inserted toast is what gets announced.
     expect(region).toBe(document.querySelector(".toasts"));
+    await dismiss(user, toast);
+  });
+
+  it("says a known failure in plain words instead of the Git output", async () => {
+    mock.failClone("fatal: repository 'https://example.com/team/repo.git/' not found");
+    const user = await clone("https://example.com/team/repo.git");
+    const toast = await failure();
+    expect(toast).toHaveTextContent("The repository was not found, or this computer has no access to it.");
+    expect(toast).not.toHaveTextContent("fatal:");
+    expect(toast).not.toHaveTextContent("example.com");
+    await dismiss(user, toast);
+  });
+
+  it("still says an unknown failure in plain words, without the Git output", async () => {
+    mock.failClone("fatal: oddity-42 from Git");
+    const user = await clone("https://example.com/team/repo.git");
+    const toast = await failure();
+    expect(toast).toHaveTextContent("Check the address and the connection, then try again.");
+    expect(toast).not.toHaveTextContent("fatal:");
+    expect(toast).not.toHaveTextContent("oddity-42");
     await dismiss(user, toast);
   });
 
