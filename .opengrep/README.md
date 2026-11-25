@@ -18,7 +18,7 @@ finding, and **does not replace CodeQL**.
   - `orbyn-rust-secret-field-in-log` for `rust/cleartext-logging`: a secret-named field reaching a log call through
     another value; `redact`, `redacted_tail` and length-only reads are sanitizers.
   - `orbyn-js-regex-escape-skips-backslash` for `js/incomplete-sanitization`: `replace(/[…]/g, "\\$&")` whose
-    character class does not escape a backslash (`web/src/styles/tokens.test.ts:165` is the known case).
+    character class does not escape a backslash (`web/src/styles/tokens.test.ts:165` was the known case; it is fixed).
 - `tests/`: a matching case and a safe look-alike for every rule. A rule is unproven without both. The workflow runs
   them first.
 
@@ -35,25 +35,33 @@ opengrep scan --config .opengrep/rules --exclude .opengrep --exclude node_module
 
 Use only local rules: a `p/...` ruleset or `opengrep validate` downloads from `semgrep.dev`.
 
-## Status against CodeQL (re-checked 2026-11-23)
+## Status against CodeQL (record updated 2026-11-26)
 
-Four of the five query classes named in issue #849 now have a rule with tests: `rust/path-injection`,
-`rust/sql-injection`, `rust/cleartext-logging` and `js/incomplete-sanitization`. What is still open before CodeQL can be
-turned off:
+Gap 3 of issue #849 is closed: `orbyn-js-regex-escape-skips-backslash` covers `js/incomplete-sanitization` with a
+matching case and a safe look-alike, and the one instance it named (`web/src/styles/tokens.test.ts:165`) is fixed,
+so the helper now carries a backslash through instead of eating it.
 
-- **Parser limits, not rules.** Opengrep v2.0.0 still cannot parse five files under `crates/orbyn-core/src`
+The other four gaps are **open** and need the owner's decision. None is accepted here, and the advisory workflow stays
+non-required. The list was not re-run against the engine in that change: no local binary, so the parser set below is
+the 2026-11-23 re-check.
+
+- **Gap 1 — parser limits, not rules.** Opengrep v2.0.0 could not parse five files under `crates/orbyn-core/src`
   (`host/process.rs:557`, `host/process/unix_tree.rs:85`, `governance/computer/mod.rs:323`,
-  `governance/computer/cdp.rs:560`, `crew/cancel.rs:156`) or `web/src/api/client.ts:262`. A clean scan says nothing
-  about those files. The 2026-11-21 snapshot named six; `cdp.rs` and `client.ts` joined them since.
-- **No interfile taint.** Request data reaches a filesystem path across the route/core boundary, where an intrafile rule
-  cannot follow it. Closing that needs `--enable-interfile` in the scan and `taint_interfile: true` on the rule: a
-  workflow change that was not made or measured with the runners disabled.
-- **Cleartext transmission has no rule.** Telling `http` from `https` needs the configured endpoint, which a rule
-  cannot see; a rule that fires on every authenticated call would be worse than none.
-- **The side-by-side run has not happened** (the CI-gate method in the `orbyn-opengrep` skill).
-- The session-storage question in the issue is a design decision, not a rule.
+  `governance/computer/cdp.rs:560`, `crew/cancel.rs:156`) or `web/src/api/client.ts:262`; the issue also names
+  `crates/orbynd/src/bin/orbyn_fake_engine/acp.rs` and `desktop/src-tauri/src/system.rs`. A clean scan says nothing
+  about them. Decision needed: wait for a parser fix, rewrite the constructs, or keep CodeQL's Rust analysis for them.
+- **Gap 2 — no rule for what CodeQL's Rust queries find.** `rust/path-injection`, `rust/sql-injection` and
+  `rust/cleartext-logging` have taint rules with tests. Still missing: cleartext transmission (telling `http` from
+  `https` needs the configured endpoint, which a rule cannot see) and the cross-file flow where request data reaches
+  a filesystem path across the route/core boundary (needs `--enable-interfile` and `taint_interfile: true`, a workflow
+  change neither made nor measured). Decision needed: accept the gap or fund those rules.
+- **Gap 4 — the side-by-side run has not happened.** Decision needed: choose the stretch in advance, then record what
+  each scanner reports and the other misses (the CI-gate method in the `orbyn-opengrep` skill).
+- **Gap 5 — the session-storage question.** Seven test files write the launch token with
+  `sessionStorage.setItem("orbyn.token", ...)`. Decision needed: whether the product should keep it there; it is a
+  design decision, not a rule.
 
-Do not turn CodeQL off until that side-by-side comparison has been run for a stretch chosen in advance.
+Do not turn CodeQL off until gap 4 has run for that stretch and the owner has accepted gaps 1, 2 and 5.
 
 ## Findings are leads
 
