@@ -242,6 +242,10 @@
 .cx-t10hd .cx-t10sp{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .cx-t10h5{margin:0;font-size:12px;font-weight:500;color:var(--color-text);display:flex;align-items:center;gap:8px}
 .cx-t10h5 .cx-t10r{margin-left:auto;font-weight:400;color:var(--color-textSoft);text-decoration:underline;text-underline-offset:2px}
+/* Target size (WCAG 2.2 AA 2.5.8): the inline links these headers carry ("Open Trust", "Back to Review", "Coverage") were 17
+   to 19 px tall. A 24 px box with its label centred keeps the link inline and its type size; the negative block margin
+   leaves the line the design drew. */
+.cx-t10r{display:inline-flex;align-items:center;min-height:24px;margin-block:-3px}
 .cx-aptb>div.cx-h{color:var(--color-textSoft)!important}
 .cx-fkv>span{color:var(--color-textSoft)}
 .cx-t13mk{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:7px;background:var(--color-sunken);font-size:11.5px;color:var(--color-text);white-space:nowrap}

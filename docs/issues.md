@@ -91,14 +91,14 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
   same limit to what it emits: at most 50 cursors and 4 KiB of them as that JSON, with any further scopes dropped in
   key order. Only the scopes named in `cursors` are read, one page each, and the answer holds just those pages and
   their next cursors. The cursor is opaque: the page never builds or edits one, and the service refuses one it did
-  not issue for that scope and filter (`400 invalid`). Built for GitLab, Forgejo, Azure DevOps and Linear; GitHub
+  not issue for that scope and filter (`400 invalid_input`). Built for GitLab, Forgejo, Azure DevOps and Linear; GitHub
   gives one page and no cursor. The beta UI may leave paging out.
 - **"Not planned"** is `close_reason: "not_planned"` when the tracker says so (GitHub, GitLab "won't fix"
   labels are not guessed at). A tracker that does not say reports `null`.
 - `counts` are the tracker's totals before label, assignee and text filters; `null` when it cannot say.
 - A tracker that fails for any other reason while others answer goes in `failed`, with the service's own message
   (never the raw tracker response). An invalid request, such as a paging cursor the service did not issue, is
-  `400 invalid` instead and fails the whole listing. A listing is up to 100 issues per tracker and scope; results are
+  `400 invalid_input` instead and fails the whole listing. A listing is up to 100 issues per tracker and scope; results are
   cached 30 seconds.
 - `linked_pull_requests` is what the tracker reports of its own accord, read-only. A tracker that does not
   report them gives `[]`.
@@ -116,7 +116,7 @@ The service's usual error body `{ code, message }`. Codes for issues, with the s
 | `forbidden` | 403 | the tracker refused the token or the repository |
 | `not_found` | 404 | no such issue; a link to one is refused the same way |
 | `tracker_unavailable` | 502 | the tracker did not answer or answered nonsense |
-| `invalid` | 400 | a host that is not `https://`, a scope outside the connection, a bad filter, or a paging cursor the service did not issue |
+| `invalid_input` | 400 | a host that is not `https://`, a scope outside the connection, a bad filter, or a paging cursor the service did not issue |
 
 A message never contains a token or a raw tracker body.
 
@@ -145,7 +145,7 @@ detail are built, and the thread link, start-thread, draft and find paths use th
 - **Scope.** The scopes of a GitLab connection are the scopes it names, then the project paths of the git remotes
   (`origin`) of this machine's projects whose remote host equals the connection's host (`gitlab_path_of_remote`:
   https, `ssh://` and `git@host:` forms; user, port and `.git` dropped; subgroups kept). A connection made in the UI
-  keeps no scope of its own. A scope outside these is `400 invalid` and nothing is sent.
+  keeps no scope of its own. A scope outside these is `400 invalid_input` and nothing is sent.
 - **Mapping.** `key` is the project's `iid` as text, `display_key` is `#<iid>`, `author` and `assignees` are
   usernames, labels are names, `url` is `web_url` when it stays on the connection's host (otherwise
   `{host}/{path}/-/issues/{iid}`), `comment_count` is `user_notes_count`. State `opened` is category `open`, name
@@ -153,7 +153,7 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   page (at most five pages) until 50 comments or the end, and come back oldest first.
 - **Paging.** The listing carries `next_cursors["gitlab <path>"]` while GitLab advertises a next page, and infers
   the next page from a full page when GitLab sends no `x-next-page` header. A cursor is
-  the page number and a tag bound to the scope and the filters; one that does not verify is `400 invalid` and
+  the page number and a tag bound to the scope and the filters; one that does not verify is `400 invalid_input` and
   nothing is sent. The tag is not signed with a secret, so it proves "made for these filters", not "made by this
   service". With `cursors` present only the scopes it names are read (this applies to every tracker; GitHub issues no
   cursor and refuses any).
@@ -162,7 +162,7 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   one, and everything else (a `5xx`, a timeout, a refused redirect, an unreadable or oversized answer) is
   `tracker_unavailable`. The message is always the service's sentence, never GitLab's reply. A list that fails for
   any other reason goes in `IssueList.failed` while other trackers answer; an invalid cursor or a comma in a label
-  filter is the usual `400 invalid` and no list at all. There is no separate rate-limited screen.
+  filter is the usual `400 invalid_input` and no list at all. There is no separate rate-limited screen.
 - **Untrusted text.** Titles are cut to 256 characters, labels to 200 and at most 100 of them, user names to 100
   and at most 50 assignees, an issue body to 64 KiB and a comment to 16 KiB. Text is never read for instructions
   and the draft framing above is unchanged.
@@ -202,7 +202,7 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   (`origin`) of this machine's projects whose remote host equals the connection's host (`forgejo_path_of_remote`:
   https, `ssh://` and `git@host:` forms; user, port and `.git` dropped; Forgejo has no subgroups, so only exactly
   two path segments are a scope). A connection made in the UI keeps no scope of its own. A scope outside these is
-  `400 invalid` and nothing is sent.
+  `400 invalid_input` and nothing is sent.
 - **Mapping.** `key` is `number` as text, `display_key` is `#<number>`, `author` and `assignees` are `user.login`
   and `assignees[].login`, labels are names, `url` is `html_url` when it stays on the connection's host (otherwise
   `{host}/{owner}/{repo}/issues/{number}`), `comment_count` is `comments`. State `open` is category `open`, name
@@ -211,19 +211,19 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   comment (Forgejo's API reference lists no page or limit for it); the first 50 are kept, oldest first.
 - **Paging.** The listing carries `next_cursors["forgejo <owner/repo>"]` while Forgejo's `Link` header names a next
   page, and infers the next page from a full page when the header is absent. A cursor is the page number and a tag
-  bound to the scope and the filters; one that does not verify is `400 invalid` and nothing is sent. The tag is not
+  bound to the scope and the filters; one that does not verify is `400 invalid_input` and nothing is sent. The tag is not
   signed with a secret, so it proves "made for these filters", not "made by this service". With `cursors` present
   only the scopes it names are read (this applies to every tracker; GitHub issues no cursor and refuses any).
 - **Filters.** The `assigned_by` filter sends the login; `me` is resolved with a `GET /api/v1/user` on the same
-  host and token; `none` is refused as `400 invalid` because Forgejo's issue list has no way to ask for unassigned
+  host and token; `none` is refused as `400 invalid_input` because Forgejo's issue list has no way to ask for unassigned
   issues. A label name containing a comma cannot be expressed as the comma-separated `labels` value and is
-  `400 invalid` before anything is sent.
+  `400 invalid_input` before anything is sent.
 - **Failures.** `401` is `tracker_not_connected` ("Forgejo did not accept the saved token"), `403` is `forbidden`,
   `404` is `not_found`, `429` is `rate_limited` with the wait from `Retry-After` when Forgejo gave one, and
   everything else (a `5xx`, a timeout, a refused redirect, an unreadable or oversized answer) is
   `tracker_unavailable` ("Forgejo did not answer."). The message is always the service's sentence, never Forgejo's
   reply. A list that fails for any other reason goes in `IssueList.failed` while other trackers answer; an invalid
-  cursor or a comma in a label filter is the usual `400 invalid` and no list at all.
+  cursor or a comma in a label filter is the usual `400 invalid_input` and no list at all.
 - **Untrusted text.** Titles are cut to 256 characters, labels to 200 and at most 100 of them, user names to 100
   and at most 50 assignees, an issue body to 64 KiB and a comment to 16 KiB. Text is never read for instructions
   and the draft framing above is unchanged.
@@ -285,8 +285,8 @@ DevOps (Planned).
   `{org}.visualstudio.com` host, whose subdomain is the organization. A `.git` ending and a trailing slash are
   dropped and percent-encoded names are decoded; a remote with extra segments, another host or another form is
   ignored. When the stored host names an organization (`https://dev.azure.com/{organization}`), a remote of
-  another organization is ignored and a scope of another organization is `400 invalid`. A scope is at most 200
-  bytes. A scope outside these is `400 invalid` and nothing is sent. A connection is checked when it is saved: a
+  another organization is ignored and a scope of another organization is `400 invalid_input`. A scope is at most 200
+  bytes. A scope outside these is `400 invalid_input` and nothing is sent. A connection is checked when it is saved: a
   host that is not one of the two shapes and a scope that is not `organization/project` are refused before the PAT
   is stored.
 - **Mapping.** `key` is the work item id as text, `display_key` is `#<id>`, `title` is `System.Title`, `author`
@@ -310,13 +310,13 @@ DevOps (Planned).
   word search does not apply); each label appends `[System.Tags] CONTAINS '<label>'`; the assignee appends
   `[System.AssignedTo] = @Me` or `= '<login>'`. Single quotes are doubled, text is capped at 200 bytes, a label at
   200 and a login at 320 (the route's caps; the reader also caps characters as a second guard), and a control
-  character is `400 invalid`. An `assignee=none` filter is `400 invalid`: this reader has no WIQL form for
+  character is `400 invalid_input`. An `assignee=none` filter is `400 invalid_input`: this reader has no WIQL form for
   unassigned work items.
 - **Paging.** The listing asks WIQL for the ids through `offset + page size`, slices out the page, and carries
   `next_cursors["azure_devops <org>/<project>"]` when the page is full and the next offset is at most 1000. The
   limit is clamped to 1..50, and work item ids are read at most 50 per `GET`. A cursor is the offset and a tag
   bound to the scope and the filters; the offset must be a positive multiple of the page size and at most 1000, so
-  a forged, replayed or out-of-range cursor is `400 invalid` and nothing is sent. The tag is not signed with a
+  a forged, replayed or out-of-range cursor is `400 invalid_input` and nothing is sent. The tag is not signed with a
   secret, so it proves "made for these filters", not "made by this service".
 - **Failures.** `401` is `tracker_not_connected` ("Azure DevOps did not accept the saved token"), `403` is
   `forbidden`, `404` is `not_found` ("project" for a listing, "work item" for a detail), `429` is `rate_limited`
@@ -325,7 +325,7 @@ DevOps (Planned).
   oversized answer) is `tracker_unavailable` ("Azure DevOps did not answer."). A `404` on the comments read is an
   empty comment list, not a missing work item: the preview endpoint may not be there. The
   message is always the service's sentence, never Azure DevOps' reply. A list that fails for any other reason
-  goes in `IssueList.failed` while other trackers answer; an invalid cursor or label is the usual `400 invalid`
+  goes in `IssueList.failed` while other trackers answer; an invalid cursor or label is the usual `400 invalid_input`
   and no list at all.
 - **Untrusted text.** Titles are cut to 256 characters, labels to 200 and at most 100 of them, user names to 100,
   a state name to 100, a link to 2048 bytes, a date to 64 characters, an issue body to 64 KiB and a comment to
@@ -374,7 +374,7 @@ detail are built, and the thread link, start-thread, draft and find paths use th
 - **Credentials and host.** The token is read from the keychain for each source (`tracker:linear`) and sent only as the
   `Authorization` header, with the personal API key itself (no `Bearer` prefix), to `https://api.linear.app/graphql`.
   The connection's host is fixed to that origin: `connect` refuses a host, the reader re-checks it when built (a stored
-  plain `http` host or any other host is `400 invalid`), and the HTTP client itself refuses plain `http`. No proxy, no
+  plain `http` host or any other host is `400 invalid_input`), and the HTTP client itself refuses plain `http`. No proxy, no
   referer, 10 second timeout, an answer over 2 MiB is refused, and a redirect is followed only within the same scheme,
   host and port (at most three); any other redirect ends the request as `tracker_unavailable`. The token is in no log
   line, address or error.
@@ -385,7 +385,7 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   can see more, only those first 20 teams are read). That teams read is cached for the same 30 seconds as a listing
   and cleared by connect and disconnect. Nothing outside those keys is read: a listing drops a row whose identifier
   belongs to another team, and a detail for another team's identifier is `not_found` before the lookup; a UUID is
-  checked against the team in the issue that comes back. A scope outside the connection is `400 invalid` and nothing
+  checked against the team in the issue that comes back. A scope outside the connection is `400 invalid_input` and nothing
   is sent. A stored team key needs no teams read.
 - **Mapping.** `key` and `display_key` are the identifier (`ENG-123`), `title` is `title`, `author` and `assignees` are
   the creator's and assignee's `displayName` (falling back to `name`, cut to 100 characters), labels are
@@ -401,10 +401,10 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   is `null: true`, any other value is the person's name as Linear shows it (`name: { eq: $assignee }`), and `any`
   leaves it out. A label filter is one `{ labels: { name: { eq: $labelN } } }` condition per label inside `and:
   [...]`, so every named label must be on the issue. An empty label name, one over 200 characters (counted in
-  characters, not bytes), one with a control character, or more than 20 names is `400 invalid` before anything is
+  characters, not bytes), one with a control character, or more than 20 names is `400 invalid_input` before anything is
   sent.
 - **Paging.** The listing carries `next_cursors["linear <team>"]` while `pageInfo.hasNextPage` is true, as Linear's
-  `endCursor` and a tag bound to the scope and the filters; one that does not verify is `400 invalid` and nothing is
+  `endCursor` and a tag bound to the scope and the filters; one that does not verify is `400 invalid_input` and nothing is
   sent. `hasNextPage` must be a boolean, and when it is true `endCursor` must be a non-empty string with no control
   characters; anything else is `tracker_unavailable` ("Linear answered something unreadable."). The tag is not signed
   with a secret, so it proves "made for these filters", not "made by this service". A cursor longer than the 200 bytes
@@ -420,7 +420,7 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   `rate_limited` with the headers, and on a detail `invalid input`, `not found` or `entity not found` is `not_found`;
   everything else is `tracker_unavailable`. The message is always the service's sentence, never Linear's `message`.
   A detail whose `data.issue` is null is `not_found`. A list that fails for any other reason goes in
-  `IssueList.failed` while other trackers answer; an invalid cursor, scope or label filter is the usual `400 invalid`
+  `IssueList.failed` while other trackers answer; an invalid cursor, scope or label filter is the usual `400 invalid_input`
   and no list at all.
 - **Untrusted text.** Titles are cut to 256 characters, labels to 200 and at most 100 of them, names to 100, the state
   name to 200, a comment id to 100, an issue body to 64 KiB and a comment to 16 KiB. Text is never read for
@@ -484,13 +484,13 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   tracker addresses a person on a write. The service checks each id's length and characters only, not that it is a
   candidate of the scope: GitHub drops a login that cannot be assigned without an error, so the answer's `assignees`
   is what was stored. A body with none present is
-  `400 invalid`. `title` is one line, at most 256 characters; `body` at most 64 KiB. One write covers the
+  `400 invalid_input`. `title` is one line, at most 256 characters; `body` at most 64 KiB. One write covers the
   description pencil and the label and assignee "+" controls: the page sends the full new set.
 - `state`: a name taken from `IssueDetail.states`, a list the detail then carries (name, category). A closed
   state takes an optional `close_reason`, `completed` (the default) or `not_planned`; a tracker that cannot say
   `not_planned` closes as completed and the answer's `IssueState.close_reason` says what it stored. A
-  `close_reason` on an open state, or a name the issue does not declare, is `400 invalid`.
-- `sort` defaults to `updated`; an unknown value is `400 invalid`. Only GitHub orders by it: the other trackers accept
+  `close_reason` on an open state, or a name the issue does not declare, is `400 invalid_input`.
+- `sort` defaults to `updated`; an unknown value is `400 invalid_input`. Only GitHub orders by it: the other trackers accept
   `sort=created` but still fetch by updated date, and the cut at 100 issues is made in that order. Every GitHub list is now a
   `gh issue list --search sort:...` call, so it reads through GitHub's search API: a lower rate limit than the plain list,
   and a result that can lag a new or changed issue by a short while. The `label` (repeat, all must match) and `assignee`
@@ -547,7 +547,7 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
 - `create` (**built, GitHub**): `title` is one line, 1 to 256 characters; `body` at most 64 KiB; `labels` (at most 50) are names, `assignees`
   (at most 25) are candidate `id`s from `GET /api/issues/candidates`, as in `update`. `template` is the `id` of a
   template from `templates`: when present, a missing `body` is filled from the template's body, a body the person sent
-  wins, and an id the tracker does not report is `400 invalid` ("Unknown issue template."). The template's labels are
+  wins, and an id the tracker does not report is `400 invalid_input` ("Unknown issue template."). The template's labels are
   not merged into the create's: labels are the create body's own.
   One call creates one issue: no retry loop, and a timeout answers `tracker_unavailable` with the issue possibly created
   (the answer says so, and the page re-reads the list rather than sending again). A `scope` outside the connection is
@@ -556,7 +556,7 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   tracker returned it). Editing and deleting comments are not part of this row.
 - `react` (**built, GitHub**): `reaction` is one of `thumbs_up`, `thumbs_down`, `laugh`, `hooray`, `confused`, `heart`, `rocket`, `eyes`;
   `on` true adds the person's reaction and false removes it, both idempotent. `comment_id` absent means the issue itself.
-  A tracker with a smaller set refuses a value it lacks with `400 invalid` and names the ones it has; none is mapped to a
+  A tracker with a smaller set refuses a value it lacks with `400 invalid_input` and names the ones it has; none is mapped to a
   near one. The answer is the issue with its reaction counts as the tracker reports them, in the tracker's own words
   (`IssueDetail.reactions`).
 - `templates` (**built, PR2**): the tracker's own issue templates for the scope, read-only:
@@ -571,7 +571,7 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   fills the person's own create form.
 - `bindProject` (**built, PR3**): stores which connected tracker and scope this project's issues come from, so the
   page and the engine tools can default to it. `scope` must be one of the connection's scopes; a tracker that is not
-  connected is `400 invalid`. It stores two names and no secret, writes one audit row (`issues.project.bind`, ids
+  connected is `400 invalid_input`. It stores two names and no secret, writes one audit row (`issues.project.bind`, ids
   and names only), and never changes the connection, the project or any issue.
 - **Engines.** The engine-facing issue tools (N24) are list, read, create, comment, link, unlink and thread list:
   create and comment call the same Core functions, in the project's own connected tracker and scope, as the Person
@@ -613,7 +613,7 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
 - **GitLab, Forgejo, Azure DevOps and Linear write too (R15 PR1b).** Each uses its own REST or GraphQL write path and
   its own rules:
   - **GitLab**: create is one `POST` of the project's issues with the labels as comma-joined names and the assignees as
-    numeric candidate ids; a label name containing a comma is `400 invalid` before anything is sent, because GitLab
+    numeric candidate ids; a label name containing a comma is `400 invalid_input` before anything is sent, because GitLab
     takes the names as one comma-separated value and would silently read it as two. Comment is a `POST` to the
     issue's notes and answers that note's numeric id. React is an `award_emoji` write whose `name=` is GitLab's own
     word (all eight map); both directions first read the reader's own award, so a repeated add or a removal with
@@ -622,25 +622,25 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
     more may be behind it; a removal whose own-award lookup runs out of those pages answers `tracker_unavailable`
     rather than pretending the award is gone.
   - **Forgejo**: create resolves each label name to the repository's label id first (a name the repository lacks is
-    `400 invalid` before anything is sent) and writes the assignees as logins; comment answers the stored comment.
+    `400 invalid_input` before anything is sent) and writes the assignees as logins; comment answers the stored comment.
     React writes or deletes the `content` word on the issue's or a comment's reactions path (all eight map); both
     directions first read the reader's own reaction, so a repeated add writes one reaction and a removal with nothing
     left writes nothing. The answer carries each content word and count from at most two pages of 50, and carries
     no counts when the last page is full, because more may be behind it. Label names are resolved against the
-    repository's labels read up to five pages of 50, so a label beyond the first 250 is `400 invalid` even though it
+    repository's labels read up to five pages of 50, so a label beyond the first 250 is `400 invalid_input` even though it
     exists.
   - **Azure DevOps**: create picks the project's first of `Issue`, `Task` and `Bug` and sends the fields as a JSON
     Patch document (title, description HTML-escaped, labels as the semicolon-joined `System.Tags`, one assignee; more
-    than one is `400 invalid`, as is a label with a semicolon in it); comment writes markdown and answers the stored
+    than one is `400 invalid_input`, as is a label with a semicolon in it); comment writes markdown and answers the stored
     comment. Reaction writes target `{base}/_apis/wit/workItems/{id}/comments/{commentId}/reactions/{type}` with
     `7.1-preview.1`. It reacts **on comments only** and has **six of the eight** reactions (`thumbs_up`, `thumbs_down`,
-    `laugh`, `hooray`, `confused`, `heart`): `rocket` and `eyes` are `400 invalid` naming the six it has, never
-    mapped to a near one, and a reaction with no `comment_id` is `400 invalid` too. The answer is the work item with
+    `laugh`, `hooray`, `confused`, `heart`): `rocket` and `eyes` are `400 invalid_input` naming the six it has, never
+    mapped to a near one, and a reaction with no `comment_id` is `400 invalid_input` too. The answer is the work item with
     no reactions: Azure DevOps reports them on comments, not on the work item.
   - **Linear**: create resolves the team's id and the label ids (a workspace or team label; a name the workspace lacks
-    is `400 invalid`), takes one assignee at most, and sends a fixed `issueCreate` mutation whose values are
+    is `400 invalid_input`), takes one assignee at most, and sends a fixed `issueCreate` mutation whose values are
     variables. The labels are read once with `issueLabels(first: 250)` and no paging, so a label beyond the first
-    250 is `400 invalid` even though it exists. Comment resolves the issue's internal id inside the team first, then
+    250 is `400 invalid_input` even though it exists. Comment resolves the issue's internal id inside the team first, then
     `commentCreate`. React resolves the issue, proves a named comment belongs to it (`not_found`, before any
     mutation), and sends `reactionCreate` with the emoji (Linear answers success for a duplicate); a removal finds
     the reader's own reaction and deletes it by id, and writes nothing when it finds none. The answer carries each
@@ -666,7 +666,7 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
 
 `GET /api/issues/templates` exists behind the Issues flag and is a `Local` read (no Person key): query `tracker` and
 `scope`, answers `IssueTemplate[]`. The route, the Core read and each writer's lookup share one rule: a missing body
-is filled from the named template, a body the person sent wins, an id the tracker does not report is `400 invalid`,
+is filled from the named template, a body the person sent wins, an id the tracker does not report is `400 invalid_input`,
 and the template's labels are never merged into the create's. Untrusted template text only ever fills the person's
 create form; nothing feeds it to an engine.
 
@@ -703,10 +703,10 @@ The tracker field is required: a body without it is `400 invalid_input`, never r
 `200 { tracker, scope }`; an unbind answers `204`.
 
 - **Validation, before anything is stored**: the project must exist (`404` otherwise); a tracker that is not
-  connected is `400 invalid` (the write routes' invalid, not the reads' `409`); `scope` is required on a bind, is at
+  connected is `400 invalid_input` (the write routes' invalid, not the reads' `409`); `scope` is required on a bind, is at
   most 200 bytes with no control characters, and must be one of the connection's scopes (the stored scopes; for
   GitHub, GitLab, Azure DevOps and Forgejo the project remotes on the connection's host; for Linear the teams its key
-  can see when the connection stores none), else `400 invalid`. An unbind that names a scope is `400 invalid`.
+  can see when the connection stores none), else `400 invalid_input`. An unbind that names a scope is `400 invalid_input`.
 - **What it stores**: one row per project — the tracker and scope, two names and no secret (migration 89, table
   `project_issue_trackers`, `ON DELETE CASCADE` so a removed project takes its binding with it). It never writes the
   connection, the project row or an issue.
@@ -732,7 +732,7 @@ them.
   validation as `POST /api/issues/item/create`, in the project's tracker/scope from its own git remote (never from an
   argument). It answers the created issue as the issue-read tool does: the summary fields, the body cleaned of the
   framing markers and cut at 16 KiB, and the tracker-text-is-data note. The tracker's refusal keeps its contract error;
-  an unknown template id is the same `400 invalid` the route answers.
+  an unknown template id is the same `400 invalid_input` the route answers.
 - `orbyn_issue_comment`: `{ key, body }` — the same `CommentIssue` fields and 1-64 KiB not-blank rule as
   `POST /api/issues/item/comment`. It answers the stored comment (`id`, `author`, `created_at`, `body` cleaned and cut,
   and the note).
@@ -742,6 +742,19 @@ them.
 - **Not built.** `set_state` stays out: the service has no update/state route yet (its own parity row), and a tool
   cannot be backed by a core function that does not exist. React is not in this row. No real tracker was contacted:
   the tool tests use a local fake issue reader over a fake project remote.
+
+## Not done
+
+Found in the post-merge review of the create, comment, react, template and binding work; each is a later change.
+
+- Forgejo comment reactions are scoped to the repository, not the issue: a comment id from another issue of the same
+  repository is accepted while the answer describes issue `key`. GitHub and Linear check that the comment belongs to the
+  issue; Forgejo should read the comment first and require its `issue_url` to end in `/issues/{key}`.
+- GitLab template keys that contain a space (file names such as "Bug Report") are skipped by the plain-segment check
+  and silently missing from the list; the key should be percent-encoded as one path segment instead.
+- A project binding is not removed when the project is removed softly (`removed_at`), so the row comes back if the
+  project is restored. Nothing reads the binding yet; the soft-remove path should delete the row, or the contract should
+  stop saying a removed project takes its binding with it.
 
 ## What T3 has that this does not (Planned)
 

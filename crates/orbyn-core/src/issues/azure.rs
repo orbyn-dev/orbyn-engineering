@@ -1212,7 +1212,8 @@ impl IssueSource for Azure {
                 "application/json-patch+json",
                 "project",
             )
-            .await?;
+            .await
+            .map_err(|error| super::possibly_created("Azure DevOps", error))?;
         let value = parse(&got.body)?;
         let summary = summary(&self.host, &base, scope, &value)?;
         let fields = value.get("fields").ok_or_else(unreadable)?;

@@ -4,6 +4,7 @@ import type { CloneJob, Project } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
+import { cloneFailure } from "./cloneFailure";
 
 const POLL_MS = 1000;
 
@@ -82,7 +83,7 @@ export function CloneJobs() {
             <>
               <span className="clone-job-text">
                 <strong>Clone failed</strong>
-                {job.error ? ` ${job.error}` : null}
+                {job.error ? ` ${cloneFailure(job.error)}` : null}
               </span>
               <Button small onClick={() => void retry(job.id)}>
                 Retry

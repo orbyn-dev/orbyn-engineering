@@ -653,7 +653,8 @@ impl IssueSource for GitLab {
         let path = format!("/api/v4/projects/{project}/issues");
         let got = self
             .send(Method::POST, &path, &[], Some(&payload), "project")
-            .await?;
+            .await
+            .map_err(|error| super::possibly_created("GitLab", error))?;
         let value = parse(&got.body)?;
         let summary = summary(&self.host, scope, &value).ok_or_else(unreadable)?;
         // A new issue has no comments: its own reply is the whole answer, so a successful create is never reported
