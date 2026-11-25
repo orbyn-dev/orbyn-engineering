@@ -24,9 +24,10 @@ const PERMISSIONS: Record<string, { title: string; missing: string; open: ShellA
 
 /** What only the desktop app can do. Nothing shows on a plain server. */
 export function DesktopApp() {
-  const status = useAsync("shell-status", (signal) => api.shell(signal), { keep: true });
+  const status = useAsync("shell-status", (signal, how) => api.shell(signal, how.force), { keep: true });
   const pushToast = useUi((state) => state.pushToast);
-  const reload = status.reload;
+  // A shell-changed event reads past any read in flight: that answer may hold the older facts.
+  const reload = status.reloadNow;
   useEffect(() => onShellChange(reload), [reload]);
   if (!status.data?.attached) return null;
   const { cli, permissions } = status.data.facts;

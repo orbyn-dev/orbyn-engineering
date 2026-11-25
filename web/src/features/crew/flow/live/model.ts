@@ -121,6 +121,13 @@ export function decidedBy(gate: FlowGate): string {
 /** A service word such as `needs_person` or `looks_good` as plain text. */
 export const plain = (word: string): string => word.replaceAll("_", " ");
 
+/** A check's row word: its kind, when the task's key names one, and its id. Never the key's own text for the check. */
+export const checkName = (check: { id: string; kind?: string | null }): string =>
+  check.kind ? `${plain(check.kind)} · ${check.id}` : check.id;
+
+/** The first seven characters of a commit, as the designs show a hash. */
+export const shortCommit = (commit: string): string => commit.slice(0, 7);
+
 /** A moment as the person's own clock reads it, for example "Sat 7 Nov, 15:02". An unreadable one is shown as sent. */
 export function when(iso: string): string {
   const at = new Date(iso);
