@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { MockApi } from "../../mock/api";
+import { runHandlers } from "../product/shell/shortcuts";
 import { installMockFetch } from "../test-support";
 import { TitleBar } from "./TitleBar";
 import { WindowControls } from "./WindowControls";
@@ -58,6 +59,60 @@ it("shows window controls only for the Windows desktop frame", async () => {
   const mac = render(<TitleBar layout="wide" navShown />);
   await waitFor(() => expect(mac.container.querySelector(".titlebar")).toHaveAttribute("data-lights"));
   expect(screen.queryByRole("button", { name: "Minimize" })).toBeNull();
+});
+
+it("titles each titlebar icon button, with its key on this platform", async () => {
+  const platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  const windows = render(<TitleBar layout="wide" navShown />);
+  expect(await screen.findByRole("button", { name: "Hide sidebar" })).toHaveAttribute("title", "Hide sidebar (Ctrl+B)");
+  expect(screen.getByRole("button", { name: "Back" })).toHaveAttribute("title", "Back (Ctrl+[)");
+  expect(screen.getByRole("button", { name: "Forward" })).toHaveAttribute("title", "Forward (Ctrl+])");
+  windows.unmount();
+
+  platform.mockReturnValue("MacIntel");
+  render(<TitleBar layout="wide" navShown={false} />);
+  expect(await screen.findByRole("button", { name: "Show sidebar" })).toHaveAttribute("title", "Show sidebar (⌘B)");
+  expect(screen.getByRole("button", { name: "Back" })).toHaveAttribute("title", "Back (⌘[)");
+  expect(screen.getByRole("button", { name: "Forward" })).toHaveAttribute("title", "Forward (⌘])");
+});
+
+it("reads each tooltip shortcut from the saved keymap when a command is remapped", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  mock.setKeybindings({
+    path: "~/.orbyn/keybindings.json",
+    rules: [
+      { key: "alt+b", command: "sidebar.toggle", when: null, remove: false, custom: true, default_keys: ["mod+b"] },
+      { key: "alt+left", command: "navigation.back", when: "!terminalFocus", remove: false, custom: true, default_keys: ["mod+["] },
+      { key: "alt+right", command: "navigation.forward", when: "!terminalFocus", remove: false, custom: true, default_keys: ["mod+]"] },
+    ],
+    issues: [],
+    conflicts: [],
+  });
+  render(<TitleBar layout="wide" navShown />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveAttribute("title", "Hide sidebar (Alt+B)"));
+  expect(screen.getByRole("button", { name: "Back" })).toHaveAttribute("title", "Back (Alt+←)");
+  expect(screen.getByRole("button", { name: "Forward" })).toHaveAttribute("title", "Forward (Alt+→)");
+});
+
+it("says no key for a command whose key the person removed, and follows a remap while the bar stays mounted", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  const view = (rules: Array<{ key: string; command: string; remove: boolean }>) => ({
+    path: "~/.orbyn/keybindings.json",
+    rules: rules.map((rule) => ({ ...rule, when: null, custom: true, default_keys: [] })),
+    issues: [],
+    conflicts: [],
+  });
+  mock.setKeybindings(view([{ key: "mod+b", command: "sidebar.toggle", remove: true }, { key: "mod+[", command: "navigation.back", remove: true }]));
+  render(<TitleBar layout="wide" navShown />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveAttribute("title", "Hide sidebar"));
+  expect(screen.getByRole("button", { name: "Back" })).toHaveAttribute("title", "Back");
+  // Forward is not named by the saved keys, so it keeps its built-in key.
+  expect(screen.getByRole("button", { name: "Forward" })).toHaveAttribute("title", "Forward (Ctrl+])");
+
+  mock.setKeybindings(view([{ key: "alt+b", command: "sidebar.toggle", remove: false }]));
+  act(() => { runHandlers("keybindings.reload"); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveAttribute("title", "Hide sidebar (Alt+B)"));
+  expect(screen.getByRole("button", { name: "Back" })).toHaveAttribute("title", "Back (Ctrl+[)");
 });
 
 it("sends each window control's command to the shell", async () => {

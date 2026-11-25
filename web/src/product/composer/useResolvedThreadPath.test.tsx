@@ -86,6 +86,19 @@ it("route cancellation clears transient navigation even with no mounted surface"
   expect(useUi.getState().diffReveal).toBeNull();
 });
 
+it("names the reference's repository as repo_id, and names none for the primary one", async () => {
+  prepare();
+  const resolve = vi.spyOn(api, "resolveThreadPath").mockResolvedValue(response("one.txt"));
+  // The primary repository is the service's default, so the request carries no repo_id at all.
+  renderHook(() => useResolvedThreadPath("t", reference("one.txt", 1)));
+  await waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
+  expect(resolve.mock.calls[0]?.[1]).toEqual({ path: "one.txt", basis: "thread", cwd: thread.cwd });
+  // A file of another repository of a multi-repository thread is resolved in that repository.
+  renderHook(() => useResolvedThreadPath("t", { ...reference("one.txt", 1), repoId: "planner" }));
+  await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2));
+  expect(resolve.mock.calls[1]?.[1]).toEqual({ path: "one.txt", basis: "thread", cwd: thread.cwd, repo_id: "planner" });
+});
+
 it("cwd cancellation survives an absent surface and a move back to the original folder", () => {
   prepare();
   useUi.getState().revealFile("one.txt", null, { threadId: thread.id, cwd: thread.cwd });

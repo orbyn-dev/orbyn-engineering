@@ -3,7 +3,8 @@
 Issue trackers beside the code: a list of issues from GitHub, GitLab, Azure DevOps, Forgejo and Linear, a
 thread started from an issue, and a link between a thread and the issues it works on. Beta: reads are
 `Local`; create, comment and react are `Person` writes through the person's own account, beside Orbyn's own
-connection writes (connect, disconnect, bind a project's tracker, link, start a thread).
+connection writes (connect, disconnect, bind a project's tracker, link, start a thread). GitHub also edits an
+issue, moves its state and lists the labels and people a picker offers.
 Behind a flag until it ships; with the flag off every route here answers `404` and the web app hides Issues.
 
 Field names follow the T3 Code issue schema (MIT, `9168ca73d`, names only) in snake_case. The web side's
@@ -43,7 +44,7 @@ write is, and goes in `ENFORCED` and `PERSON_ROUTES` (`personKey.ts`).
 | `GET /api/issues/trackers` | no | `TrackerRow[]` (below) |
 | `POST /api/issues/trackers/{tracker}/connect` | **yes** | `TrackerRow`. Body `{ host?, scope?, token? }`; `token` is absent for `github` |
 | `POST /api/issues/trackers/{tracker}/disconnect` | **yes** | `TrackerRow`. Removes the host, scopes and keychain token |
-| `GET /api/issues` | no | `IssueList`. Query: `tracker`, `state`, `label` (repeat), `assignee`, `q`, `limit`, `cursors` (below) |
+| `GET /api/issues` | no | `IssueList`. Query: `tracker`, `state`, `label` (repeat), `assignee`, `q`, `sort`, `limit`, `cursors` (below) |
 | `GET /api/issues/item` | no | `IssueDetail`. Query: `tracker`, `scope`, `key` |
 | `GET /api/issues/links` | no | `Record<thread_id, IssueRef[]>`, oldest link first |
 | `GET /api/issues/find` | no | `IssueRef[]`. Query `q`: a number, words or a pasted issue link |
@@ -51,6 +52,9 @@ write is, and goes in `ENFORCED` and `PERSON_ROUTES` (`personKey.ts`).
 | `POST /api/threads/{id}/issue-links` | **yes** | `204`. Body `{ tracker, scope, key }` |
 | `POST /api/threads/{id}/issue-links/remove` | **yes** | `204`. Removes this thread's link only |
 | `POST /api/issues/start-thread` | **yes** | `Thread`. Body `{ tracker, scope, key, message, project_id }`: creates the thread, links it and queues `message`, in one write |
+| `POST /api/issues/item/update` | **yes** | `IssueDetail`. Body `{ tracker, scope, key, title?, body?, labels?, assignees? }`; `assignees` are candidate `id`s |
+| `POST /api/issues/item/state` | **yes** | `IssueDetail`. Body `{ tracker, scope, key, state, close_reason? }`; `state` is the `name` of one of the issue's `states` |
+| `GET /api/issues/candidates` | no | `IssueCandidates`. Query `tracker`, `scope`; both are required |
 
 `GET /api/issues/trackers` answers `404` when the Issues flag is off, and the client reads that as "this
 service reports no issues". A tracker not connected is a row with `connected: false`, never a `404`.
@@ -119,8 +123,8 @@ A message never contains a token or a raw tracker body.
 ## GitLab as built
 
 `gitlab` reads issues in `crates/orbyn-core/src/issues/gitlab.rs`, behind the same `ORBYN_ISSUES` flag. List and
-detail are built, and the thread link, start-thread, draft and find paths use them; of the T3 issue work only the
-`update` and `state` writes and the `candidates` read are missing for GitLab (Planned).
+detail are built, and the thread link, start-thread, draft and find paths use them; of the T3 issue work the
+`update` and `state` writes, the `candidates` read and the list's `sort` option are missing for GitLab (Planned).
 
 - **Requests.** `GET {host}/api/v4/projects/{path}/issues` (`state` `opened|closed|all`, `labels`, `search`,
   `assignee_username`, `assignee_id=None`, `scope=assigned_to_me`, `order_by=updated_at`, `per_page` up to 100,
@@ -462,8 +466,9 @@ into them, so they are **data**, never instructions to an engine, and never reac
 ## Issue writes and list controls
 
 T3 Code at `9168ca73d` (`issue.ts`: `IssueListSort`, `IssueUpdateInput`, `IssueSetStateInput`,
-`IssueCandidates`) has all of these, so they are in the beta, built after the read routes above. They are
-**not built yet**: the web app keeps the controls as Planned until each route lands. Each write is
+`IssueCandidates`) has all of these, so they are in the beta, built after the read routes above. `update`,
+`state`, `candidates` and the list's `sort` are built for GitHub (R15 PR3); the other four trackers keep them
+Planned, answer `422 unsupported` and say so in their own section below. Each write is
 Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the updated `IssueDetail`.
 
 | Route | Person | Answers |
@@ -476,14 +481,19 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
 - `update`: every field is optional and only the present ones are written; `labels` (at most 50) and
   `assignees` (at most 25) are the whole set, as every tracker writes them. `labels` are label names;
   `assignees` are the `id` of a candidate from `candidates`, never a login typed by hand, because `id` is how the
-  tracker addresses a person on a write (an `id` that is not a candidate of the scope is `400 invalid_input`). A body with none present is
+  tracker addresses a person on a write. The service checks each id's length and characters only, not that it is a
+  candidate of the scope: GitHub drops a login that cannot be assigned without an error, so the answer's `assignees`
+  is what was stored. A body with none present is
   `400 invalid_input`. `title` is one line, at most 256 characters; `body` at most 64 KiB. One write covers the
   description pencil and the label and assignee "+" controls: the page sends the full new set.
 - `state`: a name taken from `IssueDetail.states`, a list the detail then carries (name, category). A closed
   state takes an optional `close_reason`, `completed` (the default) or `not_planned`; a tracker that cannot say
   `not_planned` closes as completed and the answer's `IssueState.close_reason` says what it stored. A
   `close_reason` on an open state, or a name the issue does not declare, is `400 invalid_input`.
-- `sort` defaults to `updated`; an unknown value is `400 invalid_input`. The `label` (repeat, all must match) and `assignee`
+- `sort` defaults to `updated`; an unknown value is `400 invalid_input`. Only GitHub orders by it: the other trackers accept
+  `sort=created` but still fetch by updated date, and the cut at 100 issues is made in that order. Every GitHub list is now a
+  `gh issue list --search sort:...` call, so it reads through GitHub's search API: a lower rate limit than the plain list,
+  and a result that can lag a new or changed issue by a short while. The `label` (repeat, all must match) and `assignee`
   filters already exist in the read route above and are built; the web side sends T3's `labels[]` as repeated `label`.
 - `candidates` is read when a picker opens, not with every issue: `{ labels: { name, color? }[], assignees:
   { login, name?, id }[], truncated }`. `id` is how the tracker addresses the person on a write, which is not
@@ -492,6 +502,28 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
 - A write the tracker refuses answers the usual error (`forbidden`, `not_found`, `rate_limited`,
   `tracker_unavailable`) and changes nothing here. Issue text going in is as untrusted as issue text coming
   out: it is sent as a field value, never in an argument position, and never rendered as markup by this side.
+
+### As built, GitHub (R15 PR3)
+
+- **`update`** is one `PATCH /repos/{owner}/{repo}/issues/{n}` through the person's own `gh`, carrying only the
+  fields that are present (`labels` and `assignees` are the whole new set, so an empty list clears them), and the
+  answer is the issue read back, so it carries the comments, the linked pull requests and the states a detail read
+  does. Core checks the title, the body, the labels and the assignees before `gh` runs, and a body with none of the
+  four is `400 invalid` with nothing sent.
+- **`state`** is one `PATCH` of `state` and `state_reason`. GitHub has one closed state with two reasons and the
+  detail names them apart, so a closed issue's row reads as the state it is in: `Open`, `Closed` (completed) and
+  `Closed as not planned`. Closing uses the reason the chosen name carries, and the answer's
+  `IssueState.close_reason` says what GitHub stored. The detail is read before the write, so a name the issue does
+  not offer and a `close_reason` on an open state are `400 invalid` with nothing sent.
+- **`candidates`** answers the repository's labels (one `gh label list` page of 200) and its assignable people
+  (`repos/{scope}/assignees`, 100 a page, two pages), each text cut as the read cuts it. GitHub addresses a person
+  by login, so an assignee candidate's `id` is its login. A full last page may hide more, so `truncated` is set
+  whenever 200 of either were kept or the second page was full.
+- **`sort`** is a `gh issue list` search qualifier (`sort:updated-desc`, the default, or `sort:created-desc`):
+  `gh` has no order flag. The order is part of the paging cursor's tag, so a cursor issued for one order is refused
+  for the other.
+- **`states`** is `Some` for every GitHub detail and answers `[]` never: the three states above are always offered.
+  The other four trackers answer `None`, so the web app keeps their State row as Planned.
 
 ## Create, comment, react, templates and project binding (contract)
 
@@ -729,14 +761,18 @@ Found in the post-merge review of the create, comment, react, template and bindi
 The event timeline, "involved/mentioned"
 filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting and
 reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b), templates in R15 PR2 and
-project binding in R15 PR3. The engine-facing
-issue tools (N24) list, read, create, comment, link, unlink and list a thread's linked issues; they do not change
-state (the service has no state route).
+project binding in R15 PR3. The edits, state moves and the list's order are built for GitHub (R15 PR3) and Planned
+for the other four, whose sections say so; `candidates` is a GitLab, Forgejo, Azure DevOps and Linear gap too. The
+engine-facing issue tools (N24) list, read, create, comment, link, unlink and list a thread's linked issues; they do not
+change state (the service has no state route for them).
 
 ## Differences from the web side's guessed contract
 
-- **State changes** are specified above ("Issue writes and list controls") and not built yet; until they
-  land the page shows them as Planned and calls nothing.
+- **State changes** are specified above ("Issue writes and list controls") and built for GitHub: the detail carries
+  `states` (its own names and categories, `None` when the tracker offers none) and a closed issue's name tells a
+  completed close from a not-planned one. A tracker whose `states` is absent keeps the State row as Planned.
+- `IssueDetail` adds `states`; `IssueCandidates` (`labels`, `assignees`, `truncated`) is a new read, and `sort` a new
+  list query value.
 
 - `get` takes the whole ref, `get(tracker, scope, key)`: a key is unique only within a scope.
 - `TrackerRow` adds `host` and `detail`; `connect` and `disconnect` are new calls (Person-class).

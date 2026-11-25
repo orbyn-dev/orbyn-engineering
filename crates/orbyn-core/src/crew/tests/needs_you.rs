@@ -8,6 +8,7 @@ use serde_json::json;
 use super::harness::{Turn, World, brief, give_back_worker_run, key, take_worker_run, world};
 use super::review_support::{arc, built, crew};
 use crate::crew::WORKER_STOPPED_TWICE;
+use crate::crew::needs_you::Scope;
 use crate::error::CoreError;
 
 fn items(w: &World) -> Vec<NeedsYouItem> {
@@ -353,7 +354,7 @@ async fn a_task_whose_last_cancel_attempt_failed_is_could_not_stop_and_not_dismi
     assert!(
         !w.core
             .store
-            .crew_could_not_stop()
+            .crew_could_not_stop(None, None)
             .unwrap()
             .iter()
             .any(|one| one.task.id == id)
@@ -361,9 +362,10 @@ async fn a_task_whose_last_cancel_attempt_failed_is_could_not_stop_and_not_dismi
     assert!(items(&w).iter().all(|item| item.id != id));
 }
 
-/// A read scoped to another crew leaves the could-not-stop item out, and a read that accepts its crew keeps it.
+/// The one needs-you read narrowed to one crew leaves another crew's item out, and the device read keeps it: the
+/// Taskboard's 30-second read is scoped the same way, so it never loads every crew's records.
 #[tokio::test]
-async fn a_scoped_read_leaves_out_another_crews_could_not_stop_item() {
+async fn a_needs_you_read_for_one_crew_leaves_out_another_crews_item() {
     let w = crew(arc(|_, _| Turn::Hang)).await;
     let id = started_hanging(&w, "Stuck elsewhere.").await;
     let _epoch = take_worker_run(&w, &id);
@@ -371,20 +373,17 @@ async fn a_scoped_read_leaves_out_another_crews_could_not_stop_item() {
     assert_eq!(answer.failed, vec![id.clone()]);
     let crew_id = w.task(&id).crew_id;
 
-    let other = w
-        .core
-        .needs_you_all(&|_, crew_id| crew_id == "another-crew")
-        .unwrap();
+    let other = w.core.needs_you_all(Scope::Crew("another-crew")).unwrap();
     assert!(other.iter().all(|item| item.id != id));
 
-    let own = w
-        .core
-        .needs_you_all(&|_, one| one == crew_id.as_str())
-        .unwrap();
+    let own = w.core.needs_you_all(Scope::Crew(&crew_id)).unwrap();
     assert!(
         own.iter()
             .any(|item| item.id == id && item.kind == NeedsYouKind::CouldNotStop)
     );
+    // The device read (the Inbox) still holds it: scoping narrows a reader, never the field.
+    let device = w.core.needs_you_all(Scope::Device).unwrap();
+    assert!(device.iter().any(|item| item.id == id));
 }
 
 /// A task that waits on a person and whose worker could not be stopped is the stop, not the wait: its worker may still run.
@@ -644,4 +643,65 @@ async fn too_many_items_in_one_request_are_refused() {
         Err(CoreError::Invalid(_))
     ));
     assert!(w.core.crew_needs_you_notify(&many[..50]).is_ok());
+}
+
+/// The Autopilot digest's `needs_person` count is the one needs-you field, not a recount of its own merge records: a task
+/// waiting on a person (no merge at all) and a merge whose break waits are both counted, a dismissal drops an item from
+/// both, and the digest's quiet day follows the field.
+#[tokio::test]
+async fn the_autopilot_digest_needs_you_count_is_the_one_field() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => Turn::Silent,
+    }))
+    .await;
+    let now = crate::util::unix_now();
+    // Nothing waits yet: the digest is quiet and says nobody needs a person.
+    let empty = w.core.autopilot_digest(now, Some(24)).unwrap();
+    assert_eq!(empty.needs_person, 0);
+    assert_eq!(w.core.crew_needs_you().unwrap().count, 0);
+    assert!(empty.quiet, "nothing happened");
+
+    // A passed task whose merge waits on a person, and a task whose worker never ran: two field items, one merge and one
+    // task, so a count of merge records alone would undercount.
+    let merged = w.built_work().await;
+    let crew_id = w.task(&merged).crew_id;
+    let mut record = crate::crew::fixtures::merge_record(&merged, "/repo", "main", "a break");
+    record.crew_id = crew_id;
+    record.review_state = "waiting".to_owned();
+    record.needs_person = Some("The break needs a person.".to_owned());
+    w.core.store.add_crew_merge(&record).unwrap();
+    let (answer, error) = w
+        .start(
+            brief(json!({ "engine": { "id": "ghost", "assigned_by": "lead" } })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let could_not_start = answer["task"].as_str().unwrap().to_owned();
+
+    let digest = w.core.autopilot_digest(now, Some(24)).unwrap();
+    let field = w.core.crew_needs_you().unwrap();
+    assert_eq!(digest.needs_person, 2, "a merge wait and a task wait");
+    assert_eq!(
+        digest.needs_person as usize, field.count as usize,
+        "the digest counts the one field the Inbox answers from"
+    );
+    assert!(!digest.quiet, "a wait is something to say");
+
+    // A dismissal hides the item in the field, so the digest's count follows it down.
+    w.core
+        .crew_needs_you_dismiss(NeedsYouKind::CouldNotStart, &could_not_start, "user")
+        .unwrap();
+    let digest = w.core.autopilot_digest(now, Some(24)).unwrap();
+    assert_eq!(digest.needs_person, 1, "the dismissed task is not counted");
+    assert_eq!(
+        digest.needs_person as usize,
+        w.core.crew_needs_you().unwrap().count as usize,
+        "both read the same field after a dismissal"
+    );
+    assert!(
+        !digest.quiet,
+        "the merge wait is still a person's to answer"
+    );
 }
