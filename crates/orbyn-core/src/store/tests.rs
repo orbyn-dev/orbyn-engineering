@@ -1572,4 +1572,3 @@ fn a_project_issue_tracker_binding_is_one_row_with_cascade() {
     assert!(f.store.project_issue_tracker(&bare.id).unwrap().is_none());
     assert_eq!(f.store.tracker_connections().unwrap().len(), 1);
 }
-
