@@ -50,9 +50,13 @@ fn outside() -> Script {
     })
 }
 
+/// The crew's one run: each test starts that crew's run once before reading it, so the count says the row is the one
+/// they mean and the read's position never picks another.
 fn run_of(w: &World, crew: &str) -> wire::BackgroundRun {
     let page = Page::new(None, None).unwrap();
-    w.core.background_runs(crew, page).unwrap().runs.remove(0)
+    let mut runs = w.core.background_runs(crew, page).unwrap().runs;
+    assert_eq!(runs.len(), 1, "the crew has one run: {runs:?}");
+    runs.pop().expect("the crew's run")
 }
 
 async fn until_run(w: &World, crew: &str, state: wire::BackgroundRunState) -> wire::BackgroundRun {
@@ -67,6 +71,26 @@ fn queue(w: &World) -> crate::crew::ReviewQueue {
     w.core.crew_review_queue(NOW).unwrap()
 }
 
+/// A crew's run, started here and waited for until it reaches the review: the id is the row the test reads, so no read
+/// has to take the first run by position.
+async fn run_to_review(w: &World, crew: &str) -> String {
+    let run = w.core.crew_background_run_now(crew, "user").await.unwrap();
+    until_run(w, crew, wire::BackgroundRunState::NeedsReview).await;
+    run.id
+}
+
+/// The wire queue's background run with this id, found by id so a second waiting run cannot stand in for it.
+fn wire_run<'a>(
+    queue: &'a wire::AutopilotReviewQueue,
+    run: &str,
+) -> &'a wire::AutopilotBackgroundReviewItem {
+    queue
+        .background_runs
+        .iter()
+        .find(|item| item.run_id == run)
+        .expect("the wire queue has the background run with that id")
+}
+
 #[tokio::test]
 async fn a_run_that_finished_with_work_waits_in_the_review_queue() {
     let w = world(true, good()).await;
@@ -76,8 +100,12 @@ async fn a_run_that_finished_with_work_waits_in_the_review_queue() {
 
     let queue = queue(&w);
     assert!(queue.merges.is_empty(), "no merge was made");
-    assert_eq!(queue.background.len(), 1);
-    let item = &queue.background[0];
+    assert_eq!(queue.background.len(), 1, "the one run waits");
+    let item = queue
+        .background
+        .iter()
+        .find(|item| item.run_id == run.id)
+        .expect("the queue lists the run that finished");
     assert_eq!(
         (item.run_id.as_str(), item.crew_id.as_str()),
         (run.id.as_str(), id.as_str())
@@ -113,8 +141,12 @@ async fn a_run_stopped_for_its_budget_waits_with_its_reason_and_spend() {
     );
 
     let queue = queue(&w);
-    assert_eq!(queue.background.len(), 1);
-    let item = &queue.background[0];
+    assert_eq!(queue.background.len(), 1, "the one stopped run waits");
+    let item = queue
+        .background
+        .iter()
+        .find(|item| item.run_id == stopped.id)
+        .expect("the queue lists the run that stopped");
     assert_eq!(item.state, "stopped");
     assert_eq!(item.stop_reason.as_deref(), Some("budget"));
     assert_eq!(
@@ -140,13 +172,15 @@ async fn a_run_stopped_by_a_failure_still_waits_for_a_person() {
     );
 
     let queue = queue(&w);
-    assert_eq!(queue.background.len(), 1);
-    assert_eq!(queue.background[0].state, "stopped");
-    assert_eq!(
-        queue.background[0].stop_reason.as_deref(),
-        Some("engine_error")
-    );
-    assert_eq!(queue.background[0].review_reason, None);
+    assert_eq!(queue.background.len(), 1, "the stopped run is listed");
+    let item = queue
+        .background
+        .iter()
+        .find(|item| item.run_id == stopped.id)
+        .expect("the queue lists the stopped run");
+    assert_eq!(item.state, "stopped");
+    assert_eq!(item.stop_reason.as_deref(), Some("engine_error"));
+    assert_eq!(item.review_reason, None);
 }
 
 #[tokio::test]
@@ -218,8 +252,8 @@ async fn the_wire_queue_carries_the_background_run_without_a_merge_or_a_risk() {
     let queue = w.core.autopilot_review_queue(NOW, page).unwrap();
     assert!(queue.items.is_empty(), "a background run has no merge");
     assert_eq!(queue.total, 0);
-    assert_eq!(queue.background_runs.len(), 1);
-    let item = &queue.background_runs[0];
+    assert_eq!(queue.background_runs.len(), 1, "the one run is listed");
+    let item = wire_run(&queue, &run.id);
     assert_eq!(
         (
             item.run_id.as_str(),
@@ -324,20 +358,18 @@ async fn acknowledging_a_waiting_review_settles_it_and_the_crew_may_run_again() 
 
     // One audit row, the person's, records what was settled.
     let audits = w.core.store.list_audit(None, 100).unwrap();
-    let rows: Vec<_> = audits
+    let mut rows: Vec<_> = audits
         .iter()
         .filter(|row| row.action == "crew.background.run.acknowledge")
         .collect();
-    assert_eq!(rows.len(), 1);
+    assert_eq!(rows.len(), 1, "one audit row, the person's");
+    let row = rows.pop().expect("the acknowledge audit row");
+    assert_eq!((row.actor.as_str(), row.source.as_str()), ("user", "user"));
+    assert_eq!(row.target, id);
+    assert_eq!(row.detail["run"], run.id);
+    assert_eq!(row.detail["state"], "needs_review");
     assert_eq!(
-        (rows[0].actor.as_str(), rows[0].source.as_str()),
-        ("user", "user")
-    );
-    assert_eq!(rows[0].target, id);
-    assert_eq!(rows[0].detail["run"], run.id);
-    assert_eq!(rows[0].detail["state"], "needs_review");
-    assert_eq!(
-        rows[0].detail["review_reason"],
+        row.detail["review_reason"],
         waiting.review_reason.clone().unwrap()
     );
 }
@@ -376,8 +408,13 @@ async fn acknowledging_a_review_that_is_not_waiting_is_refused_plainly_and_chang
     assert_eq!(w.core.background_get(&id).unwrap().reviews_waiting, 0);
     // A failed stop still shows in Review: it is not a waiting review, so it has no acknowledgement (PR 4's open question).
     let listed = queue(&w);
-    assert_eq!(listed.background.len(), 1);
-    assert_eq!(listed.background[0].state, "stopped");
+    assert_eq!(listed.background.len(), 1, "the failed stop is listed");
+    let item = listed
+        .background
+        .iter()
+        .find(|item| item.run_id == run.id)
+        .expect("the queue lists the failed stop");
+    assert_eq!(item.state, "stopped");
 }
 
 #[tokio::test]
@@ -390,13 +427,12 @@ async fn acknowledging_is_not_found_with_the_preview_off() {
 #[tokio::test]
 async fn the_wire_queue_pages_the_background_runs_and_counts_them_all() {
     let w = world(true, good()).await;
-    let mut runs = Vec::new();
-    for name in ["First", "Second", "Third"] {
-        let crew = crew_with(&w, name, 10, 30, true).await;
-        let run = w.core.crew_background_run_now(&crew, "user").await.unwrap();
-        until_run(&w, &crew, wire::BackgroundRunState::NeedsReview).await;
-        runs.push(run.id);
-    }
+    let first_crew = crew_with(&w, "First", 10, 30, true).await;
+    let first_run = run_to_review(&w, &first_crew).await;
+    let second_crew = crew_with(&w, "Second", 10, 30, true).await;
+    let second_run = run_to_review(&w, &second_crew).await;
+    let third_crew = crew_with(&w, "Third", 10, 30, true).await;
+    let third_run = run_to_review(&w, &third_crew).await;
 
     let first = w
         .core
@@ -408,15 +444,21 @@ async fn the_wire_queue_pages_the_background_runs_and_counts_them_all() {
         .iter()
         .map(|item| item.run_id.as_str())
         .collect();
-    assert_eq!(ids, [runs[0].as_str(), runs[1].as_str()]);
+    assert_eq!(
+        ids,
+        [first_run.as_str(), second_run.as_str()],
+        "the first page is the oldest two"
+    );
     assert_eq!(first.next_offset, Some(2), "another page of runs remains");
 
     let last = w
         .core
         .autopilot_review_queue(NOW, Page::new(Some(2), Some(2)).unwrap())
         .unwrap();
-    assert_eq!(last.background_runs.len(), 1);
-    assert_eq!(last.background_runs[0].run_id, runs[2]);
+    assert_eq!(last.background_runs.len(), 1, "one run on the last page");
+    let last_run = wire_run(&last, &third_run);
+    assert_eq!(last_run.run_id, third_run);
+    assert_eq!(last_run.crew_id, third_crew);
     assert_eq!(last.next_offset, None);
     assert_eq!(last.background_total, 3);
 }
