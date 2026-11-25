@@ -955,7 +955,7 @@ async fn target_status(root: &Path, project: &orbyn_contracts::Project) -> Targe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{TempDir, library, run_git};
+    use crate::testing::{TempDir, library, link_dir, run_git};
 
     async fn service(dir: &TempDir) -> Arc<Workspace> {
         let data = dir.path().join("data");
@@ -1046,25 +1046,31 @@ mod tests {
         assert!(matches!(incomplete, Err(CoreError::WorkspaceRefused(_))));
     }
 
-    #[cfg(unix)]
     #[tokio::test]
-    async fn symlinked_roots_and_targets_are_refused() {
+    async fn linked_roots_and_targets_are_refused() {
         let dir = TempDir::new();
         let path = library(&dir.path().join("mine"));
         let link = dir.path().join("link");
-        std::os::unix::fs::symlink(&path, &link).unwrap();
+        link_dir(&path, &link);
         let workspace = service(&dir).await;
-        assert!(matches!(
-            workspace.setup(adopt(&link)).await,
-            Err(CoreError::WorkspaceRefused(_))
-        ));
+        let Err(CoreError::WorkspaceRefused(reason)) = workspace.setup(adopt(&link)).await else {
+            panic!("a linked library root was not refused");
+        };
+        assert_eq!(
+            reason,
+            format!(
+                "{} is a symlink, which is not supported here.",
+                link.display()
+            ),
+            "the link itself is named, not only refused"
+        );
 
         std::fs::create_dir_all(path.join("repo")).unwrap();
         let outside = dir.path().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
         run_git(&outside, &["init", "-q"]);
         let escape = path.join("repo/escape");
-        std::os::unix::fs::symlink(&outside, &escape).unwrap();
+        link_dir(&outside, &escape);
         // A link is followed to its real folder, and the real folder is what counts.
         assert_eq!(
             check_target(&path, &escape).await.unwrap(),
@@ -1072,7 +1078,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn the_library_is_refused_from_every_side() {
         let dir = TempDir::new();
@@ -1093,19 +1098,26 @@ mod tests {
         let nested = resolve_project(&root, &repo.join("app")).await.unwrap();
         assert_eq!(nested.path, repo.join("app"));
 
-        for bad in [
-            root.clone(),
-            root.join("skills/how/inner"),
-            repo.clone(),
-            dir.path().to_path_buf(),
+        for (bad, expected) in [
+            (
+                root.clone(),
+                "This is the skills library, or a folder containing it.",
+            ),
+            (
+                root.join("skills/how/inner"),
+                "This folder is inside the skills library.",
+            ),
+            (repo.clone(), "This folder is inside the skills library."),
+            (
+                dir.path().to_path_buf(),
+                "This is the skills library, or a folder containing it.",
+            ),
         ] {
-            assert!(
-                matches!(
-                    resolve_project(&root, &bad).await,
-                    Err(CoreError::WorkspaceRefused(_))
-                ),
-                "{bad:?}"
-            );
+            let Err(CoreError::WorkspaceRefused(reason)) = resolve_project(&root, &bad).await
+            else {
+                panic!("{bad:?} was not refused");
+            };
+            assert_eq!(reason, expected, "{bad:?}");
         }
 
         // A folder in a repository keeps the selected physical scope.
@@ -1117,12 +1129,23 @@ mod tests {
         let plain = dir.path().join("plain");
         std::fs::create_dir_all(&plain).unwrap();
         assert!(!resolve_project(&root, &plain).await.unwrap().is_git);
-        assert!(resolve_project(&root, Path::new("relative")).await.is_err());
+        let Err(CoreError::WorkspaceRefused(reason)) =
+            resolve_project(&root, Path::new("relative")).await
+        else {
+            panic!("a relative path was not refused");
+        };
+        assert_eq!(reason, "Use an absolute path.");
 
         // A link into the library is the library.
         let link = dir.path().join("link");
-        std::os::unix::fs::symlink(&root, &link).unwrap();
-        assert!(resolve_project(&root, &link).await.is_err());
+        link_dir(&root, &link);
+        let Err(CoreError::WorkspaceRefused(reason)) = resolve_project(&root, &link).await else {
+            panic!("a link to the library was not refused");
+        };
+        assert_eq!(
+            reason,
+            "This is the skills library, or a folder containing it."
+        );
 
         // A linked worktree of the library is the library's history elsewhere.
         run_git(&root, &["config", "user.email", "t@example.com"]);
@@ -1139,7 +1162,11 @@ mod tests {
                 worktree.to_str().unwrap(),
             ],
         );
-        assert!(resolve_project(&root, &worktree).await.is_err());
+        let Err(CoreError::WorkspaceRefused(reason)) = resolve_project(&root, &worktree).await
+        else {
+            panic!("a worktree of the library was not refused");
+        };
+        assert_eq!(reason, "This is a worktree of the skills library.");
 
         // An external clone's worktree parked under repo/ keeps its Git data outside.
         let external = dir.path().join("external");
@@ -1153,10 +1180,10 @@ mod tests {
             &external,
             &["worktree", "add", "-q", linked.to_str().unwrap()],
         );
-        assert!(matches!(
-            resolve_project(&root, &linked).await,
-            Err(CoreError::WorkspaceRefused(_))
-        ));
+        let Err(CoreError::WorkspaceRefused(reason)) = resolve_project(&root, &linked).await else {
+            panic!("a worktree with Git data outside the workspace was not refused");
+        };
+        assert_eq!(reason, "This checkout's Git data is outside the workspace.");
     }
 
     #[tokio::test]

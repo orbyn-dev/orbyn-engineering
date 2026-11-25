@@ -34,6 +34,42 @@ pub fn run_git(cwd: &Path, args: &[&str]) {
     assert!(status.success(), "git {args:?}");
 }
 
+/// A second name for a folder: a symlink on Unix, a junction on Windows, where a
+/// file symlink needs a privilege a test runner may not grant. Both paths come from
+/// the caller's disposable fixture.
+pub fn link_dir(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        // Junction creation needs no symbolic-link privilege on supported Windows.
+        // cmd.exe reads a `/` inside a bare path as a switch, so name both paths the
+        // way cmd parses them.
+        let native = |path: &Path| path.to_string_lossy().replace('/', r"\");
+        let output = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(native(link))
+            .arg(native(target))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "mklink /J {} {}: {}",
+            link.display(),
+            target.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+/// Removes the link itself, never the folder a [`link_dir`] link names.
+pub fn unlink_dir(link: &Path) {
+    #[cfg(unix)]
+    std::fs::remove_file(link).unwrap();
+    #[cfg(windows)]
+    std::fs::remove_dir(link).unwrap();
+}
+
 /// A minimal valid skills library with one skill and its host links.
 pub fn library(root: &Path) -> PathBuf {
     std::fs::create_dir_all(root.join("skills/how")).unwrap();

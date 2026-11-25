@@ -505,7 +505,6 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_parent_replaced_after_checkout_resolution_cannot_authorize_other_bytes() {
         let dir = std::env::temp_dir().join(crate::util::new_id());
@@ -520,9 +519,14 @@ mod tests {
         .unwrap();
         let expected = crate::util::canonicalize(&root).unwrap().join("orbyn.json");
         std::fs::remove_dir(&root).unwrap();
-        std::os::unix::fs::symlink(&outside, &root).unwrap();
+        crate::testing::link_dir(&outside, &root);
         let view = read_project_file(expected.parent().unwrap());
-        assert!(view.problem.is_some());
+        assert_eq!(
+            view.problem.as_deref(),
+            Some("This project checkout is no longer at its registered path."),
+            "the bytes reached through the link are the other folder's"
+        );
+        assert!(view.path.is_none());
         assert!(view.file.is_none());
         assert!(view.scripts.is_empty());
 
@@ -530,7 +534,7 @@ mod tests {
             parse_file(&expected).unwrap_err(),
             "This project file must be a direct file in the checkout."
         );
-        std::fs::remove_file(&root).unwrap();
+        crate::testing::unlink_dir(&root);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
