@@ -57,6 +57,12 @@ const EXIT_GRACE: Duration = Duration::from_secs(3);
 /// How long a run held open for a workflow waits, once the last one ends, for the
 /// follow-up turn the CLI starts after a finished workflow. A stopped one starts none.
 const HOLD_GRACE: Duration = Duration::from_secs(5);
+/// How long a completed turn is held open for background work in all. A `local_agent` that
+/// never sends its notification must not keep the run open forever.
+const HOLD_LIMIT: Duration = Duration::from_secs(30 * 60);
+/// How long the same hold waits with no line from the CLI at all: a finish signal that never
+/// comes must not use the whole limit.
+const HOLD_IDLE: Duration = Duration::from_secs(5 * 60);
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 const INITIALIZE_ID: &str = "orbyn-capabilities";
 const USAGE_ID: &str = "orbyn-usage";
