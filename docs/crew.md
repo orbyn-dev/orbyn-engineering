@@ -601,15 +601,23 @@ stay in the [review README](../crates/orbyn-core/src/crew/review/README.md#decis
 - **The clearing repro runs at the current checkout — blocked on #436.** It must pass now, is not shown to have failed before
   the fix (the Gate says so), and its Evidence records the commit it ran on. Fail-before/pass-after at the finding's exact
   commit needs a throwaway checkout and process ownership in #436. Unblocked by #436.
-- **Byte-exact Git is scoped to the checks that decide — accepted.** Crew's scope, size and changed-path checks run
+- **Byte-exact Git is scoped to the checks that decide — closed, and the scope is settled rather than provisional.**
+  Crew's scope, size and changed-path checks run
   `git_byte_exact` (line-ending conversion and the untracked cache off) and refuse a nonempty or unreadable `info/attributes`;
   those checks also need Git 2.40 or later, where `GIT_ATTR_SOURCE` keeps the checkout's own `.gitattributes` out of the read,
-  and errors on older Git instead of passing bytes it did not compare. `git_hardened` keeps its previous behaviour for every other
-  caller. Adding the flags to every hardened read would change file explorer and merge reads too, and real Windows
-  `core.autocrlf=true` behaviour is unverified ([handoff](handoff.md)). Repository metadata remains writable. Unblocked by
-  auditing every caller and recording Windows evidence; `autocrlf_cannot_hide_a_byte_change_from_scope_or_size`,
+  and errors on older Git instead of passing bytes it did not compare. `git_hardened` keeps the checkout's line-ending
+  conversion on purpose: the reads it serves compare a working tree against its index, so forcing the conversion off
+  publishes a clean `core.autocrlf=true` checkout as changed — measured on Git for Windows 2.43, where
+  `status --porcelain` reads ` M f.txt` for a CRLF checkout the conversion leaves equal, with the index rebuilt without
+  stat info so Git compares content. That would turn the verifier's dirty read and the explorer's changed-file list into
+  false positives. The other hardened callers are working-tree comparisons, which need the conversion left on, or reads
+  of stored objects and metadata, where it changes nothing: `show commit:path` and `cat-file` return the blob's own bytes
+  under either setting, and `rev-parse`, `ls-files` and `ls-tree` answer without reading file content. Repository metadata
+  remains writable. Covered by
+  `hardened_reads_keep_the_checkouts_line_ending_conversion`,
+  `autocrlf_cannot_hide_a_byte_change_from_scope_or_size`,
   `an_in_tree_attributes_rule_cannot_hide_a_byte_change_from_scope_or_size`,
-  `the_byte_exact_checks_need_attr_source_from_git_2_40` and `only_the_byte_exact_helper_carries_the_crew_flags` cover it.
+  `the_byte_exact_checks_need_attr_source_from_git_2_40` and `only_the_byte_exact_helper_carries_the_crew_flags`.
 - **The touched guard and HEAD reads — closed.** `chk-fix-touched` is a core byte comparison in the immutable key, run only for
   a stored fix task, never a shell command; a missing, unreadable or nonregular file cannot pass. The two plain
   `rev-parse HEAD` reads the issue named use `git_hardened`, in `review/lanes.rs` and the start path. Covered by
