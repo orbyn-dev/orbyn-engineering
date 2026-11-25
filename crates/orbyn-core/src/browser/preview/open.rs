@@ -14,7 +14,7 @@ use crate::store::AuditRecord;
 use crate::util::new_id;
 use orbyn_contracts::PreviewTab;
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
@@ -54,23 +54,32 @@ impl Core {
         self.open_page(thread_id, url, size, actor, how).await
     }
 
-    /// Opens a file from the thread's checkout. Anywhere else reads as not found.
+    /// Opens a file from the thread's checkout, or from the worktree of the repository
+    /// `repo_id` names. Anywhere else reads as not found.
     pub async fn open_preview_file(
         &self,
         thread_id: &str,
         path: &str,
         actor: &str,
     ) -> Result<PreviewTab> {
-        let thread = self.store.thread(thread_id)?;
-        let checkout = crate::util::canonicalize(Path::new(&thread.cwd))?;
+        let file = self.preview_file(thread_id, path)?;
+        let url = file_url(&file);
+        self.open_page(thread_id, url, (None, None), actor, OpenHow::default())
+            .await
+    }
+
+    /// The file a preview tab shows: a file inside the thread's checkout, which is the
+    /// worktree of the repository `repo_id` names when the caller scoped one. A path that
+    /// leaves that worktree, a folder and a missing file all read as not found.
+    pub(crate) fn preview_file(&self, thread_id: &str, path: &str) -> Result<PathBuf> {
+        let (_, scope) = self.file_scope(thread_id)?;
+        let checkout = crate::util::canonicalize(&scope.checkout)?;
         let file = crate::util::canonicalize(&checkout.join(path))
             .map_err(|_| CoreError::NotFound("file".into()))?;
         if !file.starts_with(&checkout) || !file.is_file() {
             return Err(CoreError::NotFound("file".into()));
         }
-        let url = file_url(&file);
-        self.open_page(thread_id, url, (None, None), actor, OpenHow::default())
-            .await
+        Ok(file)
     }
 
     pub(super) async fn open_page(

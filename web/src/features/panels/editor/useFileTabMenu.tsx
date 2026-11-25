@@ -29,8 +29,9 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
   if (!target) return null;
   if (target.kind === "worktree" || target.kind === "issue") return [closeItem];
   const relative = target.path;
-  // Another repository's file is not under the thread's folder, and the outside editor route and the composer's file chip know only the primary checkout.
+  // Another repository's file is not under the thread's folder: its absolute path is unknown and the composer's file chip names a checkout, so both stay off. Its repo-relative path goes to the outside editor with its repo_id.
   const foreign = target.kind === "thread" && target.repoId !== undefined;
+  const repoId = target.kind === "thread" ? target.repoId : undefined;
   const root = target.kind === "thread" ? (foreign ? "" : cwd) : (worktree?.path ?? "");
   const absolute = root ? `${root.replace(/\/$/, "")}/${relative}` : null;
   const copy = (text: string, done: string) =>
@@ -38,14 +39,14 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
       () => pushToast(done),
       () => pushToast("Couldn't copy the path"),
     );
-  // The thread's own file is named relative to its folder, a thread file by its tab and an explorer file by the worktree it is in; only a file of the thread's folder can be handed to an editor.
-  const own = foreign ? null : target.kind === "thread" ? target.path : worktree ? threadPathOf(worktree.path, cwd, target.path) : null;
+  // The thread's own file is named relative to its folder, a thread file by its tab (its repository's when it names one) and an explorer file by the worktree it is in.
+  const own = target.kind === "thread" ? target.path : worktree ? threadPathOf(worktree.path, cwd, target.path) : null;
   const list = editors.data ?? [];
   const primary = primaryEditor(list, preferred);
   const open = async (id: string, remember: boolean) => {
     if (own === null) return;
     try {
-      await api.openInEditor(threadId, { path: own, editor: id });
+      await api.openInEditor(threadId, { path: own, editor: id, ...(repoId === undefined ? {} : { repo_id: repoId }) });
       // Choosing another editor here opens the file in it once; the favourite stays.
       if (remember) useUi.getState().setPrefs({ preferredEditor: id });
     } catch (failure) {

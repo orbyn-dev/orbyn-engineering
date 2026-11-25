@@ -910,3 +910,330 @@ async fn an_untrusted_folder_shows_nothing_outside_either() {
     let (code, _) = outside(&service, &thread, &full(&file)).await;
     assert_eq!(code, 403);
 }
+/// A Git repository on `main` at `root`, with one commit holding `files`.
+fn repository(root: &std::path::Path, files: &[(&str, &str)]) -> std::path::PathBuf {
+    std::fs::create_dir_all(root).unwrap();
+    run_git(root, &["init", "-q", "-b", "main"]);
+    run_git(root, &["config", "user.email", "t@example.com"]);
+    run_git(root, &["config", "user.name", "T"]);
+    for (name, content) in files {
+        std::fs::write(root.join(name), content).unwrap();
+    }
+    run_git(root, &["add", "."]);
+    run_git(root, &["commit", "-q", "-m", "first"]);
+    root.to_path_buf()
+}
+/// A service with multi-repository projects on, a project of two Git repositories and a thread in
+/// both: its task folder, and one worktree per repository (the project's own first).
+struct MultiRepo {
+    service: Service,
+    thread: String,
+    project: String,
+    other: String,
+    worktrees: Vec<(String, std::path::PathBuf)>,
+}
+
+impl MultiRepo {
+    fn worktree(&self, repo_id: &str) -> std::path::PathBuf {
+        self.worktrees
+            .iter()
+            .find(|(id, _)| id == repo_id)
+            .unwrap_or_else(|| panic!("no worktree for {repo_id}"))
+            .1
+            .clone()
+    }
+
+    /// The worktree of the repository that is not the one asked for, as a sibling path from it.
+    fn sibling_of(&self, repo_id: &str, path: &str) -> String {
+        self.worktrees
+            .iter()
+            .find(|(id, _)| id != repo_id)
+            .map(|(_, worktree)| {
+                format!(
+                    "../{}/{path}",
+                    worktree.file_name().unwrap().to_string_lossy()
+                )
+            })
+            .unwrap()
+    }
+}
+
+async fn multi_repo_thread(dir: &TempDir, extra_env: Vec<(String, String)>) -> MultiRepo {
+    let mut env = vec![
+        ("ORBYN_MULTI_REPO".to_owned(), "1".to_owned()),
+        // A browser path that is never run: a preview reaches it only after its file resolved, so a
+        // test that reads the resolution's answer gets the browser's failure instead of a tab.
+        (
+            "ORBYN_BROWSER".to_owned(),
+            dir.path()
+                .join("no-such-browser")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    ];
+    env.extend(extra_env);
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            env,
+            ..Options::default()
+        },
+    );
+    service.ensure_workspace(dir.path()).await;
+    let primary = repository(
+        &dir.path().join("work/primary"),
+        &[("base.txt", "base\n"), ("page.html", "<title>one</title>")],
+    );
+    let other = repository(
+        &dir.path().join("work/other"),
+        &[
+            ("other.txt", "other\n"),
+            ("page.html", "<title>two</title>"),
+        ],
+    );
+    let (code, project) = service
+        .send("/api/projects/add", json!({ "path": primary }))
+        .await;
+    assert_eq!(code, 201, "{project}");
+    let project_id = project["id"].as_str().unwrap().to_owned();
+    let (code, _) = service
+        .send(&format!("/api/projects/{project_id}/trust"), json!({}))
+        .await;
+    assert_eq!(code, 200);
+    let (code, added) = service
+        .send(
+            &format!("/api/projects/{project_id}/repos/add-folder"),
+            json!({ "path": other }),
+        )
+        .await;
+    assert_eq!(code, 200, "{added}");
+    let other_id = added["id"].as_str().unwrap().to_owned();
+    let (code, _) = service
+        .send(
+            &format!("/api/projects/{project_id}/repos/{other_id}/trust"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(code, 200);
+    let (code, thread) = service
+        .send(
+            &format!("/api/projects/{project_id}/repo-threads"),
+            json!({
+                "repos": [
+                    { "repo_id": project_id, "base_branch": "main" },
+                    { "repo_id": other_id, "base_branch": "main" },
+                ],
+                "engine": "codex",
+                "model": null,
+                "permission_mode": "supervised",
+            }),
+        )
+        .await;
+    assert_eq!(code, 200, "{thread}");
+    let thread_id = thread["id"].as_str().unwrap().to_owned();
+    let folder = service
+        .json(&format!("/api/threads/{thread_id}/task-folder"))
+        .await;
+    let root = std::path::PathBuf::from(folder["root"].as_str().unwrap());
+    let worktrees = folder["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row["repo_id"].as_str().unwrap().to_owned(),
+                root.join(row["name"].as_str().unwrap()),
+            )
+        })
+        .collect();
+    MultiRepo {
+        service,
+        thread: thread_id,
+        project: project_id,
+        other: other_id,
+        worktrees,
+    }
+}
+
+#[tokio::test]
+async fn a_repo_id_opens_the_preview_in_the_named_repositorys_worktree() {
+    let dir = TempDir::new();
+    let repo = multi_repo_thread(&dir, Vec::new()).await;
+    let service = &repo.service;
+    let preview = format!("/api/threads/{}/previews/file", repo.thread);
+    let other_tree = repo.worktree(&repo.other);
+    std::fs::write(other_tree.join("only.html"), "<title>only</title>").unwrap();
+
+    // The primary's preview does not see the second repository's file, and a named repository
+    // does: the file resolved in that worktree, so the answer is the configured browser's
+    // failure rather than the 404 a missing path outside it gets.
+    let (code, body) = service.send(&preview, json!({ "path": "only.html" })).await;
+    assert_eq!(code, 404, "{body}");
+    let (code, body) = service
+        .send(
+            &preview,
+            json!({ "path": "only.html", "repo_id": repo.other }),
+        )
+        .await;
+    assert!(
+        (500..=502).contains(&code),
+        "the named repository's file resolved and the browser failed after it: {code} {body}"
+    );
+
+    // The same name is each repository's own file: naming the second and a file only the primary
+    // has is still not found in that worktree, and its own page resolves.
+    let (code, _) = service
+        .send(
+            &preview,
+            json!({ "path": "base.txt", "repo_id": repo.other }),
+        )
+        .await;
+    assert_eq!(code, 404);
+    let (code, body) = service
+        .send(
+            &preview,
+            json!({ "path": "page.html", "repo_id": repo.other }),
+        )
+        .await;
+    assert!((500..=502).contains(&code), "{code} {body}");
+
+    // A path that leaves the named repository is not found, even when it names the primary's file.
+    let sibling = repo.sibling_of(&repo.other, "base.txt");
+    let (code, _) = service
+        .send(&preview, json!({ "path": sibling, "repo_id": repo.other }))
+        .await;
+    assert_eq!(code, 404);
+
+    // A repository that is not the thread's, and an ordinary thread, are 404 as everywhere else.
+    let (code, body) = service
+        .send(
+            &preview,
+            json!({ "path": "other.txt", "repo_id": "no-such" }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+    let plain = service.thread(&repo.project, "codex").await;
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{plain}/previews/file"),
+            json!({ "path": "base.txt", "repo_id": repo.other }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+}
+
+#[tokio::test]
+async fn a_repo_id_on_the_outside_editor_is_not_found_for_an_unknown_repository_or_an_ordinary_thread()
+ {
+    let dir = TempDir::new();
+    let repo = multi_repo_thread(&dir, Vec::new()).await;
+    let service = &repo.service;
+    let open = format!("/api/threads/{}/files/open", repo.thread);
+
+    // An unknown repository is not found before the editor is chosen.
+    let (code, body) = service
+        .send(
+            &open,
+            json!({ "path": "other.txt", "editor": "no-such-editor", "repo_id": "no-such" }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+    // An ordinary thread has one checkout and no repositories, so any repo_id is 404.
+    let plain = service.thread(&repo.project, "codex").await;
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{plain}/files/open"),
+            json!({ "path": "base.txt", "editor": "no-such-editor", "repo_id": repo.other }),
+        )
+        .await;
+    assert_eq!(code, 404, "{body}");
+    // A path that leaves the named repository is refused before the editor is chosen.
+    let (code, body) = service
+        .send(
+            &open,
+            json!({
+                "path": repo.sibling_of(&repo.other, "base.txt"),
+                "editor": "no-such-editor",
+                "repo_id": repo.other,
+            }),
+        )
+        .await;
+    assert_eq!(code, 400, "{body}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_repo_id_opens_the_named_repositorys_file_in_the_configured_editor() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let record = dir.path().join("opened");
+    let code = bin.join("code");
+    std::fs::write(
+        &code,
+        format!("#!/bin/sh\necho \"$1\" > '{}'\n", record.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&code, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let repo = multi_repo_thread(&dir, vec![("PATH".to_owned(), path)]).await;
+    let service = &repo.service;
+    assert!(
+        service
+            .json("/api/editors")
+            .await
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|editor| editor["id"] == "vscode")
+    );
+    let open = format!("/api/threads/{}/files/open", repo.thread);
+    let opened_for = |path: &std::path::Path| path.to_str().unwrap().to_owned();
+    let wait_for_record = || async {
+        for _ in 0..6000 {
+            if let Ok(seen) = std::fs::read_to_string(&record) {
+                if !seen.trim().is_empty() {
+                    return seen.trim().to_owned();
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("the editor never ran");
+    };
+
+    // The named repository's worktree file, not the primary's file of the same relative name.
+    let (code, body) = service
+        .send(
+            &open,
+            json!({ "path": "other.txt", "editor": "vscode", "repo_id": repo.other }),
+        )
+        .await;
+    assert_eq!(code, 202, "{body}");
+    assert_eq!(
+        wait_for_record().await,
+        opened_for(&repo.worktree(&repo.other).join("other.txt"))
+    );
+
+    // No repo_id is the primary repository, as before: the same relative path is its worktree's.
+    let (code, body) = service
+        .send(&open, json!({ "path": "other.txt", "editor": "vscode" }))
+        .await;
+    assert_eq!(code, 202, "{body}");
+    assert_eq!(
+        wait_for_record().await,
+        opened_for(&repo.worktree(&repo.project).join("other.txt"))
+    );
+
+    // An unknown repository opens nothing.
+    std::fs::remove_file(&record).unwrap();
+    let (code, _) = service
+        .send(
+            &open,
+            json!({ "path": "other.txt", "editor": "vscode", "repo_id": "no-such" }),
+        )
+        .await;
+    assert_eq!(code, 404);
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(!record.exists(), "no editor ran for an unknown repository");
+}

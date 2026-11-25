@@ -1,5 +1,5 @@
 use crate::store::thread_repos::ThreadRepoRecord;
-use orbyn_contracts::{GitAction, WriteFile};
+use orbyn_contracts::{GitAction, OpenInEditor, WriteFile};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -459,6 +459,96 @@ async fn a_repo_id_names_the_repository_a_file_call_reads_and_writes() {
 }
 
 #[tokio::test]
+async fn a_repo_id_opens_previews_and_the_outside_editor_in_the_named_repositorys_worktree() {
+    let dir = TempDir::new();
+    let core = core(&dir, true).await;
+    let (main, other) = two_repos(&dir);
+    let project = core.add_project(&path_text(&main)).await.unwrap().id;
+    core.store.trust_project(&project, "user").unwrap();
+    let added = core
+        .add_repo_folder(
+            &project,
+            AddRepoFolder {
+                path: path_text(&other),
+            },
+        )
+        .await
+        .unwrap();
+    core.trust_repo(&project, &added.id).await.unwrap();
+    let thread = multi_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&added.id, "other", &other)],
+    );
+    // A file only the second repository has: the primary's preview does not see it, the named
+    // repository's preview is that repository's file on disk.
+    std::fs::write(other.join("only.txt"), "other only\n").unwrap();
+    assert!(matches!(
+        core.preview_file(&thread, "only.txt"),
+        Err(CoreError::NotFound(_))
+    ));
+    let previewed = crate::in_repo(Some(added.id.clone()), async {
+        core.preview_file(&thread, "only.txt")
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        previewed,
+        crate::util::canonicalize(&other.join("only.txt")).unwrap()
+    );
+    // The same name in the two repositories is two files, and each preview is its own.
+    assert_eq!(
+        core.preview_file(&thread, "a.txt").unwrap(),
+        crate::util::canonicalize(&main.join("a.txt")).unwrap()
+    );
+    let in_other = crate::in_repo(Some(added.id.clone()), async {
+        core.preview_file(&thread, "a.txt")
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        in_other,
+        crate::util::canonicalize(&other.join("a.txt")).unwrap()
+    );
+    assert_eq!(std::fs::read_to_string(&in_other).unwrap(), "other\n");
+    // A previewed path that leaves the named repository reads as not found, through `..` or
+    // as an absolute path; its own file is still not a folder.
+    for path in ["../main/a.txt", "/etc/passwd", ""] {
+        assert!(
+            matches!(
+                crate::in_repo(Some(added.id.clone()), async {
+                    core.preview_file(&thread, path)
+                })
+                .await,
+                Err(CoreError::NotFound(_))
+            ),
+            "{path:?}"
+        );
+    }
+    // The outside editor resolves the same file the same way; the editor itself is chosen
+    // after the path, so an unknown one is refused only once the named repository's file
+    // resolved, and a path outside that repository is refused before it.
+    let edit = |path: &str| {
+        let body = OpenInEditor {
+            path: path.to_owned(),
+            editor: "no-such-editor".into(),
+            line: None,
+            column: None,
+            repo_id: None,
+        };
+        let core = core.clone();
+        let thread = thread.clone();
+        let repo = added.id.clone();
+        async move { crate::in_repo(Some(repo), core.open_in_editor(&thread, &body, "user")).await }
+    };
+    assert!(matches!(edit("only.txt").await, Err(CoreError::Invalid(_))));
+    assert!(matches!(
+        edit("../main/a.txt").await,
+        Err(CoreError::Invalid(_))
+    ));
+}
+
+#[tokio::test]
 async fn a_git_action_commits_in_the_named_repository_only() {
     let dir = TempDir::new();
     let core = core(&dir, true).await;
@@ -544,6 +634,46 @@ async fn an_unknown_untrusted_or_flagged_off_repository_is_refused_at_every_entr
         Err(CoreError::RepoUntrusted(_))
     ));
     assert!(matches!(read("no-such").await, Err(CoreError::NotFound(_))));
+    // The preview opener and the outside editor read a file through the same resolver, so
+    // they refuse the untrusted repository and an unknown one before anything else runs.
+    let preview = |repo: &str| {
+        let core = core.clone();
+        let thread = thread.clone();
+        let repo = repo.to_owned();
+        async move {
+            crate::in_repo(
+                Some(repo),
+                async move { core.preview_file(&thread, "a.txt") },
+            )
+            .await
+        }
+    };
+    assert!(matches!(
+        preview(&added.id).await,
+        Err(CoreError::RepoUntrusted(_))
+    ));
+    assert!(matches!(
+        preview("no-such").await,
+        Err(CoreError::NotFound(_))
+    ));
+    let edit = |repo: &str| {
+        let core = core.clone();
+        let thread = thread.clone();
+        let repo = repo.to_owned();
+        let body = OpenInEditor {
+            path: "a.txt".into(),
+            editor: "no-such-editor".into(),
+            line: None,
+            column: None,
+            repo_id: None,
+        };
+        async move { crate::in_repo(Some(repo), core.open_in_editor(&thread, &body, "user")).await }
+    };
+    assert!(matches!(
+        edit(&added.id).await,
+        Err(CoreError::RepoUntrusted(_))
+    ));
+    assert!(matches!(edit("no-such").await, Err(CoreError::NotFound(_))));
     let action = GitAction {
         commit_message: Some("x".into()),
         push: false,
@@ -585,6 +715,14 @@ async fn an_unknown_untrusted_or_flagged_off_repository_is_refused_at_every_entr
             .is_err()
     );
     assert!(core.read_file(&plain, "a.txt").await.is_ok());
+    assert!(core.preview_file(&plain, "a.txt").is_ok());
+    assert!(matches!(
+        crate::in_repo(Some(project.clone()), async {
+            core.preview_file(&plain, "a.txt")
+        })
+        .await,
+        Err(CoreError::NotFound(_))
+    ));
     assert!(matches!(
         core.thread_repos(&plain).await,
         Err(CoreError::NotFound(_))

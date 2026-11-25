@@ -3326,8 +3326,9 @@ profile. A named profile lives in `<data>/browser-profiles`, survives restarts, 
 one tab at a time because a browser locks its profile folder. A profile can be renamed
 while a tab has it open: only the stored name changes, never the folder, so its cookies
 and history stay. A private tab only stays
-out of the UI's history. `/previews/file` opens a file inside the checkout as `file:`,
-which agents and the address bar cannot reach. Picking an element reads it and changes
+out of the UI's history. `/previews/file` opens a file inside the checkout as `file:`, or the
+worktree of the repository `repo_id` names (docs/multi-repo.md), which agents and the address
+bar cannot reach. Picking an element reads it and changes
 nothing, and what it returns comes from the page, so the UI quotes it into the draft for a
 person to read before sending. A browser that dies is started again on the same profile and
 page, up to three times in 30 seconds after 1, 2 and 4 seconds, and then the tab reports
@@ -3925,7 +3926,7 @@ every method, path and which routes need a credential.
 | `GET, PUT /api/threads/:id/files/content` | `FileContent`; a stale `base_revision` is `409 file_conflict` |
 | `POST /api/threads/:id/files/mutate` | `ExplorerFileAction`: create, move (rename) or nonrecursive delete in the thread's checkout; `204`, `403` active session/untrusted, `404` unknown thread, `400` invalid path or destination |
 | `GET /api/threads/:id/files/raw?path=&download=` | Bytes with `Range`, `If-Range` and `If-None-Match`; `206`, `304`, `413 file_too_large`, `416`; `download` forces an attachment |
-| `POST /api/threads/:id/files/open`, `GET /api/editors` | `OpenInEditor` with optional `line` and `column`; `file_manager` reveals the file |
+| `POST /api/threads/:id/files/open`, `GET /api/editors` | `OpenInEditor` with optional `line` and `column`, and `repo_id` for another repository of a multi-repository thread; `file_manager` reveals the file |
 | `POST /api/threads/:id/git/action` | `GitAction` to `GitActionResult`: commit, push, pull request |
 | `GET, POST /api/threads/:id/branches`, `POST .../branches/switch` | List, create and switch |
 | `POST /api/threads/:id/vcs/refresh-status` | `VcsStatus`: branch or detached HEAD, HEAD, tracking ref, ahead/behind and working-tree change counts, read from Git now; `400` outside Git, `403 folder_untrusted` |
@@ -3980,7 +3981,7 @@ every method, path and which routes need a credential.
 | `POST .../previews/:tab/navigate`, `/control`, `/input` | `NavigatePreview`; `PreviewControl`; `PreviewInput`, `400` until a person holds the page |
 | `POST .../previews/:tab/history`, `/resize` | `StepPreview`; `ResizePreview`, `400` outside 100 to 4096; both to `PreviewTab` |
 | `POST, DELETE .../previews/:tab/recording` | Start with optional `PreviewRecordingOptions` query; stop, to `PreviewRecording` with successful frame count and optional error |
-| `POST .../previews/file` | `OpenPreviewFile` to `PreviewTab`, inside the checkout |
+| `POST .../previews/file` | `OpenPreviewFile` to `PreviewTab`, inside the checkout or the worktree of the repository `repo_id` names |
 | `POST .../previews/:tab/view`, `/reload`, `/clear`, `/pick` | `PreviewView`; `ReloadPreview`; `ClearPreview`; `PickPreview` to `PickedElement` |
 | `GET, POST /api/browser-profiles` | `BrowserProfile[]`; `CreateBrowserProfile` |
 | `DELETE /api/browser-profiles/:id`, `POST .../clear` | Remove, or empty, a profile no tab has open |

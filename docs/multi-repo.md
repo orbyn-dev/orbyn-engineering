@@ -280,9 +280,10 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   text. The title line names the repository and the tab's tooltip reads `README.md (name)`. `409 file_conflict` keeps its Changed on
   disk banner (Keep mine, Reload); `409 repo_untrusted` on a read or a write shows the service's message and the existing trust
   dialog, keeps the text and repeats nothing; a path outside the repository (`400`) or a repository that is not the thread's (`404`) is
-  said in words. That tab is the editor only: no rendered preview, no line comments, no "Add file to message", no outside editor and
-  no absolute path, and images, archives, documents, binary and truncated files say they can't be shown yet, because those routes
-  (`.../files/raw`, zip, office, download, `previews/file`, `open-in-editor`) take no `repo_id`.
+  said in words. That tab is the editor only: no rendered preview, no line comments, no "Add file to message" and no absolute
+  path, and images, archives, documents, binary and truncated files say they can't be shown yet, because the client sends no
+  `repo_id` to the byte and archive routes (`.../files/raw`, zip, office, download). Open in browser (`previews/file`) and the
+  outside editor (`open-in-editor`) take it, so both work on that tab (see "As built: repo_id on Git and file calls").
 - **Turn totals.** The turn picker's per-turn figures were the primary repository's alone. In a multi-repository thread each turn's
   totals sum `GET .../diff?scope=turn&run=` over the thread's trusted repositories, one read per repository with its own `repo_id`.
   An untrusted repository is not read and a repository whose read fails is left out, and the row says "N repo not counted" instead of
@@ -340,6 +341,10 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
   file is resolved inside that worktree by the usual guard (a path that leaves it, an absolute path or a link out is refused), and a
   file `revision` belongs to that repository's file. In Core the route sets the repository with `orbyn_core::in_repo(repo_id, work)`;
   work spawned from inside does not inherit it.
+- **Preview and outside editor.** `POST .../previews/file` and `POST .../files/open` take `repo_id` in the body when it is given: the
+  previewed file, and the file the editor opens, are the named repository's, resolved with the same guard rooted at that repository's
+  worktree, so a path that leaves it is refused and the same relative path is each repository's own file. Absent is the primary, so
+  every older client is unchanged. Unknown, ordinary-thread and flag-off `repo_id`s are `404` as everywhere else.
 - **Refusals.** A `repo_id` on an ordinary thread, one that is not the thread's, or any `repo_id` with the flag off is `404 not_found`. A
   repository whose row in the project is untrusted is `409 repo_untrusted` for every call; a repository removed from the project keeps
   working in a thread that already has its worktree.
@@ -427,5 +432,7 @@ over the limit is refused; each write route needs the person key; a failed clone
 `remove`; per-repository commit touches only that repository's worktree; a permission mode the engine
 does not offer is refused before anything is created; a scan never follows a symlink, caps its results
 and adds nothing; a workspace folder outside the file's folder is listed `refused` and not added; a
-`repo_id` on a file write never resolves a path in another repository; a task folder uses one branch name in
-every repository and a taken name creates nothing.
+`repo_id` on a file write never resolves a path in another repository; `.../previews/file` and
+`.../files/open` read the named repository's file, refuse a path outside its worktree, and are `404` for
+an unknown or ordinary-thread `repo_id`; a task folder uses one branch name in every repository and a
+taken name creates nothing.
