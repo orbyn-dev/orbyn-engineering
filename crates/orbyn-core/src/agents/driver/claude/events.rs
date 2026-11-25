@@ -73,7 +73,7 @@ impl StreamMapper {
     }
 
     /// Work that would die with the CLI and that the CLI reports back on.
-    fn holding(&self) -> bool {
+    pub(super) fn holding(&self) -> bool {
         !self.workflows.is_empty()
             || self
                 .background

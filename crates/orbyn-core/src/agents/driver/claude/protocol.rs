@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::events::StreamMapper;
 use super::workflows::Workflows;
-use super::{EXIT_GRACE, HOLD_GRACE};
+use super::{EXIT_GRACE, HOLD_GRACE, HOLD_IDLE, HOLD_LIMIT};
 use crate::agents::driver::pipes::{EngineProcess, exit_message, lines};
 use crate::agents::driver::{
     EngineEvent, EngineOutcome, RunControl, RunKind, RunSpec, SteerMessage,
