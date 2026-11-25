@@ -93,7 +93,8 @@ describe("a background run's own page", () => {
   });
 
   it("offers no Open the run for a watch whose runs read holds none", async () => {
-    const { panel } = await openWatch("crew-background-watch-refused");
+    const { panel } = await openWatch("crew-background-watch-template-no-run");
+    expect(within(panel).getByText("Failing: started Fix failing CI")).toBeVisible();
     expect(within(panel).queryByRole("button", { name: "Open the run" })).toBeNull();
   });
 
