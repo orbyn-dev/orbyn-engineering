@@ -4,14 +4,14 @@ import { NO_SUCH_ROUTE, routeAbsent } from "./edit";
 /**
  * Whether an answer means "this service has no such route" (docs/issues.md, "Issue writes and list controls"). The two `404`s that
  * matter are different facts and are read apart in both directions (#1530): the SPA fallback answers a path no route claimed with
- * `404 not_found` and `No such route.` (`crates/orbynd/src/routes/ui.rs`), while a route that exists and cannot find the issue it
- * was asked for answers `404 not_found` with a sentence naming what it could not find.
+ * `404 not_found` and its own sentence (`crates/orbynd/src/routes/ui.rs`, pinned by
+ * `crates/orbynd/src/routes/tests.rs`'s `a_service_prefix_miss_answers_no_such_route`), while a route that exists and cannot find
+ * the issue it was asked for answers `404 not_found` with a sentence naming what it could not find.
  */
 describe("a route that is not there, and a thing that is not there", () => {
   it("reads the SPA fallback's own 404 not_found as no such route (#1530)", () => {
+    // `NO_SUCH_ROUTE` is the web's one copy of the sentence; the service's copy is pinned by the orbynd test named there.
     expect(routeAbsent(404, "not_found", NO_SUCH_ROUTE)).toBe(true);
-    // The exact sentence the service answers with, not a copy of it: the fallback's message is the marker.
-    expect(NO_SUCH_ROUTE).toBe("No such route.");
   });
 
   it("keeps a route's own not_found for a missing issue as an answer, not as an absent route", () => {
@@ -32,7 +32,7 @@ describe("a route that is not there, and a thing that is not there", () => {
 
   it("reads every answer that is not a 404 or 405 as the route being there", () => {
     for (const [status, code] of [[200, ""], [204, ""], [400, "invalid"], [409, "tracker_not_connected"], [403, "person_required"], [500, "internal"]] as const) {
-      expect(routeAbsent(status, code, "No such route."), `${status} ${code}`).toBe(false);
+      expect(routeAbsent(status, code, NO_SUCH_ROUTE), `${status} ${code}`).toBe(false);
     }
   });
 });

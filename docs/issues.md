@@ -508,8 +508,10 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   `GET /api/issues/candidates` with no query, a read that changes nothing, and the answer decides. A `400` or `409` is the route
   answering, so the writes and the sort are offered, and so is a `404 not_found` that names the thing the route could not find.
   "No such route" is a `405`, a `404` whose code is not `not_found`, or the SPA fallback's own `404 not_found` whose message is
-  `No such route.` (`crates/orbynd/src/routes/ui.rs` answers that for any `/api` path no route claimed): those keep each control
-  as the disabled Planned pill and send nothing, and a write that meets one returns to Planned (#1530).
+  `No such route.` (`crates/orbynd/src/routes/ui.rs` answers that for any `/api` path no route claimed;
+  `crates/orbynd/src/routes/tests.rs`'s `a_service_prefix_miss_answers_no_such_route` pins its status, code and message, and the
+  web's one copy of the sentence is `NO_SUCH_ROUTE` in `web/src/features/issues/edit.ts`): those keep each control as the disabled
+  Planned pill and send nothing, and a write that meets one returns to Planned (#1530).
 - A write the tracker refuses answers the usual error (`forbidden`, `not_found`, `rate_limited`,
   `tracker_unavailable`) and changes nothing here. Issue text going in is as untrusted as issue text coming
   out: it is sent as a field value, never in an argument position, and never rendered as markup by this side.

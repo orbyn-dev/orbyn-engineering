@@ -42,8 +42,11 @@ export function commentProblem(body: string): string | null {
 
 /**
  * The transport's own sentence for a path no route claimed: a request under `/api` that the router did not claim is answered by
- * the SPA fallback as `404` `not_found` with this message (`crates/orbynd/src/routes/ui.rs`). A route that exists and cannot find
- * the thing it was asked for answers `not_found` with a sentence naming that thing, so the two `404`s are different facts.
+ * the SPA fallback as `404` `not_found` with this message (`crates/orbynd/src/routes/ui.rs`, the `SERVICE_PREFIXES` branch, where
+ * the sentence is written). A route that exists and cannot find the thing it was asked for answers `not_found` with a sentence
+ * naming that thing, so the two `404`s are different facts that only this sentence tells apart. It is the one copy of the string
+ * on the web side; the service's copy is pinned by `a_service_prefix_miss_answers_no_such_route` in
+ * `crates/orbynd/src/routes/tests.rs`, so a reword there fails a test and this constant has to change with it.
  */
 export const NO_SUCH_ROUTE = "No such route.";
 
