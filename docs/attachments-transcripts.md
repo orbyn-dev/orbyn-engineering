@@ -3,8 +3,9 @@
 What the web composer and thread need from the service for three Beta frame groups. Transcript export, import and the composer
 attach, the routes under B43, are built and wired in the web (`web/src/features/thread/transcriptFile/` and
 `web/src/features/thread/composer/transcriptsClient.ts`): a file dropped on the composer posts the real attach route and becomes a
-transcript chip. The photo conversion route is built and its web client is wired (below): HEIC, HEIF and WebP are still refused by
-the service until a decoder is linked, so a HEIC photo shows that message instead of uploading as it is. The earlier-messages read is
+transcript chip. The photo conversion route is built and its web client is wired (below): WebP is decoded and written
+again, while HEIC and HEIF are still refused by the service until a decoder is linked, so a HEIC photo shows that message
+instead of uploading as it is. The earlier-messages read is
 built, with its web wiring still pending. A dev-only preview
 (`#/preview/attachments`, `#/preview/earlier`) installs the clients from `web/mock/attachments.ts` and `web/mock/earlier.ts`; the
 transcript export and import mock lives in `web/mock/api.ts`. A name here changes only if the service pull request says so. Rows:
@@ -42,20 +43,23 @@ Built: `POST /api/threads/{id}/attachments/convert?name=<label>` with the photo 
 `orbyn-core`'s `conversation/photo_conversion.rs`, route in `orbynd`'s `routes/composer.rs`, class `local`).
 
 - Web: `web/src/features/thread/composer/photoConversion.ts` answers the real client (`photoConversionClient.ts`) by default.
-  The composer sends HEIC and HEIF (including a file whose system type is empty and whose name carries the ending) and WebP to
-  this route, so the service's deferral message is shown instead of the file being silently uploaded, and it sends a PNG or JPEG
-  over 10 MiB here to be shrunk. An ordinary PNG or JPEG within the limit still uploads by `POST /api/threads/{id}/attachments`,
-  as before. A failed conversion turns the chip red with Retry and Remove, and send stays held until every chip has an id. The web
-  shows its own sentence for `unreadable_image` and `still_too_large`, and the service's message for `file_too_large` and
-  `unsupported_type`; `size` and `original_size` are read as numbers although the generated type says bigint. The mock stays behind
+  The composer sends HEIC and HEIF (including a file whose system type is empty and whose name carries the ending) to this
+  route, so the service's refusal message is shown instead of the file being silently uploaded; it sends WebP here so the
+  service decodes it and writes it again from pixels, and it sends a PNG or JPEG over 10 MiB here to be shrunk. An ordinary
+  PNG or JPEG within the limit still uploads by `POST /api/threads/{id}/attachments`, as before. A failed conversion turns
+  the chip red with Retry and Remove, and send stays held until every chip has an id. The web shows its own sentence for
+  `unreadable_image` and `still_too_large`, and the service's message for `file_too_large` and `unsupported_type`; `size`
+  and `original_size` are read as numbers although the generated type says bigint. The mock stays behind
   `__ORBYN_PREVIEWS__`. Not observed against a real service.
-- Allowed input types: `image/png` and `image/jpeg`, decided from the bytes and never from the claimed one. Anything
-  else is `415 unsupported_type`. **Deferred:** HEIC and HEIF decoding needs libheif (LGPL-3.0, a C library this build
-  does not link) and WebP needs `image`'s `webp` feature and the `image-webp` crate, so all three are refused with a
-  message that names HEIC and no `converted` answer exists yet. Each is its own decision, recorded in row B8.
-- Behaviour: a PNG or JPEG over 10 MiB is made smaller until it is at most 10 MiB (`action: "shrunk"`). A photo already
-  within the limit is written again at its own size (`action: "none"`), which is what drops its metadata. The stored file
-  is the written one; the original is not kept and the chip never offers it back.
+- Allowed input types: `image/png`, `image/jpeg` and `image/webp`, decided from the bytes and never from the claimed
+  one. WebP is decoded in process by the pure-Rust `image-webp` crate behind `image`'s `webp` feature (MIT OR
+  Apache-2.0 with the rest of the image-rs project), so this build links no C codec. Anything else is `415
+  unsupported_type`. **Deferred:** HEIC and HEIF decoding needs a C decoder (libheif, LGPL-3.0); linking one is the
+  owner's dependency and licence decision, so both are refused with a message that names HEIC and no `converted`
+  answer exists yet. Recorded in row B8.
+- Behaviour: a PNG, JPEG or WebP over 10 MiB is made smaller until it is at most 10 MiB (`action: "shrunk"`). A photo
+  already within the limit is written again at its own size (`action: "none"`), which is what drops its metadata. The
+  stored file is the written one; the original is not kept and the chip never offers it back.
 - Cap on the input: 50 MiB (`413 file_too_large`), refused from the declared `Content-Length` before the body is read and
   then by a counting read, so a request without a length also stops. A pixel cap of 100 megapixels and a 512 MiB decoder
   allocation are checked from the header before a decoder allocates, so a small file cannot expand into memory. The
@@ -216,7 +220,8 @@ record has no `imported_at`. Not observed against a real service.
 The export, import and composer attach routes are wired in production: the two menus save a file under the thread title plus
 `.orbyn.json`, the sheet creates the thread and opens it, and a transcript dropped on the composer becomes an attachment of that
 thread. Photo conversion is wired in production too: the composer sends HEIC, HEIF, WebP and PNG/JPEG over 10 MiB to the convert
-route, which refuses the first three today and shrinks the last, while ordinary images still upload as before. It was not observed
+route, which writes WebP again, refuses HEIC and HEIF today and shrinks an oversized PNG or JPEG, while an ordinary image
+within the limit still uploads as before. It was not observed
 against a real service. The earlier-messages read is wired in production (`earlierApi()` sends the route) but was
 not observed against a real service. An imported thread still carries its `source` and `imported_at`, so its marker shows and its
 history keeps the imported messages.

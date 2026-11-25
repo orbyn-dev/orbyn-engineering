@@ -8,12 +8,27 @@ use serde_json::{Value, json};
 
 use super::harness::{Script, Turn, World, brief, report, world};
 use super::review_support::commit_all;
-use crate::crew::{MergeOutcome, MergeTarget, Mode, ModeScope, ReviewAnswer, Risk};
+use crate::crew::{MergeOutcome, MergeTarget, Mode, ModeScope, ReviewAnswer, ReviewItem, Risk};
 use crate::error::CoreError;
 use crate::source_control::git::{git, text};
 use crate::testing::run_git;
 
 const NOW: i64 = 1_800_000_000;
+
+/// The review row of `task`, found by its id: the read ranks the rows, so a test does not.
+fn review_row<'a>(rows: &'a [ReviewItem], task: &str) -> &'a ReviewItem {
+    rows.iter()
+        .find(|row| row.task_id == task)
+        .expect("the task's review row")
+}
+
+/// The body of the one event of `kind` the task recorded: the read filters by kind, so a test
+/// asserts a single row instead of indexing to it.
+fn one_event_body(w: &World, task: &str, kind: &str) -> Value {
+    let events = super::autopilot_support::events(w, task, kind);
+    assert_eq!(events.len(), 1, "one {kind} event");
+    events.into_iter().next().unwrap().body
+}
 
 pub async fn gitq(repo: &Path, args: &[&str]) -> String {
     text(&git(repo, args).await.unwrap())
@@ -206,24 +221,19 @@ async fn under_full_a_high_risk_diff_merges_and_goes_to_the_top_of_the_review_qu
         order,
         [(high.as_str(), Risk::High), (low.as_str(), Risk::Low)]
     );
-    assert_eq!(queue[0].due_unix, Some(NOW + 2 + 4 * 3600));
-    assert_eq!(queue[1].due_unix, None);
-    assert!(
+    // Order is the read's contract here: the high-risk merge ranks first.
+    let high_row = review_row(&queue, &high);
+    assert_eq!(high_row.due_unix, Some(NOW + 2 + 4 * 3600));
+    assert_eq!(review_row(&queue, &low).due_unix, None);
+    let later =
         m.w.core
             .crew_review_queue(NOW + 2 + 5 * 3600)
             .unwrap()
-            .merges[0]
-            .overdue
-    );
-    assert!(
-        !m.w.core
-            .crew_review_queue(NOW + 2 + 5 * 3600)
-            .unwrap()
-            .merges[1]
-            .overdue
-    );
-    assert!(queue[0].not_verified.iter().any(|n| n.contains("coverage")));
-    assert_eq!(queue[0].proof["merge_checks_run"], 1);
+            .merges;
+    assert!(review_row(&later, &high).overdue);
+    assert!(!review_row(&later, &low).overdue);
+    assert!(high_row.not_verified.iter().any(|n| n.contains("coverage")));
+    assert_eq!(high_row.proof["merge_checks_run"], 1);
 
     // Answers: looks good clears it, a comment is kept, a revert is opened and verified.
     let target = &m.target;
@@ -265,8 +275,7 @@ async fn under_full_a_high_risk_diff_merges_and_goes_to_the_top_of_the_review_qu
         "reverted"
     );
     // This repository defines no checks, so the revert ran none and says so.
-    let reverted = super::autopilot_support::events(&m.w, &high, "reverted");
-    assert_eq!(reverted[0].body["verified"], false);
+    assert_eq!(one_event_body(&m.w, &high, "reverted")["verified"], false);
     assert_eq!(
         m.w.core
             .store
@@ -296,10 +305,8 @@ async fn low_and_medium_follow_the_mode() {
         &on.process(NOW).await[..],
         [MergeOutcome::Merged { .. }]
     ));
-    assert_eq!(
-        on.w.core.crew_review_queue(NOW).unwrap().merges[0].due_unix,
-        Some(NOW + 24 * 3600)
-    );
+    let reviewed = on.w.core.crew_review_queue(NOW).unwrap().merges;
+    assert_eq!(review_row(&reviewed, &id).due_unix, Some(NOW + 24 * 3600));
 
     let off = merging(Mode::Off, |_| vec![("docs/note.md", "A note.\n")]).await;
     let id = passed(&off.w, &["docs/**"], "Write a note.").await;
@@ -376,6 +383,7 @@ async fn merges_go_in_order_and_a_conflict_is_rejected_without_moving_main() {
         .await
         .unwrap();
     let before = m.tip().await;
+    // Order is the contract here: the queue merges in the order the tasks were queued.
     let outcomes = m.process(NOW + 2).await;
     assert!(
         matches!(&outcomes[0], MergeOutcome::Merged { task_id, .. } if *task_id == first),
@@ -761,16 +769,13 @@ async fn a_lane_that_slice_4b_ran_satisfies_the_owed_check_and_a_block_is_one_ev
             "{outcomes:?}"
         );
     }
-    let blocked = super::autopilot_support::events(&w, &id, "merge_waiting");
-    assert_eq!(
-        blocked.len(),
-        1,
-        "the same block is not repeated on every pass"
-    );
-    assert_eq!(blocked[0].body["blocked"], true);
+    // The same block is not repeated on every pass: the task recorded one waiting event.
+    assert_eq!(one_event_body(&w, &id, "merge_waiting")["blocked"], true);
     // The lane slice 4b writes, by the token the queue is owed, satisfies it.
     let lanes = w.review(&id, &[crate::crew::CODE_LANE]).await;
-    w.until_state(&lanes[0], "passed").await;
+    for lane in &lanes {
+        w.until_state(lane, "passed").await;
+    }
     let outcomes = w.core.crew_process_merges(&target, NOW + 3).await.unwrap();
     assert!(
         matches!(&outcomes[..], [MergeOutcome::Merged { .. }]),
@@ -778,8 +783,8 @@ async fn a_lane_that_slice_4b_ran_satisfies_the_owed_check_and_a_block_is_one_ev
     );
 }
 
-/// Three docs-only tasks merged under Full, each touching its own file.
-async fn three_merged() -> (Merging, Vec<String>) {
+/// Three docs-only tasks merged under Full, each touching its own file, kept with the file that names it.
+async fn three_merged() -> (Merging, Vec<(&'static str, String)>) {
     let m = merging(Mode::Full, |n| match n {
         0 => vec![("docs/a.md", "a\n")],
         1 => vec![("docs/b.md", "b\n")],
@@ -793,11 +798,20 @@ async fn three_merged() -> (Merging, Vec<String>) {
             .crew_queue_merge(&task, &m.target, NOW + n as i64)
             .await
             .unwrap();
-        tasks.push(task);
+        tasks.push((*file, task));
     }
     let outcomes = m.process(NOW + 10).await;
     assert_eq!(outcomes.len(), 3, "{outcomes:?}");
     (m, tasks)
+}
+
+/// The merge task that wrote `docs/{file}.md`, found by the file the fixture names it with.
+fn task_for<'a>(tasks: &'a [(&'static str, String)], file: &str) -> &'a String {
+    tasks
+        .iter()
+        .find(|(name, _)| *name == file)
+        .map(|(_, task)| task)
+        .unwrap_or_else(|| panic!("the task that wrote docs/{file}.md"))
 }
 
 fn scratch_folders(m: &Merging) -> usize {
@@ -813,8 +827,18 @@ async fn two_reverts_of_one_merge_act_once_and_a_looks_good_cannot_undo_a_revert
     let target = &m.target;
     // The last merge, reverted twice at once: one revert commit, one refusal.
     let (first, second) = tokio::join!(
-        core.crew_answer_review(&tasks[2], ReviewAnswer::Revert, target, NOW + 20),
-        core.crew_answer_review(&tasks[2], ReviewAnswer::Revert, target, NOW + 20),
+        core.crew_answer_review(
+            task_for(&tasks, "c"),
+            ReviewAnswer::Revert,
+            target,
+            NOW + 20
+        ),
+        core.crew_answer_review(
+            task_for(&tasks, "c"),
+            ReviewAnswer::Revert,
+            target,
+            NOW + 20
+        ),
     );
     assert_eq!(
         [first.is_ok(), second.is_ok()]
@@ -828,8 +852,18 @@ async fn two_reverts_of_one_merge_act_once_and_a_looks_good_cannot_undo_a_revert
     assert_eq!(m.tip().await, made);
     // A looks-good racing a revert, in either order, never leaves anything but "reverted".
     let (reverted, good) = tokio::join!(
-        core.crew_answer_review(&tasks[1], ReviewAnswer::Revert, target, NOW + 21),
-        core.crew_answer_review(&tasks[1], ReviewAnswer::LooksGood, target, NOW + 21),
+        core.crew_answer_review(
+            task_for(&tasks, "b"),
+            ReviewAnswer::Revert,
+            target,
+            NOW + 21
+        ),
+        core.crew_answer_review(
+            task_for(&tasks, "b"),
+            ReviewAnswer::LooksGood,
+            target,
+            NOW + 21
+        ),
     );
     // Answers run one at a time. A revert wins whichever order they take: LooksGood first is overwritten by the
     // revert; LooksGood second is refused because the merge is already reverted.
@@ -839,15 +873,21 @@ async fn two_reverts_of_one_merge_act_once_and_a_looks_good_cannot_undo_a_revert
         Err(CoreError::Invalid(why)) => assert!(why.contains("already reverted"), "{why}"),
         other => panic!("a racing looks-good must win first or be refused: {other:?}"),
     }
-    let state = core.store.crew_merge(&tasks[1]).unwrap().unwrap();
+    let state = core
+        .store
+        .crew_merge(task_for(&tasks, "b"))
+        .unwrap()
+        .unwrap();
     assert_eq!(state.review_state, "reverted", "{good:?}");
     assert_eq!(state.reverted_commit.as_deref(), Some(commit.as_str()));
     // And a late answer to a reverted merge is refused by the store, not just by the check before it.
-    let late = core.store.set_merge_review(&tasks[2], "looks_good", None);
+    let late = core
+        .store
+        .set_merge_review(task_for(&tasks, "c"), "looks_good", None);
     assert!(late.is_err());
     assert_eq!(
         core.store
-            .crew_merge(&tasks[2])
+            .crew_merge(task_for(&tasks, "c"))
             .unwrap()
             .unwrap()
             .review_state,
@@ -861,13 +901,22 @@ async fn two_reverts_of_one_merge_act_once_and_a_looks_good_cannot_undo_a_revert
 async fn a_revert_refuses_a_branch_that_no_longer_holds_the_merge_and_a_checked_out_dirty_one() {
     let (m, tasks) = three_merged().await;
     let core = &m.w.core;
-    let record = core.store.crew_merge(&tasks[0]).unwrap().unwrap();
+    let record = core
+        .store
+        .crew_merge(task_for(&tasks, "a"))
+        .unwrap()
+        .unwrap();
     // Dirty and checked out: the crew never touches it.
     run_git(&m.w.repo, &["checkout", "-q", &m.main]);
     std::fs::write(m.w.repo.join("docs/a.md"), "edited by a person\n").unwrap();
     let tip = m.tip().await;
     let why = core
-        .crew_answer_review(&tasks[2], ReviewAnswer::Revert, &m.target, NOW + 30)
+        .crew_answer_review(
+            task_for(&tasks, "c"),
+            ReviewAnswer::Revert,
+            &m.target,
+            NOW + 30,
+        )
         .await
         .unwrap_err()
         .to_string();
@@ -881,7 +930,12 @@ async fn a_revert_refuses_a_branch_that_no_longer_holds_the_merge_and_a_checked_
     // Unrelated: the branch was put back before the merge, so the merge is not on it.
     run_git(&m.w.repo, &["branch", "-f", &m.main, &record.before_commit]);
     let why = core
-        .crew_answer_review(&tasks[0], ReviewAnswer::Revert, &m.target, NOW + 31)
+        .crew_answer_review(
+            task_for(&tasks, "a"),
+            ReviewAnswer::Revert,
+            &m.target,
+            NOW + 31,
+        )
         .await
         .unwrap_err()
         .to_string();
@@ -889,7 +943,7 @@ async fn a_revert_refuses_a_branch_that_no_longer_holds_the_merge_and_a_checked_
     assert_eq!(m.tip().await, record.before_commit);
     assert_eq!(
         core.store
-            .crew_merge(&tasks[0])
+            .crew_merge(task_for(&tasks, "a"))
             .unwrap()
             .unwrap()
             .review_state,

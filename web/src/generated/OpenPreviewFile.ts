@@ -2,6 +2,10 @@
 
 export type OpenPreviewFile = { 
 /**
- * Inside the thread's checkout.
+ * Inside the thread's checkout or the named repository's worktree.
  */
-path: string, };
+path: string, 
+/**
+ * A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+ */
+repo_id?: string, };

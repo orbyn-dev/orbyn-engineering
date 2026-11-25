@@ -17,10 +17,15 @@ export function mediaKind(path: string): MediaKind | null {
   return KINDS.find(([pattern]) => pattern.test(name))?.[1] ?? null;
 }
 
-/** Elements can't set a header, so this route takes the token in the query. */
-export function rawUrl(threadId: string, path: string, download = false): string {
+/**
+ * Elements can't set a header, so this route takes the token in the query.
+ * `repoId` names another repository of a multi-repository thread, whose worktree holds the
+ * repo-relative `path`; left out, the route reads the thread's own checkout, as always.
+ */
+export function rawUrl(threadId: string, path: string, download = false, repoId?: string): string {
   const token = readToken();
   const query = new URLSearchParams({ path });
+  if (repoId !== undefined) query.set("repo_id", repoId);
   if (token) query.set("token", token);
   if (download) query.set("download", "true");
   return serviceUrl(`/api/threads/${encodeURIComponent(threadId)}/files/raw?${query}`);

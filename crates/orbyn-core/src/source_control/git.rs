@@ -10,6 +10,8 @@ use tokio::process::Command;
 
 use crate::error::{CoreError, Result};
 
+use super::branch_names::{self, MAX_EXISTING_BRANCHES, Naming, NamingMode};
+
 /// Git's well-known empty tree, the parent side of a root commit's diff.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
@@ -386,20 +388,24 @@ pub(crate) async fn linked_worktrees(repo: &Path) -> Result<Vec<RegisteredWorktr
 /// How a new worktree starts, from the settings and the project file.
 #[derive(Clone, Debug)]
 pub struct WorktreeOptions {
-    pub prefix: String,
+    pub naming: Naming,
     pub base: Option<String>,
     pub from_origin: bool,
     /// `recursive`, `top-level` or `none`; legacy spellings remain readable.
     pub submodules: String,
+    /// The thread's real title, when the creation request had one; semantic naming uses it
+    /// before the purpose.
+    pub seed: Option<String>,
 }
 
 impl Default for WorktreeOptions {
     fn default() -> Self {
         Self {
-            prefix: "feat".to_owned(),
+            naming: Naming::default(),
             base: None,
             from_origin: false,
             submodules: "none".to_owned(),
+            seed: None,
         }
     }
 }
@@ -449,14 +455,21 @@ pub(crate) async fn create_worktree(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let branch = format!("{}/{purpose}", options.prefix);
+    // The branch name is chosen from the thread and the naming mode, never taken from
+    // the request as a ref: semantic naming reads the project's local branches first, so
+    // the same title twice makes two branches, and custom naming uses the purpose itself.
+    let existing = if options.naming.mode == NamingMode::Semantic {
+        local_branch_names(repo).await?
+    } else {
+        Vec::new()
+    };
+    let branch =
+        branch_names::branch_name(&options.naming, options.seed.as_deref(), purpose, &existing);
     if git(repo, &["check-ref-format", "--branch", &branch])
         .await
         .is_err()
     {
-        return Err(CoreError::Invalid(
-            "That branch prefix is not valid.".into(),
-        ));
+        return Err(CoreError::Invalid("That branch name is not valid.".into()));
     }
     let start = worktree_start(repo, options).await.unwrap_or(head);
     git(
@@ -481,6 +494,24 @@ pub(crate) async fn create_worktree(
         branch,
         base: start,
     })
+}
+
+/// The project's local branches, capped. Semantic naming avoids them; a listing past the
+/// cap is cut rather than read unbounded, and a name past it is left to Git to refuse.
+async fn local_branch_names(repo: &Path) -> Result<Vec<String>> {
+    let listing = git(
+        repo,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    )
+    .await?;
+    let listing = String::from_utf8_lossy(&listing);
+    Ok(listing
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .take(MAX_EXISTING_BRANCHES)
+        .map(str::to_owned)
+        .collect())
 }
 
 /// A chosen base, or the remote's head when asked for. `None` means this clone's HEAD.
