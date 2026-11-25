@@ -14,7 +14,7 @@ import { endingLabel, endingsOf, toLF } from "./editorModel";
  * through the service's write route, which checks the path and writes only if the file is still what this edit started
  * from; nothing is saved on its own.
  */
-export function FileEditor({ threadId, tabId, path, file, line, cwd, repoId, locked = false, onReload }: { threadId: string; tabId: string; path: string; file: FileContent; line: number | null; cwd: string; /** Another repository of the thread whose worktree holds `path`: the read and the write carry it. */ repoId?: string; /** The worktree is locked: the file reads, and nothing is saved. */ locked?: boolean; onReload(): void }) {
+export function FileEditor({ threadId, tabId, path, file, line, cwd, repoId, repoName, locked = false, onReload }: { threadId: string; tabId: string; path: string; file: FileContent; line: number | null; cwd: string; /** Another repository of the thread whose worktree holds `path`: the read, the write and the line comments carry it. */ repoId?: string; /** That repository's name, so a line comment says where the file is. */ repoName?: string; /** The worktree is locked: the file reads, and nothing is saved. */ locked?: boolean; onReload(): void }) {
   const key = fileKey(threadId, cwd, path, repoId);
   const session = useEditorSessions((state) => state.sessions[key]);
   // A session that goes missing while the file is showing (given up on a close that was then cancelled) is made again.
@@ -87,8 +87,8 @@ export function FileEditor({ threadId, tabId, path, file, line, cwd, repoId, loc
       text={text}
       eolLabel={endingLabel(ends.eol, ends.mixed)}
       reveal={line}
-      // Comments name a checkout and a path, not a repository, so another repository's file takes none.
-      {...(repoId === undefined ? { comments: { threadId, cwd, revision: session?.revision ?? file.revision, text: session?.saved ?? toLF(file.content) } } : {})}
+      comments={{ threadId, cwd, revision: session?.revision ?? file.revision, text: session?.saved ?? toLF(file.content),
+        ...(repoId === undefined ? {} : { repoId }), ...(repoName === undefined ? {} : { repoName }) }}
       standing={dirty ? "unsaved" : "saved"}
       onChange={(next) => patch(key, { text: next })}
       onSave={() => void saveSession(key)}

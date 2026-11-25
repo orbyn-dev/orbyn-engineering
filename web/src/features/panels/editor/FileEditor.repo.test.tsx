@@ -1,7 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createReposMock } from "../../../../mock/repos";
+import { chipLabel } from "../../../product/composer/composerContext";
+import { useComposerChips } from "../../../product/state/composerChipStore";
 import { fileTabId } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { setReposApi, type RepoRow, type ThreadRepo } from "../../repos";
@@ -60,6 +62,7 @@ const row = (id: string, trusted: boolean): RepoRow => ({ id, name: id === "p" ?
 
 beforeEach(() => {
   useEditorSessions.setState({ sessions: {}, locked: {} });
+  useComposerChips.setState({ chips: {} });
   useWorkspace.setState({ threads: { t: { id: "t", project_id: "p", cwd: "/repo" } as never } });
   HTMLDialogElement.prototype.showModal ??= function showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); };
 });
@@ -212,4 +215,41 @@ it("keeps the outside editor for a primary file tab without repo_id", async () =
   await userEvent.click(await screen.findByRole("button", { name: "VS Code" }));
   await waitFor(() => expect(served.opens).toHaveLength(1));
   expect(served.opens[0]).toEqual({ path: "notes.txt", editor: "vscode" });
+});
+
+it("comments on a line of another repository's file with its repo_id and name, and shows only that repository's comments", async () => {
+  serve();
+  render(<Viewer threadId="t" tabId="planner" path="notes.txt" repoId={REPO} repoName="orbyn-planner" line={null} />);
+  const box = await planner();
+  act(() => box.focus());
+  await userEvent.click(screen.getByRole("button", { name: "Comment on line 1" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "File comment" }), "why here?");
+  await userEvent.click(screen.getByRole("button", { name: "Add comment" }));
+
+  const chip = useComposerChips.getState().chips.t![0]!;
+  // The comment names the repository of its tab, so the next message points at the right notes.txt of the thread.
+  expect(chip).toMatchObject({ kind: "review", path: "notes.txt", line: 1, repoId: REPO, repoName: "orbyn-planner", sourceRevision: "r-planner", sourceCwd: "/repo" });
+  expect(chipLabel(chip)).toBe("orbyn-planner/notes.txt:1");
+  expect(screen.getByRole("list", { name: "File comments" })).toHaveTextContent("why here?");
+
+  // The same path and revision of the thread's own checkout is another file with another comment: never listed here.
+  act(() => useComposerChips.getState().add("t", { id: "primary", kind: "review", path: "notes.txt", line: 1, comment: "primary note", excerpt: "primary text", sourceRevision: "r-planner", sourceCwd: "/repo" }));
+  expect(screen.getByRole("list", { name: "File comments" })).not.toHaveTextContent("primary note");
+});
+
+it("moves a repository's file comment with its line on save, and leaves another repository's comment alone", async () => {
+  const served = serve();
+  const key = fileKey("t", "/repo", "notes.txt", REPO);
+  render(<><EditorTitleExtras threadId="t" tabId="planner" onSave={() => void saveSession(key)} /><Viewer threadId="t" tabId="planner" path="notes.txt" repoId={REPO} line={null} /></>);
+  await planner();
+  act(() => {
+    useComposerChips.getState().add("t", { id: "mine", kind: "review", path: "notes.txt", line: 1, endLine: 1, comment: "here", excerpt: "# planner", sourceRevision: "r-planner", sourceCwd: "/repo", repoId: REPO, repoName: "orbyn-planner" });
+    useComposerChips.getState().add("t", { id: "primary", kind: "review", path: "notes.txt", line: 1, endLine: 1, comment: "primary", excerpt: "primary text", sourceRevision: "r-planner", sourceCwd: "/repo" });
+  });
+  act(() => useEditorSessions.getState().patch(key, { text: `// header\n${TEXT}` }));
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(served.puts).toHaveLength(1));
+  const chips = useComposerChips.getState().chips.t!;
+  expect(chips.find((chip) => chip.id === "mine")).toMatchObject({ line: 2, endLine: 2, sourceRevision: "r2", comment: "here" });
+  expect(chips.find((chip) => chip.id === "primary")).toMatchObject({ line: 1, sourceRevision: "r-planner", comment: "primary" });
 });
