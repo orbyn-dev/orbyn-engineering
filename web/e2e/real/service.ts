@@ -159,7 +159,14 @@ function makeLibrary(root: string): string {
   writeFileSync(join(library, "skills/how/SKILL.md"), '---\nname: how\ndescription: "Trace behavior"\n---\n\n# how\n');
   for (const host of [".claude", ".agents"]) {
     mkdirSync(join(library, host, "skills"), { recursive: true });
-    symlinkSync("../../skills/how", join(library, host, "skills/how"));
+    // Windows refuses a symbolic link without Developer Mode; a directory junction needs no privilege and
+    // reads the same, so a machine that has neither can still start the service.
+    try {
+      symlinkSync("../../skills/how", join(library, host, "skills/how"));
+    } catch (error) {
+      if (process.platform !== "win32") throw error;
+      symlinkSync(join(library, "skills/how"), join(library, host, "skills/how"), "junction");
+    }
   }
   writeFileSync(join(library, ".gitignore"), "repo/\n");
   git(library, "init", "-q", "-b", "main");
@@ -198,6 +205,12 @@ export interface ServiceOptions {
   builtUi?: boolean;
   /** Records only protocol-double launches, for controlled ordering assertions. */
   engineLaunchLog?: string;
+  /**
+   * The real `orbyn-engine-host` program the service runs hosts with (`ORBYN_ENGINE_HOST`), and the
+   * families it may serve: `claude` is on by default as the service has it, and `acp` needs no engine
+   * login. Stop, restart and Try again are then the service's own routes, not a stand-in.
+   */
+  engineHost?: { program: string; claude?: boolean; acp?: boolean };
   /** Use production automatic provider discovery only in controlled lifecycle tests. */
   discoverKnownEngines?: boolean;
   starred?: boolean;
@@ -284,7 +297,7 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
   if (ui && !existsSync(join(ui, "index.html"))) throw new Error("Build this checkout's production UI first: npm run build");
   const service = spawn(BIN, ["serve", "--data-dir", join(dir, "data"), "--workspace-url", makeLibrary(dir), ...(options.parentStdin ? ["--parent-stdin"] : []), ...(ui ? ["--ui-dir", ui] : [])], {
     // A home of its own, so no real engine history or login is read.
-    env: { ...inherited, ...profile, ...engines, ...(options.crewPreview ? { ORBYN_CREW_PREVIEW: "1" } : {}), ...(options.backgroundWatchIntervalSecs ? { ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS: String(options.backgroundWatchIntervalSecs) } : {}), ...(options.seedProposals ? { ORBYN_DEV_SEED_PROPOSALS: "1" } : {}), ...(options.issues ? { ORBYN_ISSUES: "1" } : {}), ...(options.multiRepo ? { ORBYN_MULTI_REPO: "1" } : {}), ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${forge ? `${forge.bin}${delimiter}` : ""}${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", ORBYN_DEV_DISABLE_PERSON_KEY: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
+    env: { ...inherited, ...profile, ...engines, ...(options.crewPreview ? { ORBYN_CREW_PREVIEW: "1" } : {}), ...(options.backgroundWatchIntervalSecs ? { ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS: String(options.backgroundWatchIntervalSecs) } : {}), ...(options.seedProposals ? { ORBYN_DEV_SEED_PROPOSALS: "1" } : {}), ...(options.issues ? { ORBYN_ISSUES: "1" } : {}), ...(options.multiRepo ? { ORBYN_MULTI_REPO: "1" } : {}), ...(options.engineHost ? { ORBYN_ENGINE_HOST: options.engineHost.program, ...(options.engineHost.claude === false ? { ORBYN_ENGINE_HOST_CLAUDE: "0" } : {}), ...(options.engineHost.acp ? { ORBYN_ENGINE_HOST_ACP: "1" } : {}) } : {}), ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${forge ? `${forge.bin}${delimiter}` : ""}${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", ORBYN_DEV_DISABLE_PERSON_KEY: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
     stdio: ["pipe", "pipe", "inherit"],
   });
   const ready = await new Promise<{ url: string; token: string }>((done, fail) => {
