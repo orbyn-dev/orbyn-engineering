@@ -18,6 +18,8 @@ import { CommentBox } from "./IssueComment";
 import { PickerEditor, useDescriptionEditor, type EditProps, type IssueWriter } from "./IssueEdit";
 import { IssueGlyph } from "./IssueGlyph";
 import { IssueStateButton } from "./IssueStateMenu";
+import { LinkedThreadsChip } from "./LinkedThreadsChip";
+import { LinkThreadDialog } from "./LinkThreadDialog";
 import { reloadIssueLinks, useIssueThreads } from "./links";
 import { StartThreadDialog } from "./StartThreadDialog";
 
@@ -25,9 +27,10 @@ export function Person({ login }: { login: string }) {
   return <span className="iss-person"><span className="iss-avatar" aria-hidden>{login.slice(0, 2).toUpperCase()}</span>{login}</span>;
 }
 
-function LinkedThreads({ issue, onStart }: { issue: Detail; onStart(): void }) {
+function LinkedThreads({ issue, onStart, onLinked }: { issue: Detail; onStart(): void; onLinked(): void }) {
   const { threadIds, loaded, failed, retry } = useIssueThreads(issue);
   const threads = useWorkspace((state) => state.threads);
+  const [linking, setLinking] = useState(false);
   const known = threadIds.flatMap((id) => (threads[id] ? [threads[id]] : []));
   return (
     <section className="iss-card" role="group" aria-label="Linked threads">
@@ -51,7 +54,11 @@ function LinkedThreads({ issue, onStart }: { issue: Detail; onStart(): void }) {
           ))}
         </ul>
       )}
-      <Button icon={<Plus size={14} aria-hidden />} onClick={onStart}>Start a thread from this issue</Button>
+      <div className="iss-thread-acts">
+        <Button icon={<Plus size={14} aria-hidden />} onClick={onStart}>Start a thread from this issue</Button>
+        <Button onClick={() => setLinking(true)}>Link to a thread…</Button>
+      </div>
+      {linking ? <LinkThreadDialog issue={issue} onClose={() => setLinking(false)} onLinked={onLinked} /> : null}
     </section>
   );
 }
@@ -187,7 +194,7 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
   const display = issue?.display_key ?? (/^\d+$/.test(issueKey) ? `#${issueKey}` : issueKey);
   return (
     <>
-      <PageBar back={{ name: "issues" }}>
+      <PageBar back={{ name: "issues" }} actions={issue && issue.linked_threads.length > 0 ? <LinkedThreadsChip issue={issue} /> : undefined}>
         <h1 tabIndex={-1} data-page-title>{issue?.title ?? "Issue"}</h1>
         {issue ? <span className="page-sub"><span className="page-sub-item">{issue.display_key} · {trackerName(issue.tracker)} · {issue.scope}</span><span className="page-sub-item iss-state"><IssueGlyph state={issue.state} />{stateWord(issue.state)}</span></span> : null}
       </PageBar>
@@ -211,7 +218,7 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
             </div>
             <aside className="iss-right">
               <Facts issue={read.data} edit={{ issue: read.data, offered, write, writing }} host={host} />
-              <LinkedThreads issue={read.data} onStart={() => setStarting(true)} />
+              <LinkedThreads issue={read.data} onStart={() => setStarting(true)} onLinked={() => { void read.refreshQuietly(); }} />
             </aside>
           </div>
         )}

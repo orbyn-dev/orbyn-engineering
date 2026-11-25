@@ -81,7 +81,7 @@ export interface IssuesMock extends IssuesApi {
    */
   /** Every list read, in order: the query and the `cursors` it carried (`undefined` for the first page). */
   listed: { query: IssueQuery; cursors: Record<string, string> | undefined }[];
-  failNext(what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates" | "comment" | "token" | "keychain" | "host" | "reject" | "unreachable" | null): void;
+  failNext(what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates" | "comment" | "link" | "token" | "keychain" | "host" | "reject" | "unreachable" | null): void;
   /** Every candidates read, as `<tracker> <scope>`. */
   candidatesRead: string[];
 }
@@ -116,7 +116,7 @@ export function createIssuesMock(init: {
   const bodies = new Map<string, string>();
   const candidatesRead: string[] = [];
   const noRoute = () => new ApiFailure("http_404", "The server answered 404.", 404);
-  const take = (what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates" | "comment") => {
+  const take = (what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates" | "comment" | "link") => {
     if (fail !== what) return;
     fail = null;
     throw new ApiFailure("tracker_unavailable", "GitHub did not answer.", 502);
@@ -186,6 +186,7 @@ export function createIssuesMock(init: {
     link: async (threadId, ref) => {
       writes.push(`link:${threadId}:${ref.key}`);
       await wait();
+      take("link");
       const one = find(ref);
       if (!one) throw new ApiFailure("not_found", `No issue ${ref.key} in ${ref.scope}.`, 404);
       const held = links[threadId] ?? [];
