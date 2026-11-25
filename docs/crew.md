@@ -1409,12 +1409,24 @@ this app yet". That is no longer true of all of them: the escape and capacity ba
 `capacity-live-*` screens). The live escape, capacity and backtest screens are reached from Settings › Crew behind `crew_preview` (the four entry rows and the
 Coverage links, Crew Designs v87; see [escapes.md](crew/escapes.md), slice 4l and backlog B3 below); the Review-tab Escapes section
 (`entry-crew-review-escapes*`) is not built, because the beta has no Review tab. The remaining escape frames (report, dashboard,
-route counts, create check) and the other capacity frames stay drawn samples with disabled buttons. Values the design
+route counts, create check) and the other capacity frames stay drawn samples with disabled buttons, though the per-area counts
+read the two route-counts frames want is built (next paragraph). Values the design
 marks Proposed (the 60-day window, the 10-merge and 2x router tie-break, a limit of 8, sampling one in four rounded up)
 stay Proposed on the screen. The settings rows are drawn in the Preview frame only: in the real Settings page they would
 show a state ("Not set") that nothing stores yet. The v22 units apply to the v19 frames too: the header line reads
 "Codex 62% of its weekly limit", per-merge cost is tokens and minutes in the engine's own unit, and the review-reverted
 card offers "Create a check".
+
+**As built (slice 4k, per-area counts read):** `GET /api/crew/escapes/counts?project=&area=` answers the one part of the escape
+report that the design names and the backend did not have: the merges in the log's stored window (`report_days`) that touched one
+area, and the escapes logged against them, one row per engine, possible, confirmed and dismissed kept apart and no rate. An escape
+counts in the area copied onto it when it was logged, a merge in its own `areas`; rows are busiest first, with `low_sample` the
+log's own test (fewer merges in the area than `min_merges`) and an area's `merges` total counting every engine's. The list is
+bounded at 16 engine rows (`ESCAPE_COUNT_ENGINES_MAX`) and `truncated` says when more had a merge there, so nothing is dropped
+silently. It is a read: class **Local**, in `crew::changes::READS`, and it answers no route that changes state. An unknown project
+and an area that is not a name (empty, over 300 characters, a control character) are refused, never answered as an empty list; an
+area the project never merged into is an honest empty answer. **Display only:** the Router reads no escape count in v1, so the
+counts decide no engine. `escape-route-counts` and `escape-route-shifted` still draw sample data until they are wired to it.
 
 **As built (slice 4f, UI part D):** the independent oracle (Crew Designs v22, 18 frames) and the reviewer backtest (v23, 16
 frames) in `web/src/features/crew/{oracle,backtest}`, on the same stage and with the same rules as part C: drawn sample
@@ -1973,7 +1985,7 @@ The person's "Re-run checks" for a Crew task (Preview). Backend only: the card t
   and a `stopped` task whose reason is `repeated_failure`, `budget` or `engine_error` **and** whose checks ran live at least once (it
   has Evidence). Refused with `409 task_busy` and a plain reason, and nothing runs: a task stopped for `injection_suspected` or
   `too_many_denials` (Autopilot stops a task for those from `running`, so the key never ran in that checkout and the worker may have
-  planted what the key's commands execute), for `lead_stopped` (the lead's reason is not known), for any reason not on the allow-list,
+  planted what the key's commands execute), for `lead_stopped` (the lead stopped it and its reason is not known), for any reason not on the allow-list,
   or never verified; a task being worked on, being verified, `cancelled`, or whose worker still has an engine run open; and one whose
   checks are being run again. The table admits six stop reasons today; the allow-list means a seventh is refused until someone names it.
 - **Limits against spam.** At most one re-run at a time on the device, across all tasks, and 10 seconds between the end of one re-run
@@ -2125,6 +2137,32 @@ The person's stop button for a Crew task (Preview). Backend only: the card actio
 - **Known limits.** A cancel cannot undo what the worker already wrote in its worktree, and commits already merged stay merged; the
   worktree itself is left as the existing end of a task leaves it. A check command already running when the cancel lands finishes
   first (its result is discarded). The stop waits up to four seconds for the engine before it closes the run by force.
+
+## As built (lead stop)
+
+The lead's stop of a Crew task it leads (Preview, `crew_stop`). Backend only: the lead calls it over MCP; no screen draws it.
+
+- **What exists.** Core `Core::crew_stop_tool` and the MCP tool `crew_stop` (protocol `crew.stop`), behind the Crew Preview flag.
+  Its argument is `{ "task": "<id>" }`; the answer is `{ task, run, state: "stopped", stop_reason: "lead_stopped" }`.
+- **Who.** Only the lead thread that leads the task. A worker's token is refused `not_authorized` before the requested task is
+  read, so a worker cannot end its own task; another crew's task is `invalid_object` (there is no such task in this crew). A
+  task's crew id and its run's lead thread are written from the same lead thread, so the crew check decides; the lead-thread
+  check stays as defence in depth. The person's cancel keeps its own invariant: no agent tool cancels a task.
+- **What it stops.** A non-final task the lifecycle can take to `stopped`: `running`, `verifying`, `failed`, `changed_approach`
+  or `needs_person`, which covers a held task no engine could take. A final task is `run_ended`; `briefed` and `routed` are
+  `invalid_transition`, because the lifecycle table has no move from them to `stopped` (a person can still cancel one).
+- **How.** The path the core's own stops take: one transaction moves the state to `stopped` with the reason `lead_stopped` (it
+  clears a verification claim like every move out of `verifying`), then the existing end of a task runs: leases released, its
+  worker's run's stop requested (the request a budget-timer stop makes too; the engine's stop is not confirmed), a final `stopped`
+  result written with "The lead stopped the task." and the lead told through its queue. A task that moves between the read and the
+  move is never overwritten: one that ended is `run_ended`, and one still live is `invalid_transition` naming the state it moved
+  to. This is not a cancel and writes none of its rows: the person's stop button is still the only `cancelled` ending, and no person
+  route was added.
+- **Audit.** The MCP call is recorded before it happens as the `tool.call` row every Crew tool gets; the task state and its final
+  result are the record. No table, migration or contract change: `StopReason::LeadStopped` already existed.
+- **Limits.** A stop cannot undo what the worker already wrote in its checkout, and a check already running finishes first, as with
+  every stop of a task. A `lead_stopped` task is still refused by "Re-run checks" (the lead's reason is not known), and a stopped
+  task cannot be resumed. Fake-engine tests only; no real engine run.
 
 ## As built (close lead)
 
