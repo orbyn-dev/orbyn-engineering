@@ -94,7 +94,8 @@ The rows are device only, never synced or exported, and hold ids and enums, neve
   A worker's file change is refused at the gate when it is outside the lease, with the lease's own words.
 - A crew-wide turn budget is one device-local number (`crew_turn_budget`, whole turns; 0 or unset is
   none), set in Settings › General. A crew's spend is the per-task tally summed over its tasks, so the two budgets cannot disagree; a new
-  task is refused once the crew has spent it, and a task already running is never stopped by it.
+  task is refused once the crew has spent it, and a task already running is never stopped by it. It fails closed: a budget or a
+  spend that cannot be read refuses the start rather than reading as no budget.
 - The lead's stop is the lead's own: only the thread that leads a task stops it, a worker's token or a task of
   another crew is refused, and a task that already ended or that the lifecycle cannot stop from `briefed` or `routed` is
   refused. A person's cancel stays the only `cancelled` ending.
