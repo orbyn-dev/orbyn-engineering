@@ -24,7 +24,7 @@ impl From<CoreError> for RestoreFailure {
 /// outstanding, then start a fresh mapper for the prompt; replay is not a turn.
 pub(super) async fn resume_without_replay(
     rpc: &RpcClient,
-    inbound: &mut mpsc::UnboundedReceiver<Inbound>,
+    inbound: &mut mpsc::Receiver<Inbound>,
     method: &str,
     params: Value,
     session: &str,

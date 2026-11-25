@@ -477,6 +477,31 @@ async fn a_prompt_that_cannot_be_queued_puts_the_task_back() {
     assert_eq!(answer["state"], "running");
 }
 
+#[tokio::test]
+async fn a_held_task_with_nothing_left_at_the_budget_boundary_is_not_resumed() {
+    let w = world(true, held_script()).await;
+    let (id, worker) = held(&w).await;
+    // The task has spent exactly its thirty minutes: the resume reads zero left and must not arm a timer
+    // with nothing on it. The positive side of the same boundary is a_resumed_task_gets_its_minutes_timer_back.
+    let now = crate::util::unix_now();
+    let started = now - 30 * 60;
+    set_times(&w, &id, started, started);
+
+    let (reply, refused) = resume(&w, &w.lead_token, &id).await;
+    assert!(refused, "{reply}");
+    assert_eq!(reply["code"], "invalid_object");
+    assert!(
+        reply["message"]
+            .as_str()
+            .unwrap()
+            .contains("time budget"),
+        "{reply}"
+    );
+    assert_eq!(w.task(&id).state, "needs_person", "the task is as it was");
+    assert_eq!(w.sent_to(&worker).len(), 1, "only the brief was sent");
+    assert!(w.core.store.list_queue(&worker).unwrap().is_empty());
+}
+
 #[test]
 fn the_resume_tool_is_listed_for_the_lead_with_one_task_argument() {
     let spec = crate::crew::tool_specs()
