@@ -87,8 +87,9 @@ impl StreamMapper {
         self.held.is_some() && !self.holding() && !self.resumed
     }
 
-    /// Background work still running as the run ends goes with the CLI; each is said to have stopped.
-    pub(super) fn end_background(&mut self) -> Vec<EngineEvent> {
+    /// Background work still running as the run ends goes with the CLI; each is said to have stopped,
+    /// with `reason` saying why (a cap, a cancel, the engine exiting).
+    pub(super) fn end_background(&mut self, reason: &str) -> Vec<EngineEvent> {
         let mut ended: Vec<_> = self.background.drain().collect();
         ended.sort_by(|a, b| a.0.cmp(&b.0));
         ended
@@ -103,6 +104,7 @@ impl StreamMapper {
                         "taskId": id,
                         "taskType": task.kind,
                         "description": task.description,
+                        "reason": reason,
                     }),
                 }
                 .into()
