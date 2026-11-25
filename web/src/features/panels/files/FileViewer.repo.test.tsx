@@ -84,6 +84,20 @@ it("puts the repo_id on the download link of another repository's file", async (
   expect(href.get("download")).toBe("true");
 });
 
+it("puts the repo_id on a binary file's own Save link, where there is no media bar", async () => {
+  serve({ binary: true, size: 64 }, new Uint8Array([0x00, 0x01]));
+  render(<Viewer threadId="t" tabId="tab" path="bin/data.bin" repoId={REPO} line={null} />);
+
+  expect(await screen.findByText(/data\.bin is a binary file/)).toBeInTheDocument();
+  const save = screen.getByRole("link", { name: "Save file" });
+  const href = query(save.getAttribute("href")!);
+  expect(href.get("path")).toBe("bin/data.bin");
+  expect(href.get("repo_id")).toBe(REPO);
+  expect(href.get("download")).toBe("true");
+  // The editor-only binary frame carries the save; no media bar is drawn above it.
+  expect(screen.queryByRole("button", { name: "Copy contents" })).toBeNull();
+});
+
 it("still draws a text file of another repository as its own text, read with its repo_id", async () => {
   const asked = serve({ content: "# planner\n" });
   render(<Viewer threadId="t" tabId="tab" path="README.md" repoId={REPO} line={null} />);
