@@ -280,9 +280,11 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   text. The title line names the repository and the tab's tooltip reads `README.md (name)`. `409 file_conflict` keeps its Changed on
   disk banner (Keep mine, Reload); `409 repo_untrusted` on a read or a write shows the service's message and the existing trust
   dialog, keeps the text and repeats nothing; a path outside the repository (`400`) or a repository that is not the thread's (`404`) is
-  said in words. That tab is the editor only: no rendered preview, no line comments, no "Add file to message", no outside editor and
-  no absolute path, and images, archives, documents, binary and truncated files say they can't be shown yet, because those routes
-  (`.../files/raw`, zip, office, download, `previews/file`, `open-in-editor`) take no `repo_id`.
+  said in words. A text file of that tab is the editor only: no rendered preview, no line comments, no "Add file to message", no
+  outside editor and no absolute path. Its image, PDF, video, audio, font, archive, document, binary and truncated files load from
+  their own repository's worktree: the client sends `repo_id` on `GET .../files/raw`, whose bytes, `Range` answers, inline-or-attachment
+  decision and `download` are that repository's file (see "As built: repo_id on Git and file calls"). `previews/file` (Open in browser)
+  and `open-in-editor` (outside editor) take none yet, so neither is offered there.
 - **Turn totals.** The turn picker's per-turn figures were the primary repository's alone. In a multi-repository thread each turn's
   totals sum `GET .../diff?scope=turn&run=` over the thread's trusted repositories, one read per repository with its own `repo_id`.
   An untrusted repository is not read and a repository whose read fails is left out, and the row says "N repo not counted" instead of
@@ -341,6 +343,12 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
   file is resolved inside that worktree by the usual guard (a path that leaves it, an absolute path or a link out is refused), and a
   file `revision` belongs to that repository's file. In Core the route sets the repository with `orbyn_core::in_repo(repo_id, work)`;
   work spawned from inside does not inherit it.
+- **Raw bytes.** `GET .../files/raw` takes `repo_id` in the query when it is given: the bytes, the `Range`, `If-Range` and
+  `If-None-Match` answers, the inline-or-attachment decision and `download` are the named repository's file, read with the same
+  guard rooted at that repository's worktree. Absent is the primary, so every older client is unchanged; preview, download, zip and
+  office views all read this route. Unknown, ordinary-thread and flag-off `repo_id`s are `404` as everywhere else. The web client
+  sends it for another repository's media, archive, document and download (the file tab above); a text file of another repository
+  stays the editor, and `previews/file` and `open-in-editor` take no `repo_id` yet.
 - **Navigation coordinates are one repository's too.** `POST /api/threads/{id}/paths/resolve` resolves the reference in the
   repository its `repo_id` names, the primary one when absent, so a link to a repository's file is never looked for in the task
   folder and the answer's `checkout_path` is relative to that repository's worktree. The request's `cwd` is the thread's own
@@ -440,11 +448,12 @@ over the limit is refused; each write route needs the person key; a failed clone
 `remove`; per-repository commit touches only that repository's worktree; a permission mode the engine
 does not offer is refused before anything is created; a scan never follows a symlink, caps its results
 and adds nothing; a workspace folder outside the file's folder is listed `refused` and not added; a
-`repo_id` on a file write never resolves a path in another repository; a task folder uses one branch name in
-every repository and a taken name creates nothing; a diff, commits, a commit or branch comparison and a turn's
-checkpoint read the repository their `repo_id` names, the primary (the first stored repository) when it is
-absent, and run Git in that repository's worktree rather than the task folder; checkpoint capture and a file
-restore still use the engine's task folder; navigation coordinates resolve in the repository their `repo_id`
-names too, the primary when absent, so a repository's file is found in its own worktree and the task folder is
-never the checkout, and a thread that moved answers `409 stale_owner`; an unknown repository is `404` and an
-untrusted one is refused.
+`repo_id` on a file write never resolves a path in another repository; `.../files/raw` reads the named
+repository's bytes, refuses a path outside its worktree, and is `404` for an unknown or ordinary-thread
+`repo_id`; a task folder uses one branch name in every repository and a taken name creates nothing; a diff,
+commits, a commit or branch comparison and a turn's checkpoint read the repository their `repo_id` names, the
+primary (the first stored repository) when it is absent, and run Git in that repository's worktree rather than
+the task folder; checkpoint capture and a file restore still use the engine's task folder; navigation coordinates
+resolve in the repository their `repo_id` names too, the primary when absent, so a repository's file is found in
+its own worktree and the task folder is never the checkout, and a thread that moved answers `409 stale_owner`;
+an unknown repository is `404` and an untrusted one is refused.
