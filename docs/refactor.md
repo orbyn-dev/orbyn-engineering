@@ -369,6 +369,10 @@ under W7a.
   fine for a named infrastructure failure only (the NSIS download 504 in the Windows desktop build, `gh`
   network timeouts), after the run finishes and with the cause written in the PR. Caching the NSIS tool in
   the desktop build workflow would remove the most frequent one.
+- Two core crew tests are load-sensitive: `crew::tests::flow_board::the_board_names_every_wait_of_its_crew_past_the_inboxs_two_hundred`
+  (about 80 s alone, starved to a timeout when run with other modules) and
+  `crew::tests::autopilot_engines::two_live_protocol_runs_approve_without_sharing_tools_key_or_transcript` (its approval can time out under
+  load). Both pass alone; run them by name on a busy machine instead of re-running a whole module.
 - Disk: each Rust worktree builds its own `target/` (several GB each) and the cleanup tool only moves
   retired worktrees to the Trash, so the space comes back when the Trash is emptied. Run
   `worktree_retire.py report` before creating a worktree.
