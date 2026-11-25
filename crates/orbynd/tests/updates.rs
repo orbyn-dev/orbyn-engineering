@@ -249,7 +249,7 @@ async fn update_events_send_the_status_then_each_change() {
     );
     let found = tokio::time::timeout(Duration::from_secs(10), async {
         while let Some(Ok(chunk)) = body.next().await {
-            for frame in parser.push(&chunk) {
+            for frame in parser.push(&chunk).expect("test SSE frames fit the cap") {
                 let status: Value = serde_json::from_str(&frame).unwrap();
                 if status["app"]["latest"] == "99.0.0" {
                     return true;
