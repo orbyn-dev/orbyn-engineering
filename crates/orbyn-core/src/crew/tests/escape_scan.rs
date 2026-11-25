@@ -260,7 +260,7 @@ impl Scan {
             (log.total, log.possible, log.confirmed, log.dismissed),
             (1, 1, 0, 0)
         );
-        let row = log.rows[0].clone();
+        let row = one(&log.rows, "possible escape row").clone();
         assert_eq!(row.source, source);
         assert_eq!(row.state, wire::EscapeState::Possible);
         assert_eq!((row.decided_unix, row.decided_by), (None, None));
@@ -281,6 +281,16 @@ fn nothing_found(out: &ScanOutcome, scanned: u32) {
         (scanned, 0, 0, 0, false),
         "{out:?}"
     );
+}
+
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list. A read that returns
+/// none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
 }
 
 // Signal 1: a revert made outside the crew.
@@ -305,10 +315,10 @@ async fn a_revert_outside_the_crew_is_one_possible_escape() {
     );
     assert!(row.reason.unwrap().contains(&revert[..12]));
     let detail = s.rig.w.core.crew_escape_detail(&row.id).unwrap();
-    assert_eq!(detail.events.len(), 1);
-    assert_eq!(detail.events[0].kind, wire::EscapeEventKind::Detected);
-    assert_eq!(detail.events[0].decided_by, wire::EscapeActor::Core);
-    assert_eq!(detail.events[0].cause, format!("revert:{revert}"));
+    let event = one(&detail.events, "escape event");
+    assert_eq!(event.kind, wire::EscapeEventKind::Detected);
+    assert_eq!(event.decided_by, wire::EscapeActor::Core);
+    assert_eq!(event.cause, format!("revert:{revert}"));
 }
 
 #[tokio::test]
@@ -365,7 +375,8 @@ async fn a_fix_within_the_window_on_lines_the_merge_added_is_one_possible_escape
         "{reason}"
     );
     let detail = s.rig.w.core.crew_escape_detail(&row.id).unwrap();
-    assert_eq!(detail.events[0].cause, format!("follow_up_fix:{fix}"));
+    let event = one(&detail.events, "escape event");
+    assert_eq!(event.cause, format!("follow_up_fix:{fix}"));
 }
 
 #[tokio::test]
@@ -442,7 +453,8 @@ async fn a_commit_message_cannot_forge_or_split_log_entries() {
     assert_eq!((out.scanned, out.found, out.skipped), (1, 1, 0), "{out:?}");
     let row = s.only_possible(wire::EscapeSource::FollowUpFix);
     let detail = s.rig.w.core.crew_escape_detail(&row.id).unwrap();
-    assert_eq!(detail.events[0].cause, format!("follow_up_fix:{fix}"));
+    let event = one(&detail.events, "escape event");
+    assert_eq!(event.cause, format!("follow_up_fix:{fix}"));
     let _ = merge;
 }
 
@@ -503,7 +515,8 @@ async fn a_merge_whose_work_never_fits_the_time_does_not_pin_the_scan() {
         let m = s.rig.w.core.store.crew_merge(task).unwrap().unwrap();
         format!("{}:{}", m.merged_unix, m.id)
     };
-    // Newest first: merges[2], merges[1], merges[0]. Each scan counts the first merge as unread and moves past it.
+    // Order is the contract here: the fixture pushed the merges oldest first, so the newest-first scan reads
+    // merges[2], then merges[1], then merges[0], and each scan counts the first unread merge and moves past it.
     let first = s
         .rig
         .w
@@ -557,6 +570,8 @@ async fn a_scan_that_is_cut_short_resumes_so_every_merge_is_looked_at_over_succe
     for (i, line) in [3, 6, 9, 12, 15].into_iter().enumerate() {
         merges.push(s.merge(line, 5 - i as i64).await);
     }
+    // The fixture pushes oldest first, so the first entry is the merge the newest-first scan reaches last.
+    let (oldest_task, oldest_merge) = merges.first().expect("the oldest merge");
     let limits = Limits {
         merges: 2,
         calls: 200,
@@ -578,7 +593,7 @@ async fn a_scan_that_is_cut_short_resumes_so_every_merge_is_looked_at_over_succe
     );
     // The oldest merge is reverted later. A scan that kept re-reading the newest two would never see it.
     s.repo
-        .git(&["revert", "-m", "1", "--no-edit", &merges[0].1]);
+        .git(&["revert", "-m", "1", "--no-edit", oldest_merge]);
     let second = scan(&s, limits).await.unwrap();
     assert_eq!((second.scanned, second.found), (2, 0), "{second:?}");
     let third = scan(&s, limits).await.unwrap();
@@ -588,7 +603,7 @@ async fn a_scan_that_is_cut_short_resumes_so_every_merge_is_looked_at_over_succe
             .w
             .core
             .store
-            .crew_escape_of_merge(&merges[0].0)
+            .crew_escape_of_merge(oldest_task)
             .unwrap()
             .is_some()
     );
@@ -707,12 +722,13 @@ async fn the_possible_list_holds_only_possible_escapes_newest_first_with_a_page(
     let mut s = scan_rig().await;
     s.merge_with(3, 3, |m| m.watch = "broken".into()).await;
     s.merge_with(8, 2, |m| m.watch = "broken".into()).await;
-    s.merge_with(13, 1, |m| m.watch = "broken".into()).await;
+    let (newest, _) = s.merge_with(13, 1, |m| m.watch = "broken".into()).await;
     s.scan().await;
     let all = s.possible();
     assert_eq!((all.total, all.rows.len()), (3, 3));
     let found: Vec<i64> = all.rows.iter().map(|r| r.found_unix).collect();
-    assert!(found.windows(2).all(|w| w[0] >= w[1]));
+    // Newest first: every adjacent pair, read together rather than by its places.
+    assert!(found.is_sorted_by(|a, b| a >= b), "newest first: {found:?}");
     let page = s
         .rig
         .w
@@ -720,13 +736,18 @@ async fn the_possible_list_holds_only_possible_escapes_newest_first_with_a_page(
         .crew_escape_possible(&s.rig.project, Page::new(Some(2), Some(2)).unwrap())
         .unwrap();
     assert_eq!((page.total, page.rows.len()), (3, 1));
-    // Confirm one (a person's act): it leaves the possible list.
-    let first = &all.rows[0];
+    // Confirm one (a person's act): it leaves the possible list. The row is found by the merge it is about, not
+    // by the list's first place.
+    let confirmed = all
+        .rows
+        .iter()
+        .find(|row| row.merge_task_id == newest)
+        .expect("the newest merge's possible escape");
     s.rig
         .w
         .core
         .crew_escape_confirm(
-            &first.id,
+            &confirmed.id,
             &wire::EscapeDecide {
                 project: s.rig.project.clone(),
                 seen: wire::EscapeSeen {
@@ -900,6 +921,8 @@ async fn a_batch_the_writer_refuses_does_not_pin_the_cursor() {
         "{first:?}"
     );
     assert_eq!(s.counts(), before, "a refused batch wrote");
+    // The batch reads newest first, so it passed merges[2] and then merges[1]: the cursor names the merge the batch
+    // ended on, which is merges[1]. Order is the contract here.
     let mid = s
         .rig
         .w
