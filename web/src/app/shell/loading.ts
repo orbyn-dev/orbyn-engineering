@@ -1,8 +1,5 @@
 import { useWorkspace } from "../../product/state/workspace";
 
-export const HIDDEN_POLL_EVERY = 3;
-
-
 // One load at a time: a remount (React's development double mount included) or a
 // slow load meeting the next tick joins the load already running.
 let loading: Promise<void> | null = null;
