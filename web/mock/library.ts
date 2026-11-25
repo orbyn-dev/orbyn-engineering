@@ -66,6 +66,41 @@ const STATUS: Record<string, [number, string]> = {
   not_found: [404, "That item is not in the library any more."],
 };
 
+/**
+ * The parameters of an imported entry, each field the editor and a render read narrowed to its type; `null` when the list is
+ * not the contract's `Param[]`. The service refuses such an entry (`invalid_input`) before storing it, so the dev preview does
+ * too and never holds a parameter a later render would throw on.
+ */
+function readParams(value: unknown): Param[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  const out: Param[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
+    const one = item as Record<string, unknown>;
+    const { name, label, required } = one;
+    const kind = one.kind;
+    // The contract's two optional fields read `null` as absent, as serde does; a `String` or `bool` field with `null` is refused.
+    const fallback = one.default ?? undefined;
+    const choices = one.choices ?? undefined;
+    if (typeof name !== "string") return null;
+    if (kind !== "text" && kind !== "choice" && kind !== "path") return null;
+    if (label !== undefined && typeof label !== "string") return null;
+    if (required !== undefined && typeof required !== "boolean") return null;
+    if (fallback !== undefined && typeof fallback !== "string") return null;
+    if (choices !== undefined && (!Array.isArray(choices) || !choices.every((choice) => typeof choice === "string"))) return null;
+    out.push({
+      name,
+      label: label ?? "",
+      kind,
+      required: required ?? false,
+      ...(fallback === undefined ? {} : { default: fallback }),
+      ...(choices === undefined ? {} : { choices: choices as string[] }),
+    });
+  }
+  return out;
+}
+
 export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFixtures> | null; suggestions?: Suggestions | "untrusted"; platform?: "stored" | "planned"; delayMs?: number; limits?: Partial<LibraryLimits>; profiles?: string[] } = {}): LibraryMock {
   const missing = init.fixtures === null;
   const seed = init.fixtures ?? libraryFixtures();
@@ -247,7 +282,8 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
       for (const [index, value] of entries("workflows").entries()) {
         const entry = record(value);
         const name = text(entry.name).trim();
-        if (name === "" || typeof entry.command !== "string") { add("workflow", index, "refused", undefined, "invalid_input"); continue; }
+        const params = readParams(entry.params);
+        if (name === "" || typeof entry.command !== "string" || params === null) { add("workflow", index, "refused", undefined, "invalid_input"); continue; }
         const ids: string[] = [];
         for (const named of Array.isArray(entry.env_set_names) ? entry.env_set_names : []) {
           const id = typeof named === "string" ? setIds.get(nameKey(named)) : undefined;
@@ -258,7 +294,7 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
         const final = reserve(workflowNames, name);
         if (!dryRun) {
           const id = nextId("01jwn");
-          const one: Workflow = { id, name: final, description: text(entry.description), command: text(entry.command), params: Array.isArray(entry.params) ? (entry.params as Param[]) : [], env_set_ids: ids, source: "import", needs_ack: true, ...stamp };
+          const one: Workflow = { id, name: final, description: text(entry.description), command: text(entry.command), params, env_set_ids: ids, source: "import", needs_ack: true, ...stamp };
           workflows.set(id, one);
         }
         add("workflow", index, final === name ? "created" : "renamed", final);
@@ -267,11 +303,12 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
       for (const [index, value] of entries("prompts").entries()) {
         const entry = record(value);
         const name = text(entry.name).trim();
-        if (name === "" || typeof entry.body !== "string") { add("prompt", index, "refused", undefined, "invalid_input"); continue; }
+        const params = readParams(entry.params);
+        if (name === "" || typeof entry.body !== "string" || params === null) { add("prompt", index, "refused", undefined, "invalid_input"); continue; }
         const final = reserve(promptNames, name);
         if (!dryRun) {
           const id = nextId("01jpn");
-          const one: Prompt = { id, name: final, description: text(entry.description), body: text(entry.body), params: Array.isArray(entry.params) ? (entry.params as Param[]) : [], source: "import", ...stamp };
+          const one: Prompt = { id, name: final, description: text(entry.description), body: text(entry.body), params, source: "import", ...stamp };
           prompts.set(id, one);
         }
         add("prompt", index, final === name ? "created" : "renamed", final);
