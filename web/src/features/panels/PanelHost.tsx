@@ -382,7 +382,7 @@ export function PanelHost({
       : [
           ...(rowIds.length > 1
             ? [
-                { label: "Close tab", icon: <X size={14} aria-hidden />, onSelect: () => closeWithFocus(tab) },
+                { label: "Close tab", icon: <X size={14} aria-hidden />, shortcut: formatShortcut("mod+w"), onSelect: () => closeWithFocus(tab) },
                 { label: "Close other tabs", icon: <X size={14} aria-hidden />, onSelect: () => guardClose(rowIds.filter((one) => one !== tab), () => { closeOthers(tab); setSaid("Other tabs closed"); focusTab(tab); }) },
                 { label: "Close all tabs", icon: <X size={14} aria-hidden />, onSelect: () => guardClose(rowIds, () => { closeAll(); setSaid("All tabs closed. Nothing is open."); plusButton.current?.focus(); }) },
               ]

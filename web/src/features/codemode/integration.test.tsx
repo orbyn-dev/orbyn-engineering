@@ -51,17 +51,12 @@ describe("the Tools tab", () => {
   const tools = (names: string[]): EngineTools =>
     ({ reported: true, error: null, incomplete: false, not_reported: [], groups: [{ id: "orbyn", count: names.length, items: names.map((name) => ({ name, state: "ready", description: "x", source: null, tools: null, reason: null, detail: null, sign_in_url: null })) }] }) as unknown as EngineTools;
 
-  it("marks only the three Code Mode tools Planned", async () => {
+  it("lists the three Code Mode tools like any other, with no Planned mark", async () => {
     render(<ToolsList tools={tools(["orbyn_code_search", "orbyn_code_describe", "orbyn_code_run", "orbyn_thread_list"])} engineName="Claude Code" mode="thread" />);
     await userEvent.click(screen.getByRole("button", { name: /Orbyn/ }));
-    expect(screen.getAllByText("Planned")).toHaveLength(3);
-    const ordinary = screen.getByText("orbyn_thread_list").closest("li")!;
-    expect(within(ordinary).queryByText("Planned")).toBeNull();
-  });
-
-  it("does not mark a tool of another group that happens to share a name", async () => {
-    const other = { ...tools(["orbyn_code_run"]), groups: [{ id: "mcp", count: 1, items: [{ name: "orbyn_code_run", state: "ready", description: "x", source: null, tools: null, reason: null, detail: null, sign_in_url: null }] }] } as unknown as EngineTools;
-    render(<ToolsList tools={other} engineName="Claude Code" mode="thread" />);
+    for (const name of ["orbyn_code_search", "orbyn_code_describe", "orbyn_code_run", "orbyn_thread_list"]) {
+      expect(within(screen.getByText(name).closest("li")!).queryByText("Planned")).toBeNull();
+    }
     expect(screen.queryByText("Planned")).toBeNull();
   });
 });

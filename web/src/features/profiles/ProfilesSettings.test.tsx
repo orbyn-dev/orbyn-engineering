@@ -2,8 +2,17 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createProfilesMock, profileFixtures } from "../../../mock/profiles";
+import type { EngineStatus } from "../../api/types";
+import { useWorkspace } from "../../product/state/workspace";
 import { ProfilesSettings } from "./ProfilesSettings";
 import { setProfilesApi } from "./api";
+
+/** The engine list the editor reads its options and their login state from. */
+const seedEngines = (auth: "logged_in" | "logged_out") => {
+  useWorkspace.setState({
+    engines: { data: [{ id: "claude", name: "Claude Code", installed: true, auth } as EngineStatus], loading: false, error: null },
+  });
+};
 
 afterEach(() => { setProfilesApi(null); });
 
@@ -89,6 +98,29 @@ it("shows the service's name_taken under the name and keeps the text, when the l
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByText(/A profile with that name already exists/)).toBeVisible();
   expect(screen.getByLabelText("Name")).toHaveValue("Brand new");
+});
+
+it("offers a Sign in link to Providers when the edited profile's engine is signed out", async () => {
+  seedEngines("logged_out");
+  setProfilesApi(createProfilesMock());
+  render(<ProfilesSettings />);
+  const user = userEvent.setup();
+  await menuOf(user, "Night shift", "Edit");
+  const dialog = await screen.findByRole("dialog");
+  const note = within(dialog).getByRole("note");
+  expect(note).toHaveTextContent("Claude Code is signed out. Sign in from Settings › Providers.");
+  expect(within(note).getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "#/settings/providers");
+});
+
+it("draws no Sign in link for an engine that is signed in", async () => {
+  seedEngines("logged_in");
+  setProfilesApi(createProfilesMock());
+  render(<ProfilesSettings />);
+  const user = userEvent.setup();
+  await menuOf(user, "Night shift", "Edit");
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).queryByText(/is signed out/)).toBeNull();
+  expect(within(dialog).queryByRole("link", { name: "Sign in" })).toBeNull();
 });
 
 it("offers no read-only permission mode and no effort or model field", async () => {

@@ -35,7 +35,7 @@ it("the Details popover's Tools row counts what is ready, names what is not, and
   expect(await screen.findByRole("region", { name: "Your MCP servers" })).toBeInTheDocument();
   // It closes like any other tab.
   await user.click(screen.getByRole("button", { name: "Tab menu" }));
-  await user.click(screen.getByRole("menuitem", { name: "Close tab" }));
+  await user.click(screen.getByRole("menuitem", { name: /^Close tab/ }));
   expect(screen.queryByRole("tab", { name: "Tools" })).toBeNull();
 });
 
