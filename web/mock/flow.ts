@@ -1,9 +1,10 @@
 /**
  * The mock's Flow reads (`/api/crew/flow/*`): the crews that have work, a crew's tasks with the ten cells of each, one task
- * zoomed, and one task's Run page read. They answer in the Crew scenarios (`crew`, `crew-<state>`) and nowhere else, so the
- * default scenario keeps every Crew route at 404 as the service does with Crew Preview off. A sample with a `run` answers the
- * Run page route; one without it keeps the older service's 404, so the page falls back to its Flow-based Planned marks. The
- * sample tasks exercise every state the real data can have: running, needs
+ * zoomed, one task's Run page read and one task's checks, artifacts and diff. They answer in the Crew scenarios (`crew`,
+ * `crew-<state>`) and nowhere else, so the default scenario keeps every Crew route at 404 as the service does with Crew
+ * Preview off. A sample with a `run` answers the Run page route; one without it keeps the older service's 404, so the page
+ * falls back to its Flow-based Planned marks. A sample with an `artifacts` answers the artifacts route; one without it keeps
+ * the older service's 404 too. The sample tasks exercise every state the real data can have: running, needs
  * you, failed after loops, merged and waiting for review, skipped stages, queued and stopped. Reads only.
  *
  * The person's two writes (`POST /api/crew/tasks/{id}/cancel` and `/rerun-checks`) are answered by `board.ts`, for the zoom as well.
@@ -19,6 +20,7 @@ import type { FlowCounts } from "../src/generated/FlowCounts.ts";
 import type { FlowFilter } from "../src/generated/FlowFilter.ts";
 import type { FlowRunPage } from "../src/generated/FlowRunPage.ts";
 import type { FlowStage } from "../src/generated/FlowStage.ts";
+import type { FlowTaskArtifacts } from "../src/generated/FlowTaskArtifacts.ts";
 import type { FlowTaskDetail } from "../src/generated/FlowTaskDetail.ts";
 import type { FlowTaskList } from "../src/generated/FlowTaskList.ts";
 import type { FlowTaskRow } from "../src/generated/FlowTaskRow.ts";
@@ -44,9 +46,25 @@ interface Sample {
   detail: Omit<FlowTaskDetail, "row" | "truncated" | "crew">;
   /** The Run page read answers for this task. A sample without one keeps the older service's 404. */
   run?: FlowRunPage;
+  /** The checks, artifacts and diff read answers for this task. A sample without one keeps the older service's 404. */
+  artifacts?: FlowTaskArtifacts;
 }
 
 const RUN_COMMIT = "a41c9e2c0ffee0123456789abcdef0123456789a";
+const BASE_COMMIT = "0b1e5f00c0ffee0123456789abcdef0123456789b";
+
+/** The change the checks read in the samples: two files, +18 −4, as the frame draws it. */
+const SAMPLE_DIFF: FlowTaskArtifacts["diff"] = {
+  base: BASE_COMMIT,
+  files: [
+    { path: "auth/redirect.ts", status: "modified", added: 12, removed: 3 },
+    { path: "auth/redirect.test.ts", status: "modified", added: 6, removed: 1 },
+  ],
+  files_total: 2,
+  added: 18,
+  removed: 4,
+  truncated: false,
+};
 
 const row = (id: string, name: string, kind: string, engine: string | null, state: string, round: number, cells: FlowCell[], at: string): FlowTaskRow => ({
   id,
@@ -95,6 +113,15 @@ function samples(): Sample[] {
         ],
         not_verified: [], commit: RUN_COMMIT, pull: null, truncated: false,
       },
+      // The build under way: two checks, none of them naming an artifact yet, and the change they read.
+      artifacts: {
+        task: "task-redirect", crew: MOCK_CREW,
+        checks: [
+          { id: "check-1", kind: "test", task: "task-redirect", outcome: "pass", exit_code: 0, duration_ms: 4000, commit: RUN_COMMIT, artifacts: [] },
+          { id: "check-2", kind: "lint", task: "task-redirect", outcome: "fail", exit_code: 1, duration_ms: 22000, commit: RUN_COMMIT, artifacts: [] },
+        ],
+        diff: SAMPLE_DIFF, diff_absent: null, truncated: false,
+      },
     },
     {
       row: row("task-needs", "Project icon picker", "implement", "codex", "needs_person", 1, line({ brief: "done", route: "done", build: "needs_you" }), "13:40"),
@@ -113,6 +140,16 @@ function samples(): Sample[] {
           { label: "pnpm test:types", outcome: "skipped", exit_code: null, duration_ms: 0, proves: "Every caller uses the new name.", commit: RUN_COMMIT },
         ],
         not_verified: ["The mobile app's callers: no check covers them."], commit: RUN_COMMIT, pull: null, truncated: false,
+      },
+      // Two named artifacts, one of them with no name, and a lead's repro check the task's key does not name.
+      artifacts: {
+        task: "task-failed", crew: MOCK_CREW,
+        checks: [
+          { id: "check-1", kind: "test", task: "task-failed", outcome: "pass", exit_code: 0, duration_ms: 4000, commit: RUN_COMMIT, artifacts: [] },
+          { id: "check-2", kind: "test", task: "task-failed", outcome: "fail", exit_code: 1, duration_ms: 22000, commit: RUN_COMMIT, artifacts: [{ kind: "log", name: "pnpm-test-auth.log", hash: "sha256:7e1c4b94a" }] },
+          { id: "lead-repro-1", task: "task-failed", outcome: "fail", exit_code: 1, duration_ms: 1000, commit: RUN_COMMIT, artifacts: [{ kind: "report", name: null, hash: "sha256:1a2b3c4d5" }] },
+        ],
+        diff: SAMPLE_DIFF, diff_absent: null, truncated: false,
       },
     },
     {
@@ -142,6 +179,15 @@ function samples(): Sample[] {
         not_verified: ["The mobile app's redirect: no check covers it."], commit: RUN_COMMIT,
         pull: { number: 142, branch: "crew/login-docs", commit: RUN_COMMIT }, truncated: false,
       },
+      // A passed task whose checkout is gone: the checks are there and the read names why there is no diff.
+      artifacts: {
+        task: "task-merged", crew: MOCK_CREW,
+        checks: [
+          { id: "check-1", kind: "lint", task: "task-merged", outcome: "pass", exit_code: 0, duration_ms: 4000, commit: RUN_COMMIT, artifacts: [{ kind: "screenshot", name: "login-docs.png", hash: "sha256:9f8e7d6c5" }] },
+          { id: "check-2", kind: "test", task: "task-merged", outcome: "pass", exit_code: 0, duration_ms: 22000, commit: RUN_COMMIT, artifacts: [] },
+        ],
+        diff: null, diff_absent: "no_checkout", truncated: false,
+      },
     },
     {
       row: row("task-queued", "Move the CHANGELOG entry", "docs", null, "briefed", 1, line({ brief: "done" }), "12:00"),
@@ -159,6 +205,11 @@ function samples(): Sample[] {
         merge: null,
         watch: null,
         you: null,
+      },
+      // The read answers and is empty: no check ran, and the checkout could not be read.
+      artifacts: {
+        task: "task-stopped", crew: MOCK_CREW,
+        checks: [], diff: null, diff_absent: "unreadable", truncated: true,
       },
     },
   ];
@@ -253,6 +304,12 @@ export function flowMock(scenario: string, method: string, path: string, query: 
     const end = Math.min(offset + limit, matched.length);
     const body: FlowTaskList = { crew, counts, tasks: matched.slice(offset, end), total: matched.length, next_offset: end < matched.length ? end : null, truncated };
     return { status: 200, body };
+  }
+  const artifactsId = /^\/api\/crew\/flow\/tasks\/([^/]+)\/artifacts$/.exec(path)?.[1];
+  if (artifactsId) {
+    const found = [...all, ...many()].find((one) => one.row.id === decodeURIComponent(artifactsId));
+    if (!found) return missing("task");
+    return found.artifacts ? { status: 200, body: found.artifacts } : missing("artifacts");
   }
   const runId = /^\/api\/crew\/flow\/tasks\/([^/]+)\/run$/.exec(path)?.[1];
   if (runId) {
