@@ -412,7 +412,7 @@ async fn a_class_keeps_the_other_engines_out_and_the_decision_and_the_row_name_t
     let rejected = fakes(&decision.rejected);
     assert_eq!(rejected.len(), 1);
     let blocked = found(&rejected, "alpha's rejection", |rejected| {
-        rejected.engine == "alpha"
+        rejected.engine.as_str() == "alpha"
     });
     assert_eq!(
         (blocked.engine.as_str(), blocked.why),
