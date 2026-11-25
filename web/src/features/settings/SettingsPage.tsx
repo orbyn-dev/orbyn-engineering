@@ -109,7 +109,7 @@ function SettingsPageContent({ section, sub, unknown, row: addressRow, onClose }
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [target, setTarget] = useState<{ id: string; anchor?: boolean } | null>(null);
-  const shell = useAsync("settings-search-shell", (signal) => api.shell(signal), { keep: true });
+  const shell = useAsync("settings-search-shell", (signal, how) => api.shell(signal, how.force), { keep: true });
   // A row that exists only on macOS is left out of search elsewhere, so a result never lands on a missing row.
   const info = useAsync("environment-identity", (signal) => api.info(signal));
   // The Account category exists only while the sign-in gate is on: no dead entry, nothing disabled-looking.
@@ -150,7 +150,8 @@ function SettingsPageContent({ section, sub, unknown, row: addressRow, onClose }
   }, [onClose]);
 
   const sectionResults = groups.flatMap((group) => group.sections).filter((entry) => (entry !== "account" || accountOn) && (entry !== "crew" || crewOn) && labels[entry].toLowerCase().includes(query.trim().toLowerCase()));
-  const reloadShell = shell.reload;
+  // A shell-changed event reads past any read in flight: that answer may hold the older facts.
+  const reloadShell = shell.reloadNow;
   useEffect(() => onShellChange(reloadShell), [reloadShell]);
   const results = useMemo(() => {
     const available = new Set<"cli" | "accessibility" | "screen_recording">();

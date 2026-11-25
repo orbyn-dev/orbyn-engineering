@@ -20,7 +20,13 @@ linked_threads: Array<string>,
  * The reactions on the issue as the tracker reports them, in the tracker's own words. Absent when the
  * tracker does not report them; a write route answers them for a tracker that does (docs/issues.md).
  */
-reactions?: Array<IssueReactionCount> | null, tracker: TrackerKind, scope: string, key: string, 
+reactions?: Array<IssueReactionCount> | null, 
+/**
+ * The states this issue can move to, in the tracker's own words and order (docs/issues.md, "Issue writes and
+ * list controls"). Absent when the tracker offers no state change here; `[]` when it offers one but has no
+ * state to name.
+ */
+states?: Array<IssueState> | null, tracker: TrackerKind, scope: string, key: string, 
 /**
  * How the tracker writes the key: `#412`, `ORB-87`.
  */
