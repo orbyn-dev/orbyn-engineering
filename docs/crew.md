@@ -1409,12 +1409,24 @@ this app yet". That is no longer true of all of them: the escape and capacity ba
 `capacity-live-*` screens). The live escape, capacity and backtest screens are reached from Settings › Crew behind `crew_preview` (the four entry rows and the
 Coverage links, Crew Designs v87; see [escapes.md](crew/escapes.md), slice 4l and backlog B3 below); the Review-tab Escapes section
 (`entry-crew-review-escapes*`) is not built, because the beta has no Review tab. The remaining escape frames (report, dashboard,
-route counts, create check) and the other capacity frames stay drawn samples with disabled buttons. Values the design
+route counts, create check) and the other capacity frames stay drawn samples with disabled buttons, though the per-area counts
+read the two route-counts frames want is built (next paragraph). Values the design
 marks Proposed (the 60-day window, the 10-merge and 2x router tie-break, a limit of 8, sampling one in four rounded up)
 stay Proposed on the screen. The settings rows are drawn in the Preview frame only: in the real Settings page they would
 show a state ("Not set") that nothing stores yet. The v22 units apply to the v19 frames too: the header line reads
 "Codex 62% of its weekly limit", per-merge cost is tokens and minutes in the engine's own unit, and the review-reverted
 card offers "Create a check".
+
+**As built (slice 4k, per-area counts read):** `GET /api/crew/escapes/counts?project=&area=` answers the one part of the escape
+report that the design names and the backend did not have: the merges in the log's stored window (`report_days`) that touched one
+area, and the escapes logged against them, one row per engine, possible, confirmed and dismissed kept apart and no rate. An escape
+counts in the area copied onto it when it was logged, a merge in its own `areas`; rows are busiest first, with `low_sample` the
+log's own test (fewer merges in the area than `min_merges`) and an area's `merges` total counting every engine's. The list is
+bounded at 16 engine rows (`ESCAPE_COUNT_ENGINES_MAX`) and `truncated` says when more had a merge there, so nothing is dropped
+silently. It is a read: class **Local**, in `crew::changes::READS`, and it answers no route that changes state. An unknown project
+and an area that is not a name (empty, over 300 characters, a control character) are refused, never answered as an empty list; an
+area the project never merged into is an honest empty answer. **Display only:** the Router reads no escape count in v1, so the
+counts decide no engine. `escape-route-counts` and `escape-route-shifted` still draw sample data until they are wired to it.
 
 **As built (slice 4f, UI part D):** the independent oracle (Crew Designs v22, 18 frames) and the reviewer backtest (v23, 16
 frames) in `web/src/features/crew/{oracle,backtest}`, on the same stage and with the same rules as part C: drawn sample
