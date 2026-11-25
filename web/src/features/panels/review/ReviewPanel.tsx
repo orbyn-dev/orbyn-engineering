@@ -34,7 +34,7 @@ function Item({ threadId, chip, sent, waiting }: { threadId: string; chip: Revie
   return <li className="review-item" data-state={sent ? "open" : "draft"}>
     <div className="review-item-head">
       <button type="button" className="review-path" title={chip.path} aria-label={`Open ${chipLabel(chip)}`}
-        onClick={() => useUi.getState().revealFile(chip.path, chip.line, { threadId, cwd: chip.sourceCwd ?? cwd ?? "" })}>
+        onClick={() => useUi.getState().revealFile(chip.path, chip.line, { threadId, cwd: chip.sourceCwd ?? cwd ?? "" }, chip.repoId)}>
         <bdi>{chipLabel(chip)}</bdi>
       </button>
       {sent ? <span className="review-badge">{waiting ? "Waiting for the agent" : "Sent"}</span>
