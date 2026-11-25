@@ -390,8 +390,7 @@ mod tests {
 
     #[test]
     fn a_project_tracker_body_must_name_the_tracker_to_unbind_explicitly() {
-        let explicit: SetProjectIssueTracker =
-            serde_json::from_str(r#"{"tracker":null}"#).unwrap();
+        let explicit: SetProjectIssueTracker = serde_json::from_str(r#"{"tracker":null}"#).unwrap();
         assert_eq!(explicit.tracker, None);
         assert_eq!(explicit.scope, None);
         let missing = serde_json::from_str::<SetProjectIssueTracker>(r#"{"scope":"o/r"}"#);
