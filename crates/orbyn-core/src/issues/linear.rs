@@ -66,7 +66,7 @@ const TEAM_ID_QUERY: &str =
     "query OrbynTeamId($key:String!){teams(first:1,filter:{key:{eq:$key}}){nodes{id key}}}";
 const LABELS_QUERY: &str = "query OrbynLabels{issueLabels(first:250){nodes{id name team{key}}}}";
 /// The team's own issue templates: the same fixed document the team read uses, narrowed to the templates.
-const TEAM_TEMPLATES_QUERY: &str = "query OrbynTeamTemplates($key:String!){teams(first:1,filter:{key:{eq:$key}}){nodes{templates{nodes{id name description content type hasFormFields templateData}}{}}}}";
+const TEAM_TEMPLATES_QUERY: &str = "query OrbynTeamTemplates($key:String!){teams(first:1,filter:{key:{eq:$key}}){nodes{templates{nodes{id name description content type hasFormFields templateData}}}}}";
 const ISSUE_REF_QUERY: &str =
     "query OrbynIssueRef($id:String!){issue(id:$id){id identifier team{key}}}";
 const COMMENT_REF_QUERY: &str = "query OrbynCommentRef($id:String!){comment(id:$id){id issue{id}}}";
@@ -239,13 +239,16 @@ fn cursor_tag(scope: &str, query: &IssueQuery) -> String {
     let labels = query.labels.join("\u{1f}");
     let assignee = format!("{:?}", query.assignee);
     let limit = query.limit.to_string();
-    let parts: [&str; 7] = [
+    // The order is part of the filter: a cursor issued for one order is not accepted for another.
+    let sort = format!("{:?}", query.sort);
+    let parts: [&str; 8] = [
         "linear-cursor",
         scope,
         state,
         &labels,
         &assignee,
         &query.text,
+        &sort,
         &limit,
     ];
     let mut hash = Sha256::new();
@@ -943,7 +946,6 @@ impl IssueSource for Linear {
         Ok(templates)
     }
 
-
     async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
         team_key(scope)?;
         if new.assignees.len() > 1 {
@@ -964,7 +966,8 @@ impl IssueSource for Linear {
         }
         let value = self
             .graph(ISSUE_CREATE_MUTATION, json!({ "input": input }), false)
-            .await?;
+            .await
+            .map_err(|error| super::possibly_created("Linear", error))?;
         if value
             .pointer("/data/issueCreate/success")
             .and_then(Value::as_bool)
@@ -988,6 +991,7 @@ impl IssueSource for Linear {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
+            states: None,
         })
     }
 
@@ -1152,6 +1156,7 @@ impl IssueSource for Linear {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
+            states: None,
         })
     }
 

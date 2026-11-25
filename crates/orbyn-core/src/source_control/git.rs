@@ -10,6 +10,8 @@ use tokio::process::Command;
 
 use crate::error::{CoreError, Result};
 
+use super::branch_names::{self, MAX_EXISTING_BRANCHES, Naming, NamingMode};
+
 /// Git's well-known empty tree, the parent side of a root commit's diff.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
@@ -44,6 +46,10 @@ const CREW_BYTE_EXACT: &[&str] = &[
     "-c",
     "core.untrackedCache=false",
 ];
+
+/// The Git release that started honouring `GIT_ATTR_SOURCE`. Older Git reads the checkout's own
+/// `.gitattributes` instead, which could normalize a byte change away from a byte-exact read.
+const ATTR_SOURCE_FROM: (u32, u32) = (2, 40);
 
 /// The repository's own empty tree. Reading attributes from it hides `.gitattributes`.
 async fn no_attributes(cwd: &Path) -> Result<String> {
@@ -142,6 +148,23 @@ async fn hardened(cwd: &Path, extra: &[&str], args: &[&str]) -> Result<Vec<u8>> 
         ));
     }
     Ok(output.stdout)
+}
+
+/// The major and minor version in `git version` output, such as `git version 2.39.3 (Apple Git-146)` or
+/// `git version 2.45.1.windows.1`.
+pub(crate) fn git_version(output: &str) -> Option<(u32, u32)> {
+    let version = output.trim().strip_prefix("git version ")?;
+    let mut parts = version.split(|c: char| !c.is_ascii_digit());
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// Whether this Git honours `GIT_ATTR_SOURCE`, which keeps the checkout's own `.gitattributes` out of a read.
+/// A byte-exact read needs that: otherwise a text attribute could normalize a byte change away.
+pub(crate) async fn reads_attributes_from_source(cwd: &Path) -> bool {
+    let Ok(out) = git_raw(cwd, &["version"]).await else {
+        return false;
+    };
+    git_version(&text(&out.stdout)).is_some_and(|version| version >= ATTR_SOURCE_FROM)
 }
 
 /// `git_hardened` that never holds more than `cap` bytes of output: past the cap the process tree is stopped and the call is an
@@ -365,20 +388,24 @@ pub(crate) async fn linked_worktrees(repo: &Path) -> Result<Vec<RegisteredWorktr
 /// How a new worktree starts, from the settings and the project file.
 #[derive(Clone, Debug)]
 pub struct WorktreeOptions {
-    pub prefix: String,
+    pub naming: Naming,
     pub base: Option<String>,
     pub from_origin: bool,
     /// `recursive`, `top-level` or `none`; legacy spellings remain readable.
     pub submodules: String,
+    /// The thread's real title, when the creation request had one; semantic naming uses it
+    /// before the purpose.
+    pub seed: Option<String>,
 }
 
 impl Default for WorktreeOptions {
     fn default() -> Self {
         Self {
-            prefix: "feat".to_owned(),
+            naming: Naming::default(),
             base: None,
             from_origin: false,
             submodules: "none".to_owned(),
+            seed: None,
         }
     }
 }
@@ -428,14 +455,21 @@ pub(crate) async fn create_worktree(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let branch = format!("{}/{purpose}", options.prefix);
+    // The branch name is chosen from the thread and the naming mode, never taken from
+    // the request as a ref: semantic naming reads the project's local branches first, so
+    // the same title twice makes two branches, and custom naming uses the purpose itself.
+    let existing = if options.naming.mode == NamingMode::Semantic {
+        local_branch_names(repo).await?
+    } else {
+        Vec::new()
+    };
+    let branch =
+        branch_names::branch_name(&options.naming, options.seed.as_deref(), purpose, &existing);
     if git(repo, &["check-ref-format", "--branch", &branch])
         .await
         .is_err()
     {
-        return Err(CoreError::Invalid(
-            "That branch prefix is not valid.".into(),
-        ));
+        return Err(CoreError::Invalid("That branch name is not valid.".into()));
     }
     let start = worktree_start(repo, options).await.unwrap_or(head);
     git(
@@ -460,6 +494,24 @@ pub(crate) async fn create_worktree(
         branch,
         base: start,
     })
+}
+
+/// The project's local branches, capped. Semantic naming avoids them; a listing past the
+/// cap is cut rather than read unbounded, and a name past it is left to Git to refuse.
+async fn local_branch_names(repo: &Path) -> Result<Vec<String>> {
+    let listing = git(
+        repo,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    )
+    .await?;
+    let listing = String::from_utf8_lossy(&listing);
+    Ok(listing
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .take(MAX_EXISTING_BRANCHES)
+        .map(str::to_owned)
+        .collect())
 }
 
 /// A chosen base, or the remote's head when asked for. `None` means this clone's HEAD.
@@ -823,6 +875,23 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(text(&exact), "false", "{key} is off for byte-exact checks");
+        }
+    }
+
+    #[test]
+    fn the_byte_exact_checks_need_attr_source_from_git_2_40() {
+        for (output, supported) in [
+            ("git version 2.39.5 (Apple Git-154)\n", false),
+            ("git version 2.40.0\n", true),
+            ("git version 2.45.1.windows.1\n", true),
+            ("git version 3.0.0\n", true),
+            ("not git", false),
+        ] {
+            assert_eq!(
+                git_version(output).is_some_and(|version| version >= ATTR_SOURCE_FROM),
+                supported,
+                "{output}"
+            );
         }
     }
 

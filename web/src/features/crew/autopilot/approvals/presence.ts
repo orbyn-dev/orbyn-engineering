@@ -56,9 +56,10 @@ export function useDesktopApp(): boolean {
   const [desktop, setDesktop] = useState(canAskPresence);
   useEffect(() => {
     let live = true;
-    const read = () => void readShellStatus().then(() => live && setDesktop(canAskPresence()), () => undefined);
+    // A shell-changed event reads past any read in flight: that answer may hold the older facts.
+    const read = (fresh = false) => void readShellStatus(undefined, fresh).then(() => live && setDesktop(canAskPresence()), () => undefined);
     read();
-    const stop = onShellChange(read);
+    const stop = onShellChange(() => read(true));
     return () => {
       live = false;
       stop();

@@ -470,6 +470,8 @@ async fn a_task_that_is_not_final_shows_no_check_text_and_no_gate_reason() {
             .unwrap()
             .as_nanos()
     );
+    // Template rows: any row of the finished task works, because the graft below replaces every field
+    // a read looks at.
     let evidence = w.core.store.crew_evidence(&done).unwrap().remove(0);
     let gate = w.core.store.crew_gates(&done).unwrap().remove(0);
     for (object, fields) in [
@@ -682,6 +684,7 @@ async fn a_gate_reason_that_quotes_a_repro_or_another_tasks_check_is_withheld() 
         .unwrap();
 
     // The lead's free-text reason on a Gate is checked for secrets when written, not for key text.
+    // Any gate of the task is a template: its reason is replaced below and its id recomputed.
     let mut gate =
         CrewObject::Gate(w.core.store.crew_gates(&subject).unwrap().remove(0)).to_value();
     gate["reason"] = json!(format!("ran {repro_command} and {other_check}"));
@@ -734,4 +737,87 @@ async fn only_the_security_lane_is_the_security_review() {
     assert_eq!(state(&list, &subject, Stage::Code), State::Done);
     let detail = w.core.crew_flow_task(&subject).unwrap();
     assert!(detail.lanes.iter().all(|l| l.group == "code"));
+}
+
+/// The You cell of a task's row: the list's and the zoom's, which must agree.
+fn you_cell(w: &super::harness::World, crew_id: &str, id: &str) -> State {
+    let list = w
+        .core
+        .crew_flow_tasks(crew_id, None, None, None, page())
+        .unwrap();
+    let row = list
+        .tasks
+        .iter()
+        .find(|row| row.id == id)
+        .expect("the task's row");
+    let listed = row
+        .cells
+        .iter()
+        .find(|cell| cell.stage == Stage::You)
+        .unwrap()
+        .state;
+    let zoomed = w
+        .core
+        .crew_flow_task(id)
+        .unwrap()
+        .row
+        .cells
+        .iter()
+        .find(|cell| cell.stage == Stage::You)
+        .unwrap()
+        .state;
+    assert_eq!(listed, zoomed, "the list and the zoom agree");
+    listed
+}
+
+/// KC3: the You cell reads the one needs-you field, never its own answer. A merge whose break waits on a person is the
+/// field's MergeWaiting item, so the cell says Needs you; the same waiting merge with no note that the field names is the
+/// ordinary review wait; and a reverted merge is Failed.
+#[tokio::test]
+async fn the_you_cell_reads_the_one_needs_you_field() {
+    let w = crew(arc(|_, root| built(root))).await;
+    let id = w.built_work().await;
+    let crew_id = w.task(&id).crew_id;
+    let mut record = crate::crew::fixtures::merge_record(&id, "/repo", "main", "a break");
+    record.crew_id = crew_id.clone();
+    record.review_state = "waiting".to_owned();
+    record.needs_person = Some("The break needs a person.".to_owned());
+    w.core.store.add_crew_merge(&record).unwrap();
+
+    // The field names a merge wait, so the cell says Needs you from that one field.
+    let field = w.core.crew_needs_you().unwrap().items;
+    let item = field
+        .iter()
+        .find(|item| item.id == id)
+        .expect("the field names the merge wait");
+    assert_eq!(item.kind, orbyn_contracts::NeedsYouKind::MergeWaiting);
+    assert_eq!(you_cell(&w, &crew_id, &id), State::NeedsYou);
+
+    // Without a note for a person the field no longer names it: the cell is the ordinary review wait, not Needs you.
+    w.core.store.set_merge_needs_person(&id, None).unwrap();
+    assert!(
+        w.core
+            .crew_needs_you()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| item.id != id),
+        "the field no longer names the merge"
+    );
+    assert_eq!(you_cell(&w, &crew_id, &id), State::ReviewWaiting);
+
+    // A reverted merge is Failed, and the field names nothing.
+    w.core
+        .store
+        .set_merge_review(&id, "reverted", None)
+        .unwrap();
+    assert!(
+        w.core
+            .crew_needs_you()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| item.id != id)
+    );
+    assert_eq!(you_cell(&w, &crew_id, &id), State::Failed);
 }

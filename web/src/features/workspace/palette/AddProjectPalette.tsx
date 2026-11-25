@@ -11,19 +11,37 @@ import { FolderBrowser } from "../../../product/ui/FolderBrowser";
 import { dropTrailingSlash, expandHome, homePrefix, pathName, replaceHomePrefix, shortenHome, splitPath, withSlash } from "./pathInput";
 import { trackClone } from "../app-chrome/CloneJobs";
 import { canPickFolder, pickFolder } from "../../repos";
+import { checkCloneSource, cloneAddress } from "../../../product/git/cloneSource";
 import "../addProject.css";
 
 export type AddProjectView = "folders" | "new" | "clone";
 
-/** An `owner/name` on GitHub is a clone address too; anything else goes to Git as typed. */
-export function cloneAddress(text: string): string {
-  const typed = text.trim();
-  return /^[\w.-]+\/[\w.-]+$/.test(typed) && !/^\.{1,2}\//.test(typed) ? `https://github.com/${typed}.git` : typed;
+/** A folder this dialog hands Git as typed: a drive path, home, the current folder or a UNC share. */
+const isLocalPath = (address: string) => /^(?:[A-Za-z]:[\\/]|\\\\|~[\\/]|\/|\.{1,2}[\\/])/.test(address);
+
+/**
+ * Why the typed clone source cannot be sent, or null when it can. The Add project flow hands Git any
+ * source it reads: an http(s), ssh or file URL, an scp-like address, an owner/name on GitHub or a local
+ * path, so only what cannot be a source at all is refused. The Repositories dialog's check supplies its
+ * empty-address rule and its space-or-control-character one, which this flow applies to an address but
+ * not to a local path, spaces and all (Git takes a folder with spaces); its https-or-ssh-only rule is
+ * that page's route, not this flow's.
+ */
+export function cloneProblem(text: string): string | null {
+  const address = cloneAddress(text);
+  const checked = checkCloneSource(address);
+  const local = isLocalPath(address);
+  // eslint-disable-next-line no-control-regex
+  const bad = /[\u0000-\u001f\u007f]/.test(address) || (!local && /\s/.test(address));
+  if (!checked.ok && (address === "" || bad)) return checked.reason;
+  // A scheme with nothing after it names no host and no path, so there is nothing to clone.
+  if (!local && /^[A-Za-z][A-Za-z0-9+.-]*:\/\/*$/.test(address)) return "Enter the address to clone from.";
+  return null;
 }
 
 /** The base directory setting, when the person has chosen one. */
 function useBaseDirectory(): string | null {
-  const preferences = useAsync("add-project-base-directory", (signal) => readPreferences(signal));
+  const preferences = useAsync("add-project-base-directory", (signal) => readPreferences(null, signal));
   const value = (Array.isArray(preferences.data) ? preferences.data : []).find((view) => view.key === "add_project_base_directory")?.value;
   return typeof value === "string" && value.trim() ? value : null;
 }
@@ -260,6 +278,10 @@ function Folders({
   );
 }
 
+const FIELD_ID = "add-project-field";
+/** A stable id for the dialog's one error line, so the field can describe itself by it. */
+const ERROR_ID = `${FIELD_ID}-error`;
+
 /** One field, Cancel and the confirm: the design's New project and Clone dialogs. */
 function AddDialog({
   title,
@@ -267,6 +289,7 @@ function AddDialog({
   confirm,
   mono,
   hint,
+  check,
   submit,
   onCancel,
 }: {
@@ -275,12 +298,15 @@ function AddDialog({
   confirm: string;
   mono?: boolean;
   hint: ReactNode;
+  /** What is wrong with the typed value, or null when it may be sent: an answer keeps the dialog open and sends nothing. */
+  check?(value: string): string | null;
   submit(value: string): Promise<void>;
   onCancel(): void;
 }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const field = useRef<HTMLInputElement>(null);
   const live = useRef(true);
   useEffect(
     () => () => {
@@ -290,7 +316,16 @@ function AddDialog({
   );
   const send = async () => {
     const text = value.trim();
+    // The confirm is disabled while the field is empty, so an empty value never reaches this guard.
     if (!text || busy) return;
+    const problem = check?.(text) ?? null;
+    if (problem !== null) {
+      // The dialog answers with the reason and stays open; nothing is sent and the field takes
+      // the focus back, so the address can be fixed where the message points.
+      setError(problem);
+      field.current?.focus();
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -325,9 +360,10 @@ function AddDialog({
           void send();
         }}
       >
-        <label htmlFor="add-project-field">{label}</label>
+        <label htmlFor={FIELD_ID}>{label}</label>
         <input
-          id="add-project-field"
+          id={FIELD_ID}
+          ref={field}
           className={mono ? "dialog-field dialog-field-mono" : "dialog-field"}
           data-dialog-focus
           value={value}
@@ -335,10 +371,15 @@ function AddDialog({
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
-          onChange={(event) => setValue(event.target.value)}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? ERROR_ID : undefined}
+          onChange={(event) => {
+            setValue(event.target.value);
+            if (error !== null) setError(null);
+          }}
         />
         {error ? (
-          <p className="field-error" role="alert">
+          <p id={ERROR_ID} className="field-error" role="alert">
             {error}
           </p>
         ) : hint ? (
@@ -434,6 +475,7 @@ export function AddProjectPalette({
               progress shows in the sidebar until it finishes.
             </>
           }
+          check={cloneProblem}
           submit={async (url) => {
             const job = await api.startClone(cloneAddress(url));
             if (onAdded) setView("folders");

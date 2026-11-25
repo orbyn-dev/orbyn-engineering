@@ -12,7 +12,7 @@ use std::sync::Arc;
 use orbyn_contracts::{PatternKind, PatternScope, RedactionPatternInput};
 use serde_json::json;
 
-use super::autopilot_watch::{NOW, history};
+use super::autopilot_watch::{NOW, Watched, history};
 use super::harness::{KEY_MARKER, Turn, World, brief, key, world};
 use crate::crew::{ReviewAnswer, WatchOutcome};
 use crate::error::CoreError;
@@ -204,6 +204,32 @@ fn stamp(unix: i64) -> String {
         .unwrap()
 }
 
+/// The recent row whose title is `title`, found by the outcome its brief carried: the read owns the
+/// list's order, so a test never relies on where a fixture's row landed in it.
+fn recent_row<'a>(answer: &'a wire::CrewDashboard, title: &str) -> &'a wire::CrewDashboardRecent {
+    answer
+        .recent
+        .iter()
+        .find(|recent| recent.title == title)
+        .expect("the recent row with that title")
+}
+
+/// The history task whose brief carried `outcome`, found through that brief: a test never relies on
+/// the order `history` started its fixture tasks in.
+fn history_task(h: &Watched, outcome: &str) -> String {
+    h.tasks
+        .iter()
+        .find(|task| {
+            h.w.core
+                .store
+                .crew_brief(task.as_str())
+                .unwrap()
+                .is_some_and(|brief| brief.outcome == outcome)
+        })
+        .unwrap_or_else(|| panic!("the history task whose brief said {outcome}"))
+        .clone()
+}
+
 #[tokio::test]
 async fn the_read_counts_one_projects_merges_inside_the_window_only() {
     let mut r = rig().await;
@@ -287,6 +313,8 @@ async fn the_weeks_are_the_persons_local_mondays_and_a_quiet_week_is_a_zero_bar(
 
     let answer = r.read(Some(30), 600, now);
     assert_eq!(answer.weeks.len(), 4);
+    // The bars are one chronological series, oldest first: the index is the week, so the first and
+    // last bars are the order check, and a quiet week is a zero bar between them.
     assert_eq!(answer.weeks[0].start, LOCAL_MONDAY - 21 * DAY);
     assert_eq!(answer.weeks[0].merges, 2);
     assert_eq!(answer.weeks[1].merges, 0);
@@ -339,8 +367,9 @@ async fn a_merge_stamped_after_now_is_counted_in_its_own_week() {
         "the weeks add up to merges"
     );
     assert_eq!(answer.weeks.len(), 1);
-    assert_eq!(answer.weeks[0].merges, 1);
-    assert_eq!(answer.weeks[0].start.rem_euclid(DAY), 0, "a UTC Monday");
+    let week = answer.weeks.first().expect("the window's one week");
+    assert_eq!(week.merges, 1);
+    assert_eq!(week.start.rem_euclid(DAY), 0, "a UTC Monday");
 }
 
 /// Two raw engine and area names that the scrub turns into the same text are one row, not two
@@ -357,9 +386,9 @@ async fn two_raw_names_that_scrub_to_the_same_text_are_one_row() {
         .await;
     let answer = r.read(Some(30), 0, now);
     assert_eq!(answer.engines.len(), 1, "{:?}", answer.engines);
-    assert_eq!(answer.engines[0].merges, 2);
+    assert_eq!(answer.engines.first().expect("the one row").merges, 2);
     assert_eq!(answer.areas.len(), 1, "{:?}", answer.areas);
-    assert_eq!(answer.areas[0].merges, 2);
+    assert_eq!(answer.areas.first().expect("the one row").merges, 2);
 }
 
 /// A ledger row of another kind that waited on the person is `other`, never `nothing`.
@@ -371,7 +400,10 @@ async fn a_ledger_row_that_waited_on_the_person_is_needed_other() {
     r.w.core
         .merge_event(&task, "person", &json!({ "why": "a person must decide" }));
     let answer = r.read(Some(30), 0, now);
-    assert_eq!(answer.recent[0].needed, wire::CrewNeeded::Other);
+    assert_eq!(
+        recent_row(&answer, "Task 1.").needed,
+        wire::CrewNeeded::Other
+    );
     assert_eq!(answer.unaided, 0);
 }
 
@@ -449,7 +481,10 @@ async fn a_question_answered_before_the_brief_does_not_count() {
     r.brief_at(&task, brief_at);
     answered_question(&r, "q-before", brief_at - 2 * 3_600, brief_at - 3_600);
     let answer = r.read(Some(30), 0, now);
-    assert_eq!(answer.recent[0].needed, wire::CrewNeeded::Nothing);
+    assert_eq!(
+        recent_row(&answer, "Task 1.").needed,
+        wire::CrewNeeded::Nothing
+    );
     assert_eq!(answer.unaided, 1);
 }
 
@@ -497,7 +532,10 @@ async fn an_answered_question_past_the_five_hundred_row_limit_still_counts() {
             .unwrap();
     }
     let answer = r.read(Some(30), 0, now);
-    assert_eq!(answer.recent[0].needed, wire::CrewNeeded::Answer);
+    assert_eq!(
+        recent_row(&answer, "Task 1.").needed,
+        wire::CrewNeeded::Answer
+    );
 }
 
 /// A title that quotes the task's answer key comes out withheld, not on the screen.
@@ -513,7 +551,8 @@ async fn a_title_withholds_the_tasks_answer_key_text() {
     let n = r.next;
     r.add_merge_record(&task, "src/a/**", now - DAY, "alpha", json!({}), n);
     let answer = r.read(Some(30), 0, now);
-    let title = &answer.recent[0].title;
+    assert_eq!(answer.recent.len(), 1);
+    let title = &answer.recent.first().expect("the one recent row").title;
     assert!(!title.contains(KEY_MARKER), "{title}");
     assert!(title.contains("[check]"), "{title}");
 }
@@ -545,7 +584,8 @@ async fn a_title_masks_the_persons_own_secret_pattern() {
     )
     .await;
     let answer = r.read(Some(30), 0, now);
-    let title = &answer.recent[0].title;
+    assert_eq!(answer.recent.len(), 1);
+    let title = &answer.recent.first().expect("the one recent row").title;
     assert!(!title.contains("corp_abcdef"), "{title}");
     assert!(title.contains("[hidden: Corp id]"), "{title}");
 }
@@ -632,14 +672,28 @@ async fn an_engine_and_an_area_carry_their_own_record_and_a_cost_in_one_unit() {
     let charlie = answer.engines.iter().find(|e| e.name == "charlie").unwrap();
     assert_eq!(charlie.merges, 2);
     assert!(charlie.cost.is_none(), "two units are never added");
-    // Most merges first.
-    assert_eq!(answer.engines[0].name, "alpha");
+    // Most merges first, then by name: the read's own order is the assertion.
+    assert_eq!(
+        answer
+            .engines
+            .iter()
+            .map(|engine| engine.name.as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "charlie", "bravo"]
+    );
 
     let a = answer.areas.iter().find(|a| a.name == "src/a/**").unwrap();
     assert_eq!(a.merges, 2);
     let b = answer.areas.iter().find(|b| b.name == "src/b/**").unwrap();
     assert_eq!(b.merges, 3);
-    assert_eq!(answer.areas[0].name, "src/b/**");
+    assert_eq!(
+        answer
+            .areas
+            .iter()
+            .map(|area| area.name.as_str())
+            .collect::<Vec<_>>(),
+        ["src/b/**", "src/a/**"]
+    );
 }
 
 #[tokio::test]
@@ -648,8 +702,13 @@ async fn an_engine_with_no_reported_cost_says_nothing_rather_than_zero() {
     let now = crate::util::unix_now();
     r.merge("src/a/**", now - DAY, "alpha", json!({})).await;
     let answer = r.read(Some(30), 0, now);
-    assert_eq!(answer.engines[0].merges, 1);
-    assert!(answer.engines[0].cost.is_none());
+    let alpha = answer
+        .engines
+        .iter()
+        .find(|engine| engine.name == "alpha")
+        .expect("the alpha engine row");
+    assert_eq!(alpha.merges, 1);
+    assert!(alpha.cost.is_none());
 }
 
 #[tokio::test]
@@ -670,6 +729,7 @@ async fn a_revert_says_who_reverted_it_and_the_list_is_newest_first() {
         answer.reverted
     );
     assert_eq!(answer.reverts.len(), 2);
+    // A window pair is two adjacent rows of one list: the pair's order is the assertion.
     assert!(
         answer
             .reverts
@@ -711,15 +771,17 @@ async fn a_persons_revert_after_an_unsure_break_is_not_certain() {
             .crew_watch_main(&h.target, NOW + 100)
             .await
             .unwrap();
-    assert!(
-        matches!(outcome, WatchOutcome::NeedsPerson { .. }),
-        "{outcome:?}"
-    );
+    let WatchOutcome::NeedsPerson { culprit, .. } = outcome else {
+        panic!("{outcome:?}")
+    };
+    let culprit = culprit.expect("the watch named the merge that broke main");
+    // The third fixture merge is the one that rewrote `src/state.txt`: the watch names exactly it.
+    assert_eq!(culprit, history_task(&h, "Task 3."));
     run_git(&h.w.repo, &["checkout", "-q", "parking"]);
     // The person reverts through the same `revert_merge` the watch uses, once the branch is free.
     let commit =
         h.w.core
-            .crew_answer_review(&h.tasks[2], ReviewAnswer::Revert, &h.target, NOW + 200)
+            .crew_answer_review(&culprit, ReviewAnswer::Revert, &h.target, NOW + 200)
             .await
             .unwrap();
     assert!(commit.is_some());
@@ -778,9 +840,11 @@ async fn a_revert_with_nothing_recorded_is_null_certain() {
     ])
     .await;
     let project = h.w.core.store.thread(&h.w.lead).unwrap().project_id;
+    // Any merge with nothing recorded does; this one is named by the brief `history` gave it.
+    let task = history_task(&h, "Task 2.");
     let commit =
         h.w.core
-            .crew_answer_review(&h.tasks[1], ReviewAnswer::Revert, &h.target, NOW + 100)
+            .crew_answer_review(&task, ReviewAnswer::Revert, &h.target, NOW + 100)
             .await
             .unwrap();
     assert!(commit.is_some());
@@ -808,13 +872,28 @@ async fn recent_lists_the_newest_merges_with_their_checks() {
 
     let answer = r.read(Some(30), 0, now);
     assert_eq!(answer.recent.len(), 3);
+    // The list is newest first: its titles assert the order, and each row is found by its own title.
     assert_eq!(
-        answer.recent[0].checks,
+        answer
+            .recent
+            .iter()
+            .map(|recent| recent.title.as_str())
+            .collect::<Vec<_>>(),
+        ["Task 3.", "Task 2.", "Task 1."]
+    );
+    assert_eq!(
+        recent_row(&answer, "Task 3.").checks,
         wire::CrewChecks::None_,
         "the newest"
     );
-    assert_eq!(answer.recent[1].checks, wire::CrewChecks::Failed);
-    assert_eq!(answer.recent[2].checks, wire::CrewChecks::Passed);
+    assert_eq!(
+        recent_row(&answer, "Task 2.").checks,
+        wire::CrewChecks::Failed
+    );
+    assert_eq!(
+        recent_row(&answer, "Task 1.").checks,
+        wire::CrewChecks::Passed
+    );
     assert!(
         answer
             .recent
@@ -866,7 +945,10 @@ async fn the_read_writes_nothing() {
     // The held command is what that merge needed, so it is not one that needed nothing.
     assert_eq!(answer.merges, 1);
     assert_eq!(answer.unaided, 0);
-    assert_eq!(answer.recent[0].needed, wire::CrewNeeded::Approval);
+    assert_eq!(
+        recent_row(&answer, "Task 1.").needed,
+        wire::CrewNeeded::Approval
+    );
 }
 
 /// Every row of every table the store holds, before and after the read. Not three counts: a read

@@ -61,13 +61,19 @@ pub struct ResolveThreadPath {
     pub basis: ThreadPathBasis,
     // The caller's current thread cwd, fenced against moves during resolution.
     pub cwd: String,
+    /// A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_id: Option<String>,
 }
 }
 
 wire! {
 pub struct ResolvedThreadPath {
+    /// The thread's stored folder, which the request fenced against.
     pub cwd: String,
-    // An existing safe file inside the selected thread cwd, never a sibling.
+    // An existing safe file inside the selected checkout (a repository's worktree for a
+    // multi-repository thread), never a sibling.
     pub checkout_path: Option<String>,
     // Git-relative metadata can name missing/deleted files and checkout siblings.
     pub repository_path: Option<String>,
@@ -119,6 +125,10 @@ pub struct OpenInEditor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub column: Option<u32>,
+    /// A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_id: Option<String>,
 }
 }
 

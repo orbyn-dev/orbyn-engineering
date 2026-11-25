@@ -49,25 +49,40 @@ fn later(one: &str, other: &str) -> bool {
 }
 
 impl Store {
-    /// Every task in one of `states`, across every crew, newest first, with the project of its lead thread.
-    pub fn crew_tasks_in_states(&self, states: &[&str]) -> Result<Vec<NeedsYouTask>> {
+    /// Every task in one of `states`, newest first, with the project of its lead thread. `crew` and `project`
+    /// narrow the query itself, so a read scoped to one crew or one repository never loads the other records.
+    pub fn crew_tasks_in_states(
+        &self,
+        states: &[&str],
+        crew: Option<&str>,
+        project: Option<&str>,
+    ) -> Result<Vec<NeedsYouTask>> {
         if states.is_empty() {
             return Ok(Vec::new());
         }
         let marks = vec!["?"; states.len()].join(",");
-        let args: Vec<rusqlite::types::Value> = states
+        let mut args: Vec<rusqlite::types::Value> = states
             .iter()
             .map(|state| rusqlite::types::Value::from((*state).to_owned()))
             .collect();
-        let conn = self.reader();
-        let mut statement = conn.prepare(&format!(
+        let mut sql = format!(
             "SELECT t.*, th.project_id AS lead_project
              FROM crew_tasks t
              LEFT JOIN crew_runs r ON r.task_id = t.id
              LEFT JOIN threads th ON th.id = r.lead_thread_id
-             WHERE t.state IN ({marks})
-             ORDER BY t.updated_at DESC, t.id"
-        ))?;
+             WHERE t.state IN ({marks})"
+        );
+        if let Some(crew) = crew {
+            sql.push_str(" AND t.crew_id = ?");
+            args.push(rusqlite::types::Value::Text(crew.to_owned()));
+        }
+        if let Some(project) = project {
+            sql.push_str(" AND th.project_id = ?");
+            args.push(rusqlite::types::Value::Text(project.to_owned()));
+        }
+        sql.push_str(" ORDER BY t.updated_at DESC, t.id");
+        let conn = self.reader();
+        let mut statement = conn.prepare(&sql)?;
         let rows = statement
             .query_map(rusqlite::params_from_iter(args.iter()), |row| {
                 Ok(NeedsYouTask {
@@ -110,10 +125,13 @@ impl Store {
     /// when that attempt failed. The try is the last `crew.task.cancel_failed` row of the task, with no `crew.task.cancelled` or
     /// `crew.task.stop_retried` row after it. A task that passed or stopped is not one. A `cancelled` task is: its second stop
     /// failed after the state moved, and a cancel of it tries the stop again (#1400). Reads the audit rows the cancel already
-    /// writes and adds no storage.
-    pub fn crew_could_not_stop(&self) -> Result<Vec<CouldNotStopTask>> {
-        let conn = self.reader();
-        let mut statement = conn.prepare(
+    /// writes and adds no storage; `crew` and `project` narrow the query itself.
+    pub fn crew_could_not_stop(
+        &self,
+        crew: Option<&str>,
+        project: Option<&str>,
+    ) -> Result<Vec<CouldNotStopTask>> {
+        let mut sql = String::from(
             "SELECT t.*, th.project_id AS lead_project, a.ts AS failed_at
              FROM crew_tasks t
              JOIN audit_events a ON a.id = (
@@ -127,11 +145,22 @@ impl Store {
                    SELECT 1 FROM audit_events c
                    WHERE c.target = t.id AND c.id > a.id
                      AND c.action IN ('crew.task.cancelled', 'crew.task.stop_retried')
-               )
-             ORDER BY t.updated_at DESC, t.id",
-        )?;
+               )",
+        );
+        let mut args: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(crew) = crew {
+            sql.push_str(" AND t.crew_id = ?");
+            args.push(rusqlite::types::Value::Text(crew.to_owned()));
+        }
+        if let Some(project) = project {
+            sql.push_str(" AND th.project_id = ?");
+            args.push(rusqlite::types::Value::Text(project.to_owned()));
+        }
+        sql.push_str(" ORDER BY t.updated_at DESC, t.id");
+        let conn = self.reader();
+        let mut statement = conn.prepare(&sql)?;
         let rows = statement
-            .query_map([], |row| {
+            .query_map(rusqlite::params_from_iter(args.iter()), |row| {
                 Ok(CouldNotStopTask {
                     task: super::crew::task_row(row)?,
                     project_id: row.get("lead_project")?,
@@ -142,13 +171,36 @@ impl Store {
         Ok(rows)
     }
 
-    /// The tasks that have a ledger row of this kind, in one query.
-    pub fn crew_tasks_with_autopilot_event(&self, kind: &str) -> Result<BTreeSet<String>> {
+    /// The tasks that have a ledger row of this kind, in one query. `crew` and `project` narrow the query itself, so a
+    /// read scoped to one crew or one repository never reads the whole ledger.
+    pub fn crew_tasks_with_autopilot_event(
+        &self,
+        kind: &str,
+        crew: Option<&str>,
+        project: Option<&str>,
+    ) -> Result<BTreeSet<String>> {
+        let mut sql = String::from("SELECT DISTINCT e.task_id FROM crew_autopilot_events e");
+        let mut args = vec![rusqlite::types::Value::Text(kind.to_owned())];
+        if crew.is_some() || project.is_some() {
+            sql.push_str(
+                " JOIN crew_tasks t ON t.id = e.task_id
+                  LEFT JOIN crew_runs r ON r.task_id = t.id
+                  LEFT JOIN threads th ON th.id = r.lead_thread_id",
+            );
+        }
+        sql.push_str(" WHERE e.kind = ?1");
+        if let Some(crew) = crew {
+            sql.push_str(" AND t.crew_id = ?");
+            args.push(rusqlite::types::Value::Text(crew.to_owned()));
+        }
+        if let Some(project) = project {
+            sql.push_str(" AND th.project_id = ?");
+            args.push(rusqlite::types::Value::Text(project.to_owned()));
+        }
         let conn = self.reader();
-        let mut statement =
-            conn.prepare("SELECT DISTINCT task_id FROM crew_autopilot_events WHERE kind = ?1")?;
+        let mut statement = conn.prepare(&sql)?;
         Ok(statement
-            .query_map([kind], |row| row.get(0))?
+            .query_map(rusqlite::params_from_iter(args.iter()), |row| row.get(0))?
             .collect::<rusqlite::Result<BTreeSet<String>>>()?)
     }
 

@@ -406,13 +406,16 @@ fn cursor_tag(scope: &str, query: &IssueQuery, page: u32) -> String {
     let assignee = format!("{:?}", query.assignee);
     let limit = query.limit.to_string();
     let page = page.to_string();
-    let parts: [&str; 8] = [
+    // The order is part of the filter: a cursor issued for one order is not accepted for another.
+    let sort = format!("{:?}", query.sort);
+    let parts: [&str; 9] = [
         "gitlab-cursor",
         scope,
         state,
         &labels,
         &assignee,
         &query.text,
+        &sort,
         &limit,
         &page,
     ];
@@ -650,7 +653,8 @@ impl IssueSource for GitLab {
         let path = format!("/api/v4/projects/{project}/issues");
         let got = self
             .send(Method::POST, &path, &[], Some(&payload), "project")
-            .await?;
+            .await
+            .map_err(|error| super::possibly_created("GitLab", error))?;
         let value = parse(&got.body)?;
         let summary = summary(&self.host, scope, &value).ok_or_else(unreadable)?;
         // A new issue has no comments: its own reply is the whole answer, so a successful create is never reported
@@ -662,6 +666,7 @@ impl IssueSource for GitLab {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
+            states: None,
         })
     }
 
@@ -908,6 +913,7 @@ impl IssueSource for GitLab {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
+            states: None,
         })
     }
 }

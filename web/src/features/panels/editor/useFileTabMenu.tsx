@@ -6,7 +6,6 @@ import { chipId, fileExcerpt, languageForPath } from "../../../product/composer/
 import { savedContents, sessionOfTab, useEditorSessions } from "./editorSessions";
 import { launchableEditors, primaryEditor } from "../../../product/composer/editorPreferences";
 import { navigate } from "../../../product/state/route";
-import { formatShortcut } from "../../../product/shell/shortcuts";
 import { parseFileTab, useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import type { MenuItem } from "../../../ui/Menu";
@@ -17,7 +16,7 @@ import { threadPathOf, useExplorer } from "../../workspace";
  * installed ones, the favourite marked) and Close tab. Reveal in the left bar is not here: the left bar has no way to
  * be told to show a file yet.
  */
-export function useFileTabMenu(threadId: string, tab: string | null, close: () => void): MenuItem[] | null {
+export function useFileTabMenu(threadId: string, tab: string | null, close: () => void, closeKey?: string): MenuItem[] | null {
   const target = tab ? parseFileTab(tab) : null;
   const editors = useAsync("editors", (signal) => api.editors(signal));
   const preferred = useUi((state) => state.preferredEditor);
@@ -26,12 +25,13 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
   const pushToast = useUi((state) => state.pushToast);
   // What the editor holds, for the two items that read the file: only a file open in the editor has any.
   const held = useEditorSessions((state) => (tab ? sessionOfTab(state.sessions, threadId, cwd, tab) : undefined));
-  const closeItem: MenuItem = { label: "Close tab", icon: <X size={14} aria-hidden />, shortcut: formatShortcut("mod+w"), onSelect: close };
+  const closeItem: MenuItem = { label: "Close tab", icon: <X size={14} aria-hidden />, shortcut: closeKey, onSelect: close };
   if (!target) return null;
   if (target.kind === "worktree" || target.kind === "issue") return [closeItem];
   const relative = target.path;
-  // Another repository's file is not under the thread's folder, and the outside editor route and the composer's file chip know only the primary checkout.
+  // Another repository's file is not under the thread's folder: its absolute path is unknown and the composer's file chip names a checkout, so both stay off. Its repo-relative path goes to the outside editor with its repo_id.
   const foreign = target.kind === "thread" && target.repoId !== undefined;
+  const repoId = target.kind === "thread" ? target.repoId : undefined;
   const root = target.kind === "thread" ? (foreign ? "" : cwd) : (worktree?.path ?? "");
   const absolute = root ? `${root.replace(/\/$/, "")}/${relative}` : null;
   const copy = (text: string, done: string) =>
@@ -39,14 +39,14 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
       () => pushToast(done),
       () => pushToast("Couldn't copy the path"),
     );
-  // The thread's own file is named relative to its folder, a thread file by its tab and an explorer file by the worktree it is in; only a file of the thread's folder can be handed to an editor.
-  const own = foreign ? null : target.kind === "thread" ? target.path : worktree ? threadPathOf(worktree.path, cwd, target.path) : null;
+  // The thread's own file is named relative to its folder, a thread file by its tab (its repository's when it names one) and an explorer file by the worktree it is in.
+  const own = target.kind === "thread" ? target.path : worktree ? threadPathOf(worktree.path, cwd, target.path) : null;
   const list = editors.data ?? [];
   const primary = primaryEditor(list, preferred);
   const open = async (id: string, remember: boolean) => {
     if (own === null) return;
     try {
-      await api.openInEditor(threadId, { path: own, editor: id });
+      await api.openInEditor(threadId, { path: own, editor: id, ...(repoId === undefined ? {} : { repo_id: repoId }) });
       // Choosing another editor here opens the file in it once; the favourite stays.
       if (remember) useUi.getState().setPrefs({ preferredEditor: id });
     } catch (failure) {
