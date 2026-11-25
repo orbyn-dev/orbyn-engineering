@@ -70,6 +70,8 @@ it("opens the served linked threads from the header chip, read only, and follows
   const pop = await screen.findByRole("dialog", { name: "Linked threads" });
   // The list is read only: it offers no unlink, no link, nothing that writes.
   expect(within(pop).queryAllByRole("button")).toHaveLength(0);
+  // With no button or input inside it, the panel itself takes focus, so its label is announced and Tab reaches its rows.
+  expect(pop).toHaveFocus();
   const link = within(pop).getByRole("link", { name: /Fix login redirect/ });
   expect(link).toHaveAttribute("href", "#/threads/thread-1");
   await user.click(link);
@@ -136,6 +138,104 @@ it("keeps the link dialog open and says why when the link write fails", async ()
   expect(within(dialog).getByRole("button", { name: "Link" })).toBeEnabled();
   expect(mock.writes).toEqual(["link:thread-2:412"]);
   expect(screen.getByRole("button", { name: "Linked threads" })).toHaveTextContent("Linked from 1 thread");
+});
+
+it("walks the thread picker by arrow keys, boundaries included, and picks a row with Enter", async () => {
+  setIssuesApi(createIssuesMock());
+  useWorkspace.setState({ threads: { "thread-1": thread("thread-1", "Fix login redirect"), "thread-2": thread("thread-2", "Try cookie-based redirect"), "thread-3": thread("thread-3", "Trace the queue") } });
+  const user = userEvent.setup();
+  at("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
+  const card = await screen.findByRole("group", { name: "Linked threads" });
+  await user.click(within(card).getByRole("button", { name: "Link to a thread…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Link a thread" });
+  const search = within(dialog).getByRole("combobox", { name: "Search threads" });
+  const options = within(dialog).getAllByRole("option");
+  expect(options).toHaveLength(2);
+  expect(search).toHaveFocus();
+  // Arrow Down from the search enters the list; the arrows move between rows and stop at the ends.
+  await user.keyboard("{ArrowDown}");
+  expect(options[0]).toHaveFocus();
+  await user.keyboard("{ArrowDown}");
+  expect(options[1]).toHaveFocus();
+  await user.keyboard("{ArrowDown}");
+  expect(options[1]).toHaveFocus();
+  await user.keyboard("{ArrowUp}");
+  expect(options[0]).toHaveFocus();
+  await user.keyboard("{ArrowUp}");
+  expect(options[0]).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(options[0]).toHaveAttribute("aria-selected", "true");
+});
+
+it("a link is not a second write: while the page is saving another change, Link sends nothing and says so", async () => {
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  useWorkspace.setState({ threads: { "thread-1": thread("thread-1", "Fix login redirect"), "thread-2": thread("thread-2", "Try cookie-based redirect") } });
+  const user = userEvent.setup();
+  at("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
+  const card = await screen.findByRole("group", { name: "Linked threads" });
+  expect(await within(card).findByRole("link", { name: /Fix login redirect/ })).toBeVisible();
+  // Hold one description write open, then open the picker and try to link while it is in flight.
+  const realUpdate = mock.update;
+  let finish = () => {};
+  mock.update = (ref, input) => new Promise((resolve) => { finish = () => void realUpdate(ref, input).then(resolve); });
+  const pencil = screen.getByRole("button", { name: "Edit description" });
+  await waitFor(() => expect(pencil).toBeEnabled());
+  await user.click(pencil);
+  const box = screen.getByRole("textbox", { name: "Description" });
+  await user.clear(box);
+  await user.type(box, "Rewritten");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await user.click(within(card).getByRole("button", { name: "Link to a thread…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Link a thread" });
+  await user.click(within(dialog).getByRole("option", { name: /Try cookie-based redirect/ }));
+  await user.click(within(dialog).getByRole("button", { name: "Link" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("The page is still saving another change.");
+  expect(mock.writes.filter((write) => write.startsWith("link:"))).toEqual([]);
+  // Once the page's write has settled, the same press goes through.
+  await act(async () => { finish(); });
+  await waitFor(() => expect(screen.queryByRole("textbox", { name: "Description" })).toBeNull());
+  await user.click(within(dialog).getByRole("button", { name: "Link" }));
+  expect(await within(card).findByRole("link", { name: /Try cookie-based redirect/ })).toBeVisible();
+  expect(mock.writes).toEqual(["update:412:body", "link:thread-2:412"]);
+});
+
+it("reads the links after the link, not an answer that was already in flight", async () => {
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  useWorkspace.setState({ threads: { "thread-1": thread("thread-1", "Fix login redirect"), "thread-2": thread("thread-2", "Try cookie-based redirect") } });
+  const user = userEvent.setup();
+  at("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
+  const card = await screen.findByRole("group", { name: "Linked threads" });
+  expect(await within(card).findByRole("link", { name: /Fix login redirect/ })).toBeVisible();
+  // A links read starts before the link and stays in flight with the links as they were then.
+  const realLinks = mock.links;
+  let started = false;
+  let release = () => {};
+  mock.links = () => {
+    if (!started) {
+      started = true;
+      return new Promise((resolve) => { release = () => resolve({ "thread-1": [refOf("412")] }); });
+    }
+    return realLinks();
+  };
+  const pencil = screen.getByRole("button", { name: "Edit description" });
+  await waitFor(() => expect(pencil).toBeEnabled());
+  await user.click(pencil);
+  const box = screen.getByRole("textbox", { name: "Description" });
+  await user.clear(box);
+  await user.type(box, "Rewritten");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(started).toBe(true));
+  // The link's own read starts after its write and shows the link; the older read must not put the card back.
+  await user.click(within(card).getByRole("button", { name: "Link to a thread…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Link a thread" });
+  await user.click(within(dialog).getByRole("option", { name: /Try cookie-based redirect/ }));
+  await user.click(within(dialog).getByRole("button", { name: "Link" }));
+  expect(await within(card).findByRole("link", { name: /Try cookie-based redirect/ })).toBeVisible();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Linked threads" })).toHaveTextContent("Linked from 2 threads"));
+  await act(async () => { release(); });
+  expect(within(card).getAllByRole("link")).toHaveLength(2);
 });
 
 it("keeps a closed issue's page and says how it closed", async () => {

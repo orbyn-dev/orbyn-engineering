@@ -27,7 +27,7 @@ export function Person({ login }: { login: string }) {
   return <span className="iss-person"><span className="iss-avatar" aria-hidden>{login.slice(0, 2).toUpperCase()}</span>{login}</span>;
 }
 
-function LinkedThreads({ issue, onStart, onLinked }: { issue: Detail; onStart(): void; onLinked(): void }) {
+function LinkedThreads({ issue, onStart, link, onLinked }: { issue: Detail; onStart(): void; link(threadId: string): Promise<boolean>; onLinked(): void }) {
   const { threadIds, loaded, failed, retry } = useIssueThreads(issue);
   const threads = useWorkspace((state) => state.threads);
   const [linking, setLinking] = useState(false);
@@ -58,7 +58,7 @@ function LinkedThreads({ issue, onStart, onLinked }: { issue: Detail; onStart():
         <Button icon={<Plus size={14} aria-hidden />} onClick={onStart}>Start a thread from this issue</Button>
         <Button onClick={() => setLinking(true)}>Link to a thread…</Button>
       </div>
-      {linking ? <LinkThreadDialog issue={issue} onClose={() => setLinking(false)} onLinked={onLinked} /> : null}
+      {linking ? <LinkThreadDialog issue={issue} link={link} onClose={() => setLinking(false)} onLinked={onLinked} /> : null}
     </section>
   );
 }
@@ -188,6 +188,22 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
       setWriting(false);
     }
   };
+  // The card's link is a write on this page too: it takes the same guard, then reads the links again from a read that starts
+  // after the write, so the card lists the thread the tracker now holds rather than an answer read before it.
+  const linkThread = async (threadId: string): Promise<boolean> => {
+    const target = read.data;
+    if (!target || locked.current) return false;
+    locked.current = true;
+    setWriting(true);
+    try {
+      await issuesApi().link(threadId, target);
+      await reloadIssueLinks(version, { afterWrite: true });
+      return true;
+    } finally {
+      locked.current = false;
+      setWriting(false);
+    }
+  };
   const back = <a className="iss-back" href={routeHref({ name: "issues" })}><ArrowLeft size={14} aria-hidden />Back to Issues</a>;
   const issue = read.data;
   const href = issue ? safeHref(issue.url) : null;
@@ -218,7 +234,7 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
             </div>
             <aside className="iss-right">
               <Facts issue={read.data} edit={{ issue: read.data, offered, write, writing }} host={host} />
-              <LinkedThreads issue={read.data} onStart={() => setStarting(true)} onLinked={() => { void read.refreshQuietly(); }} />
+              <LinkedThreads issue={read.data} onStart={() => setStarting(true)} link={linkThread} onLinked={() => { void read.refreshQuietly(); }} />
             </aside>
           </div>
         )}
