@@ -858,15 +858,40 @@ impl Core {
             }
             _ => None,
         };
-        let thread = self
+        // Issue #436: a brief that writes gets a worktree of its own, made before the worker's
+        // thread so a change in the lead's checkout is not the worker's. A read-only brief keeps
+        // the lead's checkout, and a correction review keeps the checkout it recorded.
+        let worktree = match (self.config.crew_writer_worktrees, &correction_subject) {
+            (true, None) => self.crew_writer_worktree(lead, brief, member, base).await?,
+            _ => None,
+        };
+        let checkout = worktree.as_ref().map(|worktree| worktree.path.as_str());
+        // The run records the worktree's own base, so the verifier reads the commit the worker
+        // began at, and its own checkout, so it reads the files the worker wrote.
+        let recorded_base = worktree
+            .as_ref()
+            .map_or(base, |worktree| Some(worktree.base.as_str()));
+        let thread = match self
             .attach_crew_worker_at(
                 &lead.id,
                 &task,
                 brief.id.as_str(),
-                base,
+                recorded_base,
                 correction_subject.as_deref(),
+                checkout,
             )
-            .await?;
+            .await
+        {
+            Ok(thread) => thread,
+            Err(error) => {
+                // A worker that never started leaves no checkout behind.
+                if let Some(worktree) = &worktree {
+                    self.discard_crew_worktree(lead, std::path::Path::new(&worktree.path))
+                        .await;
+                }
+                return Err(error);
+            }
+        };
         Ok(json!({ "thread": thread.id, "member": member }))
     }
 
@@ -877,9 +902,16 @@ impl Core {
         task_id: &str,
         base: Option<&str>,
         correction_subject: Option<&str>,
+        checkout: Option<&str>,
     ) -> Result<orbyn_contracts::Thread, CrewError> {
         let Some(subject) = correction_subject else {
-            return self.attach_crew_worker(lead_id, task, task_id, base).await;
+            return match checkout {
+                Some(checkout) => {
+                    self.attach_crew_worker_selected(lead_id, task, task_id, base, Some(checkout))
+                        .await
+                }
+                None => self.attach_crew_worker(lead_id, task, task_id, base).await,
+            };
         };
         let selected = self
             .correction_review_thread(&self.store.thread(lead_id).map_err(internal)?, subject)
