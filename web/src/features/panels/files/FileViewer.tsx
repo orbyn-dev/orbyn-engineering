@@ -97,7 +97,7 @@ function FileBody({
 /** A file of the thread's checkout, by what it holds. Exported so the bar's own controls can be tested from one file. */
 export function Viewer({ threadId, tabId, path, line, repoId, locked: worktreeLocked = false, onBack }: { threadId: string; tabId: string; path: string; line: number | null; /** Another repository of a multi-repository thread: `path` is relative to it, and every read and write carries its `repo_id`. Absent is the thread's own checkout, as always. */ repoId?: string; /** The thread's own worktree is locked: its files read and are never saved. */ locked?: boolean; onBack?(): void }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
-  // The raw, archive, document and download routes take no repository: another repository's file is read as text through the content route only.
+  // The raw, archive, document and download routes are not sent a repository by the client yet: another repository's file is read as text through the content route, and opened by the browser preview and the outside editor, which take one.
   const foreign = repoId !== undefined;
   const media = foreign ? null : mediaKind(path);
   // An archive is read as a folder list rather than as bytes, so it never
@@ -135,7 +135,7 @@ export function Viewer({ threadId, tabId, path, line, repoId, locked: worktreeLo
       setCopying(false);
     }
   };
-  const open = () => openInEditor(threadId, path, line);
+  const open = () => openInEditor(threadId, path, line, repoId);
   // A plain text file is drawn as the editor (Engineer Designs v106), which has no bar of its own: what it offers is in the header and the tab menu.
   // Another repository's file has no rendered preview (that would read the primary's), so every text file of it is the editor.
   const editing = !media && !zip && !office && (foreign || !previewKind(path)) && !!file.data && !file.data.binary && !file.data.truncated;
@@ -151,7 +151,7 @@ export function Viewer({ threadId, tabId, path, line, repoId, locked: worktreeLo
   }, [threadId, tabId, locked, setLock]);
   const openInBrowser = async () => {
     try {
-      await openThreadFileInBrowser(threadId, path);
+      await openThreadFileInBrowser(threadId, path, repoId);
       useUi.getState().showInBrowser("");
     } catch (failure) {
       pushToast(`Couldn't open it. ${toFailure(failure).message}`);
@@ -219,7 +219,7 @@ export function Viewer({ threadId, tabId, path, line, repoId, locked: worktreeLo
       ) : office ? (
         <DocumentViewer threadId={threadId} path={path} kind={office} size={file.data.size} />
       ) : file.data.binary && plain ? (
-        <BinaryFile threadId={threadId} path={path} size={Number(file.data.size)} />
+        <BinaryFile threadId={threadId} path={path} size={Number(file.data.size)} repoId={repoId} />
       ) : file.data.binary ? (
         <FileBytes threadId={threadId} path={path} size={file.data.size} as="hex" />
       ) : file.data.truncated ? (
