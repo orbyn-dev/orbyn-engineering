@@ -1,4 +1,4 @@
-import type { IssueCandidates, IssueDetail, IssueState, IssueUpdateInput } from "./contract";
+import type { IssueCandidates, IssueComment, IssueDetail, IssueState, IssueUpdateInput } from "./contract";
 
 /**
  * The limits docs/issues.md ("Issue writes and list controls") puts on `POST /api/issues/item/update`, and the checks that keep the
@@ -12,6 +12,8 @@ export const LABELS_MAX = 50;
 export const ASSIGNEES_MAX = 25;
 /** The most of each a picker draws; the service reads at most 200 and says `truncated` when there were more. */
 export const CANDIDATES_MAX = 200;
+/** 64 KiB, counted in bytes of UTF-8 as the service counts them: a comment is 1 to 64 KiB and not blank. */
+export const COMMENT_MAX = 64 * 1024;
 
 const encoder = new TextEncoder();
 export const byteLength = (text: string): number => encoder.encode(text).length;
@@ -28,6 +30,13 @@ export function updateProblem(input: IssueUpdateInput): string | null {
   if (body !== undefined && byteLength(body) > BODY_MAX) return `The description is over ${BODY_MAX / 1024} KiB.`;
   if (labels !== undefined && labels.length > LABELS_MAX) return `An issue can have at most ${LABELS_MAX} labels.`;
   if (assignees !== undefined && assignees.length > ASSIGNEES_MAX) return `An issue can have at most ${ASSIGNEES_MAX} assignees.`;
+  return null;
+}
+
+/** Why this comment cannot be sent, in words for the person, or `null` when it can. */
+export function commentProblem(body: string): string | null {
+  if (body.trim() === "") return "The comment cannot be empty.";
+  if (byteLength(body) > COMMENT_MAX) return `The comment is over ${COMMENT_MAX / 1024} KiB.`;
   return null;
 }
 
@@ -68,6 +77,19 @@ export function readCandidates(value: unknown): IssueCandidates {
     if (login && id) assignees.push({ login, id, name: asText(who.name, 80) });
   }
   return { labels, assignees, truncated: row.truncated === true || (Array.isArray(row.labels) && row.labels.length > CANDIDATES_MAX) || (Array.isArray(row.assignees) && row.assignees.length > CANDIDATES_MAX) };
+}
+
+/** A stored comment as the service answered it, keeping only the fields the issue page draws and capping its text. */
+export function readComment(value: unknown): IssueComment {
+  const row = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  const who = typeof row.author === "object" && row.author !== null ? (row.author as Record<string, unknown>) : null;
+  const login = who === null ? null : asText(who.login, 80);
+  return {
+    id: asText(row.id, 200) ?? "",
+    author: login ? { login } : null,
+    body: asText(row.body, COMMENT_MAX) ?? "",
+    created_at: asText(row.created_at, 64) ?? "",
+  };
 }
 
 /** The detail an update or a state write answers, with what an older answer leaves out filled in, as `get` does. */
