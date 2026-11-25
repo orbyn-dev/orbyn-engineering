@@ -268,7 +268,10 @@ mod tests {
             hold.expired(start + HOLD_IDLE - Duration::from_secs(1)),
             None
         );
-        assert_eq!(hold.expired(start + HOLD_IDLE + Duration::from_secs(1)), Some("idle"));
+        assert_eq!(
+            hold.expired(start + HOLD_IDLE + Duration::from_secs(1)),
+            Some("idle")
+        );
     }
 
     #[test]

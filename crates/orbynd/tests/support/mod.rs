@@ -480,7 +480,11 @@ impl SseReader {
                 .await
                 .expect("stream stalled")
                 .unwrap_or(None)?;
-            for frame in self.parser.push(&chunk).expect("test SSE frames fit the cap") {
+            for frame in self
+                .parser
+                .push(&chunk)
+                .expect("test SSE frames fit the cap")
+            {
                 self.pending
                     .push_back(serde_json::from_str(&frame).unwrap());
             }

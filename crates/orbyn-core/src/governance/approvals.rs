@@ -1021,7 +1021,9 @@ mod tests {
         let mut waiting = Vec::new();
         for _ in 0..MAX_WAITING_APPROVALS {
             let (gate, scope) = (gate.clone(), f.scope.clone());
-            waiting.push(tokio::spawn(async move { gate.request(&scope, ask()).await }));
+            waiting.push(tokio::spawn(
+                async move { gate.request(&scope, ask()).await },
+            ));
         }
         for _ in 0..500 {
             if f.store

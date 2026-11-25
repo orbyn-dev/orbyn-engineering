@@ -99,8 +99,7 @@ fn deny_picks_reject_and_missing_option_never_allows() {
 fn an_allow_never_becomes_a_permanent_grant() {
     // The agent offers only "always": Orbyn's one-time allow is not that, so the request is
     // answered cancelled instead of remembered for good.
-    let only_always =
-        json!({ "options": [{ "optionId": "y-always", "kind": "allow_always" }] });
+    let only_always = json!({ "options": [{ "optionId": "y-always", "kind": "allow_always" }] });
     assert_eq!(
         permission_outcome(&only_always, &Verdict::Allow, false),
         json!({ "outcome": "cancelled" })

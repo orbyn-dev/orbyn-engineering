@@ -924,7 +924,10 @@ async fn agui_stream(service: &Service, thread: &str, input: Value) -> (Vec<Valu
             .await
             .expect("stream stalled");
         let Some(chunk) = chunk else { break };
-        for frame in parser.push(&chunk.unwrap()).expect("test SSE frames fit the cap") {
+        for frame in parser
+            .push(&chunk.unwrap())
+            .expect("test SSE frames fit the cap")
+        {
             frames.push(serde_json::from_str(&frame).unwrap());
         }
     }

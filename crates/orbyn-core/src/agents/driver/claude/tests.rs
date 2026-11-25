@@ -90,7 +90,10 @@ fn a_held_agent_that_never_notifies_is_reported_stopped_with_the_caps_reason() {
     let mut mapper = StreamMapper::default();
     mapper.on_frame(&started("a1", "local_agent"));
     mapper.on_frame(&done());
-    assert!(mapper.held.is_some(), "the finished turn waits for the agent");
+    assert!(
+        mapper.held.is_some(),
+        "the finished turn waits for the agent"
+    );
     assert!(!mapper.waiting_on_hold(), "the agent is still running");
     // The idle cap ends the hold; the work that never notified is said to have stopped, and why.
     let ended = mapper.end_background("idle");

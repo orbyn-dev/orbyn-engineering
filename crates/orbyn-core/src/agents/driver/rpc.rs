@@ -293,7 +293,10 @@ mod tests {
         receiver.recv().await.unwrap();
         receiver.recv().await.unwrap();
         tokio::task::yield_now().await;
-        assert!(!flood.is_finished(), "backpressure holds the engine's next line");
+        assert!(
+            !flood.is_finished(),
+            "backpressure holds the engine's next line"
+        );
         for _ in 2..8 {
             receiver.recv().await.unwrap();
         }
