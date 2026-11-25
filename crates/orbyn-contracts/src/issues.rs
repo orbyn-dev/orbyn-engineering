@@ -35,8 +35,9 @@ pub struct TrackerRow {
 }
 }
 
-wire! {
 /// Connects a tracker. `token` is absent for GitHub, which reads through the person's own `gh`.
+#[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../web/src/generated/")]
 pub struct ConnectTracker {
     #[serde(default)]
     #[ts(optional = nullable)]
@@ -48,6 +49,16 @@ pub struct ConnectTracker {
     #[ts(optional = nullable)]
     pub token: Option<String>,
 }
+
+/// The token is a secret: this type never prints it, as `SetEnvValue` does. The host and scope are shown,
+/// because they are the person's own words and carry no secret.
+impl std::fmt::Debug for ConnectTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectTracker")
+            .field("host", &self.host)
+            .field("scope", &self.scope)
+            .finish_non_exhaustive()
+    }
 }
 
 wire_enum! {
@@ -407,6 +418,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(described.description.as_deref(), Some("A crash"));
+    }
+
+    #[test]
+    fn a_connect_request_never_prints_its_token() {
+        let connect = ConnectTracker {
+            host: Some("https://dev.azure.com".into()),
+            scope: Some("org/project".into()),
+            token: Some("SECRET-tracker-token".into()),
+        };
+        let printed = format!("{connect:?}");
+        assert!(!printed.contains("SECRET"), "{printed}");
+        assert!(!printed.to_ascii_lowercase().contains("token"), "{printed}");
+        // The non-secret fields stay visible, so a failure that names what was refused is readable.
+        assert!(
+            printed.contains("dev.azure.com") && printed.contains("org/project"),
+            "{printed}"
+        );
+        let parsed: ConnectTracker = serde_json::from_str(
+            r#"{"host":"https://dev.azure.com","scope":"org","token":"SECRET-2"}"#,
+        )
+        .unwrap();
+        assert!(!format!("{parsed:?}").contains("SECRET-2"));
     }
 
     #[test]
