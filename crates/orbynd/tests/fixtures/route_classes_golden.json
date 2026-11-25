@@ -98,6 +98,7 @@
     ["GET","/api/crew/settings/engine-tiers","local"],
     ["GET","/api/crew/skill-proposals","local"],
     ["GET","/api/crew/stops","local"],
+    ["GET","/api/crew/tasks/{id}/samples","local"],
     ["GET","/api/crew/trust","local"],
     ["GET","/api/devices","local"],
     ["GET","/api/devices/{id}","local"],

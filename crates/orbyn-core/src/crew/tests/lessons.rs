@@ -11,7 +11,7 @@ use super::autopilot_merge::{merging, passed};
 use super::autopilot_watch::NOW;
 use super::harness::{Turn, World, brief, key, report, world};
 use crate::crew::lessons::{LessonScope, TEXT_MAX};
-use crate::crew::{Answering, Mode, Page};
+use crate::crew::{Answering, Mode, Page, Stamper};
 use crate::error::CoreError;
 use crate::store::{CrewLesson, LessonEvidence};
 
@@ -415,4 +415,86 @@ async fn a_lesson_keeps_at_most_five_evidence_ids_on_every_write_path() {
         .unwrap();
     assert_eq!(lesson.evidence.len(), 5, "{:?}", lesson.evidence);
     assert_eq!(lesson.evidence[0], evidence("task", "sha256:0"));
+}
+
+/// A task written straight to the harness's store, with a stamped brief and key, so the sample read needs no engine
+/// turn: the read is a read of the record.
+fn sampled_task(
+    w: &World,
+    outcome: &str,
+    run: &str,
+    used: &[String],
+    left_out: &[String],
+) -> String {
+    let stamper = Stamper {
+        crew_id: wire::CrewId::new("crew-1").unwrap(),
+        engine: wire::CrewToken::new("claude").unwrap(),
+        member: wire::CrewMember::new("lead-01").unwrap(),
+        now: wire::CrewTimestamp::new("2026-11-12T10:00:00Z").unwrap(),
+    };
+    let stamped = stamper
+        .brief(&brief(json!({ "outcome": outcome })))
+        .unwrap();
+    let key = stamper.answer_key(&key(), &stamped.id).unwrap();
+    w.core
+        .store
+        .create_crew_task_with_lessons(&stamped, &key, run, used, left_out)
+        .unwrap()
+        .id
+}
+
+#[tokio::test]
+async fn the_task_sample_read_answers_the_recorded_row_and_the_one_outcome() {
+    let w = person_world().await;
+    let task = sampled_task(&w, "A sampled task.", "run-one", &[], &[]);
+    let read = w.core.crew_task_samples(&task).unwrap();
+    assert_eq!(read.task_id, task);
+    assert_eq!(read.samples.len(), 1, "one task records exactly one sample");
+    let sample = &read.samples[0];
+    assert_eq!(sample.task_id, task);
+    assert_eq!(
+        sample.project_id, None,
+        "the run's lead thread is not there at creation"
+    );
+    assert_eq!(sample.kind, "implement");
+    assert!(!sample.had_lessons);
+    assert!(sample.lesson_ids.is_empty());
+    assert!(sample.left_out_ids.is_empty());
+    assert_eq!(sample.outcome, None);
+    assert_eq!(sample.stop_reason, None);
+    assert_eq!(sample.engine, None);
+    assert_eq!(sample.finished_at, None);
+    assert!(!sample.created_at.is_empty(), "the row keeps its times");
+
+    // A brief that carried lessons and left one out keeps both id lists in the sample, ids only.
+    let used = vec!["les_one".to_owned(), "les_two".to_owned()];
+    let left_out = vec!["les_three".to_owned()];
+    let lessoned = sampled_task(&w, "A lessoned task.", "run-two", &used, &left_out);
+    let read = w.core.crew_task_samples(&lessoned).unwrap();
+    assert!(read.samples[0].had_lessons);
+    assert_eq!(read.samples[0].lesson_ids, used);
+    assert_eq!(read.samples[0].left_out_ids, left_out);
+
+    // The store's own state move writes the one outcome, and the read answers it with a finish time. Reading twice
+    // changes nothing: the record is the same answer.
+    w.core
+        .store
+        .move_crew_task(&task, "cancelled", None)
+        .unwrap();
+    let finished = w.core.crew_task_samples(&task).unwrap();
+    assert_eq!(finished.samples[0].outcome.as_deref(), Some("cancelled"));
+    assert_eq!(finished.samples[0].stop_reason, None);
+    assert!(finished.samples[0].finished_at.is_some());
+    assert_eq!(w.core.crew_task_samples(&task).unwrap(), finished);
+
+    // An unknown task is not found, and with Preview off the read is a route that is not there.
+    assert!(matches!(
+        w.core.crew_task_samples("sha256:none"),
+        Err(CoreError::NotFound(_))
+    ));
+    let off = world(false, Arc::new(|_, _| Turn::Hang)).await;
+    assert!(matches!(
+        off.core.crew_task_samples(&task),
+        Err(CoreError::NotFound(_))
+    ));
 }
