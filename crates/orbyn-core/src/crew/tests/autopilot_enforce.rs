@@ -3,7 +3,7 @@
 //! override tests use merge rows written beside real tasks. Nothing is pushed.
 
 use orbyn_contracts as wire;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::autopilot_areas::{DAY, Rig, rig};
 use super::autopilot_merge::{Merging, merging, passed};
@@ -44,6 +44,51 @@ fn choose(
         seen,
         reason: None,
     }
+}
+
+/// The body of the one event of `kind` the task recorded: the ledger read filters by kind and only
+/// appends, so a test asserts the single row instead of indexing to it.
+fn one_event_body(w: &World, task: &str, kind: &str) -> Value {
+    let rows = events(w, task, kind);
+    assert_eq!(rows.len(), 1, "one {kind} event");
+    rows.into_iter().next().unwrap().body
+}
+
+/// The mode row for `area`, found by the name every row carries: the read's order is not part of
+/// the contract.
+fn area_mode<'a>(modes: &'a [wire::AutopilotAreaMode], area: &str) -> &'a wire::AutopilotAreaMode {
+    modes
+        .iter()
+        .find(|mode| mode.area == area)
+        .unwrap_or_else(|| panic!("a mode row for {area}"))
+}
+
+/// The review row of `task`, found by its id: the queue ranks its rows, so a test does not rely on
+/// where one landed.
+fn review_item<'a>(
+    items: &'a [wire::AutopilotReviewItem],
+    task: &str,
+) -> &'a wire::AutopilotReviewItem {
+    items
+        .iter()
+        .find(|item| item.task_id == task)
+        .unwrap_or_else(|| panic!("the review row of {task}"))
+}
+
+/// The fixture's merge whose brief carried `outcome`, found through that brief: a test never relies
+/// on where the fixture returned it.
+fn merge_named(r: &Rig, tasks: &[String], outcome: &str) -> String {
+    tasks
+        .iter()
+        .find(|task| {
+            r.w.core
+                .store
+                .crew_brief(task.as_str())
+                .unwrap()
+                .is_some_and(|brief| brief.outcome == outcome)
+        })
+        .unwrap_or_else(|| panic!("the merge whose brief said {outcome}"))
+        .clone()
 }
 
 /// A Full crew whose tasks write into `src/db`: turn 0 a migration (high), turn 1 a query file (medium), turn 2 a note (low).
@@ -101,24 +146,23 @@ async fn a_lowered_area_makes_a_high_risk_diff_wait_while_the_others_still_merge
         "{outcomes:?}"
     );
     // The ledger names the lowered mode, and the risk report and the Review queue carry the marker.
-    let queued_event = &events(&m.w, &high, "merge_queued")[0].body;
-    assert_eq!(queued_event["effective_mode"], "on");
+    assert_eq!(
+        one_event_body(&m.w, &high, "merge_queued")["effective_mode"],
+        "on"
+    );
     let report = m.w.core.autopilot_risk_at(&high, NOW).unwrap();
     assert_eq!(report.risk, wire::AutopilotRisk::High);
     assert_eq!(report.area_modes.len(), 1);
-    assert_eq!(report.area_modes[0].mode, wire::AutopilotMode::On);
-    assert!(
-        report.area_modes[0]
-            .line
-            .starts_with("Area src/db is on On:")
-    );
+    let lowered = area_mode(&report.area_modes, "src/db");
+    assert_eq!(lowered.mode, wire::AutopilotMode::On);
+    assert!(lowered.line.starts_with("Area src/db is on On:"));
     let review =
         m.w.core
             .autopilot_review_queue(NOW + 2, Page::new(None, None).unwrap())
             .unwrap();
     assert_eq!(review.items.len(), 1);
     assert_eq!(
-        review.items[0].area_modes.len(),
+        review_item(&review.items, &high).area_modes.len(),
         1,
         "a lowered area is marked"
     );
@@ -158,9 +202,7 @@ async fn a_ceiling_of_on_or_off_is_never_changed_by_a_lowering() {
         )
     );
     assert_eq!(
-        events(&on.w, &high, "merge_queued")[0]
-            .body
-            .get("effective_mode"),
+        one_event_body(&on.w, &high, "merge_queued").get("effective_mode"),
         None,
         "nothing was lowered"
     );
@@ -217,7 +259,7 @@ async fn keep_ceiling_lets_a_high_diff_through_the_full_path_and_off_makes_every
             .autopilot_review_queue(NOW + 1, Page::new(None, None).unwrap())
             .unwrap();
     assert!(
-        review.items[0].area_modes.is_empty(),
+        review_item(&review.items, &high).area_modes.is_empty(),
         "a kept ceiling is not a lowered area"
     );
 
@@ -338,7 +380,10 @@ async fn an_unreadable_area_fails_closed_as_off_with_a_ledger_event() {
     assert!(entry.note.unwrap().contains("could not be read"));
     let rows = events(&m.w, &high, "area_read_failed");
     assert_eq!(rows.len(), 1, "visible in the ledger, not only the log");
-    assert_eq!(rows[0].body["treated_as"], "off");
+    assert_eq!(
+        rows.first().expect("the ledger row").body["treated_as"],
+        "off"
+    );
     // Off, not On: a person may have set the area to Off, so a failure to read never lets even a low diff through.
     for task in [&medium, &low] {
         let entry =
@@ -369,49 +414,51 @@ async fn a_breaker_that_fails_after_a_revert_is_in_the_ledger_and_tried_again() 
             .await
             .unwrap();
     assert!(reverted.is_some(), "the revert itself stands");
-    let failed = events(&m.w, &id, "area_breaker_failed");
-    assert_eq!(failed.len(), 1);
-    assert_eq!(failed[0].body["stage"], "revert");
-    assert_eq!(failed[0].body["resolved"], false);
-    assert_eq!(failed[0].body["revert"], json!(reverted.clone().unwrap()));
+    let failure = one_event_body(&m.w, &id, "area_breaker_failed");
+    assert_eq!(failure["stage"], "revert");
+    assert_eq!(failure["resolved"], false);
+    assert_eq!(failure["revert"], json!(reverted.clone().unwrap()));
     // Repaired, the next look at the same revert records it once and marks the failure resolved.
     m.w.core.store.fix_area_modes_for_test();
     m.w.core.area_breaker_retry(NOW + 6);
     m.w.core.area_breaker_retry(NOW + 7);
     let failed = events(&m.w, &id, "area_breaker_failed");
     assert_eq!(failed.len(), 2, "one resolved row, and not again");
-    assert_eq!(failed[1].body["resolved"], true);
+    let resolved = failed
+        .iter()
+        .find(|row| row.body["resolved"] == true)
+        .expect("the row the repair wrote");
+    assert_eq!(resolved.body["stage"], "revert");
 }
 
 #[tokio::test]
 async fn a_failed_breaker_trips_the_area_at_the_next_merge_without_a_second_revert() {
     let mut r = rig().await;
-    let mut tasks = Vec::new();
-    for i in 0..5 {
-        tasks.push(r.merge(&["src/a"], NOW - (5 - i) * DAY).await);
+    // The two oldest merges are the ones reverted below; the rest fill the window.
+    let first = r.merge(&["src/a"], NOW - 5 * DAY).await;
+    let second = r.merge(&["src/a"], NOW - 4 * DAY).await;
+    for i in 2..5 {
+        r.merge(&["src/a"], NOW - (5 - i) * DAY).await;
     }
-    r.revert(&tasks[0], NOW);
+    r.revert(&first, NOW);
     // The second revert reaches the breaker while the table is damaged.
     let commit = format!("{:040x}", 0xfeed_u64);
-    r.w.core
-        .store
-        .set_merge_reverted(&tasks[1], &commit)
-        .unwrap();
-    let record = r.w.core.store.crew_merge(&tasks[1]).unwrap().unwrap();
+    r.w.core.store.set_merge_reverted(&second, &commit).unwrap();
+    let record = r.w.core.store.crew_merge(&second).unwrap().unwrap();
     r.w.core.store.break_area_modes_for_test();
     let error =
         r.w.core
             .area_breaker_after_revert(&record, &commit, NOW)
             .unwrap_err();
     r.w.core
-        .area_breaker_failed(&tasks[1], "revert", Some(&commit), &error);
+        .area_breaker_failed(&second, "revert", Some(&commit), &error);
     r.w.core.store.fix_area_modes_for_test();
     assert!(r.mode("src/a").is_none(), "not recorded yet");
     // The next merge looks at the revert again.
     r.merge_recorded(&["src/a"], NOW + 1).await;
     assert_eq!(r.mode("src/a").unwrap().state, "demoted");
     assert_eq!(r.kinds("src/a"), ["demoted"]);
-    assert_eq!(events(&r.w, &tasks[1], "area_breaker_failed").len(), 2);
+    assert_eq!(events(&r.w, &second, "area_breaker_failed").len(), 2);
 }
 
 async fn lowered_rig() -> (Rig, Vec<String>) {
@@ -438,7 +485,10 @@ async fn a_person_keeps_the_ceiling_and_the_trail_names_the_audit_row() {
     assert_eq!(row.person_override.as_ref().unwrap().choice, "keep_ceiling");
     let trail = r.w.core.store.area_events(&r.project, "src/a", 10).unwrap();
     assert_eq!(trail.len(), 2);
-    let event = &trail[0];
+    let event = trail
+        .iter()
+        .find(|event| event.kind == "override_set")
+        .expect("the override's trail row");
     assert_eq!(
         (event.kind.as_str(), event.decided_by.as_str()),
         ("override_set", "person")
@@ -570,7 +620,11 @@ async fn a_new_trip_ends_keep_ceiling_and_follow_returns_the_area_to_the_record(
     );
     assert_eq!(row.now, wire::AutopilotMode::On);
     assert!(row.person_override.is_none());
-    let cleared = &r.w.core.store.area_events(&r.project, "src/a", 10).unwrap()[1];
+    let trail = r.w.core.store.area_events(&r.project, "src/a", 10).unwrap();
+    let cleared = trail
+        .iter()
+        .find(|event| event.kind == "override_cleared")
+        .expect("the cleared override's trail row");
     assert_eq!(
         (cleared.kind.as_str(), cleared.decided_by.as_str()),
         ("override_cleared", "breaker")
@@ -638,10 +692,12 @@ async fn a_new_trip_ends_keep_ceiling_and_follow_returns_the_area_to_the_record(
 #[tokio::test]
 async fn the_risk_report_the_review_queue_and_the_digest_carry_the_areas() {
     let (r, tasks) = lowered_rig().await;
-    let report = r.w.core.autopilot_risk_at(&tasks[4], NOW).unwrap();
+    // The read only needs one of the fixture's merges; this one is named by the brief it carried.
+    let task = merge_named(&r, &tasks, "Task 5.");
+    let report = r.w.core.autopilot_risk_at(&task, NOW).unwrap();
     assert_eq!(report.area_modes.len(), 1);
     assert_eq!(
-        report.area_modes[0].line,
+        area_mode(&report.area_modes, "src/a").line,
         "Area src/a is on On: 2 reverts in 14 days · 5 merges"
     );
     let review =
@@ -649,16 +705,18 @@ async fn the_risk_report_the_review_queue_and_the_digest_carry_the_areas() {
             .autopilot_review_queue(NOW, Page::new(None, None).unwrap())
             .unwrap();
     assert!(!review.items.is_empty());
-    assert!(
-        review
-            .items
-            .iter()
-            .all(|i| i.area_modes.len() == 1 && i.area_modes[0].mode == wire::AutopilotMode::On)
-    );
+    assert!(review.items.iter().all(|item| {
+        item.area_modes.len() == 1
+            && area_mode(&item.area_modes, "src/a").mode == wire::AutopilotMode::On
+    }));
     let digest = r.w.core.autopilot_digest(NOW + 1, Some(24)).unwrap();
     assert_eq!(digest.areas_changed.len(), 1);
-    assert_eq!(digest.areas_changed[0].kind, "demoted");
-    assert_eq!(digest.areas_changed[0].area, "src/a");
+    let changed = digest
+        .areas_changed
+        .iter()
+        .find(|changed| changed.area == "src/a")
+        .expect("the area's change row");
+    assert_eq!(changed.kind, "demoted");
     assert!(!digest.quiet);
     let quiet = rig().await;
     let digest = quiet.w.core.autopilot_digest(NOW, Some(24)).unwrap();
@@ -675,7 +733,8 @@ async fn a_revert_that_lands_while_the_person_waits_makes_the_choice_stale() {
     let guard = holder.crew_merges.lock().await;
     let waiting = tokio::spawn(async move { core.autopilot_area_override(&body, NOW + 1).await });
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    r.revert(&tasks[2], NOW + 2);
+    // A merge the fixture left unreverted does; this one is named by the brief it carried.
+    r.revert(&merge_named(&r, &tasks, "Task 3."), NOW + 2);
     drop(guard);
     let error = waiting.await.unwrap().unwrap_err();
     assert!(matches!(error, CoreError::Stale(_)), "{error}");
@@ -700,8 +759,9 @@ async fn a_return_ends_keep_ceiling_in_the_trail_and_an_area_name_is_checked() {
     for d in 1..=5 {
         r.merge(&["src/a"], NOW + d * DAY).await;
     }
+    // The check only needs a task of the project; this one is named by the brief it carried.
     r.w.core
-        .area_restore_check(&tasks[0], NOW + 14 * DAY)
+        .area_restore_check(&merge_named(&r, &tasks, "Task 1."), NOW + 14 * DAY)
         .unwrap();
     assert_eq!(
         r.kinds("src/a"),
