@@ -102,6 +102,30 @@ impl Core {
                 }
             }
         }
+        self.excuse_held_downtime();
+    }
+
+    /// Credits the off time of the tasks waiting for a person. A held task has no budget timer across a restart and no
+    /// recovery picks it up, so its minutes would otherwise count the whole window the app was off: when the lead resumes
+    /// it, the remaining minutes are read from the run and that credit is what keeps them right. The credit's own audit row
+    /// is the next restart's boundary (`excuse_crew_downtime`), so no off time is credited twice.
+    fn excuse_held_downtime(&self) {
+        let Ok(tasks) = self.store.crew_tasks_held() else {
+            return;
+        };
+        for (task, _run) in tasks {
+            let last = self
+                .store
+                .crew_task_last_event(&task.id)
+                .ok()
+                .flatten()
+                .or_else(|| crate::util::parse_time(&task.updated_at))
+                .unwrap_or_else(crate::util::unix_now);
+            let off = crate::util::unix_now().saturating_sub(last);
+            if let Err(error) = self.store.excuse_crew_downtime(&task.id, off) {
+                tracing::warn!(%error, task = %task.id, "could not record a held crew task's off time");
+            }
+        }
     }
 
     /// Stops a task the restart leaves alone: `stopped` with `engine_error`, as before, and the

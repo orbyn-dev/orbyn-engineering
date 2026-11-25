@@ -1,8 +1,10 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
+import type { MockApi } from "../../../mock/api";
 import type { EngineStatus, Project } from "../../api/types";
 import { useWorkspace } from "../../product/state/workspace";
+import { installMockFetch } from "../../test-support";
 import { DraftView } from "./DraftView";
 import { useDraftModelDefaults } from "./useDraftModelDefaults";
 
@@ -11,11 +13,6 @@ vi.mock("../workspace/app-chrome/GitHubStarPrompt", () => ({ recordUserPrompt: (
 vi.mock("./useDraftCheckout", () => ({ useDraftCheckout: () => ({ worktree: null, setWorktree: () => undefined, loading: false, error: null }) }));
 vi.mock("./useDraftModelDefaults", () => ({ useDraftModelDefaults: vi.fn() }));
 vi.mock("../repos", async (original) => ({ ...(await original<typeof import("../repos")>()), useRepos: () => ({ view: null }) }));
-vi.mock("../../product/state/modelStore", async (original) => {
-  const actual = await original<typeof import("../../product/state/modelStore")>();
-  return { ...actual, useEngineModels: () => null, resolveModel: () => null };
-});
-
 const noDefaults = {
   installed: [],
   engine: null,
@@ -28,7 +25,10 @@ const noDefaults = {
   reload: () => undefined,
 };
 
+let mock: MockApi;
 beforeEach(() => {
+  // The real model store reads the lists the composer's picker asks for; the service is the only fake.
+  mock = installMockFetch();
   vi.mocked(useDraftModelDefaults).mockReturnValue(noDefaults);
 });
 
@@ -57,6 +57,8 @@ it("shows the visible Unmanaged word on the draft's engine chip and in place of 
     id: "kiro", name: "Kiro", installed: true, tier: "acp",
     capabilities: { managed: false, permission_modes: ["supervised"], approvals: false, skill_delivery: [] },
   } as unknown as EngineStatus;
+  // The engine's own list names it, so the chip's accessible name is the engine's like the mocked list's was.
+  mock.setEngineModels("kiro", [{ id: "kiro-default", label: "Kiro", description: null, is_default: true, custom: false, options: [] }]);
   vi.mocked(useDraftModelDefaults).mockReturnValue({
     ...noDefaults,
     installed: [kiro],

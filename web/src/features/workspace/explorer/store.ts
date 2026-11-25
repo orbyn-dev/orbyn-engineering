@@ -4,7 +4,7 @@ import { asBackground } from "../../../api/lanes";
 import type { ExplorerTree } from "../../../generated/ExplorerTree";
 import type { ExplorerWorktrees } from "../../../generated/ExplorerWorktrees";
 import { toFailure } from "../../../lib/useAsync";
-import { readTree, readWorktrees } from "./api";
+import { readRepoTree, readTree, readWorktrees } from "./api";
 
 /** One read the explorer keeps: its last good data, whether it is on its way, and why it last failed. */
 export interface Kept<T> {
@@ -18,6 +18,12 @@ export const PAGE = 200;
 
 export const levelKey = (projectId: string, worktreeId: string, path: string) => JSON.stringify([projectId, worktreeId, path]);
 
+/**
+ * A repository level's key: one folder of a multi-repository thread's chosen repository, under its project. The project comes
+ * first so a project's reload reads all of its repository levels, exactly as it reads its worktree levels.
+ */
+export const repoLevelKey = (projectId: string, threadId: string, repoId: string | undefined, path: string) => JSON.stringify(["thread", projectId, threadId, repoId ?? "", path]);
+
 interface Loads {
   /** The open thread, which makes another thread's worktrees read-only for it. */
   thread: string | null;
@@ -28,12 +34,18 @@ interface Loads {
 interface ExplorerStore {
   worktrees: Record<string, Kept<ExplorerWorktrees>>;
   levels: Record<string, Kept<ExplorerTree>>;
-  /** Children shown of a folder; more are held than shown once it passes `PAGE`. */
+  /** The open thread's chosen repository, folder by folder (a multi-repository thread only). */
+  repoLevels: Record<string, Kept<ExplorerTree>>;
+  /** Children shown of a folder; more are held than shown once it passes `PAGE`. Worktree and repository levels share it. */
   shown: Record<string, number>;
   loadWorktrees(projectId: string, loads: Loads): Promise<void>;
   loadLevel(projectId: string, worktreeId: string, path: string, loads?: Pick<Loads, "quiet" | "refresh">): Promise<void>;
+  /** One folder level of one repository of a multi-repository thread; `repoId` absent is the thread's primary repository. */
+  loadRepoLevel(projectId: string, threadId: string, repoId: string | undefined, path: string, loads?: Pick<Loads, "quiet" | "refresh">): Promise<void>;
+  /** Reads again every repository level that thread has loaded. */
+  reloadRepo(projectId: string, threadId: string, loads: Pick<Loads, "quiet" | "refresh">): Promise<void>;
   showMore(key: string): void;
-  /** Reads again what a project has loaded: an event named it (`quiet`), or the person pressed Refresh. */
+  /** Reads again what a project has loaded — its worktrees, their folders and its threads' repository folders: an event named it (`quiet`), or the person pressed Refresh. */
   reload(projectId: string, loads: Loads): Promise<void>;
   reset(): void;
 }
@@ -106,7 +118,29 @@ async function keep<T>(
 export const useExplorer = create<ExplorerStore>((set, get) => ({
   worktrees: {},
   levels: {},
+  repoLevels: {},
   shown: {},
+  loadRepoLevel: (projectId, threadId, repoId, path, { quiet = false, refresh = false } = {}) => {
+    const key = repoLevelKey(projectId, threadId, repoId, path);
+    return keep(
+      `rl:${key}`,
+      `rl:${key}:${refresh}`,
+      () => readRepoTree(threadId, repoId, path),
+      () => get().repoLevels[key],
+      (next) => set((state) => ({ repoLevels: { ...state.repoLevels, [key]: next } })),
+      quiet,
+    );
+  },
+  async reloadRepo(projectId, threadId, loads) {
+    const keys = Object.keys(get().repoLevels).filter((key) => {
+      const [, project, thread] = JSON.parse(key) as string[];
+      return project === projectId && thread === threadId;
+    });
+    await Promise.all(keys.map((key) => {
+      const [, , , repoId, path] = JSON.parse(key) as [string, string, string, string, string];
+      return get().loadRepoLevel(projectId, threadId, repoId === "" ? undefined : repoId, path, loads);
+    }));
+  },
   loadWorktrees: (projectId, { thread, quiet = false, refresh = false }) =>
     keep(
       `w:${projectId}`,
@@ -129,13 +163,18 @@ export const useExplorer = create<ExplorerStore>((set, get) => ({
   },
   showMore: (key) => set((state) => ({ shown: { ...state.shown, [key]: (state.shown[key] ?? PAGE) + PAGE } })),
   async reload(projectId, loads) {
-    const { worktrees, levels } = get();
+    const { worktrees, levels, repoLevels } = get();
     const keys = Object.keys(levels).filter((key) => (JSON.parse(key) as string[])[0] === projectId);
+    const repoKeys = Object.keys(repoLevels).filter((key) => (JSON.parse(key) as string[])[1] === projectId);
     await Promise.all([
       worktrees[projectId] ? get().loadWorktrees(projectId, loads) : Promise.resolve(),
       ...keys.map((key) => {
         const [, worktreeId, path] = JSON.parse(key) as [string, string, string];
         return get().loadLevel(projectId, worktreeId, path, loads);
+      }),
+      ...repoKeys.map((key) => {
+        const [, , threadId, repoId, path] = JSON.parse(key) as [string, string, string, string, string];
+        return get().loadRepoLevel(projectId, threadId, repoId === "" ? undefined : repoId, path, loads);
       }),
     ]);
   },
@@ -143,6 +182,6 @@ export const useExplorer = create<ExplorerStore>((set, get) => ({
     epoch += 1;
     running.clear();
     generation.clear();
-    set({ worktrees: {}, levels: {}, shown: {} });
+    set({ worktrees: {}, levels: {}, repoLevels: {}, shown: {} });
   },
 }));

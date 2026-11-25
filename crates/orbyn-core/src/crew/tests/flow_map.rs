@@ -67,6 +67,12 @@ async fn the_map_has_a_lead_and_the_workers_and_says_how_each_message_was_delive
         .iter()
         .find(|n| n.role == FlowRole::Lead)
         .expect("the map has its lead");
+    // That order is product order, not fixture order: the map puts the lead first, then the newest workers.
+    assert_eq!(
+        map.nodes.first().map(|n| n.role),
+        Some(FlowRole::Lead),
+        "the lead first, then the newest workers"
+    );
     let workers: Vec<_> = map
         .nodes
         .iter()
@@ -346,7 +352,8 @@ async fn a_delivery_is_reported_only_when_every_recipient_agrees() {
         "an edge says nothing its newest message does not"
     );
 
-    // A message with no delivery row has none.
+    // A message with no delivery row has none. Any stored message is a template: the body and id
+    // below replace what identifies it.
     let mut message =
         CrewObject::Message(d.w.core.store.crew_messages(&d.a).unwrap().remove(0)).to_value();
     message["body"] = json!(format!("unsent {marker}"));
@@ -474,6 +481,7 @@ fn other_crews_traffic(d: &Duo, count: usize) {
         .add_crew_run(&task.id, "lead-thread-2", "worker-other")
         .unwrap();
     let crew = d.w.task(&d.a).crew_id;
+    // Any message of the crew is a template: each copy below replaces its identity fields.
     let (_, template) = store.crew_messages_in_crew(&crew).unwrap().remove(0);
     for n in 0..count {
         let mut value = CrewObject::Message(template.clone()).to_value();
