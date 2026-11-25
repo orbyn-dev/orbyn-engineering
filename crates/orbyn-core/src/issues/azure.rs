@@ -138,10 +138,14 @@ fn shared_client() -> Result<Client> {
 fn host_shape(host: &str) -> Result<(String, Option<String>, bool)> {
     let rest = host.strip_prefix("https://").ok_or_else(host_refused)?;
     let (authority, path) = rest.split_once('/').map_or((rest, ""), |(a, p)| (a, p));
+    // The cloud-host allowlist names bare hosts (`dev.azure.com`, `{org}.visualstudio.com`); a port would send the
+    // PAT to `host:port`, which it does not name. (GitLab and Forgejo accept a port for self-managed hosts by
+    // design; Linear's fixed host is the one other reader that refuses one.)
+    if authority.contains(':') {
+        return Err(host_refused());
+    }
     let authority = authority.to_ascii_lowercase();
-    let name = authority
-        .rsplit_once(':')
-        .map_or(authority.as_str(), |(name, _)| name);
+    let name = authority.as_str();
     let path = path.trim_matches('/');
     if name == "dev.azure.com" {
         if path.is_empty() {
