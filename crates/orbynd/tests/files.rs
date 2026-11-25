@@ -1120,7 +1120,7 @@ async fn an_untrusted_folder_shows_nothing_outside_either() {
 }
 
 /// A real repository with one commit on `main`, outside the workspace library.
-fn repository(path: &std::path::Path, file: &str, content: &str) {
+fn repository_with_file(path: &std::path::Path, file: &str, content: &str) {
     std::fs::create_dir_all(path).unwrap();
     run_git(path, &["init", "-q", "-b", "main"]);
     run_git(path, &["config", "user.email", "t@example.com"]);
@@ -1156,10 +1156,10 @@ async fn repo_thread() -> RepoThread {
         },
     );
     let main = dir.path().join("main");
-    repository(&main, "same.png", "primary");
+    repository_with_file(&main, "same.png", "primary");
     let project = service.project(&main, true).await;
     let other = dir.path().join("other");
-    repository(&other, "same.png", "other");
+    repository_with_file(&other, "same.png", "other");
     let (status, row) = service
         .send(
             &format!("/api/projects/{project}/repos/add-folder"),
