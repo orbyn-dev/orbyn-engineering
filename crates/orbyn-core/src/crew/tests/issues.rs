@@ -1658,7 +1658,12 @@ mod writes {
             self.states.is_some()
         }
 
-        async fn update(&self, scope: &str, key: &str, _edit: &IssueEdit<'_>) -> Result<IssueDetail> {
+        async fn update(
+            &self,
+            scope: &str,
+            key: &str,
+            _edit: &IssueEdit<'_>,
+        ) -> Result<IssueDetail> {
             self.edits.fetch_add(1, Ordering::SeqCst);
             Ok(self.detail(scope, key))
         }
@@ -2129,7 +2134,9 @@ mod writes {
     async fn editing() -> (super::super::harness::World, Arc<Writes>) {
         let (w, _) = connected(TrackerKind::Gitlab, "team/app", true).await;
         let source = Writes::editing();
-        w.core.issues.set_source(TrackerKind::Gitlab, source.clone());
+        w.core
+            .issues
+            .set_source(TrackerKind::Gitlab, source.clone());
         (w, source)
     }
 
@@ -2170,7 +2177,10 @@ mod writes {
             (TrackerKind::Linear, "ENG"),
         ] {
             let (w, source) = connected(kind, scope, true).await;
-            let wanted = format!("{} issue edits arrive in a later update.", display_name(kind));
+            let wanted = format!(
+                "{} issue edits arrive in a later update.",
+                display_name(kind)
+            );
             let update = w.core.update_issue(update(kind, scope)).await.map(|_| ());
             let state = w
                 .core
@@ -2184,7 +2194,11 @@ mod writes {
                 .await
                 .map(|_| ());
             let candidates = w.core.issue_candidates(kind, scope).await.map(|_| ());
-            for (what, refused) in [("update", update), ("state", state), ("candidates", candidates)] {
+            for (what, refused) in [
+                ("update", update),
+                ("state", state),
+                ("candidates", candidates),
+            ] {
                 let Err(error) = refused else {
                     panic!("{kind:?} {what} answered a success");
                 };
@@ -2207,11 +2221,18 @@ mod writes {
             close_reason: reason,
         };
         for (what, input) in [
-            ("a reason on an open state", state("Open", Some(IssueCloseReason::NotPlanned))),
+            (
+                "a reason on an open state",
+                state("Open", Some(IssueCloseReason::NotPlanned)),
+            ),
             ("a state the issue does not declare", state("Wontfix", None)),
         ] {
             let error = w.core.set_state_issue(input).await.map(|_| ()).unwrap_err();
-            assert_eq!((error.status(), error.code()), (400, "invalid_input"), "{what}");
+            assert_eq!(
+                (error.status(), error.code()),
+                (400, "invalid_input"),
+                "{what}"
+            );
         }
         assert_eq!(source.writes(), 0);
         // A closed state takes a reason, and an open one none.
@@ -2233,9 +2254,11 @@ mod writes {
             .unwrap();
         assert_eq!(candidates.labels.len(), 200);
         assert_eq!(candidates.assignees.len(), 200);
-        assert!(candidates.truncated, "a source that sent more than 200 is marked");
+        assert!(
+            candidates.truncated,
+            "a source that sent more than 200 is marked"
+        );
     }
-
 }
 
 mod binding {
