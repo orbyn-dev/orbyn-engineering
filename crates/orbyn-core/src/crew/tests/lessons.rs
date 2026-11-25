@@ -520,5 +520,4 @@ async fn the_task_sample_read_answers_the_recorded_row_and_the_one_outcome() {
         off.core.crew_task_samples(&off_task),
         Err(CoreError::NotFound(_))
     ));
-
 }
