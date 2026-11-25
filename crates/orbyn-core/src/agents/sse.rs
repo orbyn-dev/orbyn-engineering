@@ -13,6 +13,8 @@ pub struct FrameTooLarge;
 pub struct SseParser {
     buffer: Vec<u8>,
     data: Vec<String>,
+    /// The bytes the frame's `data:` lines hold, kept as they arrive so the cap check stays linear.
+    data_len: usize,
 }
 
 impl SseParser {
@@ -39,15 +41,17 @@ impl SseParser {
                 if !self.data.is_empty() {
                     frames.push(self.data.join("\n"));
                     self.data.clear();
+                    self.data_len = 0;
                 }
             } else if let Some(value) = text.strip_prefix("data:") {
-                self.data
-                    .push(value.strip_prefix(' ').unwrap_or(value).to_owned());
-                let kept: usize =
-                    self.data.iter().map(String::len).sum::<usize>() + self.data.len();
-                if kept > MAX_FRAME_BYTES {
+                let value = value.strip_prefix(' ').unwrap_or(value);
+                // One byte per line stands for the newline the join adds; counting as the lines arrive keeps
+                // the check linear, so a frame split into very many lines cannot make the parser quadratic.
+                self.data_len += value.len() + 1;
+                if self.data_len > MAX_FRAME_BYTES {
                     return Err(FrameTooLarge);
                 }
+                self.data.push(value.to_owned());
             }
         }
         Ok(frames)
@@ -91,7 +95,13 @@ mod tests {
     #[test]
     fn a_frame_whose_data_lines_add_up_past_the_cap_is_refused() {
         let mut parser = SseParser::default();
-        let line = b"data: aaaaaaaa\n".repeat(MAX_FRAME_BYTES / 8);
-        assert_eq!(parser.push(&line), Err(FrameTooLarge));
+        // Two lines pass the cap and keep the test linear: a cap check that re-summed the frame per line would
+        // itself be a denial of service, so this case must stay cheap.
+        let mut body = b"data: ".to_vec();
+        body.extend(std::iter::repeat_n(b'a', MAX_FRAME_BYTES / 2));
+        body.push(b'\n');
+        let mut lines = body.clone();
+        lines.extend_from_slice(&body);
+        assert_eq!(parser.push(&lines), Err(FrameTooLarge));
     }
 }
