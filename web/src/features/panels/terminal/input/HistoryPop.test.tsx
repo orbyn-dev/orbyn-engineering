@@ -42,3 +42,10 @@ describe("HistoryPop with a multi-line command", () => {
     expect(await screen.findByText("echo hi ⏎ export TOKEN=••••••")).toBeTruthy();
   });
 });
+
+describe("HistoryPop with a secret-named assignment", () => {
+  it("masks a literal fallback in the value", async () => {
+    render(<HistoryPop shell={[entry("export API_TOKEN=${TOKEN:-hunter2}")]} project={[]} scope="shell" onPick={() => undefined} onClose={() => undefined} />);
+    expect(await screen.findByText("export API_TOKEN=••••••")).toBeTruthy();
+  });
+});
