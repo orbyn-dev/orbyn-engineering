@@ -118,6 +118,13 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   const canCreate = gitAvailable && linkedPulls.status === "ready" && linkedPulls.data.length === 0;
   const [restoring, setRestoring] = useState(false);
   const [creating, setCreating] = useState(false);
+  // The repository the pull request dialog opened for. Held until it closes, so a repository read that fails while it is
+  // open cannot move the submission to the primary repository or drop the note naming the one it acts on.
+  const [creatingRepo, setCreatingRepo] = useState<{ id: string | undefined; name: string } | undefined>(undefined);
+  const openCreating = () => {
+    setCreatingRepo(choice.selected ? { id: repoId, name: repoLabel(choice.selected.name) } : undefined);
+    setCreating(true);
+  };
   const commits = useAsync(`commits:${threadId}:${source}${repoSuffix}`, (signal) =>
     source === "commit" ? (repoId === undefined ? api.commits(threadId, signal) : api.commits(threadId, signal, repoId)) : Promise.resolve([]),
   );
@@ -328,8 +335,11 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   const failed = diff.status === "error";
   const added = files.reduce((sum, file) => sum + file.additions, 0);
   const removed = files.reduce((sum, file) => sum + file.deletions, 0);
-  // Nothing changed means nothing to open a pull request for.
-  const offerPull = canCreate && ((diff.data?.length ?? 0) > 0 || (branchAhead.data?.length ?? 0) > 0);
+  // Nothing changed means nothing to open a pull request for. In the working-tree, turn and thread scopes the list holds
+  // every trusted repository's files, so only the chosen repository's count: another repository's change is not this one's
+  // to carry, and its pull request dialog would act only on the chosen repository.
+  const changedHere = (diff.data ?? []).filter((file) => !choice.multi || file.repo_id === choice.selected?.repo_id);
+  const offerPull = canCreate && (changedHere.length > 0 || (branchAhead.data?.length ?? 0) > 0);
   const foot = thread && thread.active_run === null && ((source === "turn" && latestRun) || offerPull);
 
   const bar = findOpen ? (
@@ -488,14 +498,14 @@ export function DiffPanel({ threadId }: { threadId: string }) {
             </Button>
           ) : null}
           {offerPull ? (
-            <Button small tone="quiet" icon={<GitPullRequest size={14} aria-hidden />} onClick={() => setCreating(true)}>
+            <Button small tone="quiet" icon={<GitPullRequest size={14} aria-hidden />} onClick={openCreating}>
               Create pull request
             </Button>
           ) : null}
         </div>
       ) : null}
       {restoring && latestRun ? <RestoreFilesDialog threadId={threadId} runId={latestRun} onClose={() => setRestoring(false)} /> : null}
-      {creating && thread ? <GitActionDialog thread={thread} plan={createPullRequestPlan()} repo={choice.selected ? { id: repoId, name: repoLabel(choice.selected.name) } : undefined} onClose={() => setCreating(false)} /> : null}
+      {creating && thread ? <GitActionDialog thread={thread} plan={createPullRequestPlan()} repo={creatingRepo} onClose={() => { setCreating(false); setCreatingRepo(undefined); }} /> : null}
     </div>
   );
 }
