@@ -17,6 +17,7 @@ use serde_json::Value;
 
 use crate::app::Core;
 use crate::crew::autopilot::ledger;
+use crate::crew::needs_you::Scope;
 use crate::crew::working::working;
 use crate::crew::{key_needles, valid_id, wire_name};
 use crate::error::{CoreError, Result};
@@ -389,10 +390,7 @@ impl Core {
     /// function over this project's tasks for the workers. It is not windowed, writes nothing and starts nothing.
     fn dashboard_live(&self, project: &str) -> Result<wire::CrewDashboardLive> {
         let mut waits: BTreeMap<String, (wire::NeedsYouKind, u32)> = BTreeMap::new();
-        for item in self.needs_you_all(&|item_project, _| item_project == Some(project))? {
-            if item.project_id.as_deref() != Some(project) {
-                continue;
-            }
+        for item in self.needs_you_all(Scope::Project(project))? {
             let row = waits.entry(wire_name(&item.kind)).or_insert((item.kind, 0));
             row.1 = row.1.saturating_add(1);
         }

@@ -280,9 +280,11 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   text. The title line names the repository and the tab's tooltip reads `README.md (name)`. `409 file_conflict` keeps its Changed on
   disk banner (Keep mine, Reload); `409 repo_untrusted` on a read or a write shows the service's message and the existing trust
   dialog, keeps the text and repeats nothing; a path outside the repository (`400`) or a repository that is not the thread's (`404`) is
-  said in words. That tab is the editor only: no rendered preview, no line comments, no "Add file to message", no outside editor and
-  no absolute path, and images, archives, documents, binary and truncated files say they can't be shown yet, because those routes
-  (`.../files/raw`, zip, office, download, `previews/file`, `open-in-editor`) take no `repo_id`.
+  said in words. A text file of that tab is the editor only: no rendered preview, no line comments, no "Add file to message", no
+  outside editor and no absolute path. Its image, PDF, video, audio, font, archive, document, binary and truncated files load from
+  their own repository's worktree: the client sends `repo_id` on `GET .../files/raw`, whose bytes, `Range` answers, inline-or-attachment
+  decision and `download` are that repository's file (see "As built: repo_id on Git and file calls"). `previews/file` (Open in browser)
+  and `open-in-editor` (outside editor) take none yet, so neither is offered there.
 - **Turn totals.** The turn picker's per-turn figures were the primary repository's alone. In a multi-repository thread each turn's
   totals sum `GET .../diff?scope=turn&run=` over the thread's trusted repositories, one read per repository with its own `repo_id`.
   An untrusted repository is not read and a repository whose read fails is left out, and the row says "N repo not counted" instead of
@@ -321,9 +323,11 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   a taken branch name, no branch checked out) shows as a notice and the list stays as it was. One click, one write, busy guard.
 - **Not done.** `GET .../files` and `.../files/metadata` take `repo_id` on the service, but the web has no call to either route (the file
   explorer uses the worktree routes and file reads already send `repo_id`), so there is nothing to change until a screen shows another
-  repository's tree. The delete confirm of a thread has no place for notes, so it does not say that a multi-repository thread's worktrees
-  stay on disk when they hold changes (the service removes the clean ones; see "As built: pull requests and removal"). The optional first `message` is not asked for in the dialog (the thread opens and
-  the person types). `ThreadRepo.pull_request`, `repo_id` on pull request routes and on `FileDiff` and removing a repository are now in the service ("As built: pull requests and removal"); the web side draws them (below).
+  repository's tree. `ThreadRepo.pull_request`, `repo_id` on pull request routes and on `FileDiff` and removing a repository are now in the service ("As built: pull requests and removal"); the web side draws them (below).
+- **First message and delete.** The new-thread dialog asks for an optional First message; a trimmed non-empty one is sent as `message`
+  and the service queues it as the thread's first turn. The delete confirm of one multi-repository thread says every repository's worktree
+  stays on disk when it holds changes; several threads, a thread in one repository and a failed repository read keep the existing words
+  (the service removes the clean worktrees; see "As built: pull requests and removal").
 - **Not verified against a live service.** Checked with the mock (which now applies the rules above) and request-level tests of the
   client; the routes have not been run against an `orbynd` with `ORBYN_MULTI_REPO=1`.
 
@@ -332,14 +336,31 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
 Behind the same flag. Migration 66 adds `thread_repos` (thread, repo id, position, name, branch, worktree path); a thread with no rows is
 an ordinary thread and nothing below changes for it. The rows are written by thread creation in the next slice.
 
-- **Where `repo_id` goes.** Body: `POST /api/threads/{id}/git/action`, `POST .../branches`, `POST .../branches/switch`, and
-  `PUT .../files/content` (`GitAction`, `CreateBranch`, `SwitchBranch`, `WriteFile`). Query: `GET .../commits`, `GET .../diff`,
-  `GET .../branches` and `GET .../files/content`. Absent is the primary repository (position 0).
+- **Where `repo_id` goes.** Body: `POST /api/threads/{id}/git/action`, `POST .../branches`, `POST .../branches/switch`,
+  `PUT .../files/content` and `POST .../paths/resolve` (`GitAction`, `CreateBranch`, `SwitchBranch`, `WriteFile`,
+  `ResolveThreadPath`). Query: `GET .../commits`, `GET .../diff`, `GET .../branches` and `GET .../files/content`. Absent is
+  the primary repository (position 0).
 - **One resolver.** Every thread Git and file call reads the thread through one function that, for a multi-repository thread,
   returns it with its `cwd` set to the chosen repository's worktree. So the repository is the only thing that changes: the path of a
   file is resolved inside that worktree by the usual guard (a path that leaves it, an absolute path or a link out is refused), and a
   file `revision` belongs to that repository's file. In Core the route sets the repository with `orbyn_core::in_repo(repo_id, work)`;
   work spawned from inside does not inherit it.
+- **Raw bytes.** `GET .../files/raw` takes `repo_id` in the query when it is given: the bytes, the `Range`, `If-Range` and
+  `If-None-Match` answers, the inline-or-attachment decision and `download` are the named repository's file, read with the same
+  guard rooted at that repository's worktree. Absent is the primary, so every older client is unchanged; preview, download, zip and
+  office views all read this route. Unknown, ordinary-thread and flag-off `repo_id`s are `404` as everywhere else. The web client
+  sends it for another repository's media, archive, document and download (the file tab above); a text file of another repository
+  stays the editor, and `previews/file` and `open-in-editor` take no `repo_id` yet.
+- **Navigation coordinates are one repository's too.** `POST /api/threads/{id}/paths/resolve` resolves the reference in the
+  repository its `repo_id` names, the primary one when absent, so a link to a repository's file is never looked for in the task
+  folder and the answer's `checkout_path` is relative to that repository's worktree. The request's `cwd` is the thread's own
+  stored folder (the task folder) and so is the answer's: the thread's move is still `409 stale_owner`, and it is that folder,
+  not a worktree, that a client fences against.
+- **Known limit: a task-folder reference.** A reference the engine writes relative to its task folder (a message link or a tool
+  result such as `planner/src/x.ts`) still resolves in the thread's primary repository: the task folder is not a checkout, and
+  its worktrees share no one path namespace. A repository-relative reference that names its `repo_id` resolves in that
+  repository; following a task-folder reference to the repository that owns it needs the link, chip or reveal intent to carry
+  the repository (issue #1581).
 - **Refusals.** A `repo_id` on an ordinary thread, one that is not the thread's, or any `repo_id` with the flag off is `404 not_found`. A
   repository whose row in the project is untrusted is `409 repo_untrusted` for every call; a repository removed from the project keeps
   working in a thread that already has its worktree.
@@ -350,7 +371,8 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
 ## As built: repository threads and the task folder
 
 Behind the same flag; no new migration (`thread_repos` is from the slice above). Built: `POST /api/projects/{id}/repo-threads`,
-`GET /api/threads/{id}/task-folder`, `POST /api/threads/{id}/repos`, and `repo_id` on the file tree and metadata reads.
+`GET /api/threads/{id}/task-folder`, `POST /api/threads/{id}/repos`, and `repo_id` on the file tree and metadata reads and on
+navigation coordinates.
 
 - **Start.** `StartThreadInput { repos, engine, model, permission_mode, message?, branch_name? }`, answered with the `Thread`. Two to eight
   repositories (`409 repo_limit` past 8; fewer than two is `400`, one repository uses the normal start); each `base_branch` must be a
@@ -366,7 +388,8 @@ Behind the same flag; no new migration (`thread_repos` is from the slice above).
   primary repository (the project's own folder, when chosen) is position 0; `permission_mode` is applied after creation and the optional
   `message` is queued as the first turn.
 - **Reads.** `GET .../task-folder` answers `TaskFolder { root, branch, repos: ThreadRepo[], max_per_thread }`, `404` for an ordinary
-  thread. `GET .../files` and `.../files/metadata` take `repo_id` too, so the tree of one repository can be shown.
+  thread. `GET .../files` and `.../files/metadata` take `repo_id` too, so the tree of one repository can be shown;
+  `POST .../paths/resolve` takes it on the body, so a link to one repository's file resolves in that repository.
 - **Adding a repository** (`POST /api/threads/{id}/repos` `{ repo_id }`, `ThreadRepo`): a trusted repository of the project that is not
   in the thread, on the thread's branch cut from that repository's current branch (`400` when none is checked out, when it already has
   the branch name or is already in the thread; `409 repo_limit` at 8, `409 repo_untrusted`). Both writes are Person-class.
@@ -427,8 +450,12 @@ over the limit is refused; each write route needs the person key; a failed clone
 `remove`; per-repository commit touches only that repository's worktree; a permission mode the engine
 does not offer is refused before anything is created; a scan never follows a symlink, caps its results
 and adds nothing; a workspace folder outside the file's folder is listed `refused` and not added; a
-`repo_id` on a file write never resolves a path in another repository; a task folder uses one branch name in
-every repository and a taken name creates nothing; a diff, commits, a commit or branch comparison and a turn's
-checkpoint read the repository their `repo_id` names, the primary (the first stored repository) when it is
-absent, and run Git in that repository's worktree rather than the task folder; checkpoint capture and a file
-restore still use the engine's task folder; an unknown repository is `404` and an untrusted one is refused.
+`repo_id` on a file write never resolves a path in another repository; `.../files/raw` reads the named
+repository's bytes, refuses a path outside its worktree, and is `404` for an unknown or ordinary-thread
+`repo_id`; a task folder uses one branch name in every repository and a taken name creates nothing; a diff,
+commits, a commit or branch comparison and a turn's checkpoint read the repository their `repo_id` names, the
+primary (the first stored repository) when it is absent, and run Git in that repository's worktree rather than
+the task folder; checkpoint capture and a file restore still use the engine's task folder; navigation coordinates
+resolve in the repository their `repo_id` names too, the primary when absent, so a repository's file is found in
+its own worktree and the task folder is never the checkout, and a thread that moved answers `409 stale_owner`;
+an unknown repository is `404` and an untrusted one is refused.

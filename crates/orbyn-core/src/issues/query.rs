@@ -28,11 +28,20 @@ pub(crate) fn capped_cursors(cursors: BTreeMap<String, String>) -> BTreeMap<Stri
     kept
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StateFilter {
+    #[default]
     Open,
     Closed,
     All,
+}
+
+/// How a listing is ordered, newest first by that date (docs/issues.md, "Issue writes and list controls").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IssueSort {
+    #[default]
+    Updated,
+    Created,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,6 +59,8 @@ pub struct IssueQuery {
     pub labels: Vec<String>,
     pub assignee: AssigneeFilter,
     pub text: String,
+    /// Newest first by this date; `updated` unless the person chose otherwise.
+    pub sort: IssueSort,
     pub limit: usize,
     /// Where to carry on, per `"<tracker> <scope>"`. Empty for a first page. A source checks that it issued each one.
     pub cursors: BTreeMap<String, String>,
@@ -63,6 +74,7 @@ impl Default for IssueQuery {
             labels: Vec::new(),
             assignee: AssigneeFilter::Any,
             text: String::new(),
+            sort: IssueSort::Updated,
             limit: DEFAULT_LIMIT,
             cursors: BTreeMap::new(),
         }
@@ -136,6 +148,15 @@ impl IssueQuery {
                 "q" => {
                     plain(value, 200, "The search text")?;
                     query.text = value.trim().to_owned();
+                }
+                "sort" => {
+                    query.sort = match value.as_str() {
+                        "updated" => IssueSort::Updated,
+                        "created" => IssueSort::Created,
+                        _ => {
+                            return Err(CoreError::Invalid("sort is updated or created.".into()));
+                        }
+                    };
                 }
                 "limit" => {
                     let n: usize = value
@@ -252,7 +273,7 @@ mod tests {
         for bad in [
             ("state", "merged"),
             ("tracker", "jira"),
-            ("sort", "created"),
+            ("sort", "newest"),
             ("involvement", "authored"),
             ("label", " "),
             ("assignee", "a b"),
@@ -265,5 +286,25 @@ mod tests {
             .map(|i| ("label".to_owned(), format!("l{i}")))
             .collect();
         assert!(IssueQuery::from_pairs(&many).is_err());
+    }
+
+    #[test]
+    fn sort_is_updated_unless_created_is_asked_for() {
+        assert_eq!(
+            IssueQuery::from_pairs(&[]).unwrap().sort,
+            IssueSort::Updated
+        );
+        assert_eq!(
+            IssueQuery::from_pairs(&pairs(&[("sort", "updated")]))
+                .unwrap()
+                .sort,
+            IssueSort::Updated
+        );
+        assert_eq!(
+            IssueQuery::from_pairs(&pairs(&[("sort", "created")]))
+                .unwrap()
+                .sort,
+            IssueSort::Created
+        );
     }
 }
