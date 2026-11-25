@@ -31,7 +31,7 @@ its own. Code, not a model, decides whether a finding is true.
   with no file reads. Scope and size checks retain `--exclude-standard` and disable the untracked cache.
   Pre-existing ignored caches do not require broader scope or data removal; ignored new files remain invisible to these checks.
   No generic cache names are specially exempted, and the core does not widen leases or remove existing data.
-  `git_hardened` disables repository filters and diff converters, tree/global/system attributes and replace refs. The scope, size and changed-path checks use `git_byte_exact`, which also disables line-ending conversion and the untracked cache; no other caller carries those flags.
+  `git_hardened` disables repository filters and diff converters, tree/global/system attributes and replace refs. The scope, size and changed-path checks use `git_byte_exact`, which also disables line-ending conversion and the untracked cache; the capacity and flow reads use it for byte-exact diffs too. Those checks need Git 2.40 or later, where `GIT_ATTR_SOURCE` keeps a checkout's own `.gitattributes` out of the read; older Git errors them rather than pass bytes it did not compare.
   Git's `info/attributes` overrides are a separate source: scope and size checks refuse a nonempty, unreadable or nonregular override file
   with an error; an absent or empty readable file is accepted. The preflight checks metadata without reading attribute contents.
   If git cannot list the index, or the flags were recorded for another directory than the one checked, nothing passes: the task goes to a person (a task whose index cannot be listed does not start).
@@ -65,7 +65,7 @@ and connect launch and merge admission. Focused fake-engine, store and HTTP test
 - A fingerprint (lane, file, claim) only labels a finding across rounds; the guard and the blocking keep to the lane and file.
 - Accepted remaining Git limits (#451): a new file hidden by `.gitignore`, `.git/info/exclude` or `core.excludesFile`;
   a crafted `.git/index` whose saved file times match an edited file; a `.git` file pointing to another git folder;
-  and in general a writable `.git` in the checkout. A write outside the checkout is seen by none of the checks. The `info/attributes`
+  a Git older than 2.40, where the byte-exact checks error instead of passing; and in general a writable `.git` in the checkout. A write outside the checkout is seen by none of the checks. The `info/attributes`
   preflight can race a metadata change. Refusing flags and disabling conversions do not establish filesystem isolation or immutable Git metadata.
   Counting all ignored files would charge pre-existing caches and local data to a narrow task; this slice preserves compatibility instead.
   Task-start byte baselines and stronger output/read bounds are future work, alongside #436 isolation. Git output remains buffered;
@@ -112,7 +112,7 @@ records workflow completion, not proof of code correctness. A required-lane waiv
 | Real Claude and Codex yield | Unqualified: only fake engines are tested here. Real provider runs and confirmed-finding yield remain outstanding. |
 | Hidden paths and index flags | Partially changed: all hiding flags refuse admission/fail checks; sparse checkouts with skip-worktree entries are intentionally unsupported. Ignored new files remain an accepted blind spot to preserve ordinary cached checkouts. Crafted index stat data remains a limit above; #436 isolation is still needed. |
 | Clearing repro at finding commit | Deferred: current-checkout repro is recorded as such; fail-before/pass-after at exact commits and isolated process lifetime remain outstanding with #436. |
-| Byte-exact Git | Changed: only Crew scope, size and changed-path checks run `git_byte_exact` (autocrlf, safecrlf and untracked cache off). `git_hardened` is unchanged. Repository metadata remains writable. |
+| Byte-exact Git | Changed: only Crew scope, size and changed-path checks run `git_byte_exact` (autocrlf, safecrlf and untracked cache off), and they need Git 2.40 or later for `GIT_ATTR_SOURCE` (older Git fails them closed). `git_hardened` is unchanged. Repository metadata remains writable. |
 | Touched guard and plain HEAD reads | Changed: core digest comparison and hardened HEAD reads in `review/lanes` and the start path's `classes/file`. No generic shell rewriting. |
 
 This is partial hardening, not full #451 qualification. Exact-commit repro, isolated review and real-lane measurements stay visible.

@@ -56,7 +56,11 @@ async fn resolve_thread_path(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<ResolveThreadPath>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.resolve_thread_path(&id, &body).await?))
+    // A multi-repository thread resolves coordinates in the repository named, else its primary one.
+    let repo = body.repo_id.clone();
+    Ok(Json(
+        orbyn_core::in_repo(repo, state.core.resolve_thread_path(&id, &body)).await?,
+    ))
 }
 
 async fn ignored_files(
