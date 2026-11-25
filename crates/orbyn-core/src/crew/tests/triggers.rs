@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use crate::crew::triggers::{
     Budget, ENGINES_MAX, FILE_MAX, KIND_NAMES, NAME_MAX, PROBLEMS_MAX, Problem,
     SCHEDULE_MAX_MINUTES, SCHEDULE_MIN_MINUTES, SETTING_MAX, TEMPLATE_IDS, TEMPLATES_MAX,
-    TRIGGERS_MAX, TriggerKind, parse_and_validate,
+    TRIGGERS_MAX, TriggerDef, TriggerKind, parse_and_validate,
 };
 
 /// One trigger with the fields every kind needs; tests change single fields with `edit`.
@@ -51,6 +51,14 @@ fn assert_problem(problems: &[String], field: &str, needle: &str) {
     );
 }
 
+/// The parsed trigger called `name`, found by the name the file gives it. A test never relies on the
+/// order the file declared its triggers in.
+fn named<'a>(defs: &'a [TriggerDef], name: &str) -> &'a TriggerDef {
+    defs.iter()
+        .find(|def| def.name == name)
+        .expect("the parsed trigger with that name")
+}
+
 #[test]
 fn a_valid_file_parses_all_three_kinds() {
     let text = file_of(vec![
@@ -68,29 +76,26 @@ fn a_valid_file_parses_all_three_kinds() {
     ]);
     let defs = parse_and_validate(&text).expect("a valid file parses");
     assert_eq!(defs.len(), 3);
+    let ci_failed = named(&defs, "fix-main-ci");
+    assert_eq!(ci_failed.kind, TriggerKind::CiFailed);
+    assert_eq!(ci_failed.branch.as_deref(), Some("main"));
+    assert_eq!(ci_failed.workflow.as_deref(), Some("ci.yml"));
     assert_eq!(
-        defs.iter().map(|def| def.kind).collect::<Vec<_>>(),
-        [
-            TriggerKind::CiFailed,
-            TriggerKind::Schedule,
-            TriggerKind::Manual
-        ]
-    );
-    assert_eq!(defs[0].name, "fix-main-ci");
-    assert_eq!(defs[0].branch.as_deref(), Some("main"));
-    assert_eq!(defs[0].workflow.as_deref(), Some("ci.yml"));
-    assert_eq!(defs[1].every_minutes, Some(10080));
-    assert_eq!(defs[2].every_minutes, None);
-    assert_eq!(
-        defs[0].budget,
+        ci_failed.budget,
         Budget {
             turns: 30,
             minutes: 20
         }
     );
-    assert_eq!(defs[0].engines, ["claude", "codex"]);
-    assert_eq!(defs[0].description, "Fix the failing build.");
-    assert_eq!(defs[0].template, "fix_failing_ci");
+    assert_eq!(ci_failed.engines, ["claude", "codex"]);
+    assert_eq!(ci_failed.description, "Fix the failing build.");
+    assert_eq!(ci_failed.template, "fix_failing_ci");
+    let scheduled = named(&defs, "monday-deps");
+    assert_eq!(scheduled.kind, TriggerKind::Schedule);
+    assert_eq!(scheduled.every_minutes, Some(10080));
+    let manual = named(&defs, "by-hand");
+    assert_eq!(manual.kind, TriggerKind::Manual);
+    assert_eq!(manual.every_minutes, None);
 }
 
 #[test]
@@ -104,7 +109,7 @@ fn a_template_declared_in_the_file_may_be_referenced() {
     })
     .to_string();
     let defs = parse_and_validate(&text).expect("the declared template is known");
-    assert_eq!(defs[0].template, "nightly-deps");
+    assert_eq!(named(&defs, "nightly").template, "nightly-deps");
 }
 
 #[test]
@@ -368,7 +373,7 @@ fn a_schedule_needs_the_minimum_interval() {
         json!(SCHEDULE_MIN_MINUTES),
     ));
     let defs = parse_and_validate(&at_minimum).expect("60 minutes is the minimum, inclusive");
-    assert_eq!(defs[0].every_minutes, Some(SCHEDULE_MIN_MINUTES));
+    assert_eq!(named(&defs, "x").every_minutes, Some(SCHEDULE_MIN_MINUTES));
 }
 
 #[test]
@@ -468,10 +473,11 @@ fn repository_text_is_data_and_is_never_expanded() {
         json!(description),
     ));
     let defs = parse_and_validate(&text).expect("text is carried, not run");
-    assert_eq!(defs[0].description, description);
-    assert!(defs[0].description.contains("${HOME}"), "no expansion");
-    assert!(defs[0].description.contains("$(rm -rf /)"), "no shell");
-    assert!(defs[0].description.contains('`'), "no backtick handling");
+    let def = named(&defs, "x");
+    assert_eq!(def.description, description);
+    assert!(def.description.contains("${HOME}"), "no expansion");
+    assert!(def.description.contains("$(rm -rf /)"), "no shell");
+    assert!(def.description.contains('`'), "no backtick handling");
 }
 
 #[test]
@@ -650,7 +656,7 @@ fn a_schedule_is_a_whole_number_of_hours() {
     for fine in [60, 120, 1440, SCHEDULE_MAX_MINUTES] {
         let text = one(edit(trigger("x", "schedule"), "every_minutes", json!(fine)));
         let defs = parse_and_validate(&text).expect("a whole number of hours parses");
-        assert_eq!(defs[0].every_minutes, Some(fine));
+        assert_eq!(named(&defs, "x").every_minutes, Some(fine));
         assert!(
             (1..=720).contains(&(fine / 60)),
             "maps to every_hours 1..720"
@@ -726,6 +732,7 @@ fn walking_and_listing_are_capped() {
         r#"{{"background":{{"version":1,"triggers":[{many}]}}}}"#
     ));
     assert_eq!(problems.len(), PROBLEMS_MAX + 1, "{problems:#?}");
+    // Order is the contract here: the counted footer is the last problem listed.
     assert!(problems.last().unwrap().contains(" more"), "{problems:#?}");
     assert_problem(&problems, "background.triggers", "30000");
 
@@ -735,6 +742,7 @@ fn walking_and_listing_are_capped() {
     ));
     assert!(problems.len() <= PROBLEMS_MAX + 1, "{problems:#?}");
     assert_problem(&problems, "background.templates", "5000");
+    // Past the cap the extra rows are one count, so the first row over the cap is never named.
     assert!(
         problems
             .iter()
