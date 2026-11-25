@@ -116,11 +116,12 @@ export async function saveSession(key: string, against?: string | null, endingsO
     const written = await saveThreadFile(current.threadId, { path: current.path, content: withEol(sent, current.eol), base_revision: against === undefined ? current.revision : against, ...(current.repoId === undefined ? {} : { repo_id: current.repoId }) });
     const before = current.saved;
     patch(key, { saved: sent, revision: written.revision, saving: false, mixed: false });
-    // Comments on this file follow their text to the new revision, or are marked out of date when it is gone.
-    // The chips name a checkout and a path, not a repository: another repository's file never moves the primary's.
-    if (current.revision && written.revision !== current.revision && current.repoId === undefined) {
+    // Comments on this file follow their text to the new revision, or are marked out of date when it is gone. A comment
+    // names its repository, so another repository's file with the same path never moves the primary's and the reverse.
+    if (current.revision && written.revision !== current.revision) {
       const { chips, update } = useComposerChips.getState();
-      const where = { cwd: current.cwd, path: current.path, fromRevision: current.revision, toRevision: written.revision, before, after: sent };
+      const where = { cwd: current.cwd, path: current.path, fromRevision: current.revision, toRevision: written.revision, before, after: sent,
+        ...(current.repoId === undefined ? {} : { repoId: current.repoId }) };
       const mine = chips[current.threadId] ?? [];
       remapReviewChips(mine, where).forEach((chip, at) => { if (chip !== mine[at]) update(current.threadId, chip); });
     }
