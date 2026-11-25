@@ -6,7 +6,6 @@ import { chipId, fileExcerpt, languageForPath } from "../../../product/composer/
 import { savedContents, sessionOfTab, useEditorSessions } from "./editorSessions";
 import { launchableEditors, primaryEditor } from "../../../product/composer/editorPreferences";
 import { navigate } from "../../../product/state/route";
-import { formatShortcut } from "../../../product/shell/shortcuts";
 import { parseFileTab, useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import type { MenuItem } from "../../../ui/Menu";
@@ -17,7 +16,7 @@ import { threadPathOf, useExplorer } from "../../workspace";
  * installed ones, the favourite marked) and Close tab. Reveal in the left bar is not here: the left bar has no way to
  * be told to show a file yet.
  */
-export function useFileTabMenu(threadId: string, tab: string | null, close: () => void): MenuItem[] | null {
+export function useFileTabMenu(threadId: string, tab: string | null, close: () => void, closeKey?: string): MenuItem[] | null {
   const target = tab ? parseFileTab(tab) : null;
   const editors = useAsync("editors", (signal) => api.editors(signal));
   const preferred = useUi((state) => state.preferredEditor);
@@ -26,7 +25,7 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
   const pushToast = useUi((state) => state.pushToast);
   // What the editor holds, for the two items that read the file: only a file open in the editor has any.
   const held = useEditorSessions((state) => (tab ? sessionOfTab(state.sessions, threadId, cwd, tab) : undefined));
-  const closeItem: MenuItem = { label: "Close tab", icon: <X size={14} aria-hidden />, shortcut: formatShortcut("mod+w"), onSelect: close };
+  const closeItem: MenuItem = { label: "Close tab", icon: <X size={14} aria-hidden />, shortcut: closeKey, onSelect: close };
   if (!target) return null;
   if (target.kind === "worktree" || target.kind === "issue") return [closeItem];
   const relative = target.path;

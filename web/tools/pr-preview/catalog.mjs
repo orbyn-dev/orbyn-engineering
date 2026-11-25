@@ -792,6 +792,10 @@ export const FRAMES = {
   "lane-same-engine": { route: "#/crew/flow", scenario: "crew-review-same", steps: [click("button", "Use next in the auth redirect", { prefix: true })] },
   "lane-same-engine-full": { route: "#/crew/flow", scenario: "crew-review-full", steps: [click("button", "Use next in the auth redirect", { prefix: true })] },
 
+  // The artifacts view of the Flow task zoom (docs/crew.md): the checks the build ran, the artifacts they named and the change
+  // pinned to the commit the task started from, from GET /api/crew/flow/tasks/{id}/artifacts.
+  "flow-artifacts": { route: "#/crew/flow", scenario: "crew", steps: [click("button", "Use next in the auth redirect", { prefix: true }), click("button", "Artifacts")] },
+
   // Approved two-control additions @ git:6e509d39c0486c2c51a119416d24c5443937acd5.
   "lane-remove-reason": { route: "#/crew/flow", scenario: "crew-review-remove", steps: [click("button", "Review dependency licences", { prefix: true }), click("button", "Remove…"), { do: "fill", label: "Reason", value: "This change only updates documentation; the dependency licences are unchanged." }] },
   "settings-acp-tier-editor": { route: "#/settings/crew", scenario: "crew", steps: [click("button", "Edit tiers"), click("region", "Engine tiers")] },

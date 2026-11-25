@@ -3,6 +3,7 @@ import { serviceUrl } from "./origin";
 import { forgetPersonKey, personKeyHeaders } from "./personKey";
 import { readToken } from "./token";
 import { inBackground, inLane, laneFor } from "./lanes";
+import { forgetSharedReads, sharedKey, sharedRead } from "./singleFlight";
 import type { CreateBranch } from "../generated/CreateBranch";
 import type { RewindResult } from "../generated/RewindResult";
 import type { SwitchBranch } from "../generated/SwitchBranch";
@@ -173,12 +174,21 @@ export interface RequestOptions {
   priority?: "foreground";
   /** Extra headers, such as the nonce a confirmed account action sends back. */
   headers?: Record<string, string>;
+  /**
+   * Opt in: identical reads in flight share one request. Set only on reads a screen can start
+   * from more than one place at the same moment; a write never joins one.
+   */
+  share?: boolean;
+  /** Never join a read already in flight: the answer decides something, so it must be read now. */
+  fresh?: boolean;
 }
 
 const unreachable = () => new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0);
 
 /**
  * Slow reads queue in their own lane (see `lanes.ts`); everything else goes straight out.
+ * A read that opts into sharing joins an identical one in flight (see `singleFlight.ts`), and
+ * a write drops those flights so a read made after it never joins one sent before it.
  * The slow-request warning counts queued time.
  */
 export function request<T>(
@@ -190,7 +200,20 @@ export function request<T>(
 ): Promise<T> {
   const slow = setTimeout(() => onSlowRequest(), SLOW_REQUEST_MS);
   const lane = options.priority === "foreground" ? "interactive" : laneFor(method, path);
-  const sent = inLane(lane, signal, (laned) => send<T>(method, path, body, laned, options.headers), unreachable, inBackground());
+  const background = inBackground();
+  const sendInLane = (own: AbortSignal | undefined) =>
+    inLane(lane, own, (laned) => send<T>(method, path, body, laned, options.headers), unreachable, background);
+  // A write may change what a read in flight answers. Clear when it is sent and again when it
+  // settles, so a read awaited after it never joins one sent before or while it ran.
+  const write = method !== "GET" && options.share !== true;
+  let sent: Promise<T>;
+  if (options.share === true && options.fresh !== true) {
+    sent = sharedRead(sharedKey(method, path, body, options.headers), sendInLane, signal);
+  } else {
+    if (write) forgetSharedReads();
+    sent = sendInLane(signal);
+    if (write) sent = sent.finally(() => forgetSharedReads());
+  }
   return sent.finally(() => clearTimeout(slow));
 }
 
@@ -364,7 +387,8 @@ export const api = {
     request<LimitsOverview>("GET", `/api/limits${force ? "?force=true" : ""}`, undefined, signal),
   /** `refresh` reads now, whatever the service has kept, for a check the person asked for. */
   updates: (signal?: AbortSignal, refresh = false) => request<UpdateStatus>("GET", `/api/updates${refresh ? "?refresh=1" : ""}`, undefined, signal),
-  shell: (signal?: AbortSignal) => request<ShellStatus>("GET", "/api/shell", undefined, signal),
+  shell: (signal?: AbortSignal, fresh = false) =>
+    request<ShellStatus>("GET", "/api/shell", undefined, signal, { share: true, fresh }),
   shellAction: (action: ShellAction) => request<void>("POST", "/api/shell/actions", { action }),
   checkUpdates: () => request<UpdateStatus>("POST", "/api/updates/check"),
   applyAppUpdate: (update: AppUpdateRequest) => request<void>("POST", "/api/updates/app/apply", update),
@@ -404,7 +428,8 @@ export const api = {
     request<ProjectRemoval>("DELETE", `/api/projects/${q(id)}${confirm ? "?confirm=true" : ""}`),
 
   skills: (signal?: AbortSignal) => request<SkillPackStatus>("GET", "/api/skills", undefined, signal),
-  info: (signal?: AbortSignal) => request<ServerInfo>("GET", "/api/info", undefined, signal),
+  info: (signal?: AbortSignal) =>
+    request<ServerInfo>("GET", "/api/info", undefined, signal, { share: true }),
   signIn: (key: string) => request<void>("POST", "/auth/session", { key }),
 
   projects: (signal?: AbortSignal) => request<Project[]>("GET", "/api/projects", undefined, signal),
@@ -415,14 +440,15 @@ export const api = {
     request<FsListing>("GET", `/api/fs/browse${path ? `?path=${q(path)}` : ""}`, undefined, signal),
 
   threads: (projectId: string, signal?: AbortSignal) =>
-    request<Thread[]>("GET", `/api/threads?project_id=${q(projectId)}`, undefined, signal),
+    request<Thread[]>("GET", `/api/threads?project_id=${q(projectId)}`, undefined, signal, { share: true }),
   editors: (signal?: AbortSignal) => request<EditorInfo[]>("GET", "/api/editors", undefined, signal),
   openInEditor: (threadId: string, body: { path: string; editor: string; line?: number; column?: number; repo_id?: string }) =>
     request<void>("POST", `/api/threads/${q(threadId)}/files/open`, body),
   /** `repoId` names one repository of a multi-repository thread; left out, the primary one (docs/multi-repo.md). */
   openPreviewFile: (threadId: string, path: string, repoId?: string) =>
     request<PreviewTab>("POST", `/api/threads/${q(threadId)}/previews/file`, { path, ...(repoId === undefined ? {} : { repo_id: repoId }) }),
-  allThreads: (signal?: AbortSignal) => request<Thread[]>("GET", "/api/threads", undefined, signal),
+  allThreads: (signal?: AbortSignal) =>
+    request<Thread[]>("GET", "/api/threads", undefined, signal, { share: true }),
   adoptScratch: (threadId: string) => request<Project>("POST", `/api/threads/${q(threadId)}/adopt`, {}),
   thread: (id: string, signal?: AbortSignal) =>
     request<Thread>("GET", `/api/threads/${q(id)}`, undefined, signal),
