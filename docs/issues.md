@@ -653,8 +653,12 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
 - **A write the tracker refuses** answers the usual `forbidden`, `not_found`, `rate_limited` or
   `tracker_unavailable` and changes nothing here. Issue text goes in as a JSON field value, never as an argument
   position.
-- **The web client does not call the three writes yet**: its create, comment and react controls stay Planned until a
-  web slice builds them against these routes; `web/src/api/personKey.ts` lists the routes now, so the key already
+- **The web client calls `comment` only**: the issue page's comment box under the comments is one
+  `POST /api/issues/item/comment` through the page-wide one-write guard, and it shows the comment the service stored
+  after the tracker's own, keeps a failed draft and says nothing changed, refuses a blank or over-64 KiB body before
+  sending anything, and goes back to Planned when a first answer is a 404 or 405 that is not `not_found`
+  (`web/src/features/issues/IssueComment.tsx`, `http.ts`). Its create and react controls stay Planned until a web
+  slice builds them against these routes; `web/src/api/personKey.ts` lists all three routes, so the key already
   goes with them.
 - **Not verified.** No real GitHub, GitLab, Forgejo, Azure DevOps or Linear issue was created, commented on or
   reacted to; every writer is tested against its own local fake server, and the REST/GraphQL shapes (field names,

@@ -79,6 +79,14 @@ fn audits(w: &World, task: &str, action: &str) -> Vec<AuditEvent> {
         .collect()
 }
 
+/// The one audit row `task` recorded for `action`, unpacked from the store's list rather than read by place.
+/// A missing row or a second one fails here by the action the test asked for.
+fn one_audit(w: &World, task: &str, action: &str) -> AuditEvent {
+    let mut rows = audits(w, task, action);
+    assert_eq!(rows.len(), 1, "one {action} audit for the task: {rows:?}");
+    rows.pop().expect("the task's one audit row")
+}
+
 fn set_times(w: &World, task: &str, created: i64, updated: i64) {
     w.core
         .store
@@ -112,14 +120,13 @@ async fn a_running_builder_resumes_once_with_its_key_and_attempt() {
         "a live task has no off time beyond a second boundary"
     );
 
-    let resumed = audits(&w, &id, "crew.task.resumed");
-    assert_eq!(resumed.len(), 1);
+    let resumed = one_audit(&w, &id, "crew.task.resumed");
     assert_eq!(
-        (resumed[0].actor.as_str(), resumed[0].source.as_str()),
+        (resumed.actor.as_str(), resumed.source.as_str()),
         ("core", "core")
     );
     assert_eq!(
-        resumed[0].detail,
+        resumed.detail,
         json!({ "round": 1, "member": "worker-resume" })
     );
     assert!(audits(&w, &id, "crew.task.restart_stopped").is_empty());
@@ -140,23 +147,12 @@ async fn a_running_builder_resumes_once_with_its_key_and_attempt() {
     })
     .await;
     let prompts = w.sent_to(&worker);
-    assert_eq!(prompts.len(), 1);
-    assert!(
-        prompts[0].contains("lost when Orbyn restarted"),
-        "{}",
-        prompts[0]
-    );
-    assert!(
-        prompts[0].contains("call crew_report again"),
-        "{}",
-        prompts[0]
-    );
-    assert!(
-        prompts[0].contains("last verified round (round 1)"),
-        "{}",
-        prompts[0]
-    );
-    assert!(!prompts[0].contains(&key_id), "the brief held the key id");
+    assert_eq!(prompts.len(), 1, "one resume brief on the worker thread");
+    let prompt = prompts.first().expect("the restart's one resume brief");
+    assert!(prompt.contains("lost when Orbyn restarted"), "{prompt}");
+    assert!(prompt.contains("call crew_report again"), "{prompt}");
+    assert!(prompt.contains("last verified round (round 1)"), "{prompt}");
+    assert!(!prompt.contains(&key_id), "the brief held the key id");
 }
 
 #[tokio::test]
@@ -182,9 +178,10 @@ async fn a_second_restart_stops_the_task_without_another_resume() {
     assert_eq!(task.stop_reason.as_deref(), Some("engine_error"));
     let run = w.core.store.crew_run(&id).unwrap().unwrap();
     assert_eq!((run.resume_count, run.attempts), (1, 1));
-    let stopped = audits(&w, &id, "crew.task.restart_stopped");
-    assert_eq!(stopped.len(), 1);
-    assert_eq!(stopped[0].detail, json!({ "why": "already_resumed" }));
+    assert_eq!(
+        one_audit(&w, &id, "crew.task.restart_stopped").detail,
+        json!({ "why": "already_resumed" })
+    );
     assert_eq!(audits(&w, &id, "crew.task.resumed").len(), 1);
     assert!(w.sent_to(&second).is_empty(), "no second resume was sent");
 
@@ -240,7 +237,8 @@ async fn a_second_restart_stops_the_task_without_another_resume() {
         .filter(|item| item.id == id)
         .collect();
     assert_eq!(ours.len(), 1, "one item for the task");
-    assert_eq!(ours[0].kind, NeedsYouKind::WorkerStoppedTwice);
+    let item = ours.first().expect("the task's one needs-you item");
+    assert_eq!(item.kind, NeedsYouKind::WorkerStoppedTwice);
 }
 
 #[tokio::test]
@@ -256,9 +254,10 @@ async fn a_reviewer_lane_stops_without_a_resume() {
     let run = w.core.store.crew_run(&id).unwrap().unwrap();
     assert_eq!((run.resume_count, run.attempts), (0, 0));
     assert!(run.resumed_at.is_none());
-    let stopped = audits(&w, &id, "crew.task.restart_stopped");
-    assert_eq!(stopped.len(), 1);
-    assert_eq!(stopped[0].detail, json!({ "why": "reviewer" }));
+    assert_eq!(
+        one_audit(&w, &id, "crew.task.restart_stopped").detail,
+        json!({ "why": "reviewer" })
+    );
     assert!(audits(&w, &id, "crew.task.resumed").is_empty());
     assert!(w.sent_to(&worker).is_empty());
     assert!(
@@ -282,9 +281,10 @@ async fn a_not_resumable_member_stops_without_a_stop_detail() {
     assert_eq!(task.state, "stopped");
     assert_eq!(task.stop_reason.as_deref(), Some("engine_error"));
     assert_eq!(task.stop_detail, None);
-    let stopped = audits(&w, &id, "crew.task.restart_stopped");
-    assert_eq!(stopped.len(), 1);
-    assert_eq!(stopped[0].detail, json!({ "why": "not_resumable" }));
+    assert_eq!(
+        one_audit(&w, &id, "crew.task.restart_stopped").detail,
+        json!({ "why": "not_resumable" })
+    );
     assert!(audits(&w, &id, "crew.task.resumed").is_empty());
     assert!(w.sent_to(&worker).is_empty());
     assert!(
@@ -396,9 +396,10 @@ async fn a_resume_brief_that_cannot_be_sent_stops_send_failed() {
     assert_eq!(task.stop_detail, None);
     let run = w.core.store.crew_run(&id).unwrap().unwrap();
     assert_eq!((run.resume_count, run.attempts), (1, 1));
-    let stopped = audits(&w, &id, "crew.task.restart_stopped");
-    assert_eq!(stopped.len(), 1);
-    assert_eq!(stopped[0].detail, json!({ "why": "send_failed" }));
+    assert_eq!(
+        one_audit(&w, &id, "crew.task.restart_stopped").detail,
+        json!({ "why": "send_failed" })
+    );
     assert!(
         w.core
             .crew_needs_you()
