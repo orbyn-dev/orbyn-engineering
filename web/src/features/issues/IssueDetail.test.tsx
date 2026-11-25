@@ -21,7 +21,7 @@ afterEach(() => { setIssuesApi(null); window.location.hash = ""; vi.restoreAllMo
 
 const at = (hash: string) => { window.location.hash = hash; render(<IssuesPage />); };
 
-it("shows the title, state, tracker, facts, body and comments as written, read only", async () => {
+it("shows the title, state, tracker, facts, body and comments as written", async () => {
   setIssuesApi(createIssuesMock());
   at("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
   expect(await screen.findByRole("heading", { name: "Login sends people back to /home" })).toBeVisible();
@@ -32,7 +32,6 @@ it("shows the title, state, tracker, facts, body and comments as written, read o
   expect(within(facts).getByText("riley", { selector: "dd" })).toBeVisible();
   expect(within(facts).getByText("auth")).toBeVisible();
   expect(screen.getByText("Reproduced. The redirect reads", { exact: false })).toBeVisible();
-  expect(screen.queryByRole("textbox")).toBeNull();
   expect(screen.getByRole("link", { name: "Open on GitHub" })).toHaveAttribute("href", "https://github.com/orbyn-dev/orbyn-engineering/issues/412");
   expect(screen.getByRole("link", { name: "Back to Issues" })).toHaveAttribute("href", "#/issues");
 });
@@ -378,7 +377,7 @@ it("shows the description, labels and assignees controls as Planned while the se
     expect(button.parentElement).toHaveTextContent("Planned");
     await user.click(button);
   }
-  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "Description" })).toBeNull();
   expect(screen.queryByRole("menu")).toBeNull();
   expect(mock.writes).toEqual([]);
 });
