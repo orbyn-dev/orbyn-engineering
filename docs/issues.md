@@ -541,8 +541,13 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   page and the engine tools can default to it. `scope` must be one of the connection's scopes; a tracker that is not
   connected is `400 invalid`. It stores two names and no secret, writes one audit row (`issues.project.bind`, ids
   and names only), and never changes the connection, the project or any issue.
-- **Engines.** The engine-facing issue tools (N24) stay read, link and unlink. These five do not give an engine any new
-  power: create, comment and react are the person's own actions from the page; an engine that wants one asks the person.
+- **Engines.** The engine-facing issue tools (N24) are list, read, create, comment, link, unlink and thread list:
+  create and comment call the same Core functions, in the project's own connected tracker and scope, as the Person
+  routes do, so they take the same inputs and answer the same refusals (a tracker that is not connected answers the
+  one "no connected issue tracker" refusal). They are acting tools, so a run's tool approval policy gates each call
+  as it gates every other acting tool; a Crew worker cannot use them (its allow list refuses an unlisted tool by
+  default). Engine tools never use the person key and add no Person-class authority; react is not an engine tool, and
+  set_state is not built because the service has no update/state route (a separate row).
 - **Tests when built.** Each write against the local fake server of each tracker that supports it: exact status and `code`,
   the exact field sent, no token in the answer or the audit row; `403 desktop_required` without the person key and
   nothing sent; a refusal changes nothing here; the route table and class tests pass without special cases.
@@ -685,14 +690,35 @@ The tracker field is required: a body without it is `400 invalid_input`, never r
   route is tested through the real service with a stand-in `gh` and a local fake tracker connection. No real
   `orbynd` service run with a real connected tracker exercises it.
 
+### As built (N24 engine issue tools)
+
+Seven engine-facing tools over the project's own connected tracker and scope, alongside the existing routes: before
+this row they were list, read, link, unlink and thread list; now `orbyn_issue_create` and `orbyn_issue_comment` join
+them.
+
+- `orbyn_issue_create`: `{ title, body?, labels?, assignees?, template? }` — the same `CreateIssue` fields, caps and
+  validation as `POST /api/issues/item/create`, in the project's tracker/scope from its own git remote (never from an
+  argument). It answers the created issue as the issue-read tool does: the summary fields, the body cleaned of the
+  framing markers and cut at 16 KiB, and the tracker-text-is-data note. The tracker's refusal keeps its contract error;
+  an unknown template id is the same `400 invalid` the route answers.
+- `orbyn_issue_comment`: `{ key, body }` — the same `CommentIssue` fields and 1-64 KiB not-blank rule as
+  `POST /api/issues/item/comment`. It answers the stored comment (`id`, `author`, `created_at`, `body` cleaned and cut,
+  and the note).
+- **Permission and approval.** Both are acting tools: each call goes through the run's own tool approval policy
+  (`ActionKind::Tool`) exactly as the project and pull acting tools do, and no tool uses the person key. A Crew
+  worker's allow list names no issue tool, so a worker is refused by default; the allow list was not widened.
+- **Not built.** `set_state` stays out: the service has no update/state route yet (its own parity row), and a tool
+  cannot be backed by a core function that does not exist. React is not in this row. No real tracker was contacted:
+  the tool tests use a local fake issue reader over a fake project remote.
+
 ## What T3 has that this does not (Planned)
 
 The event timeline, "involved/mentioned"
 filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting and
 reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b), templates in R15 PR2 and
 project binding in R15 PR3. The engine-facing
-issue tools (N24) list, read, link, unlink and list a thread's linked issues; they do not create, comment or
-change state.
+issue tools (N24) list, read, create, comment, link, unlink and list a thread's linked issues; they do not change
+state (the service has no state route).
 
 ## Differences from the web side's guessed contract
 
