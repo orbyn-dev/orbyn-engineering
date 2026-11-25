@@ -7,6 +7,7 @@ import { useNow } from "../../../lib/useNow";
 import { chipId, languageForPath } from "../../../product/composer/composerContext";
 import { primaryEditor } from "../../../product/composer/editorPreferences";
 import { useComposerChips } from "../../../product/state/composerChipStore";
+import { useThreadLogs } from "../../../product/state/threadLogs";
 import { navigate, type Route } from "../../../product/state/route";
 import { fileTabId, useUi, type FileTarget } from "../../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
@@ -73,13 +74,16 @@ export function Explorer({ route }: { route: Route }) {
   const currentThreadId = route.name === "thread" ? route.id : null;
   const current = currentThreadId ? threads[currentThreadId] : undefined;
   const currentProjectId = current?.project_id ?? (route.name === "project" || route.name === "new" ? route.projectId : null);
-  // A multi-repository thread's repositories, and which one its tree shows: the primary until the person picks another.
-  const threadRepos = useThreadRepos(currentThreadId ?? "", 0, currentThreadId !== null);
+  // A multi-repository thread's repositories, and which one its tree shows: the primary until the person picks another. The
+  // choice is read again when the thread's Changes are (a run ended, a repository added or trusted), as the header Git menu does.
+  const version = useThreadLogs((state) => (currentThreadId ? (state.diffVersion[currentThreadId] ?? 0) : 0));
+  const threadRepos = useThreadRepos(currentThreadId ?? "", version, currentThreadId !== null);
   const repoChoice = usePickedRepo(currentThreadId ?? "", threadRepos.repos, threadRepos.reload);
   const threadCheckout = useMemo<ThreadCheckout | null>(() => {
     const picked = repoChoice.selected;
     if (!currentThreadId || !repoChoice.multi || !picked) return null;
-    return { threadId: currentThreadId, readRepoId: repoChoice.repoId, tabRepoId: picked.repo_id, name: repoLabel(picked.name), branch: picked.branch };
+    // The primary repository's files open as the thread's own tab; another repository's carry its id.
+    return { threadId: currentThreadId, readRepoId: repoChoice.repoId, tabRepoId: repoChoice.repoId, name: repoLabel(picked.name), branch: picked.branch };
   }, [currentThreadId, repoChoice.multi, repoChoice.repoId, repoChoice.selected]);
 
   const now = useNow(true, 30_000);
@@ -111,7 +115,7 @@ export function Explorer({ route }: { route: Route }) {
       if (row.kind !== "loading") continue;
       if (row.level) {
         const level = row.level;
-        if ("threadId" in level) void store.loadRepoLevel(level.threadId, level.repoId, level.path);
+        if ("threadId" in level) void store.loadRepoLevel(row.projectId, level.threadId, level.repoId, level.path);
         else void store.loadLevel(row.projectId, level.worktreeId, level.path);
       } else void store.loadWorktrees(row.projectId, { thread: currentThreadId });
     }
@@ -125,24 +129,20 @@ export function Explorer({ route }: { route: Route }) {
       const store = useExplorer.getState();
       for (const id of projectIds) void store.reload(id, { thread: latest.current, quiet: true });
     };
-    const repoAgain = (projectIds: string[]) => {
-      const threadId = latest.current;
-      const projectId = threadId ? useWorkspace.getState().threads[threadId]?.project_id : undefined;
-      if (threadId && projectId && projectIds.includes(projectId)) void useExplorer.getState().reloadRepo(threadId, { quiet: true });
-    };
     const loaded = () => Object.keys(useExplorer.getState().worktrees);
     again(loaded());
     return registerRefresh(under("explorer"), (heard) => {
       const named = heard.some((what) => what === EVERYTHING) ? loaded() : heard.map((what) => what.slice("explorer:".length));
-      const projects = [...new Set(named)].filter((id) => id in useExplorer.getState().worktrees);
-      again(projects);
-      repoAgain(projects);
+      again([...new Set(named)].filter((id) => id in useExplorer.getState().worktrees));
     });
   }, []);
-  // Which worktrees are read-only for a thread depends on the thread asking.
+  // Which worktrees are read-only for a thread depends on the thread asking, and its repository folders are read again on
+  // entering it, since another thread's files may have changed while it was away.
   useEffect(() => {
     const store = useExplorer.getState();
     for (const id of Object.keys(store.worktrees)) void store.loadWorktrees(id, { thread: currentThreadId, quiet: true });
+    const projectId = currentThreadId ? useWorkspace.getState().threads[currentThreadId]?.project_id : undefined;
+    if (currentThreadId && projectId) void store.reloadRepo(projectId, currentThreadId, { quiet: true });
   }, [currentThreadId]);
 
   // The long list draws only what is on screen.
@@ -208,7 +208,8 @@ export function Explorer({ route }: { route: Route }) {
     // A file of the open thread's chosen repository opens as the thread's file of that repository: its read and write
     // name the repository, which is the only way the service resolves the path in that repository's worktree.
     if (row.checkout && row.path !== undefined) {
-      useUi.getState().openFileTab({ kind: "thread", path: row.path, repoId: row.checkout.tabRepoId });
+      const repoId = row.checkout.tabRepoId;
+      useUi.getState().openFileTab(repoId === undefined ? { kind: "thread", path: row.path } : { kind: "thread", path: row.path, repoId });
       return;
     }
     const target = targetOf(row);
@@ -291,13 +292,13 @@ export function Explorer({ route }: { route: Route }) {
     if (row.kind === "thread" && row.thread) return navigate({ name: "thread", id: row.thread.id });
     if (row.kind === "more" && row.level) {
       const level = row.level;
-      return useExplorer.getState().showMore("threadId" in level ? repoLevelKey(level.threadId, level.repoId, level.path) : levelKey(row.projectId, level.worktreeId, level.path));
+      return useExplorer.getState().showMore("threadId" in level ? repoLevelKey(row.projectId, level.threadId, level.repoId, level.path) : levelKey(row.projectId, level.worktreeId, level.path));
     }
     if (row.kind === "error") {
       const store = useExplorer.getState();
       if (row.retry === "level" && row.level) {
         const level = row.level;
-        if ("threadId" in level) void store.loadRepoLevel(level.threadId, level.repoId, level.path);
+        if ("threadId" in level) void store.loadRepoLevel(row.projectId, level.threadId, level.repoId, level.path);
         else void store.loadLevel(row.projectId, level.worktreeId, level.path);
       } else void store.loadWorktrees(row.projectId, { thread: currentThreadId });
       return;
@@ -376,7 +377,6 @@ export function Explorer({ route }: { route: Route }) {
   const refresh = () => {
     const store = useExplorer.getState();
     for (const id of Object.keys(store.worktrees)) void store.reload(id, { thread: currentThreadId, refresh: true });
-    if (currentThreadId) void store.reloadRepo(currentThreadId, { refresh: true });
   };
 
   const selectedTab = activeTab;
@@ -384,7 +384,10 @@ export function Explorer({ route }: { route: Route }) {
     if (row.kind === "thread") return row.thread?.id === currentThreadId;
     if (row.kind === "worktree" && row.missing && row.worktree) return selectedTab === fileTabId({ kind: "worktree", projectId: row.projectId, worktreeId: row.worktree.id });
     if (row.kind !== "file") return false;
-    if (row.checkout && row.path !== undefined) return selectedTab === fileTabId({ kind: "thread", path: row.path, repoId: row.checkout.tabRepoId });
+    if (row.checkout && row.path !== undefined) {
+      const repoId = row.checkout.tabRepoId;
+      return selectedTab === fileTabId(repoId === undefined ? { kind: "thread", path: row.path } : { kind: "thread", path: row.path, repoId });
+    }
     const target = targetOf(row);
     return target !== null && selectedTab === fileTabId(target);
   };

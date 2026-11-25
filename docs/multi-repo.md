@@ -323,11 +323,14 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   project's Worktrees, labelled with the thread's branch and marked as the thread's own. The repository chip above it (the explorer's own,
   sharing the choice of the header Git menu and the Changes panel: the thread's primary until the person picks another) names the
   repository shown. Its tree is read through `GET /api/threads/{id}/files?path=&repo_id=` (no `repo_id` for the primary, so it reads as
-  the service's default), and a file opens as the thread's file tab of that repository, so its read and write carry the repository's
-  `repo_id` rather than being resolved against the thread's task folder. A thread in one repository, and every ordinary thread, keeps
-  the explorer it had: no chip, no checkout row and no call to that route. Known limits: the route answers no change letters, and no
+  the service's default). A file of the primary repository opens as the thread's own file tab, with no repository on the tab (the shape
+  the rest of the app opens a thread's files with); a file of another repository opens as that repository's tab, whose read and write
+  carry its `repo_id` rather than being resolved against the thread's task folder. A thread in one repository, and every ordinary
+  thread, keeps the explorer it had: no chip, no checkout row and no call to that route. Known limits: the route answers no change
+  letters (the service cuts a folder at 5,000 entries and its answer says nothing about it, so the level is shown as complete), no
   file watcher covers the thread's worktree, so the tree reads again when the project's data changes (a finished run, for one) or the
-  person presses Refresh. A file the row lists opens its tab and no more: it is not dragged into the message and has no outside
+  person presses Refresh, and on re-entering the thread; the repository list is read again with the thread's Changes (a run that ended,
+  a repository added or trusted), so one added to a running thread can be picked. A file the row lists opens its tab and no more: it is not dragged into the message and has no outside
   editor, "Reveal" or rendered preview, because the thread names one folder and these paths are repository-relative (the same limit the
   other repositories' file tabs have). `GET .../files/metadata` still has no web caller: no screen shows a file's metadata. No frame
   draws this row or the explorer's chip, so both reuse what exists: a worktree row (branch label, Git icon, current dot) and the

@@ -14,15 +14,16 @@ type RowKind = "project" | "group" | "thread" | "worktree" | "repo" | "dir" | "f
 
 /**
  * The open multi-repository thread's chosen repository, drawn as its own checkout row. Its tree is read through the
- * thread's file list route with the repository's `repo_id`, and a file opens as the thread's file tab of that
- * repository, so nothing here names a project worktree and no path is resolved against the thread's own folder.
+ * thread's file list route with the repository's `repo_id`. A file of the thread's primary repository opens as the thread's
+ * own file tab (no repository on it, as the rest of the app opens its files); one of another repository opens as that
+ * repository's tab, so its read and write name it.
  */
 export interface ThreadCheckout {
   threadId: string;
   /** The `repo_id` the tree reads send; absent is the thread's primary repository, the service's default. */
   readRepoId: string | undefined;
-  /** The repository's real id, carried by every file tab it opens. */
-  tabRepoId: string;
+  /** The repository's real id, carried by a file tab of a repository other than the primary; absent for the primary. */
+  tabRepoId: string | undefined;
   /** The repository's name, as one line of plain text. */
   name: string;
   /** The thread's own branch in it, the same name in every repository of the thread. */
@@ -132,7 +133,7 @@ export function buildRows(input: ExplorerInput): Row[] {
   const rows: Row[] = [];
 
   const levelRows = (owner: LevelOwner, path: string, depth: number) => {
-    const key = owner.kind === "worktree" ? levelKey(owner.projectId, owner.worktree.id, path) : repoLevelKey(owner.checkout.threadId, owner.checkout.readRepoId, path);
+    const key = owner.kind === "worktree" ? levelKey(owner.projectId, owner.worktree.id, path) : repoLevelKey(owner.projectId, owner.checkout.threadId, owner.checkout.readRepoId, path);
     const level = owner.kind === "worktree" ? input.levels[key] : input.repoLevels[key];
     const at = owner.kind === "worktree"
       ? { worktreeId: owner.worktree.id, path }

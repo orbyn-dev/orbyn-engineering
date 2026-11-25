@@ -26,8 +26,11 @@ export function readExplorerFile(projectId: string, worktreeId: string, path: st
 }
 
 /**
- * One folder level of the open thread's chosen repository (`repoId` absent is its primary repository), read through
+ * One folder level of one repository of a multi-repository thread (`repoId` absent is its primary repository), read through
  * the thread's own file list route. The answer names each entry but no change letters: `changes` is `unavailable`.
+ *
+ * `truncated` is always false: the route cuts a folder at 5,000 entries and its answer carries no total and no cut flag, so a
+ * level longer than that is shown as complete. The page's own 200-row page and "Show more" row still apply.
  */
 export async function readRepoTree(threadId: string, repoId: string | undefined, path: string, signal?: AbortSignal): Promise<ExplorerTree> {
   const query = `path=${q(path)}${repoId === undefined ? "" : `&repo_id=${q(repoId)}`}`;

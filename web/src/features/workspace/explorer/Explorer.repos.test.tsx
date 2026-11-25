@@ -1,17 +1,20 @@
-import { configure, render, screen, waitFor, within } from "@testing-library/react";
+import { act, configure, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { dataChanged } from "../../../api/shell";
 import { App } from "../../../app/App";
 import { createReposMock } from "../../../../mock/repos";
+import { startDataRefresh } from "../../../lib/dataRefresh";
 import { fileTabId, useUi } from "../../../product/state/ui";
+import { useThreadLogs } from "../../../product/state/threadLogs";
 import { installMockFetch } from "../../../test-support";
 import { setReposApi, type RepoRow, type ThreadRepo } from "../../repos";
 import { useExplorer } from "./store";
 
 // F70 (#1058): the left explorer browses the open multi-repository thread's chosen repository through the thread's own
 // file tree route (`?repo_id=`); a thread in one repository keeps exactly the explorer it had, with no chooser and no
-// such read. The repository also governs the file tab: every file it opens names its repository, so its read and write
-// go through that repository's worktree.
+// such read. The repository also governs the file tab: a file of the primary repository opens as the thread's own tab,
+// a file of another repository as that repository's tab, so its read and write name that repository.
 const THREAD = "t-done";
 const PRIMARY = "p-app";
 const OTHER = "orbyn-planner";
@@ -58,13 +61,13 @@ function levelOf(path: string, repoId: string | null) {
   return [...seen.values()].sort((a, b) => Number(b.is_dir) - Number(a.is_dir) || a.name.localeCompare(b.name));
 }
 
-/** Serves the thread's file tree route and records every URL it was asked for. Everything else is the app's mock API. */
+/** Serves every thread's file tree route and records each URL it was asked for. Everything else is the app's mock API. */
 function serveTrees() {
   const real = fetch;
   const reads: string[] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const url = String(input);
-    if (url.startsWith(`/api/threads/${THREAD}/files?`)) {
+    if (/^\/api\/threads\/[^/?]+\/files\?/.test(url)) {
       reads.push(url);
       const query = new URL(url, "http://x").searchParams;
       return new Response(JSON.stringify(levelOf(query.get("path") ?? "", query.get("repo_id"))), { status: 200 });
@@ -142,12 +145,13 @@ it("switching loads the other repository's tree with repo_id, and each file open
   await user.click(await findRow(/^plan\.md/));
   expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "plans/plan.md", repoId: OTHER }));
 
-  // The primary repository's own file keeps the primary repository's id, so its read and write name it too.
+  // The primary repository's own file opens as the thread's own tab, without a repository on it, as the rest of the app
+  // opens its files: preview, line comments and the composer's actions are the normal file tab's.
   await waitFor(() => expect(chooser()).toHaveAccessibleName("Repository: orbyn-planner"));
   await user.click(chooser());
   await user.click(await screen.findByRole("menuitem", { name: "orbyn-engineering" }));
   await user.click(await findRow(/^main\.ts/));
-  expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "main.ts", repoId: PRIMARY }));
+  expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "main.ts" }));
 });
 
 it("an ordinary thread draws no chooser and asks for no repository tree", async () => {
@@ -172,4 +176,73 @@ it("a thread in one repository keeps today's explorer: no chooser and no reposit
   expect(await screen.findByText("README.md")).toBeInTheDocument();
   expect(within(screen.getByRole("navigation", { name: "Workspace" })).queryByRole("button", { name: /^Repository:/ })).toBeNull();
   expect(reads).toEqual([]);
+});
+
+it("switching from a multi-repository thread to an ordinary one draws no chooser, no checkout row and reads no repository tree", async () => {
+  const user = userEvent.setup();
+  twoRepositories();
+  const reads = serveTrees();
+  render(<App />);
+  expect(await findRow(/^main\.ts/)).toBeInTheDocument();
+
+  await user.click(await findRow("Tool call states"));
+  await waitFor(() => expect(window.location.hash).toBe("#/threads/t-tools"));
+  // Nothing of the multi-repository thread's list is drawn for the ordinary one ...
+  expect(within(sidebar()).queryByRole("button", { name: /^Repository:/ })).toBeNull();
+  expect(screen.queryByRole("img", { name: "This thread’s repository" })).toBeNull();
+  expect(await findRow(/^README\.md/)).toBeInTheDocument();
+  // ... and a real pause shows the old list never reached the new thread's tree read.
+  await new Promise((done) => setTimeout(done, 300));
+  expect(reads.filter((url) => url.includes("/api/threads/t-tools/files"))).toEqual([]);
+});
+
+it("reads the thread's repository tree again on re-entry", async () => {
+  const user = userEvent.setup();
+  twoRepositories();
+  const reads = serveTrees();
+  render(<App />);
+  await findRow(/^main\.ts/);
+  await waitFor(() => expect(reads).toHaveLength(1));
+
+  await user.click(await findRow("Tool call states"));
+  await waitFor(() => expect(window.location.hash).toBe("#/threads/t-tools"));
+
+  const before = reads.length;
+  await user.click(await findRow("Explain how the event log resumes"));
+  await waitFor(() => expect(window.location.hash).toBe(`#/threads/${THREAD}`));
+
+  expect(await findRow(/^main\.ts/)).toBeInTheDocument();
+  await waitFor(() => expect(reads.length).toBeGreaterThan(before));
+});
+
+it("reads the thread's repository tree again when the project's files change", async () => {
+  const stop = startDataRefresh();
+  twoRepositories();
+  const reads = serveTrees();
+  render(<App />);
+  await findRow(/^main\.ts/);
+  await waitFor(() => expect(reads).toHaveLength(1));
+
+  act(() => dataChanged("explorer:p-app"));
+  await waitFor(() => expect(reads).toHaveLength(2));
+  stop();
+});
+
+it("reads the thread's repositories again when its Changes do, so one added to the running thread can be picked", async () => {
+  const user = userEvent.setup();
+  const mock = createReposMock({
+    threads: { [THREAD]: [checkoutRepo(PRIMARY, "orbyn-engineering"), checkoutRepo(OTHER, "orbyn-planner")] },
+    repositories: [projectRepo(PRIMARY, "orbyn-engineering", true), projectRepo(OTHER, "orbyn-planner", false), projectRepo("orbyn-docs", "orbyn-docs", false)],
+  });
+  setReposApi(mock);
+  serveTrees();
+  render(<App />);
+  await waitFor(() => expect(chooser()).toHaveAccessibleName("Repository: orbyn-engineering"));
+
+  await act(async () => {
+    await mock.addThreadRepo(THREAD, "orbyn-docs");
+    useThreadLogs.getState().touchDiff(THREAD);
+  });
+  await user.click(chooser());
+  expect(await screen.findByRole("menuitem", { name: "orbyn-docs" })).toBeInTheDocument();
 });

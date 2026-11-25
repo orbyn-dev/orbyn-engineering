@@ -17,18 +17,25 @@ function deferred<T>() {
 
 beforeEach(() => { useExplorer.getState().reset(); vi.resetAllMocks(); });
 
-it("keeps one repository level per thread and repository, and reads them again for the thread", async () => {
+it("keeps one repository level per project, thread and repository, and reads them again with the thread and the project", async () => {
   vi.mocked(readRepoTree).mockResolvedValue(tree(""));
-  await useExplorer.getState().loadRepoLevel("t", "planner", "");
-  await useExplorer.getState().loadRepoLevel("t", undefined, "");
+  await useExplorer.getState().loadRepoLevel("p", "t", "planner", "");
+  await useExplorer.getState().loadRepoLevel("p", "t", undefined, "");
   expect(vi.mocked(readRepoTree).mock.calls).toEqual([["t", "planner", ""], ["t", undefined, ""]]);
-  expect(useExplorer.getState().repoLevels[repoLevelKey("t", "planner", "")]?.data?.path).toBe("");
-  expect(useExplorer.getState().repoLevels[repoLevelKey("t", undefined, "")]?.data?.path).toBe("");
-  // The thread's repository levels are read again; another thread's are not.
-  await useExplorer.getState().loadRepoLevel("other", "planner", "");
+  expect(useExplorer.getState().repoLevels[repoLevelKey("p", "t", "planner", "")]?.data?.path).toBe("");
+  expect(useExplorer.getState().repoLevels[repoLevelKey("p", "t", undefined, "")]?.data?.path).toBe("");
+  await useExplorer.getState().loadRepoLevel("p", "other", "planner", "");
+  await useExplorer.getState().loadRepoLevel("q", "t", "planner", "");
+  // The thread's repository levels are read again, and only that thread's in that project.
   vi.mocked(readRepoTree).mockClear();
-  await useExplorer.getState().reloadRepo("t", { quiet: true });
+  await useExplorer.getState().reloadRepo("p", "t", { quiet: true });
   expect(vi.mocked(readRepoTree).mock.calls).toEqual([["t", "planner", ""], ["t", undefined, ""]]);
+  // A project's reload reads its repository levels as it reads its worktree levels.
+  await useExplorer.getState().loadWorktrees("p", { thread: null });
+  await useExplorer.getState().loadLevel("p", "w", "");
+  vi.mocked(readRepoTree).mockClear();
+  await useExplorer.getState().reload("p", { thread: null, quiet: true });
+  expect(vi.mocked(readRepoTree).mock.calls).toEqual([["t", "planner", ""], ["t", undefined, ""], ["other", "planner", ""]]);
   // Reset forgets them with everything else.
   useExplorer.getState().reset();
   expect(useExplorer.getState().repoLevels).toEqual({});

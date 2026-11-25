@@ -18,8 +18,11 @@ export const PAGE = 200;
 
 export const levelKey = (projectId: string, worktreeId: string, path: string) => JSON.stringify([projectId, worktreeId, path]);
 
-/** A repository level's key: one folder of the open multi-repository thread's chosen repository. Prefixed so it never meets a worktree level. */
-export const repoLevelKey = (threadId: string, repoId: string | undefined, path: string) => JSON.stringify(["thread", threadId, repoId ?? "", path]);
+/**
+ * A repository level's key: one folder of a multi-repository thread's chosen repository, under its project. The project comes
+ * first so a project's reload reads all of its repository levels, exactly as it reads its worktree levels.
+ */
+export const repoLevelKey = (projectId: string, threadId: string, repoId: string | undefined, path: string) => JSON.stringify(["thread", projectId, threadId, repoId ?? "", path]);
 
 interface Loads {
   /** The open thread, which makes another thread's worktrees read-only for it. */
@@ -37,12 +40,12 @@ interface ExplorerStore {
   shown: Record<string, number>;
   loadWorktrees(projectId: string, loads: Loads): Promise<void>;
   loadLevel(projectId: string, worktreeId: string, path: string, loads?: Pick<Loads, "quiet" | "refresh">): Promise<void>;
-  /** One folder level of the open thread's chosen repository; `repoId` absent is its primary repository. */
-  loadRepoLevel(threadId: string, repoId: string | undefined, path: string, loads?: Pick<Loads, "quiet" | "refresh">): Promise<void>;
-  /** Reads again every repository level the thread has loaded. */
-  reloadRepo(threadId: string, loads: Pick<Loads, "quiet" | "refresh">): Promise<void>;
+  /** One folder level of one repository of a multi-repository thread; `repoId` absent is the thread's primary repository. */
+  loadRepoLevel(projectId: string, threadId: string, repoId: string | undefined, path: string, loads?: Pick<Loads, "quiet" | "refresh">): Promise<void>;
+  /** Reads again every repository level that thread has loaded. */
+  reloadRepo(projectId: string, threadId: string, loads: Pick<Loads, "quiet" | "refresh">): Promise<void>;
   showMore(key: string): void;
-  /** Reads again what a project has loaded: an event named it (`quiet`), or the person pressed Refresh. */
+  /** Reads again what a project has loaded — its worktrees, their folders and its threads' repository folders: an event named it (`quiet`), or the person pressed Refresh. */
   reload(projectId: string, loads: Loads): Promise<void>;
   reset(): void;
 }
@@ -117,8 +120,8 @@ export const useExplorer = create<ExplorerStore>((set, get) => ({
   levels: {},
   repoLevels: {},
   shown: {},
-  loadRepoLevel: (threadId, repoId, path, { quiet = false, refresh = false } = {}) => {
-    const key = repoLevelKey(threadId, repoId, path);
+  loadRepoLevel: (projectId, threadId, repoId, path, { quiet = false, refresh = false } = {}) => {
+    const key = repoLevelKey(projectId, threadId, repoId, path);
     return keep(
       `rl:${key}`,
       `rl:${key}:${refresh}`,
@@ -128,11 +131,14 @@ export const useExplorer = create<ExplorerStore>((set, get) => ({
       quiet,
     );
   },
-  async reloadRepo(threadId, loads) {
-    const keys = Object.keys(get().repoLevels).filter((key) => (JSON.parse(key) as string[])[1] === threadId);
+  async reloadRepo(projectId, threadId, loads) {
+    const keys = Object.keys(get().repoLevels).filter((key) => {
+      const [, project, thread] = JSON.parse(key) as string[];
+      return project === projectId && thread === threadId;
+    });
     await Promise.all(keys.map((key) => {
-      const [, , repoId, path] = JSON.parse(key) as [string, string, string, string];
-      return get().loadRepoLevel(threadId, repoId === "" ? undefined : repoId, path, loads);
+      const [, , , repoId, path] = JSON.parse(key) as [string, string, string, string, string];
+      return get().loadRepoLevel(projectId, threadId, repoId === "" ? undefined : repoId, path, loads);
     }));
   },
   loadWorktrees: (projectId, { thread, quiet = false, refresh = false }) =>
@@ -157,13 +163,18 @@ export const useExplorer = create<ExplorerStore>((set, get) => ({
   },
   showMore: (key) => set((state) => ({ shown: { ...state.shown, [key]: (state.shown[key] ?? PAGE) + PAGE } })),
   async reload(projectId, loads) {
-    const { worktrees, levels } = get();
+    const { worktrees, levels, repoLevels } = get();
     const keys = Object.keys(levels).filter((key) => (JSON.parse(key) as string[])[0] === projectId);
+    const repoKeys = Object.keys(repoLevels).filter((key) => (JSON.parse(key) as string[])[1] === projectId);
     await Promise.all([
       worktrees[projectId] ? get().loadWorktrees(projectId, loads) : Promise.resolve(),
       ...keys.map((key) => {
         const [, worktreeId, path] = JSON.parse(key) as [string, string, string];
         return get().loadLevel(projectId, worktreeId, path, loads);
+      }),
+      ...repoKeys.map((key) => {
+        const [, , threadId, repoId, path] = JSON.parse(key) as [string, string, string, string, string];
+        return get().loadRepoLevel(projectId, threadId, repoId === "" ? undefined : repoId, path, loads);
       }),
     ]);
   },

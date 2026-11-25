@@ -129,7 +129,7 @@ describe("explorer rows", () => {
   });
 
   it("draws a multi-repository thread's chosen repository as its own checkout row, read through the thread", () => {
-    const checkout: ThreadCheckout = { threadId: "t", readRepoId: undefined, tabRepoId: "p", name: "app", branch: "orbyn/1058" };
+    const checkout: ThreadCheckout = { threadId: "t", readRepoId: undefined, tabRepoId: undefined, name: "app", branch: "orbyn/1058" };
     const worktrees = { p: kept({ project_id: "p", git: true, worktrees: [
       worktree({ id: "own", branch: "orbyn/1058", threads: [] }),
       worktree({ id: "x", branch: "feat/x", is_main: false }),
@@ -137,7 +137,7 @@ describe("explorer rows", () => {
     const input = base({
       worktrees,
       threadCheckout: checkout,
-      repoLevels: { [repoLevelKey("t", undefined, "")]: level([entry("checkout", { kind: "directory" }), entry("main.ts")]) },
+      repoLevels: { [repoLevelKey("p", "t", undefined, "")]: level([entry("checkout", { kind: "directory" }), entry("main.ts")]) },
     });
     const rows = buildRows(input);
     // The thread's checkout comes first in the Worktrees group; its own branch is not also one of the project's worktrees.
@@ -147,19 +147,19 @@ describe("explorer rows", () => {
     // A folder is opened with the thread's repository level, one level deeper.
     const opened = buildRows({
       ...input,
-      repoLevels: { ...input.repoLevels, [repoLevelKey("t", undefined, "checkout")]: level([entry("app.ts", { path: "checkout/app.ts" })]) },
+      repoLevels: { ...input.repoLevels, [repoLevelKey("p", "t", undefined, "checkout")]: level([entry("app.ts", { path: "checkout/app.ts" })]) },
       explorerOpen: { [checkoutFolderKey(checkout, "checkout")]: true },
     });
     expect(opened.find((row) => row.kind === "file" && row.path === "checkout/app.ts")).toMatchObject({ checkout });
   });
 
   it("switches the checkout row's tree with the repository chosen, keying it by the repository", () => {
-    const primary: ThreadCheckout = { threadId: "t", readRepoId: undefined, tabRepoId: "p", name: "app", branch: "orbyn/1058" };
+    const primary: ThreadCheckout = { threadId: "t", readRepoId: undefined, tabRepoId: undefined, name: "app", branch: "orbyn/1058" };
     const other: ThreadCheckout = { ...primary, readRepoId: "planner", tabRepoId: "planner", name: "planner" };
     expect(checkoutKey(primary)).not.toBe(checkoutKey(other));
     const rows = buildRows(base({
       threadCheckout: other,
-      repoLevels: { [repoLevelKey("t", "planner", "")]: level([entry("plan.md")]) },
+      repoLevels: { [repoLevelKey("p", "t", "planner", "")]: level([entry("plan.md")]) },
     }));
     expect(keys(rows)).toContain("file:3:plan.md");
     expect(rows.find((row) => row.kind === "repo")?.checkout?.tabRepoId).toBe("planner");
