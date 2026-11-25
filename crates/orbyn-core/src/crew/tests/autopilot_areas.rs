@@ -659,7 +659,7 @@ async fn a_revert_found_by_the_watch_reaches_the_breaker() {
         panic!("{outcome:?}")
     };
     // The third merge, the one that wrote BAD, is the merge the watch reverted.
-    let broken = merged_at(&h.w, &h.tasks, NOW + 3);
+    let broken = merged_at(&h.w, &h.tasks, NOW + 2);
     assert_eq!(task_id, broken);
     assert_eq!(
         stored_merge(&h.w, &task_id).reverted_commit.as_deref(),
