@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiFailure, NETWORK_ERROR } from "../../api/client";
 import type { ProjectIconResource } from "../../generated/ProjectIconResource";
 const mock = vi.hoisted(() => ({ request: vi.fn(), preview: vi.fn(), read: vi.fn(), store: vi.fn(),
   remove: vi.fn(), purge: vi.fn(), clear: vi.fn(), origin: "http://127.0.0.1:1234" }));
-vi.mock("../../api/client", () => ({ request: mock.request }));
+// The client's own failure class, so a refused read is the value the real request throws.
+vi.mock("../../api/client", async () => {
+  const actual = await vi.importActual<typeof import("../../api/client")>("../../api/client");
+  return { ApiFailure: actual.ApiFailure, NETWORK_ERROR: actual.NETWORK_ERROR, request: mock.request };
+});
 vi.mock("../../api/origin", () => ({ serviceUrl: (path: string) => `${mock.origin}${path}` }));
 vi.mock("./projectImagePreview", () => ({ projectImagePreview: mock.preview,
   PROJECT_IMAGE_MIME: { png: "image/png", svg: "image/svg+xml" }, MissingProjectImage: class extends Error {} }));
@@ -103,14 +108,16 @@ describe("shared local project images", () => {
     late(payload()); await flush(); expect(cache.readProjectImage(entry.key)).toBe(DATA_B);
   });
   it("restores a persisted preview on read failure and clears it on authoritative missing", async () => {
-    mock.read.mockResolvedValue(stored()); mock.request.mockRejectedValue(new Error("offline"));
-    const entry = subscribe(); await flush(); expect(cache.readProjectImage(entry.key)).toBe(DATA_A);
+    // A network failure (status 0) is not an authoritative miss: the restored preview stays and nothing is deleted.
+    mock.read.mockResolvedValue(stored()); mock.request.mockRejectedValue(new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0));
+    const entry = subscribe(); await flush(); expect(cache.readProjectImage(entry.key)).toBe(DATA_A); expect(mock.remove).not.toHaveBeenCalled();
     mock.request.mockResolvedValue({ ...payload(), image: null });
     await vi.advanceTimersByTimeAsync(60_000);
     expect(cache.readProjectImage(entry.key)).toBeNull(); expect(mock.remove).toHaveBeenCalledWith(stored().key, project.id);
   });
   it("clears a restored preview when the registered resource is refused", async () => {
-    mock.read.mockResolvedValue(stored()); mock.request.mockRejectedValue({ status: 403 });
+    // A folder the service refuses is a 403 the client turns into ApiFailure, not a bare status object.
+    mock.read.mockResolvedValue(stored()); mock.request.mockRejectedValue(new ApiFailure("workspace_refused", "This folder is inside the skills library.", 403));
     const entry = subscribe(); await flush(); expect(cache.readProjectImage(entry.key)).toBeNull();
     expect(mock.remove).toHaveBeenCalledWith(stored().key, project.id);
   });
@@ -158,7 +165,7 @@ describe("shared local project images", () => {
     mock.preview.mockReturnValue(new Promise<string>((done) => { finish = done; }));
     cache.invalidateProjectImages(project.id); await flush(); expect(cache.readProjectImage(entry.key)).toBe(DATA_A);
     finish(DATA_B); await flush(); expect(cache.readProjectImage(entry.key)).toBe(DATA_B);
-    mock.request.mockRejectedValue(new Error("offline")); cache.invalidateProjectImages(project.id); await flush();
+    mock.request.mockRejectedValue(new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0)); cache.invalidateProjectImages(project.id); await flush();
     expect(cache.readProjectImage(entry.key)).toBe(DATA_B);
   });
   it("fences a late decoded preview when the cache is cleared", async () => {

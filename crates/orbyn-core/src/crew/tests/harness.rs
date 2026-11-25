@@ -78,6 +78,9 @@ pub struct Fake {
     family: String,
     /// Takes input while a turn runs, as Claude and Codex do; false is an engine that does not.
     steerable: bool,
+    /// Takes this many steers per run, then reports every later one as refused (SteerFailed);
+    /// `None` takes every steer, as an engine that accepts input does.
+    refuses_after: Option<usize>,
     /// Lists a lead-tier model as well, so a review role can be routed to it.
     tiered: bool,
     /// What was handed to a running turn's input: `(thread, text)`.
@@ -258,6 +261,8 @@ impl EngineDriver for Fake {
         let answers = self.answers.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let stop = cancel.clone();
+        let refuses_after = self.refuses_after;
+        let refusal_events = events.clone();
         let task = tokio::spawn(async move {
             let outcome = match turn {
                 None => EngineOutcome::Completed,
@@ -309,9 +314,27 @@ impl EngineDriver for Fake {
         let input = self.steerable.then(|| {
             let (send, mut receive) = mpsc::unbounded_channel::<SteerMessage>();
             let (steered, thread) = (self.steered.clone(), spec_thread);
+            let events = refusal_events;
             tokio::spawn(async move {
+                let mut accepted = 0;
                 while let Some(steer) = receive.recv().await {
-                    steered.lock().unwrap().push((thread.clone(), steer.prompt));
+                    steered
+                        .lock()
+                        .unwrap()
+                        .push((thread.clone(), steer.prompt.clone()));
+                    let refuse = match refuses_after {
+                        None => false,
+                        Some(after) if accepted < after => {
+                            accepted += 1;
+                            false
+                        }
+                        Some(_) => true,
+                    };
+                    // An engine that cannot take the text reports the refusal back, as a failed
+                    // Codex turn/steer and a rejected host steering request do.
+                    if refuse {
+                        let _ = events.send(EngineEvent::SteerFailed(steer)).await;
+                    }
                 }
             });
             send
@@ -375,6 +398,37 @@ pub async fn world_with(preview: bool, script: Script, engines: &[(&str, bool)])
     world_tiered(preview, script, engines, false).await
 }
 
+/// `world_with`, where every engine refuses the steers it is handed (SteerFailed), as an engine
+/// whose turn cannot be steered does.
+pub async fn world_refusing_steers(
+    preview: bool,
+    script: Script,
+    engines: &[(&str, bool)],
+) -> World {
+    world_refusing_steers_after(preview, script, engines, 0).await
+}
+
+/// `world_with`, where every engine takes its first `accepted` steers and refuses every later one
+/// (SteerFailed), as an engine answers the steer that reaches its running turn.
+pub async fn world_refusing_steers_after(
+    preview: bool,
+    script: Script,
+    engines: &[(&str, bool)],
+    accepted: usize,
+) -> World {
+    world_full(
+        preview,
+        script,
+        engines,
+        false,
+        false,
+        Vec::new(),
+        None,
+        Some(accepted),
+    )
+    .await
+}
+
 /// `world_with`, with an explicit ACP lead assignment pinned to each fake's default
 /// model. Builder admission remains; a nondefault model is not promoted by that assignment.
 pub async fn world_tiered(
@@ -383,7 +437,17 @@ pub async fn world_tiered(
     engines: &[(&str, bool)],
     tiered: bool,
 ) -> World {
-    world_full(preview, script, engines, tiered, false, Vec::new(), None).await
+    world_full(
+        preview,
+        script,
+        engines,
+        tiered,
+        false,
+        Vec::new(),
+        None,
+        None,
+    )
+    .await
 }
 
 pub async fn world_publication(script: Script, timeout: Option<std::time::Duration>) -> World {
@@ -395,6 +459,7 @@ pub async fn world_publication(script: Script, timeout: Option<std::time::Durati
         false,
         Vec::new(),
         timeout,
+        None,
     )
     .await
 }
@@ -410,6 +475,7 @@ pub async fn world_confined(script: Script) -> World {
         true,
         Vec::new(),
         None,
+        None,
     )
     .await
 }
@@ -417,7 +483,7 @@ pub async fn world_confined(script: Script) -> World {
 #[cfg(target_os = "macos")]
 /// `world_confined`, with these fake engines (an id ending in `codex` is of the Codex family).
 pub async fn world_confined_with(script: Script, engines: &[(&str, bool)]) -> World {
-    world_full(true, script, engines, false, true, Vec::new(), None).await
+    world_full(true, script, engines, false, true, Vec::new(), None, None).await
 }
 
 pub async fn world_forge(script: Script) -> World {
@@ -428,6 +494,7 @@ pub async fn world_forge(script: Script) -> World {
         false,
         false,
         vec!["ci".into()],
+        None,
         None,
     )
     .await
@@ -442,6 +509,7 @@ pub async fn world_forge_review(script: Script) -> World {
         false,
         vec!["ci".into()],
         None,
+        None,
     )
     .await
 }
@@ -454,6 +522,7 @@ async fn world_full(
     confine: bool,
     merge_checks: Vec<String>,
     approval_timeout: Option<std::time::Duration>,
+    refuses_after: Option<usize>,
 ) -> World {
     let dir = TempDir::new();
     let library = crate::testing::library(&dir.path().join("library"));
@@ -516,6 +585,7 @@ async fn world_full(
             // An id that ends in `codex` is a Codex engine, so the run-start refusal for that family applies to it.
             family: if id.ends_with("codex") { "codex" } else { id }.to_owned(),
             steerable: *steerable,
+            refuses_after,
             tiered,
             steered: steered.clone(),
             core: cell.clone(),

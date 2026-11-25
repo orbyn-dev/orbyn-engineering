@@ -422,6 +422,8 @@ impl RunManager {
         if !core.crew_enabled() {
             return;
         }
+        // No refusal can still arrive for a hand-over on this thread: it ended.
+        core.crew_forget_live_steers(thread_id);
         let (thread_id, run_id) = (thread_id.to_owned(), run_id.to_owned());
         tokio::spawn(async move { core.crew_worker_run_ended(thread_id, run_id).await });
     }
