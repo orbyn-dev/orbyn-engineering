@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ToolItem } from "../../product/timeline/types";
-import { callKind, callLabel, callMs, callRuns, callState, resultRows, runLabel, runOutcomes, sourceLines } from "./toolCalls";
+import { callKind, callLabel, callMs, callRuns, callState, resultRows, runLabel, runOutcomes, sourceLines, turnOutcomeText } from "./toolCalls";
 import { callDuration } from "../../lib/format";
 
 const call = (name: string, args: unknown, extra: Partial<ToolItem> = {}): ToolItem => ({
@@ -97,6 +97,40 @@ describe("tool call rows", () => {
     const mixed = group({ exitCode: 0 }, { exitCode: 1 }, { result: null, done: false }, { exitCode: null, result: "ok" });
     expect(runOutcomes(mixed, false, false)).toEqual({ failed: 1, text: "1 failed" });
     expect(runOutcomes(mixed, false, true)).toEqual({ failed: 1, text: "1 failed" });
+  });
+
+  it("counts a finished turn's calls by the four outcomes the engine reported", () => {
+    const turn = [
+      call("Bash", { command: "npm test" }, { exitCode: 0 }),
+      call("Bash", { command: "npm run lint" }, { exitCode: 1, result: "1 failed" }),
+      call("Bash", { command: "git fetch" }, { result: null, done: false }),
+      call("Bash", { command: "npm run build" }, { exitCode: null, result: "built" }),
+    ];
+    expect(turnOutcomeText(turn, false, false)).toBe("4 tool calls · 1 succeeded · 1 failed · 1 no result reported · 1 outcome unknown");
+  });
+
+  it("reads a turn's resultless call as unknown when the run was interrupted, not no result reported", () => {
+    const turn = [call("Bash", { command: "ls" }, { exitCode: 0 }), call("Bash", { command: "git fetch" }, { result: null, done: false })];
+    expect(turnOutcomeText(turn, false, false)).toBe("2 tool calls · 1 succeeded · 1 no result reported");
+    expect(turnOutcomeText(turn, false, true)).toBe("2 tool calls · 1 succeeded · 1 outcome unknown");
+  });
+
+  it("lists only the outcomes a turn has, and keeps a call still running out of them", () => {
+    const done = [0, 1, 2, 3, 4, 5, 6, 7].map((at) => call("Bash", { command: `ok${at}` }, { exitCode: 0 }));
+    expect(turnOutcomeText(done, false, false)).toBe("8 tool calls · 8 succeeded");
+    const live = [...done, call("Bash", { command: "sync" }, { result: null, done: false })];
+    expect(turnOutcomeText(live, true, false)).toBe("9 tool calls · 8 succeeded");
+    expect(turnOutcomeText(live, false, false)).toBe("9 tool calls · 8 succeeded · 1 no result reported");
+  });
+
+  it("counts many missing calls in their own words", () => {
+    const turn = [
+      call("Bash", { command: "a" }, { result: null, done: false }),
+      call("Bash", { command: "b" }, { result: null, done: false }),
+      call("Bash", { command: "c" }, { exitCode: null, result: "ok" }),
+      call("Bash", { command: "d" }, { exitCode: null, result: "ok" }),
+    ];
+    expect(turnOutcomeText(turn, false, false)).toBe("4 tool calls · 2 no results reported · 2 outcomes unknown");
   });
 
   it("labels each kind with its own verb, object and note", () => {
