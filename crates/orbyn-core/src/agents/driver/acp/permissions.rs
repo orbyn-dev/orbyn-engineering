@@ -82,12 +82,16 @@ pub(super) fn answer_request(
 
 /// Picks the option that matches the verdict. Fails closed: with no matching
 /// option the request is reported cancelled, never allowed.
+///
+/// An allow answers with a one-time grant only: `allow_always` is the agent keeping the
+/// permission for good, which this approval did not ask for, so an option set that offers no
+/// `allow_once` is cancelled rather than remembered.
 pub(super) fn permission_outcome(params: &Value, verdict: &Verdict, cancelled: bool) -> Value {
     if cancelled {
         return json!({ "outcome": "cancelled" });
     }
     let wanted: &[&str] = if verdict.is_allowed() {
-        &["allow_once", "allow_always"]
+        &["allow_once"]
     } else {
         &["reject_once", "reject_always"]
     };
@@ -113,18 +117,39 @@ pub(super) fn permission_outcome(params: &Value, verdict: &Verdict, cancelled: b
 /// Every file a file-changing request names, so the gate scope-checks all of them.
 /// Empty for any other kind, and for a file change that names none: that one is
 /// declined by the caller, never gated as a path derived from its title.
+///
+/// `locations` is the protocol's own list, but some engines name a file only in `rawInput`:
+/// a move's `destination` or a single `filePath`/`path` field. Those are files the request
+/// touches too, so they are collected and scope-checked; a duplicate is listed once.
 pub(super) fn gate_paths(params: &Value, kind: ActionKind) -> Vec<String> {
     if kind != ActionKind::FileChange {
         return Vec::new();
     }
-    params
+    let mut paths: Vec<String> = Vec::new();
+    let mut add = |path: &str| {
+        if !paths.iter().any(|seen| seen == path) {
+            paths.push(path.to_owned());
+        }
+    };
+    for location in params
         .pointer("/toolCall/locations")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|location| location.get("path").and_then(Value::as_str))
-        .map(str::to_owned)
-        .collect()
+    {
+        if let Some(path) = location.get("path").and_then(Value::as_str) {
+            add(path);
+        }
+    }
+    for field in ["filePath", "path", "destination"] {
+        if let Some(path) = params
+            .pointer(&format!("/toolCall/rawInput/{field}"))
+            .and_then(Value::as_str)
+        {
+            add(path);
+        }
+    }
+    paths
 }
 
 pub(super) fn classify(params: &Value) -> (ActionKind, String, String) {
