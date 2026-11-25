@@ -205,9 +205,11 @@ async fn only_the_first_links_are_read_and_the_rest_stay_shown_unknown() {
         LINKED_CHECKS_READ_LIMIT,
         "only the first links are read"
     );
-    assert!(pulls[..LINKED_CHECKS_READ_LIMIT]
-        .iter()
-        .all(|pull| pull.checks.is_some()));
+    assert!(
+        pulls[..LINKED_CHECKS_READ_LIMIT]
+            .iter()
+            .all(|pull| pull.checks.is_some())
+    );
     assert!(
         pulls[LINKED_CHECKS_READ_LIMIT..]
             .iter()
