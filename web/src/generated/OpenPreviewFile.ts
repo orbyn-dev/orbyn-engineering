@@ -2,7 +2,7 @@
 
 export type OpenPreviewFile = { 
 /**
- * Inside the thread's checkout.
+ * Inside the thread's checkout or the named repository's worktree.
  */
 path: string, 
 /**

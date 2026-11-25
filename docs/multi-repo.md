@@ -280,10 +280,11 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   text. The title line names the repository and the tab's tooltip reads `README.md (name)`. `409 file_conflict` keeps its Changed on
   disk banner (Keep mine, Reload); `409 repo_untrusted` on a read or a write shows the service's message and the existing trust
   dialog, keeps the text and repeats nothing; a path outside the repository (`400`) or a repository that is not the thread's (`404`) is
-  said in words. That tab is the editor only: no rendered preview, no line comments, no "Add file to message" and no absolute
-  path, and images, archives, documents, binary and truncated files say they can't be shown yet, because the client sends no
-  `repo_id` to the byte and archive routes (`.../files/raw`, zip, office, download). Open in browser (`previews/file`) and the
-  outside editor (`open-in-editor`) take it, so both work on that tab (see "As built: repo_id on Git and file calls").
+  said in words. That tab today is the editor only: no rendered preview, no line comments, no "Add file to message", no media
+  bar and no absolute path, and images, archives, documents, binary and truncated files say they can't be shown yet, because the
+  client sends no `repo_id` to the byte and archive routes (`.../files/raw`, zip, office, download). The service's `previews/file`
+  and `files/open` take one now, and the file-tab menu's outside editor and the binary view's Reveal/Open in editor send it; the
+  media bar's Open in browser and Open in editor use it once #1573 draws that bar and the non-text views for a foreign tab.
 - **Turn totals.** The turn picker's per-turn figures were the primary repository's alone. In a multi-repository thread each turn's
   totals sum `GET .../diff?scope=turn&run=` over the thread's trusted repositories, one read per repository with its own `repo_id`.
   An untrusted repository is not read and a repository whose read fails is left out, and the row says "N repo not counted" instead of
@@ -333,9 +334,10 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
 Behind the same flag. Migration 66 adds `thread_repos` (thread, repo id, position, name, branch, worktree path); a thread with no rows is
 an ordinary thread and nothing below changes for it. The rows are written by thread creation in the next slice.
 
-- **Where `repo_id` goes.** Body: `POST /api/threads/{id}/git/action`, `POST .../branches`, `POST .../branches/switch`, and
-  `PUT .../files/content` (`GitAction`, `CreateBranch`, `SwitchBranch`, `WriteFile`). Query: `GET .../commits`, `GET .../diff`,
-  `GET .../branches` and `GET .../files/content`. Absent is the primary repository (position 0).
+- **Where `repo_id` goes.** Body: `POST /api/threads/{id}/git/action`, `POST .../branches`, `POST .../branches/switch`,
+  `PUT .../files/content`, `POST .../previews/file` and `POST .../files/open` (`GitAction`, `CreateBranch`, `SwitchBranch`,
+  `WriteFile`, `OpenPreviewFile`, `OpenInEditor`). Query: `GET .../commits`, `GET .../diff`, `GET .../branches` and
+  `GET .../files/content`. Absent is the primary repository (position 0).
 - **One resolver.** Every thread Git and file call reads the thread through one function that, for a multi-repository thread,
   returns it with its `cwd` set to the chosen repository's worktree. So the repository is the only thing that changes: the path of a
   file is resolved inside that worktree by the usual guard (a path that leaves it, an absolute path or a link out is refused), and a

@@ -1075,9 +1075,11 @@ async fn a_repo_id_opens_the_preview_in_the_named_repositorys_worktree() {
             json!({ "path": "only.html", "repo_id": repo.other }),
         )
         .await;
-    assert!(
-        (500..=502).contains(&code),
-        "the named repository's file resolved and the browser failed after it: {code} {body}"
+    // The path resolved, so the configured browser is what failed: it does not exist, and the
+    // launch's I/O error is the service's 500 (`internal`), never the file resolver's 404.
+    assert_eq!(
+        code, 500,
+        "the named repository's file resolved and the browser failed after it: {body}"
     );
 
     // The same name is each repository's own file: naming the second and a file only the primary
@@ -1095,7 +1097,7 @@ async fn a_repo_id_opens_the_preview_in_the_named_repositorys_worktree() {
             json!({ "path": "page.html", "repo_id": repo.other }),
         )
         .await;
-    assert!((500..=502).contains(&code), "{code} {body}");
+    assert_eq!(code, 500, "{body}");
 
     // A path that leaves the named repository is not found, even when it names the primary's file.
     let sibling = repo.sibling_of(&repo.other, "base.txt");
