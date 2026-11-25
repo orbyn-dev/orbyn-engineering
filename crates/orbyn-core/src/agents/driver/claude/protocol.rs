@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
@@ -6,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::events::StreamMapper;
 use super::workflows::Workflows;
-use super::{EXIT_GRACE, HOLD_GRACE};
+use super::{EXIT_GRACE, HOLD_GRACE, HOLD_IDLE, HOLD_LIMIT};
 use crate::agents::driver::pipes::{EngineProcess, exit_message, lines};
 use crate::agents::driver::{
     EngineEvent, EngineOutcome, RunControl, RunKind, RunSpec, SteerMessage,
@@ -22,6 +24,41 @@ async fn sleep_until(due: Option<tokio::time::Instant>) {
     match due {
         Some(due) => tokio::time::sleep_until(due).await,
         None => std::future::pending().await,
+    }
+}
+
+/// The caps on a hold: the CLI keeps a completed turn open for background work that says when
+/// it ends. Work that never notifies must not keep the run open: a quiet spell ends it after
+/// the idle cap, and the total cap bounds it whatever the traffic.
+struct Held {
+    limit_at: tokio::time::Instant,
+    idle_at: tokio::time::Instant,
+}
+
+impl Held {
+    fn new(limit: Duration, idle: Duration) -> Self {
+        let now = tokio::time::Instant::now();
+        Self {
+            limit_at: now + limit,
+            idle_at: now + idle,
+        }
+    }
+
+    /// A line arrived while the turn is held: the work is still talking.
+    fn activity(&mut self, idle: Duration) {
+        self.idle_at = tokio::time::Instant::now() + idle;
+    }
+
+    /// The cap that ran out first, if one did. Only the tests ask this; the run loop watches the two instants.
+    #[cfg(test)]
+    fn expired(&self, now: tokio::time::Instant) -> Option<&'static str> {
+        if now >= self.limit_at {
+            Some("limit")
+        } else if now >= self.idle_at {
+            Some("idle")
+        } else {
+            None
+        }
     }
 }
 
@@ -61,11 +98,26 @@ pub(super) async fn run_protocol(
     let mut stream = lines(process.stdout);
     let mut outcome = None;
     let mut grace = None;
+    // A completed turn held open for background work: its caps, and which one ended it.
+    let mut hold: Option<Held> = None;
+    let mut held_reason: Option<&'static str> = None;
     let stream_ended = loop {
+        let limit_due = hold.as_ref().map(|held| held.limit_at);
+        let idle_due = hold.as_ref().map(|held| held.idle_at);
         tokio::select! {
             biased;
             () = cancel.cancelled() => break false,
             () = sleep_until(grace) => {
+                outcome = mapper.held.take();
+                break false;
+            }
+            () = sleep_until(limit_due), if limit_due.is_some() => {
+                held_reason = Some("limit");
+                outcome = mapper.held.take();
+                break false;
+            }
+            () = sleep_until(idle_due), if idle_due.is_some() => {
+                held_reason = Some("idle");
                 outcome = mapper.held.take();
                 break false;
             }
@@ -105,9 +157,21 @@ pub(super) async fn run_protocol(
                     break false;
                 }
                 if mapper.waiting_on_hold() {
+                    // The background work ended; the follow-up turn has a short grace, not a cap.
+                    hold = None;
                     grace.get_or_insert_with(|| tokio::time::Instant::now() + HOLD_GRACE);
+                } else if mapper.held.is_some() && mapper.holding() {
+                    // Held for work that is still running: each line is a sign of life, and the
+                    // caps end the hold if the notifications never come.
+                    grace = None;
+                    if let Some(held) = hold.as_mut() {
+                        held.activity(HOLD_IDLE);
+                    } else {
+                        hold = Some(Held::new(HOLD_LIMIT, HOLD_IDLE));
+                    }
                 } else {
                     grace = None;
+                    hold = None;
                 }
             }
         }
@@ -122,10 +186,21 @@ pub(super) async fn run_protocol(
     for event in mapper.workflows.end_all() {
         let _ = events.send(event).await;
     }
-    for event in mapper.end_background() {
+    let cancelled = cancel.is_cancelled();
+    // Work still running now dies with the CLI; say why it is being stopped. A cap says which one
+    // ended the hold, so a run that waited on work that never answered is not reported as finished work.
+    let why = if cancelled {
+        "cancelled"
+    } else if let Some(reason) = held_reason {
+        reason
+    } else if stream_ended {
+        "engine exited"
+    } else {
+        "turn ended"
+    };
+    for event in mapper.end_background(why) {
         let _ = events.send(event).await;
     }
-    let cancelled = cancel.is_cancelled();
     let status = match tokio::time::timeout(EXIT_GRACE, process.child.wait()).await {
         Ok(status) => status.ok(),
         Err(_) => {
@@ -178,4 +253,34 @@ pub(crate) fn prompt_uuid() -> String {
 
 fn user_frame(text: &str) -> String {
     json!({ "type": "user", "message": { "role": "user", "content": text } }).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_held_turn_that_never_notifies_expires_on_the_idle_cap_first() {
+        let start = tokio::time::Instant::now();
+        let hold = Held::new(HOLD_LIMIT, HOLD_IDLE);
+        assert_eq!(hold.expired(start), None, "a fresh hold is open");
+        assert_eq!(
+            hold.expired(start + HOLD_IDLE - Duration::from_secs(1)),
+            None
+        );
+        assert_eq!(
+            hold.expired(start + HOLD_IDLE + Duration::from_secs(1)),
+            Some("idle")
+        );
+    }
+
+    #[test]
+    fn the_total_cap_ends_a_hold_whose_work_keeps_talking() {
+        let start = tokio::time::Instant::now();
+        let mut hold = Held::new(Duration::from_secs(30), Duration::from_secs(5));
+        for _ in 0..10 {
+            hold.activity(Duration::from_secs(5));
+        }
+        assert_eq!(hold.expired(start + Duration::from_secs(31)), Some("limit"));
+    }
 }
