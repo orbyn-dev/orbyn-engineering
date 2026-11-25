@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { ApiFailure, request } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
-import type { Copied, EnvSet, LibraryApi, LibrarySummary, Prompt, Suggestions, Workflow } from "./contract";
+import { EXPORT_KINDS } from "./contract";
+import type { Copied, EnvSet, LibraryApi, LibraryDocument, LibrarySummary, Prompt, Suggestions, Workflow } from "./contract";
 
 const q = encodeURIComponent;
 const isMissing = (error: unknown) => error instanceof ApiFailure && error.status === 404;
@@ -57,6 +58,13 @@ const http: LibraryApi = {
   copySuggestion: (projectId, file, index) => request<Copied>("POST", `/api/projects/${q(projectId)}/library/suggestions/copy`, { file, index }),
   // The document is the body (the service reads bytes and refuses over `import_bytes`); `dry_run` is a top-level field beside `format`.
   importLibrary: (document, dryRun) => request("POST", "/api/library/import", { ...(isObject(document) ? document : {}), dry_run: dryRun }),
+  // Every kind is asked for explicitly, so the file a person saves holds all four even if the service's default ever narrows.
+  async exportLibrary(kinds = EXPORT_KINDS, signal) {
+    const query = kinds.length > 0 ? `?kinds=${q(kinds.join(","))}` : "";
+    const document = await request<LibraryDocument>("GET", `/api/library/export${query}`, undefined, signal);
+    if (!isObject(document) || typeof document.format !== "string") throw new ApiFailure("bad_answer", "The service answered an export in a shape this app does not know.", 502);
+    return document;
+  },
 };
 
 let current: LibraryApi = http;
