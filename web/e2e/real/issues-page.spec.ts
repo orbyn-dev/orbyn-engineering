@@ -35,7 +35,7 @@ test.beforeEach(async ({ page }) => {
   await page.setViewportSize(WINDOW);
 });
 
-test("the list shows the tracker's issues with counts, state tabs, the filters and the Planned sort", async ({ page }) => {
+test("the list shows the tracker's issues with counts, state tabs and the filters", async ({ page }) => {
   await page.goto(`${service.page}#/issues`);
   await expect(page.getByRole("heading", { name: "Issues", exact: true })).toBeVisible({ timeout: 30_000 });
   // The counts are the tracker's own totals (two gh api search reads); the tabs are Open, Closed and All.
@@ -53,20 +53,10 @@ test("the list shows the tracker's issues with counts, state tabs, the filters a
   await expect(retry.locator(".iss-state")).toHaveText("Open");
   await expect(retry.locator(".iss-avatar")).toHaveAttribute("title", "me");
   await expect(rows(page).filter({ hasText: "Tidy the docs" })).toContainText("#12 · GitHub · opened by ada");
-  // The update and state writes are not on this service (create, comment and react are, but the client does not call them).
-  // The client discovers the edit controls with a read of GET /api/issues/candidates, which this service answers through its
-  // SPA fallback as 404 `not_found` ("No such route."); the client does not read that code as
-  // "not offered", so Sort starts live. A chosen sort is sent as `sort` on GET /api/issues, which refuses an unknown filter
-  // with 400 invalid; only then does the control go back to the disabled Planned form and the list is read again unsorted.
-  const sort = page.getByRole("button", { name: "Sort: Updated", exact: true });
-  await expect(sort).toBeEnabled();
-  await sort.click();
-  const refused = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/issues" && new URL(response.url()).searchParams.get("sort") === "created");
-  await page.getByRole("menuitem", { name: "Created" }).click();
-  expect((await refused).status()).toBe(400);
-  await expect(page.getByRole("button", { name: "Sort: Updated", exact: true })).toBeDisabled();
-  await expect(rows(page)).toHaveCount(2);
-
+  // The update and state writes and the candidates read are not on this service, and the client's not-offered probe reads this
+  // service's SPA fallback 404 as a live route, so Sort starts enabled and a chosen sort is refused 400 (#1530). That is a bug,
+  // not behaviour to pin, so this spec asserts nothing about Sort until #1530 is fixed: the intended case (Sort stays the
+  // disabled Planned pill while the route is absent) belongs here then.
   // Search: the text goes to the tracker as gh --search, one row, a removable chip and the shown line.
   await search(page).fill("queue");
   await search(page).press("Enter");
