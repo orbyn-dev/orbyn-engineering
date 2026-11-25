@@ -1,4 +1,4 @@
--- Migration 90: a pull request watch belongs to one repository of the thread (docs/multi-repo.md, "Pull requests").
+-- Migration 91: a pull request watch belongs to one repository of the thread (docs/multi-repo.md, "Pull requests").
 -- Two repositories can both have a #12. Every existing watch moves to the thread's own project, which is its
 -- primary repository, so a thread with one repository is unchanged.
 CREATE TABLE pull_watches_by_repo (

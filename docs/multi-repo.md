@@ -430,7 +430,7 @@ navigation coordinates.
 - **`repo_id` on the thread pull request routes.** `?repo_id=` on `GET` and `POST /api/threads/{id}/pulls`, `POST .../pulls/refresh`,
   `GET` and `DELETE .../pulls/{number}`, `POST .../pulls/{number}/review` and `.../merge`, and on the watches (`GET .../watches`,
   `POST`/`DELETE .../pulls/{number}/watch`). Absent means the primary repository, so every older client is unchanged. Unknown, untrusted or
-  flag-off repositories are refused as for the Git routes. A watch is kept by (thread, repository, number) (migration 90), so two
+  flag-off repositories are refused as for the Git routes. A watch is kept by (thread, repository, number) (migration 91), so two
   repositories can both watch a #12; every watch made before it moved to the thread's own project, which is its primary repository.
   Unlinking a link drops that repository's watch. The watch pass refreshes the open links of each repository of a thread and reads each
   watch in its own repository's worktree.
