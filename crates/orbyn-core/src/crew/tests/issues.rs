@@ -2124,11 +2124,12 @@ mod writes {
         assert_eq!(source.writes(), 0);
     }
 
-    /// A world whose GitHub source builds its edits and declares an open and a closed state.
+    /// A world whose connected tracker's source builds its edits and declares an open and a closed state. GitLab stands in for
+    /// the one built tracker: connecting GitHub needs a real `gh`, and the core's rules do not depend on which tracker edits.
     async fn editing() -> (super::super::harness::World, Arc<Writes>) {
-        let (w, _) = connected(TrackerKind::Github, "acme/app", true).await;
+        let (w, _) = connected(TrackerKind::Gitlab, "team/app", true).await;
         let source = Writes::editing();
-        w.core.issues.set_source(TrackerKind::Github, source.clone());
+        w.core.issues.set_source(TrackerKind::Gitlab, source.clone());
         (w, source)
     }
 
@@ -2147,14 +2148,14 @@ mod writes {
     #[tokio::test]
     async fn an_update_with_nothing_to_change_is_refused_and_sends_nothing() {
         let (w, source) = editing().await;
-        let mut empty = update(TrackerKind::Github, "acme/app");
+        let mut empty = update(TrackerKind::Gitlab, "team/app");
         empty.title = None;
         let error = w.core.update_issue(empty).await.map(|_| ()).unwrap_err();
         assert_eq!((error.status(), error.code()), (400, "invalid_input"));
         assert_eq!(source.writes(), 0);
         // One present field is written.
         w.core
-            .update_issue(update(TrackerKind::Github, "acme/app"))
+            .update_issue(update(TrackerKind::Gitlab, "team/app"))
             .await
             .unwrap();
         assert_eq!(source.writes(), 1);
@@ -2199,8 +2200,8 @@ mod writes {
     async fn a_close_reason_on_an_open_state_or_an_unknown_state_is_refused_before_a_write() {
         let (w, source) = editing().await;
         let state = |name: &str, reason: Option<IssueCloseReason>| IssueSetStateInput {
-            tracker: TrackerKind::Github,
-            scope: "acme/app".into(),
+            tracker: TrackerKind::Gitlab,
+            scope: "team/app".into(),
             key: "7".into(),
             state: name.to_owned(),
             close_reason: reason,
@@ -2227,7 +2228,7 @@ mod writes {
         let (w, _source) = editing().await;
         let candidates = w
             .core
-            .issue_candidates(TrackerKind::Github, "acme/app")
+            .issue_candidates(TrackerKind::Gitlab, "team/app")
             .await
             .unwrap();
         assert_eq!(candidates.labels.len(), 200);
