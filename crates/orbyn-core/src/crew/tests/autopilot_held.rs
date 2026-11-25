@@ -15,6 +15,20 @@ use crate::host::presence::PRESENCE_LIFETIME_SECS;
 use crate::testing::run_git;
 use crate::util::unix_now;
 
+/// The body of the one event of `kind` a task recorded: the read filters by kind, so a test names the
+/// event it means instead of reading a place in the list; none or several fails here with the rows.
+fn one_event_body(w: &World, task: &str, kind: &str) -> Value {
+    let rows = events(w, task, kind);
+    match rows.as_slice() {
+        [row] => row.body.clone(),
+        [] => panic!("the task recorded no {kind} event: {rows:?}"),
+        rows => panic!(
+            "{} {kind} events where the test expects one: {rows:?}",
+            rows.len()
+        ),
+    }
+}
+
 /// Plays the desktop shell: sends one line the way the shell does and returns the service's answer.
 pub(super) fn shell_says(w: &World, line: &Value, now: i64) -> Value {
     let (lines, mut answers) = mpsc::unbounded_channel();
@@ -110,15 +124,11 @@ async fn a_denied_command_is_held_once_and_a_retry_does_not_add_another() {
     let again = request(&w, &id, ActionKind::Command, "make deploy").await;
     assert!(matches!(again, Verdict::Deny(_)));
     assert_eq!(w.core.autopilot_held().unwrap().items.len(), 1);
-    let held = events(&w, &id, "held");
-    assert_eq!(held.len(), 1);
-    assert_eq!(held[0].body["hold"], hold);
-    assert_eq!(held[0].body["decided_by"], "autopilot");
+    let held = one_event_body(&w, &id, "held");
+    assert_eq!(held["hold"], hold);
+    assert_eq!(held["decided_by"], "autopilot");
     assert!(
-        held[0].body["bound"]
-            .as_str()
-            .unwrap()
-            .starts_with("hmac-sha256:"),
+        held["bound"].as_str().unwrap().starts_with("hmac-sha256:"),
         "the row names the keyed binding, never a plain digest a reader can test"
     );
 }
@@ -146,12 +156,12 @@ async fn approving_once_lets_exactly_one_retry_of_the_same_command_through() {
     for kind in ["held", "approved_once", "hold_used"] {
         assert!(rows.iter().any(|k| k == kind), "{kind}: {rows:?}");
     }
-    let approved_row = &events(&w, &id, "approved_once")[0];
-    assert_eq!(approved_row.body["decided_by"], "person");
-    assert_eq!(approved_row.body["via"], "desktop_presence");
-    let allowed = events(&w, &id, "allowed");
-    assert_eq!(allowed[0].body["decided_by"], "person");
-    assert_eq!(allowed[0].body["hold"], hold);
+    let approved_row = one_event_body(&w, &id, "approved_once");
+    assert_eq!(approved_row["decided_by"], "person");
+    assert_eq!(approved_row["via"], "desktop_presence");
+    let allowed = one_event_body(&w, &id, "allowed");
+    assert_eq!(allowed["decided_by"], "person");
+    assert_eq!(allowed["hold"], hold);
 }
 
 /// The approval is bound to the command, its arguments and the thread. Each case has its own task: three denials in a row stop one.
@@ -242,7 +252,7 @@ async fn the_shell_is_told_what_the_dialog_shows_and_nothing_from_the_window() {
     let (w, id) = held_world().await;
     let command = format!("make deploy -- echo {KEY_MARKER}");
     request(&w, &id, ActionKind::Command, &command).await;
-    let hold = w.core.autopilot_held().unwrap().items.remove(0);
+    let hold = open_hold(&w, &id);
     let shown = describe(&w, &hold.id, unix_now());
     assert_eq!(shown["type"], "presence_hold");
     assert_eq!(shown["request_id"], "r-1");
@@ -490,9 +500,9 @@ async fn the_always_denied_list_is_checked_again_at_approval_time() {
         other => panic!("{other:?}"),
     }
     assert_eq!(state_of(&w, &hold), State::Denied);
-    let row = &events(&w, &id, "denied_by_person")[0];
-    assert_eq!(row.body["decided_by"], "hard_rule");
-    assert_eq!(row.body["rule"], "N5");
+    let row = one_event_body(&w, &id, "denied_by_person");
+    assert_eq!(row["decided_by"], "hard_rule");
+    assert_eq!(row["rule"], "N5");
     // And the retry on main is refused by the list itself, with or without any approval.
     let verdict = request(&w, &id, ActionKind::Command, "git push").await;
     assert!(matches!(verdict, Verdict::Deny(_)));
@@ -572,12 +582,9 @@ async fn deny_needs_no_password_and_the_same_command_is_not_held_again() {
     let hold = hold_of(&w, &id, "make deploy").await;
     let denied = w.core.autopilot_deny_held(&hold).unwrap();
     assert_eq!(denied.state, State::Denied);
-    let row = &events(&w, &id, "denied_by_person")[0];
-    assert_eq!(
-        row.body["decided_by"], "local_caller",
-        "no proof of who called"
-    );
-    assert_eq!(row.body["hold"], hold);
+    let row = one_event_body(&w, &id, "denied_by_person");
+    assert_eq!(row["decided_by"], "local_caller", "no proof of who called");
+    assert_eq!(row["hold"], hold);
     // One decision each: a second answer is refused.
     assert!(matches!(
         w.core.autopilot_deny_held(&hold),
@@ -723,7 +730,7 @@ async fn the_answer_keys_text_is_withheld_from_the_command_the_person_reads() {
     let command = format!("make deploy -- echo {KEY_MARKER}");
     let verdict = request(&w, &id, ActionKind::Command, &command).await;
     assert!(matches!(verdict, Verdict::Deny(_)));
-    let item = w.core.autopilot_held().unwrap().items.remove(0);
+    let item = open_hold(&w, &id);
     assert!(
         !item.command.contains(KEY_MARKER),
         "the shown command held the key's text"
@@ -753,7 +760,7 @@ async fn a_command_too_long_to_read_is_held_but_cannot_be_approved() {
     let long = format!("make {}", "a".repeat(crate::crew::SHOWN_MAX + 10));
     let verdict = request(&w, &id, ActionKind::Command, &long).await;
     assert!(matches!(verdict, Verdict::Deny(_)));
-    let item = w.core.autopilot_held().unwrap().items.remove(0);
+    let item = open_hold(&w, &id);
     assert!(!item.readable);
     // The dialog is never offered it, and no grant can be made for it.
     let refused = describe(&w, &item.id, unix_now());
@@ -1025,12 +1032,10 @@ async fn the_row_shows_the_flags_that_change_what_runs() {
     let refused = w.core.gate.request(&scope(&w, &id), one).await;
     assert!(matches!(refused, Verdict::Deny(_)), "the lead said no");
     let held = open_hold(&w, &id);
+    let recorded = one_event_body(&w, &id, "held");
     for shown in [
         held.command.clone(),
-        events(&w, &id, "held")[0].body["action"]["target"]
-            .as_str()
-            .unwrap()
-            .to_owned(),
+        recorded["action"]["target"].as_str().unwrap().to_owned(),
     ] {
         assert!(shown.contains("cwd: /repo"), "{shown:?}");
         assert!(shown.contains("runs in the background"), "{shown:?}");
@@ -1069,13 +1074,11 @@ async fn a_row_escapes_a_newline_bidi_or_zero_width_character() {
         )
         .expect("held");
     let held = open_hold(&w, &id);
+    let recorded = one_event_body(&w, &id, "held");
     for shown in [
         held.command.clone(),
         held.reason.clone(),
-        events(&w, &id, "held")[0].body["action"]["target"]
-            .as_str()
-            .unwrap()
-            .to_owned(),
+        recorded["action"]["target"].as_str().unwrap().to_owned(),
     ] {
         assert!(
             !shown
