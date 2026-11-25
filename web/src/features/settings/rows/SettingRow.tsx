@@ -5,6 +5,7 @@ export const SettingRowIds = createContext<(title: string) => string | undefined
 /** One row of a settings group: what it is on the left, its control on the right. */
 export function SettingRow({
   title,
+  tag,
   settingId: explicitId,
   description,
   error,
@@ -13,6 +14,8 @@ export function SettingRow({
   children,
 }: {
   title: string;
+  /** Drawn beside the title in the row's heading, such as the pill a row behind a setting carries. */
+  tag?: ReactNode;
   settingId?: string;
   description?: ReactNode;
   /** Says why this row's own save failed, in the row that failed (.field-error, as the frames draw a field error). */
@@ -28,6 +31,7 @@ export function SettingRow({
       <div className="setting-line-text">
         <div className="setting-line-heading">
           <span className="setting-line-title">{title}</span>
+          {tag}
         </div>
         {description ? <span className="setting-line-desc">{description}</span> : null}
         {error ? <p className="field-error" role="alert">{error}</p> : null}
