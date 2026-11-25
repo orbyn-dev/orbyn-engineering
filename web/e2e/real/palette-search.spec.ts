@@ -92,15 +92,21 @@ test("a thread is found by title, project and branch, and a picked thread ranks 
   await query(dialog).fill(branch);
   await expect(dialog.getByRole("button", { name: /Branch evidence thread/ })).toBeVisible();
 
-  // Picking a thread is remembered: for a query both threads match, the picked one is now ranked first.
+  // Picking a thread is remembered: for a query both threads match, the picked one is then ranked first. Pick the one that is
+  // NOT first now, so the ranking can only have moved because of the pick.
   await query(dialog).fill("evidence thread");
-  await dialog.getByRole("button", { name: /Palette evidence thread/ }).click();
-  await expect(page).toHaveURL(new RegExp(titleThread));
+  const matches = dialog.locator("button").filter({ hasText: "evidence thread" });
+  await expect(matches).toHaveCount(2);
+  const firstBefore = await matches.first().innerText();
+  const pickPalette = !firstBefore.includes("Palette evidence thread");
+  const picked = pickPalette ? "Palette evidence thread" : "Branch evidence thread";
+  await dialog.getByRole("button", { name: new RegExp(picked) }).click();
+  await expect(page).toHaveURL(new RegExp(pickPalette ? titleThread : branchThread));
   const again = await search(page, "evidence thread");
-  await expect(again.locator("button").filter({ hasText: "evidence thread" }).first()).toContainText("Palette evidence thread");
+  await expect(again.locator("button").filter({ hasText: "evidence thread" }).first()).toContainText(picked);
   // What frecency keeps is row ids and times only, in this window's own storage.
   const stored = JSON.parse((await page.evaluate(() => localStorage.getItem("orbyn.palette.frecency"))) ?? "{}") as Record<string, unknown>;
-  expect(Object.keys(stored)).toContain(titleThread);
+  expect(Object.keys(stored)).toContain(pickPalette ? titleThread : branchThread);
   expect(Object.values(stored).flat().every((stamp) => typeof stamp === "number")).toBe(true);
 });
 
