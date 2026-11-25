@@ -375,5 +375,6 @@ Group 2's `orbyn_device_open` and `orbyn_device_close` are not built. They belon
 device panel and its live view, and this service has no device-panel state, no live-view route and
 no boot command, so the two tools are blocked on that unbuilt surface (the device panel and live
 view are H20 to H23). Building them would add a new route and UI, so nothing stands in for them.
-`power_off` is built because the service already had the power-off action; it adds no authority of
-its own.
+`power_off` is built because the service already had the power-off action; it adds no new service
+capability, though it is new gated agent authority: it goes through the same approval gate as the other
+tools.
