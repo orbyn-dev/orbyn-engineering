@@ -15,6 +15,16 @@ fn page() -> Page {
     Page::new(Some(200), None).unwrap()
 }
 
+/// One engine's counts, found by the engine it names rather than by a place in the list: the read orders engines
+/// busiest first, which is its contract, not a fixture order a test can read a position from.
+fn engine_counts<'a>(counts: &'a wire::EscapeCounts, name: &str) -> &'a wire::EscapeEngineCounts {
+    counts
+        .engines
+        .iter()
+        .find(|engine| engine.engine == name)
+        .unwrap_or_else(|| panic!("no {name} engine: {:?}", counts.engines))
+}
+
 fn decide(project: &str, state: wire::EscapeState) -> wire::EscapeDecide {
     wire::EscapeDecide {
         project: project.to_owned(),
@@ -71,7 +81,7 @@ async fn counts_are_one_areas_by_engine_and_possible_stays_apart() {
         (60, 10),
         "the log's own stored window and sample, not a guess"
     );
-    let engine = counts.engines[0].clone();
+    let engine = engine_counts(&counts, "alpha");
     assert_eq!(
         (
             engine.engine.as_str(),
@@ -91,12 +101,9 @@ async fn counts_are_one_areas_by_engine_and_possible_stays_apart() {
     rig.revert(&a, NOW);
     let counts = core.crew_escape_counts(&rig.project, "web/auth").unwrap();
     assert_eq!((counts.merges, counts.engines.len()), (2, 1));
+    let engine = engine_counts(&counts, "alpha");
     assert_eq!(
-        (
-            counts.engines[0].possible,
-            counts.engines[0].confirmed,
-            counts.engines[0].dismissed
-        ),
+        (engine.possible, engine.confirmed, engine.dismissed),
         (1, 0, 0)
     );
 
@@ -105,12 +112,9 @@ async fn counts_are_one_areas_by_engine_and_possible_stays_apart() {
         .crew_escape_counts(&rig.project, "docs/guides")
         .unwrap();
     assert_eq!((docs.merges, docs.engines.len()), (1, 1));
+    let engine = engine_counts(&docs, "alpha");
     assert_eq!(
-        (
-            docs.engines[0].merges,
-            docs.engines[0].possible,
-            docs.engines[0].confirmed
-        ),
+        (engine.merges, engine.possible, engine.confirmed),
         (1, 0, 0)
     );
 }
@@ -122,17 +126,21 @@ async fn a_confirmed_escape_is_counted_confirmed_and_never_as_possible() {
     let _b = rig.merge(&["web/auth"], NOW - 3 * DAY).await;
     let core = &rig.w.core;
     rig.revert(&a, NOW);
-    let id = core
+    let log = core
         .crew_escape_log(&rig.project, Some("possible"), page())
-        .unwrap()
-        .rows[0]
+        .unwrap();
+    let id = log
+        .rows
+        .iter()
+        .find(|row| row.merge_task_id == a)
+        .expect("the reverted merge's possible escape")
         .id
         .clone();
     core.crew_escape_confirm(&id, &decide(&rig.project, wire::EscapeState::Possible))
         .unwrap();
 
     let counts = core.crew_escape_counts(&rig.project, "web/auth").unwrap();
-    let engine = &counts.engines[0];
+    let engine = engine_counts(&counts, "alpha");
     assert_eq!(
         (
             engine.merges,
@@ -193,6 +201,13 @@ async fn a_cut_list_says_it_was_cut_and_keeps_the_busiest_engine() {
         (2, false),
         "two engines fit under the bound"
     );
+    // The order is the contract ("busiest first"): the engine with three merges is listed before the one with one.
+    let order: Vec<(&str, u32)> = counts
+        .engines
+        .iter()
+        .map(|row| (row.engine.as_str(), row.merges))
+        .collect();
+    assert_eq!(order, [("alpha", 3), ("beta", 1)], "busiest engine first");
 
     // One row more than the cap: the busiest is kept, the rest is cut and said to be cut, never dropped silently.
     let cut = core
@@ -203,8 +218,9 @@ async fn a_cut_list_says_it_was_cut_and_keeps_the_busiest_engine() {
         (1, true),
         "a cut list carries one row and says so"
     );
+    let kept = engine_counts(&cut, "alpha");
     assert_eq!(
-        (cut.engines[0].engine.as_str(), cut.engines[0].merges),
+        (kept.engine.as_str(), kept.merges),
         ("alpha", 3),
         "the engine the area was mostly merged with is kept"
     );

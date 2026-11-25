@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::limits::spent_window_reset;
 use super::text;
 use crate::agents::driver::{
-    EngineEvent, EngineOutcome, ItemRecord, diff_activity, proposed_plan_events,
+    EngineEvent, EngineOutcome, ItemRecord, diagnostics, diff_activity, proposed_plan_events,
 };
 use crate::util::new_id;
 
@@ -218,13 +218,14 @@ impl TurnMapper {
                 step.outcome = Some(match turn.get("status").and_then(Value::as_str) {
                     Some("completed") => EngineOutcome::Completed,
                     Some("interrupted") => EngineOutcome::Cancelled,
-                    _ => EngineOutcome::Failed(
-                        turn.pointer("/error/message")
+                    _ => EngineOutcome::Failed(diagnostics::outward(
+                        &turn
+                            .pointer("/error/message")
                             .and_then(Value::as_str)
                             .map(str::to_owned)
                             .or_else(|| self.last_error.take())
                             .unwrap_or_else(|| "Codex failed the turn.".to_owned()),
-                    ),
+                    )),
                 });
             }
             _ => tracing::trace!(%method, "ignored Codex notification"),
