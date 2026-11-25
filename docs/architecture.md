@@ -1653,9 +1653,15 @@ at either scope; at project scope the engine then inherits the global choice. A 
 (`PUT /api/preferences`, `PUT /api/projects/{id}/preferences` or the scoped settings
 route); there is no text-generator write route.
 
-Branch names and cleanup have no generator in the service yet: branch names come from
-`branch_name_prefix`, and the stored `branch_naming_mode` semantic and custom modes are
-not called, so no branch or cleanup call reaches the resolver.
+A new worktree's branch name is chosen deterministically, without the resolver or an
+engine call: static mode keeps `<branch_name_prefix>/<purpose>`; semantic mode makes a
+lowercase slug from the thread's real title, or the purpose when it has none, capped at
+64 characters and suffixed `-2`, `-3` and so on until it is not one of the project's
+branches; custom mode uses the purpose as the complete branch name. An unusable seed
+falls back to the static name, and a name Git refuses is `invalid_input`, never
+replaced. The stored `branch_name_instructions` is not sent anywhere, so the
+model-written custom name its setting describes is not built, and cleanup has no
+generator either, so neither a branch nor a cleanup call reaches the resolver.
 
 ## Automatic requests
 
