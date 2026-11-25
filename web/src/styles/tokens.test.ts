@@ -162,7 +162,7 @@ describe("design tokens", () => {
 });
 
 describe("control radii (Orbyn Components)", () => {
-  const block = (text: string, selector: string) => new RegExp(`(?:^|\\n)${selector.replace(/[.[\]]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(text)?.[1] ?? "";
+  const block = (text: string, selector: string) => new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(text)?.[1] ?? "";
 
   it("gives buttons 9px, every segmented control 10px with 7px segments, menus 12px and fields 10px", () => {
     expect(block(css["base.css"]!, ".btn")).toContain("border-radius: var(--radius-9)");
