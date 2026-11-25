@@ -4,7 +4,6 @@ import { parsed } from "../../product/timeline/toolTrace";
 import type { ToolItem } from "../../product/timeline/types";
 import type { ApprovalVia, CallStatus, CodeCall, CodeErrorKind, CodeReply, CodeRunCall, CodeRunRecord, CodeRunStatus, RunError, RunView } from "./types";
 
-export const CODE_TOOLS = ["orbyn_code_search", "orbyn_code_describe", "orbyn_code_run"] as const;
 export type CodeTool = "search" | "describe" | "run";
 
 /** The limits docs/code-mode.md gives; the screens never draw more than these, so no run can grow the page. */
@@ -17,9 +16,6 @@ export function codeToolOf(name: string): CodeTool | null {
   const tool = parts.slice(2).join("_");
   return tool === "orbyn_code_run" ? "run" : tool === "orbyn_code_search" ? "search" : tool === "orbyn_code_describe" ? "describe" : null;
 }
-
-/** True for one of the three tools by its bare name (the Tools tab lists them that way). */
-export const isCodeToolName = (name: string): boolean => (CODE_TOOLS as readonly string[]).includes(name);
 
 const byteLength = (text: string) => new TextEncoder().encode(text).length;
 
