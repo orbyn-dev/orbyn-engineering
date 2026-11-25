@@ -35,7 +35,8 @@ import {
   type WorkingRow,
   type WorkItem,
 } from "../../product/timeline/timeline";
-import { workSegments } from "./toolCalls";
+import { useThreadLogs } from "../../product/state/threadLogs";
+import { turnOutcomeText, workSegments } from "./toolCalls";
 import { PlanRow } from "./trail/PlanRow";
 import { TrailRun, trailKeys } from "./trail/ToolTrail";
 import { useThreadOfTimeline } from "./timelineThread";
@@ -419,7 +420,7 @@ function Fold({ fold, live }: { fold: TurnFold; live: boolean }) {
           {(open || loaded) && fold.entries.map((entry) => (
             <TimelineRow key={entry.key} entry={entry} live={false} tools={NO_TOOLS} />
           ))}
-          {open || loaded ? <GroupControls entries={fold.entries} /> : null}
+          {open || loaded ? <GroupControls entries={fold.entries} live={live} /> : null}
         </div>
       </Collapsible>
       </SurfacedWorkflows>
@@ -433,38 +434,40 @@ function Fold({ fold, live }: { fold: TurnFold; live: boolean }) {
 const NO_TOOLS: ToolItem[] = [];
 
 /** The open-state ids of a turn's tool groups: a group's own, or the row's when it stands alone. */
-function groupIds(entries: readonly TimelineEntry[]): { ids: string[]; groups: number; calls: number } {
+function groupIds(entries: readonly TimelineEntry[]): { ids: string[]; groups: number } {
   let ids: string[] = [];
   let groups = 0;
-  let calls = 0;
   for (const entry of entries) {
     if (entry.kind === "fold") {
       const inner = groupIds(entry.entries);
       ids = ids.concat(inner.ids);
       groups += inner.groups;
-      calls += inner.calls;
     } else if (entry.kind === "work") {
       for (const segment of workSegments(entry.items)) {
         if (!("runs" in segment)) continue;
         for (const run of segment.runs) {
           groups += 1;
-          calls += run.items.length;
           ids.push(run.items.length === 1 ? `tool:${run.key}` : `tg:${run.key}`);
         }
       }
     }
   }
-  return { ids, groups, calls };
+  return { ids, groups };
 }
 
-/** A long turn: how many calls in how many groups, and two quiet buttons to open or fold them all. */
-function GroupControls({ entries }: { entries: readonly TimelineEntry[] }) {
+/** A long turn: its calls by the outcome the engine reported, and two quiet buttons to open or fold them all. */
+function GroupControls({ entries, live }: { entries: readonly TimelineEntry[]; live: boolean }) {
   const { setMany } = useOpenControl();
-  const { ids, groups, calls } = useMemo(() => groupIds(entries), [entries]);
+  const threadId = useThreadOfTimeline();
+  const { ids, groups } = useMemo(() => groupIds(entries), [entries]);
+  const tools = useMemo(() => foldTools(entries).filter((item): item is ToolItem => item.kind === "tool"), [entries]);
+  const runId = tools[0]?.runId ?? null;
+  const interrupted = useThreadLogs((state) => (threadId && runId ? state.logs[threadId]?.runs[runId]?.outcome === "cancelled" : false));
+  const count = useMemo(() => turnOutcomeText(tools, live, interrupted), [tools, live, interrupted]);
   if (groups < 4) return null;
   return (
     <div className="tcmini">
-      <span className="cnt">{`${calls} tool calls in ${groups} groups`}</span>
+      <span className="cnt">{count}</span>
       <button type="button" className="lk" onClick={() => setMany(ids, true)}>
         Expand all
       </button>
@@ -476,7 +479,7 @@ function GroupControls({ entries }: { entries: readonly TimelineEntry[] }) {
   );
 }
 
-function foldTools(entries: TimelineEntry[]): WorkItem[] {
+function foldTools(entries: readonly TimelineEntry[]): WorkItem[] {
   return entries.flatMap((entry) =>
     entry.kind === "work" ? entry.items : entry.kind === "fold" ? foldTools(entry.entries) : [],
   );
