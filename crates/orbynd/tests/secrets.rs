@@ -279,6 +279,75 @@ async fn a_project_is_switched_off_by_id_and_listed_by_name() {
     service.stop().await;
 }
 
+/// A project's agents can be switched to read recognised secrets as they are; another project's agents must
+/// still get the masked form. The fake engine records the prompt it was given, so the assertion is over the
+/// text that reached the engine, not over the stored setting.
+#[tokio::test]
+async fn one_projects_agents_read_a_secret_as_it_is_and_another_projects_agents_do_not() {
+    let dir = TempDir::new();
+    let launches = dir.path().join("launches.jsonl");
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            env: vec![(
+                "ORBYN_FAKE_LAUNCH_FILE".into(),
+                launches.to_string_lossy().into_owned(),
+            )],
+            ..Options::default()
+        },
+    );
+    let one = service.project(&dir.path().join("one"), true).await;
+    let two = service.project(&dir.path().join("two"), true).await;
+    // A recognised GitHub token, built here so no real credential is in the test or its files.
+    let secret = format!("ghp_{}", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8");
+    assert_eq!(secret.len(), 40);
+
+    // Project one's agents read values as they are; project two keeps the default masked surface.
+    let (code, view) = call(
+        &service,
+        Method::PUT,
+        &format!("/api/settings/secrets/projects/{one}"),
+        json!({ "redaction": false }),
+    )
+    .await;
+    assert_eq!(code, 200, "{view}");
+    assert_eq!(view["projects_off"].as_array().unwrap().len(), 1);
+    assert_eq!(view["projects_off"][0]["id"], one.as_str());
+    assert_eq!(view["projects_off"][0]["name"], "one");
+
+    // The same prompt in each project, one after the other, so the launch file's order is the project order.
+    for project in [&one, &two] {
+        let thread = service.thread(project, "claude").await;
+        service.admit(&thread, &format!("KEY={secret}")).await;
+        assert_eq!(service.finished(&thread).await, "completed");
+    }
+
+    let prompts: Vec<String> = std::fs::read_to_string(&launches)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|record| record["mode"] == "claude-prompt")
+        .filter_map(|record| record["args"][0].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(prompts.len(), 2, "one prompt per run: {prompts:?}");
+    assert!(
+        prompts[0].contains(&secret),
+        "project one's engine did not read the value as it is: {}",
+        prompts[0]
+    );
+    assert!(
+        !prompts[1].contains(&secret),
+        "the secret reached project two's engine: {}",
+        prompts[1]
+    );
+    assert!(
+        prompts[1].contains("[hidden: GitHub token]"),
+        "project two's engine got no masked form: {}",
+        prompts[1]
+    );
+    service.stop().await;
+}
+
 #[tokio::test]
 async fn the_routes_need_the_credential() {
     let dir = TempDir::new();
