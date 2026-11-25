@@ -5,7 +5,7 @@ import type { BlockLimits as WireBlockLimits } from "../../../../generated/Block
 import type { BlockList as WireBlockList } from "../../../../generated/BlockList";
 import type { BlockOutputPage as WireBlockOutputPage } from "../../../../generated/BlockOutputPage";
 import type { CommandBlock as WireCommandBlock } from "../../../../generated/CommandBlock";
-import type { BlockLimits, BlockList, BlockOutputPage, CommandBlock, CommandBlocksApi } from "./blocksTypes";
+import type { BlockLimits, BlockList, BlockTerminal, BlockOutputPage, CommandBlock, CommandBlocksApi } from "./blocksTypes";
 
 const q = encodeURIComponent;
 
