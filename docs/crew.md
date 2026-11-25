@@ -2182,7 +2182,7 @@ The lead's resume of a held Crew task (Preview, `crew_resume`). Backend only: th
   a cancel that lands first makes this one refuse instead of overwriting it (and a caller that loses the race is told what is there
   now: an ending is `run_ended`, another resume or a move is `invalid_transition`). Then the worker's prompt is queued; if that
   queueing fails, the task is moved back to `needs_person` rather than left `running` with no worker. The minutes keep counting
-  through the wait the way the live budget timer counts them. Off time is free: a restart credits every task waiting for a person
+  through the wait the way the live budget timer counts them. Off time is free, and a held task is not running, so a restart credits a held task's whole wait as off time (not a budget bug): a restart credits every task waiting for a person
   its off time the same way it credits an in-flight one (`recover::excuse_held_downtime`; the credit's audit row is the next
   restart's boundary), and the resume reads the run again so that credit is counted. A resumed task gets its timer again with what
   is left of the brief's minutes, so a task held across a restart neither runs with no timer nor pays for the window the app was
