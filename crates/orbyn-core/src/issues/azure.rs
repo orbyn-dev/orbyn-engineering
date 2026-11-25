@@ -378,13 +378,16 @@ fn cursor_tag(scope: &str, query: &IssueQuery, offset: u32) -> String {
     let assignee = format!("{:?}", query.assignee);
     let limit = query.limit.to_string();
     let offset = offset.to_string();
-    let parts: [&str; 8] = [
+    // The order is part of the filter: a cursor issued for one order is not accepted for another.
+    let sort = format!("{:?}", query.sort);
+    let parts: [&str; 9] = [
         "azure-cursor",
         scope,
         state,
         &labels,
         &assignee,
         &query.text,
+        &sort,
         &limit,
         &offset,
     ];
@@ -1231,6 +1234,7 @@ impl IssueSource for Azure {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
+            states: None,
         })
     }
 
@@ -1385,6 +1389,7 @@ impl IssueSource for Azure {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
+            states: None,
         })
     }
 }

@@ -239,13 +239,16 @@ fn cursor_tag(scope: &str, query: &IssueQuery) -> String {
     let labels = query.labels.join("\u{1f}");
     let assignee = format!("{:?}", query.assignee);
     let limit = query.limit.to_string();
-    let parts: [&str; 7] = [
+    // The order is part of the filter: a cursor issued for one order is not accepted for another.
+    let sort = format!("{:?}", query.sort);
+    let parts: [&str; 8] = [
         "linear-cursor",
         scope,
         state,
         &labels,
         &assignee,
         &query.text,
+        &sort,
         &limit,
     ];
     let mut hash = Sha256::new();
@@ -943,7 +946,6 @@ impl IssueSource for Linear {
         Ok(templates)
     }
 
-
     async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
         team_key(scope)?;
         if new.assignees.len() > 1 {
@@ -988,6 +990,7 @@ impl IssueSource for Linear {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
+            states: None,
         })
     }
 
@@ -1152,6 +1155,7 @@ impl IssueSource for Linear {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
+            states: None,
         })
     }
 
