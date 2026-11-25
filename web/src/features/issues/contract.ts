@@ -223,6 +223,12 @@ export interface IssuesApi {
   update(issue: IssueTarget, input: IssueUpdateInput): Promise<IssueDetail>;
   /** One write per call, Person-class: `POST /api/issues/item/state`, `state` (plus `close_reason` when the entry has one) one of the issue's `states`. Answers the updated issue. */
   setState(issue: IssueTarget, state: IssueState): Promise<IssueDetail>;
+  /**
+   * One write per call, Person-class: `POST /api/issues/item/comment` with `{ tracker, scope, key, body }`. `body` is the
+   * person's own text, 1 to 64 KiB and not blank; the client refuses anything else before sending. Answers the comment the
+   * tracker stored, which the issue page appends to its comments.
+   */
+  comment(issue: IssueTarget, body: string): Promise<IssueComment>;
 }
 
 export const TRACKER_NAMES: Record<TrackerKind, string> = {

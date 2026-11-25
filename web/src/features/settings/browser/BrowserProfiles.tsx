@@ -5,14 +5,15 @@ import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { Loading } from "../../../product/ui/states";
 import { Button } from "../../../ui/controls";
-import { ConfirmDialog } from "../../../ui/Dialog";
-import { clearBrowserProfile, createBrowserProfile, deleteBrowserProfile, listBrowserProfiles } from "../api";
+import { ConfirmDialog, Dialog } from "../../../ui/Dialog";
+import { clearBrowserProfile, createBrowserProfile, deleteBrowserProfile, listBrowserProfiles, renameBrowserProfile } from "../api";
 import { SettingRowIds } from "../rows/SettingRow";
 import "./browserProfiles.css";
 
 /**
  * Settings › Browser: the named profiles the service keeps. Names and the service's words are service data, drawn as
- * text and capped. Each write is one request however fast the button is pressed. Rename is not here: the service has no call for it.
+ * text and capped. Each write is one request however fast the button is pressed. Rename changes the stored name only, so a
+ * profile open in a tab can be renamed.
  */
 
 const NAME_SHOWN = 80;
@@ -29,7 +30,7 @@ function profilesOf(data: unknown): BrowserProfile[] {
   });
 }
 
-type Step = { kind: "clear" | "delete"; profile: BrowserProfile };
+type Step = { kind: "clear" | "delete" | "rename"; profile: BrowserProfile };
 
 function NewProfileRow({ onDone, onCancel }: { onDone(): void; onCancel(): void }) {
   const [name, setName] = useState("");
@@ -70,6 +71,47 @@ function NewProfileRow({ onDone, onCancel }: { onDone(): void; onCancel(): void 
   );
 }
 
+/** The rename dialog: one field, Cancel and Save. Enter saves; Escape cancels. Only the stored name changes, and a name
+ * that is unchanged once trimmed closes without a write, as the design's Rename thread dialog does. */
+function RenameDialog({ profile, onClose, onRenamed }: { profile: BrowserProfile; onClose(): void; onRenamed(name: string): void }) {
+  const [value, setValue] = useState(profile.name);
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const pending = useRef(false);
+  const next = value.trim();
+  const save = async () => {
+    if (pending.current || !next) return;
+    // The same name, spaces aside, is not a write: Save closes the dialog and nothing is sent or said.
+    if (next === profile.name) { onClose(); return; }
+    pending.current = true;
+    setBusy(true);
+    setSaid(null);
+    try {
+      const renamed = await renameBrowserProfile(profile.id, next);
+      onRenamed(renamed.name);
+    } catch (failure) {
+      setSaid(cap(toFailure(failure).message, SAID_SHOWN));
+      pending.current = false;
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog title={`Rename the profile ${cap(profile.name, NAME_SHOWN)}?`} busy={busy} onClose={onClose}
+      footer={<>
+        <Button disabled={busy} onClick={onClose}>Cancel</Button>
+        <Button tone="primary" busy={busy} disabled={!next} onClick={() => void save()}>Save</Button>
+      </>}>
+      <form className="rename-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+        <input className="dialog-field" aria-label="Profile name" data-dialog-focus value={value} autoComplete="off" spellCheck={false}
+          disabled={busy} aria-invalid={said ? true : undefined}
+          onFocus={(event) => event.currentTarget.select()}
+          onChange={(event) => { setValue(event.target.value); setSaid(null); }} />
+        {said ? <p className="field-error" role="alert">{said}</p> : null}
+      </form>
+    </Dialog>
+  );
+}
+
 export function BrowserProfilesSection() {
   const pushToast = useUi((state) => state.pushToast);
   const read = useAsync("browser-profiles", (signal) => listBrowserProfiles(signal), { keep: true });
@@ -80,6 +122,12 @@ export function BrowserProfilesSection() {
   const searchId = useContext(SettingRowIds)("Browser profiles");
 
   const profiles = read.status === "ready" ? profilesOf(read.data) : [];
+  const renaming = step?.kind === "rename" ? step.profile : null;
+  const renamed = (profile: BrowserProfile, name: string) => {
+    pushToast(`Renamed the profile ${cap(profile.name, NAME_SHOWN)} to ${cap(name, NAME_SHOWN)}.`);
+    setStep(null);
+    read.reload();
+  };
   const confirm = async ({ kind, profile }: Step) => {
     if (pending.current) return;
     pending.current = true;
@@ -132,6 +180,7 @@ export function BrowserProfilesSection() {
                 <span role="cell" className="bp-name"><b title={profile.name}>{shown}</b></span>
                 <span role="cell">{profile.in_use ? <span className="set-pill warn dot">Open in a tab</span> : <span className="t3">Not open</span>}</span>
                 <span role="cell" className="bp-acts">
+                  <Button small tone="quiet" aria-label={`Rename ${shown}…`} onClick={() => setStep({ kind: "rename", profile })}>Rename…</Button>
                   <Button small tone="quiet" aria-label={`Clear ${shown}…`} onClick={() => setStep({ kind: "clear", profile })}>Clear…</Button>
                   <Button small tone="quiet" aria-label={`Delete ${shown}…`} onClick={() => setStep({ kind: "delete", profile })}>Delete…</Button>
                 </span>
@@ -150,6 +199,7 @@ export function BrowserProfilesSection() {
           <p>The profile, its name and everything it kept are removed from this computer. Tabs can no longer pick it. This can’t be undone.</p>
         </ConfirmDialog>
       ) : null}
+      {renaming ? <RenameDialog profile={renaming} onClose={() => setStep(null)} onRenamed={(name) => renamed(renaming, name)} /> : null}
     </>
   );
 }
