@@ -62,7 +62,7 @@ const http: LibraryApi = {
   async exportLibrary(kinds = EXPORT_KINDS, signal) {
     const query = kinds.length > 0 ? `?kinds=${q(kinds.join(","))}` : "";
     const document = await request<LibraryDocument>("GET", `/api/library/export${query}`, undefined, signal);
-    if (!isObject(document) || typeof document.format !== "string") throw new ApiFailure("bad_answer", "The service answered an export in a shape this app does not know.", 502);
+    if (!isObject(document) || document.format !== "orbyn-library") throw new ApiFailure("bad_answer", "The service answered an export in a shape this app does not know.", 502);
     return document;
   },
 };

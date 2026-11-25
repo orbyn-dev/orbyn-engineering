@@ -137,6 +137,9 @@ it("reports a 404 export as the older service it is, and refuses a body that is 
   await expect(libraryApi().exportLibrary()).rejects.toMatchObject({ code: "not_found", status: 404 });
   vi.stubGlobal("fetch", answer(200, { hello: "world" }));
   await expect(libraryApi().exportLibrary()).rejects.toMatchObject({ code: "bad_answer", status: 502 });
+  // A 200 that is not a library document is refused even when it carries a `format`: the panel must not save it.
+  vi.stubGlobal("fetch", answer(200, { format: "error", message: "Export failed" }));
+  await expect(libraryApi().exportLibrary()).rejects.toMatchObject({ code: "bad_answer", status: 502 });
 });
 
 it("answers the 503 keychain_unavailable of a key write with its code and the service's message", async () => {

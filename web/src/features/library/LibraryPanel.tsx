@@ -118,6 +118,7 @@ function LibraryBody({ threadId, projectId, data, reload, typeIntoTerminal, tab,
   };
 
   // Export is one toolbar button and no screen of its own: the service builds the document, the browser saves it, nothing is written.
+  // A multi-click gesture saves one file: only its first click counts, and `exporting` covers an export still pending.
   const exporting = useRef(false);
   const [busyExport, setBusyExport] = useState(false);
   const exportAll = async () => {
@@ -194,7 +195,7 @@ function LibraryBody({ threadId, projectId, data, reload, typeIntoTerminal, tab,
         <button type="button" role="tab" aria-selected={tab === "repo"} className="lib-tab" onClick={() => setTab("repo")}>From repo · {repoTotal}</button>
         <button type="button" role="tab" aria-selected={tab === "personal"} className="lib-tab" onClick={() => setTab("personal")}>Personal · {personalTotal}</button>
         <span className="lib-spacer" />
-        <Button small tone="quiet" icon={<Download size={14} aria-hidden />} busy={busyExport} onClick={() => void exportAll()}>Export</Button>
+        <Button small tone="quiet" icon={<Download size={14} aria-hidden />} busy={busyExport} onClick={(event) => { if (event.detail <= 1) void exportAll(); }}>Export</Button>
         <Button small icon={<Plus size={14} aria-hidden />} onClick={() => setOpen({ what: "form", kind: null, item: null })}>New item</Button>
       </div>
       <label className="lib-search">

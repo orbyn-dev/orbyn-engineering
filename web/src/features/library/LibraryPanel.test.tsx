@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createLibraryMock, libraryFixtures, suggestionFixtures } from "../../../mock/library";
@@ -548,6 +548,23 @@ it("exports once for a double click on the button", async () => {
   await user.dblClick(screen.getByRole("button", { name: "Export" }));
   await waitFor(() => expect(saved.files).toHaveLength(1));
   expect(request).toHaveBeenCalledTimes(1);
+});
+
+it("ignores the second click of a double click that lands after the first export finished", async () => {
+  const mock = createLibraryMock();
+  const request = vi.spyOn(mock, "exportLibrary");
+  const { user } = await mount(mock);
+  const button = screen.getByRole("button", { name: "Export" });
+  await user.click(button);
+  await waitFor(() => expect(saved.files).toHaveLength(1));
+  // The same gesture's second click, once the first request has already finished: one gesture, one file.
+  fireEvent.click(button, { detail: 2 });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(saved.files).toHaveLength(1);
+  // A new click gesture still exports.
+  fireEvent.click(button, { detail: 1 });
+  await waitFor(() => expect(saved.files).toHaveLength(2));
 });
 
 it("says an older service has no export instead of failing silently, and saves nothing", async () => {
