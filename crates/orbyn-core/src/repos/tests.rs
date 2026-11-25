@@ -34,6 +34,9 @@ fn repo(path: &Path) -> PathBuf {
     run_git(path, &["init", "-q", "-b", "main"]);
     run_git(path, &["config", "user.email", "t@example.com"]);
     run_git(path, &["config", "user.name", "T"]);
+    // The fixture keeps LF on every machine: the worktree checkout must not depend
+    // on the person's global `core.autocrlf`.
+    run_git(path, &["config", "core.autocrlf", "false"]);
     std::fs::write(path.join("a.txt"), "one\n").unwrap();
     run_git(path, &["add", "."]);
     run_git(path, &["commit", "-q", "-m", "first"]);
