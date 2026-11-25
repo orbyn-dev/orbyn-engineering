@@ -53,6 +53,16 @@ describe("a Crew notification's words", () => {
       lines: ["The merge waits for you."],
       target: NEEDS_YOU_INBOX,
     });
+    expect(noticeOf(item("merge_gate_waiting", { reason: "A merge waits for your release." }))).toEqual({
+      title: "A merge waits for your release",
+      lines: ["A merge waits for your release."],
+      target: NEEDS_YOU_INBOX,
+    });
+    expect(noticeOf(item("command_approval", { reason: "A command waits for your approval." }))).toEqual({
+      title: "A command waits for your approval",
+      lines: ["A command waits for your approval."],
+      target: NEEDS_YOU_INBOX,
+    });
     expect(noticeOf(item("background_review", { reason: "It used its whole turn budget." }))).toEqual({
       title: "The review waits for you",
       lines: ["It used its whole turn budget."],

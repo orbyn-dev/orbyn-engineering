@@ -155,6 +155,16 @@ pub struct HeldBook {
     items: Vec<Held>,
 }
 
+/// One hold still waiting for the person, as the one needs-you field reads it. A snapshot of the in-memory hold: the
+/// read sweeps nothing and writes nothing, so asking the field never changes what it answers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeldWaiting {
+    pub id: String,
+    pub task_id: String,
+    pub crew_id: String,
+    pub held_at: i64,
+}
+
 /// The flags that change what a command does, not how the engine names it. They are shown (the whole request is bound); the list
 /// is the fields the engines this app runs put on a command request.
 const EFFECT_FLAGS: &[(&str, &str)] = &[
@@ -706,6 +716,22 @@ impl Core {
     /// Holds still open or decided lately, newest first. A hold whose task has ended is closed here.
     pub fn autopilot_held(&self) -> Result<wire::AutopilotHeldList> {
         self.autopilot_held_at(unix_now())
+    }
+
+    /// The holds still waiting for the person, for the one needs-you field. A snapshot of the in-memory book: it sweeps
+    /// nothing and reads nothing, and a hold past its deadline is no longer a wait even before a sweep closes it.
+    pub(crate) fn held_waiting(&self, now: i64) -> Vec<HeldWaiting> {
+        self.held_book()
+            .items
+            .iter()
+            .filter(|item| item.stage == Stage::Held && item.deadline > now)
+            .map(|item| HeldWaiting {
+                id: item.id.clone(),
+                task_id: item.task_id.clone(),
+                crew_id: item.crew_id.clone(),
+                held_at: item.held_at,
+            })
+            .collect()
     }
 
     pub(crate) fn autopilot_held_at(&self, now: i64) -> Result<wire::AutopilotHeldList> {

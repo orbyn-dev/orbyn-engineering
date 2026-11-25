@@ -82,6 +82,10 @@ export function noticeOf(item: NeedsYouItem): Notice {
       return { title: "Could not start", lines: reasonLines(item), target: NEEDS_YOU_INBOX };
     case "merge_waiting":
       return { title: "The merge waits for you", lines: reasonLines(item), target: NEEDS_YOU_INBOX };
+    case "merge_gate_waiting":
+      return { title: "A merge waits for your release", lines: reasonLines(item), target: NEEDS_YOU_INBOX };
+    case "command_approval":
+      return { title: "A command waits for your approval", lines: reasonLines(item), target: NEEDS_YOU_INBOX };
     case "background_review":
       return { title: "The review waits for you", lines: reasonLines(item), target: REVIEW_QUEUE };
     case "watch_failing": {
@@ -113,6 +117,8 @@ const NOUNS: Record<NeedsYouKind, Noun> = {
   could_not_start: ["refused start", "refused starts"],
   manual_check: ["item", "items"],
   merge_waiting: ["merge", "merges"],
+  merge_gate_waiting: ["merge", "merges"],
+  command_approval: ["command", "commands"],
   background_review: ["review", "reviews"],
   watch_failing: ["watch", "watches"],
   watch_could_not_run: ["watch", "watches"],
@@ -126,6 +132,8 @@ const KIND_ORDER: readonly NeedsYouKind[] = [
   "task_needs_person",
   "could_not_start",
   "merge_waiting",
+  "merge_gate_waiting",
+  "command_approval",
   "background_review",
   "watch_failing",
   "watch_could_not_run",

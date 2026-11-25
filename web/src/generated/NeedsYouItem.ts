@@ -2,12 +2,13 @@
 import type { NeedsYouKind } from "./NeedsYouKind";
 
 /**
- * One thing that waits for the person. `id` is the task's id, a background run's id or a watch crew's id; `since` is when it
- * began to wait. `name`, `engine`, `model` and `task_kind` are set only for a `could_not_stop` item.
+ * One thing that waits for the person. `id` is the task's id, a background run's id, a watch crew's id or a held
+ * command's id; `since` is when it began to wait. `name`, `engine`, `model` and `task_kind` are set only for a
+ * `could_not_stop` item.
  */
 export type NeedsYouItem = { 
 /**
- * The task's id, a background run's id, or a watch crew's id.
+ * The task's id, a background run's id, a watch crew's id, or a held command's id.
  */
 id: string, kind: NeedsYouKind, 
 /**
@@ -15,7 +16,7 @@ id: string, kind: NeedsYouKind,
  */
 project_id?: string | null, 
 /**
- * The crew the item belongs to: a task's crew, a merge's crew, a background crew, or a watch crew.
+ * The crew the item belongs to: a task's crew, a merge's or held command's crew, a background crew, or a watch crew.
  */
 crew_id?: string | null, 
 /**
