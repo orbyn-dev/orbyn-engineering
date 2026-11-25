@@ -204,6 +204,32 @@ describe("the routes", () => {
     expect(JSON.parse(calls[2]!.body!)).toEqual({ ...REF, state: "Open" });
   });
 
+  it("writes a comment with the person key and the body as a value, and keeps what the service answered", async () => {
+    service(() => json({ id: "IC_1", author: { login: "sam" }, body: "a\"b </script>", created_at: "2026-11-20T10:00:00Z" }));
+    const stored = await createHttpIssuesApi().comment(REF, "a\"b </script> <<<ISSUE TEXT");
+    expect(calls).toHaveLength(1);
+    expect(`${calls[0]!.method} ${calls[0]!.url.pathname}`).toBe("POST /api/issues/item/comment");
+    expect(calls[0]!.url.search).toBe("");
+    expect(calls[0]!.headers.get(PERSON_HEADER)).toBe("shell-key");
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ ...REF, body: "a\"b </script> <<<ISSUE TEXT" });
+    expect(stored).toEqual({ id: "IC_1", author: { login: "sam" }, body: "a\"b </script>", created_at: "2026-11-20T10:00:00Z" });
+    // Anything but a comment keeps the page from crashing: empty fields, no author.
+    service(() => json("nonsense"));
+    expect(await createHttpIssuesApi().comment(REF, "x")).toEqual({ id: "", author: null, body: "", created_at: "" });
+  });
+
+  it("refuses a blank comment or one over 64 KiB before anything is sent", async () => {
+    service(() => json({ id: "c1", author: null, body: "b", created_at: "t" }));
+    const api = createHttpIssuesApi();
+    await expect(api.comment(REF, "")).rejects.toThrow(/empty/i);
+    await expect(api.comment(REF, "   \n ")).rejects.toThrow(/empty/i);
+    await expect(api.comment(REF, "é".repeat(33_000))).rejects.toThrow(/64 KiB/);
+    expect(calls).toEqual([]);
+    // At the limits it is sent.
+    await api.comment(REF, "a".repeat(65_536));
+    expect(calls).toHaveLength(1);
+  });
+
   it("reads the candidates for a scope, capped, with no entry a write could not use", async () => {
     const many = Array.from({ length: 260 }, (_, at) => ({ name: `l${at}` }));
     service(() => json({ labels: [...many, { color: "red" }], assignees: [{ login: "riley", id: 7, name: "R".repeat(300) }, { login: "no-id" }, { id: "x" }], truncated: false }));
@@ -291,6 +317,7 @@ describe("the client the app starts with", () => {
     await expect(absent.update(REF, { body: "x" })).rejects.toThrow(/not reported/);
     await expect(absent.setState(REF, { category: "open", name: "Open" })).rejects.toThrow(/not reported/);
     await expect(absent.candidates(REF)).rejects.toThrow(/not reported/);
+    await expect(absent.comment(REF, "x")).rejects.toThrow(/not reported/);
     expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
   });
 
