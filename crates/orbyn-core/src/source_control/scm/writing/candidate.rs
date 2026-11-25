@@ -3,6 +3,7 @@
 use super::invalid;
 use crate::error::{CoreError, Result};
 use crate::host::process::ManagedChild;
+pub(super) use crate::source_control::git::git_version;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -116,14 +117,6 @@ pub(super) async fn read_git_bounded(
     tokio::time::timeout(READ_TIMEOUT, work)
         .await
         .map_err(|_| invalid("Reading this change timed out. Enter text manually."))?
-}
-
-/// The major and minor version in `git version` output, such as
-/// `git version 2.39.3 (Apple Git-146)` or `git version 2.45.1.windows.1`.
-pub(super) fn git_version(output: &str) -> Option<(u32, u32)> {
-    let version = output.trim().strip_prefix("git version ")?;
-    let mut parts = version.split(|c: char| !c.is_ascii_digit());
-    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
 }
 
 /// `GIT_ATTR_SOURCE` arrived in Git 2.40. Older Git ignores it, so the working

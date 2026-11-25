@@ -12,8 +12,24 @@ interface Resolution {
   error: ApiFailure | null;
 }
 
+/**
+ * The reference's repository: a multi-repository thread's file is named relative to the repository it
+ * is in, and the service resolves it there; absent is the thread's primary repository. Only a caller
+ * that knows the repository names it: the reveal intents that feed this hook (a markdown link, an
+ * engine tool result, a file chip) are written relative to the task folder, so they name none yet; the
+ * diff panel's open path names one and sends it without this hook (issue #1581).
+ */
+interface Reference {
+  threadId: string;
+  cwd: string;
+  path: string;
+  basis: ThreadPathBasis;
+  nonce: number;
+  repoId?: string;
+}
+
 /** Only the latest navigation in the same thread/cwd can consume these coordinates. */
-export function useResolvedThreadPath(threadId: string, reference: { threadId: string; cwd: string; path: string; basis: ThreadPathBasis; nonce: number } | null) {
+export function useResolvedThreadPath(threadId: string, reference: Reference | null) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd);
   const epoch = useRef(0);
   useEffect(() => {
@@ -32,7 +48,7 @@ export function useResolvedThreadPath(threadId: string, reference: { threadId: s
         && route.id === threadId && useWorkspace.getState().threads[threadId]?.cwd === cwd;
     };
     try {
-      const value = await api.resolveThreadPath(threadId, { path: reference.path, basis: reference.basis, cwd }, signal);
+      const value = await api.resolveThreadPath(threadId, { path: reference.path, basis: reference.basis, cwd, ...(reference.repoId === undefined ? {} : { repo_id: reference.repoId }) }, signal);
       if (!current() || value.cwd !== cwd) throw new DOMException("Navigation changed", "AbortError");
       return { key, value, error: null };
     } catch (error) {

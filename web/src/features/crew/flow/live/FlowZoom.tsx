@@ -14,6 +14,7 @@ import { ReviewConsent, consentKey } from "./ReviewConsent";
 import { RequiredLanes } from "./RemoveLane";
 import { flowApi } from "./api";
 import { RunPage } from "../../runpage/RunPage";
+import { TaskArtifacts } from "./TaskArtifacts";
 
 /** The Review queue is not a tab of the Crew view yet, so Review has nowhere to open. */
 const NO_QUEUE = "The Review queue is not in this app yet";
@@ -59,14 +60,17 @@ function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: Rea
   const write = useTaskWrite({ id: row.id, name: row.name, allowCancel: !final, allowRerun: row.state === "passed", onDone: onChanged });
   const cancel = write.can("cancel");
   const rerun = write.can("rerun");
-  // The Run page is this task's records as a page of their own; Save as file and Copy PR comment are in it, and write nothing.
-  const [run, setRun] = useState(false);
-  if (run) {
+  // The Run page and the artifacts view are this task's records as screens of their own, each on its own read. Neither writes.
+  const [view, setView] = useState<"task" | "run" | "artifacts">("task");
+  if (view === "run") {
     return (
       <div className="fv-body fv-zoom">
-        <RunPage detail={detail} onBack={() => setRun(false)} />
+        <RunPage detail={detail} onBack={() => setView("task")} />
       </div>
     );
+  }
+  if (view === "artifacts") {
+    return <TaskArtifacts id={row.id} name={row.name || "Untitled task"} onBack={() => setView("task")} />;
   }
   return (
     <div className="fv-body fv-zoom">
@@ -76,7 +80,10 @@ function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: Rea
         <span className="fv-badge">{round.text}</span>
         <span className="fv-badge">{plain(row.state)}</span>
         <span className="fv-spacer" />
-        <button type="button" className="fv-off" onClick={() => setRun(true)}>
+        <button type="button" className="fv-off" onClick={() => setView("artifacts")}>
+          Artifacts
+        </button>
+        <button type="button" className="fv-off" onClick={() => setView("run")}>
           Run page
         </button>
         <button type="button" className="fv-off" disabled={!cancel.enabled} title={cancel.why ?? undefined} onClick={() => write.ask("cancel")}>
