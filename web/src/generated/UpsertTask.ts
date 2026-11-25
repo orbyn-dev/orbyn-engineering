@@ -4,6 +4,9 @@ import type { WebhookDedupe } from "./WebhookDedupe";
 import type { WebhookFilter } from "./WebhookFilter";
 import type { WebhookSignature } from "./WebhookSignature";
 
+/**
+ * Scheduled-task create or update. `secret` is a webhook signing secret: this type prints nothing of it.
+ */
 export type UpsertTask = { id?: string, project_id: string, thread_id?: string, name: string, prompt: string, engine: string, schedule: TaskSchedule, signature?: WebhookSignature, 
 /**
  * Absent keeps the stored secret.
