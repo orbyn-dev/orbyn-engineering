@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { ApiFailure } from "../../../api/client";
 import { createEngineHostMock } from "../../../../mock/engineHost";
 import { type HostRow, setEngineHostApi, processLine, runningFor } from "../../enginehost";
 import { HostProcessRows, useHostProcesses } from "./HostProcesses";
@@ -115,7 +116,8 @@ it("restarting a running host with threads asks first; one with none restarts at
 
 it("cuts a failure message the service chose before the Stop question shows it", async () => {
   const mock = createEngineHostMock({ hosts: hosts() });
-  mock.stop = async () => { throw new Error(`<b>x</b>${"w".repeat(900)}`); };
+  // A refusal the client can actually throw. It is not the 409 background_open, so no second question may follow.
+  mock.stop = async () => { throw new ApiFailure("internal", `<b>x</b>${"w".repeat(900)}`, 500); };
   setEngineHostApi(mock);
   const user = userEvent.setup();
   const { baseElement } = render(<Rows />);
@@ -124,4 +126,5 @@ it("cuts a failure message the service chose before the Stop question shows it",
   const alert = await screen.findByRole("alert");
   expect(alert.textContent!.length).toBeLessThan(330);
   expect(baseElement.querySelector("dialog b")).toBeNull();
+  expect(screen.queryByRole("button", { name: /anyway/ })).toBeNull();
 });
