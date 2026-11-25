@@ -9,12 +9,26 @@ use orbyn_contracts::{
 use super::autopilot_support::{
     Scripted, approvers, ask, events, kinds, request, running, scope, words,
 };
-use super::harness::KEY_MARKER;
+use super::harness::{KEY_MARKER, World};
 
 /// A secret-shaped value for the redaction test, named by label in every message.
 const SECRET: &str = "abcdefgh12345678";
 use crate::crew::{Answer, Mode, ModeScope};
 use crate::governance::approvals::{Review, Verdict};
+
+/// The body of the one event of `kind` a task recorded. The read filters by kind, so a test names the event
+/// it means instead of reading a place in the list; none or several fails here with the rows attached.
+fn one_event_body(w: &World, task: &str, kind: &str) -> serde_json::Value {
+    let rows = events(w, task, kind);
+    match rows.as_slice() {
+        [row] => row.body.clone(),
+        [] => panic!("no {kind} event: {rows:?}"),
+        rows => panic!(
+            "{} {kind} events where one is expected: {rows:?}",
+            rows.len()
+        ),
+    }
+}
 
 #[tokio::test]
 async fn a_hard_denied_action_is_never_approved_even_if_the_lead_says_yes() {
@@ -90,19 +104,19 @@ async fn the_lead_decides_an_ordinary_action_with_a_reason_and_sees_only_a_summa
     assert_eq!(verdict, Verdict::Allow);
     let seen = lead.seen.lock().unwrap();
     assert_eq!(seen.len(), 1);
+    let summary = seen.first().expect("the lead saw one summary");
     assert_eq!(
         (
-            seen[0].kind.as_str(),
-            seen[0].target.as_str(),
-            seen[0].tier.as_str()
+            summary.kind.as_str(),
+            summary.target.as_str(),
+            summary.tier.as_str()
         ),
         ("command", "cargo fmt", "low")
     );
-    assert_eq!(seen[0].brief, "Add a parse_duration function.");
-    let allowed = events(&w, &id, "allowed");
-    assert_eq!(allowed.len(), 1);
-    assert_eq!(allowed[0].body["decided_by"], "lead");
-    assert_eq!(allowed[0].body["lead"]["reason"], "Fits the brief.");
+    assert_eq!(summary.brief, "Add a parse_duration function.");
+    let allowed = one_event_body(&w, &id, "allowed");
+    assert_eq!(allowed["decided_by"], "lead");
+    assert_eq!(allowed["lead"]["reason"], "Fits the brief.");
 }
 
 #[tokio::test]
@@ -110,22 +124,19 @@ async fn a_ledger_row_says_the_task_title_and_the_engine_and_model_that_asked() 
     let (w, id) = running().await;
     // The always-denied list refuses before any approver, and the row it leaves still says who asked.
     request(&w, &id, ActionKind::Command, "rm -rf ~/projects").await;
-    let denied = &events(&w, &id, "denied")[0];
+    let denied = one_event_body(&w, &id, "denied");
     let run = w.core.store.crew_run(&id).unwrap().unwrap();
     let lead = w.core.store.thread(&run.lead_thread_id).unwrap();
     assert_eq!(
-        denied.body["title"], lead.title,
+        denied["title"], lead.title,
         "the row did not name the task it was for"
     );
-    assert_eq!(denied.body["action"]["asker_engine"], "alpha");
+    assert_eq!(denied["action"]["asker_engine"], "alpha");
     let worker = w.core.store.thread(&w.worker(&id)).unwrap();
     match &worker.model {
-        Some(model) => assert_eq!(
-            denied.body["action"]["asker_model"],
-            serde_json::json!(model)
-        ),
+        Some(model) => assert_eq!(denied["action"]["asker_model"], serde_json::json!(model)),
         None => assert!(
-            denied.body["action"].get("asker_model").is_none(),
+            denied["action"].get("asker_model").is_none(),
             "a thread with no model recorded still named one"
         ),
     }
@@ -162,7 +173,7 @@ async fn two_keys_that_disagree_give_denied_and_the_disagreement_is_logged() {
     assert_eq!((lead.calls(), second.calls()), (1, 1));
     // The denied command is also held for the person, who may approve it once (`autopilot_held`).
     assert_eq!(kinds(&w, &id), ["held", "disagreement", "denied"]);
-    let row = &events(&w, &id, "disagreement")[0].body;
+    let row = one_event_body(&w, &id, "disagreement");
     assert_eq!(row["lead"]["approve"], true);
     assert_eq!(row["second"]["engine"], "beta");
     assert_eq!(row["second"]["answer"]["approve"], false);
@@ -180,7 +191,7 @@ async fn two_keys_that_agree_allow_and_the_second_key_must_be_on_another_vendor(
         request(&w, &id, ActionKind::Command, "npm install left-pad").await,
         Verdict::Allow
     );
-    assert_eq!(events(&w, &id, "allowed")[0].body["decided_by"], "two_keys");
+    assert_eq!(one_event_body(&w, &id, "allowed")["decided_by"], "two_keys");
 
     // The same vendor is no second key: under Full the action is denied, and the person is told why.
     let (w, id) = running().await;
@@ -194,7 +205,7 @@ async fn two_keys_that_agree_allow_and_the_second_key_must_be_on_another_vendor(
     );
     assert_eq!(same.calls(), 0);
     assert_eq!(
-        events(&w, &id, "denied")[0].body["needs_second_engine"],
+        one_event_body(&w, &id, "denied")["needs_second_engine"],
         true
     );
 }
@@ -523,7 +534,7 @@ async fn three_denials_in_a_row_stop_the_task() {
         (result.state, result.stop_reason, result.r#final),
         (ResultState::Stopped, Some(StopReason::TooManyDenials), true)
     );
-    assert_eq!(events(&w, &id, "tripwire")[0].body["in_a_row"], 3);
+    assert_eq!(one_event_body(&w, &id, "tripwire")["in_a_row"], 3);
     // The run has ended: a later request is refused.
     assert!(words(&request(&w, &id, ActionKind::Command, "ls").await).contains("ended"));
 }
@@ -554,7 +565,7 @@ async fn an_approval_resets_the_row_but_twenty_denials_in_a_run_stop_the_task() 
     }
     let task = w.task(&id);
     assert_eq!(task.stop_reason.as_deref(), Some("too_many_denials"));
-    let wire = &events(&w, &id, "tripwire")[0].body;
+    let wire = one_event_body(&w, &id, "tripwire");
     assert_eq!(
         (wire["in_a_row"].as_u64(), wire["in_a_run"].as_u64()),
         (Some(2), Some(20))
@@ -581,7 +592,7 @@ async fn text_that_looks_like_injected_instructions_stops_the_task_and_the_ledge
         ("stopped", Some("injection_suspected"))
     );
     assert_eq!(lead.calls(), 0);
-    let row = &events(&w, &id, "tripwire")[0].body;
+    let row = one_event_body(&w, &id, "tripwire");
     assert_eq!(row["class"], "ignore instructions");
     assert!(
         !row.to_string().contains("deploy"),
@@ -653,7 +664,7 @@ async fn a_read_between_denials_does_not_break_the_run_of_three() {
         "the verdict did not hold the expected words"
     );
     assert_eq!(w.task(&id).stop_reason.as_deref(), Some("too_many_denials"));
-    assert_eq!(events(&w, &id, "tripwire")[0].body["in_a_row"], 3);
+    assert_eq!(one_event_body(&w, &id, "tripwire")["in_a_row"], 3);
 }
 
 #[tokio::test]
@@ -686,13 +697,15 @@ async fn under_off_a_person_is_asked_even_for_a_read_and_the_threads_accepting_m
             .store
             .list_approvals(Some(orbyn_contracts::ApprovalState::Pending))
             .unwrap();
+        assert_eq!(pending.len(), 1, "one approval waits for the worker");
+        let approval = pending.first().expect("the worker's pending request");
         assert!(
-            pending[0].summary.contains("A request"),
+            approval.summary.contains("A request"),
             "the approval is the worker's request"
         );
         w.core
             .gate
-            .decide(&pending[0].id, allow, false, "test")
+            .decide(&approval.id, allow, false, "test")
             .unwrap();
         let verdict = waiting.await.unwrap();
         assert_eq!(
@@ -990,9 +1003,7 @@ async fn a_protected_path_write_is_refused_at_the_gate_before_the_report() {
         "the refused write was recorded as allowed"
     );
     assert_eq!(kinds(&w, &id), ["denied"]);
-    let denied = events(&w, &id, "denied");
-    assert_eq!(denied.len(), 1);
-    let row = &denied[0].body;
+    let row = one_event_body(&w, &id, "denied");
     assert_eq!(row["action"]["kind"], "file_change");
     assert_eq!(row["action"]["target"], protected);
     assert_eq!(row["decided_by"], "hard_rule");
@@ -1079,10 +1090,9 @@ async fn a_protected_path_write_is_refused_at_the_gate_before_the_report() {
     );
     assert_eq!(w.task(&id).state, "stopped");
     assert_eq!(w.task(&id).stop_reason.as_deref(), Some("too_many_denials"));
-    let tripwire = events(&w, &id, "tripwire");
-    assert_eq!(tripwire.len(), 1);
-    assert_eq!(tripwire[0].body["wire"], "denials");
-    assert_eq!(tripwire[0].body["in_a_row"], 3);
+    let tripwire = one_event_body(&w, &id, "tripwire");
+    assert_eq!(tripwire["wire"], "denials");
+    assert_eq!(tripwire["in_a_row"], 3);
     let denied = events(&w, &id, "denied");
     assert_eq!(denied.len(), 3);
     for event in &denied {
