@@ -614,4 +614,55 @@ pub(super) const TOOLS: &[Tool] = &[
         &[("device_id", "string")],
         &["device_id"],
     ),
+    act(
+        "orbyn_device_fold",
+        "Fold a booted foldable device by id through the service's own fold action. The \
+         answer is {ok, device}: the device read back after the change.",
+        &[("device_id", "string")],
+        &["device_id"],
+    ),
+    act(
+        "orbyn_device_unfold",
+        "Unfold a booted foldable device by id through the service's own unfold action. The \
+         answer is {ok, device}: the device read back after the change.",
+        &[("device_id", "string")],
+        &["device_id"],
+    ),
+    act(
+        "orbyn_device_rotate",
+        "Rotate a booted Android device by id to portrait, landscape_left, \
+         portrait_upside_down or landscape_right. The answer is {ok, device}: the device read \
+         back after the change.",
+        &[("device_id", "string"), ("value", "string")],
+        &["device_id", "value"],
+    ),
+    act(
+        "orbyn_device_button",
+        "Press home, back or recents on a booted device by id. Back and recents are Android \
+         only. The answer is {ok, device}: the device read back after the change.",
+        &[("device_id", "string"), ("value", "string")],
+        &["device_id", "value"],
+    ),
+    act(
+        "orbyn_device_hinge",
+        "Set a booted foldable device's hinge angle by id, a whole number from 1 to 179 \
+         degrees. The answer is {ok, device}: the device read back after the change.",
+        &[("device_id", "string"), ("angle", "number")],
+        &["device_id", "angle"],
+    ),
+    act(
+        "orbyn_device_hinge_preset",
+        "Set a booted foldable device's hinge to the closed, half_open or open preset by id; \
+         the service owns the angle. The answer is {ok, device}: the device read back after \
+         the change.",
+        &[("device_id", "string"), ("preset", "string")],
+        &["device_id", "preset"],
+    ),
+    act(
+        "orbyn_device_power_off",
+        "Power off one of this machine's devices by id through the service's own power off \
+         action. The answer is {ok, device}: the device read back as shut down.",
+        &[("device_id", "string")],
+        &["device_id"],
+    ),
 ];
