@@ -1967,7 +1967,6 @@ mod writes {
             "{error:?}"
         );
     }
-
 }
 
 mod templates {

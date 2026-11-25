@@ -1908,6 +1908,8 @@ On the web, one shared needs-you read draws the Inbox's watch and could-not-stop
 | KC9 skill proposals | the `skills-local` area and its one writer (#1366, #1411); native discovery of the local skills for Claude (per-run read-only copy, built after this snapshot) | Skills group, proposals, review page, read error (#1358, #1409), hidden on a 404 | a Windows junction check (#1406) |
 | KC10 notifications | the once-per-item claim, migration 83 (#1418) | not built | the notification, its settings switch |
 
+**KC5 read side (built after that snapshot):** the lessons routes (slice 3) are merged, and the web list, switch and card live on the generated types (hidden only on a 404); EvalHistory samples are recorded per task (slice 4, migration 88, #1490) and a task's sample is read back at `GET /api/crew/tasks/{id}/samples` (class Local, behind Preview; ids and enums only, one row per task, one outcome written once). The card's evidence links (a task opens its thread, an escape the Escapes page) and its Updated row are built and unit-tested; neither they nor the samples read have been run against a real service, so M25 stays partial, and the router still reads no sample (`EvalHistory` is every caller's default).
+
 **KC9 library side (built after that snapshot):** an approved skill proposal writes the skill into the device's own
 skills folder, `<data>/skills-local/<slug>/SKILL.md`, whose front matter carries a `local_revision`; the shared library and
 any target repository are never written, so the library's revision and dirty flag cannot change. A local skill is personal
