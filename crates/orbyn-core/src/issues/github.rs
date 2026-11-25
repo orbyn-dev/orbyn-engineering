@@ -2,19 +2,21 @@
 //! `gh` prints is the tracker's text and is read defensively: a field that is missing or the wrong type
 //! becomes empty, never an error that hides the other issues.
 
+use super::frame::cut;
 use super::query::{AssigneeFilter, IssueQuery, IssueSort, StateFilter};
 use super::{
-    DependencyFeed, DependencyUpdate, IssueEdit, IssueSource, LabelEvent, LabelFeed, NewIssue,
-    ScopeList,
+    DependencyFeed, DependencyUpdate, IssueEdit, IssueSource, LabelEvent, LabelFeed,
+    MAX_TEMPLATE_BODY_BYTES, MAX_TEMPLATES, NewIssue, ScopeList,
 };
 use crate::error::{CoreError, Result};
 use crate::source_control::forge::{Forge, call, call_input, github_checks};
 use async_trait::async_trait;
+use base64::Engine as _;
 use orbyn_contracts::{
     IssueActor, IssueAssigneeCandidate, IssueCandidateLabel, IssueCandidates, IssueCloseReason,
     IssueComment, IssueCounts, IssueDetail, IssueLabel, IssueLinkedPull, IssueReaction,
-    IssueReactionCount, IssueState, IssueStateCategory, IssueSummary, LinkedPullState, PullChecks,
-    TrackerKind,
+    IssueReactionCount, IssueState, IssueStateCategory, IssueSummary, IssueTemplate,
+    LinkedPullState, PullChecks, TrackerKind,
 };
 use serde_json::Value;
 use std::path::PathBuf;
@@ -735,6 +737,105 @@ async fn node_id(cwd: &std::path::Path, scope: &str, key: &str) -> Result<String
         .ok_or_else(|| CoreError::NotFound("issue".into()))
 }
 
+/// The folder a GitHub repository keeps its issue templates in, one file each (docs/issues.md, "As built"): the
+/// contents API lists it and answers one file's body per markdown template.
+const TEMPLATE_DIR: &str = ".github/ISSUE_TEMPLATE";
+/// The most characters of a template's name and of its description that are kept, the most label names it carries,
+/// and the most characters of each. All of it is the tracker's text and is cut, never trusted to be short.
+const MAX_TEMPLATE_NAME_CHARS: usize = 256;
+const MAX_TEMPLATE_LABELS: usize = 50;
+const MAX_TEMPLATE_LABEL_CHARS: usize = 200;
+
+/// The parts of a markdown issue template's front matter this reader carries: its name, its one-line description
+/// and its label names. Nothing else in the block is read.
+#[derive(Default)]
+struct TemplateHeader {
+    name: Option<String>,
+    about: Option<String>,
+    labels: Vec<String>,
+}
+
+impl TemplateHeader {
+    /// One line of the front matter block, as one `key: value` pair. A key this reader does not carry, an indented
+    /// continuation and a line without a colon are all dropped rather than guessed.
+    fn read(&mut self, line: &str) {
+        if line.starts_with([' ', '\t']) {
+            return;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            return;
+        };
+        match key.trim() {
+            "name" => self.name = one_line(value, MAX_TEMPLATE_NAME_CHARS),
+            "about" => self.about = one_line(value, MAX_TEMPLATE_NAME_CHARS),
+            "labels" => self.labels = label_names(value),
+            _ => {}
+        }
+    }
+}
+
+/// One front matter value as the file means it: trimmed, and without a matching pair of `'` or `"` around the whole
+/// value, which GitHub's own templates write around every one.
+fn unquoted(value: &str) -> &str {
+    let value = value.trim();
+    let bytes = value.as_bytes();
+    let paired =
+        bytes.len() >= 2 && matches!(bytes[0], b'\'' | b'"') && bytes[bytes.len() - 1] == bytes[0];
+    if paired {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
+}
+
+/// One front matter value as a line of at most `chars` characters, or `None` when it is empty.
+fn one_line(value: &str, chars: usize) -> Option<String> {
+    let value: String = unquoted(value).trim().chars().take(chars).collect();
+    (!value.is_empty()).then_some(value)
+}
+
+/// The label names one `labels: bug, ui` line lists. The whole value is one scalar, so its quotes go before the
+/// commas are split: GitHub's own templates write `labels: 'bug, ui'`, and splitting first would keep the quotes.
+fn label_names(value: &str) -> Vec<String> {
+    unquoted(value)
+        .split(',')
+        .filter_map(|label| one_line(label, MAX_TEMPLATE_LABEL_CHARS))
+        .take(MAX_TEMPLATE_LABELS)
+        .collect()
+}
+
+/// One markdown issue template split into its front matter and its body. The block is the file's first lines,
+/// opened and closed by a line that is exactly `---`; a file without a closed block is all body, because an
+/// unterminated block is not front matter. This is not a YAML reader (docs/issues.md): three keys are read, one
+/// `key: value` line each, and a `.yml` issue form is skipped rather than half-read.
+fn markdown_template(file: &str) -> (TemplateHeader, &str) {
+    let Some(rest) = file
+        .strip_prefix("---\r\n")
+        .or_else(|| file.strip_prefix("---\n"))
+    else {
+        return (TemplateHeader::default(), file);
+    };
+    let mut header = TemplateHeader::default();
+    let mut at = file.len() - rest.len();
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end_matches(['\r', '\n']) == "---" {
+            return (header, &file[at + line.len()..]);
+        }
+        header.read(line.trim_end_matches(['\r', '\n']));
+        at += line.len();
+    }
+    (TemplateHeader::default(), file)
+}
+
+/// A contents answer's base64 body as bytes. GitHub wraps it in newlines, so the wrapping goes first; a body that
+/// is not base64 text is `None` and that one file is skipped.
+fn decoded(content: &str) -> Option<Vec<u8>> {
+    let packed: String = content.chars().filter(|c| !c.is_whitespace()).collect();
+    base64::engine::general_purpose::STANDARD
+        .decode(packed)
+        .ok()
+}
+
 #[async_trait]
 impl IssueSource for GitHub {
     async fn list(&self, scope: &str, query: &IssueQuery) -> Result<ScopeList> {
@@ -1074,6 +1175,75 @@ impl IssueSource for GitHub {
         // the issue it just changed, with no counts rather than a failure.
         detail.reactions = optional_reactions(&self.cwd, scope, key).await;
         Ok(detail)
+    }
+
+    /// The repository's own issue templates (docs/issues.md, "As built"): GitHub has no template endpoint, so the
+    /// read is the contents API's listing of `.github/ISSUE_TEMPLATE` and one body per markdown file. A `.yml` issue
+    /// form is skipped, because its shape needs a YAML reader Orbyn does not carry and a form is not a body; a
+    /// repository whose only templates are forms therefore answers none. A repository with no such folder answers
+    /// none too: GitHub's 404 for a path it does not have is "no templates", never an error (#1548).
+    async fn templates(&self, scope: &str) -> Result<Vec<IssueTemplate>> {
+        scope_ok(scope)?;
+        let args = vec![
+            "api".to_owned(),
+            format!("repos/{scope}/contents/{TEMPLATE_DIR}"),
+        ];
+        let listing = match run(&self.cwd, &args).await {
+            Ok(value) => value,
+            Err(CoreError::NotFound(_)) => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        // Anything but a list of files at that path is a repository without a templates folder, not a broken answer.
+        let Some(entries) = listing.as_array() else {
+            return Ok(Vec::new());
+        };
+        let mut templates = Vec::new();
+        for entry in entries.iter().take(MAX_TEMPLATES) {
+            let name = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let path = entry
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            // Only a `.md` file is a template this reader can carry: a folder, a submodule, `config.yml` and an
+            // issue form (`.yml`/`.yaml`) are not read at all.
+            if entry.get("type").and_then(Value::as_str) != Some("file")
+                || !name.to_ascii_lowercase().ends_with(".md")
+                || path.is_empty()
+            {
+                continue;
+            }
+            let args = vec!["api".to_owned(), format!("repos/{scope}/contents/{path}")];
+            let file = run(&self.cwd, &args).await?;
+            // A body GitHub did not send as base64 (a file over 1 MB, `encoding: "none"`) is skipped: the list keeps
+            // the templates it can read rather than failing on the one it cannot.
+            if file.get("encoding").and_then(Value::as_str) != Some("base64") {
+                continue;
+            }
+            let Some(bytes) = file
+                .get("content")
+                .and_then(Value::as_str)
+                .and_then(decoded)
+            else {
+                continue;
+            };
+            let text = String::from_utf8_lossy(&bytes);
+            let (header, body) = markdown_template(&text);
+            templates.push(IssueTemplate {
+                // The template's id is its file name: it is what a create names, and the same file answers the same
+                // id on every read.
+                id: name.to_owned(),
+                name: header
+                    .name
+                    .unwrap_or_else(|| name.chars().take(MAX_TEMPLATE_NAME_CHARS).collect()),
+                description: header.about,
+                body: cut(body, MAX_TEMPLATE_BODY_BYTES).to_owned(),
+                labels: header.labels,
+            });
+        }
+        Ok(templates)
     }
 
     async fn get(&self, scope: &str, key: &str) -> Result<IssueDetail> {
@@ -1469,6 +1639,32 @@ mod tests {
             ],
             "only a labeled event of the stored label on an open issue (not a pull request), with an id and a number, is kept"
         );
+    }
+
+    #[test]
+    fn a_markdown_template_front_matter_gives_its_name_about_and_labels() {
+        let (header, body) = markdown_template(
+            "---\r\nname: \"Bug report\"\r\nabout: ''\r\nlabels: bug, , ui\nassignees: ann\n  indented: x\nTitle: never read\n---\r\n\r\nThe body\n",
+        );
+        assert_eq!(header.name, Some("Bug report".to_owned()));
+        assert_eq!(header.about, None, "an empty value is not a description");
+        assert_eq!(header.labels, vec!["bug".to_owned(), "ui".to_owned()]);
+        assert_eq!(
+            body, "\r\nThe body\n",
+            "the block is not part of the body and the rest of the file is"
+        );
+    }
+
+    #[test]
+    fn a_template_without_a_closed_front_matter_block_is_all_body() {
+        for file in ["Just a body.\n", "---\nname: Bug\n\nstill the block\n"] {
+            let (header, body) = markdown_template(file);
+            assert_eq!(
+                header.name, None,
+                "an unterminated block is not front matter"
+            );
+            assert_eq!(body, file, "the whole file is the template's body");
+        }
     }
 }
 

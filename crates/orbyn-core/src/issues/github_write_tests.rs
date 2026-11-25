@@ -720,12 +720,149 @@ fn every_contract_reaction_has_one_tracker_word() {
     }
 }
 
+/// One contents answer: a file body, base64 and wrapped the way GitHub wraps it.
+fn contents_body(body: &str) -> String {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(body.as_bytes());
+    encoded
+        .as_bytes()
+        .chunks(60)
+        .map(|chunk| format!("{}\n", str::from_utf8(chunk).unwrap_or_default()))
+        .collect()
+}
+
+/// A contents answer for one template file.
+fn contents_file(path: &str, body: &str) -> Value {
+    json!({
+        "name": path.rsplit('/').next().unwrap_or(path),
+        "path": path,
+        "type": "file",
+        "encoding": "base64",
+        "content": contents_body(body),
+    })
+}
+
+/// A contents listing of the templates folder: `(name, type)` pairs, the file's path built from its name.
+fn contents_listing(entries: &[(&str, &str)]) -> Value {
+    Value::Array(
+        entries
+            .iter()
+            .map(|(name, kind)| {
+                json!({
+                    "name": name,
+                    "path": format!(".github/ISSUE_TEMPLATE/{name}"),
+                    "type": kind,
+                })
+            })
+            .collect(),
+    )
+}
+
+const TEMPLATE_DIR_ARGS: [&str; 2] = ["api", "repos/acme/app/contents/.github/ISSUE_TEMPLATE"];
+
 #[tokio::test]
-async fn the_templates_read_answers_none_for_github() {
-    // GitHub has no issue-template API: its templates are repository files under .github/ISSUE_TEMPLATE, which a
-    // later row reads through the person's own gh. This shape answers none rather than inventing one.
-    let templates = github().templates("acme/app").await.unwrap();
+async fn a_markdown_template_carries_its_front_matter_and_its_body() {
+    // GitHub has no issue-template endpoint, so the read lists `.github/ISSUE_TEMPLATE` and then reads one markdown
+    // file's body (docs/issues.md, "As built"). A `.yml` issue form needs a YAML reader Orbyn does not carry, so it
+    // is skipped rather than half-read (#1548).
+    let calls = calls();
+    let record = calls.clone();
+    let fixture = Arc::new(
+        move |_forge: Forge, _cwd: &Path, args: &[&str], _input: Option<&str>| -> Result<String> {
+            let args = strings(args);
+            record.lock().unwrap().push((args.clone(), None));
+            if args == strings(&TEMPLATE_DIR_ARGS) {
+                return Ok(contents_listing(&[
+                    ("bug_report.md", "file"),
+                    ("feature.yml", "file"),
+                    ("config.yml", "file"),
+                    ("legacy.md", "file"),
+                    ("old", "dir"),
+                ])
+                .to_string());
+            }
+            match args.get(1).map(String::as_str) {
+                Some("repos/acme/app/contents/.github/ISSUE_TEMPLATE/bug_report.md") => Ok(
+                    contents_file(
+                        ".github/ISSUE_TEMPLATE/bug_report.md",
+                        "---\nname: Bug report\nabout: Something is broken\ntitle: ''\nlabels: 'bug, ui'\nassignees: ''\n---\n\n**What happened?**\n",
+                    )
+                    .to_string(),
+                ),
+                // A body GitHub did not send as base64 (a file over 1 MB) is skipped, not guessed at.
+                other => {
+                    assert_eq!(
+                        other,
+                        Some("repos/acme/app/contents/.github/ISSUE_TEMPLATE/legacy.md"),
+                        "only a markdown file is read, in the list's order, and a form is never read"
+                    );
+                    Ok(json!({ "name": "legacy.md", "type": "file", "encoding": "none" }).to_string())
+                }
+            }
+        },
+    );
+    let templates =
+        with_crew_input_fixture(fixture, async { github().templates("acme/app").await })
+            .await
+            .unwrap();
+    assert_eq!(
+        templates.len(),
+        1,
+        "a form, the config, a folder and a body GitHub did not send are not templates"
+    );
+    let one = &templates[0];
+    assert_eq!(
+        one.id, "bug_report.md",
+        "the id is the file name, which is what a create names"
+    );
+    assert_eq!(
+        one.name, "Bug report",
+        "the front matter's name is the name"
+    );
+    assert_eq!(one.description.as_deref(), Some("Something is broken"));
+    assert_eq!(one.labels, vec!["bug".to_owned(), "ui".to_owned()]);
+    assert_eq!(
+        one.body, "\n**What happened?**\n",
+        "the front matter is not part of the body and the wrapping of the base64 is not either"
+    );
+    assert_eq!(
+        seen(&calls).len(),
+        3,
+        "one listing and one body per markdown file"
+    );
+}
+
+#[tokio::test]
+async fn a_repository_without_a_templates_folder_answers_none() {
+    // A repository that never made templates is the common case: GitHub answers 404 for the path it does not have,
+    // and that is "no templates", never an error.
+    let fixture = Arc::new(
+        |_forge: Forge, _cwd: &Path, _args: &[&str], _input: Option<&str>| -> Result<String> {
+            Err(CoreError::Git("gh: Not Found (HTTP 404)".into()))
+        },
+    );
+    let templates =
+        with_crew_input_fixture(fixture, async { github().templates("acme/app").await })
+            .await
+            .unwrap();
     assert!(templates.is_empty());
+}
+
+#[tokio::test]
+async fn a_template_read_failure_is_named_and_never_a_template() {
+    // A refusal other than "no such folder" is the usual GitHub refusal, and the read answers it rather than an
+    // empty list: a broken connection must not read as a repository without templates.
+    let fixture = Arc::new(
+        |_forge: Forge, _cwd: &Path, _args: &[&str], _input: Option<&str>| -> Result<String> {
+            Err(CoreError::Git("gh: HTTP 401: Bad credentials".into()))
+        },
+    );
+    let error = with_crew_input_fixture(fixture, async { github().templates("acme/app").await })
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, CoreError::TrackerNotConnected(_)),
+        "{error:?}"
+    );
 }
 
 /// One fixture for an edit or a state write: the PATCH is recorded with the JSON body it sent, and the issue is read
