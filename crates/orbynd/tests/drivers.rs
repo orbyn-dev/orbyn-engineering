@@ -732,9 +732,15 @@ async fn a_claude_run_launches_with_the_documented_flags_and_never_bare() {
         value("--permission-prompt-tool"),
         "mcp__orbyn_engineering__approve"
     );
-    for (flag, filename) in [("--mcp-config", "mcp.json"), ("--settings", "settings.json")] {
+    for (flag, filename) in [
+        ("--mcp-config", "mcp.json"),
+        ("--settings", "settings.json"),
+    ] {
         let path = std::path::Path::new(value(flag));
-        assert!(path.is_absolute(), "{flag} is not an absolute path: {args:?}");
+        assert!(
+            path.is_absolute(),
+            "{flag} is not an absolute path: {args:?}"
+        );
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),
             Some(filename),
@@ -742,7 +748,9 @@ async fn a_claude_run_launches_with_the_documented_flags_and_never_bare() {
         );
     }
     assert!(
-        !args.iter().any(|arg| *arg == "--bare" || *arg == "--plugin-dir"),
+        !args
+            .iter()
+            .any(|arg| *arg == "--bare" || *arg == "--plugin-dir"),
         "the run took a flag it must never take: {args:?}"
     );
 }
