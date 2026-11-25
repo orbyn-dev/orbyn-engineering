@@ -651,6 +651,22 @@ fn catalog_reads_share_only_their_own_scope() {
     let override_b = parse(json!({
         "recipe": { "overrides": [{ "project_id": "q", "mode": "separate" }] }
     }));
+    // A project id is an opaque string on the wire: a delimiter inside one override
+    // must not stand in for another override's boundary.
+    let merged = parse(json!({
+        "recipe": { "overrides": [{ "project_id": "p=separate;q", "mode": "repository" }] }
+    }));
+    let split = parse(json!({
+        "recipe": { "overrides": [
+            { "project_id": "p", "mode": "separate" },
+            { "project_id": "q", "mode": "repository" }
+        ] }
+    }));
+    assert_ne!(
+        catalog_read_key(&merged),
+        catalog_read_key(&split),
+        "an override delimiter cannot merge two distinct recipes"
+    );
     assert_eq!(
         catalog_read_key(&all),
         catalog_read_key(&all_explicit),
@@ -699,16 +715,34 @@ fn catalog_reads_ignore_override_order() {
 }
 
 #[tokio::test]
-async fn catalog_reads_together_answer_alike_and_a_later_one_sees_changes() {
+async fn catalog_reads_together_share_one_observation_and_a_later_one_sees_changes() {
     let dir = TempDir::new();
     let core = core(&dir).await;
     let root = dir.path().join("repo");
     repository(&root);
     configure(&root, "origin", "git@host:Owner/Repo.git");
     core.add_project(root.to_str().unwrap()).await.unwrap();
-    let query = ProjectScopesQuery::default();
+    // A selection no other test asks for, so the gate counts only these reads.
+    let query = serde_json::from_value::<ProjectScopesQuery>(json!({
+        "selection": { "kind": "project_group", "group_key": "catalog-reads-together" }
+    }))
+    .unwrap();
+    let observation = super::observation_hooks::hold(&catalog_read_key(&query));
     let together =
-        futures_util::future::join_all((0..5).map(|_| core.project_scope_catalog(&query))).await;
+        futures_util::future::join_all((0..5).map(|_| core.project_scope_catalog(&query)));
+    // Hold the first observation open until every read has joined it.
+    let gate = async {
+        tokio::time::timeout(Duration::from_secs(10), observation.started())
+            .await
+            .expect("the concurrent reads start an observation");
+        assert_eq!(
+            observation.count(),
+            1,
+            "concurrent identical reads make one observation"
+        );
+        observation.release();
+    };
+    let (together, ()) = tokio::join!(together, gate);
     let first = together[0].as_ref().unwrap();
     for catalog in &together {
         assert_eq!(catalog.as_ref().unwrap(), first);
@@ -723,4 +757,9 @@ async fn catalog_reads_together_answer_alike_and_a_later_one_sees_changes() {
         2
     );
     assert_ne!(after.version, first.version);
+    assert_eq!(
+        observation.count(),
+        2,
+        "a later read observes the workspace again"
+    );
 }

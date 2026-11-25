@@ -475,6 +475,8 @@ fn catalog_read_key(query: &ProjectScopesQuery) -> String {
         }
     }
     // Overrides name one project each; their order is not an input of the observation.
+    // Every field is length-prefixed, so a project id cannot stand in for a separator
+    // plus another override and two different recipes never share a key.
     let mut overrides: Vec<(&str, &'static str)> = query
         .recipe
         .overrides
@@ -482,10 +484,11 @@ fn catalog_read_key(query: &ProjectScopesQuery) -> String {
         .map(|entry| (entry.project_id.as_str(), mode(entry.mode)))
         .collect();
     overrides.sort_unstable();
-    let overrides: String = overrides
+    let fields: Vec<&str> = overrides
         .iter()
-        .flat_map(|(project, mode)| [*project, "=", mode, ";"])
+        .flat_map(|(project, mode)| [*project, *mode])
         .collect();
+    let overrides = opaque("overrides", &fields);
     let selection = match &query.selection {
         None | Some(ProjectSettingsSelection::AllProjects {}) => "all".to_owned(),
         Some(ProjectSettingsSelection::ProjectGroup { group_key }) => format!("group:{group_key}"),
@@ -778,8 +781,12 @@ impl Core {
     ) -> Result<ProjectScopeCatalog> {
         let key = catalog_read_key(query);
         let (store, workspace, query) = (self.store.clone(), self.workspace.clone(), query.clone());
+        #[cfg(test)]
+        let observation_key = key.clone();
         self.project_scope_reads
             .get(&key, "project-scopes", false, move || async move {
+                #[cfg(test)]
+                observation_hooks::observe(&observation_key).await;
                 observe_catalog(store, workspace, query).await
             })
             .await
@@ -820,6 +827,74 @@ impl Core {
             .collect::<Vec<_>>()
             .await;
         Ok(records)
+    }
+}
+
+/// Test seam: the shared-observation test holds one observation of a read key open and
+/// counts the observations made for that key. Production builds do not include it.
+#[cfg(test)]
+pub(crate) mod observation_hooks {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    use tokio::sync::Notify;
+
+    pub(crate) struct Observation {
+        count: AtomicUsize,
+        started: Notify,
+        release: Notify,
+        released: AtomicBool,
+    }
+
+    impl Observation {
+        pub(crate) fn count(&self) -> usize {
+            self.count.load(Ordering::SeqCst)
+        }
+
+        /// Resolves when the first observation of this key has started.
+        pub(crate) async fn started(&self) {
+            self.started.notified().await;
+        }
+
+        /// Lets the held observation finish. Later observations pass straight through.
+        pub(crate) fn release(&self) {
+            self.released.store(true, Ordering::SeqCst);
+            self.release.notify_one();
+        }
+    }
+
+    fn held() -> &'static Mutex<HashMap<String, Arc<Observation>>> {
+        static HELD: OnceLock<Mutex<HashMap<String, Arc<Observation>>>> = OnceLock::new();
+        HELD.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// Hands the test the gate it holds for `key`.
+    pub(crate) fn hold(key: &str) -> Arc<Observation> {
+        let observation = Arc::new(Observation {
+            count: AtomicUsize::new(0),
+            started: Notify::new(),
+            release: Notify::new(),
+            released: AtomicBool::new(false),
+        });
+        held()
+            .lock()
+            .unwrap()
+            .insert(key.to_owned(), observation.clone());
+        observation
+    }
+
+    /// Counts an observation of `key` and waits at the gate the test holds.
+    pub(crate) async fn observe(key: &str) {
+        let observation = held().lock().unwrap().get(key).cloned();
+        let Some(observation) = observation else {
+            return;
+        };
+        observation.count.fetch_add(1, Ordering::SeqCst);
+        observation.started.notify_one();
+        if !observation.released.load(Ordering::SeqCst) {
+            observation.release.notified().await;
+        }
     }
 }
 
