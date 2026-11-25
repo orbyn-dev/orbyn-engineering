@@ -294,7 +294,8 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   handled exactly as the thread's file always was), while its bar and tab menu now name the repository — the file chip carries the
   client-only name and no `repo_id`, so the message says `<name>/<path>`, Copy path is `<thread folder>/<name>/<path>`, and its line
   comments name the repository too. Changed files of the primary repository and files of the explorer's primary repository tree open
-  that tab; an ordinary thread and a thread in one repository still open `["t", path]` and are unchanged. A file link inside
+  that tab when a tab is what is wanted (a binary file's Open; Open in editor still opens the outside editor, as before); an
+  ordinary thread and a thread in one repository still open `["t", path]` and are unchanged. A file link inside
   its rendered Markdown still resolves against the thread's folder (the Changes panel's rendered Markdown has the same limit). Its
   image, PDF, video, audio, font, archive, document, binary and truncated files load from their own repository's
   worktree: the client sends `repo_id` on `GET .../files/raw`, whose bytes, `Range` answers, inline-or-attachment decision and

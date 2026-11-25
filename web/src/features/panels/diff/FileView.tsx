@@ -84,9 +84,10 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
   // A file of another repository opens as a tab of that repository through the same resolve path as the
   // primary's: the request names its `repo_id`, so the service resolves the path in that repository's
   // worktree rather than in the primary checkout. It has no outside editor route of its own. The primary
-  // repository's file opens as its own tab, which names it and reads as the thread's own.
+  // repository's file opens as its own tab when a tab is what is wanted (a binary file's Open), which names
+  // it and reads as the thread's own; its Open in editor still opens the outside editor, as it always has.
   const open = async (as: "editor" | "tab") => {
-    await openChanged(threadId, cwd, file.path, as, repoId, primaryRepoId);
+    await openChanged(threadId, cwd, file.path, as, repoId, as === "tab" ? primaryRepoId : undefined);
   };
   // A deleted or conflicted file has no lines to write back to.
   const actions: PatchActions | undefined = edits && file.status !== "deleted" && !conflict

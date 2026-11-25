@@ -248,6 +248,26 @@ it("opens a file of the primary repository as its own named tab, resolving it as
   expect(resolve.mock.calls.at(-1)![1]).not.toHaveProperty("repo_id");
 });
 
+it("keeps Open in editor opening the outside editor for a primary repository's changed file", async () => {
+  const user = userEvent.setup();
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  const { diff } = setup();
+  // Only the primary repository's read answers, and its read is the one without a repo_id.
+  diff.mockImplementation(async (_t, _s, _scope, repoId) => (repoId === undefined ? [FILE] : []));
+  const resolve = vi.spyOn(api, "resolveThreadPath");
+  resolve.mockResolvedValue({ cwd: "/repo", checkout_path: "auth/redirect.ts", repository_path: "auth/redirect.ts" });
+  vi.spyOn(api, "editors").mockResolvedValue([{ id: "vscode", name: "VS Code", launch_style: "goto", file_manager: false }] as never);
+  const opened = vi.spyOn(api, "openInEditor").mockResolvedValue(undefined as never);
+  useUi.setState({ panelTab: "diff", panelTabOrder: ["diff"], toasts: [] } as never);
+  render(<DiffPanel threadId="t" />);
+  await screen.findByRole("group", { name: "app changes" });
+  await user.click(await screen.findByRole("button", { name: "Open in editor" }));
+  // The primary repository's changed file still opens the person's own editor, as before; only a tab's Open names the repository.
+  await waitFor(() => expect(opened).toHaveBeenCalledWith("t", { path: "auth/redirect.ts", editor: "vscode" }));
+  expect(opened.mock.calls[0]).toHaveLength(2);
+  expect(useUi.getState().panelTab).toBe("diff");
+});
+
 it("an ordinary thread's turn totals read once, with the three arguments they always had", async () => {
   const user = userEvent.setup();
   setReposApi(createReposMock({ threads: {} }));
