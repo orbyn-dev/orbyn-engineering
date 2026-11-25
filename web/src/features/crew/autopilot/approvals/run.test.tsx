@@ -56,6 +56,12 @@ describe("a background run's own page", () => {
       ["Review waiting", "Yes"],
       ["Crew id", "bg-7f3a21"],
     ]);
+    // Each time is its own field of the read: Ran at is started_at (14:02Z) and Ended is ended_at (14:48Z), in the person's own zone.
+    const local = (iso: string) => { const at = new Date(iso); return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`; };
+    const [ranAt, ended] = [factsOf(run)[2]![1]!, factsOf(run)[3]![1]!];
+    expect(ranAt.endsWith(local("2026-11-07T14:02:00Z"))).toBe(true);
+    expect(ended.endsWith(local("2026-11-07T14:48:00Z"))).toBe(true);
+    expect(ranAt).not.toBe(ended);
     // The header chip and the State row carry the table's own words; the crew id is the read's own value.
     expect(within(run).getByText("Stopped · Budget", { selector: ".ap-chip" })).toHaveClass("ap-chip-am");
     expect(within(run).getByText("bg-7f3a21")).toHaveClass("ap-mono");
@@ -96,6 +102,16 @@ describe("a background run's own page", () => {
     const { panel } = await openWatch("crew-background-watch-template-no-run");
     expect(within(panel).getByText("Failing: started Fix failing CI")).toBeVisible();
     expect(within(panel).queryByRole("button", { name: "Open the run" })).toBeNull();
+  });
+
+  it("draws a dash for the end of a run that is still going", async () => {
+    const { user } = await openWatch("crew-background-watch-template");
+    await user.click(screen.getByRole("button", { name: "Open the run" }));
+    const run = await screen.findByRole("region", { name: "Main build run" });
+    const facts = Object.fromEntries(factsOf(run) as [string, string][]);
+    expect(facts["Ended"]).toBe("—");
+    expect(facts["State"]).toBe("Running");
+    expect(facts["Review waiting"]).toBe("No");
   });
 
   it("draws nothing of a run the read does not have, and the list stays", async () => {
