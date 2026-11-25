@@ -370,3 +370,10 @@ The tools are listed only when this machine has at least one platform's tools, a
 that (Android: `adb` and the emulator; iOS: `xcrun`). On a machine with none they are absent from
 `tools/list` and a call is not found, like any unknown tool; the check is the service's own
 `Devices::tools_available`, read once per process.
+
+Group 2's `orbyn_device_open` and `orbyn_device_close` are not built. They belong to a thread's
+device panel and its live view, and this service has no device-panel state, no live-view route and
+no boot command, so the two tools are blocked on that unbuilt surface (the device panel and live
+view are H20 to H23). Building them would add a new route and UI, so nothing stands in for them.
+`power_off` is built because the service already had the power-off action; it adds no authority of
+its own.
