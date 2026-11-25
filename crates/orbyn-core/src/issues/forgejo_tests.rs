@@ -1546,4 +1546,24 @@ mod templates {
         );
         assert!(server.seen().is_empty());
     }
+
+    #[tokio::test]
+    async fn a_create_the_tracker_never_answered_says_it_was_possibly_created() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/labels") {
+                return Reply::json(&json!([]));
+            }
+            Reply::status(503)
+        })
+        .await;
+        let error = reader(&server)
+            .create("o/r", &new_issue("T", "", &[], &[]))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::TrackerUnavailable(m) if m.contains("possibly created") && !m.contains("secret")),
+            "{error:?}"
+        );
+    }
 }

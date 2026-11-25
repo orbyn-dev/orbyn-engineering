@@ -117,6 +117,18 @@ pub(crate) enum LabelFeed {
     Events(Vec<LabelEvent>),
 }
 
+/// A create whose outcome nobody saw: the issue may exist now, so the answer says so and nothing retries (docs/issues.md,
+/// "Issue writes"). Only the final create request goes through this; the reads before it create nothing. A refusal keeps
+/// its own meaning.
+pub(crate) fn possibly_created(tracker: &str, error: CoreError) -> CoreError {
+    match error {
+        CoreError::TrackerUnavailable(_) => CoreError::TrackerUnavailable(format!(
+            "{tracker} did not answer, so the issue was possibly created. Re-read the list before writing it again."
+        )),
+        other => other,
+    }
+}
+
 /// A new issue as the owning tracker receives it: the person's validated text and the choices that name labels and
 /// people. `Core::create_issue` checks every field before a source sees it.
 pub(crate) struct NewIssue<'a> {

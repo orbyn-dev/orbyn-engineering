@@ -1662,4 +1662,18 @@ mod templates {
         );
         assert_eq!(server.seen().len(), 1, "only the list is read");
     }
+
+    #[tokio::test]
+    async fn a_create_the_tracker_never_answered_says_it_was_possibly_created() {
+        let server = Server::start(|_| Reply::status(503)).await;
+        let error = GitLab::for_test(&server.base, TOKEN, Duration::from_secs(5))
+            .create("grp/proj", &new_issue("T", "", &[], &[]))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::TrackerUnavailable(m) if m.contains("possibly created") && !m.contains("secret")),
+            "{error:?}"
+        );
+    }
 }
