@@ -1,4 +1,5 @@
 import { settingsLabel } from "../settingsSearch";
+import { isMacClient } from "../../../lib/platform";
 import { useUi } from "../../../product/state/ui";
 import { Segmented } from "../../../ui/Segmented";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
@@ -98,16 +99,18 @@ export function ChatSection() {
           />
         </SettingRow>
       </SettingGroup>
-      <PreferenceGroups
-        groups={[
-          {
-            title: "",
-            rows: [
-              { key: "open_web_links_in_app", title: settingsLabel("chat-open-links-from-other-apps"), description: "macOS links open in the Browser panel" },
-            ],
-          },
-        ]}
-      />
+      {isMacClient() ? (
+        <PreferenceGroups
+          groups={[
+            {
+              title: "",
+              rows: [
+                { key: "open_web_links_in_app", title: settingsLabel("chat-open-links-from-other-apps"), description: "macOS links open in the Browser panel" },
+              ],
+            },
+          ]}
+        />
+      ) : null}
       <p className="set-grp">Idle threads and limits</p>
       <PreferenceGroups
         groups={[
