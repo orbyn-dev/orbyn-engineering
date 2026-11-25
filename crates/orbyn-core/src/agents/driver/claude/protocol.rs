@@ -49,7 +49,8 @@ impl Held {
         self.idle_at = tokio::time::Instant::now() + idle;
     }
 
-    /// The cap that ran out first, if one did.
+    /// The cap that ran out first, if one did. Only the tests ask this; the run loop watches the two instants.
+    #[cfg(test)]
     fn expired(&self, now: tokio::time::Instant) -> Option<&'static str> {
         if now >= self.limit_at {
             Some("limit")
