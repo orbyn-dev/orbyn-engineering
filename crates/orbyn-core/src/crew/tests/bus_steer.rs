@@ -66,6 +66,34 @@ async fn post_from_lead(d: &Duo, args: Value) -> Value {
     sent
 }
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list: a
+/// read that returns none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
+/// The delivery row a post to one member answers with, found by the recipient it names: one post
+/// answers one row per target, so a second row or a row for another member is a bug, not a place
+/// a test may read.
+fn delivered_to<'a>(sent: &'a Value, to: &str) -> &'a Value {
+    let delivered = sent["delivered"]
+        .as_array()
+        .expect("a post answers with its delivery rows");
+    assert_eq!(
+        delivered.len(),
+        1,
+        "one post to one member answers one delivery row: {sent}"
+    );
+    delivered
+        .iter()
+        .find(|row| row["to"].as_str() == Some(to))
+        .unwrap_or_else(|| panic!("no delivery to {to}: {sent}"))
+}
+
 /// A question the worker posts with `crew_post`, not `crew_ask`: an ask that is waiting takes
 /// the answer back inside its own tool call instead of handing it to the running turn.
 async fn question_to_lead(d: &Duo) -> String {
@@ -91,12 +119,9 @@ async fn sent_from_lead(
         let text = body(state, kind);
         let in_reply_to = (kind == "answer").then_some(reply);
         let sent = post_from_lead(d, message(&d.ma, kind, &text, in_reply_to)).await;
-        assert_eq!(sent["delivered"][0]["to"], json!(d.ma), "{state} {kind}");
-        assert_eq!(
-            sent["delivered"][0]["mode"], expected,
-            "{state} {kind}: {sent}"
-        );
-        modes.push((kind.to_owned(), sent["delivered"][0]["mode"].to_string()));
+        let delivered = delivered_to(&sent, &d.ma);
+        assert_eq!(delivered["mode"], expected, "{state} {kind}: {sent}");
+        modes.push((kind.to_owned(), delivered["mode"].to_string()));
     }
     modes
 }
@@ -313,7 +338,7 @@ async fn only_the_retry_brief_is_queued_toward_a_worker() {
         )
         .await;
     assert!(!error, "{sent}");
-    assert_eq!(sent["delivered"][0]["mode"], "live", "{sent}");
+    assert_eq!(delivered_to(&sent, &member)["mode"], "live", "{sent}");
     w.until("the lead's message reached the turn", |w| {
         w.steered
             .lock()
@@ -340,6 +365,7 @@ async fn only_the_retry_brief_is_queued_toward_a_worker() {
     // The one thing queued toward the worker is its retry brief, and it is the next prompt.
     w.until("the retry brief starts", |w| w.sent_to(&worker).len() == 2)
         .await;
+    // Order is the contract here: the first prompt is the first brief, the second its retry brief.
     let prompts = w.sent_to(&worker);
     assert_eq!(prompts.len(), 2, "{prompts:?}");
     assert!(
@@ -401,7 +427,7 @@ async fn a_refused_live_steer_records_next_turn_and_still_requeues() {
         )
         .await;
     assert!(!error, "{sent}");
-    assert_eq!(sent["delivered"][0]["mode"], "live", "{sent}");
+    assert_eq!(delivered_to(&sent, &member)["mode"], "live", "{sent}");
     let message_id = sent["id"].as_str().unwrap().to_owned();
 
     // The engine refused the steer: one more row for the same message and recipient says the text
@@ -425,9 +451,13 @@ async fn a_refused_live_steer_records_next_turn_and_still_requeues() {
         .collect();
     let modes: Vec<&str> = rows.iter().map(|row| row.mode.as_str()).collect();
     assert_eq!(modes, ["live", "next_turn"], "{rows:?}");
-    assert_eq!(rows[1].recipient, member, "{rows:?}");
+    let refused = rows
+        .iter()
+        .find(|row| row.mode == "next_turn")
+        .expect("the refused steer's next_turn row");
+    assert_eq!(refused.recipient, member, "{rows:?}");
     assert_eq!(
-        rows[1].note.as_deref(),
+        refused.note.as_deref(),
         Some("the engine refused the live steer; the text comes with the next turn"),
         "{rows:?}"
     );
@@ -464,14 +494,14 @@ async fn a_person_steer_with_the_same_text_never_consumes_a_crew_hand_over() {
         )
         .await;
     assert!(!error, "{sent}");
-    assert_eq!(sent["delivered"][0]["mode"], "live", "{sent}");
+    assert_eq!(delivered_to(&sent, &member)["mode"], "live", "{sent}");
     let message_id = sent["id"].as_str().unwrap().to_owned();
     w.until("the crew steer is handed over", |w| {
         steered_to(w, &worker).len() == 1
     })
     .await;
     // The exact text the engine was handed for the crew message, now sent by the person.
-    let text = steered_to(&w, &worker)[0].clone();
+    let text = one(&steered_to(&w, &worker), "crew steer handed to the turn").clone();
     assert_eq!(
         w.core.crew_bus.live_steers.waiting().len(),
         1,
@@ -494,17 +524,13 @@ async fn a_person_steer_with_the_same_text_never_consumes_a_crew_hand_over() {
         .collect();
     assert_eq!(modes, ["live"], "{rows:?}");
     let waiting = w.core.crew_bus.live_steers.waiting();
-    assert_eq!(
-        waiting.len(),
-        1,
-        "a person's refusal consumed the crew hand-over"
-    );
+    let refused = one(&waiting, "crew hand-over waiting for its own refusal").clone();
 
     // The crew message's own refusal still matches and is the one that corrects its record.
     w.core.crew_steer_failed(
         &worker,
         &SteerMessage {
-            message_id: waiting[0].clone(),
+            message_id: refused,
             prompt: text,
         },
     );

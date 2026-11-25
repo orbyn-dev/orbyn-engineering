@@ -35,7 +35,7 @@ export function EditorSurface({
   /** A line a link named: the cursor goes there once, when the file opens. */
   reveal?: number | null;
   /** Where the file lives, so a line comment can name it: the comments become chips on the thread's next message. */
-  comments?: { threadId: string; cwd: string; revision: string; text: string };
+  comments?: { threadId: string; cwd: string; revision: string; text: string; repoId?: string; repoName?: string };
   onChange?(text: string): void;
   onSave?(): void;
 }) {
@@ -225,7 +225,7 @@ export function EditorSurface({
               ...(standing === "unsaved" ? { commentBlocked: "Save to comment" } : {}),
               onComment: (line: number, extend: boolean) => setSelection((now) => ({ anchor: extend && now ? now.anchor : line, end: line })),
               selected: selection ? { from: Math.min(selection.anchor, selection.end), to: Math.max(selection.anchor, selection.end) } : null,
-              commented: standing === "unsaved" ? [] : (chips ?? []).flatMap((chip) => (chip.kind === "review" && chip.path === path && chip.sourceRevision === comments.revision && chip.sourceCwd === comments.cwd && !chip.stale && chip.line ? [chip.line] : [])),
+              commented: standing === "unsaved" ? [] : (chips ?? []).flatMap((chip) => (chip.kind === "review" && chip.path === path && chip.repoId === comments.repoId && chip.sourceRevision === comments.revision && chip.sourceCwd === comments.cwd && !chip.stale && chip.line ? [chip.line] : [])),
             }
           : {})}
         onChange={(next) => onChange?.(next)}

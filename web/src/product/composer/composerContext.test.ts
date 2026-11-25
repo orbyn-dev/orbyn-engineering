@@ -58,6 +58,15 @@ describe("composer context", () => {
       expect(asChip({ kind: "review", path: "a.ts", line: 2, endLine, comment: "bad" })).toBeNull();
     }
   });
+
+  it("names a review comment's repository, kept through the clipboard", () => {
+    const chip = asChip({ kind: "review", path: "notes.txt", line: 2, comment: "why?", repoId: "planner", repoName: "orbyn-planner" }, "r")!;
+    expect(chipLabel(chip)).toBe("orbyn-planner/notes.txt:2");
+    expect(chipPrompt(chip)).toContain("Review on `orbyn-planner/notes.txt:2`");
+    expect(chipsFromClipboard({ json: chipsClipboard([chip])!.json, html: "" })?.[0]).toMatchObject({ repoId: "planner", repoName: "orbyn-planner" });
+    // The thread's own checkout has no repository, and its comment reads exactly as before.
+    expect(chipLabel(asChip({ kind: "review", path: "notes.txt", line: 2, comment: "why?" })!)).toBe("notes.txt:2");
+  });
   it("renders each kind as a readable prompt block", () => {
     expect(chipPrompt(chip({ kind: "file" }))).toBe("File `src/main.rs:12`\n```rust\nlet a = 1;\n```");
     expect(chipPrompt(chip({ kind: "terminal" }))).toContain("Terminal selection");
