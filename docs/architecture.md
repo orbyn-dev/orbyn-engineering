@@ -2937,7 +2937,10 @@ retries with the reason, the same failure twice changes approach once, and the s
 (`repeated_failure`). The worker is told the reason a check failed, never the check, its id or any other part of the key,
 and the text is proven free of the key and of secrets before it is queued (H1). `failed` and `needs_person` are interim;
 `final` is true only for `passed`, `stopped` and `cancelled`, and the lead is told through its queue when a run ends or
-needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`).
+needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`). The lead
+that leads a task can stop it (`crew_stop`, the protocol's `crew.stop`): the task moves to `stopped` with the reason `lead_stopped`
+in one transaction, then the same end (leases, its worker's run's stop request, the final result) runs; only that thread's token may stop a task, a
+final task is `run_ended`, and a `briefed` or `routed` one is `invalid_transition`.
 The lead that leads a held task can resume it (`crew_resume`, the protocol's `crew.resume`): a `needs_person` task whose
 worker reported moves to `running` in one transaction and its worker is told to carry on with the same thread, key and budget;
 a task whose worker never ran, one waiting on a person's `manual` check, a review lane, a merge correction, a busy worker and a

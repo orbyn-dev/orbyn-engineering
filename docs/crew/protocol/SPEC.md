@@ -214,6 +214,7 @@ member tools with underscores, listed in the second column. The board tools keep
 | `crew.report` | `crew_report` | worker | Report without `brief` | The report id |
 | `crew.start` | `crew_start` | lead (also core, person) | A Brief draft and an AnswerKey draft | The task id (the brief's id) |
 | `crew.resume` | `crew_resume` | lead | The task id | The task, running again |
+| `crew.stop` | `crew_stop` | lead | The task id | The task, stopped with `lead_stopped` |
 | `crew.verify` | none | core only | The task | Runs the answer key |
 | `crew.evidence.write` | none | core only | Evidence | The evidence id and the stored excerpt |
 | `crew.gate.write` | none | core, or person for a person's gate | Gate | The gate id |
@@ -258,6 +259,10 @@ worker has reported: the task moves to `running` and its worker is told to carry
 same thread, answer key and budget. A task whose worker never ran (its start was refused), one
 waiting on a `manual` check, a review lane, a merge correction, a busy worker and a task past its
 time budget are refused. The person answers a `manual` check, and a start that was refused is started again.
+The lead that leads a task MAY stop it with `crew.stop`. The task moves to `stopped` with
+reason `lead_stopped`; only a state the table lets reach `stopped` can be stopped (a
+`briefed` or `routed` task is refused), and only that task's own lead thread may stop it.
+A person's cancel is a different ending: `cancelled`, and it is not a tool.
 
 `verifying` to `failed` happens only through a failed verification, which carries a
 *fingerprint* of the failure. The loop guard applies after each one:

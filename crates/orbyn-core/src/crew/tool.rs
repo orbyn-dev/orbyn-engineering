@@ -21,10 +21,11 @@ pub const ROUTE_TOOL: &str = "crew_route";
 pub const START_TOOL: &str = "crew_start";
 pub const REPORT_TOOL: &str = "crew_report";
 pub const RESUME_TOOL: &str = "crew_resume";
+pub const STOP_TOOL: &str = "crew_stop";
 
 /// Whether `name` is a Crew tool.
 pub fn is_tool(name: &str) -> bool {
-    [ROUTE_TOOL, START_TOOL, REPORT_TOOL, RESUME_TOOL].contains(&name)
+    [ROUTE_TOOL, START_TOOL, REPORT_TOOL, RESUME_TOOL, STOP_TOOL].contains(&name)
         || super::BUS_TOOLS.contains(&name)
         || super::REVIEW_TOOLS.contains(&name)
         || super::MERGE_TOOLS.contains(&name)
@@ -74,6 +75,21 @@ pub fn tool_specs() -> Vec<Value> {
                 whose worker never ran, one waiting on a check a person makes, a review lane, a merge correction, a busy worker, one past \
                 its time budget and one that already ended are refused; a refusal writes nothing. The person's cancel \
                 stays theirs.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "task": { "type": "string" },
+                },
+                "required": ["task"],
+            },
+        }),
+        json!({
+            "name": STOP_TOOL,
+            "description": "Preview, lead only: stop a task this thread leads that has not ended. The task ends \
+                `stopped` with the reason `lead_stopped`: its leases are released, its worker's run is asked to stop \
+                and its final result is written. A task that already ended is refused, and so is one the lifecycle cannot stop \
+                (`briefed`, `routed`). The person's cancel is separate and stays theirs.",
             "inputSchema": {
                 "type": "object",
                 "additionalProperties": false,
@@ -163,6 +179,7 @@ impl Core {
             START_TOOL => self.crew_start_tool(binding, args).await,
             REPORT_TOOL => self.crew_report_tool(binding, args).await,
             RESUME_TOOL => self.crew_resume_tool(binding, args).await,
+            STOP_TOOL => self.crew_stop_tool(binding, args).await,
             merge if super::MERGE_TOOLS.contains(&merge) => {
                 self.crew_merge_tool(binding, merge, args).await
             }
