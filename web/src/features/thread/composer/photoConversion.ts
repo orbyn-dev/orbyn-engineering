@@ -1,7 +1,7 @@
 /**
  * Photo conversion (parity B8). The real route is `POST /api/threads/{id}/attachments/convert` (see
- * `photoConversionClient.ts`): the service shrinks a PNG or JPEG over 10 MiB and rewrites one within the limit, while HEIC,
- * HEIF and WebP are refused until a decoder is linked. `photoConversionApi()` answers the production client by default;
+ * `photoConversionClient.ts`): the service shrinks a PNG or JPEG over 10 MiB and rewrites one within the limit, decodes a
+ * WebP and writes it again, and refuses HEIC or HEIF until a decoder is linked. `photoConversionApi()` answers the production client by default;
  * tests and the dev-only preview install another with `setPhotoConversionApi`, and `setPhotoConversionApi(null)` restores
  * the production client. The mock lives in web/mock/attachments.ts and is installed only by the dev-only preview.
  */
@@ -18,16 +18,19 @@ const HEIC_NAME = /\.(heic|heif)$/i;
 const WEBP_NAME = /\.webp$/i;
 /** Types the service writes again smaller. A GIF is not one of them: shrinking would drop its frames. */
 const SHRINKABLE: ReadonlySet<string> = new Set(["image/png", "image/jpeg"]);
-/** Types this build refuses, so they get the service's message instead of being silently uploaded. */
-const REFUSED: ReadonlySet<string> = new Set(["image/heic", "image/heif", "image/webp"]);
+/**
+ * Types that go to the route even when small: WebP so the service writes it again from decoded pixels, and HEIC and
+ * HEIF so the service's refusal message is shown instead of a silent upload until a decoder is linked.
+ */
+const CONVERT: ReadonlySet<string> = new Set(["image/heic", "image/heif", "image/webp"]);
 
 /**
- * Whether this photo should go to the conversion route: HEIC, HEIF and WebP so the service's deferral message is shown,
- * or a PNG or JPEG over the limit to shrink. `null` means upload it exactly as before.
+ * Whether this photo should go to the conversion route: HEIC, HEIF and WebP always, or a PNG or JPEG over the limit to
+ * shrink. `null` means upload it exactly as before.
  */
 export function conversionKindOf(file: File): ConversionKind | null {
   const type = file.type.toLowerCase();
-  if (REFUSED.has(type)) return "convert";
+  if (CONVERT.has(type)) return "convert";
   if (type === "" && (HEIC_NAME.test(file.name) || WEBP_NAME.test(file.name))) return "convert";
   if (SHRINKABLE.has(type) && file.size > MAX_IMAGE_BYTES) return "shrink";
   return null;

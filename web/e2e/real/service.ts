@@ -190,6 +190,8 @@ export interface Service {
   repo: string;
   api<T>(method: string, path: string, body?: unknown): Promise<T>;
   stop(): Promise<void>;
+  /** This launch's person key, only when a shell owns the service (`parentStdin`). */
+  personKey?: string;
   /** What the stand-in `gh` was asked, oldest first. */
   ghCalls(): string[][];
   /** What the stand-in holds for one pull request now. */
@@ -225,6 +227,14 @@ export interface ServiceOptions {
   registry?: string;
   /** A folder holding the protocol double's saved ACP sessions (`sessions.json`). */
   nativeSessions?: string;
+  /**
+   * Keeps the person key enforced, as in a release build a desktop shell owns: omits
+   * `ORBYN_DEV_DISABLE_PERSON_KEY`, so a Person route needs this launch's `x-orbyn-person`
+   * key and a browser gets `desktop_required`. With `parentStdin`, the key itself arrives
+   * as `personKey`. Without `parentStdin` a service has no key, so every Person route is
+   * `desktop_required`.
+   */
+  enforcePersonKey?: boolean;
   /** Extra stand-in folders ahead of host PATH; the selected GitHub fixture takes precedence. */
   path?: string[];
   /** Runs the service with Crew Preview on (`ORBYN_CREW_PREVIEW=1`): its beta routes, writes and hash screens. */
@@ -297,10 +307,10 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
   if (ui && !existsSync(join(ui, "index.html"))) throw new Error("Build this checkout's production UI first: npm run build");
   const service = spawn(BIN, ["serve", "--data-dir", join(dir, "data"), "--workspace-url", makeLibrary(dir), ...(options.parentStdin ? ["--parent-stdin"] : []), ...(ui ? ["--ui-dir", ui] : [])], {
     // A home of its own, so no real engine history or login is read.
-    env: { ...inherited, ...profile, ...engines, ...(options.crewPreview ? { ORBYN_CREW_PREVIEW: "1" } : {}), ...(options.backgroundWatchIntervalSecs ? { ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS: String(options.backgroundWatchIntervalSecs) } : {}), ...(options.seedProposals ? { ORBYN_DEV_SEED_PROPOSALS: "1" } : {}), ...(options.issues ? { ORBYN_ISSUES: "1" } : {}), ...(options.multiRepo ? { ORBYN_MULTI_REPO: "1" } : {}), ...(options.engineHost ? { ORBYN_ENGINE_HOST: options.engineHost.program, ...(options.engineHost.claude === false ? { ORBYN_ENGINE_HOST_CLAUDE: "0" } : {}), ...(options.engineHost.acp ? { ORBYN_ENGINE_HOST_ACP: "1" } : {}) } : {}), ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${forge ? `${forge.bin}${delimiter}` : ""}${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", ORBYN_DEV_DISABLE_PERSON_KEY: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
+    env: { ...inherited, ...profile, ...engines, ...(options.crewPreview ? { ORBYN_CREW_PREVIEW: "1" } : {}), ...(options.backgroundWatchIntervalSecs ? { ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS: String(options.backgroundWatchIntervalSecs) } : {}), ...(options.seedProposals ? { ORBYN_DEV_SEED_PROPOSALS: "1" } : {}), ...(options.issues ? { ORBYN_ISSUES: "1" } : {}), ...(options.multiRepo ? { ORBYN_MULTI_REPO: "1" } : {}), ...(options.engineHost ? { ORBYN_ENGINE_HOST: options.engineHost.program, ...(options.engineHost.claude === false ? { ORBYN_ENGINE_HOST_CLAUDE: "0" } : {}), ...(options.engineHost.acp ? { ORBYN_ENGINE_HOST_ACP: "1" } : {}) } : {}), ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${forge ? `${forge.bin}${delimiter}` : ""}${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", ...(options.enforcePersonKey ? {} : { ORBYN_DEV_DISABLE_PERSON_KEY: "1" }), GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
     stdio: ["pipe", "pipe", "inherit"],
   });
-  const ready = await new Promise<{ url: string; token: string }>((done, fail) => {
+  const ready = await new Promise<{ url: string; token: string; person_key?: string }>((done, fail) => {
     service.once("exit", (code) => fail(new Error(`orbynd exited with ${code}`)));
     createInterface({ input: service.stdout }).once("line", (line) => done(JSON.parse(line) as never));
   });
@@ -334,6 +344,7 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
     folder,
     repo,
     remote: join(dir, "github.com/o/r.git"),
+    personKey: ready.person_key,
     ghPull: (number) =>
       readForgeState(forge?.state ?? "").pulls.find((pull) => pull.number === number) ?? {},
     ghEdit: (number, patch) => {

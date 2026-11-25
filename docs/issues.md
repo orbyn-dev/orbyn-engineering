@@ -72,7 +72,8 @@ type IssueDetail = IssueSummary & {
   body: string;
   comments: IssueComment[];            // the first 50, oldest first; never more in the beta
   linked_pull_requests: { repository: string; number: number; title: string; url: string;
-                          state: "open" | "closed" | "merged"; is_draft: boolean; closes_issue: boolean }[];
+                          state: "open" | "closed" | "merged"; is_draft: boolean; closes_issue: boolean;
+                          checks?: PullChecks | null }[];  // absent is unknown, never "no checks"
   linked_threads: string[];            // thread ids that link this issue
   reactions?: { content: string; count: number }[] | null;  // null unless this answer reports them
 };
@@ -101,7 +102,11 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
   `400 invalid_input` instead and fails the whole listing. A listing is up to 100 issues per tracker and scope; results are
   cached 30 seconds.
 - `linked_pull_requests` is what the tracker reports of its own accord, read-only. A tracker that does not
-  report them gives `[]`.
+  report them gives `[]`. A link carries `checks` when the tracker reports CI for it: the same `PullChecks`
+  counts the pull request list carries. GitHub reads them with one `gh pr view --json statusCheckRollup` per
+  link, in that link's own repository and best effort, so a link the person cannot read leaves the other links
+  shown. Only the first 20 links of an issue are read (each read is one API call against the account's shared hourly limit); a link past that stays shown with no `checks`, which is unknown (over the read limit). Absent is unknown, never "no checks"; the other trackers report no linked pull requests, so they carry
+  no `checks` either.
 - A link keeps an `IssueRef` snapshot beside the thread (table `issue_links`; the migration takes the next
   free number at merge time), so a chip draws with the tracker offline. A read of the issue refreshes it.
 
@@ -778,7 +783,8 @@ change state (the service has no state route for them).
 - `TrackerRow` adds `host` and `detail`; `connect` and `disconnect` are new calls (Person-class).
 - `IssueSummary` adds `closed_at`; `IssueDetail` adds `linked_pull_requests` and `linked_threads`, and
   `reactions` (the tracker's own words and counts, absent when it does not report them); `IssueList` adds
-  `next_cursors`.
+  `next_cursors`. A linked pull request adds `checks` (the pull request list's own counts, absent when the
+  read did not answer).
 - A new read, `draft`, builds the framed first message; `startThread` sends the edited message as before.
 - `link`, `unlink` and `startThread` are as guessed. `startThread` is one write that creates and links.
 - `trackers()` returning `null` is a `404` from the route.
