@@ -92,7 +92,7 @@ pub(super) fn github_rollup(value: &Value) -> Option<String> {
 
 /// Per-state counts over GitHub's check rollup, which holds check runs and commit
 /// statuses. Skipped, neutral and stale checks count only in the total.
-pub(super) fn github_checks(value: &Value) -> Option<PullChecks> {
+pub(crate) fn github_checks(value: &Value) -> Option<PullChecks> {
     let entries = value.get("statusCheckRollup")?.as_array()?;
     let mut checks = PullChecks {
         total: u32::try_from(entries.len()).unwrap_or(u32::MAX),

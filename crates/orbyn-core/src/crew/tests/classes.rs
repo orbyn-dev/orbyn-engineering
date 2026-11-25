@@ -23,6 +23,15 @@ pub(super) fn file(rules: Vec<Value>) -> String {
     json!({ "classes": { "version": 1, "rules": rules } }).to_string()
 }
 
+/// The fixture item `f` selects, or a panic naming it: a test finds a parsed item by the id, name or
+/// key the fixture gives it, never by the position the fixture happens to list it in.
+fn found<'a, T>(items: &'a [T], what: &str, f: impl Fn(&T) -> bool) -> &'a T {
+    items
+        .iter()
+        .find(|item| f(*item))
+        .unwrap_or_else(|| panic!("no fixture item for {what}"))
+}
+
 #[test]
 fn host_notes_are_nonblocking_indexed_and_do_not_echo_values() {
     let (rules, notes) = parse_file(
@@ -31,12 +40,13 @@ fn host_notes_are_nonblocking_indexed_and_do_not_echo_values() {
     .unwrap();
     assert!(rules.is_empty());
     assert_eq!(notes.len(), 3);
-    assert!(notes[0].contains("allowed_hosts[1]"));
-    assert!(notes[0].contains("ignored"));
+    // Each note names the entry it is about, so a test finds the note by that key, not by the order
+    // the fixture listed the hosts in.
+    let note = |entry: &str| found(&notes, entry, |note| note.contains(entry));
+    assert!(note("allowed_hosts[1]").contains("ignored"));
     assert!(!notes.join(" ").contains("private:443"));
-    assert!(notes[1].contains("allowed_hosts[2]"));
-    assert!(notes[1].contains("base host and all descendants"));
-    assert!(notes[2].contains("allowed_hosts[4]"));
+    assert!(note("allowed_hosts[2]").contains("base host and all descendants"));
+    assert!(note("allowed_hosts[4]").contains("base host and all descendants"));
 }
 
 #[test]
@@ -47,12 +57,18 @@ fn host_note_shapes_caps_and_secret_guard_preserve_class_validation() {
     ] {
         let (_, notes) = parse_file(source).unwrap();
         assert_eq!(notes.len(), 1);
-        assert!(notes[0].contains("no configured hosts are allowed"));
+        assert!(
+            notes
+                .iter()
+                .any(|note| note.contains("no configured hosts are allowed")),
+            "{notes:?}"
+        );
     }
     let source = json!({"allowed_hosts": vec!["bad:443"; 30]}).to_string();
     let (_, notes) = parse_file(&source).unwrap();
     assert_eq!(notes.len(), 17);
-    assert!(notes[16].contains("omitted"));
+    // Order is the contract here: the counted footer replaces the last note, after the first 16 entries.
+    assert!(notes.last().unwrap().contains("omitted"));
     assert!(!notes.join(" ").contains("bad:443"));
     for source in [
         r#"{}"#,
@@ -157,6 +173,15 @@ fn rows(w: &World, task: &str) -> Vec<crate::store::AutopilotEvent> {
         .collect()
 }
 
+/// The one class-routing row a start wrote for `task`, found by the task it records, not by position.
+fn route_row(w: &World, task: &str) -> crate::store::AutopilotEvent {
+    let rows = rows(w, task);
+    assert_eq!(rows.len(), 1, "one row per routing");
+    rows.into_iter()
+        .find(|row| row.task_id == task)
+        .expect("the task's routing row")
+}
+
 #[test]
 fn the_file_is_parsed_strictly() {
     let ok = |rules: Vec<Value>| parse_file(&file(rules));
@@ -173,7 +198,9 @@ fn the_file_is_parsed_strictly() {
     .unwrap();
     assert_eq!(rules.len(), 2);
     assert!(
-        rules[1].engines.is_empty(),
+        found(&rules, "the locked rule", |rule| rule.name == "locked")
+            .engines
+            .is_empty(),
         "no engines is valid and blocks all"
     );
     assert!(notes.is_empty());
@@ -181,7 +208,10 @@ fn the_file_is_parsed_strictly() {
     let (_, notes) =
         parse_file(r#"{"lanes":[],"future":1,"classes":{"version":1,"rules":[]}}"#).unwrap();
     assert_eq!(notes.len(), 1);
-    assert!(notes[0].contains("future"));
+    assert!(
+        notes.iter().any(|note| note.contains("future")),
+        "{notes:?}"
+    );
     // No `classes` is no rules.
     assert!(parse_file(r#"{"lanes":[]}"#).unwrap().0.is_empty());
 
@@ -352,16 +382,10 @@ async fn a_start_without_the_file_routes_as_before_and_still_writes_its_row() {
             .iter()
             .all(|r| r.code.as_str() != "path_classes")
     );
-    let rows = rows(&w, id);
-    assert_eq!(rows.len(), 1, "one row per routing");
-    assert_eq!(rows[0].body["chosen"], "alpha");
-    assert_eq!(
-        rows[0].body["commit"],
-        git_out(&w.repo, &["rev-parse", "HEAD"])
-    );
-    assert!(
-        rows[0].body["blob"].is_null() && rows[0].body["classes"].as_array().unwrap().is_empty()
-    );
+    let row = route_row(&w, id);
+    assert_eq!(row.body["chosen"], "alpha");
+    assert_eq!(row.body["commit"], git_out(&w.repo, &["rev-parse", "HEAD"]));
+    assert!(row.body["blob"].is_null() && row.body["classes"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -385,8 +409,11 @@ async fn a_class_keeps_the_other_engines_out_and_the_decision_and_the_row_name_t
         .unwrap()
         .pop()
         .unwrap();
-    assert_eq!(fakes(&decision.rejected).len(), 1);
-    let blocked = fakes(&decision.rejected)[0];
+    let rejected = fakes(&decision.rejected);
+    assert_eq!(rejected.len(), 1);
+    let blocked = found(&rejected, "alpha's rejection", |rejected| {
+        rejected.engine.as_str() == "alpha"
+    });
     assert_eq!(
         (blocked.engine.as_str(), blocked.why),
         ("alpha", RejectionWhy::PathClass)
@@ -410,17 +437,24 @@ async fn a_class_keeps_the_other_engines_out_and_the_decision_and_the_row_name_t
         "{}",
         reason.text
     );
-    let rows = rows(&w, id);
-    assert_eq!(rows.len(), 1);
-    let body = &rows[0].body;
+    let row = route_row(&w, id);
+    let body = &row.body;
     assert_eq!(
         (body["commit"].as_str(), body["blob"].as_str()),
         (Some(head.as_str()), Some(blob.as_str()))
     );
-    assert_eq!(body["classes"][0]["name"], "auth-paths");
-    assert_eq!(body["classes"][0]["pattern"], "src/**");
-    assert_eq!(body["blocked"][0]["engine"], "alpha");
-    assert_eq!(body["blocked"][0]["rule"], "auth-paths");
+    let class = found(
+        body["classes"].as_array().expect("the classes list"),
+        "the auth-paths class",
+        |class| class["name"] == "auth-paths",
+    );
+    assert_eq!(class["pattern"], "src/**");
+    let blocked = found(
+        body["blocked"].as_array().expect("the blocked list"),
+        "alpha's block",
+        |blocked| blocked["engine"] == "alpha",
+    );
+    assert_eq!(blocked["rule"], "auth-paths");
     assert_eq!(body["chosen"], "bravo");
     // The pinned base is the commit the rules were read at.
     assert_eq!(
@@ -437,7 +471,13 @@ async fn a_class_keeps_the_other_engines_out_and_the_decision_and_the_row_name_t
     let view = w.core.crew_route_view(id).unwrap();
     assert_eq!(view.decision.unwrap().engine.as_str(), "bravo");
     assert!(view.refusal.is_none() && view.rows.len() == 1);
-    assert_eq!(view.rows[0].blocked[0].rule, "auth-paths");
+    let row = found(&view.rows, "the row that chose bravo", |row| {
+        row.chosen.as_deref() == Some("bravo")
+    });
+    let blocked = found(&row.blocked, "alpha's block", |blocked| {
+        blocked.engine == "alpha"
+    });
+    assert_eq!(blocked.rule, "auth-paths");
 }
 
 #[tokio::test]
@@ -477,16 +517,20 @@ async fn two_classes_leave_only_what_both_allow() {
             ("charlie", RejectionWhy::PathClass)
         ]
     );
-    let body = &rows(&w, id)[0].body;
-    let names: Vec<&str> = body["classes"]
-        .as_array()
-        .unwrap()
+    let row = route_row(&w, id);
+    let body = &row.body;
+    let classes = body["classes"].as_array().expect("the classes list");
+    assert_eq!(classes.len(), 2, "both matching classes are listed");
+    let names: Vec<&str> = classes
         .iter()
-        .map(|c| c["name"].as_str().unwrap())
+        .map(|class| class["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["one", "two"]);
+    for name in ["one", "two"] {
+        assert!(names.contains(&name), "{names:?}");
+    }
+    let two = found(classes, "the two class", |class| class["name"] == "two");
     assert!(
-        body["classes"][1]["samples"]
+        two["samples"]
             .as_array()
             .unwrap()
             .iter()
@@ -530,15 +574,14 @@ async fn an_empty_intersection_starts_nothing_and_keeps_every_rejection_for_the_
             .is_none()
     );
     assert!(w.prompts.lock().unwrap().is_empty(), "nothing was started");
-    let rows = rows(&w, id);
-    assert_eq!(rows.len(), 1);
-    assert!(rows[0].body["chosen"].is_null());
-    let all = rows[0].body["rejected"].as_array().unwrap().len();
+    let row = route_row(&w, id);
+    assert!(row.body["chosen"].is_null());
+    let all = row.body["rejected"].as_array().unwrap().len();
     assert!(
         all >= 2,
         "every rejected engine is kept, not only the sentence"
     );
-    assert_eq!(rows[0].body["blocked"].as_array().unwrap().len(), all);
+    assert_eq!(row.body["blocked"].as_array().unwrap().len(), all);
     // The route serves the same refusal as the item shows.
     let view = w.core.crew_route_view(id).unwrap();
     assert_eq!(view.state, "needs_person");
@@ -607,7 +650,8 @@ async fn an_invalid_file_blocks_every_engine_and_says_why() {
             "{one}"
         );
     }
-    let body = &rows(&w, id)[0].body;
+    let row = route_row(&w, id);
+    let body = &row.body;
     assert!(body["problem"].as_str().unwrap().contains("version 3"));
     assert!(
         body["blob"].is_string(),
@@ -637,7 +681,9 @@ async fn an_edit_after_the_base_is_not_in_force_and_the_view_says_so() {
     );
     assert_eq!(view.rules.len(), 1);
     assert_eq!(
-        view.rules[0].engines.len(),
+        found(&view.rules, "the keep rule", |rule| rule.name == "keep")
+            .engines
+            .len(),
         1,
         "the committed rule, not the working copy"
     );
@@ -649,13 +695,18 @@ async fn an_edit_after_the_base_is_not_in_force_and_the_view_says_so() {
     );
     // Committing it again later does not move a task that already started.
     let id = answer["task"].as_str().unwrap().to_owned();
-    let before = rows(&w, &id)[0].body.clone();
+    let before = route_row(&w, &id).body.clone();
     run_git(&w.repo, &["add", "-f", ".orbyn/crew.json"]);
     commit(&w.repo, "loosen");
-    assert_eq!(rows(&w, &id)[0].body, before);
+    assert_eq!(route_row(&w, &id).body, before);
     let view = w.core.crew_classes_view(Some(&w.lead), None).await.unwrap();
     assert!(!view.working_copy_differs && view.working_copy_note.is_none());
-    assert_eq!(view.rules[0].engines.len(), 2);
+    assert_eq!(
+        found(&view.rules, "the keep rule", |rule| rule.name == "keep")
+            .engines
+            .len(),
+        2
+    );
 }
 
 #[tokio::test]
@@ -674,7 +725,7 @@ async fn a_brief_with_no_files_counts_as_every_class_and_a_far_lease_as_none() {
     );
     let id = answer["task"].as_str().unwrap();
     assert!(
-        rows(&w, id)[0].body["unknown"]
+        route_row(&w, id).body["unknown"]
             .as_str()
             .unwrap()
             .contains("no files")
@@ -684,7 +735,7 @@ async fn a_brief_with_no_files_counts_as_every_class_and_a_far_lease_as_none() {
     assert_eq!(answer["route"]["engine"], "alpha", "{answer}");
     let id = answer["task"].as_str().unwrap();
     assert!(
-        rows(&w, id)[0].body["classes"]
+        route_row(&w, id).body["classes"]
             .as_array()
             .unwrap()
             .is_empty()
@@ -825,7 +876,12 @@ async fn paths_are_folded_and_a_bad_path_is_refused_by_the_tester() {
         .unwrap();
     let by = |path: &str| test.paths.iter().find(|p| p.path == path).unwrap();
     let hit = by("SRC/auth/Login.rs");
-    assert!(hit.valid && hit.classes[0].name == "auth");
+    assert!(hit.valid);
+    assert!(
+        hit.classes.iter().any(|class| class.name == "auth"),
+        "{:?}",
+        hit.classes
+    );
     let engines: Vec<&str> = hit
         .allowed_engines
         .as_ref()
@@ -978,7 +1034,12 @@ async fn a_routing_that_fails_leaves_no_row_naming_an_engine() {
         )]),
     );
     let mut leaky = key();
-    leaky["checks"][1]["params"]["run"] = json!(super::harness::KEY_MARKER);
+    let checks = leaky["checks"].as_array_mut().expect("the checks list");
+    let command = checks
+        .iter_mut()
+        .find(|check| check["id"] == "chk-run")
+        .expect("the command check");
+    command["params"]["run"] = json!(super::harness::KEY_MARKER);
     let (answer, error) = w.start(brief(json!({})), leaky).await;
     assert!(error, "{answer}");
     let chosen: i64 = w
@@ -1009,10 +1070,14 @@ async fn a_recorded_routing_keeps_its_commit_blob_and_classes_when_head_and_the_
     commit(&w.repo, "drop the rules");
     run_git(&w.repo, &["reset", "-q", "--hard", "HEAD~2"]);
     let view = w.core.crew_route_view(&id).unwrap();
-    let row = &view.rows[0];
-    assert_eq!(row.commit.as_deref(), Some(head.as_str()));
+    let row = found(&view.rows, "the row of the recorded commit", |row| {
+        row.commit.as_deref() == Some(head.as_str())
+    });
     assert_eq!(row.blob.as_deref(), Some(blob.as_str()));
-    assert_eq!(row.classes[0].name, "keep");
+    assert!(
+        row.classes.iter().any(|class| class.name == "keep"),
+        "the keep class is listed"
+    );
     assert_eq!(view.decision.unwrap().engine.as_str(), "bravo");
 }
 
@@ -1285,7 +1350,8 @@ async fn the_ledger_row_records_both_sides_and_a_class_of_the_same_name_on_each(
     let (answer, error) = w.start(brief(json!({})), key()).await;
     assert!(!error, "{answer}");
     let id = answer["task"].as_str().unwrap();
-    let body = &rows(&w, id)[0].body;
+    let row = route_row(&w, id);
+    let body = &row.body;
     assert_eq!(body["pinned"]["reference"], "origin/main");
     assert_eq!(body["pinned"]["commit"], pinned_commit);
     assert_eq!(body["pinned"]["blob"], pinned_blob);

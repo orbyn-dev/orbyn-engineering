@@ -314,6 +314,68 @@ impl Store {
         }
         Ok(tallies)
     }
+
+    /// Per engine: the project's merges in the window that touched `area`, and the escapes of those merges by state. The same counts
+    /// [`Store::crew_escape_tallies`] makes for the whole project, narrowed to one area. A merge is counted in the area its own `areas`
+    /// names; an escape in the area copied onto it when it was logged. An engine with escapes always has a merge row here, since an
+    /// escape belongs to a merge. One unreadable row fails the whole read (rule 7).
+    pub fn crew_escape_tallies_in_area(
+        &self,
+        project_id: &str,
+        area: &str,
+        merged_since: i64,
+    ) -> Result<BTreeMap<String, EscapeTally>> {
+        let mut conn = self.reader();
+        let tx = conn.transaction().map_err(unreadable)?;
+        let mut tallies: BTreeMap<String, EscapeTally> = BTreeMap::new();
+        let merges = tx
+            .prepare(
+                "SELECT m.engine, COUNT(*) FROM crew_merges m
+                 JOIN crew_runs r ON r.task_id = m.task_id
+                 JOIN threads t ON t.id = r.lead_thread_id
+                 WHERE t.project_id = ?1 AND m.merged_unix >= ?2
+                   AND EXISTS (SELECT 1 FROM json_each(m.areas) j WHERE j.value = ?3)
+                 GROUP BY m.engine",
+            )
+            .map_err(unreadable)?
+            .query_map(params![project_id, merged_since, area], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
+            })
+            .map_err(unreadable)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(unreadable)?;
+        for (engine, count) in merges {
+            tallies.entry(engine).or_default().merges = count;
+        }
+        let escapes = tx
+            .prepare(
+                "SELECT e.engine, e.state, COUNT(*) FROM crew_escapes e
+                 JOIN crew_merges m ON m.task_id = e.merge_task_id
+                 WHERE e.project_id = ?1 AND m.merged_unix >= ?2
+                   AND EXISTS (SELECT 1 FROM json_each(e.areas) j WHERE j.value = ?3)
+                 GROUP BY e.engine, e.state",
+            )
+            .map_err(unreadable)?
+            .query_map(params![project_id, merged_since, area], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    word::<EscapeState>(row.get(1)?)?,
+                    row.get::<_, u32>(2)?,
+                ))
+            })
+            .map_err(unreadable)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(unreadable)?;
+        for (engine, state, count) in escapes {
+            let tally = tallies.entry(engine).or_default();
+            match state {
+                EscapeState::Possible => tally.possible = count,
+                EscapeState::Confirmed => tally.confirmed = count,
+                EscapeState::Dismissed => tally.dismissed = count,
+            }
+        }
+        Ok(tallies)
+    }
 }
 
 /// Rows for tests of other crates, which cannot reach the writer. Never built into the service.

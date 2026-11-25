@@ -442,10 +442,11 @@ export const api = {
   threads: (projectId: string, signal?: AbortSignal) =>
     request<Thread[]>("GET", `/api/threads?project_id=${q(projectId)}`, undefined, signal, { share: true }),
   editors: (signal?: AbortSignal) => request<EditorInfo[]>("GET", "/api/editors", undefined, signal),
-  openInEditor: (threadId: string, body: { path: string; editor: string; line?: number; column?: number }) =>
+  openInEditor: (threadId: string, body: { path: string; editor: string; line?: number; column?: number; repo_id?: string }) =>
     request<void>("POST", `/api/threads/${q(threadId)}/files/open`, body),
-  openPreviewFile: (threadId: string, path: string) =>
-    request<PreviewTab>("POST", `/api/threads/${q(threadId)}/previews/file`, { path }),
+  /** `repoId` names one repository of a multi-repository thread; left out, the primary one (docs/multi-repo.md). */
+  openPreviewFile: (threadId: string, path: string, repoId?: string) =>
+    request<PreviewTab>("POST", `/api/threads/${q(threadId)}/previews/file`, { path, ...(repoId === undefined ? {} : { repo_id: repoId }) }),
   allThreads: (signal?: AbortSignal) =>
     request<Thread[]>("GET", "/api/threads", undefined, signal, { share: true }),
   adoptScratch: (threadId: string) => request<Project>("POST", `/api/threads/${q(threadId)}/adopt`, {}),
