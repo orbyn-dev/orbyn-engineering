@@ -1,6 +1,7 @@
 //! Linear issues through its GraphQL API (docs/issues.md, "Linear as built"). One endpoint,
 //! `https://api.linear.app/graphql`, with fixed query strings and GraphQL variables; nothing the person types is ever
-//! spliced into the query. Queries only, never a mutation. The token comes from the keychain, goes only in the
+//! spliced into the query. Reads are queries; the create, comment and react writes are fixed mutation strings with
+//! values only in variables. The token comes from the keychain, goes only in the
 //! `Authorization` header of a request to that one host, and is never logged or put in an error. Everything the
 //! tracker returns is untrusted text: it is cut to the limits below and is never parsed for instructions.
 //!
