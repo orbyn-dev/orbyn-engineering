@@ -2,7 +2,7 @@ import { ApiFailure, request } from "../../api/client";
 import type {
   IssueDetail, IssueList, IssueQuery, IssueRef, IssueTarget, IssuesApi, ThreadDraft, TrackerKind, TrackerRow,
 } from "./contract";
-import { readCandidates, readDetail, routeAbsent, updateProblem } from "./edit";
+import { commentProblem, readCandidates, readComment, readDetail, routeAbsent, updateProblem } from "./edit";
 
 /**
  * The HTTP client behind `IssuesApi`: one function per route in docs/issues.md, through the app's own `request`, which adds the
@@ -100,6 +100,12 @@ export function createHttpIssuesApi(): IssuesApi {
       return readDetail(await request<IssueDetail>("POST", "/api/issues/item/update", { ...named(issue), ...fields }));
     },
     setState: async (issue, state) => readDetail(await request<IssueDetail>("POST", "/api/issues/item/state", { ...named(issue), state: state.name, ...(state.close_reason ? { close_reason: state.close_reason } : {}) })),
+    comment: async (issue, body) => {
+      // Blank or over a limit: refused here, before anything is sent.
+      const problem = commentProblem(body);
+      if (problem) throw new Error(problem);
+      return readComment(await request<unknown>("POST", "/api/issues/item/comment", { ...named(issue), body }));
+    },
   };
 }
 
@@ -160,5 +166,6 @@ export function createLiveIssuesApi(http: IssuesApi = createHttpIssuesApi()): Is
     candidates: strict(http.candidates),
     update: strict(http.update),
     setState: strict(http.setState),
+    comment: strict(http.comment),
   };
 }
