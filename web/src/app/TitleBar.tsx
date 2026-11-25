@@ -75,9 +75,10 @@ export function useWindowFrame(): "lights" | "controls" | null {
   const info = useAsync("environment-identity", (signal) => api.info(signal));
   useEffect(() => {
     let live = true;
-    const read = () => void readShellStatus().then(() => live && setAttached(inDesktopApp()), () => undefined);
+    // A shell-changed event reads past any read in flight: that answer may hold the older facts.
+    const read = (fresh = false) => void readShellStatus(undefined, fresh).then(() => live && setAttached(inDesktopApp()), () => undefined);
     read();
-    const stop = onShellChange(read);
+    const stop = onShellChange(() => read(true));
     return () => {
       live = false;
       stop();
