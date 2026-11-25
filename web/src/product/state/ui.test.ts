@@ -74,6 +74,16 @@ describe("thread layouts", () => {
     }
   });
 
+  it("opens the file tab of the repository a reveal names, and the old tab shape without one", () => {
+    ui().revealFile("src/a.ts", 4, { threadId: "a", cwd: "/w" }, "planner");
+    expect(ui().panelTab).toBe(fileTabId({ kind: "thread", path: "src/a.ts", repoId: "planner" }));
+    expect(ui().fileReveal).toMatchObject({ path: "src/a.ts", line: 4, repoId: "planner", threadId: "a", cwd: "/w" });
+    ui().revealFile("src/a.ts", null, { threadId: "a", cwd: "/w" });
+    // Without a repository the tab id is what it always was, byte for byte.
+    expect(ui().panelTab).toBe(fileTabId({ kind: "thread", path: "src/a.ts" }));
+    expect(ui().fileReveal).not.toHaveProperty("repoId");
+  });
+
   it("sets the remembered choice aside on a phone-width window and does not save what happens there", () => {
     ui().setPanelOpen(true);
     ui().setPanelNarrow(true);

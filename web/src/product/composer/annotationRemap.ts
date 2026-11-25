@@ -68,6 +68,8 @@ export function remapAnnotation(before: string, after: string, range: { line: nu
 export interface RemapWhere {
   cwd: string;
   path: string;
+  /** Another repository of a multi-repository thread whose file was saved; absent for the thread's own checkout. */
+  repoId?: string;
   fromRevision: string;
   toRevision: string;
   before: string;
@@ -75,14 +77,15 @@ export interface RemapWhere {
 }
 
 /**
- * The file comments of one saved file, moved to its new revision. Comments for other files, checkouts or revisions are
- * returned untouched, and the same array comes back when none applies.
+ * The file comments of one saved file, moved to its new revision. Comments for other files, checkouts, repositories or
+ * revisions are returned untouched, and the same array comes back when none applies.
  */
 export function remapReviewChips(chips: readonly ComposerChip[], where: RemapWhere): ComposerChip[] {
   let changed = false;
   const result = chips.map((chip): ComposerChip => {
     if (chip.kind !== "review" || chip.line === null || chip.path !== where.path
-      || chip.sourceCwd !== where.cwd || chip.sourceRevision !== where.fromRevision) return chip;
+      || chip.sourceCwd !== where.cwd || (chip.repoId ?? null) !== (where.repoId ?? null)
+      || chip.sourceRevision !== where.fromRevision) return chip;
     changed = true;
     const { stale: _was, ...rest } = chip;
     // A comment already out of date stays so: later edits never bring it back to some other text.
