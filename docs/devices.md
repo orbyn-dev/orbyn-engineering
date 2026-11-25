@@ -374,7 +374,7 @@ that (Android: `adb` and the emulator; iOS: `xcrun`). On a machine with none the
 Group 2's `orbyn_device_open` and `orbyn_device_close` are not built. They belong to a thread's
 device panel and its live view, and this service has no device-panel state, no live-view route and
 no boot command, so the two tools are blocked on that unbuilt surface (the device panel and live
-view are H20 to H23). Building them would add a new route and UI, so nothing stands in for them.
+view are H20, H22 and H23; H21 is device setup; see issue #1611). Building them would add a new route and UI, so nothing stands in for them.
 `power_off` is built because the service already had the power-off action; it adds no new service
 capability, though it is new gated agent authority: it goes through the same approval gate as the other
 tools.
