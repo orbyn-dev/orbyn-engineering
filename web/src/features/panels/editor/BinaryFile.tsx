@@ -8,7 +8,11 @@ import { openInEditor } from "../files/openInEditor";
 import { rawUrl } from "../../../product/media/media";
 import { EditorEmpty } from "./EditorShell";
 
-/** editor-binary: no text editor for a file that is not text. It says so, gives the size and can reveal the file. Images, PDFs, archives and documents never get here. Another repository's file is revealed and opened in that repository's worktree. */
+/**
+ * editor-binary: no text editor for a file that is not text. It says so, gives the size and can reveal the file.
+ * Images, PDFs, archives and documents never get here. Another repository's file is revealed, opened in an outside
+ * editor and saved from its own repository: every call carries the `repo_id`.
+ */
 export function BinaryFile({ threadId, path, size, repoId }: { threadId: string; path: string; size: number; /** Another repository of a multi-repository thread; absent is the thread's own checkout. */ repoId?: string }) {
   const editors = useAsync("editors", (signal) => api.editors(signal));
   const manager = (editors.data ?? []).find((one) => one.file_manager);
@@ -36,7 +40,7 @@ export function BinaryFile({ threadId, path, size, repoId }: { threadId: string;
           <Button tone="quiet" onClick={() => void openInEditor(threadId, path, null, repoId)}>
             Open in editor
           </Button>
-          <a className="btn btn-quiet" href={rawUrl(threadId, path, true)} download>
+          <a className="btn btn-quiet" href={rawUrl(threadId, path, true, repoId)} download>
             Save file
           </a>
         </>
