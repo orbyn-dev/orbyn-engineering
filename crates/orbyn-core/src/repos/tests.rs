@@ -497,10 +497,18 @@ async fn a_repo_id_opens_previews_and_the_outside_editor_in_the_named_repository
         crate::util::canonicalize(&other.join("only.txt")).unwrap()
     );
     // The same name in the two repositories is two files, and each preview is its own.
+    // With no repository named, a path is the thread's own folder's (the task folder), as a terminal
+    // link's is: the primary's file is `<its folder name>/a.txt`, and a bare name is not found.
+    let main_name = main.file_name().unwrap().to_string_lossy().into_owned();
     assert_eq!(
-        core.preview_file(&thread, "a.txt").unwrap(),
+        core.preview_file(&thread, &format!("{main_name}/a.txt"))
+            .unwrap(),
         crate::util::canonicalize(&main.join("a.txt")).unwrap()
     );
+    assert!(matches!(
+        core.preview_file(&thread, "a.txt"),
+        Err(CoreError::NotFound(_))
+    ));
     let in_other = crate::in_repo(Some(added.id.clone()), async {
         core.preview_file(&thread, "a.txt")
     })

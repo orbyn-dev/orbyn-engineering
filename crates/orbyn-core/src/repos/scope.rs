@@ -24,6 +24,12 @@ fn wanted() -> Option<String> {
     REPO_SCOPE.try_with(Clone::clone).ok().flatten()
 }
 
+/// Whether the running call named a repository. A call that did not keeps its older meaning for a
+/// route whose callers (a terminal link, say) name paths relative to the thread's own folder.
+pub(crate) fn repo_asked() -> bool {
+    wanted().is_some()
+}
+
 /// The most changed files a repository reports.
 const MAX_FILES: usize = 200;
 

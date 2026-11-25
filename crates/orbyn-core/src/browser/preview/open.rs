@@ -68,12 +68,18 @@ impl Core {
             .await
     }
 
-    /// The file a preview tab shows: a file inside the thread's checkout, which is the
-    /// worktree of the repository `repo_id` names when the caller scoped one. A path that
-    /// leaves that worktree, a folder and a missing file all read as not found.
+    /// The file a preview tab shows: a file inside the worktree of the repository `repo_id` names,
+    /// or, when the caller named none, inside the thread's own folder as before (a multi-repository
+    /// thread's task folder, which is what a terminal link's path is relative to). A path that
+    /// leaves that folder, a folder and a missing file all read as not found.
     pub(crate) fn preview_file(&self, thread_id: &str, path: &str) -> Result<PathBuf> {
-        let (_, scope) = self.file_scope(thread_id)?;
-        let checkout = crate::util::canonicalize(&scope.checkout)?;
+        let checkout = if crate::repos::repo_asked() {
+            let (_, scope) = self.file_scope(thread_id)?;
+            crate::util::canonicalize(&scope.checkout)?
+        } else {
+            let thread = self.store.thread(thread_id)?;
+            crate::util::canonicalize(Path::new(&thread.cwd))?
+        };
         let file = crate::util::canonicalize(&checkout.join(path))
             .map_err(|_| CoreError::NotFound("file".into()))?;
         if !file.starts_with(&checkout) || !file.is_file() {

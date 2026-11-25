@@ -283,8 +283,8 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   said in words. That tab today is the editor only: no rendered preview, no line comments, no "Add file to message", no media
   bar and no absolute path, and images, archives, documents, binary and truncated files say they can't be shown yet, because the
   client sends no `repo_id` to the byte and archive routes (`.../files/raw`, zip, office, download). The service's `previews/file`
-  and `files/open` take one now, and the file-tab menu's outside editor and the binary view's Reveal/Open in editor send it; the
-  media bar's Open in browser and Open in editor use it once #1573 draws that bar and the non-text views for a foreign tab.
+  and `files/open` take one now, and the file-tab menu's outside editor sends it; the binary view's Reveal/Open in editor and the
+  media bar's Open in browser carry it in the client too, but are drawn for a foreign tab only once #1573 draws that bar and the non-text views.
 - **Turn totals.** The turn picker's per-turn figures were the primary repository's alone. In a multi-repository thread each turn's
   totals sum `GET .../diff?scope=turn&run=` over the thread's trusted repositories, one read per repository with its own `repo_id`.
   An untrusted repository is not read and a repository whose read fails is left out, and the row says "N repo not counted" instead of
@@ -345,8 +345,9 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
   work spawned from inside does not inherit it.
 - **Preview and outside editor.** `POST .../previews/file` and `POST .../files/open` take `repo_id` in the body when it is given: the
   previewed file, and the file the editor opens, are the named repository's, resolved with the same guard rooted at that repository's
-  worktree, so a path that leaves it is refused and the same relative path is each repository's own file. Absent is the primary, so
-  every older client is unchanged. Unknown, ordinary-thread and flag-off `repo_id`s are `404` as everywhere else.
+  worktree, so a path that leaves it is refused and the same relative path is each repository's own file. Absent keeps the older
+  meaning (a path relative to the thread's own folder, which is the task folder of a multi-repository thread, as a terminal link's
+  is), so every older client is unchanged. Unknown, ordinary-thread and flag-off `repo_id`s are `404` as everywhere else.
 - **Refusals.** A `repo_id` on an ordinary thread, one that is not the thread's, or any `repo_id` with the flag off is `404 not_found`. A
   repository whose row in the project is untrusted is `409 repo_untrusted` for every call; a repository removed from the project keeps
   working in a thread that already has its worktree.
