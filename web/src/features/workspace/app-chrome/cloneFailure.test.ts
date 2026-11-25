@@ -22,6 +22,7 @@ it.each([
   ["fatal: unable to access 'https://example.com/team/repo.git/': The requested URL returned error: 404", "The repository was not found, or this computer has no access to it."],
   ["fatal: unable to access 'https://github.com/orbyn-dev/private.git/': Could not resolve host: github.com", "Orbyn could not reach the repository. Check the connection, then try again."],
   ["fatal: unable to access 'https://github.com/x/y.git/': Failed to connect to github.com port 443 after 21000 ms: Couldn't connect to server", "Orbyn could not reach the repository. Check the connection, then try again."],
+  ["fatal: unable to access 'https://github.com/team/404.git/': Could not resolve host: github.com", "Orbyn could not reach the repository. Check the connection, then try again."],
   ["ssh: connect to host github.com port 22: Connection refused", "Orbyn could not reach the repository. Check the connection, then try again."],
 ])("says %s in one plain sentence", (raw, plain) => {
   expect(shown(raw)).toBe(plain);

@@ -9,7 +9,7 @@ const INVALID_ADDRESS =
 
 /** Git reached the server and the repository is absent, or this computer is not allowed to read it: a 401, 403 or 404 answer lands here. */
 const NO_ACCESS =
-  /not found|authentication|permission denied|publickey|could not read (username|from remote)|access denied|invalid username or password|\b40[134]\b/i;
+  /not found|authentication|permission denied|publickey|could not read (username|from remote)|access denied|invalid username or password|returned error: 40[134]\b/i;
 
 /** Git could not reach the server: a name that does not resolve, a refused or timed-out connection. */
 const UNREACHABLE =
