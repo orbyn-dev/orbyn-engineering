@@ -17,6 +17,17 @@ const EXE = process.platform === "win32" ? "orbyn-engine-host.exe" : "orbyn-engi
 const HOST = resolve(process.env.ORBYN_ENGINE_HOST ?? join(REPO, "engine-host/dist", EXE));
 const BUILD = `Build the engine host first: cd engine-host && npm ci && node scripts/build-sea.mjs, or set ORBYN_ENGINE_HOST (looked for ${HOST})`;
 
+/**
+ * A missing host build is a skip with an annotation naming the CI job that will build it (#1588), so the run says it did not run.
+ * With ORBYN_REQUIRE_SEA_HOST=1 (set where the build is expected) it is a failure instead, so the spec can never read green unrun.
+ */
+const needHost = () => {
+  if (existsSync(HOST)) return;
+  if (process.env.ORBYN_REQUIRE_SEA_HOST === "1") throw new Error(`ORBYN_REQUIRE_SEA_HOST=1 but there is no engine host. ${BUILD}`);
+  test.info().annotations.push({ type: "needs-sea-host", description: "Skipped: no engine host build; CI does not build it yet (#1588)" });
+  test.skip(true, BUILD);
+};
+
 type Host = { family: string; state: string; host_version?: string; last_crash?: { error_kind: string } | null };
 
 const hostOf = async (service: Service, family = "claude"): Promise<Host | undefined> =>
@@ -26,7 +37,7 @@ const postTo = (page: Page, path: string) =>
   page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === path);
 
 test("stops and restarts a running engine host against the live service", async ({ page }) => {
-  test.skip(!existsSync(HOST), BUILD);
+  needHost();
   test.setTimeout(90_000);
   const { service } = await startProject({ fakeEngines: true, engineHost: { program: HOST } });
   try {
@@ -82,7 +93,7 @@ test("stops and restarts a running engine host against the live service", async 
 });
 
 test("tries a host again after it gave up, and a fixed fault starts it", async ({ page }) => {
-  test.skip(!existsSync(HOST), BUILD);
+  needHost();
   test.setTimeout(180_000);
   const folder = mkdtempSync(join(tmpdir(), "orbyn-host-fault-"));
   const program = join(folder, EXE);
