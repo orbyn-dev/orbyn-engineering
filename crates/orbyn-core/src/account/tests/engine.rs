@@ -14,10 +14,10 @@ use super::*;
 use crate::account::DeviceApi as _;
 use crate::account::SyncHandle;
 use crate::account::api::{AccountApi, ApprovalDigits, ApprovalStatus};
-use crate::account::engine::{EngineAccount, EngineZones, connect, parts};
+use crate::account::engine::{EngineAccount, EngineZones, Retrying, connect, parts};
 
-type Account = EngineAccount<Wire, dc::MemoryStore, dc::SystemClock>;
-type Zones = EngineZones<Wire, dc::MemoryStore, dc::SystemClock>;
+type Account = EngineAccount<Retrying<Wire>, dc::MemoryStore, dc::SystemClock>;
+type Zones = EngineZones<Retrying<Wire>, dc::MemoryStore, dc::SystemClock>;
 
 const APPROVER: &str = "0a0a0a0a-0000-4000-8000-0000000000a1";
 const NEWCOMER: &str = "0a0a0a0a-0000-4000-8000-0000000000b2";
@@ -44,8 +44,10 @@ fn device(server: &Arc<Server>, id: &str, name: &str, trusted: bool) -> Device {
             vault_key: dc::Zeroizing::new(crate::util::random_bytes::<32>().unwrap()),
         })
         .unwrap();
+    // Wrapped as every real client wraps its transport (retry.rs), so these tests take the same
+    // path a shipped cancel does; only the wait between attempts is shortened.
     let client = dc::DeviceClient::new(
-        Wire(server.clone()),
+        Retrying::with_pause(Wire(server.clone()), Duration::from_millis(1)),
         store,
         dc::SystemClock,
         dc::ClientConfig {
@@ -240,6 +242,95 @@ async fn a_cancel_the_engine_did_not_take_is_returned_and_the_request_is_kept() 
     assert_eq!(
         newcomer.account.approval_status(NEWCOMER).await.err(),
         Some(DeviceError::RequestGone)
+    );
+}
+
+#[tokio::test]
+async fn a_cancel_the_network_lost_once_reaches_the_engine_on_the_next_attempt() {
+    let (server, approver, newcomer) = pair();
+    allow(&approver, &newcomer).await;
+    // The first attempt never reaches the Engine, so nothing was done and a second one is safe.
+    server.drop_next("/cancel", 1);
+    newcomer.account.cancel_approval(NEWCOMER).await.unwrap();
+    assert_eq!(server.closures(), 1, "the Engine closed the approval once");
+    assert!(!server.approval_open());
+    assert_eq!(
+        server.calls("/cancel"),
+        2,
+        "the lost attempt and the one that arrived"
+    );
+    assert_eq!(
+        newcomer.account.approval_status(NEWCOMER).await.err(),
+        Some(DeviceError::RequestGone)
+    );
+}
+
+#[tokio::test]
+async fn a_cancel_the_network_lost_twice_still_arrives_on_the_third_attempt() {
+    let (server, approver, newcomer) = pair();
+    allow(&approver, &newcomer).await;
+    // Two retries is the whole policy: the third attempt is the last one there is.
+    server.drop_next("/cancel", 2);
+    newcomer.account.cancel_approval(NEWCOMER).await.unwrap();
+    assert_eq!(server.closures(), 1);
+    assert_eq!(server.calls("/cancel"), 3);
+}
+
+#[tokio::test]
+async fn a_cancel_that_never_arrives_gives_up_after_three_attempts() {
+    let (server, approver, newcomer) = pair();
+    allow(&approver, &newcomer).await;
+    // More attempts are available than the policy allows: the fourth is never made.
+    server.drop_next("/cancel", 4);
+    assert_eq!(
+        newcomer.account.cancel_approval(NEWCOMER).await.err(),
+        Some(DeviceError::Offline)
+    );
+    assert_eq!(server.calls("/cancel"), 3, "three attempts, never more");
+    assert_eq!(server.closures(), 0);
+    assert!(
+        server.approval_open(),
+        "the Engine still holds the approval, as the person is told"
+    );
+}
+
+#[tokio::test]
+async fn a_cancel_the_engine_took_before_the_answer_was_lost_is_not_applied_twice() {
+    let (server, approver, newcomer) = pair();
+    allow(&approver, &newcomer).await;
+    // The ambiguous one: the Engine closes the approval and the answer never comes back, so this
+    // computer cannot tell a cancel that was taken from one that never arrived.
+    server.lose_next_answer("/cancel", 1);
+    newcomer.account.cancel_approval(NEWCOMER).await.unwrap();
+    assert_eq!(
+        server.calls("/cancel"),
+        2,
+        "the lost answer and the attempt that asked again"
+    );
+    assert_eq!(
+        server.closures(),
+        1,
+        "closed once: a second cancel writes the same terminal state, it never toggles one"
+    );
+    assert!(!server.approval_open());
+}
+
+#[tokio::test]
+async fn nothing_but_a_cancel_is_sent_again() {
+    let (server, approver, newcomer) = pair();
+    allow(&approver, &newcomer).await;
+    // A poll that loses its answer is not repeated: the screen asks again on its own, and a second
+    // sign-in step is not safe to send twice.
+    let polls = server.calls("/devices/current");
+    server.drop_next("/devices/current", 1);
+    assert_eq!(
+        newcomer.account.approval_status(NEWCOMER).await.err(),
+        Some(DeviceError::Offline)
+    );
+    assert_eq!(
+        server.calls("/devices/current"),
+        polls + 1,
+        "sent once, never again"
     );
 }
 
