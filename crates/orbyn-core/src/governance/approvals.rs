@@ -180,9 +180,18 @@ pub trait ActionReview: Send + Sync {
     async fn review(&self, scope: &RunScope, ask: &ActionAsk) -> Review;
 }
 
+/// The check a Crew worker's file lease installs on the gate (H10), asked when no [`ActionReview`]
+/// is bound, so a lease refusal never depends on Autopilot having been wired. A check that cannot
+/// be made is a `Deny`, never a `Pass`.
+#[async_trait::async_trait]
+pub trait ActionLease: Send + Sync {
+    async fn lease(&self, scope: &RunScope, ask: &ActionAsk) -> Review;
+}
+
 pub struct ApprovalGate {
     store: Arc<Store>,
     review: std::sync::OnceLock<Arc<dyn ActionReview>>,
+    lease: std::sync::OnceLock<Arc<dyn ActionLease>>,
     waiters: Mutex<HashMap<String, oneshot::Sender<ApprovalState>>>,
     /// Words for the engine, between a denial and its waiter reading them.
     feedback: Mutex<HashMap<String, String>>,
@@ -194,6 +203,7 @@ impl ApprovalGate {
         Self {
             store,
             review: std::sync::OnceLock::new(),
+            lease: std::sync::OnceLock::new(),
             waiters: Mutex::new(HashMap::new()),
             feedback: Mutex::new(HashMap::new()),
             timeout,
@@ -203,6 +213,12 @@ impl ApprovalGate {
     /// Installs Autopilot's check. It can be set once.
     pub fn bind_review(&self, review: Arc<dyn ActionReview>) {
         let _ = self.review.set(review);
+    }
+
+    /// Installs the Crew lease check. It can be set once. It is not tied to the Preview flag that
+    /// gates Autopilot's binding: a worker's lease holds whether or not that check was wired.
+    pub fn bind_lease(&self, lease: Arc<dyn ActionLease>) {
+        let _ = self.lease.set(lease);
     }
 
     /// Decides an action, waiting for a person when policy says ask. The audit
@@ -328,9 +344,15 @@ impl ApprovalGate {
         if scope.plan && ask.kind == ActionKind::FileChange {
             return Ok(Verdict::Deny("Plan mode changes nothing.".to_owned()));
         }
-        let review = match self.review.get() {
-            Some(review) => review.review(scope, &ask).await,
-            None => Review::Pass,
+        // Autopilot's chain answers first when it was bound, so its own ledger and trip wires see the
+        // request. When nothing bound it, the lease still holds: the gate asks its own lease check
+        // rather than let a Crew worker's write through unchecked.
+        let (review, source) = match self.review.get() {
+            Some(review) => (review.review(scope, &ask).await, "autopilot"),
+            None => match self.lease.get() {
+                Some(lease) => (lease.lease(scope, &ask).await, "crew_lease"),
+                None => (Review::Pass, "autopilot"),
+            },
         };
         if let Review::Deny(words) = review {
             self.store.append_audit(&AuditRecord {
@@ -338,7 +360,7 @@ impl ApprovalGate {
                 action: "action.deny".into(),
                 target: ask.target.clone(),
                 decision: Some(PolicyEffect::Deny),
-                source: "autopilot".into(),
+                source: source.into(),
                 thread_id: Some(scope.thread_id.clone()),
                 run_id: Some(scope.run_id.clone()),
                 detail: json!({ "kind": ask.kind }),

@@ -15,7 +15,7 @@ use time::OffsetDateTime;
 
 use crate::app::Core;
 use crate::error::CoreError;
-use crate::governance::approvals::{ActionAsk, resolve_existing};
+use crate::governance::approvals::{ActionAsk, ActionLease, Review, RunScope, resolve_existing};
 
 fn invalid(message: impl Into<String>) -> CrewError {
     CrewError::new(ErrorCode::InvalidObject, message)
@@ -390,5 +390,42 @@ impl Core {
                 .map_err(internal)?;
         }
         Ok(())
+    }
+}
+
+/// The gate's own lease check (H10), bound by `McpService::bind_host` whether or not Autopilot's
+/// review was: a worker's file change may name only paths its lease covers, and a check that cannot
+/// be made — no core, an unreadable task, no worktree — is a refusal, never a pass.
+pub(crate) struct LeaseGuard(pub std::sync::Weak<Core>);
+
+#[async_trait::async_trait]
+impl ActionLease for LeaseGuard {
+    async fn lease(&self, scope: &RunScope, ask: &ActionAsk) -> Review {
+        let Some(core) = self.0.upgrade() else {
+            return Review::Deny("Orbyn could not check this action.".to_owned());
+        };
+        if ask.kind != ActionKind::FileChange {
+            return Review::Pass;
+        }
+        let found = match core.store.crew_task_for_worker(&scope.thread_id) {
+            Ok(found) => found,
+            Err(_) => return Review::Deny("Orbyn could not check this action.".to_owned()),
+        };
+        // Not a Crew worker: this check has nothing to say about the run.
+        let Some((task, run)) = found else {
+            return Review::Pass;
+        };
+        let Some(worktree) = run
+            .worktree
+            .as_deref()
+            .map(PathBuf::from)
+            .or_else(|| scope.write_scope.as_ref().map(|w| w.checkout.clone()))
+        else {
+            return Review::Deny("Orbyn could not find this task's worktree.".to_owned());
+        };
+        match core.crew_refuse_lease_write(&task.id, run.member.as_str(), &worktree, ask) {
+            Some(words) => Review::Deny(words),
+            None => Review::Pass,
+        }
     }
 }

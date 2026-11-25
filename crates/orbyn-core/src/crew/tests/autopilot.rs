@@ -1095,3 +1095,206 @@ async fn a_protected_path_write_is_refused_at_the_gate_before_the_report() {
     );
     assert!(unchanged(), "a refused write reached the checkout");
 }
+
+/// A gate with only the lease check bound, as a service that started without Autopilot's review
+/// (Crew Preview off at start-up): the lease is then the one thing that can refuse a crew write.
+fn gate_with_lease_only(w: &super::harness::World) -> crate::governance::approvals::ApprovalGate {
+    use crate::governance::approvals::{ActionLease, ApprovalGate};
+    let gate = ApprovalGate::new(w.core.store.clone(), std::time::Duration::from_secs(60));
+    let lease: std::sync::Arc<dyn ActionLease> =
+        std::sync::Arc::new(crate::crew::LeaseGuard(std::sync::Arc::downgrade(&w.core)));
+    gate.bind_lease(lease);
+    gate
+}
+
+/// #439: the lease is enforced whether or not Autopilot's review was bound. The read a write
+/// outside the lease gets is the lease's own, and the store names the gate's lease check as the
+/// refusal rather than a chain a person could argue with.
+#[tokio::test]
+async fn a_write_outside_the_lease_is_refused_when_no_autopilot_review_is_bound() {
+    let (w, id) = running().await;
+    let gate = gate_with_lease_only(&w);
+    let mut accepting = scope(&w, &id);
+    // The thread takes file changes, so only the lease can refuse the second write.
+    accepting.mode = orbyn_contracts::PermissionMode::FullAccess;
+    let inside = gate
+        .request(
+            &accepting,
+            ask(ActionKind::FileChange, "src/new.txt", &["src/new.txt"]),
+        )
+        .await;
+    assert_eq!(
+        inside,
+        Verdict::Allow,
+        "a write inside the lease still goes"
+    );
+    let stray = gate
+        .request(
+            &accepting,
+            ask(ActionKind::FileChange, "docs/stray.md", &["docs/stray.md"]),
+        )
+        .await;
+    assert!(
+        words(&stray).contains(OUTSIDE_THE_LEASE),
+        "{}",
+        words(&stray)
+    );
+    let audit = w.core.store.list_audit(Some(&w.worker(&id)), 20).unwrap();
+    assert!(
+        audit.iter().any(|row| row.action == "action.deny"
+            && row.target == "docs/stray.md"
+            && row.source == "crew_lease"),
+        "the refusal is not the gate's own lease check: {audit:?}"
+    );
+    assert!(
+        !audit
+            .iter()
+            .any(|row| row.action == "action.allow" && row.target == "docs/stray.md"),
+        "the refused write was recorded as accepted"
+    );
+}
+
+/// H10, before the write: the lease's refusal is the gate's verdict, so the file still holds its old
+/// bytes and the store holds no report, attempt or check. A check made after the write would not be
+/// enforcement, however red it turned.
+#[tokio::test]
+async fn the_lease_refusal_lands_before_anything_is_written() {
+    let (w, id) = running().await;
+    let target = w.repo.join("docs/accepted.md");
+    std::fs::create_dir_all(target.parent().expect("a parent")).unwrap();
+    std::fs::write(&target, "the old bytes").unwrap();
+    let refused = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(
+                ActionKind::FileChange,
+                "docs/accepted.md",
+                &["docs/accepted.md"],
+            ),
+        )
+        .await;
+    assert!(
+        words(&refused).contains(OUTSIDE_THE_LEASE),
+        "{}",
+        words(&refused)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "the old bytes",
+        "the refused write changed the file, so the check came after it"
+    );
+    assert!(
+        w.core.store.crew_reports(&id).unwrap().is_empty(),
+        "a report was stored before the write was refused"
+    );
+    assert!(
+        w.core.store.crew_results(&id).unwrap().is_empty(),
+        "an attempt was stored before the report"
+    );
+    assert_eq!(w.task(&id).state, "running");
+}
+
+/// A worker holding no live lease at all is refused: a lease that is gone is not a wider one.
+#[tokio::test]
+async fn a_write_with_no_lease_held_is_refused_at_the_gate() {
+    let (w, id) = running().await;
+    w.core
+        .release_crew_leases(&id)
+        .expect("the task's leases are released");
+    let refused = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(ActionKind::FileChange, "src/new.txt", &["src/new.txt"]),
+        )
+        .await;
+    assert!(
+        words(&refused).contains("no lease is held"),
+        "{}",
+        words(&refused)
+    );
+    assert!(!w.repo.join("src/new.txt").exists(), "the write landed");
+}
+
+/// A lapsed lease is read on use and refuses the write: the gate never falls back to the brief.
+#[tokio::test]
+async fn a_lapsed_lease_refuses_the_write_at_the_gate() {
+    let (w, id) = running().await;
+    let live = w
+        .core
+        .store
+        .crew_leases(&id)
+        .unwrap()
+        .into_iter()
+        .find(|lease| lease.mode == LeaseMode::Write)
+        .expect("the brief's write lease");
+    let mut lapsed = live;
+    lapsed.expires_at = crate::crew::leases::utc_seconds(crate::util::unix_now() - 60).unwrap();
+    lapsed.id = orbyn_contracts::CrewObject::Lease(lapsed.clone())
+        .computed_id()
+        .unwrap();
+    w.core
+        .store
+        .add_crew_object(&id, &orbyn_contracts::CrewObject::Lease(lapsed))
+        .unwrap();
+    let refused = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(ActionKind::FileChange, "src/new.txt", &["src/new.txt"]),
+        )
+        .await;
+    assert!(
+        words(&refused).contains("the lease ran out"),
+        "{}",
+        words(&refused)
+    );
+    assert!(!w.repo.join("src/new.txt").exists(), "the write landed");
+}
+
+/// Neither check passes when it cannot be made: a lease guard with no core to read and Autopilot's
+/// own review with no core both deny, so a dropped core is never a way through the gate.
+#[tokio::test]
+async fn a_lease_check_that_cannot_read_its_core_refuses() {
+    use crate::governance::approvals::{ActionLease, ActionReview, ApprovalGate};
+    let (w, id) = running().await;
+    let mut accepting = scope(&w, &id);
+    accepting.mode = orbyn_contracts::PermissionMode::FullAccess;
+
+    let leased = ApprovalGate::new(w.core.store.clone(), std::time::Duration::from_secs(60));
+    let guard: std::sync::Arc<dyn ActionLease> =
+        std::sync::Arc::new(crate::crew::LeaseGuard(std::sync::Weak::new()));
+    leased.bind_lease(guard);
+    let refused = leased
+        .request(
+            &accepting,
+            ask(ActionKind::FileChange, "src/new.txt", &["src/new.txt"]),
+        )
+        .await;
+    assert!(
+        words(&refused).contains("could not check"),
+        "{}",
+        words(&refused)
+    );
+
+    let reviewed = ApprovalGate::new(w.core.store.clone(), std::time::Duration::from_secs(60));
+    let review: std::sync::Arc<dyn ActionReview> =
+        std::sync::Arc::new(crate::crew::GateReview(std::sync::Weak::new()));
+    reviewed.bind_review(review);
+    let refused = reviewed
+        .request(
+            &accepting,
+            ask(ActionKind::FileChange, "src/new.txt", &["src/new.txt"]),
+        )
+        .await;
+    assert!(
+        words(&refused).contains("could not check"),
+        "{}",
+        words(&refused)
+    );
+    assert!(!w.repo.join("src/new.txt").exists(), "the write landed");
+}

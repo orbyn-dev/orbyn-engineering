@@ -97,7 +97,9 @@ impl ActionReview for GateReview {
     async fn review(&self, scope: &RunScope, ask: &ActionAsk) -> Review {
         match self.0.upgrade() {
             Some(core) => core.crew_review_action(scope, ask).await,
-            None => Review::Pass,
+            // The core is gone, so no lease, rule or worktree can be read. This path never passes:
+            // not knowing is a refusal, as everywhere else on the gate.
+            None => Review::Deny("Orbyn could not check this action.".to_owned()),
         }
     }
 }
