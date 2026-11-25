@@ -25,7 +25,21 @@ actor?: string | null, tier?: string | null,
 /**
  * The always-denied rule, such as `N5`.
  */
-rule?: string | null, mode?: string | null, action_kind?: string | null, target?: string | null, paths: Array<string>, lead?: AutopilotAnswer | null, 
+rule?: string | null, mode?: string | null, 
+/**
+ * The task's title as it stood when the row was written (the lead thread's title), so the person reads
+ * which work the row was for rather than an id alone. Absent when the title could not be read then.
+ */
+title?: string | null, 
+/**
+ * The engine of the run that asked, when a run asked: the answer is the same one the gate decided on.
+ */
+asker_engine?: string | null, 
+/**
+ * The model the asking run's thread was on, when the store knows one. Absent for a run with no model
+ * recorded and for rows no run asked for.
+ */
+asker_model?: string | null, action_kind?: string | null, target?: string | null, paths: Array<string>, lead?: AutopilotAnswer | null, 
 /**
  * The second key's answer, when the action needed two.
  */

@@ -4,22 +4,19 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createDevicesMock, createDevicesPlannedMock } from "../../../mock/devices";
 import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
-import { setViewportWidth } from "../../test-support";
+import { installMockFetch, setViewportWidth } from "../../test-support";
 import { useConnection } from "../../product/state/connection";
 import { useUi } from "../../product/state/ui";
 import { setDevicesApi } from "../devices";
 import { setDevicesPlannedApi } from "../devices/planned";
 import { PanelHost } from "./PanelHost";
 
-vi.mock("./browser/BrowserPanel", () => ({ BrowserPanel: () => <div>Browser content</div> }));
-vi.mock("./diff/DiffPanel", () => ({ DiffPanel: () => <div>Diff content</div> }));
-vi.mock("./files/FileTab", () => ({ FileTab: () => <div>Files content</div> }));
-vi.mock("./activity/ActivityPanel", () => ({ ActivityPanel: () => null }));
-
 const thread = { id: "thread-1" } as Thread;
 const tabs = () => screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"));
 
 beforeEach(() => {
+  // The panel host draws the real panels; the service is the only fake.
+  installMockFetch();
   vi.spyOn(api, "diff").mockResolvedValue([]);
   vi.spyOn(api, "keybindings").mockResolvedValue({ rules: [], issues: [] } as never);
   useConnection.setState({ offline: false, serviceDown: false });

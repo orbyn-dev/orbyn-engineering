@@ -10,17 +10,15 @@ import { runHandlers } from "../../product/shell/shortcuts";
 import { useUi } from "../../product/state/ui";
 import { CLOSED_TABS_KEPT, forgetClosedTabs } from "../../product/state/ui/store";
 import { fileTabId } from "../../product/state/ui/fileTab";
+import { installMockFetch } from "../../test-support";
 import { runShellCommand } from "./commands";
-
-vi.mock("../../features/panels/browser/BrowserPanel", () => ({ BrowserPanel: () => <div>Browser content</div> }));
-vi.mock("../../features/panels/diff/DiffPanel", () => ({ DiffPanel: () => <div>Diff content</div> }));
-vi.mock("../../features/panels/files/FileTab", () => ({ FileTab: () => <div>Files content</div> }));
-vi.mock("../../features/panels/activity/ActivityPanel", () => ({ ActivityPanel: () => null }));
 
 const thread = { id: "thread-1" } as Thread;
 const threadRoute = () => parseRoute("#/threads/thread-1");
 
 beforeEach(() => {
+  // The panel host draws the real panels; the service is the only fake.
+  installMockFetch();
   forgetClosedTabs();
   vi.spyOn(api, "diff").mockResolvedValue([]);
   vi.spyOn(api, "keybindings").mockResolvedValue({ rules: [], issues: [] } as never);
@@ -129,6 +127,14 @@ describe("rightPanel.new (mod+t)", () => {
     act(() => void runHandlers("rightPanel.new"));
     await user.click(await screen.findByRole("menuitem", { name: /Browser/ }));
     expect(useUi.getState()).toMatchObject({ panelTab: "browser", panelTabsClosed: [] });
+    // The real Browser panel, not a stand-in, is what the chosen tab now shows.
+    expect(document.querySelector(".browser-panels")).not.toBeNull();
+  });
+
+  it("draws the real Changes panel for the open Changes tab", () => {
+    useUi.setState({ panelTab: "diff" });
+    panel("docked");
+    expect(document.querySelector(".x2-pbody")).not.toBeNull();
   });
 
   it("has no handler once the panel is gone", () => {
