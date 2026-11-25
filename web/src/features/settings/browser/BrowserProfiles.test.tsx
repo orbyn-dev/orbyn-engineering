@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 
 describe("Settings › Browser", () => {
-  it("lists each profile with whether a tab has it open, and offers Clear and Delete but no Rename", async () => {
+  it("lists each profile with whether a tab has it open, and offers Rename, Clear and Delete", async () => {
     render(<BrowserProfilesSection />);
     const table = await screen.findByRole("table", { name: "Browser profiles" });
     const rows = within(table).getAllByRole("row").slice(1);
@@ -35,7 +35,7 @@ describe("Settings › Browser", () => {
     expect(within(rows[1]!).getByText("Open in a tab")).toBeVisible();
     expect(within(rows[1]!).getByRole("button", { name: "Clear Client demo…" })).toBeEnabled();
     expect(within(rows[2]!).getByRole("button", { name: "Delete Staging…" })).toBeEnabled();
-    expect(screen.queryByText(/rename/i)).toBeNull();
+    expect(within(rows[0]!).getByRole("button", { name: "Rename Work…" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "New profile" })).toBeVisible();
   });
 
@@ -89,6 +89,43 @@ describe("Settings › Browser", () => {
     await user.click(screen.getByRole("button", { name: "Create" }));
     expect(await screen.findByText("Short")).toBeVisible();
     expect(wireWrites().map((write) => write.body)).toEqual([{ name: "x".repeat(70) }, { name: "Short" }]);
+  });
+
+  it("renames a profile with one write on Save, then says so in a toast and the list", async () => {
+    const user = userEvent.setup();
+    render(<BrowserProfilesSection />);
+    await user.click(await screen.findByRole("button", { name: "Rename Work…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename the profile Work?" });
+    const field = within(dialog).getByRole("textbox", { name: "Profile name" });
+    expect(field).toHaveValue("Work");
+    await user.clear(field);
+    await user.type(field, " Home ");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByText("Home")).toBeVisible());
+    expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual(["Renamed the profile Work to Home."]);
+    expect(wireWrites()).toEqual([{ method: "POST", path: "/api/browser-profiles/p1/rename", body: { name: "Home" } }]);
+    expect(screen.queryByText("Work")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("shows the service’s refusal of a bad name in the dialog, keeps the old name and lets Save try again", async () => {
+    const user = userEvent.setup();
+    render(<BrowserProfilesSection />);
+    await user.click(await screen.findByRole("button", { name: "Rename Work…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename the profile Work?" });
+    mock.fail("/api/browser-profiles/p1/rename", 1, 400, "invalid_input", "A profile name is 1 to 64 characters.");
+    const field = within(dialog).getByRole("textbox", { name: "Profile name" });
+    await user.clear(field);
+    await user.type(field, "x".repeat(70));
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("A profile name is 1 to 64 characters.");
+    expect(within(dialog).getByRole("textbox", { name: "Profile name" })).toHaveValue("x".repeat(70));
+    expect(screen.getByText("Work")).toBeVisible();
+    await user.clear(field);
+    await user.type(field, "Home");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByText("Home")).toBeVisible());
+    expect(wireWrites().map((write) => write.body)).toEqual([{ name: "x".repeat(70) }, { name: "Home" }]);
   });
 
   it("cancels a new profile without a write", async () => {

@@ -1431,6 +1431,14 @@ export function createMockApi(options: MockOptions = {}) {
 
     if (method === "POST" && seg[0] === "api") {
       if (seg[1] === "browser-profiles" && seg[3] === "clear") return { status: 204 };
+      if (seg[1] === "browser-profiles" && seg[3] === "rename") {
+        const name = typeof data.name === "string" ? data.name.trim() : "";
+        if (!name || name.length > 64) return err(400, "invalid_input", "A profile name is 1 to 64 characters.");
+        const row = browserProfiles.find((entry) => entry.id === seg[2]);
+        if (!row) return err(404, "not_found", "Profile not found.");
+        row.name = name;
+        return { status: 200, body: row };
+      }
       if (seg[1] === "projects" && seg[3] === "trust") {
         const project = projects.find((p) => p.id === seg[2]);
         if (!project) return err(404, "not_found", "Project not found.");
