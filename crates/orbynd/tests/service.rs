@@ -462,7 +462,7 @@ async fn replay_then_live_has_no_gap_or_duplicate() {
             let mut events: Vec<Value> = Vec::new();
             use futures_util::StreamExt;
             while let Some(Ok(chunk)) = body.next().await {
-                for frame in parser.push(&chunk) {
+                for frame in parser.push(&chunk).expect("test SSE frames fit the cap") {
                     events.push(serde_json::from_str(&frame).unwrap());
                 }
                 if events
@@ -924,7 +924,10 @@ async fn agui_stream(service: &Service, thread: &str, input: Value) -> (Vec<Valu
             .await
             .expect("stream stalled");
         let Some(chunk) = chunk else { break };
-        for frame in parser.push(&chunk.unwrap()) {
+        for frame in parser
+            .push(&chunk.unwrap())
+            .expect("test SSE frames fit the cap")
+        {
             frames.push(serde_json::from_str(&frame).unwrap());
         }
     }
