@@ -10,8 +10,9 @@ import { useAsync } from "../../lib/useAsync";
  */
 let current: IssuesApi = createLiveIssuesApi();
 let version = 0;
+type Refused = "sort" | "edit" | "state" | "comment" | "create" | "react";
 /** What this service refused as "no such route" (404 or 405) on first use: those controls go back to Planned for the life of this client. */
-const refused = new Set<"sort" | "edit" | "state" | "comment">();
+const refused = new Set<Refused>();
 const listeners = new Set<() => void>();
 
 // Dev only: `#/preview/issues` installs the mock so the screens can be seen before the routes exist. In a
@@ -69,13 +70,13 @@ const refusedListeners = new Set<() => void>();
  * not offer it is never shown a success. Called only for a 404 or 405 that is not `not_found` (see `routeAbsent`). It does not
  * change `useApiVersion`, so no screen reads again and no draft is lost.
  */
-export function markNotOffered(what: "sort" | "edit" | "state" | "comment"): void {
+export function markNotOffered(what: Refused): void {
   if (refused.has(what)) return;
   refused.add(what);
   for (const listener of refusedListeners) listener();
 }
 
-function useRefused(what: "sort" | "edit" | "state" | "comment"): boolean {
+function useRefused(what: Refused): boolean {
   const [, tick] = useState(0);
   useEffect(() => {
     const listener = () => tick((n) => n + 1);
@@ -111,4 +112,14 @@ export function useStateRefused(): boolean {
 /** Whether the comment write was refused as "no such route" on first use, so the comment box goes back to Planned. */
 export function useCommentRefused(): boolean {
   return useRefused("comment");
+}
+
+/** Whether the create write was refused as "no such route" on first use, so the New issue control goes back to Planned. */
+export function useCreateRefused(): boolean {
+  return useRefused("create");
+}
+
+/** Whether the react write was refused as "no such route" on first use, so the reaction bar is not offered. */
+export function useReactRefused(): boolean {
+  return useRefused("react");
 }
