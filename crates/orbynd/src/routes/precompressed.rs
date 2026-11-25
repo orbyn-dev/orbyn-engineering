@@ -57,7 +57,10 @@ pub fn compressible(path: &Path) -> bool {
 pub fn is_sibling(path: &Path) -> bool {
     // Windows drops trailing dots and spaces when it opens a name, so `app.js.br.` is the
     // sibling `app.js.br`; read the name the way the file system will.
-    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
     let name = name.trim_end_matches(['.', ' ']);
     Path::new(name)
         .extension()
