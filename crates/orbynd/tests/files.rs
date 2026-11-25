@@ -1553,10 +1553,10 @@ async fn a_repo_id_opens_the_named_repositorys_file_in_the_configured_editor() {
     let opened_for = |path: &std::path::Path| path.to_str().unwrap().to_owned();
     let wait_for_record = || async {
         for _ in 0..6000 {
-            if let Ok(seen) = std::fs::read_to_string(&record) {
-                if !seen.trim().is_empty() {
-                    return seen.trim().to_owned();
-                }
+            if let Ok(seen) = std::fs::read_to_string(&record)
+                && !seen.trim().is_empty()
+            {
+                return seen.trim().to_owned();
             }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
@@ -1576,7 +1576,9 @@ async fn a_repo_id_opens_the_named_repositorys_file_in_the_configured_editor() {
         opened_for(&fixture.other_root.join("same.png"))
     );
 
-    // No repo_id is the primary repository, as before: the same relative path is its worktree's.
+    // No repo_id is the primary repository, as before: the same relative path is its worktree's. The first
+    // answer is cleared so the wait cannot read it instead of this one.
+    std::fs::remove_file(&record).unwrap();
     let (code, body) = service
         .send(&open, json!({ "path": "same.png", "editor": "vscode" }))
         .await;
