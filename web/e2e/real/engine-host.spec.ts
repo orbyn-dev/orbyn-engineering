@@ -13,7 +13,8 @@ import { startProject, type Service } from "./service";
 
 const REPO = resolve(import.meta.dirname, "../../..");
 const EXE = process.platform === "win32" ? "orbyn-engine-host.exe" : "orbyn-engine-host";
-const HOST = process.env.ORBYN_ENGINE_HOST ?? join(REPO, "engine-host/dist", EXE);
+// Absolute: the service starts the host from another working directory, so a relative override would not be found.
+const HOST = resolve(process.env.ORBYN_ENGINE_HOST ?? join(REPO, "engine-host/dist", EXE));
 const BUILD = `Build the engine host first: cd engine-host && npm ci && node scripts/build-sea.mjs, or set ORBYN_ENGINE_HOST (looked for ${HOST})`;
 
 type Host = { family: string; state: string; host_version?: string; last_crash?: { error_kind: string } | null };
