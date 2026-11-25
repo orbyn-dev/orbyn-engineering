@@ -548,8 +548,9 @@ limits appear only where an engine reports them itself, as Codex does through
 the supported drivers do not expose an authoritative current account/workspace binding
 that can validate a kept report. Email, plan and cached signed-in status are not identities.
 A failed read returns unavailable without an old-account fallback, including in the client;
-opening or refreshing Limits waits for the bounded provider read. An overlapping older read
-cannot answer after a newer read, a forget or an engine configuration change. No subscription
+opening or refreshing Limits waits for the bounded provider read. An older read cannot answer
+after an explicit usage refresh (`POST /api/usage/refresh`), the only call that forgets; overlapping
+reads do not fence one another, and neither does an engine configuration change. No subscription
 report is exposed through the no-I/O `cached_limits` path: Crew treats it as not reported,
 and scheduled near-limit checks still ask the engine afresh. Only Codex's `rateLimits`,
 `rateLimitsByLimitId` and plan leave the driver; its account ID, upsell copy and
