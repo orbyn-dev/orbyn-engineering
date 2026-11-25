@@ -2,6 +2,16 @@
 
 use crate::crew::{DiffFacts, Rate, RecentTotals, Risk, area_of, areas_of, score};
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list: a read that returns
+/// none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
 fn facts(paths: &[&str], files: u32, lines: u32) -> DiffFacts {
     DiffFacts {
         paths: paths.iter().map(|p| (*p).to_owned()).collect(),
@@ -68,7 +78,8 @@ fn a_high_revert_rate_makes_an_area_or_an_engine_high_only_with_enough_merges() 
     )];
     let scored = score(&f);
     assert_eq!(scored.risk, Risk::High);
-    assert!(scored.reasons[0].contains("reverted in 2 of its last 10"));
+    let reason = one(&scored.reasons, "reason of the hot area");
+    assert!(reason.contains("reverted in 2 of its last 10"));
     // Too little data changes nothing, however bad the rate.
     f.areas = vec![(
         "crates/core".into(),
@@ -184,8 +195,9 @@ fn a_change_split_into_small_merges_adds_up() {
     };
     let scored = score(&f);
     assert_eq!(scored.risk, Risk::High);
+    let reason = one(&scored.reasons, "reason of the rolling size");
     assert!(
-        scored.reasons[0].contains("last 5 merges add up"),
+        reason.contains("last 5 merges add up"),
         "{:?}",
         scored.reasons
     );
