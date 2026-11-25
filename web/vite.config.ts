@@ -43,8 +43,10 @@ const chunkGroups = [
   { name: "app-pages", test: /[\\/]src[\\/]features[\\/](?:family|issues|pulls|repos|skills|tools|workspace)[\\/]/ },
   { name: "app-panels", test: /[\\/]src[\\/]features[\\/]panels[\\/]/ },
   { name: "app-thread", test: /[\\/]src[\\/]features[\\/]thread[\\/]/ },
-  // Settings reaches every feature; onboarding reaches thread and workspace.
-  { name: "app-settings", test: /[\\/]src[\\/]features[\\/](?:onboarding|settings)[\\/]/ },
+  // Settings reaches every feature; onboarding reaches thread and workspace. They stay apart so the
+  // home screen, which is an onboarding screen, does not fetch Settings with it.
+  { name: "app-onboarding", test: /[\\/]src[\\/]features[\\/]onboarding[\\/]/ },
+  { name: "app-settings", test: /[\\/]src[\\/]features[\\/]settings[\\/]/ },
   // A feature not named above waits for every group it might import; a feature that others import
   // instead belongs in the group before its dependents.
   { name: "app-features", test: /[\\/]src[\\/]features[\\/]/ },
