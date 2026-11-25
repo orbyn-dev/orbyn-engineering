@@ -32,7 +32,7 @@ fn short(text: &str) -> CrewShortText {
     .expect("1 to 1000 characters")
 }
 
-fn stop_name(reason: StopReason) -> &'static str {
+pub(super) fn stop_name(reason: StopReason) -> &'static str {
     match reason {
         StopReason::RepeatedFailure => "repeated_failure",
         StopReason::Budget => "budget",
