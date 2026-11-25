@@ -66,8 +66,15 @@ it("names every repository's worktree for a single multi-repository thread", asy
 
 it("keeps the one worktree words for a thread in one repository", async () => {
   const thread = threadById("t-done");
-  setReposApi(createReposMock());
+  const repos = createReposMock({
+    threads: { [thread.id]: [{ repo_id: "orbyn-engineering", name: "orbyn-engineering", branch: "orbyn/login", added: 2, deleted: 1, trusted: true }] },
+  });
+  const read = vi.spyOn(repos, "threadRepos");
+  setReposApi(repos);
   render(<DeleteThreadsDialog threads={[thread]} onClose={() => undefined} />);
+  // The one repository has arrived before the words are judged.
+  await waitFor(() => expect(read).toHaveBeenCalled());
+  expect(await read.mock.results[0]?.value).toHaveLength(1);
 
   expect(await screen.findByText("Its messages and checkpoints are deleted. Code changes in its worktree stay.")).toBeVisible();
   expect(screen.queryByText(/every repository's worktree/)).toBeNull();
