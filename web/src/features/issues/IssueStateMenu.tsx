@@ -19,8 +19,10 @@ import { choiceLabel, reasonOf, sameState, stateWord } from "./model";
  * - `[]`: the service offers it, but this tracker has no other state. The state is text, with no note.
  * - a list: a button that lists them in the tracker's own words and order and marks the current one. Choosing one is one write,
  *   `POST /api/issues/item/state` with the state's name, through the page's write guard: while it is in flight the button is off and
- *   a second choice is not a second write. The state on screen changes only when the tracker answers, with the issue it answers.
- *   A failure says nothing changed and leaves the state as it was.
+ *   a second choice is not a second write. One opening takes one choice, as in RepoGitMenu: a click on an item that is still
+ *   leaving the screen is not a second choice either, even when the first answer lands between the two clicks and the screen has not
+ *   drawn it yet. The state on screen changes only when the tracker answers, with the issue it answers. A failure says nothing
+ *   changed and leaves the state as it was.
  */
 export function IssueStateButton({ issue, write, writing }: { issue: IssueDetail; write: IssueWriter; writing: boolean }) {
   const pushToast = useUi((state) => state.pushToast);
@@ -33,6 +35,9 @@ export function IssueStateButton({ issue, write, writing }: { issue: IssueDetail
   now.current = issue.state;
   // Set at the click, not at the next render: two quick choices in one frame are still one write.
   const sending = useRef(false);
+  // One choice per opening, as in RepoGitMenu: a click on an item that is still leaving the screen is not a second choice, even when
+  // the first answer has landed and the screen has not drawn it yet.
+  const picked = useRef(false);
   const choices = issue.states ?? [];
   if (issue.states === undefined || refused) {
     return (
@@ -44,7 +49,8 @@ export function IssueStateButton({ issue, write, writing }: { issue: IssueDetail
   }
   if (choices.length === 0) return <span className="iss-state"><IssueGlyph state={issue.state} />{stateWord(issue.state)}</span>;
   const choose = async (next: IssueState) => {
-    if (busy || sending.current || sameState(next, now.current)) return;
+    if (picked.current || busy || sending.current || sameState(next, now.current)) return;
+    picked.current = true;
     sending.current = true;
     try {
       await write(() => issuesApi().setState(issue, next));
@@ -71,6 +77,7 @@ export function IssueStateButton({ issue, write, writing }: { issue: IssueDetail
         aria-busy={busy || undefined}
         onClick={(event) => {
           const rect = event.currentTarget.getBoundingClientRect();
+          if (menu === null) picked.current = false;
           setMenu(menu ? null : { x: rect.left, y: rect.bottom + 4 });
         }}
       >
