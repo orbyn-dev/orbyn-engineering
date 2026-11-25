@@ -679,18 +679,33 @@ impl Store {
     /// (`review_waiting`, whether it finished with work, stopped for its budget or waited on a person), and a run that stopped for
     /// a failure, which has nothing to review but still tells the person what happened. A review the person acknowledged clears
     /// `review_waiting` and drops the run from this list, while the run keeps why it waited. A run stopped by the person's own
-    /// switch (`disabled`) needs nothing from them, and a running run is not waiting.
-    pub fn background_reviews(&self) -> Result<Vec<BackgroundReviewRow>> {
-        let conn = self.reader();
-        let mut statement = conn.prepare(
+    /// switch (`disabled`) needs nothing from them, and a running run is not waiting. `crew` and `project` narrow the
+    /// query itself, so a read scoped to one crew or one repository never loads another's.
+    pub fn background_reviews(
+        &self,
+        crew: Option<&str>,
+        project: Option<&str>,
+    ) -> Result<Vec<BackgroundReviewRow>> {
+        let mut sql = String::from(
             "SELECT r.*, c.name AS crew_name, c.project_id AS crew_project, c.template AS crew_template
              FROM crew_background_runs r JOIN crew_background c ON c.id = r.background_id
-             WHERE r.review_waiting = 1
-                OR (r.state = 'stopped' AND COALESCE(r.stop_reason, '') IN ('repeated_failure', 'engine_error'))
-             ORDER BY r.started_at ASC, r.rowid ASC",
-        )?;
+             WHERE (r.review_waiting = 1
+                OR (r.state = 'stopped' AND COALESCE(r.stop_reason, '') IN ('repeated_failure', 'engine_error')))",
+        );
+        let mut args: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(crew) = crew {
+            sql.push_str(" AND r.background_id = ?");
+            args.push(rusqlite::types::Value::Text(crew.to_owned()));
+        }
+        if let Some(project) = project {
+            sql.push_str(" AND c.project_id = ?");
+            args.push(rusqlite::types::Value::Text(project.to_owned()));
+        }
+        sql.push_str(" ORDER BY r.started_at ASC, r.rowid ASC");
+        let conn = self.reader();
+        let mut statement = conn.prepare(&sql)?;
         let rows = statement
-            .query_map([], |row| {
+            .query_map(rusqlite::params_from_iter(args.iter()), |row| {
                 Ok(BackgroundReviewRow {
                     run: run_row(row)?,
                     crew_name: row.get("crew_name")?,
@@ -1507,10 +1522,13 @@ impl Store {
     /// or two checks that could not run (the last result that ran is still a failure and its last change asked for the person),
     /// and the could-not-run row takes over once the streak reaches three; a failing watch that started its template, or that
     /// only had a failing baseline (a first check never raises), asks for nothing. A watch that is off asks for nothing either,
-    /// because nothing will check it until it is turned back on.
-    pub fn watch_raised(&self) -> Result<Vec<WatchRaisedRow>> {
-        let conn = self.reader();
-        let mut statement = conn.prepare(
+    /// because nothing will check it until it is turned back on. `crew` and `project` narrow the query itself.
+    pub fn watch_raised(
+        &self,
+        crew: Option<&str>,
+        project: Option<&str>,
+    ) -> Result<Vec<WatchRaisedRow>> {
+        let mut sql = String::from(
             "SELECT s.background_id, c.project_id, s.last_state, s.error_streak, s.last_checked_unix, s.last_reason,
                     ch.kind AS change_kind, ch.action AS change_action, ch.at_unix AS change_at
              FROM crew_watch_state s
@@ -1520,11 +1538,22 @@ impl Store {
                             WHERE background_id = s.background_id AND kind <> 'turned_off')
              WHERE c.trigger_kind = 'watch' AND c.enabled = 1
                AND ((s.last_state = 'could_not_run' AND s.error_streak >= 3)
-                    OR (s.last_result = 'fail' AND ch.kind = 'failing' AND ch.action = 'needs_you'))
-             ORDER BY s.background_id",
-        )?;
+                    OR (s.last_result = 'fail' AND ch.kind = 'failing' AND ch.action = 'needs_you'))",
+        );
+        let mut args: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(crew) = crew {
+            sql.push_str(" AND s.background_id = ?");
+            args.push(rusqlite::types::Value::Text(crew.to_owned()));
+        }
+        if let Some(project) = project {
+            sql.push_str(" AND c.project_id = ?");
+            args.push(rusqlite::types::Value::Text(project.to_owned()));
+        }
+        sql.push_str(" ORDER BY s.background_id");
+        let conn = self.reader();
+        let mut statement = conn.prepare(&sql)?;
         let rows = statement
-            .query_map([], |row| {
+            .query_map(rusqlite::params_from_iter(args.iter()), |row| {
                 Ok(WatchRaisedRow {
                     crew_id: row.get(0)?,
                     project_id: row.get(1)?,
