@@ -319,9 +319,20 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
 - **Add a repository** uses the popover's existing "Add a repository to this thread…" menu, which lists trusted, finished, Git repositories
   of the project that are not in the thread; the service's refusal (`repo_limit`, `repo_untrusted`, `not_git`, `400` already in the thread,
   a taken branch name, no branch checked out) shows as a notice and the list stays as it was. One click, one write, busy guard.
-- **Not done.** `GET .../files` and `.../files/metadata` take `repo_id` on the service, but the web has no call to either route (the file
-  explorer uses the worktree routes and file reads already send `repo_id`), so there is nothing to change until a screen shows another
-  repository's tree. The delete confirm of a thread has no place for notes, so it does not say that a multi-repository thread's worktrees
+- **The thread's repository tree.** The left bar's Files view shows a thread in two or more repositories as one checkout row under its
+  project's Worktrees, labelled with the thread's branch and marked as the thread's own. The repository chip above it (the explorer's own,
+  sharing the choice of the header Git menu and the Changes panel: the thread's primary until the person picks another) names the
+  repository shown. Its tree is read through `GET /api/threads/{id}/files?path=&repo_id=` (no `repo_id` for the primary, so it reads as
+  the service's default), and a file opens as the thread's file tab of that repository, so its read and write carry the repository's
+  `repo_id` rather than being resolved against the thread's task folder. A thread in one repository, and every ordinary thread, keeps
+  the explorer it had: no chip, no checkout row and no call to that route. Known limits: the route answers no change letters, and no
+  file watcher covers the thread's worktree, so the tree reads again when the project's data changes (a finished run, for one) or the
+  person presses Refresh. A file the row lists opens its tab and no more: it is not dragged into the message and has no outside
+  editor, "Reveal" or rendered preview, because the thread names one folder and these paths are repository-relative (the same limit the
+  other repositories' file tabs have). `GET .../files/metadata` still has no web caller: no screen shows a file's metadata. No frame
+  draws this row or the explorer's chip, so both reuse what exists: a worktree row (branch label, Git icon, current dot) and the
+  repository chip the header, Changes and branch dialogs already draw, in the explorer's own header; listed as undrawn for the Designer.
+- **Not done.** The delete confirm of a thread has no place for notes, so it does not say that a multi-repository thread's worktrees
   stay on disk when they hold changes (the service removes the clean ones; see "As built: pull requests and removal"). The optional first `message` is not asked for in the dialog (the thread opens and
   the person types). `ThreadRepo.pull_request`, `repo_id` on pull request routes and on `FileDiff` and removing a repository are now in the service ("As built: pull requests and removal"); the web side draws them (below).
 - **Not verified against a live service.** Checked with the mock (which now applies the rules above) and request-level tests of the

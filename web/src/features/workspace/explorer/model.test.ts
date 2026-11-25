@@ -4,8 +4,8 @@ import type { ExplorerEntry } from "../../../generated/ExplorerEntry";
 import type { ExplorerTree } from "../../../generated/ExplorerTree";
 import type { ExplorerWorktree } from "../../../generated/ExplorerWorktree";
 import { ApiFailure } from "../../../api/client";
-import { buildRows, crumb, folderKey, groupKey, insidePath, projectKey, readOnlyOf, readOnlyWhy, samePath, threadPathOf, worktreeKey, type ExplorerInput } from "./model";
-import { PAGE, levelKey, type Kept } from "./store";
+import { buildRows, checkoutFolderKey, checkoutKey, crumb, folderKey, groupKey, insidePath, projectKey, readOnlyOf, readOnlyWhy, samePath, threadPathOf, worktreeKey, type ExplorerInput, type ThreadCheckout } from "./model";
+import { PAGE, levelKey, repoLevelKey, type Kept } from "./store";
 
 const project = { id: "p", name: "app" } as Project;
 const other = { id: "q", name: "other" } as Project;
@@ -24,7 +24,7 @@ const thread = (id: string) => ({ id, title: id, project_id: "p" }) as Thread;
 const base = (over: Partial<ExplorerInput> = {}): ExplorerInput => ({
   projects: [project, other], threads: {}, currentThreadId: "t", currentProjectId: "p",
   worktrees: { p: kept({ project_id: "p", git: true, worktrees: [worktree({ threads: [{ id: "t", title: "t", running: false }] }), worktree({ id: "x", branch: "feat/x", is_main: false })] }) },
-  levels: {}, shown: {}, explorerOpen: {}, needs: {}, ...over,
+  levels: {}, repoLevels: {}, threadCheckout: null, shown: {}, explorerOpen: {}, needs: {}, ...over,
 });
 const keys = (rows: ReturnType<typeof buildRows>) => rows.map((row) => `${row.kind}:${row.depth}:${row.label}`);
 
@@ -108,7 +108,7 @@ describe("explorer rows", () => {
     const missing = rows.find((row) => row.label === "feat/m")!;
     expect(missing).toMatchObject({ badge: "Missing", missing: true, open: false });
     // Nothing is read below a missing worktree, whatever was saved as unfolded.
-    expect(rows.filter((row) => row.level?.worktreeId === "m")).toEqual([]);
+    expect(rows.filter((row) => row.level && "worktreeId" in row.level && row.level.worktreeId === "m")).toEqual([]);
   });
 
   it("lists a folder outside Git, or a project rooted at its own folder, as one folder: files directly under the project", () => {
@@ -126,6 +126,43 @@ describe("explorer rows", () => {
 
   it("never reads a project's own folder inside a repository as read-only", () => {
     expect(readOnlyOf(worktree({ is_subfolder: true, read_only: true, read_only_reason: "locked" }), "t")).toBe(false);
+  });
+
+  it("draws a multi-repository thread's chosen repository as its own checkout row, read through the thread", () => {
+    const checkout: ThreadCheckout = { threadId: "t", readRepoId: undefined, tabRepoId: "p", name: "app", branch: "orbyn/1058" };
+    const worktrees = { p: kept({ project_id: "p", git: true, worktrees: [
+      worktree({ id: "own", branch: "orbyn/1058", threads: [] }),
+      worktree({ id: "x", branch: "feat/x", is_main: false }),
+    ] }) };
+    const input = base({
+      worktrees,
+      threadCheckout: checkout,
+      repoLevels: { [repoLevelKey("t", undefined, "")]: level([entry("checkout", { kind: "directory" }), entry("main.ts")]) },
+    });
+    const rows = buildRows(input);
+    // The thread's checkout comes first in the Worktrees group; its own branch is not also one of the project's worktrees.
+    expect(keys(rows)).toEqual(["project:0:app", "group:1:Worktrees", "repo:2:orbyn/1058", "dir:3:checkout", "file:3:main.ts", "worktree:2:feat/x", "project:0:other"]);
+    expect(rows.find((row) => row.kind === "repo")).toMatchObject({ current: true, label: "orbyn/1058", title: "app · orbyn/1058", checkout });
+    expect(rows.find((row) => row.kind === "file")).toMatchObject({ path: "main.ts", checkout });
+    // A folder is opened with the thread's repository level, one level deeper.
+    const opened = buildRows({
+      ...input,
+      repoLevels: { ...input.repoLevels, [repoLevelKey("t", undefined, "checkout")]: level([entry("app.ts", { path: "checkout/app.ts" })]) },
+      explorerOpen: { [checkoutFolderKey(checkout, "checkout")]: true },
+    });
+    expect(opened.find((row) => row.kind === "file" && row.path === "checkout/app.ts")).toMatchObject({ checkout });
+  });
+
+  it("switches the checkout row's tree with the repository chosen, keying it by the repository", () => {
+    const primary: ThreadCheckout = { threadId: "t", readRepoId: undefined, tabRepoId: "p", name: "app", branch: "orbyn/1058" };
+    const other: ThreadCheckout = { ...primary, readRepoId: "planner", tabRepoId: "planner", name: "planner" };
+    expect(checkoutKey(primary)).not.toBe(checkoutKey(other));
+    const rows = buildRows(base({
+      threadCheckout: other,
+      repoLevels: { [repoLevelKey("t", "planner", "")]: level([entry("plan.md")]) },
+    }));
+    expect(keys(rows)).toContain("file:3:plan.md");
+    expect(rows.find((row) => row.kind === "repo")?.checkout?.tabRepoId).toBe("planner");
   });
 
   it("indents a level 13px and leaves a deep row's place to its depth", () => {

@@ -20,9 +20,10 @@ import { arrangeThreads, attentionRank } from "../sidebar/groups";
 import { ExplorerRow, type RowHandlers } from "./ExplorerRow";
 import { useExplorerWatch } from "./watch";
 import { LeftBarSwitch } from "./LeftBarSwitch";
-import { buildRows, threadPathOf, type Row } from "./model";
+import { buildRows, threadPathOf, type Row, type ThreadCheckout } from "./model";
+import { RepoChooser, repoLabel, usePickedRepo, useThreadRepos } from "../../repos";
 import { canStartThreadIn, startThreadIn } from "./startThread";
-import { levelKey, useExplorer } from "./store";
+import { levelKey, repoLevelKey, useExplorer } from "./store";
 
 /** A row's height with the 1px gap under it; rows of a long list are placed by it. */
 const PITCH = 25;
@@ -72,6 +73,14 @@ export function Explorer({ route }: { route: Route }) {
   const currentThreadId = route.name === "thread" ? route.id : null;
   const current = currentThreadId ? threads[currentThreadId] : undefined;
   const currentProjectId = current?.project_id ?? (route.name === "project" || route.name === "new" ? route.projectId : null);
+  // A multi-repository thread's repositories, and which one its tree shows: the primary until the person picks another.
+  const threadRepos = useThreadRepos(currentThreadId ?? "", 0, currentThreadId !== null);
+  const repoChoice = usePickedRepo(currentThreadId ?? "", threadRepos.repos, threadRepos.reload);
+  const threadCheckout = useMemo<ThreadCheckout | null>(() => {
+    const picked = repoChoice.selected;
+    if (!currentThreadId || !repoChoice.multi || !picked) return null;
+    return { threadId: currentThreadId, readRepoId: repoChoice.repoId, tabRepoId: picked.repo_id, name: repoLabel(picked.name), branch: picked.branch };
+  }, [currentThreadId, repoChoice.multi, repoChoice.repoId, repoChoice.selected]);
 
   const now = useNow(true, 30_000);
   const waitingTerminals = useWaitingThreadIds();
@@ -86,10 +95,11 @@ export function Explorer({ route }: { route: Route }) {
     return { byProject, needs };
   }, [threads, now, waitingTerminals]);
 
+  const repoLevels = useExplorer((state) => state.repoLevels);
   const rows = useMemo(
     () =>
-      buildRows({ projects, threads: byProject, currentThreadId, currentProjectId, worktrees, levels, shown, explorerOpen, needs }),
-    [projects, byProject, currentThreadId, currentProjectId, worktrees, levels, shown, explorerOpen, needs],
+      buildRows({ projects, threads: byProject, currentThreadId, currentProjectId, worktrees, levels, repoLevels, threadCheckout, shown, explorerOpen, needs }),
+    [projects, byProject, currentThreadId, currentProjectId, worktrees, levels, repoLevels, threadCheckout, shown, explorerOpen, needs],
   );
 
   useExplorerWatch(rows);
@@ -99,8 +109,11 @@ export function Explorer({ route }: { route: Route }) {
     const store = useExplorer.getState();
     for (const row of rows) {
       if (row.kind !== "loading") continue;
-      if (row.level) void store.loadLevel(row.projectId, row.level.worktreeId, row.level.path);
-      else void store.loadWorktrees(row.projectId, { thread: currentThreadId });
+      if (row.level) {
+        const level = row.level;
+        if ("threadId" in level) void store.loadRepoLevel(level.threadId, level.repoId, level.path);
+        else void store.loadLevel(row.projectId, level.worktreeId, level.path);
+      } else void store.loadWorktrees(row.projectId, { thread: currentThreadId });
     }
   }, [rows, currentThreadId]);
 
@@ -112,11 +125,18 @@ export function Explorer({ route }: { route: Route }) {
       const store = useExplorer.getState();
       for (const id of projectIds) void store.reload(id, { thread: latest.current, quiet: true });
     };
+    const repoAgain = (projectIds: string[]) => {
+      const threadId = latest.current;
+      const projectId = threadId ? useWorkspace.getState().threads[threadId]?.project_id : undefined;
+      if (threadId && projectId && projectIds.includes(projectId)) void useExplorer.getState().reloadRepo(threadId, { quiet: true });
+    };
     const loaded = () => Object.keys(useExplorer.getState().worktrees);
     again(loaded());
     return registerRefresh(under("explorer"), (heard) => {
       const named = heard.some((what) => what === EVERYTHING) ? loaded() : heard.map((what) => what.slice("explorer:".length));
-      again([...new Set(named)].filter((id) => id in useExplorer.getState().worktrees));
+      const projects = [...new Set(named)].filter((id) => id in useExplorer.getState().worktrees);
+      again(projects);
+      repoAgain(projects);
     });
   }, []);
   // Which worktrees are read-only for a thread depends on the thread asking.
@@ -185,6 +205,12 @@ export function Explorer({ route }: { route: Route }) {
     return { kind: "explorer", projectId: row.projectId, worktreeId: row.worktree.id, path: row.path };
   };
   const openFile = (row: Row) => {
+    // A file of the open thread's chosen repository opens as the thread's file of that repository: its read and write
+    // name the repository, which is the only way the service resolves the path in that repository's worktree.
+    if (row.checkout && row.path !== undefined) {
+      useUi.getState().openFileTab({ kind: "thread", path: row.path, repoId: row.checkout.tabRepoId });
+      return;
+    }
     const target = targetOf(row);
     if (target) useUi.getState().openFileTab(target);
   };
@@ -224,6 +250,14 @@ export function Explorer({ route }: { route: Route }) {
       });
       return;
     }
+    if (row.kind === "file" && row.checkout && row.path !== undefined) {
+      const path = row.path;
+      setMenu({ x, y, label: "File actions", row, items: [
+        { label: "Open", shortcut: "↵", onSelect: () => openFile(row) },
+        { label: "Copy path", onSelect: () => void copyText(path, "Path copied") },
+      ] });
+      return;
+    }
     if (row.kind !== "file" || !row.worktree || row.path === undefined) return;
     const { worktree, path } = row;
     const owned = ownsFile(row);
@@ -255,11 +289,17 @@ export function Explorer({ route }: { route: Route }) {
       return useUi.getState().openFileTab({ kind: "worktree", projectId: row.projectId, worktreeId: row.worktree.id });
     }
     if (row.kind === "thread" && row.thread) return navigate({ name: "thread", id: row.thread.id });
-    if (row.kind === "more" && row.level) return useExplorer.getState().showMore(levelKey(row.projectId, row.level.worktreeId, row.level.path));
+    if (row.kind === "more" && row.level) {
+      const level = row.level;
+      return useExplorer.getState().showMore("threadId" in level ? repoLevelKey(level.threadId, level.repoId, level.path) : levelKey(row.projectId, level.worktreeId, level.path));
+    }
     if (row.kind === "error") {
       const store = useExplorer.getState();
-      if (row.retry === "level" && row.level) void store.loadLevel(row.projectId, row.level.worktreeId, row.level.path);
-      else void store.loadWorktrees(row.projectId, { thread: currentThreadId });
+      if (row.retry === "level" && row.level) {
+        const level = row.level;
+        if ("threadId" in level) void store.loadRepoLevel(level.threadId, level.repoId, level.path);
+        else void store.loadLevel(row.projectId, level.worktreeId, level.path);
+      } else void store.loadWorktrees(row.projectId, { thread: currentThreadId });
       return;
     }
     if (event.type === "click" || event.type === "keydown") toggle(row);
@@ -272,7 +312,7 @@ export function Explorer({ route }: { route: Route }) {
     const row = rows.find((one) => one.key === element?.dataset.key);
     if (!row || (event.target as HTMLElement).closest("button")) return;
     const at = nav.indexOf(row);
-    const expandable = row.kind === "project" || row.kind === "group" || row.kind === "worktree" || row.kind === "dir";
+    const expandable = row.kind === "project" || row.kind === "group" || row.kind === "worktree" || row.kind === "repo" || row.kind === "dir";
     const move = (to: Row | undefined) => {
       event.preventDefault();
       focusRow(to);
@@ -336,6 +376,7 @@ export function Explorer({ route }: { route: Route }) {
   const refresh = () => {
     const store = useExplorer.getState();
     for (const id of Object.keys(store.worktrees)) void store.reload(id, { thread: currentThreadId, refresh: true });
+    if (currentThreadId) void store.reloadRepo(currentThreadId, { refresh: true });
   };
 
   const selectedTab = activeTab;
@@ -343,6 +384,7 @@ export function Explorer({ route }: { route: Route }) {
     if (row.kind === "thread") return row.thread?.id === currentThreadId;
     if (row.kind === "worktree" && row.missing && row.worktree) return selectedTab === fileTabId({ kind: "worktree", projectId: row.projectId, worktreeId: row.worktree.id });
     if (row.kind !== "file") return false;
+    if (row.checkout && row.path !== undefined) return selectedTab === fileTabId({ kind: "thread", path: row.path, repoId: row.checkout.tabRepoId });
     const target = targetOf(row);
     return target !== null && selectedTab === fileTabId(target);
   };
@@ -360,6 +402,12 @@ export function Explorer({ route }: { route: Route }) {
           </IconButton>
         </span>
       </div>
+      {threadCheckout ? (
+        // The repository the checkout row below shows, and the file tabs it opens. A thread in one repository has none.
+        <div className="x2repo-bar">
+          <RepoChooser choice={repoChoice} />
+        </div>
+      ) : null}
       <div className="sidebar-scroll x2scroll" ref={scroller} onScroll={measure}>
         {projectsState.error && !projectsState.data ? (
           <ErrorState compact title="Couldn't load projects" failure={projectsState.error} onRetry={() => void refreshAll()} />

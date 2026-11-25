@@ -1,10 +1,10 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import type { ExplorerTree } from "../../../generated/ExplorerTree";
 import type { ExplorerWorktrees } from "../../../generated/ExplorerWorktrees";
-import { readTree, readWorktrees } from "./api";
-import { levelKey, useExplorer } from "./store";
+import { readRepoTree, readTree, readWorktrees } from "./api";
+import { levelKey, repoLevelKey, useExplorer } from "./store";
 
-vi.mock("./api", () => ({ readTree: vi.fn(), readWorktrees: vi.fn() }));
+vi.mock("./api", () => ({ readRepoTree: vi.fn(), readTree: vi.fn(), readWorktrees: vi.fn() }));
 
 const tree = (path: string): ExplorerTree => ({ worktree_id: "w", path, entries: [], truncated: false,
   total: 0, total_at_least: false, changes: "ready", read_only: false });
@@ -16,6 +16,23 @@ function deferred<T>() {
 }
 
 beforeEach(() => { useExplorer.getState().reset(); vi.resetAllMocks(); });
+
+it("keeps one repository level per thread and repository, and reads them again for the thread", async () => {
+  vi.mocked(readRepoTree).mockResolvedValue(tree(""));
+  await useExplorer.getState().loadRepoLevel("t", "planner", "");
+  await useExplorer.getState().loadRepoLevel("t", undefined, "");
+  expect(vi.mocked(readRepoTree).mock.calls).toEqual([["t", "planner", ""], ["t", undefined, ""]]);
+  expect(useExplorer.getState().repoLevels[repoLevelKey("t", "planner", "")]?.data?.path).toBe("");
+  expect(useExplorer.getState().repoLevels[repoLevelKey("t", undefined, "")]?.data?.path).toBe("");
+  // The thread's repository levels are read again; another thread's are not.
+  await useExplorer.getState().loadRepoLevel("other", "planner", "");
+  vi.mocked(readRepoTree).mockClear();
+  await useExplorer.getState().reloadRepo("t", { quiet: true });
+  expect(vi.mocked(readRepoTree).mock.calls).toEqual([["t", "planner", ""], ["t", undefined, ""]]);
+  // Reset forgets them with everything else.
+  useExplorer.getState().reset();
+  expect(useExplorer.getState().repoLevels).toEqual({});
+});
 
 it("one change during an old folder read queues a fresh read and new data wins", async () => {
   const old = deferred<ExplorerTree>();
