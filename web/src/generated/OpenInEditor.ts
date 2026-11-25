@@ -4,4 +4,8 @@ export type OpenInEditor = { path: string, editor: string,
 /**
  * One-based position to open at. A column needs a line.
  */
-line?: number, column?: number, };
+line?: number, column?: number, 
+/**
+ * A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+ */
+repo_id?: string, };

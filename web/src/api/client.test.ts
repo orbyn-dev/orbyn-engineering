@@ -146,3 +146,24 @@ describe("run purpose", () => {
     ]);
   });
 });
+
+describe("repo_id on the browser preview and the outside editor", () => {
+  it("sends repo_id for another repository's file and leaves it out for the primary", async () => {
+    const fetchMock = respond(200, {});
+    vi.stubGlobal("fetch", fetchMock);
+    await api.openPreviewFile("t1", "page.html");
+    await api.openPreviewFile("t1", "page.html", "r2");
+    await api.openInEditor("t1", { path: "a.ts", editor: "vscode" });
+    await api.openInEditor("t1", { path: "a.ts", editor: "vscode", repo_id: "r2" });
+    const sent = fetchMock.mock.calls.map((call) => {
+      const [url, init] = call as unknown as [string, RequestInit];
+      return [init.method, url.replace(/^.*?(?=\/api)/, ""), init.body === undefined ? undefined : JSON.parse(String(init.body))];
+    });
+    expect(sent).toEqual([
+      ["POST", "/api/threads/t1/previews/file", { path: "page.html" }],
+      ["POST", "/api/threads/t1/previews/file", { path: "page.html", repo_id: "r2" }],
+      ["POST", "/api/threads/t1/files/open", { path: "a.ts", editor: "vscode" }],
+      ["POST", "/api/threads/t1/files/open", { path: "a.ts", editor: "vscode", repo_id: "r2" }],
+    ]);
+  });
+});

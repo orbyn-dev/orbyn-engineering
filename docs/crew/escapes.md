@@ -2,7 +2,7 @@
 
 Design note for the escape backend (beta item 4k, U2). Status: PRs 1 to 4 are built, the web screens of PR 5 (5a-5c) are built, and
 capacity-pressure retention (issue #686, built in #757, migration 58) is built, as the as-built sections below record.
-Not built: the report and per-area counts backend (so `escape-dashboard` and the two route-counts frames stay drawn), the Review
+Not built: the report backend (so `escape-dashboard` stays drawn) and the web wiring of the per-area counts read, the Review
 queue that would open `escape-report`'s mark dialog and the scan from the merge and revert paths. Retention
 is capacity-driven, not age-based: nothing is pruned until a project's log is full. The screens are Crew Designs v79 on the real reads
 (`escape-*`, [crew.md](../crew.md) "slice 4f, UI part C"); 22 of 28 frames are live and six are still drawn: four redrawn at v79 and
@@ -70,6 +70,16 @@ counts, checks added, being written and failed, and a per-week series, grouped b
 (`risk::area_of`) and **lane**. A group under 10 merges returns `rate: null`, `low_sample: true`; a rate uses confirmed escapes only. An escape counts
 against the engine, model and area copied from the merge **when logged**. A hard-deleted lead thread drops out, as for 4j.
 
+**As built: the per-area counts.** `GET /escapes/counts?project=&area=` answers one area of that report (built with the escape log's
+own window, `report_days`): the merges in the window that touched the area and the escapes logged against them, one row per engine,
+possible, confirmed and dismissed never added together and **no rate**. `low_sample` is the log's own test (fewer merges in the area
+than `min_merges`). An escape is counted in the area copied onto it when it was logged, a merge in its own `areas` value. Rows are
+busiest first, so the list is useful cut: at most 16 rows (`ESCAPE_COUNT_ENGINES_MAX`), and `truncated` says when more engines had a
+merge in the area. The area's `merges` total counts every engine's merges, cut list or not. An unknown project and an area that is not
+a name (empty, over 300 characters, a control character) are refused, never answered as an empty list; an area the project never
+merged into is an honest empty answer. Read only: it is in `READS` (class **Local**), and the Router reads no escape count in v1, so
+nothing here decides an engine. The two route-counts frames stay drawn until they are wired to it.
+
 ## Screens and the reads they need
 
 All are `#/preview/crew/<frame>` in `web/src/features/crew/escape/`, reachable only in a build with the dev-only previews flag
@@ -78,7 +88,8 @@ service. The table keeps the read each frame needs; `web/mock/` has no escape da
 (path in `docs/match-kit.md`).
 
 Still drawn on sample data, every button disabled: `escape-report`, `escape-dashboard`, `escape-route-counts`, `-route-shifted`,
-`escape-create-check` and `-tooling`.
+`escape-create-check` and `-tooling`. The per-area counts read the two route-counts frames draw is built (`/escapes/counts`); they
+stay drawn until they are wired to it.
 
 | Frame | Needs |
 | --- | --- |
@@ -87,7 +98,7 @@ Still drawn on sample data, every button disabled: `escape-report`, `escape-dash
 | `escape-create-check`, `-tooling`, `escape-report` | the Review queue's merge row, `POST /escapes/mark`, `POST .../check` |
 | `escape-detail`, `-detail-tooling`, `-check-invalid` | `GET /escapes/{id}`: events, the check and its proof results, counts against, area record |
 | `escape-dashboard`, `escape-narrow-*` | `GET /escapes/report` by week, engine, area, lane (narrow: layout only) |
-| `escape-route-counts`, `-route-shifted` | per-engine counts for the task's area (`GET /escapes/counts?project=&area=`); display only: the Router does not read them in v1 |
+| `escape-route-counts`, `-route-shifted` | per-engine counts for the task's area (`GET /escapes/counts?project=&area=`, **built**); display only: the Router does not read them in v1 |
 | `escape-settings` | `GET /escapes/thresholds` (the stored config below); "ask each time" stays fixed in v1 |
 
 ## Data model
@@ -135,6 +146,8 @@ Confirm, dismiss and gap take a `seen` token (a mismatch is `409 stale`, as area
 4. **Create a check.** Brief, proof, merge-queue path, `failed` state. Tests: passes-on-both refused; no lane removed; fake engine.
 5. **Report and screens.** `/report`, `/counts`, web client, bindings, mock, the 17 frames on real data. Tests: week buckets,
    low-sample boundary, web tests per frame state. Counts into the 4j breaker or Router tie-break are **not** in this plan.
+   Built so far: `/counts` only (its own paragraph under "Report", above). `/report`, the bindings of the two route-counts
+   frames and the 17-frames-on-real-data step are still open.
 
 ## As built: PR 1, store and revert log
 
@@ -382,7 +395,8 @@ PR 1 to PR 4 already serve; 22 of the 28 frame ids in `web/src/features/crew/esc
   (5c) are the same log read in the design's 640 px window and its 320 px side panel.
 - **Still drawn samples, six.** `escape-report` (the Review item's mark dialog: the beta has no Review queue to open it from,
   and its how-found and the fix fields are Planned), `escape-dashboard` and `escape-route-counts` / `-shifted` (the report
-  and per-area counts routes are not built; every figure is Not measured, never a zero), and `escape-create-check*` (the
+  route is not built; every figure is Not measured, never a zero; the per-area counts read those two frames draw **is** built,
+  see "Report" above, and only the wiring is missing), and `escape-create-check*` (the
   v20 sample with the Review queue behind it; its dialog is built on the escape's own page, see Propose a check above).
   They are drawn at v79 with Planned pills, and `escape-create-check*` stays at v20.
 - **Where it lives.** `web/src/features/crew/escape/live/screens.tsx` maps each live frame to its read, and
@@ -400,7 +414,8 @@ PR 1 to PR 4 already serve; 22 of the 28 frame ids in `web/src/features/crew/esc
   The 20,000-event limit is not on the read, so the banner does not name it. The log's heading names the count the read returns; the narrow panel
   draws the frame's first four cards, the narrow window the page's rows. Rate, gap and check counts read Not measured while the
   report route does not exist.
-- **Not built.** No report or counts backend; a merged escape's "Merged to main" timeline row and the escape page's as-of line are absent because
+- **Not built.** The report backend (`/escapes/report`; its per-area counts read is built, above) and the web wiring of either; a
+  merged escape's "Merged to main" timeline row and the escape page's as-of line are absent because
   the detail read carries no `as_of` (the log read does, and its page shows it) and no read carries the merge row; the Review queue item that would open Propose a check is not in the beta, so the dialog opens from the escape's own page.
 
 ## Decisions (owner)
