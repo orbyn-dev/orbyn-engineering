@@ -35,10 +35,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/projects/{id}/git/init", post(init_project_git))
         .route("/api/fs/browse", get(browse))
         .route("/api/projects/{id}/publish", post(publish_project))
-        .route(
-            "/api/projects/{id}/issue-tracker",
-            post(bind_issue_tracker),
-        )
+        .route("/api/projects/{id}/issue-tracker", post(bind_issue_tracker))
         .route("/api/projects/{id}/icon", get(project_icon))
         .route(
             "/api/projects/{id}/icon/resource",

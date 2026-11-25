@@ -323,9 +323,11 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   a taken branch name, no branch checked out) shows as a notice and the list stays as it was. One click, one write, busy guard.
 - **Not done.** `GET .../files` and `.../files/metadata` take `repo_id` on the service, but the web has no call to either route (the file
   explorer uses the worktree routes and file reads already send `repo_id`), so there is nothing to change until a screen shows another
-  repository's tree. The delete confirm of a thread has no place for notes, so it does not say that a multi-repository thread's worktrees
-  stay on disk when they hold changes (the service removes the clean ones; see "As built: pull requests and removal"). The optional first `message` is not asked for in the dialog (the thread opens and
-  the person types). `ThreadRepo.pull_request`, `repo_id` on pull request routes and on `FileDiff` and removing a repository are now in the service ("As built: pull requests and removal"); the web side draws them (below).
+  repository's tree. `ThreadRepo.pull_request`, `repo_id` on pull request routes and on `FileDiff` and removing a repository are now in the service ("As built: pull requests and removal"); the web side draws them (below).
+- **First message and delete.** The new-thread dialog asks for an optional First message; a trimmed non-empty one is sent as `message`
+  and the service queues it as the thread's first turn. The delete confirm of one multi-repository thread says every repository's worktree
+  stays on disk when it holds changes; several threads, a thread in one repository and a failed repository read keep the existing words
+  (the service removes the clean worktrees; see "As built: pull requests and removal").
 - **Not verified against a live service.** Checked with the mock (which now applies the rules above) and request-level tests of the
   client; the routes have not been run against an `orbynd` with `ORBYN_MULTI_REPO=1`.
 
@@ -435,8 +437,10 @@ over the limit is refused; each write route needs the person key; a failed clone
 `remove`; per-repository commit touches only that repository's worktree; a permission mode the engine
 does not offer is refused before anything is created; a scan never follows a symlink, caps its results
 and adds nothing; a workspace folder outside the file's folder is listed `refused` and not added; a
-`repo_id` on a file write never resolves a path in another repository; a task folder uses one branch name in
-every repository and a taken name creates nothing; a diff, commits, a commit or branch comparison and a turn's
-checkpoint read the repository their `repo_id` names, the primary (the first stored repository) when it is
-absent, and run Git in that repository's worktree rather than the task folder; checkpoint capture and a file
-restore still use the engine's task folder; an unknown repository is `404` and an untrusted one is refused.
+`repo_id` on a file write never resolves a path in another repository; `.../files/raw` reads the named
+repository's bytes, refuses a path outside its worktree, and is `404` for an unknown or ordinary-thread
+`repo_id`; a task folder uses one branch name in every repository and a taken name creates nothing; a diff,
+commits, a commit or branch comparison and a turn's checkpoint read the repository their `repo_id` names, the
+primary (the first stored repository) when it is absent, and run Git in that repository's worktree rather than
+the task folder; checkpoint capture and a file restore still use the engine's task folder; an unknown
+repository is `404` and an untrusted one is refused.

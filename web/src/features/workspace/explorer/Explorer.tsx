@@ -6,6 +6,7 @@ import { registerRefresh, under, EVERYTHING } from "../../../lib/dataRefresh";
 import { useNow } from "../../../lib/useNow";
 import { chipId, languageForPath } from "../../../product/composer/composerContext";
 import { primaryEditor } from "../../../product/composer/editorPreferences";
+import { formatShortcut } from "../../../product/shell/shortcuts";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { navigate, type Route } from "../../../product/state/route";
 import { fileTabId, useUi, type FileTarget } from "../../../product/state/ui";
@@ -237,7 +238,7 @@ export function Explorer({ route }: { route: Route }) {
       row,
       items: [
         { label: "Open", shortcut: "↵", onSelect: () => openFile(row) },
-        ...(editor ? [{ label: "Open in an outside editor", shortcut: "⌥↵", onSelect: () => outsideEditor(row) }] : []),
+        ...(editor ? [{ label: "Open in an outside editor", shortcut: formatShortcut("alt+↵"), onSelect: () => outsideEditor(row) }] : []),
         ...(owned ? [{ label: "Add to this thread", shortcut: "@", onSelect: () => addToThread(row) }] : []),
         { label: "Copy path", separatorBefore: true, onSelect: () => void copyText(`${worktree.path.replace(/[\\/]+$/, "")}${separator}${path.split("/").join(separator)}`, "Path copied") },
         { label: "Copy relative path", onSelect: () => void copyText(path, "Path copied") },
