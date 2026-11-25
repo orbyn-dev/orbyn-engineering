@@ -95,7 +95,7 @@ These commands use the same service APIs and rules as the UI.
 | `orbyn project remove PROJECT` | Unregister and archive its threads; keep the folder and the threads. |
 | `orbyn project rename PROJECT NAME` | Change the displayed name; keep the folder. |
 | `orbyn theme show` | Read the stored `default_theme` preference; works against any running service. Each viewer applies a newly set theme once, at start or when its window takes focus. |
-| `orbyn theme set NAME`, `orbyn theme clear` | Refused with exit 1: the write is a `Person` route and this command holds only the service token. Set or clear the theme in the desktop app instead. |
+| `orbyn theme set NAME`, `orbyn theme clear` | Refused with exit 1: the write is a `Person` route and this command holds only the service token. Set or clear the theme in the desktop app, which can write it only when it runs the service itself; for a service started by `orbyn start` the write is refused there too. |
 
 `orbyn theme set` and `orbyn theme clear` write `PUT /api/preferences`, an enforced
 `Person` route. Against a service that `orbyn start` started, the service answers
