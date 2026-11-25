@@ -204,6 +204,8 @@ export function IssuesPage() {
   const route = useRoute();
   const { rows, settled } = useTrackers();
   const detail = route.name === "issues" && route.tracker !== undefined && route.scope !== undefined && route.key !== undefined ? { tracker: route.tracker, scope: route.scope, key: route.key } : null;
+  // The Facts show the host the service reports for this issue's tracker, from the rows this page already reads.
+  const host = detail && rows ? rows.find((row) => row.tracker === detail.tracker)?.host ?? null : null;
   const body = !settled ? null : rows === null ? (
     <>
       <PageBar><h1 tabIndex={-1} data-page-title>Issues</h1></PageBar>
@@ -215,7 +217,7 @@ export function IssuesPage() {
       <NotConnected rows={rows} />
     </>
   ) : detail ? (
-    <IssueDetail key={`${detail.tracker}:${detail.scope}:${detail.key}`} tracker={detail.tracker} scope={detail.scope} issueKey={detail.key} />
+    <IssueDetail key={`${detail.tracker}:${detail.scope}:${detail.key}`} tracker={detail.tracker} scope={detail.scope} issueKey={detail.key} host={host} />
   ) : (
     <IssuesList trackers={rows} />
   );

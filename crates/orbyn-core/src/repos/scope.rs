@@ -37,15 +37,20 @@ impl Core {
         }
     }
 
-    /// The repository id a diff of this thread names on its files: the one asked for, else the primary. `None` for
-    /// an ordinary thread, whose files name no repository.
+    /// The repository id a diff of this thread names on its files: the one asked for, else the same primary
+    /// repository `scoped_thread` reads, which is the first stored one and not always the project's folder.
+    /// `None` for an ordinary thread, whose files name no repository.
     pub fn diff_repo(&self, thread_id: &str, asked: Option<&str>) -> Result<Option<String>> {
-        if !self.config.multi_repo || self.store.thread_repos(thread_id)?.is_empty() {
+        if !self.config.multi_repo {
             return Ok(None);
         }
+        let repos = self.store.thread_repos(thread_id)?;
+        let Some(first) = repos.first() else {
+            return Ok(None);
+        };
         Ok(Some(match asked {
             Some(id) => id.to_owned(),
-            None => self.store.thread(thread_id)?.project_id,
+            None => first.repo_id.clone(),
         }))
     }
 
