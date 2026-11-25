@@ -5,9 +5,7 @@ mod support;
 use std::process::{Command, Output};
 
 use serde_json::Value;
-#[cfg(unix)]
-use support::Service;
-use support::{Options, TempDir, setup};
+use support::{Options, Service, TempDir, setup};
 
 const ORBYN: &str = env!("CARGO_BIN_EXE_orbyn");
 
@@ -116,6 +114,71 @@ async fn projects_and_the_theme_change_from_the_command_line() {
     assert_eq!(report["repaired"], false);
     let fixed = parsed(&run(&data, &["doctor", "--fix", "--json"]).await);
     assert_eq!(fixed["repaired"], true);
+    service.stop().await;
+}
+
+/// The theme write is `PUT /api/preferences`, an enforced `Person` route, so a program holding only the
+/// service token never reaches it. The refusal names the desktop app, where the theme is changed (#984),
+/// and nothing is written; `theme show` still reads. No development override here, so this is the shipped
+/// answer of a service `orbyn start` started: `403 desktop_required`.
+#[tokio::test]
+async fn theme_writes_are_refused_with_the_desktop_app_named() {
+    let dir = TempDir::new();
+    let data = dir.path().join("data");
+    let service = Service::start(
+        &data,
+        Options {
+            env: vec![("ORBYN_DEV_DISABLE_PERSON_KEY".into(), "0".into())],
+            ..Options::default()
+        },
+    );
+    assert_eq!(stdout(&run(&data, &["theme", "show"]).await).trim(), "");
+
+    let refused = run(&data, &["theme", "set", "light"]).await;
+    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&refused.stderr).trim(),
+        "Only the desktop app can set the theme: the write is a `Person` route, and this program holds \
+         only the service token. Change it in the desktop app's Appearance settings."
+    );
+    let cleared = run(&data, &["theme", "clear"]).await;
+    assert_eq!(cleared.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&cleared.stderr).trim(),
+        "Only the desktop app can clear the theme: the write is a `Person` route, and this program holds \
+         only the service token. Change it in the desktop app's Appearance settings."
+    );
+    assert_eq!(
+        stdout(&run(&data, &["theme", "show"]).await).trim(),
+        "",
+        "a refused write stores nothing"
+    );
+    service.stop().await;
+}
+
+/// The other launch mode: a service the desktop shell started holds the person key, so the same route
+/// answers `403 person_required` instead. The CLI cannot present that key either, and says the same thing.
+#[tokio::test]
+async fn theme_writes_name_the_desktop_app_against_a_desktop_owned_service() {
+    let dir = TempDir::new();
+    let data = dir.path().join("data");
+    let service = Service::start(
+        &data,
+        Options {
+            args: vec!["--parent-stdin".into()],
+            env: vec![("ORBYN_DEV_DISABLE_PERSON_KEY".into(), "0".into())],
+        },
+    );
+    assert!(service.person_key.is_some(), "the shell holds the key");
+    assert_eq!(stdout(&run(&data, &["theme", "show"]).await).trim(), "");
+    let refused = run(&data, &["theme", "set", "light"]).await;
+    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&refused.stderr).trim(),
+        "Only the desktop app can set the theme: the write is a `Person` route, and this program holds \
+         only the service token. Change it in the desktop app's Appearance settings."
+    );
+    assert_eq!(stdout(&run(&data, &["theme", "show"]).await).trim(), "");
     service.stop().await;
 }
 
