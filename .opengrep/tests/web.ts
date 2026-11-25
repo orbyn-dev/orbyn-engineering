@@ -31,7 +31,9 @@ export function escape(selector: string) {
   const b = selector.replace(/[.[\\\]]/g, "\\$&");
   // ok: orbyn-js-regex-escape-skips-backslash
   const c = selector.replace(/[.[\]]/g, "_");
-  return [a, b, c];
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const d = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [a, b, c, d];
 }
 
 export function names(name: string, text: string) {
