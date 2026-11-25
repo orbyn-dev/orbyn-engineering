@@ -6,9 +6,8 @@
 :root[data-theme="dark"] .settings-page {
   --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-opacity='.94' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 10l5 5 5-5'/%3E%3C/svg%3E");
 }
-.settings-page .settings-title {
-  font-size: var(--text-section);
-}
+/* The page title keeps the shared page-title size from pages.css: Settings draws its title in a span rather than an h1, but it
+   is the page title every other page draws, and re-declaring its size here drew Settings one step smaller than those pages (#1115). */
 .settings-page .setting-group h2 {
   padding: 12px 0 6px;
 }
