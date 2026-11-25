@@ -51,7 +51,7 @@ export function CommentBox({ issue, write, writing }: { issue: IssueDetail; writ
   };
   if (refused) {
     return (
-      <form className="iss-edit iss-comment" aria-label="Comment">
+      <form className="iss-edit" aria-label="Comment">
         <label htmlFor={field} className="iss-edit-label">Comment</label>
         <textarea id={field} rows={4} disabled />
         <div className="iss-edit-foot">
@@ -63,7 +63,7 @@ export function CommentBox({ issue, write, writing }: { issue: IssueDetail; writ
     );
   }
   return (
-    <form className="iss-edit iss-comment" aria-label="Comment" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+    <form className="iss-edit" aria-label="Comment" onSubmit={(event) => { event.preventDefault(); void save(); }}>
       <label htmlFor={field} className="iss-edit-label">Comment</label>
       <textarea
         id={field}
