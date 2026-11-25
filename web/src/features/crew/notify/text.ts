@@ -8,7 +8,10 @@ import type { Route } from "../../../product/state/route";
 /** The Needs you inbox: where a notice goes when its item carries no thread of its own. */
 export const NEEDS_YOU_INBOX: Route = { name: "crew", tab: "inbox" };
 
-/** The Review queue the inbox's review rows open. */
+/** The Approvals tab: the one screen where a held command is approved, denied or dismissed. */
+export const APPROVALS: Route = { name: "crew", tab: "approvals" };
+
+/** The Review queue the inbox's review rows open (the Approvals tab). */
 export const REVIEW_QUEUE: Route = { name: "crew", tab: "approvals" };
 
 /** The longest line a system card is given. */
@@ -83,9 +86,11 @@ export function noticeOf(item: NeedsYouItem): Notice {
     case "merge_waiting":
       return { title: "The merge waits for you", lines: reasonLines(item), target: NEEDS_YOU_INBOX };
     case "merge_gate_waiting":
-      return { title: "A merge waits for your release", lines: reasonLines(item), target: NEEDS_YOU_INBOX };
+      // No live Merge queue tab exists yet: the task's Flow line is where this wait shows (its Merge cell says
+      // "Needs you"), while the Inbox draws no row for the kind.
+      return { title: "A merge waits for your release", lines: reasonLines(item), target: { name: "crew", tab: "flow", task: item.id } };
     case "command_approval":
-      return { title: "A command waits for your approval", lines: reasonLines(item), target: NEEDS_YOU_INBOX };
+      return { title: "A command waits for your approval", lines: reasonLines(item), target: APPROVALS };
     case "background_review":
       return { title: "The review waits for you", lines: reasonLines(item), target: REVIEW_QUEUE };
     case "watch_failing": {

@@ -751,6 +751,41 @@ async fn a_held_command_is_its_own_wait_and_a_decision_drops_it() {
     );
 }
 
+/// A hold whose worker's task ended is not a wait: approving it would fail (the approve path finds no live worker and
+/// closes the hold as over), so it must not be counted or announced. The field drops it on its own read, which sweeps
+/// nothing and leaves the hold's book as it found it; a sweep closes the hold later.
+#[tokio::test]
+async fn a_held_command_for_an_ended_task_is_not_a_wait() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let task = started_hanging(&w, "Hold a command.").await;
+    let hold = crate::crew::fixtures::hold_command(
+        &w.core,
+        &task,
+        std::path::Path::new("checkout"),
+        "make deploy",
+    );
+    let found = || {
+        items(&w)
+            .into_iter()
+            .find(|item| item.kind == NeedsYouKind::CommandApproval && item.id == hold)
+    };
+    // Its worker still runs the task, so the hold waits for the person.
+    assert!(found().is_some(), "a live worker's hold is a wait");
+
+    stop_task(&w, &task, "repeated_failure");
+    assert!(found().is_none(), "a hold whose task ended is not a wait");
+    // The read wrote nothing behind the item: no hold ended, and no ledger row says one did.
+    assert!(
+        w.core
+            .store
+            .crew_autopilot_events(&task)
+            .unwrap()
+            .iter()
+            .all(|event| event.kind != "hold_ended"),
+        "the needs-you read must not sweep the held book"
+    );
+}
+
 /// A merge the queue holds for the person at the gate is its own kind, not the review wait of a merge that already
 /// landed; the person's release moves the entry out of the gate and drops the wait.
 #[tokio::test]

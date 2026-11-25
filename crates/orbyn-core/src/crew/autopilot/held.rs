@@ -719,18 +719,34 @@ impl Core {
     }
 
     /// The holds still waiting for the person, for the one needs-you field. A snapshot of the in-memory book: it sweeps
-    /// nothing and reads nothing, and a hold past its deadline is no longer a wait even before a sweep closes it.
+    /// nothing, and a hold past its deadline is no longer a wait even before a sweep closes it. A hold whose worker's task
+    /// is over is not a wait either — the task ended and the approve path would close the hold as over — even though the
+    /// hold stays in the book until its deadline or the next sweep. The live-worker check reads the store, so it runs
+    /// outside the book's borrow, as `held_sweep` does.
     pub(crate) fn held_waiting(&self, now: i64) -> Vec<HeldWaiting> {
-        self.held_book()
+        let open: Vec<(HeldWaiting, String)> = self
+            .held_book()
             .items
             .iter()
             .filter(|item| item.stage == Stage::Held && item.deadline > now)
-            .map(|item| HeldWaiting {
-                id: item.id.clone(),
-                task_id: item.task_id.clone(),
-                crew_id: item.crew_id.clone(),
-                held_at: item.held_at,
+            .map(|item| {
+                (
+                    HeldWaiting {
+                        id: item.id.clone(),
+                        task_id: item.task_id.clone(),
+                        crew_id: item.crew_id.clone(),
+                        held_at: item.held_at,
+                    },
+                    item.thread_id.clone(),
+                )
             })
+            .collect();
+        open.into_iter()
+            .filter(|(waiting, thread)| {
+                self.live_worker(thread)
+                    .is_some_and(|(task, _)| task.id == waiting.task_id)
+            })
+            .map(|(waiting, _)| waiting)
             .collect()
     }
 
