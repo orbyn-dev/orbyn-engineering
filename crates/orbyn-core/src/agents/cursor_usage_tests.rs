@@ -295,3 +295,27 @@ async fn plain_http_to_another_host_is_refused_before_any_request() {
     assert_eq!(usage.error.as_deref(), Some(GENERIC));
     assert!(usage.records.is_empty());
 }
+
+#[test]
+fn only_the_exact_loopback_hosts_may_take_the_token_over_plain_http() {
+    for base in [
+        "http://localhost",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://[::1]:3000",
+    ] {
+        assert!(is_loopback(base), "{base}");
+    }
+    for base in [
+        "http://localhost.evil.test",
+        "http://127.0.0.1.evil.test",
+        "http://localhost@evil.test",
+        "http://127.0.0.1@evil.test",
+        "http://localhost:80@evil.test",
+        "http://cursor.example.invalid",
+        "https://localhost",
+        "localhost",
+    ] {
+        assert!(!is_loopback(base), "{base}");
+    }
+}
