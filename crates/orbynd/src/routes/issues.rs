@@ -1,5 +1,6 @@
 //! Issue trackers (docs/issues.md). Beta, behind `CoreConfig::issues`: with it off every route here answers 404.
-//! Reads are `Local`. Connecting, disconnecting, linking and starting a thread are `Person` routes.
+//! Reads are `Local`; connecting, disconnecting, binding a project's tracker, creating, commenting, reacting, linking
+//! and starting a thread are `Person` routes (docs/issues.md).
 
 use axum::Json;
 use axum::Router;
