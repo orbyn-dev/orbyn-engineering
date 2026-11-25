@@ -110,6 +110,15 @@ pub(crate) async fn finished(store: &Store, scope: &RunScope, paths: &[String]) 
     let Some(write_scope) = &scope.write_scope else {
         return;
     };
+    // A multi-repository thread keeps its checkpoints in the repositories' worktrees, not in the task folder its
+    // engine writes through, so that folder cannot answer what a file held: the start stays `unknown` rather than
+    // being guessed as absent (docs/multi-repo.md).
+    if store
+        .thread_repos(&scope.thread_id)
+        .is_ok_and(|repos| !repos.is_empty())
+    {
+        return;
+    }
     let Ok(Some(checkpoint)) = store.checkpoint(&scope.run_id) else {
         return;
     };
