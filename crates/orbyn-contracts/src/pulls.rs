@@ -419,6 +419,8 @@ pub struct StackAction {
 wire! {
 pub struct PullWatch {
     pub thread_id: String,
+    /// The repository the watch belongs to: the project's id for the primary repository, as every `repo_id` here.
+    pub repo_id: String,
     pub number: u64,
     pub created_at: String,
 }

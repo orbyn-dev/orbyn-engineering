@@ -797,8 +797,11 @@ removed. The removal is refused, with no paths in the error, when `git status --
 ignored files. Commits and branches are never touched.
 
 Linked pull requests are polled every two minutes, and a refresh links the open pull
-request of the checkout's branch. The link is kept per thread and number, so a pull
-request's own linked threads are the project's threads that linked it.
+request of the checkout's branch. A link and its watch are kept per thread, repository
+and number, so two repositories can both have a #12, and a pull request's own linked
+threads are the project's threads that linked it. A watch route names the repository with
+`?repo_id=`, absent meaning the thread's primary repository, and a watch pass reads each
+watch in its own repository's worktree.
 `GET .../pulls/:number/breakdown` counts its changed files by change kind from the
 same rows `/files` serves, so it adds no forge read. A merge settles the thread when
 `on_merge` is set and the thread has not opted out. A watch wakes its thread, through the queue, when a
@@ -3999,7 +4002,7 @@ every method, path and which routes need a credential.
 | `GET /api/clones`, `POST /api/clones` | `CloneJob[]`; start a background clone (`202`), with an optional `path` |
 | `POST /api/clones/:id/cancel`, `/retry` | Stop a running clone; run a failed or cancelled one again |
 | `GET, POST /api/threads/:id/pulls`, `POST .../pulls/refresh` | Linked pull requests; refresh also links the branch's own |
-| `GET /api/threads/:id/watches`, `POST, DELETE /api/threads/:id/pulls/:number/watch` | `PullWatch`; `400` on a settled, archived or subagent thread |
+| `GET /api/threads/:id/watches?repo_id=`, `POST, DELETE /api/threads/:id/pulls/:number/watch?repo_id=` | `PullWatch`; `400` on a settled, archived or subagent thread; `repo_id` names one repository of a multi-repository thread, absent is its primary |
 | `POST /api/watches/check` | One watch pass now (`204`) |
 | `GET, DELETE /api/threads/:id/pulls/:number` | `PullRequestDetail`; unlink |
 | `POST /api/threads/:id/pulls/:number/review`, `/merge` | Review and merge through the forge CLI |

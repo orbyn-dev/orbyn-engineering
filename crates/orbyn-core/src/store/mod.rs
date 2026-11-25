@@ -110,6 +110,8 @@ mod plan_mode_reset_tests;
 mod profiles;
 #[cfg(test)]
 mod pull_repos_tests;
+#[cfg(test)]
+mod pull_watch_repos_tests;
 pub use profiles::{
     CrewApply, EngineSwitch, PROFILE_LIMIT, ProfileRow, ProfileSettings, ThreadApply,
 };

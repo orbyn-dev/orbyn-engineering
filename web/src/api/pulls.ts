@@ -129,9 +129,11 @@ export const pullsApi = {
     request<void>("POST", `/api/threads/${q(threadId)}/pulls/${number}/review${repoQuery(repoId)}`, { event, body, comments: [] }),
   threadMerge: (threadId: string, number: number, options: MergePull, repoId?: string) =>
     request<void>("POST", `/api/threads/${q(threadId)}/pulls/${number}/merge${repoQuery(repoId)}`, options),
-  watches: (threadId: string, signal?: AbortSignal) =>
-    request<PullWatch[]>("GET", `/api/threads/${q(threadId)}/watches`, undefined, signal),
-  watch: (threadId: string, number: number) => request<void>("POST", `/api/threads/${q(threadId)}/pulls/${number}/watch`),
-  unwatch: (threadId: string, number: number) =>
-    request<void>("DELETE", `/api/threads/${q(threadId)}/pulls/${number}/watch`),
+  /** The thread's watches in one repository of a multi-repository thread; absent is its primary and sends no parameter. */
+  watches: (threadId: string, signal?: AbortSignal, repoId?: string) =>
+    request<PullWatch[]>("GET", `/api/threads/${q(threadId)}/watches${repoQuery(repoId)}`, undefined, signal),
+  watch: (threadId: string, number: number, repoId?: string) =>
+    request<void>("POST", `/api/threads/${q(threadId)}/pulls/${number}/watch${repoQuery(repoId)}`),
+  unwatch: (threadId: string, number: number, repoId?: string) =>
+    request<void>("DELETE", `/api/threads/${q(threadId)}/pulls/${number}/watch${repoQuery(repoId)}`),
 };

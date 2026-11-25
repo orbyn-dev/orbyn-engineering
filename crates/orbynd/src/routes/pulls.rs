@@ -536,28 +536,40 @@ pub async fn ask_about_stop(
     ))
 }
 
+/// The watches of one repository of the thread, the primary one when none is named.
 pub async fn watches(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<RepoQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.thread_watches(&id)?))
+    Ok(Json(
+        orbyn_core::in_repo(query.repo_id, async { state.core.thread_watches(&id) }).await?,
+    ))
 }
 
 pub async fn watch(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<RepoQuery>,
 ) -> ApiResult<impl IntoResponse> {
     Ok((
         StatusCode::CREATED,
-        Json(state.core.watch_pull(&id, number)?),
+        Json(
+            orbyn_core::in_repo(query.repo_id, async { state.core.watch_pull(&id, number) })
+                .await?,
+        ),
     ))
 }
 
 pub async fn unwatch(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<RepoQuery>,
 ) -> ApiResult<StatusCode> {
-    state.core.store.unwatch_pull(&id, number)?;
+    orbyn_core::in_repo(query.repo_id, async {
+        state.core.unwatch_pull(&id, number)
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -577,7 +589,7 @@ pub async fn forges(
 
 /// A multi-repository thread's repository for a pull request call, as `?repo_id=`; absent is the primary one.
 #[derive(serde::Deserialize)]
-struct RepoQuery {
+pub(super) struct RepoQuery {
     #[serde(default)]
     repo_id: Option<String>,
 }
