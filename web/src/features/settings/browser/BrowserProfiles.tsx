@@ -71,7 +71,8 @@ function NewProfileRow({ onDone, onCancel }: { onDone(): void; onCancel(): void 
   );
 }
 
-/** The rename dialog: one field, Cancel and Save. Enter saves; Escape cancels. Only the stored name changes. */
+/** The rename dialog: one field, Cancel and Save. Enter saves; Escape cancels. Only the stored name changes, and a name
+ * that is unchanged once trimmed closes without a write, as the design's Rename thread dialog does. */
 function RenameDialog({ profile, onClose, onRenamed }: { profile: BrowserProfile; onClose(): void; onRenamed(name: string): void }) {
   const [value, setValue] = useState(profile.name);
   const [busy, setBusy] = useState(false);
@@ -80,6 +81,8 @@ function RenameDialog({ profile, onClose, onRenamed }: { profile: BrowserProfile
   const next = value.trim();
   const save = async () => {
     if (pending.current || !next) return;
+    // The same name, spaces aside, is not a write: Save closes the dialog and nothing is sent or said.
+    if (next === profile.name) { onClose(); return; }
     pending.current = true;
     setBusy(true);
     setSaid(null);

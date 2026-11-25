@@ -108,6 +108,34 @@ describe("Settings › Browser", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("closes an unchanged name without a write or a toast, and treats extra spaces as unchanged", async () => {
+    const user = userEvent.setup();
+    render(<BrowserProfilesSection />);
+    await user.click(await screen.findByRole("button", { name: "Rename Work…" }));
+    await user.click(within(await screen.findByRole("dialog", { name: "Rename the profile Work?" })).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(wireWrites()).toEqual([]);
+    expect(useUi.getState().toasts).toEqual([]);
+
+    await user.click(screen.getByRole("button", { name: "Rename Work…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename the profile Work?" });
+    const field = within(dialog).getByRole("textbox", { name: "Profile name" });
+    await user.clear(field);
+    await user.type(field, "Work  ");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(wireWrites()).toEqual([]);
+    expect(useUi.getState().toasts).toEqual([]);
+    expect(screen.getByText("Work")).toBeVisible();
+  });
+
+  it("the dev mock validates a rename like the service: 1 to 64 characters and a known id", () => {
+    expect(mock.handle("POST", "/api/browser-profiles/p1/rename", { name: "x".repeat(70) })).toEqual({ status: 400, body: { code: "invalid_input", message: "A profile name is 1 to 64 characters." } });
+    expect(mock.handle("POST", "/api/browser-profiles/p1/rename", { name: "  " })).toEqual({ status: 400, body: { code: "invalid_input", message: "A profile name is 1 to 64 characters." } });
+    expect(mock.handle("POST", "/api/browser-profiles/missing/rename", { name: "Home" })).toEqual({ status: 404, body: { code: "not_found", message: "Profile not found." } });
+    expect(mock.handle("POST", "/api/browser-profiles/p1/rename", { name: " Home " })).toEqual({ status: 200, body: { id: "p1", name: "Home", in_use: false } });
+  });
+
   it("shows the service’s refusal of a bad name in the dialog, keeps the old name and lets Save try again", async () => {
     const user = userEvent.setup();
     render(<BrowserProfilesSection />);
