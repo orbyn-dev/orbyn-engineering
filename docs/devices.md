@@ -326,14 +326,17 @@ argv table and the one-writer set; `crates/orbynd/src/routes/devices.rs` owns th
 - **Always on, no feature flag**, like the neighbouring preview and media routes; a client that reaches an older service still
   gets the `404` for which the web draws the disabled entry.
 
-## Agent tools (group 1)
+## Agent tools (groups 1 and 3)
 
-Two MCP tools let an agent ask about this machine's devices. Both are **effect** tools, like the
-pull write tools: each call goes through the app approval gate on its own, so a person allows or
-denies it, or the thread's permission mode or a rule answers; nothing is auto-approved. A Crew
-worker is refused both with the same words the pull write tools use. Each call the gate allows
-writes one audit row **before** the device call it describes (architecture rule 6), `device.tool.list`
-or `device.tool.screenshot`, with the calling engine as actor, a fixed empty detail and the device
+Nine MCP tools let an agent ask about and drive this machine's devices. All are **effect** tools,
+like the pull write tools: each call goes through the app approval gate on its own, so a person
+allows or denies it, or the thread's permission mode or a rule answers; nothing is auto-approved.
+The gate summary names the action and, for everything but the list, the one device it will touch,
+so the confirmation says what will happen (for example "Power off device android:Pixel_8"). A Crew
+worker is refused every one with the same words the pull write tools use. Each call the gate allows
+writes one audit row **before** the device call it describes (architecture rule 6), named
+`device.tool.<action>` (`list`, `screenshot`, `fold`, `unfold`, `rotate`, `button`, `hinge`,
+`hinge_preset`, `power_off`), with the calling engine as actor, a fixed empty detail and the device
 id as target: none for the list, the id when it is a short id with no path separator or control
 character, and `-` otherwise, so a path can never reach the row. A call the gate denies writes the
 gate's own deny row and no device row. The row never carries the answer, an image or a path.
@@ -342,6 +345,22 @@ gate's own deny row and no device row. The row never carries the answer, an imag
 | --- | --- | --- |
 | `orbyn_device_list` | none | The same list `GET /api/devices` answers, as JSON; gate summary "List the devices on this machine". |
 | `orbyn_device_screenshot` | `device_id` | The same effect as `POST /api/devices/{id}/actions` with `{"type":"screenshot"}`, through the service's own `Devices::act`, so the id is matched against the list the service rebuilt and only the service's stored tool id reaches a process. The answer is the action route's own `{ok, device, image}`, the image as base64 PNG; gate summary "Take a screenshot of device <device_id>". An unknown id is the service's `device_not_found`. |
+| `orbyn_device_fold` | `device_id` | The same effect as the action route's `{"type":"fold"}`: a booted foldable device folds to posture `closed`. Gate summary "Fold device <device_id>". |
+| `orbyn_device_unfold` | `device_id` | `{"type":"unfold"}`: the posture becomes `opened`. Gate summary "Unfold device <device_id>". |
+| `orbyn_device_rotate` | `device_id`, `value` | `{"type":"rotate","value":...}`, where `value` is `portrait`, `landscape_left`, `portrait_upside_down` or `landscape_right`; the service sends the value the caller chose and does not cycle. Gate summary "Rotate device <device_id> to <value>". |
+| `orbyn_device_button` | `device_id`, `value` | `{"type":"button","value":...}`, where `value` is `home` on both platforms and `back` or `recents` on Android only. Gate summary "Press the <value> button on device <device_id>". |
+| `orbyn_device_hinge` | `device_id`, `angle` | `{"type":"hinge","angle":...}`, where `angle` is a whole number from 1 to 179. Gate summary "Set the hinge angle of device <device_id> to <angle> degrees". |
+| `orbyn_device_hinge_preset` | `device_id`, `preset` | `{"type":"hinge_preset","preset":...}`, where `preset` is `closed`, `half_open` or `open`; the service owns the angle (0, 130 and 180). Gate summary "Set the hinge preset of device <device_id> to <preset>". |
+| `orbyn_device_power_off` | `device_id` | `{"type":"power_off"}`: the answer's device is read back as `shutdown`. Gate summary "Power off device <device_id>". |
+
+Every action above goes through the service's own `Devices::act`, so the id is matched against the
+list the service rebuilt, only the service's stored tool id reaches a process, and the answer is the
+action route's own `{ok, device}` read back after the change. The `value`, `preset` and `angle`
+arguments are checked against the fixed sets before the gate is asked, so an invalid action never
+becomes an approval request. A wrong id, a shutdown device, a device that does not fold and an
+unsupported platform action are the service's own codes and fixed copy: `device_not_found`,
+`device_not_booted`, `not_foldable`, `action_unsupported`, and `tool_missing` when that platform's
+tools are gone; a failing tool is `tool_failed`, `tool_timeout` or `tool_output_too_large`.
 
 A screenshot over the tool's 192 KiB image cap is still taken and read back, but the answer leaves
 the image out and says its size in `image_base64_bytes` and `note`; the reply itself is capped at
@@ -350,5 +369,4 @@ the image out and says its size in `image_base64_bytes` and `note`; the reply it
 The tools are listed only when this machine has at least one platform's tools, as the list decides
 that (Android: `adb` and the emulator; iOS: `xcrun`). On a machine with none they are absent from
 `tools/list` and a call is not found, like any unknown tool; the check is the service's own
-`Devices::tools_available`, read once per process. Groups 2 and 3 (open, close, fold, rotate,
-button, power off) are not built.
+`Devices::tools_available`, read once per process.
