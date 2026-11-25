@@ -3,17 +3,19 @@
  * the service, and only a test or the dev-only preview (`#/preview/issues`) installs this through `setIssuesApi`. Fixtures follow
  * the Engineer frames `t3gap-issue*`; none holds a credential, because the contract has no field for one on the way out. The mock
  * also answers the Issue writes and list controls of docs/issues.md ("Issue writes and list controls"): `sort`, `update`, `state`
- * and `candidates`, which the service does not build yet. `edits: false` is a service without them (the 404 the real one would
- * send), and `noStates: true` a detail that carries no `states`.
+ * and `candidates`; and the comment write of "Create, comment, react, templates and project binding": one
+ * `POST /api/issues/item/comment` appends the stored comment to the issue the screen reads next. `edits: false` is a service
+ * without the edit writes (the 404 the real one would send), `noComment: true` one without the comment route, and
+ * `noStates: true` a detail that carries no `states`.
  */
 import { ApiFailure } from "../src/api/client.ts";
 import type { Thread } from "../src/api/types.ts";
 import {
   TRACKER_KINDS,
-  type IssueCandidates, type IssueDetail, type IssueList, type IssueUpdateInput, type IssueState, type IssueQuery, type IssueRef, type IssueSummary, type IssuesApi, type LinkedPullRequest, type IssueTarget, type StartThreadInput, type TrackerKind, type TrackerRow,
+  type IssueCandidates, type IssueComment, type IssueDetail, type IssueList, type IssueUpdateInput, type IssueState, type IssueQuery, type IssueRef, type IssueSummary, type IssuesApi, type LinkedPullRequest, type IssueTarget, type StartThreadInput, type TrackerKind, type TrackerRow,
 } from "../src/features/issues/contract.ts";
 import { applyQuery } from "../src/features/issues/model.ts";
-import { updateProblem } from "../src/features/issues/edit.ts";
+import { commentProblem, updateProblem } from "../src/features/issues/edit.ts";
 
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 const REPO = "orbyn-dev/orbyn-engineering";
@@ -79,7 +81,7 @@ export interface IssuesMock extends IssuesApi {
    */
   /** Every list read, in order: the query and the `cursors` it carried (`undefined` for the first page). */
   listed: { query: IssueQuery; cursors: Record<string, string> | undefined }[];
-  failNext(what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates" | "token" | "keychain" | "host" | "reject" | "unreachable" | null): void;
+  failNext(what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates" | "comment" | "token" | "keychain" | "host" | "reject" | "unreachable" | null): void;
   /** Every candidates read, as `<tracker> <scope>`. */
   candidatesRead: string[];
 }
@@ -90,6 +92,8 @@ export function createIssuesMock(init: {
   fixedState?: TrackerKind[];
   /** A service that has no Issue writes, candidates or sort: those routes answer the 404 a missing route gives. Default: it has them. */
   edits?: boolean;
+  /** A service that has no comment route: `POST /api/issues/item/comment` answers the 404 a missing route gives. Default: it has one. */
+  noComment?: boolean;
   /** A detail that carries no `states`: the service has no state change. */
   noStates?: boolean;
   /** Answer the candidates with this many fewer than exist, and `truncated: true`. */
@@ -112,7 +116,7 @@ export function createIssuesMock(init: {
   const bodies = new Map<string, string>();
   const candidatesRead: string[] = [];
   const noRoute = () => new ApiFailure("http_404", "The server answered 404.", 404);
-  const take = (what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates") => {
+  const take = (what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates" | "comment") => {
     if (fail !== what) return;
     fail = null;
     throw new ApiFailure("tracker_unavailable", "GitHub did not answer.", 502);
@@ -120,11 +124,18 @@ export function createIssuesMock(init: {
   const connectedIssues = () => issues.filter((one) => trackers?.some((row) => row.tracker === one.tracker && row.connected));
   const find = (ref: IssueTarget) => connectedIssues().find((one) => one.tracker === ref.tracker && one.scope === ref.scope && one.key === ref.key);
   const same = (a: IssueTarget, b: IssueTarget) => a.tracker === b.tracker && a.scope === b.scope && a.key === b.key;
+  const comments = new Map<string, IssueComment[]>();
+  const commentKey = (one: Pick<IssueSummary, "tracker" | "scope" | "key">) => `${one.tracker}:${one.scope}:${one.key}`;
+  /** The tracker's comments for one issue: the fixtures until someone comments here, oldest first. */
+  const commentsOf = (one: IssueSummary): IssueComment[] => comments.get(commentKey(one)) ?? [
+    { id: "c1", author: { login: "sam" }, body: "Reproduced. The redirect reads `next` but never uses it.", created_at: ago(1440) },
+    { id: "c2", author: { login: "mika" }, body: "The picker has the same problem when it is opened from a link.", created_at: ago(240) },
+  ];
   const detailOf = (one: IssueSummary): IssueDetail => ({
     ...one, labels: [...one.labels], assignees: [...one.assignees], linked_pull_requests: init.pullRequests?.[one.key] ?? [], linked_threads: Object.keys(links).filter((id) => links[id]!.some((held) => same(held, one))),
     ...(init.noStates ? {} : { states: init.fixedState?.includes(one.tracker) ? [] : transitionFixtures(one.tracker) }),
     body: bodies.get(`${one.tracker}:${one.scope}:${one.key}`) ?? DETAIL_BODY,
-    comments: [{ id: "c1", author: { login: "sam" }, body: "Reproduced. The redirect reads `next` but never uses it.", created_at: ago(1440) }, { id: "c2", author: { login: "mika" }, body: "The picker has the same problem when it is opened from a link.", created_at: ago(240) }],
+    comments: commentsOf(one),
   });
   const pool = (): IssueCandidates => init.candidates ?? {
     labels: [...new Set([...issues.flatMap((one) => one.labels.map((label) => label.name)), "good first issue", "docs"])].map((name) => ({ name })),
@@ -228,6 +239,23 @@ export function createIssuesMock(init: {
       issues[at] = { ...issues[at]!, state, updated_at: new Date().toISOString() };
       refresh(at, ref);
       return detailOf(issues[at]!);
+    },
+    // One POST /api/issues/item/comment, the body as typed: the route checks it and answers the stored comment, which the
+    // screen appends where the tracker's comments are. A blank or over-limit body is the route's own 400, as the service gives.
+    comment: async (ref, body) => {
+      writes.push(`comment:${ref.key}:${body}`);
+      await wait();
+      if (init.noComment) throw noRoute();
+      take("comment");
+      const problem = commentProblem(body);
+      if (problem) throw new ApiFailure("invalid", problem, 400);
+      const at = issues.findIndex((one) => same(one, ref));
+      if (at < 0) throw new ApiFailure("not_found", "No such issue.", 404);
+      const stored: IssueComment = { id: `c${commentsOf(issues[at]!).length + 1}`, author: { login: init.viewer ?? "riley" }, body, created_at: new Date().toISOString() };
+      comments.set(commentKey(ref), [...commentsOf(issues[at]!), stored]);
+      issues[at] = { ...issues[at]!, comment_count: issues[at]!.comment_count + 1 };
+      refresh(at, ref);
+      return stored;
     },
     // What the service builds (docs/issues.md, "Issue text is untrusted"): the title on one line, the body cut at 16 KiB with the
     // markers removed from it, then framed as data.
