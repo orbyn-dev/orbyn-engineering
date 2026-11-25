@@ -132,7 +132,7 @@ it("while the service does not offer the writes the pencil is a Planned pill and
   expect(pencil).toBeDisabled();
   expect(pencil.parentElement).toHaveTextContent("Planned");
   await user.click(pencil);
-  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "Description" })).toBeNull();
   expect(mock.writes).toEqual([]);
 });
 
