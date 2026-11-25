@@ -42,8 +42,7 @@ matching case and a safe look-alike, and the one instance it named (`web/src/sty
 so the helper now carries a backslash through instead of eating it.
 
 The other four gaps are **open** and need the owner's decision. None is accepted here, and the advisory workflow stays
-non-required. The list was not re-run against the engine in that change: no local binary, so the parser set below is
-the 2026-11-23 re-check.
+non-required. The parser set below is the 2026-11-23 re-check; this change did not re-run the full scan.
 
 - **Gap 1 — parser limits, not rules.** Opengrep v2.0.0 could not parse five files under `crates/orbyn-core/src`
   (`host/process.rs:557`, `host/process/unix_tree.rs:85`, `governance/computer/mod.rs:323`,
@@ -57,9 +56,9 @@ the 2026-11-23 re-check.
   change neither made nor measured). Decision needed: accept the gap or fund those rules.
 - **Gap 4 — the side-by-side run has not happened.** Decision needed: choose the stretch in advance, then record what
   each scanner reports and the other misses (the CI-gate method in the `orbyn-opengrep` skill).
-- **Gap 5 — the session-storage question.** Seven test files write the launch token with
-  `sessionStorage.setItem("orbyn.token", ...)`. Decision needed: whether the product should keep it there; it is a
-  design decision, not a rule.
+- **Gap 5 — the session-storage question.** Ten test files write the launch token with
+  `sessionStorage.setItem("orbyn.token", ...)` (the issue counted seven). Decision needed: whether the product should
+  keep it there; it is a design decision, not a rule.
 
 Do not turn CodeQL off until gap 4 has run for that stretch and the owner has accepted gaps 1, 2 and 5.
 
