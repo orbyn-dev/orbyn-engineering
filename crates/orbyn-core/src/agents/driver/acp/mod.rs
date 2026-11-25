@@ -506,7 +506,9 @@ async fn run_protocol(
             } else if matches!(&*failure.error, CoreError::SessionLost) {
                 EngineOutcome::SessionLost
             } else {
-                EngineOutcome::Failed(failure.error.to_string())
+                EngineOutcome::Failed(crate::agents::driver::diagnostics::outward(
+                    &failure.error.to_string(),
+                ))
             };
             let _ = events.send(EngineEvent::Finished(outcome)).await;
             return;
@@ -597,7 +599,9 @@ async fn run_protocol(
                 }
                 break match result {
                     Ok(reply) => stop_outcome_after(&reply, sent, &agent_label),
-                    Err(error) => EngineOutcome::Failed(error.to_string()),
+                    Err(error) => EngineOutcome::Failed(
+                        crate::agents::driver::diagnostics::outward(&error.to_string()),
+                    ),
                 };
             }
         }
@@ -682,7 +686,7 @@ fn start_kiro_autopilot_correction(
 
 async fn open_session(
     rpc: &RpcClient,
-    inbound: &mut mpsc::UnboundedReceiver<Inbound>,
+    inbound: &mut mpsc::Receiver<Inbound>,
     spec: &RunSpec,
     slot: &SignInSlot,
     engine: &str,
