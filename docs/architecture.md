@@ -1135,12 +1135,16 @@ restoring a child leaves sibling changes and untracked files untouched.
 repository coordinate basis and expected cwd into optional checkout and repository
 paths. It returns no file content. Thread links prefer an existing safe file after
 stripping the longest repeated workspace suffix, then try the literal thread path.
-Only existing safe files inside cwd receive a checkout path; missing tracked files
-and sibling Git patches may retain repository coordinates for diff navigation.
-Ordinary file reads/writes and engine scope remain bounded to thread cwd. File and
-diff reveal intents are transient, capture thread/cwd before resolution, and consume
-only their own nonce. Route/cwd changes and newer navigation invalidate stale
-responses, including when an older request completes last.
+Only existing safe files inside the checkout receive a checkout path; missing tracked
+files and sibling Git patches may retain repository coordinates for diff navigation.
+A multi-repository thread resolves the reference in the repository its `repo_id`
+names, the primary repository when it is absent, so a worktree is the checkout and
+the task folder is never one; the request's and the answer's `cwd` stay the thread's
+stored folder, so a thread that moved meanwhile is still refused as stale. Ordinary
+file reads/writes and engine scope remain bounded to thread cwd. File and diff reveal
+intents are transient, capture thread/cwd before resolution, and consume only their
+own nonce. Route/cwd changes and newer navigation invalidate stale responses,
+including when an older request completes last.
 
 `POST /api/settings/preferences/query` resolves environment, logical-project or
 physical-checkout rows from one SQLite read snapshot. Effective values that differ
@@ -2937,7 +2941,9 @@ Unchanged ignored caches do not require broader scope or data removal; ignored n
 remain an accepted blind spot, pending isolated-checkout work (#436).
 Admission refuses an index with assume-unchanged or skip-worktree entries, including sparse
 checkouts; verification fails if either flag appears. Crew's scope, size and changed-path checks read Git without line-ending conversion;
-other Git reads keep their settings.
+other Git reads keep their settings. Those checks need Git 2.40 or later, which
+honours `GIT_ATTR_SOURCE`, so a checkout's own `.gitattributes` stays out of the
+read; older Git errors them rather than pass bytes it did not compare.
 Scope and size checks error on nonempty, unreadable or nonregular `info/attributes` overrides,
 which Git still reads independently of the tree attribute source; absent/empty readable files are accepted.
 A fix's touched-file guard compares the file's exact byte digest with the digest the core

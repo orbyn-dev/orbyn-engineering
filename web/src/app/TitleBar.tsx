@@ -6,6 +6,7 @@ import { SyncTitleButton, useSignedInAccount } from "../features/account";
 import { attentionRank, EnvironmentIdentity } from "../features/workspace";
 import { useAsync } from "../lib/useAsync";
 import { useReadingNav } from "./readingNav";
+import { commandShortcut, formatShortcut, useCommand } from "../product/shell/shortcuts";
 import { togglePhoneSidebar, toggleSidebarDrawer } from "../product/shell/sidebarDrawer";
 import type { LayoutWidth } from "../lib/useLayout";
 import { useUi } from "../product/state/ui";
@@ -75,9 +76,10 @@ export function useWindowFrame(): "lights" | "controls" | null {
   const info = useAsync("environment-identity", (signal) => api.info(signal));
   useEffect(() => {
     let live = true;
-    const read = () => void readShellStatus().then(() => live && setAttached(inDesktopApp()), () => undefined);
+    // A shell-changed event reads past any read in flight: that answer may hold the older facts.
+    const read = (fresh = false) => void readShellStatus(undefined, fresh).then(() => live && setAttached(inDesktopApp()), () => undefined);
     read();
-    const stop = onShellChange(read);
+    const stop = onShellChange(() => read(true));
     return () => {
       live = false;
       stop();
@@ -119,6 +121,10 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
   const ledger = useUi((state) => state.workspaceLayout === "ledger");
   const waiting = useWaitingCount();
   const account = useSignedInAccount();
+  // The person's keys, so a tooltip shows the chord a command really answers to.
+  const keymap = useAsync("keybindings", (signal) => api.keybindings(signal), { keep: true });
+  const reloadKeymap = keymap.reload;
+  useCommand("keybindings.reload", () => void reloadKeymap());
 
   // What the shell puts on screen, so the button and its label never disagree with the sidebar.
   const shown = navShown;
@@ -150,6 +156,15 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
   const end = useRef<HTMLSpanElement>(null);
   useBarEndWidth(end);
   const sidebarLabel = shown ? "Hide sidebar" : "Show sidebar";
+  // A command the saved keys do not name keeps its built-in key; one they remove has none, so its title says no key.
+  const titled = (label: string, command: string, builtIn: string) => {
+    const rules = keymap.data?.rules;
+    const key = rules?.some((rule) => rule.command === command) ? commandShortcut(rules, command) : builtIn;
+    return key ? `${label} (${formatShortcut(key)})` : label;
+  };
+  const sidebarTitle = titled(sidebarLabel, "sidebar.toggle", "mod+b");
+  const backTitle = titled("Back", "navigation.back", "mod+[");
+  const forwardTitle = titled("Forward", "navigation.forward", "mod+]");
 
   // One 44px bar in every layout (the v60 frames): it floats over the top of the page, where the page's own header
   // carries the title, chips and actions on the same centre line, with the sidebar shown or not. Only the phone,
@@ -168,6 +183,7 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
         type="button"
         className="tbi"
         aria-label={sidebarLabel}
+        title={sidebarTitle}
         aria-expanded={shown}
         data-sidebar-toggle
         onClick={
@@ -187,10 +203,10 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
       >
         <PanelLeft size={16} aria-hidden />
       </button>
-      <button type="button" className="tbi" aria-label="Back" aria-disabled={!trail.back} data-dim={!trail.back || undefined} onClick={() => trail.back && goBack()}>
+      <button type="button" className="tbi" aria-label="Back" title={backTitle} aria-disabled={!trail.back} data-dim={!trail.back || undefined} onClick={() => trail.back && goBack()}>
         <ChevronLeft size={16} aria-hidden />
       </button>
-      <button type="button" className="tbi" aria-label="Forward" aria-disabled={!trail.forward} data-dim={!trail.forward || undefined} onClick={() => trail.forward && goForward()}>
+      <button type="button" className="tbi" aria-label="Forward" title={forwardTitle} aria-disabled={!trail.forward} data-dim={!trail.forward || undefined} onClick={() => trail.forward && goForward()}>
         <ChevronRight size={16} aria-hidden />
       </button>
       <span ref={end} className="titlebar-end">
