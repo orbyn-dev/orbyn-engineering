@@ -199,7 +199,9 @@ fn lock(pending: &Pending) -> std::sync::MutexGuard<'_, HashMap<i64, oneshot::Se
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Sends one engine line to the driver; false once the driver's queue is gone.
+/// Sends one engine line to the driver. A full queue waits (the engine's own pipe is the backpressure); a queue
+/// whose driver is gone drops that frame and keeps routing responses, so a late engine notification cannot stop
+/// the pending calls of a short session.
 async fn route(message: Value, pending: &Pending, inbound: &mpsc::Sender<Inbound>) -> bool {
     let method = message.get("method").and_then(Value::as_str);
     let id = message.get("id").filter(|id| !id.is_null());
@@ -214,7 +216,7 @@ async fn route(message: Value, pending: &Pending, inbound: &mpsc::Sender<Inbound
                 .await
                 .is_err()
             {
-                return false;
+                return true;
             }
         }
         (Some(method), None) => {
@@ -226,7 +228,7 @@ async fn route(message: Value, pending: &Pending, inbound: &mpsc::Sender<Inbound
                 .await
                 .is_err()
             {
-                return false;
+                return true;
             }
         }
         (None, Some(id)) => {

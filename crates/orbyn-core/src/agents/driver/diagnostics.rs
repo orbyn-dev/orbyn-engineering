@@ -172,7 +172,7 @@ fn outward_patterns() -> &'static (regex::Regex, regex::Regex) {
         (
             regex::Regex::new(r"(?i)\b(https?://)[^/\s@]+@").expect("a fixed URL login pattern"),
             regex::Regex::new(
-                r"(?i)([?&](?:token|access_token|api[_-]?key|auth|secret|password|sig|signature|code)=)[^&#\s]*",
+                r"(?i)([?&](?:token|access_token|refresh_token|id_token|api[_-]?key|access[_-]?key|client_secret|secret|password|passwd|auth|sig|signature|session|code|key)=)[^&#\s]*",
             )
             .expect("a fixed URL credential-query pattern"),
         )
@@ -191,7 +191,7 @@ pub fn outward(text: &str) -> String {
 /// The message for a failed run: clean, and pointing at the vendor's own sign-in when
 /// that is the cause. Orbyn never runs that command for anyone.
 pub fn failure_message(text: &str, sign_in: Option<&str>) -> String {
-    let cleaned = clean(text);
+    let cleaned = outward(text);
     if !is_sign_in_failure(&cleaned) {
         return cleaned;
     }

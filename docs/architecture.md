@@ -2223,9 +2223,10 @@ holding the engine process. A resume must answer every open interrupt, replaying
 one is safe, and new input on a paused thread gets `RUN_ERROR`. `payload.approved`
 carries the decision and anything but `true` denies. The endpoint's response is read as
 SSE with an 8 MiB cap on a line and on one event's data: a stream that passes it fails the run
-with a plain sentence instead of buffering without bound. Each engine's stdio is read through a
+with a plain sentence instead of buffering without bound. Each engine driver reads its stdio through a
 bounded queue, so a flooding engine waits on its own pipe rather than growing the service's
-memory.
+memory (the host driver's per-run route channels are a separate path that is still unbounded; it is
+recorded for the next security pass).
 
 ## Instant reads
 
