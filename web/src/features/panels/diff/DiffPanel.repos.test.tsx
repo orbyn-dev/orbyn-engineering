@@ -163,8 +163,25 @@ it.each([["Open in editor"], ["Actions for auth/redirect.ts"]])("%s on a file of
   await waitFor(() => expect(useUi.getState().panelTab).toBe(id));
   expect(useUi.getState().panelTabOrder).toContain(id);
   expect(JSON.stringify(useUi.getState())).not.toContain("isn't available yet");
-  // The path is the repository's own: nothing is resolved against the primary checkout.
-  expect(resolve).not.toHaveBeenCalled();
+  // The open path resolves the file in the repository it belongs to: the request names that repo_id,
+  // so the path is never looked for in the primary checkout.
+  await waitFor(() => expect(resolve).toHaveBeenCalledWith("t", expect.objectContaining({ path: "auth/redirect.ts", basis: "repository", repo_id: "planner" }), undefined));
+});
+
+// A file the repository's working tree does not hold (deleted there, say) still opens as its tab: the
+// resolve answers no checkout path, and the read in the tab says why.
+it("a file its repository's working tree does not hold still opens as that repository's tab", async () => {
+  const user = userEvent.setup();
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  setup([{ ...FILE, path: "gone.ts" }], "planner");
+  vi.spyOn(api, "resolveThreadPath").mockResolvedValue({ cwd: "/repo", checkout_path: null, repository_path: "gone.ts" });
+  useUi.setState({ panelTab: "diff", panelTabOrder: ["diff"], toasts: [] } as never);
+  render(<DiffPanel threadId="t" />);
+  await waitFor(() => expect(screen.getAllByText("orbyn-planner").length).toBeGreaterThan(0));
+  await user.click(await screen.findByRole("button", { name: "Open in editor" }));
+  const id = fileTabId({ kind: "thread", path: "gone.ts", repoId: "planner" });
+  await waitFor(() => expect(useUi.getState().panelTab).toBe(id));
+  expect(useUi.getState().toasts).toEqual([]);
 });
 
 // #1055: the turn picker's totals are the sum over the thread's trusted repositories.
