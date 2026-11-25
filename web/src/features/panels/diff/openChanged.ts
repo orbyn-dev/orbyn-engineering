@@ -17,16 +17,21 @@ export async function checkoutPath(threadId: string, cwd: string, path: string, 
 export async function openChanged(threadId: string, cwd: string, path: string, how: "editor" | "tab", repoId?: string) {
   try {
     const inside = await checkoutPath(threadId, cwd, path, undefined, repoId);
-    if (inside === null) {
+    // Another repository's file has no editor route of its own: it opens as that repository's tab,
+    // which reads and writes with its `repo_id`. A path that repository's working tree does not hold
+    // (a file deleted there, say) still opens the tab, whose read says why; the primary's stays a notice.
+    if (inside === null && repoId === undefined) {
       useUi.getState().pushToast("Couldn't open it. That file is outside this thread's folder.");
       return;
     }
-    // Another repository's file has no editor route of its own: it opens as that repository's tab,
-    // which reads and writes with its `repo_id` rather than resolving the path in the primary checkout.
-    if (how === "tab" || repoId !== undefined) useUi.getState().openFileTab({ kind: "thread", path: inside, ...(repoId === undefined ? {} : { repoId }) });
-    else await openInEditor(threadId, inside);
+    const target = inside ?? path;
+    if (how === "tab" || repoId !== undefined) useUi.getState().openFileTab({ kind: "thread", path: target, ...(repoId === undefined ? {} : { repoId }) });
+    else await openInEditor(threadId, target);
   } catch (failure) {
-    useUi.getState().pushToast(`Couldn't open it. ${toFailure(failure).message}`);
+    // A refused resolution (an untrusted repository, say) still opens the repository's tab, which
+    // offers the trust prompt; an ordinary thread's file stays a notice.
+    if (repoId !== undefined) useUi.getState().openFileTab({ kind: "thread", path, repoId });
+    else useUi.getState().pushToast(`Couldn't open it. ${toFailure(failure).message}`);
   }
 }
 
