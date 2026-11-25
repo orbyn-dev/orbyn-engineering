@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use orbyn_contracts::{CrewError, CrewId, CrewMember, CrewRole, CrewToken, ErrorCode};
 use serde_json::{Value, json};
 
+use self::deliver::LiveSteers;
 use super::start::Caller;
 use super::tool::{LEAD_MEMBER, invalid};
 use crate::app::Core;
@@ -76,7 +77,8 @@ impl Limits {
 }
 
 /// What the bus keeps in memory: one writer at a time for the guards' count-then-store, a
-/// wake-up for a waiting `crew_ask`, and the questions somebody is waiting on.
+/// wake-up for a waiting `crew_ask`, the questions somebody is waiting on, and the live steers a
+/// running turn has not answered yet.
 #[derive(Default)]
 pub struct Bus {
     limits: Mutex<Limits>,
@@ -86,6 +88,9 @@ pub struct Bus {
     // A launch and an early inbox call must not both hand over the same message.
     // These short claims hold no mutex guard across the engine's asynchronous start.
     pub(super) deliveries: DeliveryClaims,
+    // A message handed to a running turn's input is remembered until the engine takes or refuses
+    // it, so a refusal can be recorded against the message it refused.
+    pub(super) live_steers: LiveSteers,
 }
 
 impl Bus {
