@@ -1,14 +1,15 @@
 /**
  * The issues the tracker screens read and the writes they make, as docs/issues.md defines them (Eng 4, PR #922).
  *
- * Hand-written from that doc: the Rust types in `orbyn-contracts` and the generated types are not on main yet. When they land,
- * replace these types with the generated ones in the same commit that checks the client against the service. Field names follow
- * the T3 Code issue schema (MIT, 9168ca73d, names only, no code copied) in snake_case.
+ * Hand-written from that doc. The Rust types in `orbyn-contracts` and their generated types are committed; this client keeps
+ * the shapes it reads by hand so `http.ts` can keep only the fields the screens use, and takes `PullChecks` from the generated
+ * wire type. Field names follow the T3 Code issue schema (MIT, 9168ca73d, names only, no code copied) in snake_case.
  *
  * Nothing here can carry a secret on the way in except `TrackerConnectInput.token`, which goes outward once, in the JSON body of
  * the connect route. No shape has a field for a token on the way out. Titles, bodies, labels and names are the tracker's text and
  * are untrusted: render them as text only.
  */
+import type { PullChecks } from "../../generated/PullChecks";
 
 export const TRACKER_KINDS = ["github", "gitlab", "azure_devops", "forgejo", "linear"] as const;
 export type TrackerKind = (typeof TRACKER_KINDS)[number];
@@ -88,6 +89,11 @@ export interface LinkedPullRequest {
   state: "open" | "closed" | "merged";
   is_draft: boolean;
   closes_issue: boolean;
+  /**
+   * Where its CI checks stand, the same counts the pull request list carries. Absent when the tracker did not report them
+   * or the read did not answer: absent is unknown, never "no checks" (docs/issues.md).
+   */
+  checks?: PullChecks | null;
 }
 
 export interface IssueDetail extends IssueSummary {
