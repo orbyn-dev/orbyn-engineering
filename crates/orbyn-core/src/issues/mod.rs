@@ -133,6 +133,13 @@ pub(crate) fn possibly_created(tracker: &str, error: CoreError) -> CoreError {
     }
 }
 
+/// Whether a write's answer leaves one scope's cached listings unable to describe the tracker: the tracker accepted
+/// the write, or it never answered, so it may have applied it. A refusal that came back changed nothing, and the
+/// checks before any request return early.
+fn write_may_have_changed<T>(written: &Result<T>) -> bool {
+    matches!(written, Ok(_) | Err(CoreError::TrackerUnavailable(_)))
+}
+
 /// A new issue as the owning tracker receives it: the person's validated text and the choices that name labels and
 /// people. `Core::create_issue` checks every field before a source sees it.
 pub(crate) struct NewIssue<'a> {
@@ -405,8 +412,34 @@ impl IssueDesk {
             .clear();
     }
 
-    /// Drops the 30-second listing cache. Tests call it between passes when a fake tracker changes its answer inside
-    /// the cache window; no production path needs it, because a listener's interval is 60 seconds at least.
+    /// The key one listing is cached under: its connection's tracker and scope, then every filter, sort, limit and
+    /// page the query carries. [`Self::scope_prefix`] names the part a write drops.
+    fn list_key(kind: TrackerKind, scope: &str, query: &IssueQuery) -> String {
+        format!("{}{query:?}", Self::scope_prefix(kind, scope))
+    }
+
+    /// What every cached listing of one connection's scope starts with: the tracker, a space, the scope, a space.
+    /// A tracker name holds no space and the query's `Debug` starts with `IssueQuery {`, so one scope's prefix
+    /// never matches another scope's key.
+    fn scope_prefix(kind: TrackerKind, scope: &str) -> String {
+        format!("{} {scope} ", tracker_name(kind))
+    }
+
+    /// Drops every cached listing of one connection's scope, whatever its filter, sort or page, after a write whose
+    /// effect reaches it (docs/issues.md, "Cache"). The scope is as narrow as the write: the tracker itself applies
+    /// the filters, so which cached pages the changed issue belongs to cannot be known here, while the connection
+    /// and scope of the write name every page it can reach. Pages of other scopes and connections stay.
+    pub(crate) fn scope_changed(&self, kind: TrackerKind, scope: &str) {
+        let prefix = Self::scope_prefix(kind, scope);
+        self.cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|key, _| !key.starts_with(prefix.as_str()));
+    }
+
+    /// Drops the whole 30-second listing cache. Tests call it between passes when a fake tracker changes its answer
+    /// inside the cache window without a write; a real write drops its own scope at once (`scope_changed`), and a
+    /// connect or disconnect drops everything, because the connection it was cached from is gone.
     #[cfg(test)]
     pub(crate) fn clear_cache(&self) {
         self.cache
@@ -926,7 +959,7 @@ impl Core {
         scope: &str,
         query: &IssueQuery,
     ) -> Result<ScopeList> {
-        let id = format!("{} {scope} {query:?}", tracker_name(kind));
+        let id = IssueDesk::list_key(kind, scope, query);
         if let Some((at, hit)) = self
             .issues
             .cache
@@ -1077,7 +1110,7 @@ impl Core {
         checked_body(&body, "The issue body")?;
         checked_labels(&input.labels)?;
         checked_assignees(&input.assignees)?;
-        source
+        let created = source
             .create(
                 &input.scope,
                 &NewIssue {
@@ -1087,7 +1120,11 @@ impl Core {
                     assignees: &input.assignees,
                 },
             )
-            .await
+            .await;
+        if write_may_have_changed(&created) {
+            self.issues.scope_changed(input.tracker, &input.scope);
+        }
+        created
     }
 
     /// Writes one comment on one issue and answers it as the tracker stored it. Editing or deleting a comment is
@@ -1096,13 +1133,19 @@ impl Core {
         self.require_connected(input.tracker).await?;
         self.check_issue_scope(input.tracker, &input.scope).await?;
         let body = checked_comment(&input.body)?;
-        self.writing_source(input.tracker)?
+        let written = self
+            .writing_source(input.tracker)?
             .comment(&input.scope, &input.key, body)
-            .await
+            .await;
+        if write_may_have_changed(&written) {
+            self.issues.scope_changed(input.tracker, &input.scope);
+        }
+        written
     }
 
     /// Adds or takes back one reaction and answers the issue with the tracker's reaction counts. Both directions are
-    /// idempotent on the tracker; the same call twice answers the same issue.
+    /// idempotent on the tracker; the same call twice answers the same issue. A reaction changes no field a listing
+    /// carries and no order it sorts by, so the cached pages stay.
     pub async fn react_issue(&self, input: ReactIssue) -> Result<IssueDetail> {
         self.require_connected(input.tracker).await?;
         self.check_issue_scope(input.tracker, &input.scope).await?;
@@ -1154,7 +1197,7 @@ impl Core {
             ));
         }
         let source = self.editing_source(input.tracker)?;
-        let mut detail = source
+        let written = source
             .update(
                 &input.scope,
                 &input.key,
@@ -1165,7 +1208,11 @@ impl Core {
                     assignees: input.assignees.as_deref(),
                 },
             )
-            .await?;
+            .await;
+        if write_may_have_changed(&written) {
+            self.issues.scope_changed(input.tracker, &input.scope);
+        }
+        let mut detail = written?;
         detail.linked_threads = self.store.threads_linking(&IssueKey {
             tracker: input.tracker,
             scope: input.scope,
@@ -1202,9 +1249,13 @@ impl Core {
         // `not_planned` answers what it stored.
         let close_reason =
             closed.then_some(input.close_reason.unwrap_or(IssueCloseReason::Completed));
-        let mut detail = source
+        let written = source
             .set_state(&input.scope, &input.key, &wanted.name, close_reason)
-            .await?;
+            .await;
+        if write_may_have_changed(&written) {
+            self.issues.scope_changed(input.tracker, &input.scope);
+        }
+        let mut detail = written?;
         detail.linked_threads = self.store.threads_linking(&key)?;
         Ok(detail)
     }
