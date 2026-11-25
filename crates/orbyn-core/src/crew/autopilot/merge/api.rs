@@ -193,17 +193,28 @@ impl Scrub {
         ledger::safe_masked(value, &self.needles, &self.person)
     }
 
-    /// The row's keys as shown, its values as they are (already masked by `fields`).
+    /// The row's keys as shown, its values as they are (already masked by `fields`). Two keys
+    /// can hide down to the same label (two Stripe keys are both `[hidden: API key]`); a map
+    /// holds one value per key, so the repeats get a suffix instead of one value disappearing.
     fn mask_keys(&self, value: Value) -> Value {
         match value {
             Value::Array(items) => {
                 Value::Array(items.into_iter().map(|v| self.mask_keys(v)).collect())
             }
-            Value::Object(map) => Value::Object(
-                map.into_iter()
-                    .map(|(k, v)| (self.person.labelled(&k), self.mask_keys(v)))
-                    .collect(),
-            ),
+            Value::Object(map) => {
+                let mut shown = serde_json::Map::with_capacity(map.len());
+                for (key, value) in map {
+                    let label = self.person.labelled(&key);
+                    let mut unique = label.clone();
+                    let mut suffix = 2;
+                    while shown.contains_key(&unique) {
+                        unique = format!("{label} ({suffix})");
+                        suffix += 1;
+                    }
+                    shown.insert(unique, self.mask_keys(value));
+                }
+                Value::Object(shown)
+            }
             other => other,
         }
     }
@@ -1161,6 +1172,41 @@ fn watch_row(record: &MergeRecord, scrub: &Scrub) -> wire::AutopilotWatchRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_keys_that_mask_to_the_same_label_are_both_kept() {
+        let scrub = Scrub {
+            needles: Vec::new(),
+            person: std::sync::Arc::new(crate::redaction::Redactor::with(
+                &std::collections::BTreeSet::new(),
+                Vec::new(),
+            )),
+        };
+        // Two different keys of the same built-in format: both show as the same label, and the
+        // old map kept only the second.
+        let row = scrub.mask_keys(serde_json::json!({
+            "AKIAIOSFODNN7EXAMPLE": "first",
+            "ASIAIOSFODNN7EXAMPLE": "second",
+        }));
+        let keys: Vec<&str> = row
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys.len(), 2, "neither key may hide the other: {row}");
+        assert!(
+            keys.iter()
+                .all(|key| key.contains("[hidden: AWS access key]")),
+            "{row}"
+        );
+        assert_ne!(keys[0], keys[1], "the repeat got a suffix: {row}");
+        let shown = row.to_string();
+        assert!(
+            shown.contains(r#""first""#) && shown.contains(r#""second""#),
+            "both values stay: {row}"
+        );
+    }
 
     #[test]
     fn a_page_is_bounded() {
