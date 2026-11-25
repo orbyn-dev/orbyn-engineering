@@ -86,17 +86,38 @@ fn a_background_agent_holds_a_completed_turn_until_it_ends() {
 }
 
 #[test]
+fn a_held_agent_that_never_notifies_is_reported_stopped_with_the_caps_reason() {
+    let mut mapper = StreamMapper::default();
+    mapper.on_frame(&started("a1", "local_agent"));
+    mapper.on_frame(&done());
+    assert!(
+        mapper.held.is_some(),
+        "the finished turn waits for the agent"
+    );
+    assert!(!mapper.waiting_on_hold(), "the agent is still running");
+    // The idle cap ends the hold; the work that never notified is said to have stopped, and why.
+    let ended = mapper.end_background("idle");
+    assert!(
+        matches!(&ended[..], [EngineEvent::Agui(AgUiEvent::Custom { name, value })]
+            if name == "background.stopped"
+                && value["taskId"] == "a1"
+                && value["reason"] == "idle"),
+        "{ended:?}"
+    );
+}
+
+#[test]
 fn a_background_shell_does_not_hold_the_run_and_is_reported_stopped() {
     let mut mapper = StreamMapper::default();
     mapper.on_frame(&started("b1", "local_bash"));
     mapper.on_frame(&done());
     assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
-    let ended = mapper.end_background();
+    let ended = mapper.end_background("turn ended");
     assert!(
         matches!(&ended[..], [EngineEvent::Agui(AgUiEvent::Custom { name, value })]
             if name == "background.stopped" && value["taskId"] == "b1")
     );
-    assert!(mapper.end_background().is_empty());
+    assert!(mapper.end_background("turn ended").is_empty());
 }
 
 #[test]
@@ -106,7 +127,7 @@ fn a_workflow_is_never_reported_as_a_background_stop() {
     mapper.on_frame(&launch_frame());
     mapper.on_frame(&started("b1", "local_bash"));
     mapper.on_frame(&done());
-    let ended = mapper.end_background();
+    let ended = mapper.end_background("turn ended");
     assert!(
         matches!(&ended[..], [EngineEvent::Agui(AgUiEvent::Custom { name, value })]
             if name == "background.stopped" && value["taskId"] == "b1"),
