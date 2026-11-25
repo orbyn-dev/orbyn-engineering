@@ -68,7 +68,8 @@ function serveTrees() {
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const url = String(input);
     if (/^\/api\/threads\/[^/?]+\/files\?/.test(url)) {
-      reads.push(url);
+      // Only this thread's reads are counted: the dev mock's own multi-repository thread (t-multi-repo) is read too.
+      if (url.startsWith(`/api/threads/${THREAD}/`)) reads.push(url);
       const query = new URL(url, "http://x").searchParams;
       return new Response(JSON.stringify(levelOf(query.get("path") ?? "", query.get("repo_id"))), { status: 200 });
     }

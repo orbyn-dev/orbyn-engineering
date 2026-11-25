@@ -86,7 +86,8 @@ it("shows no side panel and no launcher on a draft, even when the panel preferen
 
 it("offers the repository dialog on the new-thread screen only when the service reports several repositories for the project", async () => {
   saveDefaults("project-model");
-  const first = render(<DraftView projectId="p-app" />);
+  // A project of one repository: the dev mock answers p-app with several (mock/multiRepo.ts), so the plain case is p-site.
+  const first = render(<DraftView projectId="p-site" />);
   await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
   expect(screen.queryByRole("button", { name: /^Repositories/ })).toBeNull();
   first.unmount();
