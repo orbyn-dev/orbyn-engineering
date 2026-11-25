@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../../mock/api";
@@ -6,6 +6,7 @@ import type { Project } from "../../../../generated/Project";
 import { useWorkspace } from "../../../../product/state/workspace";
 import { installMockFetch } from "../../../../test-support";
 import { BackgroundTab } from "./Background";
+import { useWatchFocus } from "./watchFocus";
 
 let mock: MockApi;
 beforeEach(() => {
@@ -76,6 +77,25 @@ describe("a background run's own page", () => {
     await user.click(within(run).getByRole("button", { name: "Recent runs" }));
     expect(await screen.findByRole("table", { name: "Background crews" })).toBeVisible();
     expect(screen.queryByRole("region", { name: "Main build run" })).toBeNull();
+  });
+
+  it("leaves a run's page when another project is picked, and shows that project's list", async () => {
+    const { user } = await openWatch("crew-background-run-detail");
+    await user.click(screen.getByRole("button", { name: "Open the run" }));
+    await screen.findByRole("region", { name: "Main build run" });
+    const app = { id: "p-app", name: "orbyn-engineering", trusted: true, is_git: true, path: "/fixture/app" } as Project;
+    const other = { id: "p-two", name: "other-repo", trusted: true, is_git: true, path: "/fixture/two" } as Project;
+    useWorkspace.setState({ projects: { data: [app, other], loading: false, error: null } });
+    // Another project's watch is asked for (a Needs you row): the page moves to that project, whose list it shows.
+    act(() => { useWatchFocus.getState().ask("bg-other01", "p-two"); });
+    await screen.findByRole("table", { name: "Background crews" });
+    expect(screen.queryByRole("region", { name: "Main build run" })).toBeNull();
+  });
+
+  it("offers no Open the run for a watch whose runs read holds none", async () => {
+    const { panel } = await openWatch("crew-background-watch-template-no-run");
+    expect(within(panel).getByText("Failing: started Fix failing CI")).toBeVisible();
+    expect(within(panel).queryByRole("button", { name: "Open the run" })).toBeNull();
   });
 
   it("draws nothing of a run the read does not have, and the list stays", async () => {
