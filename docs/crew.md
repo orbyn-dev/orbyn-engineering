@@ -282,7 +282,10 @@ a `review_lane_tier` reason, and the `route` in a `crew_start` or `crew_review` 
    writes. The brief's `needs` (for example `image`, `mcp`) must match capabilities.
    - **One source for the state facts:** the first three checks and the write check read `ProviderFacts`
      (`agents/provider_facts.rs`), the same facts the Settings Providers list reads for its Not found, Can't start
-     (a `Broken` version) and Unmanaged (no `managed` or no `approvals`) labels, and for the Signed out state.
+     (a `Broken` version), Unmanaged (no `managed` or no `approvals`) and Limited support labels. Signed out is
+     not one of them: the list draws it from the engine's own login state and last start issue
+     (`provider_list.rs`, `ProviderTable.tsx`), and the router's SignedOut filter reads the same login state
+     through `ProviderFacts.unavailable()`.
      A test runs every combination of those facts through the router and the list and fails if they disagree.
      A sign-in that could not be confirmed has no designed label, so the list shows none for it while the router
      still refuses. Limited support (an `Unsupported` or `Graceful` version) is list-only and never keeps an engine out.
@@ -441,9 +444,19 @@ Guards, all enforced in code:
     next bus tool result, or inside a prompt the core already sends: the worker's retry prompt and the lead's result
     notice. Those prompts are admitted with the source label `user` (slice 3's channel), so held text rides in a
     prompt the queue shows as the person's, inside the data wrapper, at most 10 messages and 20,000 characters at a
-    time. A worker being verified is never handed anything. A message nobody ever collects stays `held`. Only fake
-    engines ran, so "live" is not tested against real Claude or Codex, which may read it after the tool call it is
-    in. A board write counts as a post, and a key has 16 revisions.
+    time. A worker being verified is never handed anything. A message nobody ever collects stays `held`. A board
+    write counts as a post, and a key has 16 revisions. `live` means the text entered the running turn's input, not
+    that the engine read it: the Claude CLI folds a mid-turn message into the turn it is in, so it may read it only
+    after the tool call it is in, and Codex is handed it through `turn/steer` at its next step. An engine that
+    refuses the steer reports `SteerFailed` (a failed Codex `turn/steer`, a host steering request answered
+    `rejected`): the bus appends one more delivery row, `next_turn`, for the same message and recipient, whose note
+    says the engine refused the live steer and the text comes with the next turn, and the text is requeued for that
+    turn. Rows are append-only, so the `live` row stays and the newest row says where the message stands. A bounded
+    in-memory map (64 hand-overs, 30 minutes, dropped when the run ends) pairs the thread and masked text with the
+    message and recipient by the engine's own steer id, never by the text, so a person's steer with the same words
+    cannot consume a crew hand-over; a refusal it cannot match writes nothing rather than guess. Only fake engines
+    ran: no real Claude or Codex run has yet shown how a live steer is read or refused, so both stay unqualified
+    (#444).
   - The hop count is H4 as written: a lead message to a member starts every pair of that member again. The count
     is read from the stored messages. The lead is told once per distinct refusal by a message from the core.
   - Sizes: a body up to 4000 characters, a fact value up to 8 KiB, 128 keys per board. A repo rule can lower the
@@ -2143,7 +2156,9 @@ the person key were merged first (#1342).
 
 ## Open risks
 
-- Steering differs by engine. A Claude message may land mid-tool-call. Test with real engines before claiming "live".
+- Steering differs by engine. A Claude message may land mid-tool-call, and a refusal (SteerFailed) is recorded as
+  next_turn and requeued. Both are tested on fake engines only; the real Claude and Codex runs that would qualify them
+  are still to do (#444).
 - Login and quota are per engine on the person's machine. The router must fail clearly ("Codex isn't signed in") rather
   than silently falling back.
 - Cost: several engines at once multiply usage. The crew-wide turn budget (slice 3 above) refuses new tasks and
