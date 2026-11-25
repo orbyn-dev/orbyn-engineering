@@ -1238,6 +1238,132 @@ async fn a_repository_leaves_a_thread_only_when_it_is_not_primary_and_holds_noth
     );
 }
 
+/// A navigation request for one repository of a multi-repository thread. Which repository is the
+/// scope's question: a route sets it with `in_repo`, so the body's own `repo_id` is not read here.
+fn navigation(cwd: &str, path: &str, repo_id: Option<&str>) -> orbyn_contracts::ResolveThreadPath {
+    orbyn_contracts::ResolveThreadPath {
+        path: path.to_owned(),
+        basis: orbyn_contracts::ThreadPathBasis::Repository,
+        cwd: cwd.to_owned(),
+        repo_id: repo_id.map(str::to_owned),
+    }
+}
+
+#[tokio::test]
+async fn navigation_coordinates_are_resolved_in_the_repository_its_scope_names() {
+    use orbyn_contracts::ResolveThreadPath;
+
+    let dir = TempDir::new();
+    let (core, project, other_id, _main, _other) = two_trusted(&dir).await;
+    let thread = core
+        .start_repo_thread(
+            &project,
+            start_input(&[(&project, "main"), (&other_id, "main")]),
+        )
+        .await
+        .unwrap();
+    let folder = core.task_folder(&thread.id).await.unwrap();
+    let primary = Path::new(&thread.cwd).join(&folder.repos[0].name);
+    let second = Path::new(&thread.cwd).join(&folder.repos[1].name);
+    // A file of each repository, so the answer says which worktree the path was resolved in.
+    std::fs::write(primary.join("primary.txt"), "primary\n").unwrap();
+    std::fs::write(second.join("second.txt"), "second\n").unwrap();
+    // No repository named is the primary one, and the answer's cwd stays the thread's own folder.
+    let resolved = core
+        .resolve_thread_path(&thread.id, &navigation(&thread.cwd, "primary.txt", None))
+        .await
+        .unwrap();
+    assert_eq!(resolved.cwd, thread.cwd);
+    assert_eq!(resolved.checkout_path.as_deref(), Some("primary.txt"));
+    assert_eq!(resolved.repository_path.as_deref(), Some("primary.txt"));
+    // The second repository's file is not in the primary one; it resolves when the scope names it.
+    let unresolved = core
+        .resolve_thread_path(&thread.id, &navigation(&thread.cwd, "second.txt", None))
+        .await
+        .unwrap();
+    assert_eq!(unresolved.checkout_path, None);
+    let resolved = crate::in_repo(
+        Some(other_id.clone()),
+        core.resolve_thread_path(
+            &thread.id,
+            &navigation(&thread.cwd, "second.txt", Some(&other_id)),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        resolved.cwd, thread.cwd,
+        "the task folder is still what the caller fenced against"
+    );
+    assert_eq!(resolved.checkout_path.as_deref(), Some("second.txt"));
+    assert_eq!(resolved.repository_path.as_deref(), Some("second.txt"));
+    // A repository that is not the thread's is not found.
+    assert!(matches!(
+        crate::in_repo(
+            Some("no-such-repo".into()),
+            core.resolve_thread_path(
+                &thread.id,
+                &navigation(&thread.cwd, "primary.txt", Some("no-such-repo")),
+            ),
+        )
+        .await,
+        Err(CoreError::NotFound(_))
+    ));
+    // The fence is the thread's stored folder, not a worktree inside it.
+    let moved = ResolveThreadPath {
+        cwd: path_text(&primary),
+        ..navigation(&thread.cwd, "primary.txt", None)
+    };
+    assert!(matches!(
+        core.resolve_thread_path(&thread.id, &moved).await,
+        Err(CoreError::StaleOwner)
+    ));
+}
+
+#[tokio::test]
+async fn navigation_coordinates_of_an_untrusted_repository_are_refused() {
+    let dir = TempDir::new();
+    let core = core(&dir, true).await;
+    let (main, other) = two_repos(&dir);
+    let project = core.add_project(&path_text(&main)).await.unwrap().id;
+    core.store.trust_project(&project, "user").unwrap();
+    let added = core
+        .add_repo_folder(
+            &project,
+            AddRepoFolder {
+                path: path_text(&other),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!added.trusted);
+    // A task folder over both, as a started thread has, without the start's trust check.
+    let thread = multi_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&added.id, "other", &other)],
+    );
+    let stored = core.store.thread(&thread).unwrap();
+    let request = navigation(&stored.cwd, "a.txt", None);
+    // The trusted primary still resolves; the untrusted repository is refused before it is read.
+    assert_eq!(
+        core.resolve_thread_path(&thread, &request)
+            .await
+            .unwrap()
+            .checkout_path
+            .as_deref(),
+        Some("a.txt")
+    );
+    assert!(matches!(
+        crate::in_repo(
+            Some(added.id.clone()),
+            core.resolve_thread_path(&thread, &request)
+        )
+        .await,
+        Err(CoreError::RepoUntrusted(_))
+    ));
+}
+
 /// A multi-repository thread whose folder is a task folder outside every repository: one worktree of each
 /// `(repo_id, name, source repository)` under it, on one branch, as a started thread has. No engine runs here.
 fn repo_thread(core: &Core, project: &str, repos: &[(&str, &str, &Path)]) -> (String, PathBuf) {

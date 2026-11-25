@@ -4,4 +4,8 @@ import type { ThreadPathBasis } from "./ThreadPathBasis";
 /**
  * Navigation metadata only; ordinary file reads still require a checkout path.
  */
-export type ResolveThreadPath = { path: string, basis: ThreadPathBasis, cwd: string, };
+export type ResolveThreadPath = { path: string, basis: ThreadPathBasis, cwd: string, 
+/**
+ * A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+ */
+repo_id?: string, };
