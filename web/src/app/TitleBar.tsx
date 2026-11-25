@@ -6,7 +6,7 @@ import { SyncTitleButton, useSignedInAccount } from "../features/account";
 import { attentionRank, EnvironmentIdentity } from "../features/workspace";
 import { useAsync } from "../lib/useAsync";
 import { useReadingNav } from "./readingNav";
-import { commandShortcut, formatShortcut } from "../product/shell/shortcuts";
+import { commandShortcut, formatShortcut, useCommand } from "../product/shell/shortcuts";
 import { togglePhoneSidebar, toggleSidebarDrawer } from "../product/shell/sidebarDrawer";
 import type { LayoutWidth } from "../lib/useLayout";
 import { useUi } from "../product/state/ui";
@@ -121,7 +121,9 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
   const waiting = useWaitingCount();
   const account = useSignedInAccount();
   // The person's keys, so a tooltip shows the chord a command really answers to.
-  const keymap = useAsync("keybindings", (signal) => api.keybindings(signal));
+  const keymap = useAsync("keybindings", (signal) => api.keybindings(signal), { keep: true });
+  const reloadKeymap = keymap.reload;
+  useCommand("keybindings.reload", () => void reloadKeymap());
 
   // What the shell puts on screen, so the button and its label never disagree with the sidebar.
   const shown = navShown;
@@ -153,10 +155,15 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
   const end = useRef<HTMLSpanElement>(null);
   useBarEndWidth(end);
   const sidebarLabel = shown ? "Hide sidebar" : "Show sidebar";
-  const shortcut = (command: string, builtIn: string) => formatShortcut(commandShortcut(keymap.data?.rules, command) ?? builtIn);
-  const sidebarTitle = `${sidebarLabel} (${shortcut("sidebar.toggle", "mod+b")})`;
-  const backTitle = `Back (${shortcut("navigation.back", "mod+[")})`;
-  const forwardTitle = `Forward (${shortcut("navigation.forward", "mod+]")})`;
+  // A command the saved keys do not name keeps its built-in key; one they remove has none, so its title says no key.
+  const titled = (label: string, command: string, builtIn: string) => {
+    const rules = keymap.data?.rules;
+    const key = rules?.some((rule) => rule.command === command) ? commandShortcut(rules, command) : builtIn;
+    return key ? `${label} (${formatShortcut(key)})` : label;
+  };
+  const sidebarTitle = titled(sidebarLabel, "sidebar.toggle", "mod+b");
+  const backTitle = titled("Back", "navigation.back", "mod+[");
+  const forwardTitle = titled("Forward", "navigation.forward", "mod+]");
 
   // One 44px bar in every layout (the v60 frames): it floats over the top of the page, where the page's own header
   // carries the title, chips and actions on the same centre line, with the sidebar shown or not. Only the phone,
