@@ -9,7 +9,8 @@ use tokio::process::Command;
 
 use super::create::number_from_url;
 use super::details::{
-    DetailsOutcome, classify_details, details_query, graphql_reset, parse_details,
+    DETAILS_PAGE_ROUNDS, DETAILS_PAGE_SIZE, DetailsOutcome, PageKind, PendingPage,
+    classify_details, details_batch, details_query, graphql_reset, page_query, parse_details,
 };
 use super::github::{github_threads, parse_github_event};
 use super::gitlab::gitlab_conversation;
@@ -724,13 +725,53 @@ fn the_details_query_names_one_alias_per_pull_request() {
         2
     );
     assert!(query.contains("reviews(first:100){totalCount pageInfo{hasNextPage} nodes"));
-    // A reviewer list that may continue past its first page says so, so it can be withheld.
-    assert!(query.contains("latestReviews(first:50){pageInfo{hasNextPage} nodes"));
-    assert!(query.contains("reviewRequests(first:50){pageInfo{hasNextPage} nodes"));
+    // Both review connections name the page after them, so a read can continue instead of
+    // stopping at fifty.
+    assert!(query.contains("latestReviews(first:50){pageInfo{hasNextPage endCursor} nodes"));
+    assert!(query.contains("reviewRequests(first:50){pageInfo{hasNextPage endCursor} nodes"));
     assert_eq!(query.matches("mergeable").count(), 2);
     assert_eq!(super::details::DETAILS_BATCH, 25);
     assert_eq!(super::details::DETAILS_ROW_LIMIT, 100);
     assert_eq!(super::details::DETAILS_TIMEOUT, Duration::from_secs(20));
+    assert_eq!(DETAILS_PAGE_SIZE, 50);
+    assert_eq!(DETAILS_PAGE_ROUNDS, 3);
+    // The read is bounded: first page plus three follow-ups of fifty each.
+    assert_eq!((1 + DETAILS_PAGE_ROUNDS) * DETAILS_PAGE_SIZE, 200);
+}
+
+#[test]
+fn a_page_query_reads_each_pending_connection_after_its_own_cursor() {
+    let pending = vec![
+        PendingPage {
+            number: 3,
+            kind: PageKind::Requests,
+            cursor: "r1".into(),
+        },
+        PendingPage {
+            number: 3,
+            kind: PageKind::Reviews,
+            cursor: "v1".into(),
+        },
+        PendingPage {
+            number: 4,
+            kind: PageKind::Reviews,
+            cursor: "v4".into(),
+        },
+    ];
+    let query = page_query(&pending);
+    assert_eq!(query.matches("pullRequest(").count(), 2);
+    assert!(query.contains(
+        r#"p3:pullRequest(number:3){reviewRequests(first:50,after:"r1"){pageInfo{hasNextPage endCursor} nodes"#
+    ));
+    assert!(query.contains(r#"latestReviews(first:50,after:"v1"){pageInfo"#));
+    assert!(query.contains(r#"p4:pullRequest(number:4){latestReviews(first:50,after:"v4")"#));
+    // An opaque cursor is escaped into the query, never pasted in raw.
+    let escaped = page_query(&[PendingPage {
+        number: 7,
+        kind: PageKind::Requests,
+        cursor: "a\"b\\c".into(),
+    }]);
+    assert!(escaped.contains(r#"after:"a\"b\\c""#));
 }
 
 #[test]
@@ -789,6 +830,343 @@ fn a_truncated_reviewer_connection_withholds_what_it_could_not_name() {
         assert_eq!(details[&3].viewer_review_state, None);
         assert_eq!(details[&3].comment_count, Some(5));
     }
+}
+
+/// A batched answer whose p3 review connections name a page after their first.
+fn paged_details_response() -> Value {
+    let mut response = details_response();
+    response["data"]["repository"]["p3"]["reviewRequests"] = json!({
+        "pageInfo": { "hasNextPage": true, "endCursor": "requests-1" },
+        "nodes": [
+            { "requestedReviewer": { "__typename": "User", "login": "sam" } },
+        ],
+    });
+    response["data"]["repository"]["p3"]["latestReviews"] = json!({
+        "pageInfo": { "hasNextPage": true, "endCursor": "reviews-1" },
+        "nodes": [
+            { "author": { "login": "them" }, "state": "COMMENTED" },
+        ],
+    });
+    response
+}
+
+#[tokio::test]
+async fn the_next_reviewer_and_review_pages_are_read_and_merged() {
+    use std::sync::{Arc, Mutex};
+    let first = paged_details_response();
+    // The team page repeats sam: a page boundary must not list anyone twice.
+    let second = json!({ "data": { "repository": { "p3": {
+        "reviewRequests": { "pageInfo": { "hasNextPage": false }, "nodes": [
+            { "requestedReviewer": { "__typename": "Team", "slug": "core" } },
+            { "requestedReviewer": { "__typename": "User", "login": "sam" } },
+        ] },
+        "latestReviews": { "pageInfo": { "hasNextPage": false }, "nodes": [
+            { "author": { "login": "me" }, "state": "APPROVED" },
+        ] },
+    } } } });
+    let queries = Arc::new(Mutex::new(Vec::<String>::new()));
+    let asked = queries.clone();
+    let fixture = Arc::new(move |forge, _cwd: &Path, args: &[&str]| {
+        assert_eq!(forge, Forge::GitHub);
+        assert_eq!(&args[..2], &["api", "graphql"]);
+        let query = args.last().unwrap().to_string();
+        asked.lock().unwrap().push(query.clone());
+        if query.contains("after:") {
+            Ok(second.to_string())
+        } else {
+            Ok(first.to_string())
+        }
+    });
+    let outcome = super::process::with_crew_fixture(fixture, async {
+        details_batch(Forge::GitHub, Path::new("."), "proj", &[3]).await
+    })
+    .await;
+    let DetailsOutcome::Details(found) = outcome else {
+        panic!("both pages were read: {outcome:?}");
+    };
+    let row = &found[&3];
+    assert_eq!(
+        row.requested_reviewers
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|reviewer| (reviewer.name.as_str(), reviewer.kind.as_str()))
+            .collect::<Vec<_>>(),
+        [("sam", "user"), ("core", "team")]
+    );
+    assert_eq!(row.viewer_review_state.as_deref(), Some("approved"));
+    let seen = queries.lock().unwrap();
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    let follow = &seen[1];
+    assert_eq!(follow.matches("pullRequest(").count(), 1);
+    assert!(follow.contains(r#"reviewRequests(first:50,after:"requests-1")"#));
+    assert!(follow.contains(r#"latestReviews(first:50,after:"reviews-1")"#));
+}
+
+#[tokio::test]
+async fn every_later_review_page_is_read_in_cursor_order() {
+    use std::sync::{Arc, Mutex};
+    let first = paged_details_response();
+    let second = json!({ "data": { "repository": { "p3": {
+        "reviewRequests": {
+            "pageInfo": { "hasNextPage": true, "endCursor": "requests-2" },
+            "nodes": [{ "requestedReviewer": { "__typename": "User", "login": "bea" } }],
+        },
+        "latestReviews": {
+            "pageInfo": { "hasNextPage": true, "endCursor": "reviews-2" },
+            "nodes": [{ "author": { "login": "them2" }, "state": "COMMENTED" }],
+        },
+    } } } });
+    let third = json!({ "data": { "repository": { "p3": {
+        "reviewRequests": { "pageInfo": { "hasNextPage": false }, "nodes": [
+            { "requestedReviewer": { "__typename": "Team", "slug": "core" } },
+        ] },
+        "latestReviews": { "pageInfo": { "hasNextPage": false }, "nodes": [
+            { "author": { "login": "me" }, "state": "DISMISSED" },
+        ] },
+    } } } });
+    let queries = Arc::new(Mutex::new(Vec::<String>::new()));
+    let asked = queries.clone();
+    let fixture = Arc::new(move |_forge, _cwd: &Path, args: &[&str]| {
+        let query = args.last().unwrap().to_string();
+        asked.lock().unwrap().push(query.clone());
+        if query.contains("requests-2") {
+            Ok(third.to_string())
+        } else if query.contains("after:") {
+            Ok(second.to_string())
+        } else {
+            Ok(first.to_string())
+        }
+    });
+    let outcome = super::process::with_crew_fixture(fixture, async {
+        details_batch(Forge::GitHub, Path::new("."), "proj", &[3]).await
+    })
+    .await;
+    let DetailsOutcome::Details(found) = outcome else {
+        panic!("three pages were read: {outcome:?}");
+    };
+    let row = &found[&3];
+    assert_eq!(
+        row.requested_reviewers
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|reviewer| reviewer.name.as_str())
+            .collect::<Vec<_>>(),
+        ["sam", "bea", "core"]
+    );
+    assert_eq!(row.viewer_review_state.as_deref(), Some("dismissed"));
+    assert_eq!(queries.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn a_connection_past_the_page_cap_is_withheld_not_presented_as_complete() {
+    use std::sync::{Arc, Mutex};
+    let first = paged_details_response();
+    let more = json!({ "data": { "repository": { "p3": {
+        "reviewRequests": {
+            "pageInfo": { "hasNextPage": true, "endCursor": "requests-more" },
+            "nodes": [{ "requestedReviewer": { "__typename": "User", "login": "late" } }],
+        },
+        "latestReviews": {
+            "pageInfo": { "hasNextPage": true, "endCursor": "reviews-more" },
+            "nodes": [{ "author": { "login": "late" }, "state": "APPROVED" }],
+        },
+    } } } });
+    let queries = Arc::new(Mutex::new(Vec::<String>::new()));
+    let asked = queries.clone();
+    let fixture = Arc::new(move |_forge, _cwd: &Path, args: &[&str]| {
+        let query = args.last().unwrap().to_string();
+        asked.lock().unwrap().push(query.clone());
+        if query.contains("after:") {
+            Ok(more.to_string())
+        } else {
+            Ok(first.to_string())
+        }
+    });
+    let outcome = super::process::with_crew_fixture(fixture, async {
+        details_batch(Forge::GitHub, Path::new("."), "proj", &[3]).await
+    })
+    .await;
+    let DetailsOutcome::Details(found) = outcome else {
+        panic!("the first page is still served: {outcome:?}");
+    };
+    let row = &found[&3];
+    // A page past the cap is unknown, never a short list or a guessed state.
+    assert_eq!(row.requested_reviewers, None);
+    assert_eq!(row.viewer_review_state, None);
+    // The facts the cap did not touch are still served.
+    assert_eq!(row.comment_count, Some(5));
+    assert_eq!(row.created_at.as_deref(), Some("2026-01-02T03:04:05Z"));
+    assert_eq!(row.mergeable.as_deref(), Some("conflicting"));
+    assert_eq!(
+        queries.lock().unwrap().len(),
+        1 + DETAILS_PAGE_ROUNDS,
+        "the read stops at the cap"
+    );
+}
+
+#[tokio::test]
+async fn a_continuation_without_a_cursor_is_not_followed_and_stays_unknown() {
+    use std::sync::{Arc, Mutex};
+    let mut first = paged_details_response();
+    for field in ["reviewRequests", "latestReviews"] {
+        first["data"]["repository"]["p3"][field]["pageInfo"]
+            .as_object_mut()
+            .unwrap()
+            .remove("endCursor");
+    }
+    let queries = Arc::new(Mutex::new(Vec::<String>::new()));
+    let asked = queries.clone();
+    let fixture = Arc::new(move |_forge, _cwd: &Path, args: &[&str]| {
+        let query = args.last().unwrap().to_string();
+        asked.lock().unwrap().push(query.clone());
+        Ok(first.to_string())
+    });
+    let outcome = super::process::with_crew_fixture(fixture, async {
+        details_batch(Forge::GitHub, Path::new("."), "proj", &[3]).await
+    })
+    .await;
+    let DetailsOutcome::Details(found) = outcome else {
+        panic!("the first page is still served: {outcome:?}");
+    };
+    let row = &found[&3];
+    assert_eq!(row.requested_reviewers, None);
+    assert_eq!(row.viewer_review_state, None);
+    assert_eq!(row.comment_count, Some(5));
+    assert_eq!(
+        queries.lock().unwrap().len(),
+        1,
+        "no cursor, no page to ask"
+    );
+}
+
+#[tokio::test]
+async fn a_follow_up_page_with_an_unreadable_node_withholds_the_connection() {
+    use std::sync::Arc;
+    let first = paged_details_response();
+    let second = json!({ "data": { "repository": { "p3": {
+        "reviewRequests": { "pageInfo": { "hasNextPage": false }, "nodes": [null] },
+        "latestReviews": { "pageInfo": { "hasNextPage": false }, "nodes": [
+            { "author": { "login": "me" }, "state": "APPROVED" },
+        ] },
+    } } } });
+    let fixture = Arc::new(move |_forge, _cwd: &Path, args: &[&str]| {
+        let query = args.last().unwrap();
+        if query.contains("after:") {
+            Ok(second.to_string())
+        } else {
+            Ok(first.to_string())
+        }
+    });
+    let outcome = super::process::with_crew_fixture(fixture, async {
+        details_batch(Forge::GitHub, Path::new("."), "proj", &[3]).await
+    })
+    .await;
+    let DetailsOutcome::Details(found) = outcome else {
+        panic!("the first page is still served: {outcome:?}");
+    };
+    let row = &found[&3];
+    // A nulled node is an unread reviewer, so the whole connection stays unknown.
+    assert_eq!(row.requested_reviewers, None);
+    assert_eq!(row.viewer_review_state.as_deref(), Some("approved"));
+}
+
+#[tokio::test]
+async fn a_follow_up_error_withholds_only_the_connection_it_named() {
+    use std::sync::Arc;
+    let first = paged_details_response();
+    let second = json!({
+        "data": { "repository": { "p3": {
+            "reviewRequests": { "pageInfo": { "hasNextPage": false }, "nodes": [] },
+            "latestReviews": { "pageInfo": { "hasNextPage": false }, "nodes": [
+                { "author": { "login": "me" }, "state": "APPROVED" },
+            ] },
+        } } },
+        "errors": [
+            { "type": "FORBIDDEN",
+              "path": ["repository", "p3", "reviewRequests", "nodes", 0, "requestedReviewer"] },
+        ],
+    });
+    let fixture = Arc::new(move |_forge, _cwd: &Path, args: &[&str]| {
+        let query = args.last().unwrap();
+        if query.contains("after:") {
+            Ok(second.to_string())
+        } else {
+            Ok(first.to_string())
+        }
+    });
+    let outcome = super::process::with_crew_fixture(fixture, async {
+        details_batch(Forge::GitHub, Path::new("."), "proj", &[3]).await
+    })
+    .await;
+    let DetailsOutcome::Details(found) = outcome else {
+        panic!("the answered connection is served: {outcome:?}");
+    };
+    let row = &found[&3];
+    assert_eq!(row.requested_reviewers, None);
+    assert_eq!(row.viewer_review_state.as_deref(), Some("approved"));
+    assert_eq!(row.comment_count, Some(5));
+}
+
+#[tokio::test]
+async fn a_failed_follow_up_keeps_the_first_page_facts_and_withholds_the_rest() {
+    use std::sync::{Arc, Mutex};
+    let first = paged_details_response();
+    let queries = Arc::new(Mutex::new(Vec::<String>::new()));
+    let asked = queries.clone();
+    let fixture = Arc::new(move |_forge, _cwd: &Path, args: &[&str]| {
+        let query = args.last().unwrap().to_string();
+        asked.lock().unwrap().push(query.clone());
+        if query.contains("after:") {
+            Err(CoreError::Git("boom".into()))
+        } else {
+            Ok(first.to_string())
+        }
+    });
+    let outcome = super::process::with_crew_fixture(fixture, async {
+        details_batch(Forge::GitHub, Path::new("."), "proj", &[3]).await
+    })
+    .await;
+    let DetailsOutcome::Details(found) = outcome else {
+        panic!("the first page is still served: {outcome:?}");
+    };
+    let row = &found[&3];
+    assert_eq!(row.requested_reviewers, None);
+    assert_eq!(row.viewer_review_state, None);
+    assert_eq!(row.comment_count, Some(5));
+    assert_eq!(row.created_at.as_deref(), Some("2026-01-02T03:04:05Z"));
+    assert_eq!(queries.lock().unwrap().len(), 2, "one follow-up was tried");
+}
+
+#[tokio::test]
+async fn a_rate_limited_follow_up_pauses_the_whole_read() {
+    use std::sync::{Arc, Mutex};
+    // The first page names a page after it, so the read has to ask for more.
+    let first = paged_details_response();
+    let queries = Arc::new(Mutex::new(Vec::<String>::new()));
+    let asked = queries.clone();
+    let fixture = Arc::new(move |_forge, _cwd: &Path, args: &[&str]| {
+        let query = args.last().unwrap().to_string();
+        asked.lock().unwrap().push(query.clone());
+        if query.contains("after:") {
+            // The words a spent limit comes back with, on the follow-up request.
+            Ok("GraphQL: API rate limit already exceeded".to_string())
+        } else {
+            Ok(first.to_string())
+        }
+    });
+    let outcome = super::process::with_crew_fixture(fixture, async {
+        details_batch(Forge::GitHub, Path::new("."), "proj", &[3]).await
+    })
+    .await;
+    // A pause is not a details answer, so the row's first-page facts are never shown as
+    // complete.
+    assert!(
+        matches!(outcome, DetailsOutcome::RateLimited),
+        "a spent limit on a follow-up pauses the read: {outcome:?}"
+    );
+    assert_eq!(queries.lock().unwrap().len(), 2, "one follow-up was tried");
 }
 
 #[test]

@@ -711,10 +711,21 @@ the node count, explicitly has no next page, and every node has a known review s
 Missing, malformed or truncated connections leave the count absent; a complete empty
 connection proves zero. An error under a pull alias still withholds its whole row.
 GitHub answers all of a project's rows with one batched GraphQL request, which
-also names the viewer, so the review state needs no other call. A field is absent when
-unknown, never zero or partial. A row is left out whole when its project cannot be read,
-its returned object has no known fields,
-its own batch yields no data for it or its forge has no details; only GitHub has them.
+also names the viewer, so the review state needs no other call. Each of the
+`reviewRequests` and `latestReviews` connections is read up to 200 entries: the
+batched request's first page of 50, then at most three follow-up rounds. One round
+is one request that carries a 50-entry page for every connection still naming a
+page, so a connection that needs three more pages takes part in three rounds. The
+pages are merged in cursor order, and a name a page repeats keeps its first place,
+so `requested_reviewers` and `viewer_review_state` cover a busy pull request. A
+connection still naming a page after that cap, one whose page could not be read
+whole, or one left unread when a follow-up round failed or the read's 20-second
+budget ran out is absent, never a short list. A follow-up error withholds only the
+connection its path names; an error whose path names the pull request alone
+withholds both. A field is absent when unknown, never zero or partial. A row is
+left out whole when its project cannot be read, its returned object has no known
+fields, its own batch yields no data for it or its forge has no details; only
+GitHub has them.
 The comment count is known only when the review connection is complete: at most 100
 review nodes, no next page, a matching total count, and valid nonnegative component
 counts whose sum fits the wire count. Incomplete, malformed or overflowing counts
@@ -2940,7 +2951,11 @@ and the text is proven free of the key and of secrets before it is queued (H1). 
 needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`). The lead
 that leads a task can stop it (`crew_stop`, the protocol's `crew.stop`): the task moves to `stopped` with the reason `lead_stopped`
 in one transaction, then the same end (leases, its worker's run's stop request, the final result) runs; only that thread's token may stop a task, a
-final task is `run_ended`, and a `briefed` or `routed` one is `invalid_transition`. A task whose
+final task is `run_ended`, and a `briefed` or `routed` one is `invalid_transition`.
+The lead that leads a held task can resume it (`crew_resume`, the protocol's `crew.resume`): a `needs_person` task whose
+worker reported moves to `running` in one transaction and its worker is told to carry on with the same thread, key and budget;
+a task whose worker never ran, one waiting on a person's `manual` check, a review lane, a merge correction, a busy worker and a
+task past its minutes are refused. A task whose
 brief's minutes or turns are spent stops on its next failed attempt with the reason `budget`: the turns are the worker's runs and
 the approvals reserved against the same budget, and a result counts them. A crew's turns are the same tally summed over its tasks:
 a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; set in Settings › General) refuses a new task once its crew
