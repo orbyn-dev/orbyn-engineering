@@ -8,6 +8,17 @@ use serde_json::json;
 use super::harness::Turn;
 use super::review_support::{arc, built, crew, finding, reviewed};
 
+/// The review task of the one lane a test asks for. A review answer lists its lanes in start order, not in a
+/// fixture's order, and a lane a repo rule adds must not become the lane the test waits on.
+fn one_lane(mut lanes: Vec<String>) -> String {
+    assert_eq!(
+        lanes.len(),
+        1,
+        "the test asks for one lane, and no rule adds another: {lanes:?}"
+    );
+    lanes.pop().expect("the lane's review task")
+}
+
 /// Uses the real queue consumer but deliberately stops before any merge writer:
 /// missing or held lane Evidence must be rejected even when task state passed.
 async fn assert_local_merge_held(w: &super::harness::World, subject: &str) {
@@ -46,9 +57,9 @@ async fn lane_gate_needs_finished_read_only_evidence_and_the_current_commit() {
     }))
     .await;
     let subject = w.built_work().await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
-    let review = w.core.store.crew_review(&lanes[0]).unwrap().unwrap();
+    let lane = one_lane(w.review(&subject, &["correctness"]).await);
+    w.until_state(&lane, "passed").await;
+    let review = w.core.store.crew_review(&lane).unwrap().unwrap();
     let gate = w
         .core
         .review_lane_gate(&subject, "correctness", &review.commit)
@@ -75,8 +86,8 @@ async fn lane_gate_needs_finished_read_only_evidence_and_the_current_commit() {
         .unwrap();
     assert_eq!(stale.decision, GateDecision::Fail);
 
-    let later = w.review(&subject, &["correctness"]).await;
-    assert_eq!(w.task(&later[0]).state, "running");
+    let later = one_lane(w.review(&subject, &["correctness"]).await);
+    assert_eq!(w.task(&later).state, "running");
     assert!(
         w.core
             .review_lane_gate(&subject, "correctness", &review.commit)
@@ -95,9 +106,9 @@ async fn unchecked_findings_hold_the_lane_gate_without_changing_global_blocked()
     .await;
     let subject = w.built_work().await;
     assert_local_merge_held(&w, &subject).await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
-    let review = w.core.store.crew_review(&lanes[0]).unwrap().unwrap();
+    let lane = one_lane(w.review(&subject, &["correctness"]).await);
+    w.until_state(&lane, "passed").await;
+    let review = w.core.store.crew_review(&lane).unwrap().unwrap();
     let before = w
         .core
         .review_lane_gate(&subject, "correctness", &review.commit)
@@ -151,9 +162,9 @@ async fn a_failed_read_only_run_cannot_produce_a_passing_lane_gate() {
     }))
     .await;
     let subject = w.built_work().await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "stopped").await;
-    let review = w.core.store.crew_review(&lanes[0]).unwrap().unwrap();
+    let lane = one_lane(w.review(&subject, &["correctness"]).await);
+    w.until_state(&lane, "stopped").await;
+    let review = w.core.store.crew_review(&lane).unwrap().unwrap();
     let gate = w
         .core
         .review_lane_gate(&subject, "correctness", &review.commit)
@@ -216,12 +227,12 @@ async fn later_review_and_merge_gates_never_repin_a_candidate_or_a_lane_verifica
     }))
     .await;
     let subject = w.built_work().await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+    let lane = one_lane(w.review(&subject, &["correctness"]).await);
+    w.until_state(&lane, "passed").await;
     w.until("the review has its core Result", |w| {
         w.core
             .store
-            .crew_results(&lanes[0])
+            .crew_results(&lane)
             .unwrap()
             .iter()
             .any(|r| r.state == orbyn_contracts::ResultState::Passed)
@@ -245,7 +256,7 @@ async fn later_review_and_merge_gates_never_repin_a_candidate_or_a_lane_verifica
     // An actual lane snapshot already exists; then append unrelated core activity
     // to both the builder and reviewer tasks, including a later checks Gate.
     add_later_stage_records(&w, &subject);
-    add_later_stage_records(&w, &lanes[0]);
+    add_later_stage_records(&w, &lane);
     let after = w
         .core
         .review_lane_gate(&subject, "correctness", commit)
@@ -254,12 +265,12 @@ async fn later_review_and_merge_gates_never_repin_a_candidate_or_a_lane_verifica
     assert_eq!(after.decision, GateDecision::Pass);
     assert_eq!(after.subject, before.subject);
     assert_eq!(after.evidence, before.evidence);
-    let later_lane = w.review(&subject, &["performance"]).await;
-    w.until_state(&later_lane[0], "passed").await;
+    let later_lane = one_lane(w.review(&subject, &["performance"]).await);
+    w.until_state(&later_lane, "passed").await;
     assert_eq!(
         w.core
             .store
-            .crew_review(&later_lane[0])
+            .crew_review(&later_lane)
             .unwrap()
             .unwrap()
             .commit,
@@ -272,7 +283,7 @@ async fn later_review_and_merge_gates_never_repin_a_candidate_or_a_lane_verifica
         .count();
     let expected = format!("{passed} of {} checks passed", result.checks.len());
     assert!(
-        w.sent_to(&w.worker(&later_lane[0]))
+        w.sent_to(&w.worker(&later_lane))
             .join("\n")
             .contains(&expected)
     );
