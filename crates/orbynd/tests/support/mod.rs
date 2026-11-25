@@ -4,7 +4,7 @@
 //! headless shell that `npm run test:e2e:install` puts under `web/node_modules`. Without
 //! one they print why and pass, so the default checks run on a machine with no browser;
 //! `ORBYN_REQUIRE_BROWSER=1` turns that into a failure instead, so a job that should have
-//! one cannot hide behind the skip.
+//! one cannot hide behind the skip. Giving the CI jobs a browser is issue #1575.
 
 #![allow(dead_code)]
 
@@ -20,8 +20,10 @@ use serde_json::{Value, json};
 ///
 /// `ORBYN_BROWSER` names one explicitly. Without it, the headless shell the E2E setup
 /// downloads into `web/node_modules` is used, so a checkout set up by docs/setup.md runs
-/// the browser cases in a normal test run. `ORBYN_REQUIRE_BROWSER=1` makes a run with no
-/// browser fail rather than skip, so a job that should have one cannot pass without it.
+/// the browser cases in a normal test run. A missing browser skips silently, because
+/// libtest hides a passing test's stderr; a CI job that should run these cases must set
+/// `ORBYN_REQUIRE_BROWSER=1` so a missing browser fails instead. Issue #1575 gives the
+/// CI jobs a browser.
 pub fn browser() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("ORBYN_BROWSER") {
         let path = PathBuf::from(path);
