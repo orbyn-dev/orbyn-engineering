@@ -333,9 +333,9 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   letters (the service cuts a folder at 5,000 entries and its answer says nothing about it, so the level is shown as complete), no
   file watcher covers the thread's worktree, so the tree reads again when the project's data changes (a finished run, for one) or the
   person presses Refresh, and on re-entering the thread; the repository list is read again with the thread's Changes (a run that ended,
-  a repository added or trusted), so one added to a running thread can be picked. A file the row lists opens its tab and no more: it is not dragged into the message and has no outside
-  editor, "Reveal" or rendered preview, because the thread names one folder and these paths are repository-relative (the same limit the
-  other repositories' file tabs have). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
+  a repository added or trusted), so one added to a running thread can be picked. A file the row lists opens its tab and no more: it is not dragged into the message and has no rendered
+  preview, because the thread names one folder and these paths are repository-relative (the same limit the other repositories' file
+  tabs have; their Open in editor, Open in browser and Reveal carry the `repo_id`). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
   chip and line comments name the file relative to the repository and not to the task folder (the Changes panel has the same shape);
   carrying the primary's `repo_id` on its tab would fix those and is left to a follow-up. `GET .../files/metadata` still has no web caller: no screen shows a file's metadata. No frame
   draws this row or the explorer's chip, so both reuse what exists: a worktree row (branch label, Git icon, current dot) and the
