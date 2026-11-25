@@ -166,6 +166,12 @@ export function settleSteps(planned: UpdateRunStep[], result: ApplyAllResult): U
   });
 }
 
+/** Approvals expire with their run, and an open thread's stream reads one as it lands: a poll reads them only
+ * while the thread list shows a run to wait on, or one is still on screen to clear. A never-read load is read. */
+export const approvalsToWatch = (threads: Record<string, Thread>, approvals: Loadable<Approval[]>): boolean =>
+  approvals.data === null || approvals.error !== null || approvals.data.length > 0
+  || Object.values(threads).some((thread) => Boolean(thread.active_run));
+
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
   projects: idle(),
   threadIds: {},
@@ -462,17 +468,23 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   async refreshAll(options) {
-    const { refreshProjects, refreshApprovals, refreshManaged, refreshUpdates } = get();
+    const { refreshProjects, refreshManaged, refreshUpdates } = get();
     const quick = options?.quick === true;
     // The workspace status names each project's branch, so it starts with the projects.
     const managed = quick ? Promise.resolve() : refreshManaged();
     await refreshProjects();
     const projects = get().projects.data ?? [];
+    // One global read: the per-project lists are a slice of it, so reading them separately
+    // would only repeat the same thread rows on every full load.
+    const threads = get().refreshPolledThreads(projects.map((p) => p.id));
+    // A run known from the last poll is watched at once, as before; otherwise this poll's thread
+    // list decides, so a run that started since is seen before the approvals are skipped.
+    const approvals = approvalsToWatch(get().threads, get().approvals)
+      ? get().refreshApprovals()
+      : threads.then(() => approvalsToWatch(get().threads, get().approvals) ? get().refreshApprovals() : undefined);
     await Promise.all([
-      // One global read: the per-project lists are a slice of it, so reading them separately
-      // would only repeat the same thread rows on every full load.
-      get().refreshPolledThreads(projects.map((p) => p.id)),
-      refreshApprovals(),
+      threads,
+      approvals,
       managed,
       quick ? Promise.resolve() : refreshUpdates(),
     ]);
