@@ -141,13 +141,14 @@ function samples(): Sample[] {
         ],
         not_verified: ["The mobile app's callers: no check covers them."], commit: RUN_COMMIT, pull: null, truncated: false,
       },
-      // Two named artifacts, one of them with no name, and a lead's repro check the task's key does not name.
+      // Three rows, one of them a lead's repro check the task's key does not name. No check producer stores an artifact yet,
+      // so no row names one.
       artifacts: {
         task: "task-failed", crew: MOCK_CREW,
         checks: [
           { id: "check-1", kind: "test", task: "task-failed", outcome: "pass", exit_code: 0, duration_ms: 4000, commit: RUN_COMMIT, artifacts: [] },
-          { id: "check-2", kind: "test", task: "task-failed", outcome: "fail", exit_code: 1, duration_ms: 22000, commit: RUN_COMMIT, artifacts: [{ kind: "log", name: "pnpm-test-auth.log", hash: "sha256:7e1c4b94a" }] },
-          { id: "lead-repro-1", task: "task-failed", outcome: "fail", exit_code: 1, duration_ms: 1000, commit: RUN_COMMIT, artifacts: [{ kind: "report", name: null, hash: "sha256:1a2b3c4d5" }] },
+          { id: "check-2", kind: "test", task: "task-failed", outcome: "fail", exit_code: 1, duration_ms: 22000, commit: RUN_COMMIT, artifacts: [] },
+          { id: "lead-repro-1", task: "task-failed", outcome: "fail", exit_code: 1, duration_ms: 1000, commit: RUN_COMMIT, artifacts: [] },
         ],
         diff: SAMPLE_DIFF, diff_absent: null, truncated: false,
       },
@@ -179,11 +180,12 @@ function samples(): Sample[] {
         not_verified: ["The mobile app's redirect: no check covers it."], commit: RUN_COMMIT,
         pull: { number: 142, branch: "crew/login-docs", commit: RUN_COMMIT }, truncated: false,
       },
-      // A passed task whose checkout is gone: the checks are there and the read names why there is no diff.
+      // A passed task whose checkout is gone: the checks are there and the read names why there is no diff. No check
+      // producer stores an artifact yet, so no row names one.
       artifacts: {
         task: "task-merged", crew: MOCK_CREW,
         checks: [
-          { id: "check-1", kind: "lint", task: "task-merged", outcome: "pass", exit_code: 0, duration_ms: 4000, commit: RUN_COMMIT, artifacts: [{ kind: "screenshot", name: "login-docs.png", hash: "sha256:9f8e7d6c5" }] },
+          { id: "check-1", kind: "lint", task: "task-merged", outcome: "pass", exit_code: 0, duration_ms: 4000, commit: RUN_COMMIT, artifacts: [] },
           { id: "check-2", kind: "test", task: "task-merged", outcome: "pass", exit_code: 0, duration_ms: 22000, commit: RUN_COMMIT, artifacts: [] },
         ],
         diff: null, diff_absent: "no_checkout", truncated: false,
@@ -209,7 +211,7 @@ function samples(): Sample[] {
       // The read answers and is empty: no check ran, and the checkout could not be read.
       artifacts: {
         task: "task-stopped", crew: MOCK_CREW,
-        checks: [], diff: null, diff_absent: "unreadable", truncated: true,
+        checks: [], diff: null, diff_absent: "unreadable", truncated: false,
       },
     },
   ];
