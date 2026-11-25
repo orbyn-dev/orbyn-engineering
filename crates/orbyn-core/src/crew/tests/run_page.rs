@@ -6,11 +6,12 @@
 use std::path::Path;
 
 use orbyn_contracts::{
-    CrewId, CrewMember, CrewObject, CrewTimestamp, CrewToken, GateStage, object_id,
+    CrewId, CrewMember, CrewObject, CrewResult, CrewTimestamp, CrewToken, Evidence, GateStage,
+    object_id,
 };
 use serde_json::{Value, json};
 
-use super::harness::{KEY_MARKER, Turn, brief, key, world};
+use super::harness::{KEY_MARKER, Turn, World, brief, key, world};
 use super::review_support::{arc, commit_all, crew, finding, repro_for, reviewed};
 use crate::crew::Stamper;
 use crate::error::CoreError;
@@ -87,6 +88,62 @@ fn add_result(
     store
         .add_crew_object(task, &CrewObject::parse(&value).unwrap())
         .unwrap();
+}
+
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list. A read that returns none
+/// or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
+/// The review task of the one lane a test asks for. A review answer lists its lanes in start order, not in a fixture's
+/// order, and a lane a repo rule adds must not become the lane the test waits on.
+fn one_lane(mut lanes: Vec<String>) -> String {
+    assert_eq!(
+        lanes.len(),
+        1,
+        "the test asks for one lane, and no rule adds another: {lanes:?}"
+    );
+    lanes.pop().expect("the lane's review task")
+}
+
+/// The one fix brief a subject has: one confirmed finding starts one fix, so a second brief is a bug in the product.
+fn only_fix(w: &World, subject: &str) -> crate::store::CrewFix {
+    let mut fixes = w.core.store.crew_fixes_of(subject).unwrap();
+    assert_eq!(
+        fixes.len(),
+        1,
+        "one confirmed finding starts one fix: {fixes:?}"
+    );
+    fixes.pop().expect("the fix brief")
+}
+
+/// The evidence one check of the build round wrote, found by the check it records rather than by its place in the
+/// task's evidence list.
+fn evidence_for(w: &World, task: &str, check: &str) -> Evidence {
+    w.core
+        .store
+        .crew_evidence(task)
+        .unwrap()
+        .into_iter()
+        .find(|evidence| evidence.check.as_str() == check)
+        .unwrap_or_else(|| panic!("the evidence for the {check} check"))
+}
+
+/// The build round's result that ran this check, found by the check its own list names rather than by its place in the
+/// task's results.
+fn result_that_ran(w: &World, task: &str, check: &str) -> CrewResult {
+    w.core
+        .store
+        .crew_results(task)
+        .unwrap()
+        .into_iter()
+        .find(|result| result.checks.iter().any(|row| row.check.as_str() == check))
+        .unwrap_or_else(|| panic!("the result that ran the {check} check"))
 }
 
 fn failing_key() -> Value {
@@ -350,8 +407,8 @@ async fn a_fix_round_supplies_its_own_checks_commit_and_not_verified_lines() {
     }))
     .await;
     let subject = w.built_work().await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+    let lane = one_lane(w.review(&subject, &["correctness"]).await);
+    w.until_state(&lane, "passed").await;
     let found = w.first_finding(&subject);
     let (answer, error) = w
         .lead(
@@ -361,14 +418,13 @@ async fn a_fix_round_supplies_its_own_checks_commit_and_not_verified_lines() {
         .await;
     assert!(!error, "{answer}");
     assert_eq!(answer["fix"]["started"], true, "{answer}");
-    let fix = w.core.store.crew_fixes_of(&subject).unwrap()[0]
-        .fix_task_id
-        .clone();
+    let fix = only_fix(&w, &subject).fix_task_id;
     w.until("the fix round and its result", |w| {
         w.task(&fix).state == "passed" && !w.core.store.crew_results(&fix).unwrap().is_empty()
     })
     .await;
 
+    // A task's results are stored oldest first, so the last is the round that ended the task: the one the page shows.
     let subject_result = w.core.store.crew_results(&subject).unwrap().pop().unwrap();
     let fix_result = w.core.store.crew_results(&fix).unwrap().pop().unwrap();
     let page = w.core.crew_flow_run(&subject).unwrap();
@@ -444,8 +500,7 @@ async fn a_page_shows_only_the_newest_verification_round() {
     let id = answer["task"].as_str().unwrap().to_owned();
     w.until_state(&id, "passed").await;
 
-    let base_evidence =
-        CrewObject::Evidence(w.core.store.crew_evidence(&id).unwrap().remove(0)).to_value();
+    let base_evidence = CrewObject::Evidence(evidence_for(&w, &id, "chk-run")).to_value();
     let base_gate = CrewObject::Gate(
         w.core
             .store
@@ -456,8 +511,7 @@ async fn a_page_shows_only_the_newest_verification_round() {
             .unwrap(),
     )
     .to_value();
-    let base_result =
-        CrewObject::Result(w.core.store.crew_results(&id).unwrap().remove(0)).to_value();
+    let base_result = CrewObject::Result(result_that_ran(&w, &id, "chk-run")).to_value();
 
     let commit = "e".repeat(40);
     let evidence = add_evidence(
@@ -486,9 +540,9 @@ async fn a_page_shows_only_the_newest_verification_round() {
     );
 
     let page = w.core.crew_flow_run(&id).unwrap();
-    assert_eq!(page.checks.len(), 1, "{:?}", page.checks);
-    assert_eq!(page.checks[0].label, "echo newer-round");
-    assert_eq!(page.checks[0].proves, "The newer round proves it.");
+    let check = one(&page.checks, "check");
+    assert_eq!(check.label, "echo newer-round");
+    assert_eq!(check.proves, "The newer round proves it.");
     assert_eq!(page.commit.as_deref(), Some(commit.as_str()));
     assert_eq!(
         page.not_verified,
@@ -510,8 +564,7 @@ async fn a_cap_keeps_the_newest_checks() {
     let id = answer["task"].as_str().unwrap().to_owned();
     w.until_state(&id, "passed").await;
 
-    let base_evidence =
-        CrewObject::Evidence(w.core.store.crew_evidence(&id).unwrap().remove(0)).to_value();
+    let base_evidence = CrewObject::Evidence(evidence_for(&w, &id, "chk-run")).to_value();
     let base_gate = CrewObject::Gate(
         w.core
             .store
@@ -522,8 +575,7 @@ async fn a_cap_keeps_the_newest_checks() {
             .unwrap(),
     )
     .to_value();
-    let base_result =
-        CrewObject::Result(w.core.store.crew_results(&id).unwrap().remove(0)).to_value();
+    let base_result = CrewObject::Result(result_that_ran(&w, &id, "chk-run")).to_value();
 
     let mut evidence = Vec::new();
     let mut checks = Vec::new();
@@ -560,9 +612,16 @@ async fn a_cap_keeps_the_newest_checks() {
 
     let page = w.core.crew_flow_run(&id).unwrap();
     assert!(page.truncated);
-    assert_eq!(page.checks.len(), 50);
-    assert_eq!(page.checks[0].label, "check 1");
-    assert_eq!(page.checks[49].label, "check 50");
+    // The cap drops the oldest check and keeps the newest fifty in their round order.
+    let labels: Vec<String> = page
+        .checks
+        .iter()
+        .map(|check| check.label.clone())
+        .collect();
+    assert_eq!(
+        labels,
+        (1..=50).map(|n| format!("check {n}")).collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -585,14 +644,14 @@ async fn a_long_check_command_cut_at_its_cap_says_the_page_was_truncated() {
     w.until_state(&id, "passed").await;
 
     let page = w.core.crew_flow_run(&id).unwrap();
-    assert_eq!(page.checks.len(), 1);
     assert!(
         page.truncated,
         "a 1,000-character command was cut and the page did not say so"
     );
+    let check = one(&page.checks, "check");
     assert!(
-        page.checks[0].label.chars().count() <= 200,
+        check.label.chars().count() <= 200,
         "{}",
-        page.checks[0].label.chars().count()
+        check.label.chars().count()
     );
 }
