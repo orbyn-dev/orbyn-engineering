@@ -71,6 +71,18 @@ describe("one repository on the history read", () => {
     expect(text).toContain("claude’s own unit");
   });
 
+  it("keeps the Open Trust link on the shared 24 px target class", async () => {
+    show();
+    await screen.findByText("71%");
+    // Both breakdown tables carry it, and the shared design class is what gives the link its 24 px box.
+    const links = screen.getAllByRole("link", { name: "Open Trust" });
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link).toHaveClass("cx-t10r");
+      expect(link).toHaveAttribute("href", "#/crew/trust");
+    }
+  });
+
   it("shows Autopilot by area: the mode each area is on now and the changes with their reasons", async () => {
     show();
     await screen.findByText("Autopilot by area");

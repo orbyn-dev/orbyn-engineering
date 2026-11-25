@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useUi } from "../../../product/state/ui";
 import { installMockFetch } from "../../../test-support";
 import { ChatSection } from "./ChatSection";
@@ -10,6 +10,23 @@ import { preferenceWrites, sentEdits } from "../rows/preferenceWrites.test-suppo
 beforeEach(() => {
   installMockFetch();
   window.location.hash = "";
+});
+afterEach(() => vi.restoreAllMocks());
+
+it("shows Open links from other apps here on a Mac client", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  render(<ChatSection />);
+  expect(await screen.findByRole("switch", { name: "Open links from other apps here" })).toBeInTheDocument();
+  expect(screen.getByText("macOS links open in the Browser panel")).toBeVisible();
+});
+
+it("leaves Open links from other apps here out on a Windows client", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  render(<ChatSection />);
+  // Wait for the preferences to arrive before calling the row absent.
+  expect(await screen.findByRole("switch", { name: "Snooze until limits reset" })).toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "Open links from other apps here" })).toBeNull();
+  expect(screen.queryByText("macOS links open in the Browser panel")).toBeNull();
 });
 
 it("offers the reference usage-limit defaults with their existing preference keys", async () => {
