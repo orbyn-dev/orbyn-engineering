@@ -29,8 +29,9 @@ $version = Setting "ORBYN_VERSION" ""
 
 if ($version) {
   # A version names one release folder: digits first, then letters, digits, dots, plus and hyphen only, so it cannot
-  # carry a path, a query or a space into the download address.
-  if ($version -notmatch '^v?[0-9][0-9A-Za-z.+-]*$') {
+  # carry a path, a query, a space or a newline into the download address. -cnotmatch is case-sensitive and \z anchors
+  # the end without the newline exception of $, so this accepts exactly what the shell installer's case guards do.
+  if ($version -cnotmatch '^v?[0-9][0-9A-Za-z.+-]*\z') {
     Fail "ORBYN_VERSION must look like 1.2.3 or v1.2.3-beta.1, not '$version'."
   }
   $url = "$base/download/v$($version.TrimStart('v'))"
