@@ -133,19 +133,26 @@ export function useRepos(projectId: string): { view: ReposView | null; settled: 
   return { view: read.status === "ready" ? read.data : null, settled: read.status !== "loading", reload: read.reload };
 }
 
-/** The repositories one thread works in; `repos` is `null` while loading, for a thread in one repository or none, and when the service reports none. */
+/**
+ * The repositories one thread works in; `repos` is `null` while loading, for a thread in one repository or none, and when the
+ * service reports none. The answer is kept with the thread it belongs to, so switching threads shows nothing of the old thread's
+ * list while the new thread's read is on its way: a multi-repository thread's chooser and tree are not drawn for an ordinary one.
+ */
 export function useThreadRepos(threadId: string, refreshKey = 0, enabled = true): { repos: ThreadRepo[] | null; reload(): void } {
   const version = useApiVersion();
-  const [repos, setRepos] = useState<ThreadRepo[] | null>(null);
+  const [held, setHeld] = useState<{ threadId: string; repos: ThreadRepo[] | null } | null>(null);
   const read = useCallback(() => {
     // Off: nothing is asked (a panel that needs the names only while a repository's file is open).
     if (!enabled) return () => undefined;
     const abort = new AbortController();
-    reposApi().threadRepos(threadId, abort.signal).then((next) => { if (!abort.signal.aborted) setRepos(next); }, () => { if (!abort.signal.aborted) setRepos(null); });
+    reposApi().threadRepos(threadId, abort.signal).then(
+      (next) => { if (!abort.signal.aborted) setHeld({ threadId, repos: next }); },
+      () => { if (!abort.signal.aborted) setHeld({ threadId, repos: null }); },
+    );
     return () => abort.abort();
   }, [threadId, version, refreshKey, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => read(), [read]);
-  return { repos, reload: read };
+  return { repos: enabled && held?.threadId === threadId ? held.repos : null, reload: read };
 }
 
 /** The thread's task folder; `folder` is `null` while loading, for a thread with none, and when the service has no such route. */
