@@ -80,6 +80,48 @@ fn runs(w: &World, id: &str) -> Vec<wire::BackgroundRun> {
     w.core.background_runs(id, page()).unwrap().runs
 }
 
+/// The change row of that kind, found by the kind it records: a test names the change it caused, never its
+/// place in the newest-first read or the order the fixture made it in.
+fn change_of_kind(
+    rows: &[wire::BackgroundWatchChange],
+    kind: wire::BackgroundWatchChangeKind,
+) -> &wire::BackgroundWatchChange {
+    rows.iter()
+        .find(|row| row.kind == kind)
+        .expect("the watch change of that kind")
+}
+
+/// The change row whose refusal code is that code, found by the code it records: a start can be refused more than
+/// once in one test, so the code, not the kind, names this row.
+fn refused_change<'a>(
+    rows: &'a [wire::BackgroundWatchChange],
+    code: &str,
+) -> &'a wire::BackgroundWatchChange {
+    rows.iter()
+        .find(|row| row.reason_code.as_deref() == Some(code))
+        .expect("the refused start's change row")
+}
+
+/// The Needs you row of that kind, found by the kind it records: a test names the row it means, never its place in
+/// the newest-first inbox.
+fn needs_you_row(items: &[wire::NeedsYouItem], kind: wire::NeedsYouKind) -> &wire::NeedsYouItem {
+    items
+        .iter()
+        .find(|item| item.kind == kind)
+        .expect("the Needs you row of that kind")
+}
+
+/// The run in that state, found by the state it records: a test names the run it means, never its place in the
+/// newest-first list.
+fn run_in_state(
+    runs: &[wire::BackgroundRun],
+    state: wire::BackgroundRunState,
+) -> &wire::BackgroundRun {
+    runs.iter()
+        .find(|run| run.state == state)
+        .expect("the run in that state")
+}
+
 fn threads(w: &World) -> i64 {
     w.core
         .store
@@ -479,10 +521,12 @@ async fn a_failing_watch_raises_one_needs_you_row_and_a_pass_again_resolves_it()
     let id = watch(&w, "Diff", "git diff --exit-code", "needs_you").await;
 
     tick(&w, NOW).await;
-    let baseline = changes(&w, &id);
-    assert_eq!(baseline.len(), 1);
-    assert_eq!(baseline[0].kind, wire::BackgroundWatchChangeKind::Baseline);
-    assert_eq!(baseline[0].action, wire::BackgroundWatchChangeAction::None);
+    let rows = changes(&w, &id);
+    assert_eq!(rows.len(), 1, "the baseline is the only change");
+    assert_eq!(
+        change_of_kind(&rows, wire::BackgroundWatchChangeKind::Baseline).action,
+        wire::BackgroundWatchChangeAction::None
+    );
     assert!(w.core.crew_needs_you().unwrap().items.is_empty());
 
     make_dirty(&w);
@@ -499,15 +543,17 @@ async fn a_failing_watch_raises_one_needs_you_row_and_a_pass_again_resolves_it()
     );
     let rows = changes(&w, &id);
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].kind, wire::BackgroundWatchChangeKind::Failing);
-    assert_eq!(rows[0].action, wire::BackgroundWatchChangeAction::NeedsYou);
+    assert_eq!(
+        change_of_kind(&rows, wire::BackgroundWatchChangeKind::Failing).action,
+        wire::BackgroundWatchChangeAction::NeedsYou
+    );
     let items = w.core.crew_needs_you().unwrap().items;
     assert_eq!(items.len(), 1, "{items:?}");
-    assert_eq!(items[0].kind, wire::NeedsYouKind::WatchFailing);
-    assert_eq!(items[0].id, id);
-    assert_eq!(items[0].crew_id.as_deref(), Some(id.as_str()));
+    let item = needs_you_row(&items, wire::NeedsYouKind::WatchFailing);
+    assert_eq!(item.id, id);
+    assert_eq!(item.crew_id.as_deref(), Some(id.as_str()));
     assert_eq!(
-        items[0].reason.as_deref(),
+        item.reason.as_deref(),
         Some("The watch's command is failing.")
     );
     assert!(
@@ -533,8 +579,10 @@ async fn a_failing_watch_raises_one_needs_you_row_and_a_pass_again_resolves_it()
     assert_eq!(recovered.error_streak, 0);
     let rows = changes(&w, &id);
     assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].kind, wire::BackgroundWatchChangeKind::Passing);
-    assert_eq!(rows[0].action, wire::BackgroundWatchChangeAction::Resolved);
+    assert_eq!(
+        change_of_kind(&rows, wire::BackgroundWatchChangeKind::Passing).action,
+        wire::BackgroundWatchChangeAction::Resolved
+    );
     assert!(
         w.core.crew_needs_you().unwrap().items.is_empty(),
         "Passing again resolves it"
@@ -551,8 +599,10 @@ async fn a_recovery_from_a_failing_baseline_writes_passing_with_no_action() {
     tick(&w, NOW).await;
     let rows = changes(&w, &id);
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].kind, wire::BackgroundWatchChangeKind::Baseline);
-    assert_eq!(rows[0].action, wire::BackgroundWatchChangeAction::None);
+    assert_eq!(
+        change_of_kind(&rows, wire::BackgroundWatchChangeKind::Baseline).action,
+        wire::BackgroundWatchChangeAction::None
+    );
     assert!(w.core.crew_needs_you().unwrap().items.is_empty());
 
     // The next check passes: a passing row, but there was no raised row to resolve, so its action is none.
@@ -560,8 +610,10 @@ async fn a_recovery_from_a_failing_baseline_writes_passing_with_no_action() {
     tick(&w, NOW + BUCKET).await;
     let rows = changes(&w, &id);
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].kind, wire::BackgroundWatchChangeKind::Passing);
-    assert_eq!(rows[0].action, wire::BackgroundWatchChangeAction::None);
+    assert_eq!(
+        change_of_kind(&rows, wire::BackgroundWatchChangeKind::Passing).action,
+        wire::BackgroundWatchChangeAction::None
+    );
     assert_eq!(status(&w, &id).state, wire::BackgroundWatchState::Passing);
     assert!(w.core.crew_needs_you().unwrap().items.is_empty());
 }
@@ -586,24 +638,26 @@ async fn a_template_watch_starts_one_run_and_nothing_while_nothing_changes() {
     tick(&w, NOW + BUCKET).await;
     let started = runs(&w, &id);
     assert_eq!(started.len(), 1, "{started:?}");
+    let started = run_in_state(&started, wire::BackgroundRunState::Running);
     let rows = changes(&w, &id);
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].kind, wire::BackgroundWatchChangeKind::Failing);
+    let failing = change_of_kind(&rows, wire::BackgroundWatchChangeKind::Failing);
     assert_eq!(
-        rows[0].action,
+        failing.action,
         wire::BackgroundWatchChangeAction::StartedTemplate
     );
     assert_eq!(
-        rows[0].reason_code, None,
+        failing.reason_code, None,
         "a start that succeeds has no code"
     );
     assert_eq!(
-        rows[0].reason, None,
+        failing.reason, None,
         "a start that succeeds has no sentence"
     );
     assert!(w.core.crew_needs_you().unwrap().items.is_empty());
-    let tasks = w.core.store.crew_tasks_in_crew(&started[0].id).unwrap();
+    let tasks = w.core.store.crew_tasks_in_crew(&started.id).unwrap();
     assert_eq!(tasks.len(), 1, "one task per started run");
+    // The run makes one task, so its crew's task list has that single row.
     let brief = w.core.store.crew_brief(&tasks[0].0.id).unwrap().unwrap();
     assert!(
         brief.outcome.contains("Find why the latest CI run"),
@@ -621,17 +675,20 @@ async fn a_template_watch_starts_one_run_and_nothing_while_nothing_changes() {
     // beside it.
     make_clean(&w);
     tick(&w, NOW + 3 * BUCKET).await;
+    let rows = changes(&w, &id);
+    assert_eq!(rows.len(), 3);
     assert_eq!(
-        changes(&w, &id)[0].action,
+        change_of_kind(&rows, wire::BackgroundWatchChangeKind::Passing).action,
         wire::BackgroundWatchChangeAction::None
     );
     make_dirty(&w);
     tick(&w, NOW + 4 * BUCKET).await;
     let rows = changes(&w, &id);
-    assert_eq!(rows[0].action, wire::BackgroundWatchChangeAction::NeedsYou);
-    assert_eq!(rows[0].reason_code.as_deref(), Some("run_in_progress"));
+    assert_eq!(rows.len(), 4);
+    let refused = refused_change(&rows, "run_in_progress");
+    assert_eq!(refused.action, wire::BackgroundWatchChangeAction::NeedsYou);
     assert_eq!(
-        rows[0].reason.as_deref(),
+        refused.reason.as_deref(),
         Some("A run of this crew is already running.")
     );
     assert_eq!(
@@ -646,7 +703,8 @@ async fn a_template_watch_starts_one_run_and_nothing_while_nothing_changes() {
     );
     let items = w.core.crew_needs_you().unwrap().items;
     assert_eq!(items.len(), 1, "{items:?}");
-    assert_eq!(items[0].kind, wire::NeedsYouKind::WatchFailing);
+    let item = needs_you_row(&items, wire::NeedsYouKind::WatchFailing);
+    assert_eq!(item.id, id, "the row names the watch");
 }
 
 #[tokio::test]
@@ -656,11 +714,12 @@ async fn a_finished_template_run_leaves_one_change_row_and_the_watch_reads_nothi
     tick(&w, NOW).await;
     make_dirty(&w);
     tick(&w, NOW + BUCKET).await;
+    // This test starts one run and the run makes one task, so each list read below has one row: the
+    // read's order cannot pick the wrong one.
     let run = runs(&w, &id).remove(0);
-    let task = w.core.store.crew_tasks_in_crew(&run.id).unwrap()[0]
-        .0
-        .id
-        .clone();
+    let tasks = w.core.store.crew_tasks_in_crew(&run.id).unwrap();
+    assert_eq!(tasks.len(), 1, "one task per started run");
+    let task = tasks[0].0.id.clone();
     w.until_state(&task, "passed").await;
     let run = w.core.background_runs(&id, page()).unwrap().runs.remove(0);
     assert_eq!(
@@ -713,9 +772,10 @@ async fn three_checks_that_could_not_run_raise_one_row_and_a_check_that_runs_res
             assert!(items.is_empty(), "two in a row raise nothing: {items:?}");
         } else {
             assert_eq!(items.len(), 1, "{items:?}");
-            assert_eq!(items[0].kind, wire::NeedsYouKind::WatchCouldNotRun);
             assert_eq!(
-                items[0].reason.as_deref(),
+                needs_you_row(&items, wire::NeedsYouKind::WatchCouldNotRun)
+                    .reason
+                    .as_deref(),
                 Some("3 checks in a row could not run: refused.")
             );
         }
@@ -862,6 +922,7 @@ async fn the_watch_reads_page_the_history_and_refuse_a_crew_that_is_not_a_watch(
     assert_eq!(first.total, 2, "the baseline and the recovery");
     assert_eq!(first.changes.len(), 1);
     assert_eq!(first.next_offset, Some(1));
+    // Order is the contract here: the changes read is newest first, so the recovery is the front row.
     assert_eq!(
         first.changes[0].kind,
         wire::BackgroundWatchChangeKind::Passing,
@@ -909,8 +970,9 @@ async fn a_failing_watch_stays_raised_through_short_could_not_run_streaks() {
     tick(&w, NOW + BUCKET).await;
     let items = w.core.crew_needs_you().unwrap().items;
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0].kind, wire::NeedsYouKind::WatchFailing);
-    let failing_since = items[0].since.clone();
+    let failing_since = needs_you_row(&items, wire::NeedsYouKind::WatchFailing)
+        .since
+        .clone();
     assert_eq!(failing_since, crate::util::format_unix(NOW + BUCKET));
 
     // The checkout goes away: every check now could not start. One and two in a row are not three, so the failing row stays —
@@ -924,9 +986,9 @@ async fn a_failing_watch_stays_raised_through_short_could_not_run_streaks() {
         assert_eq!(state.error_streak, n as u32 + 1);
         let items = w.core.crew_needs_you().unwrap().items;
         assert_eq!(items.len(), 1, "the failing row stays: {items:?}");
-        assert_eq!(items[0].kind, wire::NeedsYouKind::WatchFailing);
         assert_eq!(
-            items[0].since, failing_since,
+            needs_you_row(&items, wire::NeedsYouKind::WatchFailing).since,
+            failing_since,
             "the failing row keeps the change it began at"
         );
     }
@@ -935,12 +997,12 @@ async fn a_failing_watch_stays_raised_through_short_could_not_run_streaks() {
     tick(&w, NOW + 4 * BUCKET).await;
     let items = w.core.crew_needs_you().unwrap().items;
     assert_eq!(items.len(), 1, "{items:?}");
-    assert_eq!(items[0].kind, wire::NeedsYouKind::WatchCouldNotRun);
+    let item = needs_you_row(&items, wire::NeedsYouKind::WatchCouldNotRun);
     assert_eq!(
-        items[0].reason.as_deref(),
+        item.reason.as_deref(),
         Some("3 checks in a row could not run: could not start.")
     );
-    assert_eq!(items[0].since, crate::util::format_unix(NOW + 4 * BUCKET));
+    assert_eq!(item.since, crate::util::format_unix(NOW + 4 * BUCKET));
     assert!(
         matches!(
             w.core
@@ -961,8 +1023,10 @@ async fn a_failing_watch_stays_raised_through_short_could_not_run_streaks() {
     assert_eq!(state.error_streak, 0);
     let rows = changes(&w, &id);
     assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].kind, wire::BackgroundWatchChangeKind::Passing);
-    assert_eq!(rows[0].action, wire::BackgroundWatchChangeAction::Resolved);
+    assert_eq!(
+        change_of_kind(&rows, wire::BackgroundWatchChangeKind::Passing).action,
+        wire::BackgroundWatchChangeAction::Resolved
+    );
     assert!(w.core.crew_needs_you().unwrap().items.is_empty());
 }
 
@@ -978,10 +1042,10 @@ async fn turning_a_watch_off_writes_one_turned_off_row_and_hides_its_row() {
     w.core.background_turn_off(&id).await.unwrap();
     let rows = changes(&w, &id);
     assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].kind, wire::BackgroundWatchChangeKind::TurnedOff);
-    assert_eq!(rows[0].action, wire::BackgroundWatchChangeAction::None);
-    assert_eq!(rows[0].exit_code, None);
-    assert_eq!(rows[0].tail, None);
+    let turned_off = change_of_kind(&rows, wire::BackgroundWatchChangeKind::TurnedOff);
+    assert_eq!(turned_off.action, wire::BackgroundWatchChangeAction::None);
+    assert_eq!(turned_off.exit_code, None);
+    assert_eq!(turned_off.tail, None);
     assert!(
         w.core.crew_needs_you().unwrap().items.is_empty(),
         "a crew that is off asks for nothing"
@@ -1029,9 +1093,10 @@ async fn a_watch_on_an_untrusted_project_could_not_run_and_never_raises_by_itsel
     tick(&w, NOW + 2 * BUCKET).await;
     let items = w.core.crew_needs_you().unwrap().items;
     assert_eq!(items.len(), 1, "{items:?}");
-    assert_eq!(items[0].kind, wire::NeedsYouKind::WatchCouldNotRun);
     assert_eq!(
-        items[0].reason.as_deref(),
+        needs_you_row(&items, wire::NeedsYouKind::WatchCouldNotRun)
+            .reason
+            .as_deref(),
         Some("3 checks in a row could not run: folder not trusted.")
     );
 }
@@ -1080,8 +1145,14 @@ async fn a_failing_watch_asks_for_the_person_again_when_it_is_turned_back_on() {
     make_clean(&w);
     tick(&w, NOW + 3 * BUCKET).await;
     assert!(w.core.crew_needs_you().unwrap().items.is_empty());
+    let rows = changes(&w, &id);
     assert_eq!(
-        changes(&w, &id)[0].action,
+        rows.len(),
+        4,
+        "the baseline, the failure, the off and the pass"
+    );
+    assert_eq!(
+        change_of_kind(&rows, wire::BackgroundWatchChangeKind::Passing).action,
         wire::BackgroundWatchChangeAction::Resolved
     );
 }
@@ -1133,7 +1204,9 @@ async fn a_watch_changed_to_needs_you_during_a_check_does_not_start_its_template
         .store
         .background_crews_of_kind("watch")
         .unwrap()
-        .remove(0);
+        .into_iter()
+        .find(|crew| crew.id == id)
+        .expect("the watch's stored row");
     // The person changes what a failure does while the check is running.
     let update: wire::BackgroundCrewUpdate = serde_json::from_value(json!({
         "trigger": { "kind": "watch", "command": "git diff --exit-code", "every_hours": HOURS, "on_failing": "needs_you" }
@@ -1154,8 +1227,10 @@ async fn a_watch_changed_to_needs_you_during_a_check_does_not_start_its_template
         runs(&w, &id).is_empty(),
         "no run after the person chose needs_you"
     );
+    let rows = changes(&w, &id);
+    assert_eq!(rows.len(), 2, "the baseline and the failing change");
     assert_eq!(
-        changes(&w, &id)[0].action,
+        change_of_kind(&rows, wire::BackgroundWatchChangeKind::Failing).action,
         wire::BackgroundWatchChangeAction::NeedsYou
     );
     assert_eq!(w.core.crew_needs_you().unwrap().items.len(), 1);
@@ -1187,7 +1262,7 @@ async fn refused_failing_check(w: &World, id: &str, at: i64) -> wire::Background
         .unwrap();
     let rows = changes(w, id);
     assert_eq!(rows.len(), 2, "a baseline and the failing change: {rows:?}");
-    rows[0].clone()
+    change_of_kind(&rows, wire::BackgroundWatchChangeKind::Failing).clone()
 }
 
 /// One refused start: its change row, its sentence and the Needs you row it keeps raised. The words are code-owned,
@@ -1217,8 +1292,8 @@ fn assert_refused_start(
         1,
         "the refused start keeps the Needs you row: {items:?}"
     );
-    assert_eq!(items[0].kind, wire::NeedsYouKind::WatchFailing);
-    assert_eq!(items[0].crew_id.as_deref(), Some(id));
+    let item = needs_you_row(&items, wire::NeedsYouKind::WatchFailing);
+    assert_eq!(item.crew_id.as_deref(), Some(id));
 }
 
 #[test]
@@ -1263,11 +1338,13 @@ async fn a_refused_start_for_low_disk_records_the_code_and_sentence() {
     // The disk refusal keeps its stopped not-started run beside the change row, with no stop reason.
     let runs = runs(&w, &id);
     assert_eq!(runs.len(), 1, "{runs:?}");
-    assert_eq!(runs[0].state, wire::BackgroundRunState::Stopped);
-    assert_eq!(runs[0].stop_reason, None);
-    assert_eq!(runs[0].reason_code.as_deref(), Some("disk_low"));
+    let refused = run_in_state(&runs, wire::BackgroundRunState::Stopped);
+    assert_eq!(refused.stop_reason, None);
+    assert_eq!(refused.reason_code.as_deref(), Some("disk_low"));
+    let rows = changes(&w, &id);
+    assert_eq!(rows.len(), 2, "the baseline and the failing change");
     assert_eq!(
-        changes(&w, &id)[0].action,
+        change_of_kind(&rows, wire::BackgroundWatchChangeKind::Failing).action,
         wire::BackgroundWatchChangeAction::NeedsYou
     );
     crate::host::disk::set_free_for_test(&w.repo, None);
