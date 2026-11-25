@@ -128,15 +128,17 @@ it("opens another repository's Word document in the document viewer, read with i
   expect(rawAsks(asked).some((one) => one.get("repo_id") === REPO)).toBe(true);
 });
 
-it("keeps the outside editor off for another repository, with the reason as its note", async () => {
+it("offers the outside editor for another repository as it does for the thread's own file", async () => {
+  // The request body that carries the repo_id is checked in client.test.ts and FileEditor.repo.test.tsx.
   serve({ binary: true, size: 64 }, new Uint8Array([1, 2]));
-  render(<Viewer threadId="t" tabId="tab" path="art/logo.png" repoId={REPO} line={null} />);
+  const foreign = render(<Viewer threadId="t" tabId="tab" path="art/logo.png" repoId={REPO} line={null} />);
+  expect(await screen.findByRole("button", { name: "Open in editor" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: /not available for another repository/ })).toBeNull();
+  foreign.unmount();
 
-  const note = await screen.findByRole("button", { name: /not available for another repository yet/ });
-  expect(note).toBeDisabled();
-  expect(note).toHaveAttribute("title", "Open in editor — not available for another repository yet");
-  // The thread's own file still offers the action.
-  expect(screen.queryByRole("button", { name: "Open in editor" })).toBeNull();
+  serve({ binary: true, size: 64 }, new Uint8Array([1, 2]));
+  render(<Viewer threadId="t" tabId="tab" path="art/logo.png" line={null} />);
+  expect(await screen.findByRole("button", { name: "Open in editor" })).toBeEnabled();
 });
 
 it("says an untrusted repository in words rather than only failing to load the media", async () => {

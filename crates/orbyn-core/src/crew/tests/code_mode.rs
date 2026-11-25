@@ -5,12 +5,14 @@ use super::harness::{Turn, World, brief, key, world};
 use super::review_support::lead_binding;
 use crate::crew::workers::allowed;
 use crate::store::Admission;
-use crate::store::code_runs::CodeRunEnd;
+use crate::store::code_runs::{CodeRunEnd, StoredCodeCall};
 use crate::tools::mcp::McpBinding;
 use crate::tools::mcp::code::{DESCRIBE_TOOL, RUN_TOOL, SEARCH_TOOL, fake::Fake, is_inner_tool};
 use async_trait::async_trait;
 use orbyn_code_sandbox::{CodeExecutor, Limits, Run, RunError, RunSeed, ToolHost};
-use orbyn_contracts::{ApprovalState, CodeRunStatus, CreateThread, RunState};
+use orbyn_contracts::{
+    ApprovalState, CodeRunCall, CodeRunRecord, CodeRunStatus, CreateThread, RunState,
+};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,6 +23,26 @@ fn parse(answer: (String, bool)) -> (Value, bool) {
         serde_json::from_str(&answer.0).unwrap_or(Value::String(answer.0)),
         answer.1,
     )
+}
+
+/// A run record's call at script index `index`: the record's key, never the read's row position.
+fn recorded_call(record: &CodeRunRecord, index: u32) -> &CodeRunCall {
+    record
+        .calls
+        .iter()
+        .find(|call| call.index == index)
+        .expect("the recorded call with that script index")
+}
+
+/// The stored call with script index `index`, read without relying on its row position.
+fn stored_call(w: &World, run_id: &str, index: u32) -> StoredCodeCall {
+    w.core
+        .store
+        .code_calls(run_id)
+        .expect("the run's calls read")
+        .into_iter()
+        .find(|call| call.idx == index)
+        .expect("the stored call with that script index")
 }
 
 /// A Crew worker's thread and the binding its run would use.
@@ -86,6 +108,7 @@ async fn a_script_call_goes_back_through_the_core() {
     );
     assert!(!is_error, "{reply}");
     assert_eq!(reply["status"], "completed", "{reply}");
+    // The answers follow the script's call order; this script made one call.
     assert_eq!(reply["result"][0]["thread_id"], json!(w.lead), "{reply}");
     assert!(reply["runId"].as_str().is_some());
 }
@@ -231,6 +254,7 @@ async fn search_and_describe_never_show_a_worker_a_tool_it_cannot_call() {
     )
     .await;
     assert_eq!(run["status"], "completed", "{run}");
+    // The answers follow the script's call order; this script made one call.
     assert_eq!(run["result"][0]["thread_id"], json!(worker_id), "{run}");
     // The lead sees tools; its search never lists a Code Mode tool (a script may not nest).
     let lead = lead_binding(&w);
@@ -496,6 +520,7 @@ async fn a_workers_script_is_held_to_the_allow_list_on_every_call() {
     ]) {
         assert_eq!(call.tool, tool);
     }
+    // The record keeps the script's call order: calls 3 and 4 are its two refusals.
     for (call, tool) in record.calls[2..].iter().zip(DISALLOWED) {
         let preview: Value = serde_json::from_str(call.preview.as_deref().unwrap()).unwrap();
         assert_eq!(
@@ -523,6 +548,7 @@ async fn a_workers_script_is_held_to_the_allow_list_on_every_call() {
     assert_eq!(replayed["status"], "completed", "{replayed}");
     let results = replayed["result"].as_array().unwrap();
     assert_eq!(results.len(), 4, "{replayed}");
+    // A replay answers the script's calls in the same order.
     assert_eq!(results[0]["thread_id"], json!(worker), "{replayed}");
     assert!(results[1].is_array(), "{replayed}");
     for (result, tool) in results[2..].iter().zip(DISALLOWED) {
@@ -538,8 +564,8 @@ async fn a_workers_script_is_held_to_the_allow_list_on_every_call() {
     );
     let record = w.core.code_run_record(&run_id).unwrap();
     assert_eq!(record.calls.len(), 4, "{record:?}");
-    assert_eq!(record.calls[2].status, "failed");
-    assert_eq!(record.calls[3].status, "failed");
+    assert_eq!(recorded_call(&record, 3).status, "failed");
+    assert_eq!(recorded_call(&record, 4).status, "failed");
     assert_eq!(record.resumes, 1);
     assert!(
         w.core.store.pending_for_thread(&worker).unwrap().is_empty(),
@@ -606,7 +632,8 @@ async fn an_attachment_tool_in_a_workers_script_stays_on_its_own_thread() {
     assert_eq!(reply["status"], "completed", "{reply}");
     let results = reply["result"].as_array().unwrap();
     // Its own thread passes the attachment check and reaches the Crew gate, which has no lead to
-    // review it in this test. The lead's thread is refused before the gate, for both tools.
+    // review it in this test. The lead's thread is refused before the gate, for both tools. The
+    // answers follow the script's call order: its own thread first, then the lead's two.
     assert_eq!(results[0]["code"], "denied", "{reply}");
     assert!(
         !results[0]["message"]
@@ -681,6 +708,7 @@ async fn a_replay_rechecks_the_allow_list_before_answering_from_the_record() {
     let replayed = run_text(&w, &binding, json!({ "code": CODE, "run_id": run_id })).await;
     assert_eq!(replayed["status"], "completed", "{replayed}");
     let results = replayed["result"].as_array().unwrap();
+    // The replay's answers follow the script's call order.
     assert_eq!(
         results[0]["thread_id"],
         json!(thread.id),
@@ -744,19 +772,19 @@ async fn a_run_is_recorded_with_its_script_calls_and_result() {
         Some("call orbyn_environment_read")
     );
     assert_eq!(record.calls.len(), 1);
-    assert_eq!(record.calls[0].tool, "orbyn_environment_read");
-    assert_eq!(record.calls[0].status, "ok");
-    assert!(
-        record.calls[0]
-            .preview
-            .as_deref()
-            .unwrap()
-            .contains(&w.lead)
-    );
+    let call = recorded_call(&record, 1);
+    assert_eq!(call.tool, "orbyn_environment_read");
+    assert_eq!(call.status, "ok");
+    assert!(call.preview.as_deref().unwrap().contains(&w.lead));
     assert!(record.result.is_some() && record.ended_at.is_some() && record.pending.is_empty());
     let listed = w.core.code_runs_list(&w.lead).unwrap();
     assert_eq!(listed.runs.len(), 1);
-    assert_eq!(listed.runs[0].calls, 1);
+    let row = listed
+        .runs
+        .iter()
+        .find(|row| row.run_id == id)
+        .expect("the run's row in the list");
+    assert_eq!(row.calls, 1);
     assert!(w.core.code_runs_list("nobody").unwrap().runs.is_empty());
 }
 
@@ -842,12 +870,7 @@ async fn a_run_replayed_after_a_real_restart_does_not_repeat_its_effect() {
         .decide_with(&approval.id, true, false, None, "test-person")
         .expect("the person allows the script's call");
     w.until("the approved effect is recorded", |w| {
-        w.core
-            .store
-            .code_calls(&run_id)
-            .expect("the run's calls read")
-            .first()
-            .is_some_and(|call| call.status == "ok")
+        stored_call(w, &run_id, 1).status == "ok"
     })
     .await;
 
@@ -868,12 +891,7 @@ async fn a_run_replayed_after_a_real_restart_does_not_repeat_its_effect() {
         .expect("the paused run's record reads");
     assert_eq!(record.status, CodeRunStatus::Paused, "{record:?}");
     assert_eq!(record.calls.len(), 1, "{record:?}");
-    let before = w
-        .core
-        .store
-        .code_calls(&run_id)
-        .expect("the run's calls read")
-        .remove(0);
+    let before = stored_call(&w, &run_id, 1);
     assert_eq!(before.tool, "orbyn_attachment_add");
     assert_eq!(before.status, "ok");
     assert!(before.effect, "the recorded call is an effect call");
@@ -894,9 +912,10 @@ async fn a_run_replayed_after_a_real_restart_does_not_repeat_its_effect() {
         "{recovered:?}"
     );
     assert_eq!(recovered.calls.len(), 1, "the record kept the call");
-    assert_eq!(recovered.calls[0].tool, "orbyn_attachment_add");
-    assert_eq!(recovered.calls[0].status, "ok");
-    assert_eq!(recovered.calls[0].preview, preview, "the same preview");
+    let call = recorded_call(&recovered, 1);
+    assert_eq!(call.tool, "orbyn_attachment_add");
+    assert_eq!(call.status, "ok");
+    assert_eq!(call.preview, preview, "the same preview");
     assert_eq!(attachments(&w).len(), 1, "the effect is still the one row");
 
     // The replay gets the same code: the recorded call answers from the record, nothing runs it
@@ -912,7 +931,10 @@ async fn a_run_replayed_after_a_real_restart_does_not_repeat_its_effect() {
     assert_eq!(replayed["result"], json!([recorded]), "{replayed}");
     let written = attachments(&w);
     assert_eq!(written.len(), 1, "the replay repeated no effect");
-    assert_eq!(written[0].id, attachment_id, "the row is the first run's");
+    assert!(
+        written.iter().any(|row| row.id == attachment_id),
+        "the row is the first run's"
+    );
     assert_eq!(
         tool_calls(&w),
         calls + 1,
@@ -925,13 +947,12 @@ async fn a_run_replayed_after_a_real_restart_does_not_repeat_its_effect() {
     assert_eq!(record.status, CodeRunStatus::Completed, "{record:?}");
     assert_eq!(record.resumes, 1, "{record:?}");
     assert_eq!(record.calls.len(), 1, "the replay added no call row");
-    assert_eq!(record.calls[0].preview, preview, "the same result answer");
-    let after = w
-        .core
-        .store
-        .code_calls(&run_id)
-        .expect("the run's calls read")
-        .remove(0);
+    assert_eq!(
+        recorded_call(&record, 1).preview,
+        preview,
+        "the same result answer"
+    );
+    let after = stored_call(&w, &run_id, 1);
     assert_eq!(after.result, Some(result), "the stored result is unchanged");
 }
 
@@ -974,12 +995,7 @@ async fn real_javascript_replay_reaches_the_in_flight_call_without_repeating_the
     };
     assert_eq!(second.via.as_ref().map(|via| via.call), Some(2));
     assert_eq!(attachments(&w).len(), 1, "the first effect ran once");
-    let recorded = w
-        .core
-        .store
-        .code_calls(&run_id)
-        .expect("the run's calls read")
-        .remove(0);
+    let recorded = stored_call(&w, &run_id, 1);
     assert_eq!(recorded.tool, "orbyn_attachment_add");
     assert_eq!(recorded.status, "ok");
 
@@ -1002,12 +1018,7 @@ async fn real_javascript_replay_reaches_the_in_flight_call_without_repeating_the
         "{replayed}"
     );
     assert_eq!(attachments(&w).len(), 1, "the replay repeated no effect");
-    let after = w
-        .core
-        .store
-        .code_calls(&run_id)
-        .expect("the run's calls read")
-        .remove(0);
+    let after = stored_call(&w, &run_id, 1);
     assert_eq!(
         after.result, recorded.result,
         "the first answer is the recorded one"
@@ -1195,7 +1206,7 @@ async fn next_pending(w: &World, thread: &str) -> orbyn_contracts::Approval {
     panic!("no approval became pending for {thread}");
 }
 
-fn cancelled_error(record: &orbyn_contracts::CodeRunRecord) {
+fn cancelled_error(record: &CodeRunRecord) {
     assert_eq!(record.status, CodeRunStatus::Error, "{record:?}");
     let error = record.error.as_ref().expect("a cancelled run has an error");
     assert_eq!(error.kind, "cancelled", "{record:?}");
@@ -1222,10 +1233,10 @@ async fn a_paused_run_with_a_pending_approval_is_cancelled_and_the_approval_is_d
     let record = w.core.code_run_cancel(&run_id).await.unwrap();
     cancelled_error(&record);
     assert_eq!(record.calls.len(), 1, "{record:?}");
-    assert_eq!(record.calls[0].status, "failed", "{record:?}");
+    let call = recorded_call(&record, 1);
+    assert_eq!(call.status, "failed", "{record:?}");
     assert!(
-        record.calls[0]
-            .preview
+        call.preview
             .as_deref()
             .unwrap()
             .contains("The run was cancelled."),
@@ -1278,8 +1289,13 @@ async fn a_running_run_is_cancelled_while_its_outer_call_is_still_waiting() {
     });
     let mut run_id = None;
     for _ in 0..200 {
-        if let Some(row) = w.core.code_runs_list(&w.lead).unwrap().runs.first()
-            && row.status == CodeRunStatus::Running
+        if let Some(row) = w
+            .core
+            .code_runs_list(&w.lead)
+            .unwrap()
+            .runs
+            .iter()
+            .find(|row| row.status == CodeRunStatus::Running)
         {
             run_id = Some(row.run_id.clone());
             break;
@@ -1318,7 +1334,14 @@ async fn a_cancel_during_prepare_never_spawns_the_script_and_releases_the_slot()
     });
     let mut run_id = None;
     for _ in 0..200 {
-        if let Some(row) = w.core.code_runs_list(&w.lead).unwrap().runs.first() {
+        if let Some(row) = w
+            .core
+            .code_runs_list(&w.lead)
+            .unwrap()
+            .runs
+            .iter()
+            .find(|row| row.status == CodeRunStatus::Running)
+        {
             run_id = Some(row.run_id.clone());
             break;
         }
@@ -1434,7 +1457,7 @@ async fn a_late_call_answer_after_a_cancel_changes_nothing() {
     w.core.store.code_run_end(&run_id, &end).unwrap();
     let record = w.core.code_run_record(&run_id).unwrap();
     cancelled_error(&record);
-    assert_eq!(record.calls[0].status, "failed", "{record:?}");
+    assert_eq!(recorded_call(&record, 1).status, "failed", "{record:?}");
     assert_eq!(record.result, None, "{record:?}");
     assert_eq!(record.logs, Vec::<String>::new(), "{record:?}");
 }
@@ -1525,7 +1548,11 @@ async fn a_cancel_releases_the_slot_for_a_new_start_at_the_cap() {
         assert_eq!(paused["status"], "paused", "{paused}");
         ids.push(paused["runId"].as_str().unwrap().to_owned());
     }
-    w.core.code_run_cancel(&ids[0]).await.unwrap();
+    // Any one of the four runs frees its slot; which of them it is makes no difference.
+    w.core
+        .code_run_cancel(ids.first().expect("four runs at the cap"))
+        .await
+        .unwrap();
     let next = run_text(&w, &lead, json!({ "code": "sleep 60000" })).await;
     assert_eq!(next["status"], "paused", "{next}");
 }
@@ -1835,7 +1862,7 @@ async fn waited_ms_survives_a_replay() {
     // The call's own answer must be recorded before the restart, or the replay would see an
     // effect in flight and end as lost instead of answering from the record.
     for _ in 0..200 {
-        if w.core.store.code_calls(&run_id).unwrap()[0].status == "ok" {
+        if stored_call(&w, &run_id, 1).status == "ok" {
             break;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;

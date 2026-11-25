@@ -9,6 +9,7 @@ import { FileTab } from "../files/FileTab";
 import { Viewer } from "../files/FileViewer";
 import { EditorTitleExtras } from "./EditorTitleExtras";
 import { fileKey, saveSession, useEditorSessions } from "./editorSessions";
+import { useFileTabMenu } from "./useFileTabMenu";
 
 // F70 (#1055): a file or editor tab can name a repository of a multi-repository thread; every read and write of it carries that repo_id.
 const TEXT = "# planner\n";
@@ -19,15 +20,21 @@ interface Served {
   content: Record<string, string>;
   read?: { status: number; body: unknown };
   put?: { status: number; body: unknown };
+  editors?: unknown[];
+  opens: { path: string; editor: string; repo_id?: string }[];
   gets: string[];
   puts: { path: string; content: string; base_revision: string | null; repo_id?: string }[];
 }
 
 function serve(options: Partial<Served> = {}) {
-  const state: Served = { content: { planner: TEXT, primary: "primary text\n" }, gets: [], puts: [], ...options };
+  const state: Served = { content: { planner: TEXT, primary: "primary text\n" }, editors: [], opens: [], gets: [], puts: [], ...options };
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const url = String(input);
-    if (url.includes("/api/editors")) return new Response("[]");
+    if (url.includes("/api/editors")) return new Response(JSON.stringify(state.editors));
+    if (url.includes("/files/open")) {
+      state.opens.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 202 });
+    }
     if (init?.method === "PUT") {
       const body = JSON.parse(String(init.body));
       state.puts.push(body);
@@ -166,4 +173,43 @@ it("a file tab of the thread opens the repository's file, and a thread-less pane
   unmount();
   const { container } = render(<FileTab id={id} threadId={null} />);
   expect(container).toBeEmptyDOMElement();
+});
+
+const VSCODE = { id: "vscode", name: "VS Code", launch_style: "goto", file_manager: false };
+
+function RepoMenu({ tab }: { tab: string }) {
+  const items = useFileTabMenu("t", tab, () => undefined);
+  return (
+    <>
+      {items?.map((item) => (
+        <div key={item.label}>
+          <button onClick={item.onSelect}>{item.label}</button>
+          {item.children?.map((child) => (
+            <button key={child.label} onClick={child.onSelect}>{child.label}</button>
+          ))}
+        </div>
+      ))}
+    </>
+  );
+}
+
+it("offers the outside editor on another repository's file tab, with its repo-relative path and repo_id", async () => {
+  const served = serve({ editors: [VSCODE] });
+  const tab = fileTabId({ kind: "thread", path: "notes.txt", repoId: REPO });
+  render(<><Viewer threadId="t" tabId="planner" path="notes.txt" repoId={REPO} line={null} /><RepoMenu tab={tab} /></>);
+  await planner();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Open in an outside editor" })).toBeVisible());
+  await userEvent.click(await screen.findByRole("button", { name: "VS Code" }));
+  await waitFor(() => expect(served.opens).toHaveLength(1));
+  expect(served.opens[0]).toEqual({ path: "notes.txt", editor: "vscode", repo_id: REPO });
+});
+
+it("keeps the outside editor for a primary file tab without repo_id", async () => {
+  const served = serve({ editors: [VSCODE] });
+  const tab = fileTabId({ kind: "thread", path: "notes.txt" });
+  render(<><Viewer threadId="t" tabId="main" path="notes.txt" line={null} /><RepoMenu tab={tab} /></>);
+  await planner();
+  await userEvent.click(await screen.findByRole("button", { name: "VS Code" }));
+  await waitFor(() => expect(served.opens).toHaveLength(1));
+  expect(served.opens[0]).toEqual({ path: "notes.txt", editor: "vscode" });
 });

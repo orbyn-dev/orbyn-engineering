@@ -10,18 +10,17 @@ import { EditorEmpty } from "./EditorShell";
 
 /**
  * editor-binary: no text editor for a file that is not text. It says so, gives the size and can reveal the file.
- * Images, PDFs, archives and documents never get here. Another repository's file is saved from its own repository
- * (its bytes and download carry the `repo_id`); opening it in an outside editor needs a route that does not take one yet.
+ * Images, PDFs, archives and documents never get here. Another repository's file is revealed, opened in an outside
+ * editor and saved from its own repository: every call carries the `repo_id`.
  */
 export function BinaryFile({ threadId, path, size, repoId }: { threadId: string; path: string; size: number; /** Another repository of a multi-repository thread; absent is the thread's own checkout. */ repoId?: string }) {
-  const foreign = repoId !== undefined;
   const editors = useAsync("editors", (signal) => api.editors(signal));
   const manager = (editors.data ?? []).find((one) => one.file_manager);
   const name = path.split("/").at(-1) ?? path;
   const reveal = async () => {
     if (!manager) return;
     try {
-      await api.openInEditor(threadId, { path, editor: manager.id });
+      await api.openInEditor(threadId, { path, editor: manager.id, ...(repoId === undefined ? {} : { repo_id: repoId }) });
     } catch (failure) {
       useUi.getState().pushToast(`Couldn't open it. ${toFailure(failure).message}`);
     }
@@ -33,16 +32,14 @@ export function BinaryFile({ threadId, path, size, repoId }: { threadId: string;
       title="Can’t show this file"
       actions={
         <>
-          {!foreign && manager ? (
+          {manager ? (
             <Button tone="quiet" onClick={() => void reveal()}>
               Reveal in {manager.name}
             </Button>
           ) : null}
-          {foreign ? null : (
-            <Button tone="quiet" onClick={() => void openInEditor(threadId, path)}>
-              Open in editor
-            </Button>
-          )}
+          <Button tone="quiet" onClick={() => void openInEditor(threadId, path, null, repoId)}>
+            Open in editor
+          </Button>
           <a className="btn btn-quiet" href={rawUrl(threadId, path, true, repoId)} download>
             Save file
           </a>
@@ -50,7 +47,6 @@ export function BinaryFile({ threadId, path, size, repoId }: { threadId: string;
       }
     >
       {name} is a binary file ({formatBytes(size)}). Images, PDFs and archives preview in the file tab; this type has no preview.
-      {foreign ? " It can be saved, but opening it in an outside editor isn't available for another repository yet." : null}
     </EditorEmpty>
   );
 }
