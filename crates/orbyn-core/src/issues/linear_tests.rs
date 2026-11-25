@@ -1785,6 +1785,62 @@ mod writes {
             "nothing is deleted when there is no own reaction"
         );
     }
+
+    #[tokio::test]
+    async fn a_create_the_tracker_never_answered_says_it_was_possibly_created() {
+        let server = Server::start(|req| {
+            if let Some(reply) = scope_reads(req) {
+                return reply;
+            }
+            Reply::status(503)
+        })
+        .await;
+        let error = reader(&server)
+            .create("ENG", &new_issue("T", "", &[], &[]))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::TrackerUnavailable(m) if m.contains("possibly created") && !m.contains("secret")),
+            "{error:?}"
+        );
+    }
+
+    /// Every fixed GraphQL document is balanced and has no empty selection, so real Linear parses it (the fake does not).
+    #[test]
+    fn every_fixed_graphql_document_is_well_formed() {
+        for (name, document) in [
+            ("templates", TEAM_TEMPLATES_QUERY),
+            ("team id", TEAM_ID_QUERY),
+            ("labels", LABELS_QUERY),
+            ("issue ref", ISSUE_REF_QUERY),
+            ("comment ref", COMMENT_REF_QUERY),
+            ("issue create", ISSUE_CREATE_MUTATION),
+            ("comment create", COMMENT_CREATE_MUTATION),
+            ("viewer", VIEWER_QUERY),
+            ("teams", TEAMS_QUERY),
+            ("issue reactions", ISSUE_REACTIONS_QUERY),
+            ("comment reactions", COMMENT_REACTIONS_QUERY),
+            ("reaction create", REACTION_CREATE_MUTATION),
+            ("reaction delete", REACTION_DELETE_MUTATION),
+        ] {
+            let mut depth = 0i32;
+            for character in document.chars() {
+                match character {
+                    '{' | '(' => depth += 1,
+                    '}' | ')' => depth -= 1,
+                    _ => {}
+                }
+                assert!(depth >= 0, "{name}: a closing bracket with no opener");
+            }
+            assert_eq!(depth, 0, "{name}: unbalanced brackets");
+            assert!(
+                !document.replace(' ', "").contains("{}"),
+                "{name}: an empty selection set"
+            );
+        }
+    }
+
 }
 
 mod limits {
@@ -1963,60 +2019,5 @@ mod templates {
         .await;
         assert!(reader(&server).templates("ENG").await.unwrap().is_empty());
         assert_eq!(server.seen().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn a_create_the_tracker_never_answered_says_it_was_possibly_created() {
-        let server = Server::start(|req| {
-            if let Some(reply) = scope_reads(req) {
-                return reply;
-            }
-            Reply::status(503)
-        })
-        .await;
-        let error = reader(&server)
-            .create("ENG", &new_issue("T", "", &[], &[]))
-            .await
-            .map(|_| ())
-            .unwrap_err();
-        assert!(
-            matches!(&error, CoreError::TrackerUnavailable(m) if m.contains("possibly created") && !m.contains("secret")),
-            "{error:?}"
-        );
-    }
-
-    /// Every fixed GraphQL document is balanced and has no empty selection, so real Linear parses it (the fake does not).
-    #[test]
-    fn every_fixed_graphql_document_is_well_formed() {
-        for (name, document) in [
-            ("templates", TEAM_TEMPLATES_QUERY),
-            ("team id", TEAM_ID_QUERY),
-            ("labels", LABELS_QUERY),
-            ("issue ref", ISSUE_REF_QUERY),
-            ("comment ref", COMMENT_REF_QUERY),
-            ("issue create", ISSUE_CREATE_MUTATION),
-            ("comment create", COMMENT_CREATE_MUTATION),
-            ("viewer", VIEWER_QUERY),
-            ("teams", TEAMS_QUERY),
-            ("issue reactions", ISSUE_REACTIONS_QUERY),
-            ("comment reactions", COMMENT_REACTIONS_QUERY),
-            ("reaction create", REACTION_CREATE_MUTATION),
-            ("reaction delete", REACTION_DELETE_MUTATION),
-        ] {
-            let mut depth = 0i32;
-            for character in document.chars() {
-                match character {
-                    '{' | '(' => depth += 1,
-                    '}' | ')' => depth -= 1,
-                    _ => {}
-                }
-                assert!(depth >= 0, "{name}: a closing bracket with no opener");
-            }
-            assert_eq!(depth, 0, "{name}: unbalanced brackets");
-            assert!(
-                !document.replace(' ', "").contains("{}"),
-                "{name}: an empty selection set"
-            );
-        }
     }
 }
