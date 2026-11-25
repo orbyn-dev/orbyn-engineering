@@ -15,8 +15,9 @@ let attached = false;
 /** True in the desktop app, once the service has said so. */
 export const inDesktopApp = () => attached;
 
-export async function readShellStatus(signal?: AbortSignal) {
-  const status = await api.shell(signal);
+/** `fresh`: a shell-changed event asked, so join no read sent before it, which may hold the older facts. */
+export async function readShellStatus(signal?: AbortSignal, fresh = false) {
+  const status = await api.shell(signal, fresh);
   attached = status.attached;
   return status;
 }

@@ -168,6 +168,35 @@ async fn autocrlf_cannot_hide_a_byte_change_from_scope_or_size() {
     }
 }
 
+/// An in-tree `.gitattributes` rule cannot normalize a byte change away: the byte-exact reads take attributes from the
+/// empty tree, not the checkout. Git before 2.40 ignores that source, so there the check fails closed instead of passing.
+#[tokio::test]
+async fn an_in_tree_attributes_rule_cannot_hide_a_byte_change_from_scope_or_size() {
+    let dir = integrity_repo();
+    let root = dir.path();
+    std::fs::write(root.join(".gitattributes"), "base.txt text eol=lf\n").unwrap();
+    super::review_support::commit_all(root, "a text attribute");
+    std::fs::write(root.join("base.txt"), "base\r\n").unwrap();
+    let site = site_of(root, None);
+    let attributes_from_source =
+        crate::source_control::git::reads_attributes_from_source(root).await;
+    for value in [
+        json!({ "id": "scope", "kind": "file_scope", "proves": "scope", "params": { "only": ["other.txt"] } }),
+        json!({ "id": "size", "kind": "diff_size", "proves": "size", "params": { "max_lines": 0 } }),
+    ] {
+        let expected = if attributes_from_source {
+            CheckOutcome::Fail
+        } else {
+            CheckOutcome::Error
+        };
+        assert_eq!(
+            run_check(&check(value), &site).await.outcome,
+            expected,
+            "the in-tree attribute rule must not hide the byte change"
+        );
+    }
+}
+
 #[tokio::test]
 async fn info_attributes_cannot_normalize_a_byte_change_into_a_pass() {
     let dir = integrity_repo();
