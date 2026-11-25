@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { Param } from "./contract";
-import { capped, checkItem, checkKeyName, isOneLine, keychainNote, confirmFromFailure, placeholdersOf, plain, runGrantText, sourceLabel, scrubValue, startValues, valueProblems, valuesBody } from "./model";
+import { capped, checkItem, checkKeyName, importNotice, isOneLine, keychainNote, confirmFromFailure, placeholdersOf, plain, runGrantText, sourceLabel, scrubValue, startValues, valueProblems, valuesBody } from "./model";
 
 const choice: Param = { name: "package", label: "Package", kind: "choice", default: "auth", required: true, choices: ["auth", "web"] };
 
@@ -125,4 +125,11 @@ it("reads a malformed confirm_required detail as nothing to confirm, never as an
 it("labels a non-local source in words and says nothing for local or an unknown word", () => {
   expect([sourceLabel("import"), sourceLabel("repo"), sourceLabel("shared")]).toEqual(["Imported", "From repo", "Shared"]);
   expect([sourceLabel("local"), sourceLabel("<b>x</b>"), sourceLabel(undefined), sourceLabel("__proto__")]).toEqual([null, null, null, null]);
+});
+
+it("says an import's result in one line, with any refusal", () => {
+  expect(importNotice({ created: 1, renamed: 0, refused: 0 })).toBe("Imported 1 item to Personal.");
+  expect(importNotice({ created: 1, renamed: 2, refused: 0 })).toBe("Imported 3 items to Personal.");
+  expect(importNotice({ created: 0, renamed: 0, refused: 1 })).toBe("Nothing was imported. 1 entry was refused.");
+  expect(importNotice({ created: 0, renamed: 0, refused: 2 })).toBe("Nothing was imported. 2 entries were refused.");
 });

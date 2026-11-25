@@ -1,4 +1,4 @@
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { ApiFailure } from "../../api/client";
 import { useUi } from "../../product/state/ui";
@@ -6,8 +6,9 @@ import { useWorkspace } from "../../product/state/workspace";
 import { Button } from "../../ui/controls";
 import { libraryApi, useLibrary, useSuggestions, type LibraryData } from "./api";
 import type { EnvSet, Kind, Prompt, RepoEnvSet, RepoPrompt, RepoWorkflow, Suggestions, SuggestionFile, Workflow } from "./contract";
+import { ImportLibraryDialog } from "./ImportLibraryDialog";
 import { ItemForm } from "./ItemForm";
-import { plain, sourceLabel } from "./model";
+import { importNotice, plain, sourceLabel } from "./model";
 import { DeleteItem, EnvSetPage, PromptPage, WorkflowPage } from "./Pages";
 import { UseDialog, type UseMode } from "./UseDialog";
 import "./library.css";
@@ -51,9 +52,10 @@ async function place(threadId: string, mode: Exclude<UseMode, "run">, text: stri
  * The Library panel (frames `workflow-*`; docs/execution-profiles-and-library.md, Part 2): saved workflows, prompts and environment sets,
  * in two tabs. From repo lists the entries the project commits in `.orbyn/`, read only; Personal holds the person's own items, on this
  * computer. Hidden entirely when the service has no library route. Nothing is written into a repository; a repository entry is
- * used by copying it to Personal first. Everything the service or a file says is text, escaped and cut. Planned, not drawn: the last
- * run of a workflow, "changed since the last commit", another worktree's items, Compare, Reveal here, applying a set to a shell,
- * and number or yes/no parameters (the contract has text, choice and path).
+ * used by copying it to Personal first. Everything the service or a file says is text, escaped and cut. The toolbar's Import reads an
+ * Orbyn library export file: the service's dry run is drawn first, with counts per kind, and nothing is written until the person
+ * chooses Import. Planned, not drawn: the last run of a workflow, "changed since the last commit", another worktree's items, Compare,
+ * Reveal here, applying a set to a shell, and number or yes/no parameters (the contract has text, choice and path).
  */
 export function LibraryPanel({ threadId, typeIntoTerminal }: { threadId: string; typeIntoTerminal: TypeIntoTerminal }) {
   const { data, error, settled, reload } = useLibrary();
@@ -83,6 +85,10 @@ function LibraryBody({ threadId, projectId, data, reload, typeIntoTerminal, tab,
   const suggestions: Suggestions = repoRead.data ?? { workflows: [], prompts: [], env_sets: [], problems: [] };
   const copying = useRef(false);
   const [busyCopy, setBusyCopy] = useState(false);
+  // One hidden picker for the one Import action; the file is read and dry-run in the sheet, never here.
+  const picker = useRef<HTMLInputElement>(null);
+  const picks = useRef(0);
+  const [importFile, setImportFile] = useState<{ file: File; nonce: number } | null>(null);
   const needle = query.trim().toLowerCase();
 
   const repoWorkflows = suggestions.workflows.filter((one) => matches(needle, one.name, one.description, one.command));
@@ -171,6 +177,19 @@ function LibraryBody({ threadId, projectId, data, reload, typeIntoTerminal, tab,
         <button type="button" role="tab" aria-selected={tab === "repo"} className="lib-tab" onClick={() => setTab("repo")}>From repo · {repoTotal}</button>
         <button type="button" role="tab" aria-selected={tab === "personal"} className="lib-tab" onClick={() => setTab("personal")}>Personal · {personalTotal}</button>
         <span className="lib-spacer" />
+        <input
+          ref={picker}
+          type="file"
+          accept=".json,application/json"
+          hidden
+          data-library-import
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) setImportFile({ file, nonce: (picks.current += 1) });
+          }}
+        />
+        <Button small tone="quiet" icon={<Upload size={14} aria-hidden />} onClick={() => picker.current?.click()}>Import</Button>
         <Button small icon={<Plus size={14} aria-hidden />} onClick={() => setOpen({ what: "form", kind: null, item: null })}>New item</Button>
       </div>
       <label className="lib-search">
@@ -215,6 +234,16 @@ function LibraryBody({ threadId, projectId, data, reload, typeIntoTerminal, tab,
         <DeleteItem kind={open.kind} id={open.id} name={open.name}
           onDone={() => { setOpen(null); setPick(null); setNotice(`Deleted ${plain(open.name, 40)}.`); reload(); }}
           onClose={() => setOpen(null)} />
+      ) : null}
+      {importFile ? (
+        <ImportLibraryDialog
+          key={importFile.nonce}
+          file={importFile.file}
+          limit={data.summary.limits?.import_bytes}
+          onChooseAnother={() => { setImportFile(null); picker.current?.click(); }}
+          onApplied={(answer) => { setNotice(importNotice(answer)); reload(); }}
+          onClose={() => setImportFile(null)}
+        />
       ) : null}
     </section>
   );

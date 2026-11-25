@@ -1,4 +1,4 @@
-import { LIMITS, type EnvSet, type Param, type ParamKind } from "./contract";
+import { LIMITS, type EnvSet, type ImportAnswer, type Param, type ParamKind } from "./contract";
 
 /** Text the service or a file chose: cut so no line can grow a row. React escapes it; it is never markup. */
 export const plain = (text: unknown, max = 80): string => {
@@ -114,6 +114,14 @@ export function checkKeyName(name: string, existing: readonly string[]): string 
   if (existing.includes(name)) return "This set already has that name.";
   if (existing.length >= LIMITS.keysPerSet) return `A set holds at most ${LIMITS.keysPerSet} variables.`;
   return null;
+}
+
+/** What an import's answer says in one line: how many entries it added to Personal, and how many it refused. */
+export function importNotice(answer: Pick<ImportAnswer, "created" | "renamed" | "refused">): string {
+  const added = answer.created + answer.renamed;
+  const line = added === 0 ? "Nothing was imported." : `Imported ${added} ${added === 1 ? "item" : "items"} to Personal.`;
+  if (answer.refused === 0) return line;
+  return `${line} ${answer.refused} ${answer.refused === 1 ? "entry was" : "entries were"} refused.`;
 }
 
 /** The keychain state in words, for the note on a set. `null` when nothing needs saying. */

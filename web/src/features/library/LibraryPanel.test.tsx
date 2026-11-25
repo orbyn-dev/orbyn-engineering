@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createLibraryMock, libraryFixtures, suggestionFixtures } from "../../../mock/library";
@@ -510,3 +510,32 @@ it("treats a keychain_unavailable on a value save as the Planned note, with the 
   expect(document.body.textContent).not.toContain("tok-12345");
   expect(mock.writes).toEqual([]);
 });
+
+it("imports a library export from the toolbar: the dry run writes nothing, and Import reloads the library", async () => {
+  const mock = createLibraryMock();
+  const importLibrary = vi.spyOn(mock, "importLibrary");
+  const workflows = vi.spyOn(mock, "workflows");
+  const { user } = await mount(mock);
+  const picker = document.querySelector<HTMLInputElement>("input[data-library-import]")!;
+  expect(picker).toHaveAttribute("accept", ".json,application/json");
+  expect(picker).toHaveAttribute("hidden");
+  await user.click(screen.getByRole("button", { name: "Import" }));
+  const document_ = { format: "orbyn-library", version: 1, exported_at: "2026-11-22T00:00:00Z", profiles: [], workflows: [{ name: "Imported one", description: "", command: "echo 1", params: [], env_set_names: [] }], prompts: [], env_sets: [] };
+  fireEvent.change(picker, { target: { files: [new File([JSON.stringify(document_)], "orbyn-library-2026-11-22.json", { type: "application/json" })] } });
+  const dialog = await screen.findByRole("dialog", { name: "Import library" });
+  expect(await within(dialog).findByText("Checked by the service. Nothing is written until you choose Import.")).toBeVisible();
+  const table = within(dialog).getByRole("table", { name: "Import by kind" });
+  expect(within(table).getByRole("row", { name: /^Workflows/ })).toHaveTextContent("1");
+  expect(importLibrary).toHaveBeenCalledWith(document_, true);
+  expect(mock.writes).toEqual([]);
+  const before = workflows.mock.calls.length;
+  await user.click(within(dialog).getByRole("button", { name: "Import 1 item" }));
+  await waitFor(() => expect(mock.writes).toEqual(["import:1+0"]));
+  expect(await within(dialog).findByText("Imported 1 item to Personal.")).toBeVisible();
+  await waitFor(() => expect(workflows.mock.calls.length).toBeGreaterThan(before));
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(await screen.findByText("Imported 1 item to Personal.")).toBeVisible();
+  // The reload the apply started reads again; flush its timers inside act so no state lands after the test.
+  await act(async () => { await new Promise<void>((resolve) => { setTimeout(resolve, 20); }); });
+});
+
