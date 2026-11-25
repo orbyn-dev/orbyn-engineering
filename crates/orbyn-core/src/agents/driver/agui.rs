@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe, RunHandle, RunSpec,
-    ask,
+    ask, diagnostics,
 };
 use crate::agents::sse::SseParser;
 use crate::error::{CoreError, Result};
@@ -133,7 +133,9 @@ async fn drive(
             Ok(RemoteEnd::Interrupted(interrupts)) => {
                 resume = answer_interrupts(interrupts, events).await;
             }
-            Err(error) => return EngineOutcome::Failed(error.to_string()),
+            Err(error) => {
+                return EngineOutcome::Failed(diagnostics::outward(&error.to_string()));
+            }
         }
     }
     EngineOutcome::Failed("The agent kept interrupting without finishing.".to_owned())
@@ -179,7 +181,12 @@ async fn stream_run(
         .json(input)
         .send()
         .await
-        .map_err(|error| CoreError::EngineUnavailable(format!("Could not reach agent: {error}")))?;
+        .map_err(|error| {
+            CoreError::EngineUnavailable(format!(
+                "Could not reach agent: {}",
+                diagnostics::outward(&error.to_string())
+            ))
+        })?;
     if !response.status().is_success() {
         return Err(CoreError::EngineUnavailable(format!(
             "The agent answered {}.",
@@ -191,9 +198,15 @@ async fn stream_run(
     let mut parser = SseParser::default();
     while let Some(chunk) = body.next().await {
         let chunk = chunk.map_err(|error| {
-            CoreError::EngineUnavailable(format!("Agent stream failed: {error}"))
+            CoreError::EngineUnavailable(format!(
+                "Agent stream failed: {}",
+                diagnostics::outward(&error.to_string())
+            ))
         })?;
-        for frame in parser.push(&chunk) {
+        let frames = parser
+            .push(&chunk)
+            .map_err(|error| CoreError::EngineUnavailable(error.to_string()))?;
+        for frame in frames {
             let Ok(value) = serde_json::from_str::<Value>(&frame) else {
                 tracing::debug!("skipping a non-JSON AG-UI frame");
                 continue;
@@ -314,11 +327,12 @@ impl FrameMapper {
                 })
             }
             "RUN_ERROR" => Mapped::End(RemoteEnd::Finished(EngineOutcome::Failed(
-                frame
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("The agent failed.")
-                    .to_owned(),
+                diagnostics::outward(
+                    frame
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("The agent failed."),
+                ),
             ))),
             "TEXT_MESSAGE_CHUNK" => self.on_chunk(&frame),
             _ => {

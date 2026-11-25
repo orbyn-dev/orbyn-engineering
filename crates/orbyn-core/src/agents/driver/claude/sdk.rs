@@ -26,7 +26,7 @@ impl SdkMapper {
     pub(crate) fn finish(&mut self) -> Vec<EngineEvent> {
         let mut events = self.0.close_open_blocks();
         events.extend(self.0.workflows.end_all());
-        events.extend(self.0.end_background());
+        events.extend(self.0.end_background("turn ended"));
         events
     }
 }
