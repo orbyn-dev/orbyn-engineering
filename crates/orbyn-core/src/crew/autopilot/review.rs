@@ -230,6 +230,13 @@ impl Core {
         let ctx = context(ask.kind, &ask.target, &ask.paths, &scene);
         let mut action =
             json!({ "kind": wire_name(&ask.kind), "target": ask.target, "paths": ask.paths });
+        // Who asked: the run's engine, and the model its thread runs when the store knows one. Every row this
+        // function writes carries them, so the person reads which engine and model asked, not only which answered.
+        // A metadata read that fails leaves the model out; it never decides anything.
+        action["asker_engine"] = json!(scope.engine);
+        if let Some(model) = self.asker_model(&scope.thread_id) {
+            action["asker_model"] = json!(model);
+        }
 
         // Trip wire: text that reads as injected instructions. A file's own content is not scanned.
         let mut scanned = injection_in(&ask.summary).or_else(|| injection_in(&ask.target));
@@ -396,6 +403,17 @@ impl Core {
             guard: guard_body.as_ref(),
         };
         self.settle_review(task, &settled, &summary, mode, outcome, &needles)
+    }
+
+    /// The model the asking run's thread is on, for the ledger row. `None` when the thread names none or cannot be
+    /// read: this is what the row says, never what the chain decides, so an unreadable thread never denies.
+    fn asker_model(&self, thread: &str) -> Option<String> {
+        self.store
+            .thread(thread)
+            .ok()?
+            .model
+            .map(|model| model.trim().to_owned())
+            .filter(|model| !model.is_empty())
     }
 
     /// What the blast-radius guard holds in this command, if anything. It reads this device's two lists and, for a push, the
