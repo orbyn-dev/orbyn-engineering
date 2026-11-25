@@ -1,5 +1,6 @@
-import { ApiFailure, NETWORK_ERROR, authHeaders, failureFrom } from "../../../../api/client";
+import { ApiFailure, NETWORK_ERROR, authHeaders, failureFrom, request } from "../../../../api/client";
 import { serviceUrl } from "../../../../api/origin";
+import type { BlockClear as WireBlockClear } from "../../../../generated/BlockClear";
 import type { BlockLimits as WireBlockLimits } from "../../../../generated/BlockLimits";
 import type { BlockList as WireBlockList } from "../../../../generated/BlockList";
 import type { BlockOutputPage as WireBlockOutputPage } from "../../../../generated/BlockOutputPage";
@@ -66,9 +67,10 @@ async function read<T>(path: string, signal: AbortSignal): Promise<T> {
 }
 
 /**
- * The production client for the two Local reads of docs/command-blocks.md. It carries the session header and no person
- * key, and every path segment and cursor is encoded. A `410` rejects with `cursor_expired`, which `readBlockOutput` uses
- * to start the block again from the top; a `422 bad_cursor` and a failed output page surface to the card unchanged.
+ * The production client for docs/command-blocks.md: the two Local reads and the Person clear. A read carries the session
+ * header and no person key, and every path segment and cursor is encoded. A `410` rejects with `cursor_expired`, which
+ * `readBlockOutput` uses to start the block again from the top; a `422 bad_cursor` and a failed output page surface to
+ * the card unchanged. The clear goes through `request`, so the person key reaches that route.
  */
 export const realBlocksApi: CommandBlocksApi = {
   quietWhenEmpty: true,
@@ -98,3 +100,13 @@ export const realBlocksApi: CommandBlocksApi = {
     }
   },
 };
+
+/**
+ * The Person-class clear of docs/command-blocks.md, through the app's `request` so it carries the person key. It drops this
+ * terminal's finished blocks and their kept output; a running block stays and its output goes on growing. The answer says how
+ * many finished blocks went and whether one stayed.
+ */
+export function clearTerminalBlocks(terminal: BlockTerminal, signal?: AbortSignal): Promise<WireBlockClear> {
+  const path = `/api/threads/${q(terminal.threadId)}/terminals/${q(terminal.terminalId)}/blocks`;
+  return request<WireBlockClear>("DELETE", path, undefined, signal);
+}
