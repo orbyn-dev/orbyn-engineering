@@ -15,11 +15,15 @@ pub(crate) const MAX_EXISTING_BRANCHES: usize = 10_000;
 /// Collision suffixes tried before Git is left to refuse the name.
 const MAX_COLLISION_TRIES: u32 = 1_000;
 
+/// How a new worktree's branch gets its name, from the `branch_naming_mode` preference.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum NamingMode {
+pub enum NamingMode {
+    /// `<branch_name_prefix>/<purpose>`, the name every worktree used before modes existed.
     #[default]
     Static,
+    /// A bounded slug of the thread's real title, or of the purpose when it has none.
     Semantic,
+    /// The purpose as the complete branch name.
     Custom,
 }
 
@@ -35,8 +39,10 @@ impl NamingMode {
 
 /// The naming preferences a new worktree uses.
 #[derive(Clone, Debug)]
-pub(crate) struct Naming {
+pub struct Naming {
+    /// The mode that decides the name.
     pub mode: NamingMode,
+    /// The prefix static and semantic names start with.
     pub prefix: String,
 }
 

@@ -1448,7 +1448,8 @@ else `session/load` with its replay discarded; an unknown session ends the run a
 session. The session link is the thread's engine session, so no table or migration exists.
 A cancelled request stops that process and releases the instance for the next request.
 
-A new worktree uses `branch_name_prefix`, `base_branch` or the origin's head when
+A new worktree's branch name follows `branch_naming_mode` and `branch_name_prefix`
+([Text generators](#text-generators)); it starts from `base_branch` or the origin's head when
 `new_worktrees_start_from_origin` is on, falling back to HEAD, and
 `worktree_submodules` through the shared preference resolver. Checkout mode and
 submodule behavior resolve Project override → Environment override → the actual

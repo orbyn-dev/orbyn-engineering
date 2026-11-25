@@ -1116,39 +1116,57 @@ mod preference_consumer_tests {
     }
 
     #[tokio::test]
-    async fn new_worktree_branches_follow_the_naming_mode() {
+    async fn static_naming_keeps_the_prefix_and_the_purpose() {
         let dir = TempDir::new();
         let (core, project) = naming_core(&dir).await;
-
-        // Static keeps today's prefix and purpose.
-        set_naming(&core, "static");
-        let thread = make_worktree_thread(&core, &project, "fix-login", None).await;
-        assert_eq!(thread.worktree.unwrap().branch, "feat/fix-login");
-
-        // Semantic makes a slug from a real title.
-        set_naming(&core, "semantic");
-        let thread = make_worktree_thread(
-            &core,
-            &project,
-            "signup-purpose",
-            Some("Add sign-up screen"),
+        core.set_preferences(
+            None,
+            &[("branch_name_prefix".into(), json!("team/feat"))].into(),
         )
-        .await;
+        .unwrap();
+        let thread = make_worktree_thread(&core, &project, "fix-login", Some("Add login")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "team/feat/fix-login");
+        core.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn semantic_naming_slugs_the_title_and_numbers_collisions() {
+        let dir = TempDir::new();
+        let (core, project) = naming_core(&dir).await;
+        set_naming(&core, "semantic");
+
+        let thread =
+            make_worktree_thread(&core, &project, "signup-one", Some("Add sign-up screen")).await;
         assert_eq!(thread.worktree.unwrap().branch, "feat/add-sign-up-screen");
         // The same title twice makes two branches rather than reusing one.
         let thread =
-            make_worktree_thread(&core, &project, "signup-again", Some("Add sign-up screen")).await;
+            make_worktree_thread(&core, &project, "signup-two", Some("Add sign-up screen")).await;
         assert_eq!(thread.worktree.unwrap().branch, "feat/add-sign-up-screen-2");
-        // With no real title the purpose is the seed, which is today's name.
-        let thread = make_worktree_thread(&core, &project, "wire-login", None).await;
-        assert_eq!(thread.worktree.unwrap().branch, "feat/wire-login");
 
-        // Custom uses the purpose as the complete branch name.
+        // A default title names nothing, so the purpose is the seed.
+        let thread = make_worktree_thread(&core, &project, "wire-login", Some("New thread")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "feat/wire-login");
+        // A real title no slug can keep falls back to the purpose too.
+        let thread = make_worktree_thread(&core, &project, "fix-parser", Some("!!! ???")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "feat/fix-parser");
+        core.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn custom_naming_uses_the_purpose_as_the_complete_branch_name() {
+        let dir = TempDir::new();
+        let (core, project) = naming_core(&dir).await;
         set_naming(&core, "custom");
+
+        // The title is not involved, and the name carries no prefix.
         let thread =
             make_worktree_thread(&core, &project, "fix-signup", Some("Add sign-up screen")).await;
         assert_eq!(thread.worktree.unwrap().branch, "fix-signup");
 
+        // A purpose at the worktree-name limit is still the whole branch name.
+        let longest = "b".repeat(64);
+        let thread = make_worktree_thread(&core, &project, longest.as_str(), None).await;
+        assert_eq!(thread.worktree.unwrap().branch, longest);
         core.shutdown().await;
     }
 
