@@ -1,6 +1,8 @@
 // Packs a stand-in CLI with pack-cli.mjs, serves it from loopback as a release would,
 // and runs this platform's installer against it: install.sh on macOS, install.ps1 on
-// Windows. Every folder the installer writes is a throwaway one.
+// Windows. Every folder the installer writes is a throwaway one. On Linux, where CI
+// does not run an installer, only the shell installer's refusal case and the static
+// parity case run.
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -29,8 +31,13 @@ let serveDir;
 const requests = [];
 
 before(async () => {
-  if (skip) return;
   root = mkdtempSync(join(tmpdir(), "orbyn-install-test-"));
+  if (skip) {
+    // The refusal case below still runs here: the shell installer refuses the version before
+    // its platform check, so Linux needs no archive and no server, only a dead base address.
+    base = "http://127.0.0.1:9";
+    return;
+  }
   const binaries = join(root, "binaries");
   mkdirSync(binaries);
   for (const program of ["orbyn", "orbynd"]) {
@@ -192,10 +199,12 @@ test("the Windows launcher saves only the digits of the code page, in any locale
   }
 });
 
-test("an exact version and the nightly channel pick their own release", { skip }, async () => {
+test("an exact version, an empty version and the nightly channel pick their own release", { skip }, async () => {
   for (const [env, folder] of [
     [{ ORBYN_VERSION: "v1.2.3" }, "/download/v1.2.3/"],
     [{ ORBYN_VERSION: "1.2.3", ORBYN_CHANNEL: "nightly" }, "/download/v1.2.3/"],
+    // An empty ORBYN_VERSION is the unset default, not a version.
+    [{ ORBYN_VERSION: "" }, "/latest/download/"],
     [{ ORBYN_CHANNEL: "nightly" }, "/download/nightly/"],
   ]) {
     requests.length = 0;
@@ -307,12 +316,73 @@ test("an archive that names paths outside its folder writes nothing outside it",
   }
 });
 
-test("a version that is not a plain version string is refused before any download", { skip }, async () => {
-  for (const version of ["1/../x", "1.2.3/../../latest", "1 2", "v1.2.3?x=y", "..", "-1", "1.2.3#frag"]) {
+// A version names one release folder: digits first after an optional lowercase `v`, then
+// only letters, digits, dots, plus and hyphen. Shells, URLs and PowerShell paths treat the
+// other characters specially, so each must be refused before the download starts.
+const refusedVersions = [
+  "1/../x",
+  "1.2.3/../../latest",
+  "1 2",
+  "v1.2.3?x=y",
+  "..",
+  "-1",
+  "1.2.3#frag",
+  "$(id)",
+  "1.2.3;id",
+  "1.2.3|id",
+  "1.2.3&&id",
+  "1.2.3`id`",
+  "1.2.3\n",
+  "1.2.3\t",
+  "https://example.invalid/v1.2.3",
+  "refs/tags/v1.2.3",
+  "latest",
+  // PowerShell -match is case-insensitive, and TrimStart('v') would leave a capital V in the
+  // folder name; the shell installer has always refused it.
+  "V1.2.3",
+];
+
+test("the shell installer refuses a version that is not a plain version string before any download", { skip: windows && "Windows runs install.ps1; the case below covers it" }, async () => {
+  for (const version of refusedVersions) {
     requests.length = 0;
     const result = await install({ ORBYN_VERSION: version });
-    assert.notEqual(result.status, 0, `${version} was accepted`);
-    assert.match(result.stderr, /ORBYN_VERSION/, version);
-    assert.deepEqual(requests, [], `${version} reached the server`);
+    assert.notEqual(result.status, 0, `${JSON.stringify(version)} was accepted`);
+    assert.match(result.stderr, /ORBYN_VERSION/, JSON.stringify(version));
+    assert.deepEqual(requests, [], `${JSON.stringify(version)} reached the server`);
   }
+});
+
+// install.ps1 runs only on Windows, so this behavioural case runs in Windows CI; the static
+// case below is the check the Linux build box can make. The Linux box runs the shell case.
+test("the PowerShell installer refuses the same versions before any download", { skip: !windows && "install.ps1 runs on Windows only" }, async () => {
+  for (const version of refusedVersions) {
+    requests.length = 0;
+    const result = await install({ ORBYN_VERSION: version });
+    assert.notEqual(result.status, 0, `${JSON.stringify(version)} was accepted`);
+    assert.match(result.stderr, /ORBYN_VERSION/, JSON.stringify(version));
+    assert.deepEqual(requests, [], `${JSON.stringify(version)} reached the server`);
+  }
+});
+
+test("both installers check the version before the download and use one case-sensitive shape", () => {
+  const shell = readFileSync(join(scripts, "install.sh"), "utf8");
+  const powershell = readFileSync(join(scripts, "install.ps1"), "utf8");
+  for (const [name, text, download] of [
+    ["install.sh", shell, "curl -fsSL --proto"],
+    ["install.ps1", powershell, "Invoke-WebRequest -UseBasicParsing"],
+  ]) {
+    const check = text.indexOf("ORBYN_VERSION must look like");
+    const firstDownload = text.indexOf(download);
+    assert.ok(check > 0, `${name} refuses a version with a message naming ORBYN_VERSION`);
+    assert.ok(firstDownload > 0, `${name} downloads its archive`);
+    assert.ok(check < firstDownload, `${name} checks ORBYN_VERSION before the download`);
+  }
+  // The shell's `case` guards are case-sensitive and reject every character outside the
+  // version set. -notmatch would accept a leading capital V (TrimStart('v') keeps it, so the
+  // folder would be vV1.2.3), and `$` would accept a trailing newline. No Windows machine is
+  // on the build box, so this pins the two differences the Windows case cannot show here.
+  const guard = powershell.split("\n").find((line) => line.includes("if ($version -"));
+  assert.ok(guard, "install.ps1 has a version guard");
+  assert.ok(guard.includes("-cnotmatch"), "the PowerShell version check is case-sensitive");
+  assert.ok(guard.includes("\\z')"), "the PowerShell version check is end-anchored without the newline exception");
 });

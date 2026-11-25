@@ -131,12 +131,15 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/devices/{id}/actions"),
     // Engines, updates, workspace and the shell.
     ("POST", "/api/acp/registry/{id}"),
+    ("DELETE", "/api/acp/registry/{id}"),
     ("POST", "/api/engine-host/{family}/restart"),
     ("POST", "/api/engine-host/{family}/stop"),
     ("POST", "/api/engines/custom"),
+    ("DELETE", "/api/engines/custom/{id}"),
     ("POST", "/api/engines/probe-binary"),
     ("POST", "/api/engines/update-all"),
     ("POST", "/api/engines/{id}/install-recommended"),
+    ("POST", "/api/engines/{id}/native-sessions/delete"),
     ("POST", "/api/engines/{id}/update"),
     (
         "POST",
@@ -467,6 +470,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "installs an agent from the registry",
     ),
     (
+        "DELETE",
+        "/api/acp/registry/{id}",
+        "removes an agent the person installed from the registry",
+    ),
+    (
         "POST",
         "/api/approvals/{id}/decide",
         "the person's yes or no on an engine's request; a worker must not approve itself (owner ruling)",
@@ -787,6 +795,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "registers a program to run as an engine",
     ),
     (
+        "DELETE",
+        "/api/engines/custom/{id}",
+        "removes an engine the person registered",
+    ),
+    (
         "POST",
         "/api/engines/probe-binary",
         "runs a program the caller names",
@@ -800,6 +813,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/engines/{id}/install-recommended",
         "installs engine software",
+    ),
+    (
+        "POST",
+        "/api/engines/{id}/native-sessions/delete",
+        "deletes a native session stored for the person's engine",
     ),
     (
         "POST",
