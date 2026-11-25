@@ -24,15 +24,30 @@ fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
     }
 }
 
-/// The review task of the one lane a test asks for. A review answer lists its lanes in start order, not in a fixture's
-/// order, and a lane a repo rule adds must not become the lane the test waits on.
-fn one_lane(mut lanes: Vec<String>) -> String {
+/// The review task of the one lane a test asks for, found by the name it asked for: a review answer lists its lanes in
+/// start order, not in a fixture's order, so a lane a repo rule adds must not stand in for the lane the test waits on.
+async fn one_lane(w: &World, subject: &str, asked: &str) -> String {
+    let (answer, error) = w
+        .lead("crew_review", json!({ "task": subject, "lanes": [asked] }))
+        .await;
+    assert!(!error, "{answer}");
+    let lanes = answer["lanes"]
+        .as_array()
+        .expect("the review answer lists its lanes");
     assert_eq!(
         lanes.len(),
         1,
-        "the test asks for one lane, and no rule adds another: {lanes:?}"
+        "the test asks for one lane, and no rule adds another: {answer}"
     );
-    lanes.pop().expect("the lane's review task")
+    let lane = lanes[0]["lane"].as_str().expect("the lane's name");
+    assert_eq!(
+        lane, asked,
+        "the one lane is the lane the test asked for: {answer}"
+    );
+    lanes[0]["task"]
+        .as_str()
+        .expect("the lane's review task")
+        .to_owned()
 }
 
 fn project(w: &World) -> String {
@@ -231,7 +246,7 @@ async fn confirmed_while_paused() -> (World, String, String) {
     }))
     .await;
     let subject = w.built_work().await;
-    let lane = one_lane(w.review(&subject, &["correctness"]).await);
+    let lane = one_lane(&w, &subject, "correctness").await;
     w.until_state(&lane, "passed").await;
     let id = w.first_finding(&subject);
     wait_for_a_person(&w, &subject);
@@ -285,7 +300,7 @@ async fn a_paused_review_fix_tells_the_lead_it_is_waiting_for_capacity_and_a_lat
     capacity_frees(&w);
     let (again, error) = w.lead("crew_check_finding", json!({ "finding": id })).await;
     assert!(error, "a decided finding is not checked twice: {again}");
-    let lane = one_lane(w.review(&subject, &["correctness"]).await);
+    let lane = one_lane(&w, &subject, "correctness").await;
     w.until_state(&lane, "passed").await;
     let finding = w.status(&subject)["findings"]
         .as_array()
