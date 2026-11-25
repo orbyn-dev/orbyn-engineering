@@ -169,3 +169,49 @@ async fn a_link_a_person_cannot_read_leaves_the_other_links_shown() {
         "the link with no repository was never read"
     );
 }
+
+#[tokio::test]
+async fn only_the_first_links_are_read_and_the_rest_stay_shown_unknown() {
+    let reads: Reads = Arc::new(Mutex::new(Vec::new()));
+    let record = reads.clone();
+    let total = LINKED_CHECKS_READ_LIMIT + 5;
+    let fixture: GhAnswer = Arc::new(
+        move |_forge: Forge, _cwd: &Path, args: &[&str], _input: Option<&str>| -> Result<String> {
+            if args.contains(&"closedByPullRequestsReferences") {
+                let many: Vec<Value> = (1..=total)
+                    .map(|number| {
+                        json!({ "number": number, "state": "OPEN",
+                            "repository": { "nameWithOwner": "acme/app" } })
+                    })
+                    .collect();
+                return Ok(links(Value::Array(many)));
+            }
+            if args.contains(&"statusCheckRollup") {
+                let (number, repository) =
+                    target(args).expect("a pr view names a number and its repository");
+                record.lock().unwrap().push((number, repository));
+                return Ok(rollup("SUCCESS"));
+            }
+            Ok(detail_json().to_string())
+        },
+    );
+    let detail = with_crew_input_fixture(fixture, async { github().get("acme/app", "7").await })
+        .await
+        .unwrap();
+    let pulls = &detail.linked_pull_requests;
+    assert_eq!(pulls.len(), total, "every link is still shown");
+    assert_eq!(
+        reads.lock().unwrap().len(),
+        LINKED_CHECKS_READ_LIMIT,
+        "only the first links are read"
+    );
+    assert!(pulls[..LINKED_CHECKS_READ_LIMIT]
+        .iter()
+        .all(|pull| pull.checks.is_some()));
+    assert!(
+        pulls[LINKED_CHECKS_READ_LIMIT..]
+            .iter()
+            .all(|pull| pull.checks.is_none()),
+        "a link over the read limit is unknown, never zero checks"
+    );
+}

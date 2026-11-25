@@ -355,6 +355,10 @@ fn linked_pulls(value: &Value) -> Vec<IssueLinkedPull> {
         .collect()
 }
 
+/// How many linked pull requests one issue read asks `gh` about. A link past it is still shown, with no `checks`
+/// (unknown, over the read limit): each read is an API call against the account's shared hourly limit.
+pub(crate) const LINKED_CHECKS_READ_LIMIT: usize = 20;
+
 /// Where one linked pull request's checks stand, read beside the link: the same rollup counts the pull request
 /// list carries. One `gh pr view` per link, best effort — a pull request that is gone, a repository the person
 /// cannot read or a `gh` that does not answer leaves `checks` absent (unknown, never zero checks), and the other
@@ -1106,9 +1110,12 @@ impl IssueSource for GitHub {
             .unwrap_or_default();
         // The link list carries no CI, so each linked pull request is read once for it. The reads go together, so
         // one repository that is slow or refused does not hold up the others, and none of them can fail the issue.
+        // Each read is one `gh` call against the account's shared hourly API limit, so only the first
+        // `LINKED_CHECKS_READ_LIMIT` links are read; the rest stay shown with `checks` absent (unknown).
         let checks = futures_util::future::join_all(
             linked
                 .iter()
+                .take(LINKED_CHECKS_READ_LIMIT)
                 .map(|pull| linked_checks(&self.cwd, &pull.repository, pull.number)),
         )
         .await;

@@ -105,7 +105,7 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
   report them gives `[]`. A link carries `checks` when the tracker reports CI for it: the same `PullChecks`
   counts the pull request list carries. GitHub reads them with one `gh pr view --json statusCheckRollup` per
   link, in that link's own repository and best effort, so a link the person cannot read leaves the other links
-  shown. Absent is unknown, never "no checks"; the other trackers report no linked pull requests, so they carry
+  shown. Only the first 20 links of an issue are read (each read is one API call against the account's shared hourly limit); a link past that stays shown with no `checks`, which is unknown (over the read limit). Absent is unknown, never "no checks"; the other trackers report no linked pull requests, so they carry
   no `checks` either.
 - A link keeps an `IssueRef` snapshot beside the thread (table `issue_links`; the migration takes the next
   free number at merge time), so a chip draws with the tracker offline. A read of the issue refreshes it.
