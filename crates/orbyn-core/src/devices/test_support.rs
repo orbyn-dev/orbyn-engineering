@@ -310,6 +310,12 @@ impl Fake {
         self.devices_with(self.tools(false, false, false), Timeouts::default())
     }
 
+    /// A service with only the iOS tools, so an Android action answers its tool_missing code
+    /// while the device tool list itself is still available.
+    pub(crate) fn android_less_devices(&self) -> Devices {
+        self.devices_with(self.tools(false, false, true), Timeouts::default())
+    }
+
     pub(super) fn devices_with(&self, tools: Tools, timeouts: Timeouts) -> Devices {
         Devices::for_tests(tools, timeouts, Some(self.avd_home()))
     }

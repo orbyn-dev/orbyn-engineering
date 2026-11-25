@@ -637,6 +637,90 @@ fn a_password_line_read_as_a_question_still_hides_secret_text() {
     assert!(text.contains("[hidden: token]"), "{text}");
 }
 
+/// The excerpt's line cut runs after redaction, and its cap (200 characters) is shorter
+/// than this person value: the cut lands inside the match in the printed line, so the
+/// excerpt must carry the marker, never the value's head.
+#[test]
+fn an_excerpt_line_cut_inside_a_long_value_shows_no_fragment() {
+    let secret = format!("ACME-{}", "Q9Z8".repeat(100));
+    let other = format!("ACME-{}", "X7W6".repeat(100));
+    assert!(secret.chars().count() > excerpt::MAX_LINE_CHARS);
+    let redactor = Redactor::only(vec![Custom {
+        name: "Acme key",
+        regex: Regex::new("ACME-[A-Z0-9]{400}").unwrap(),
+        applies_to: PatternScope::Anywhere,
+    }]);
+    // The match starts at, before and just before the cut and runs past it; a second value
+    // sits wholly after. At 190 the cut falls in the marker the match became.
+    for (lead, marker_shown) in [(0usize, true), (150, true), (190, false)] {
+        let text = format!(
+            "{}{secret} {} {other}\nContinue? (y/N)",
+            "a ".repeat(lead / 2),
+            "b".repeat(excerpt::MAX_LINE_CHARS + 100)
+        );
+        let reading = evaluate(&redactor, &text, false).unwrap();
+        assert_eq!(reading.kind, TerminalAttentionKind::YesNo);
+        assert_eq!(reading.excerpt.len(), 2, "{:?}", reading.excerpt);
+        assert_eq!(reading.excerpt[1], "Continue? (y/N)");
+        let shown = &reading.excerpt[0];
+        assert!(!shown.contains("ACME"), "{shown}");
+        for value in [&secret, &other] {
+            let chars: Vec<char> = value.chars().collect();
+            for window in chars.windows(16) {
+                let window: String = window.iter().collect();
+                assert!(!shown.contains(&window), "{window} survived in {shown}");
+            }
+        }
+        assert!(shown.chars().count() <= excerpt::MAX_LINE_CHARS, "{shown}");
+        assert_eq!(
+            shown.matches("[hidden: ").count(),
+            shown.matches(']').count(),
+            "a marker was split: {shown}"
+        );
+        assert_eq!(
+            shown.contains("[hidden: Acme key]"),
+            marker_shown,
+            "{lead}: {shown}"
+        );
+    }
+
+    // Dropping the run a cut lands in does not drop a word before it: a value whose match
+    // crosses a space only stays out of the excerpt if it was hidden before the cut.
+    let spaced = format!("ACME KEY-{}", "Q9Z8".repeat(100));
+    let spaced_redactor = Redactor::only(vec![Custom {
+        name: "Acme key",
+        regex: Regex::new("ACME KEY-[A-Z0-9]{400}").unwrap(),
+        applies_to: PatternScope::Anywhere,
+    }]);
+    for (lead, marker_shown) in [(0usize, true), (150, true), (190, false)] {
+        let text = format!(
+            "{}{spaced} {}\nContinue? (y/N)",
+            "a ".repeat(lead / 2),
+            "b".repeat(excerpt::MAX_LINE_CHARS + 100)
+        );
+        let reading = evaluate(&spaced_redactor, &text, false).unwrap();
+        assert_eq!(reading.kind, TerminalAttentionKind::YesNo);
+        let shown = &reading.excerpt[0];
+        assert!(!shown.contains("ACME"), "{shown}");
+        let chars: Vec<char> = spaced.chars().collect();
+        for window in chars.windows(16) {
+            let window: String = window.iter().collect();
+            assert!(!shown.contains(&window), "{window} survived in {shown}");
+        }
+        assert!(shown.chars().count() <= excerpt::MAX_LINE_CHARS, "{shown}");
+        assert_eq!(
+            shown.matches("[hidden: ").count(),
+            shown.matches(']').count(),
+            "a marker was split: {shown}"
+        );
+        assert_eq!(
+            shown.contains("[hidden: Acme key]"),
+            marker_shown,
+            "{lead}: {shown}"
+        );
+    }
+}
+
 #[test]
 fn open_items_list_what_waits_in_one_thread() {
     let mut registry = Registry::default();

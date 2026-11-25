@@ -24,6 +24,7 @@ use crate::app::Core;
 use crate::crew::autopilot::ledger;
 use crate::crew::autopilot::{IN_A_ROW, IN_A_RUN, Mode, ModeScope, RULES, review_window};
 use crate::crew::background::parse_wire;
+use crate::crew::needs_you::Scope;
 use crate::crew::{key_needles, redact, withhold};
 use crate::error::{CoreError, Result};
 use crate::store::{AutopilotEvent, EVENT_KINDS, MergeEntry, MergeRecord};
@@ -297,6 +298,9 @@ fn log_row(event: &AutopilotEvent, scrub: &Scrub) -> wire::AutopilotLogRow {
         tier: str_of(&body, "tier"),
         rule: str_of(&body, "rule"),
         mode: str_of(&body, "mode"),
+        title: str_of(&body, "title"),
+        asker_engine: str_of(&action, "asker_engine"),
+        asker_model: str_of(&action, "asker_model"),
         action_kind: str_of(&action, "kind"),
         target: str_of(&action, "target"),
         paths: action
@@ -1037,7 +1041,8 @@ impl Core {
         })
     }
 
-    /// What merged, what was reverted and what waits for review in the last `hours` (1 to 720; 24 when absent).
+    /// What merged, what was reverted and what waits for review in the last `hours` (1 to 720; 24 when absent). The
+    /// `needs_person` count is the one needs-you field (KC3), not a recount of this digest's merge records.
     pub fn autopilot_digest(&self, now: i64, hours: Option<u32>) -> Result<wire::AutopilotDigest> {
         self.crew_preview_only()?;
         let hours = hours.unwrap_or(24);
@@ -1088,10 +1093,9 @@ impl Core {
             .iter()
             .filter(|m| m.due_unix.is_some_and(|due| now > due))
             .count();
-        let needs_person = merges
-            .iter()
-            .filter(|m| m.needs_person.is_some() && m.review_state != "reverted")
-            .count();
+        // KC3: what waits for a person is the one needs-you field, the same read the Inbox, the Taskboard, the Review queue and
+        // the dashboard take (dismissals included), not a count of this digest's own merge records that could drift from it.
+        let needs_person = self.needs_you_all(Scope::Device)?.len();
         let mut digest = wire::AutopilotDigest {
             since_unix: since,
             until_unix: now,

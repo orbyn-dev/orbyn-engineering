@@ -24,6 +24,7 @@ use crate::operations::updates::UpdateCenter;
 use crate::project::project_setup::SetupManager;
 use crate::project::projects::ClonePool;
 use crate::project::workspace::Workspace;
+use crate::source_control::branch_names::{Naming, NamingMode};
 use crate::source_control::git;
 use crate::store::{NewSetup, NewThread, Recovery, Store};
 use crate::tools::mcp::McpService;
@@ -214,6 +215,15 @@ pub struct Core {
     /// Personal-library environment-set values, kept in the OS keychain only, in their own service (`credentials::env_sets`).
     pub(crate) env_sets: crate::credentials::EnvSets,
     _lock: OwnerLock,
+}
+
+/// A title a caller or person set, as opposed to the default the store fills in. Semantic
+/// branch naming uses it; a default title names nothing, so the purpose is the seed instead.
+fn real_title(title: Option<&str>) -> Option<String> {
+    title
+        .map(str::trim)
+        .filter(|title| !title.is_empty() && *title != crate::agents::titles::NEW_THREAD_TITLE)
+        .map(str::to_owned)
 }
 
 impl Core {
@@ -625,16 +635,20 @@ impl Core {
                 .to_owned())
         };
         Ok(git::WorktreeOptions {
-            prefix: text("branch_name_prefix")?,
+            naming: Naming {
+                mode: NamingMode::parse(&text("branch_naming_mode")?),
+                prefix: text("branch_name_prefix")?,
+            },
             base: request.base_branch.clone(),
             from_origin: self.preference("new_worktrees_start_from_origin", Some(project_id))?
                 == serde_json::json!(true),
             submodules: text("worktree_submodules")?,
+            seed: real_title(request.title.as_deref()),
         })
     }
 
     pub async fn thread_diff(&self, thread_id: &str) -> Result<Vec<orbyn_contracts::FileDiff>> {
-        let thread = self.store.thread(thread_id)?;
+        let thread = self.scoped_thread(thread_id)?;
         let project = self.store.project(&thread.project_id)?;
         if !project.is_git {
             let Some(root) =
@@ -663,7 +677,7 @@ impl Core {
         &self,
         thread_id: &str,
     ) -> Result<Option<orbyn_contracts::JjStatus>> {
-        let thread = self.store.thread(thread_id)?;
+        let thread = self.scoped_thread(thread_id)?;
         let project = self.store.project(&thread.project_id)?;
         if project.is_git {
             return Ok(None);
@@ -1033,6 +1047,147 @@ mod preference_consumer_tests {
         )
         .unwrap();
         assert_eq!(current(), "none");
+        core.shutdown().await;
+    }
+
+    /// A real `Core` with one trusted Git project, for worktree naming through `create_thread`.
+    async fn naming_core(dir: &TempDir) -> (Core, String) {
+        let library = crate::testing::library(&dir.path().join("library"));
+        let root = dir.path().join("project");
+        std::fs::create_dir(&root).unwrap();
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec![
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "Initial",
+            ],
+        ] {
+            git::git(&root, &args).await.unwrap();
+        }
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        core.workspace
+            .setup(orbyn_contracts::WorkspaceSetup {
+                url: None,
+                adopt_path: Some(library.to_string_lossy().into_owned()),
+            })
+            .await
+            .unwrap();
+        let project = core
+            .store
+            .add_project(NewProject {
+                path: root.to_str().unwrap(),
+                name: "Project",
+                is_git: true,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+        core.store.trust_project(&project.id, "t").unwrap();
+        (core, project.id)
+    }
+
+    fn set_naming(core: &Core, mode: &str) {
+        core.set_preferences(None, &[("branch_naming_mode".into(), json!(mode))].into())
+            .unwrap();
+    }
+
+    async fn make_worktree_thread(
+        core: &Core,
+        project_id: &str,
+        purpose: &str,
+        title: Option<&str>,
+    ) -> orbyn_contracts::Thread {
+        let request: orbyn_contracts::CreateThread = serde_json::from_value(json!({
+            "project_id": project_id,
+            "engine": "codex",
+            "title": title,
+            "worktree": purpose,
+        }))
+        .unwrap();
+        core.create_thread(request).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn static_naming_keeps_the_prefix_and_the_purpose() {
+        let dir = TempDir::new();
+        let (core, project) = naming_core(&dir).await;
+        core.set_preferences(
+            None,
+            &[("branch_name_prefix".into(), json!("team/feat"))].into(),
+        )
+        .unwrap();
+        let thread = make_worktree_thread(&core, &project, "fix-login", Some("Add login")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "team/feat/fix-login");
+        core.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn semantic_naming_slugs_the_title_and_numbers_collisions() {
+        let dir = TempDir::new();
+        let (core, project) = naming_core(&dir).await;
+        set_naming(&core, "semantic");
+
+        let thread =
+            make_worktree_thread(&core, &project, "signup-one", Some("Add sign-up screen")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "feat/add-sign-up-screen");
+        // The same title twice makes two branches rather than reusing one.
+        let thread =
+            make_worktree_thread(&core, &project, "signup-two", Some("Add sign-up screen")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "feat/add-sign-up-screen-2");
+
+        // A default title names nothing, so the purpose is the seed.
+        let thread = make_worktree_thread(&core, &project, "wire-login", Some("New thread")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "feat/wire-login");
+        // A real title no slug can keep falls back to the purpose too.
+        let thread = make_worktree_thread(&core, &project, "fix-parser", Some("!!! ???")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "feat/fix-parser");
+        core.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn custom_naming_uses_the_purpose_as_the_complete_branch_name() {
+        let dir = TempDir::new();
+        let (core, project) = naming_core(&dir).await;
+        set_naming(&core, "custom");
+
+        // The title is not involved, and the name carries no prefix.
+        let thread =
+            make_worktree_thread(&core, &project, "fix-signup", Some("Add sign-up screen")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "fix-signup");
+
+        // A purpose at the worktree-name limit is still the whole branch name.
+        let longest = "b".repeat(64);
+        let thread = make_worktree_thread(&core, &project, longest.as_str(), None).await;
+        assert_eq!(thread.worktree.unwrap().branch, longest);
+        core.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn an_unusable_branch_prefix_is_refused_rather_than_replaced() {
+        let dir = TempDir::new();
+        let (core, project) = naming_core(&dir).await;
+        core.set_preferences(
+            None,
+            &[("branch_name_prefix".into(), json!("feat..x"))].into(),
+        )
+        .unwrap();
+        let request: orbyn_contracts::CreateThread = serde_json::from_value(json!({
+            "project_id": project,
+            "engine": "codex",
+            "worktree": "fix-login",
+        }))
+        .unwrap();
+        let error = core.create_thread(request).await.unwrap_err();
+        assert_eq!(error.code(), "invalid_input");
+        assert!(error.to_string().contains("branch name"), "{error}");
         core.shutdown().await;
     }
 }

@@ -1,4 +1,10 @@
 //! Runs the real `orbynd` binary against the fake engine over real processes.
+//!
+//! Browser tests drive the browser a run gives them: `ORBYN_BROWSER`, or the Playwright
+//! headless shell that `npm run test:e2e:install` puts under `web/node_modules`. Without
+//! one they print why and pass, so the default checks run on a machine with no browser;
+//! `ORBYN_REQUIRE_BROWSER=1` turns that into a failure instead, so a job that should have
+//! one cannot hide behind the skip. Giving the CI jobs a browser is issue #1575.
 
 #![allow(dead_code)]
 
@@ -9,6 +15,88 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use serde_json::{Value, json};
+
+/// The browser the browser tests drive, or `None` when this run has none.
+///
+/// `ORBYN_BROWSER` names one explicitly. Without it, the headless shell the E2E setup
+/// downloads into `web/node_modules` is used, so a checkout set up by docs/setup.md runs
+/// the browser cases in a normal test run. A missing browser skips silently, because
+/// libtest hides a passing test's stderr; a CI job that should run these cases must set
+/// `ORBYN_REQUIRE_BROWSER=1` so a missing browser fails instead. Issue #1575 gives the
+/// CI jobs a browser.
+pub fn browser() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("ORBYN_BROWSER") {
+        let path = PathBuf::from(path);
+        assert!(
+            path.is_file(),
+            "ORBYN_BROWSER is not a file: {}",
+            path.display()
+        );
+        // The service starts in another folder, so a relative override would name a different file there.
+        return Some(std::path::absolute(&path).expect("ORBYN_BROWSER has an absolute form"));
+    }
+    if let Some(path) = e2e_headless_shell() {
+        return Some(path);
+    }
+    let reason = "no browser: set ORBYN_BROWSER, or run `npm run test:e2e:install` in web (see docs/setup.md)";
+    assert!(
+        std::env::var("ORBYN_REQUIRE_BROWSER").as_deref() != Ok("1"),
+        "ORBYN_REQUIRE_BROWSER=1 and {reason}"
+    );
+    eprintln!("browser test skipped: {reason}");
+    None
+}
+
+/// The environment a service needs to use [`browser`], plus any `extra` pairs, or
+/// `None` when this run has no browser.
+pub fn browser_env(extra: &[(&str, &str)]) -> Option<Vec<(String, String)>> {
+    let browser = browser()?;
+    let mut env = vec![(
+        "ORBYN_BROWSER".to_owned(),
+        browser.to_string_lossy().into_owned(),
+    )];
+    env.extend(
+        extra
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned())),
+    );
+    Some(env)
+}
+
+/// The headless shell an E2E setup downloads, newest revision first: installs keep
+/// older revisions beside the current one.
+fn e2e_headless_shell() -> Option<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../web/node_modules/playwright-core/.local-browsers");
+    let revisions = folders_with_prefix(&root, "chromium_headless_shell-");
+    for revision in revisions.iter().rev() {
+        for build in folders_with_prefix(revision, "chrome-headless-shell-") {
+            let binary = build.join(format!(
+                "chrome-headless-shell{}",
+                std::env::consts::EXE_SUFFIX
+            ));
+            if binary.is_file() {
+                return Some(binary);
+            }
+        }
+    }
+    None
+}
+
+fn folders_with_prefix(root: &Path, prefix: &str) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(prefix))
+        })
+        .collect();
+    found.sort();
+    found
+}
 
 /// The form the product stores: on Windows, without the verbatim prefix.
 pub fn canonical(path: impl AsRef<Path>) -> PathBuf {

@@ -75,8 +75,24 @@ impl Core {
         body: &Value,
         needles: &[String],
     ) -> Result<i64> {
+        // Every row names the work it was for, so a reader is not left with a task id: the lead thread's title as
+        // it stood at the write. It goes in before `safe` like any other value, so it is redacted and cut with the
+        // rest, and a title that cannot be read leaves the row without one: it decides nothing.
+        let mut body = body.clone();
+        if let Some(title) = self.autopilot_task_title(task) {
+            body["title"] = Value::String(title);
+        }
         self.store
-            .add_crew_autopilot_event(&task.id, &task.crew_id, kind, &safe(body, needles))
+            .add_crew_autopilot_event(&task.id, &task.crew_id, kind, &safe(&body, needles))
+    }
+
+    /// The task's title as the person sees it: the lead thread's title for the run the task belongs to. A failed
+    /// read is `None`, never an error: the ledger row matters more than its title.
+    fn autopilot_task_title(&self, task: &CrewTask) -> Option<String> {
+        let run = self.store.crew_run(&task.id).ok().flatten()?;
+        let title = self.store.thread(&run.lead_thread_id).ok()?.title;
+        let title = title.trim().to_owned();
+        (!title.is_empty()).then_some(title)
     }
 }
 
@@ -142,5 +158,102 @@ mod tests {
         let row = safe_masked(&json!({ "reason": text }), &[], &person).to_string();
         assert!(!row.contains("ACME") && !row.contains("Q9Z8"));
         assert!(row.contains("[hidden: Acme key]"));
+    }
+
+    /// A person's value longer than the whole cut: the cut lands inside the match in the
+    /// stored text, so a row or a shown reason must carry the marker, never the value's head.
+    fn assert_no_value_fragment(cut: &str, cap: usize, value: &str) {
+        assert!(!cut.contains("ACME"), "{cut}");
+        let chars: Vec<char> = value.chars().collect();
+        for window in chars.windows(16) {
+            let window: String = window.iter().collect();
+            assert!(!cut.contains(&window), "{window} survived in {cut}");
+        }
+        assert!(cut.chars().count() <= cap, "{cut}");
+        assert_eq!(
+            cut.matches("[hidden: ").count(),
+            cut.matches(']').count(),
+            "a marker was split: {cut}"
+        );
+    }
+
+    #[test]
+    fn a_person_value_longer_than_the_cut_never_shows_its_head() {
+        use crate::redaction::Custom;
+        let person = Redactor::only(vec![Custom {
+            name: "Acme key",
+            regex: regex::Regex::new("ACME-[A-Z0-9]{400}").unwrap(),
+            applies_to: orbyn_contracts::PatternScope::Anywhere,
+        }]);
+        let secret = format!("ACME-{}", "Q9Z8".repeat(100));
+        let other = format!("ACME-{}", "X7W6".repeat(100));
+        assert!(secret.chars().count() > LONGEST);
+        // The stored row's 400 cut, then the shown reason's 300 cut. The match starts at,
+        // before and just before each cut and runs past it; a second value sits wholly
+        // after. At 390/290 the cut falls in the marker the match became.
+        for (cap, lead, stored, marker_shown) in [
+            (LONGEST, 0usize, true, true),
+            (LONGEST, 100, true, true),
+            (LONGEST, 390, true, false),
+            (300usize, 0, false, true),
+            (300, 100, false, true),
+            (300, 290, false, false),
+        ] {
+            let text = format!(
+                "{}{secret} {} {other} tail",
+                "a ".repeat(lead / 2),
+                "b".repeat(cap + 100)
+            );
+            let cut = if stored {
+                safe_masked(&json!({ "reason": text }), &[], &person)["reason"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            } else {
+                shown_masked(&text, &[], &person)
+            };
+            assert_no_value_fragment(&cut, cap, &secret);
+            assert_no_value_fragment(&cut, cap, &other);
+            assert_eq!(
+                cut.contains("[hidden: Acme key]"),
+                marker_shown,
+                "{cap}/{lead}: {cut}"
+            );
+        }
+
+        // Dropping the run a cut lands in does not drop a word before it: a value whose
+        // match crosses a space only stays out of the row if it was hidden before the cut.
+        let spaced = format!("ACME KEY-{}", "Q9Z8".repeat(100));
+        let spaced_person = Redactor::only(vec![Custom {
+            name: "Acme key",
+            regex: regex::Regex::new("ACME KEY-[A-Z0-9]{400}").unwrap(),
+            applies_to: orbyn_contracts::PatternScope::Anywhere,
+        }]);
+        for (cap, lead, stored, marker_shown) in [
+            (LONGEST, 0usize, true, true),
+            (LONGEST, 390, true, false),
+            (300usize, 0, false, true),
+            (300, 290, false, false),
+        ] {
+            let text = format!(
+                "{}{spaced} {} tail",
+                "a ".repeat(lead / 2),
+                "b".repeat(cap + 100)
+            );
+            let cut = if stored {
+                safe_masked(&json!({ "reason": text }), &[], &spaced_person)["reason"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            } else {
+                shown_masked(&text, &[], &spaced_person)
+            };
+            assert_no_value_fragment(&cut, cap, &spaced);
+            assert_eq!(
+                cut.contains("[hidden: Acme key]"),
+                marker_shown,
+                "{cap}/{lead}: {cut}"
+            );
+        }
     }
 }

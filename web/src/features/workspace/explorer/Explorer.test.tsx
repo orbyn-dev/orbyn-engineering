@@ -26,9 +26,10 @@ const folderReads = (path: string) => reads().filter((url) => url.includes(`/tre
 
 // These tests render the whole App and wait for tree reads; on a busy machine a read can take longer than the 1 s a
 // findBy gets by default, so waits get 5 s and each test 20 s. A test that finds nothing still fails, only later.
+// At the file's top, where the timeout is read: set from a beforeEach it does not reach the first test.
+vi.setConfig({ testTimeout: 20_000 });
 beforeEach(() => {
   configure({ asyncUtilTimeout: 5000 });
-  vi.setConfig({ testTimeout: 20_000 });
   useExplorer.getState().reset();
   installMockFetch();
   useUi.setState({ projectFolders: true, panelOpen: false, panelTab: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["diff", "browser", "activity", "side", "tools"], layouts: {}, leftBarView: "files", explorerOpen: {}, sidebarWidth: 224 });
@@ -313,6 +314,29 @@ it("offers Open and the path copies on a file, and no worktree removal", async (
   await user.pointer({ keys: "[MouseRight]", target: row("main") });
   const worktree = await screen.findByRole("menu", { name: "Worktree actions" });
   expect(within(worktree).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["New thread here", "Copy path"]);
+});
+
+const OUTSIDE_EDITOR = [{ id: "code", name: "VS Code", launch_style: "goto", file_manager: false }];
+
+it("writes the outside-editor chord the way a Windows platform does", async () => {
+  vi.spyOn(api, "editors").mockResolvedValue(OUTSIDE_EDITOR);
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  const user = userEvent.setup();
+  render(<App />);
+  await user.pointer({ keys: "[MouseRight]", target: await findRow(/^README\.md/) });
+  const menu = await screen.findByRole("menu", { name: "File actions" });
+  expect(within(menu).getByRole("menuitem", { name: /^Open in an outside editor/ })).toHaveTextContent("Open in an outside editorAlt+↵");
+  expect(within(menu).queryByText("⌥↵")).toBeNull();
+});
+
+it("keeps the outside-editor chord as ⌥↵ on macOS", async () => {
+  vi.spyOn(api, "editors").mockResolvedValue(OUTSIDE_EDITOR);
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  const user = userEvent.setup();
+  render(<App />);
+  await user.pointer({ keys: "[MouseRight]", target: await findRow(/^README\.md/) });
+  const menu = await screen.findByRole("menu", { name: "File actions" });
+  expect(within(menu).getByRole("menuitem", { name: /^Open in an outside editor/ })).toHaveTextContent("Open in an outside editor⌥↵");
 });
 
 it("reads a project's files again, quietly, when the service says they changed", async () => {

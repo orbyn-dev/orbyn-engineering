@@ -94,7 +94,17 @@ These commands use the same service APIs and rules as the UI.
 | `orbyn project add PATH` | Register an existing folder, initially untrusted. |
 | `orbyn project remove PROJECT` | Unregister and archive its threads; keep the folder and the threads. |
 | `orbyn project rename PROJECT NAME` | Change the displayed name; keep the folder. |
-| `orbyn theme show`, `set NAME`, `clear` | Read/change/reset the stored `default_theme` preference. Each viewer applies a newly set theme once, at start or when its window takes focus. |
+| `orbyn theme show` | Read the stored `default_theme` preference; works against any running service. Each viewer applies a newly set theme once, at start or when its window takes focus. |
+| `orbyn theme set NAME`, `orbyn theme clear` | Refused with exit 1: the write is a `Person` route and this command holds only the service token. Set or clear the theme in the desktop app, which can write it only when it runs the service itself; for a service started by `orbyn start` the write is refused there too. |
+
+`orbyn theme set` and `orbyn theme clear` write `PUT /api/preferences`, an enforced
+`Person` route. Against a service that `orbyn start` started, the service answers
+`403 desktop_required`, `This action is only available in the desktop app.`; against
+a desktop-owned service it answers `403 person_required`, `This action needs the
+person at the desktop app.` A debug build of the service with
+`ORBYN_DEV_DISABLE_PERSON_KEY=1` opens `Person` routes without the key, as in the CLI
+test's service; a release build has no override. See
+[#984](https://github.com/orbyn-dev/orbyn-engineering/issues/984).
 
 ## Local maintenance
 

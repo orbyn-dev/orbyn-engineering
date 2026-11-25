@@ -576,11 +576,11 @@ async fn theme_command(service: &Service, command: ThemeCommand, json_output: bo
                 .map_or(Value::Null, |view| view["value"].clone())
         }
         ThemeCommand::Set { name } => {
-            set_theme(service, json!(name)).await?;
+            set_theme(service, json!(name), "set").await?;
             json!(name)
         }
         ThemeCommand::Clear => {
-            set_theme(service, Value::Null).await?;
+            set_theme(service, Value::Null, "clear").await?;
             json!("")
         }
     };
@@ -589,12 +589,32 @@ async fn theme_command(service: &Service, command: ThemeCommand, json_output: bo
     })
 }
 
-async fn set_theme(service: &Service, value: Value) -> Outcome<()> {
+async fn set_theme(service: &Service, value: Value, verb: &str) -> Outcome<()> {
     let body = json!({ "values": { "default_theme": value } });
     service
         .call(Method::PUT, "/api/preferences", Some(body))
         .await
         .map(|_| ())
+        .map_err(|failure| theme_refusal(failure, verb))
+}
+
+/// Setting or clearing the theme writes `PUT /api/preferences`, an enforced `Person` route, so a program
+/// that holds only the service token never reaches it: a service started by `orbyn start` has no person
+/// key either (`docs/worker-token-isolation.md`). Name the desktop app instead of relaying the route's
+/// one-line refusal, which says nothing about where the theme is changed. The command still fails, because
+/// the write did not happen.
+fn theme_refusal(failure: Failure, verb: &str) -> Failure {
+    if !needs_the_desktop_app(&failure) {
+        return failure;
+    }
+    Failure {
+        message: format!(
+            "Only the desktop app can {verb} the theme: the write is a `Person` route, and this program \
+             holds only the service token. Change it in the desktop app's Appearance settings."
+        ),
+        code: failure.code,
+        api_error: failure.api_error,
+    }
 }
 
 async fn status(cli: &Cli) -> Outcome<()> {

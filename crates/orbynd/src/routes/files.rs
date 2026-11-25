@@ -56,7 +56,11 @@ async fn resolve_thread_path(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<ResolveThreadPath>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.resolve_thread_path(&id, &body).await?))
+    // A multi-repository thread resolves coordinates in the repository named, else its primary one.
+    let repo = body.repo_id.clone();
+    Ok(Json(
+        orbyn_core::in_repo(repo, state.core.resolve_thread_path(&id, &body)).await?,
+    ))
 }
 
 async fn ignored_files(
@@ -158,6 +162,9 @@ async fn open_in_editor(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<OpenInEditor>,
 ) -> ApiResult<StatusCode> {
-    state.core.open_in_editor(&id, &body, LOCAL_USER).await?;
+    // Core resolves the file inside the chosen repository's worktree and refuses one that
+    // leaves it; an absent, unknown or ordinary-thread `repo_id` is that resolver's answer.
+    let repo = body.repo_id.clone();
+    orbyn_core::in_repo(repo, state.core.open_in_editor(&id, &body, LOCAL_USER)).await?;
     Ok(StatusCode::ACCEPTED)
 }

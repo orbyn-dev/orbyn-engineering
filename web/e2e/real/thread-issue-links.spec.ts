@@ -187,7 +187,7 @@ test("the chip links and unlinks with its own form, refuses an unknown issue, an
   await expect(chip(page)).toHaveCount(0);
   expect((await links())[threadId] ?? []).toEqual([]);
 
-  // A phone gets the chip as a bottom sheet with the same list.
+  // On a phone-width window the chip opens a dialog with the same list and a Close button (that it is drawn as a sheet is not checked).
   await linkFromDetails(page, "7", /#7 Retry the queue/);
   await page.setViewportSize({ width: 420, height: 860 });
   await chip(page).click();

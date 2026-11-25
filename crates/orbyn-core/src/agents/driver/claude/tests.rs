@@ -1516,9 +1516,12 @@ async fn the_login_probe_runs_the_drivers_status_command_from_a_neutral_folder()
     )
     .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let probe = ClaudeDriver::new(script.to_string_lossy().into_owned(), Duration::from_secs(1800))
-        .probe()
-        .await;
+    let probe = ClaudeDriver::new(
+        script.to_string_lossy().into_owned(),
+        Duration::from_secs(1800),
+    )
+    .probe()
+    .await;
     assert_eq!(probe.version.as_deref(), Some("2.1.318"));
     assert_eq!(probe.auth, Some(orbyn_contracts::AuthState::LoggedIn));
     assert_eq!(probe.account.as_deref(), Some("probe@example.test"));

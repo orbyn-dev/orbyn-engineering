@@ -18,8 +18,8 @@ use crate::issues::IssueQuery;
 use crate::source_control::forge::PullFilter;
 use definitions::TOOLS;
 use orbyn_contracts::{
-    IssueLabel, IssueRef, IssueSummary, PullCheck, PullRequest, PullRequestDetail, SubmitReview,
-    TrackerKind, UpdatePull,
+    DeviceButton, DeviceOrientation, HingePreset, IssueLabel, IssueRef, IssueSummary, PullCheck,
+    PullRequest, PullRequestDetail, SubmitReview, TrackerKind, UpdatePull,
 };
 
 /// Under the 45 seconds a tool has to answer, so the caller hears `ended: false`.
@@ -88,6 +88,33 @@ fn text<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| CoreError::Invalid(format!("{key} is required.")))
+}
+
+/// An optional text argument: absent and `null` are none, anything but a string is refused.
+fn optional_text(args: &Value, key: &str) -> Result<Option<String>> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(CoreError::Invalid(format!("{key} must be a string."))),
+    }
+}
+
+/// A list of strings: absent and `null` are an empty list, anything else is refused.
+fn strings(args: &Value, key: &str) -> Result<Vec<String>> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| CoreError::Invalid(format!("{key} must be a list of strings.")))
+            })
+            .collect(),
+        Some(_) => Err(CoreError::Invalid(format!(
+            "{key} must be a list of strings."
+        ))),
+    }
 }
 
 fn number(args: &Value, key: &str) -> Result<u64> {
@@ -446,6 +473,102 @@ fn issue_ref_value(issue: &IssueRef) -> Value {
         "title": issue.title,
         "state": issue.state,
         "labels": issue_labels(&issue.labels),
+    })
+}
+
+/// The rotate action's orientation, in the service's own four names.
+fn device_orientation(value: &str) -> Result<DeviceOrientation> {
+    match value {
+        "portrait" => Ok(DeviceOrientation::Portrait),
+        "landscape_left" => Ok(DeviceOrientation::LandscapeLeft),
+        "portrait_upside_down" => Ok(DeviceOrientation::PortraitUpsideDown),
+        "landscape_right" => Ok(DeviceOrientation::LandscapeRight),
+        _ => Err(CoreError::Invalid(
+            "value must be portrait, landscape_left, portrait_upside_down or landscape_right."
+                .into(),
+        )),
+    }
+}
+
+/// The button action's button, in the service's own three names.
+fn device_button(value: &str) -> Result<DeviceButton> {
+    match value {
+        "home" => Ok(DeviceButton::Home),
+        "back" => Ok(DeviceButton::Back),
+        "recents" => Ok(DeviceButton::Recents),
+        _ => Err(CoreError::Invalid(
+            "value must be home, back or recents.".into(),
+        )),
+    }
+}
+
+/// A hinge preset, in the service's own three names. The angle is the service's, never the
+/// caller's.
+fn hinge_preset(value: &str) -> Result<HingePreset> {
+    match value {
+        "closed" => Ok(HingePreset::Closed),
+        "half_open" => Ok(HingePreset::HalfOpen),
+        "open" => Ok(HingePreset::Open),
+        _ => Err(CoreError::Invalid(
+            "preset must be closed, half_open or open.".into(),
+        )),
+    }
+}
+
+/// A hinge angle: a whole number from 1 to 179, the range the service's own schema owns.
+fn hinge_angle(args: &Value) -> Result<i32> {
+    let value = args
+        .get("angle")
+        .filter(|value| !value.is_null())
+        .ok_or_else(|| CoreError::Invalid("angle is required.".into()))?;
+    let out_of_range = || CoreError::Invalid("angle must be a whole number from 1 to 179.".into());
+    let angle = value
+        .as_u64()
+        .and_then(|angle| i32::try_from(angle).ok())
+        .ok_or_else(out_of_range)?;
+    if !(1..=179).contains(&angle) {
+        return Err(CoreError::Invalid(
+            "angle must be a whole number from 1 to 179.".into(),
+        ));
+    }
+    Ok(angle)
+}
+
+/// The gate's one-line summary for a device tool, from arguments already checked against the
+/// service's fixed sets: a value, preset or angle the service would refuse never reaches the gate.
+fn device_tool_summary(name: &str, args: &Value) -> Result<String> {
+    Ok(match name {
+        "orbyn_device_list" => "List the devices on this machine".to_owned(),
+        "orbyn_device_screenshot" => {
+            format!("Take a screenshot of device {}", text(args, "device_id")?)
+        }
+        "orbyn_device_fold" => format!("Fold device {}", text(args, "device_id")?),
+        "orbyn_device_unfold" => format!("Unfold device {}", text(args, "device_id")?),
+        "orbyn_device_rotate" => {
+            let id = text(args, "device_id")?;
+            let value = text(args, "value")?;
+            device_orientation(value)?;
+            format!("Rotate device {id} to {value}")
+        }
+        "orbyn_device_button" => {
+            let id = text(args, "device_id")?;
+            let value = text(args, "value")?;
+            device_button(value)?;
+            format!("Press the {value} button on device {id}")
+        }
+        "orbyn_device_hinge" => {
+            let id = text(args, "device_id")?;
+            let angle = hinge_angle(args)?;
+            format!("Set the hinge angle of device {id} to {angle} degrees")
+        }
+        "orbyn_device_hinge_preset" => {
+            let id = text(args, "device_id")?;
+            let preset = text(args, "preset")?;
+            hinge_preset(preset)?;
+            format!("Set the hinge preset of device {id} to {preset}")
+        }
+        "orbyn_device_power_off" => format!("Power off device {}", text(args, "device_id")?),
+        other => return Err(CoreError::NotFound(format!("tool {other}"))),
     })
 }
 
