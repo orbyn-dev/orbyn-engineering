@@ -383,6 +383,14 @@ pub fn covers(pattern: &CrewPathPattern, path: &str) -> bool {
 /// Every path that differs from the starting commit: changed tracked files and new ones.
 pub(super) async fn changed(site: &Site<'_>) -> Result<Vec<String>, CoreError> {
     use crate::source_control::git::git_byte_exact as git;
+    // GIT_ATTR_SOURCE keeps the checkout's own .gitattributes out of the read. Git before 2.40 ignores it, and there
+    // a text attribute could normalize a byte change away, so an old Git is an error, never a pass.
+    if !crate::source_control::git::reads_attributes_from_source(site.worktree).await {
+        return Err(CoreError::Git(
+            "The checkout needs Git 2.40 or later: older Git could let its own attributes hide a byte change from this check."
+                .into(),
+        ));
+    }
     // GIT_ATTR_SOURCE does not replace info/attributes. Do not read its contents:
     // encoding and eol attributes there could normalize a byte change away.
     let location = git(
