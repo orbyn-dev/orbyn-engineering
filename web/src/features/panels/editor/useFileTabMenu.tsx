@@ -14,9 +14,10 @@ import { threadPathOf, useExplorer } from "../../workspace";
 /**
  * The ⋯ menu of an open file (editor-tab-menu): the path in two forms, the file in an outside editor (the picker of
  * installed ones, the favourite marked) and Close tab. Reveal in the left bar is not here: the left bar has no way to
- * be told to show a file yet.
+ * be told to show a file yet. `repoName` is the repository's own name when the tab names one of a multi-repository
+ * thread, which is also the name of its worktree inside the thread's task folder.
  */
-export function useFileTabMenu(threadId: string, tab: string | null, close: () => void, closeKey?: string): MenuItem[] | null {
+export function useFileTabMenu(threadId: string, tab: string | null, close: () => void, closeKey?: string, repoName?: string): MenuItem[] | null {
   const target = tab ? parseFileTab(tab) : null;
   const editors = useAsync("editors", (signal) => api.editors(signal));
   const preferred = useUi((state) => state.preferredEditor);
@@ -29,10 +30,18 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
   if (!target) return null;
   if (target.kind === "worktree" || target.kind === "issue") return [closeItem];
   const relative = target.path;
-  // Another repository's file is not under the thread's folder: its absolute path is unknown and the composer's file chip names a checkout, so both stay off. Its repo-relative path goes to the outside editor with its repo_id.
+  // Another repository's worktree is `<task folder>/<name>` (docs/multi-repo.md), so once the panel has read that repository the
+  // absolute path is known too; its repo-relative path still goes to the outside editor with its repo_id.
   const foreign = target.kind === "thread" && target.repoId !== undefined;
   const repoId = target.kind === "thread" ? target.repoId : undefined;
-  const root = target.kind === "thread" ? (foreign ? "" : cwd) : (worktree?.path ?? "");
+  const root =
+    target.kind === "thread"
+      ? foreign
+        ? cwd && repoName
+          ? `${cwd.replace(/[\\/]+$/, "")}/${repoName}`
+          : ""
+        : cwd
+      : (worktree?.path ?? "");
   const absolute = root ? `${root.replace(/\/$/, "")}/${relative}` : null;
   const copy = (text: string, done: string) =>
     navigator.clipboard?.writeText(text).then(
@@ -79,16 +88,25 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
                   )
                 : pushToast("Couldn't copy. The clipboard is unavailable.")),
           },
-          ...(foreign ? [] : [
           {
             label: "Add file to message",
             icon: <Paperclip size={14} aria-hidden />,
+            // A foreign chip names its repository: before the panel has read the name, a path alone would read as the thread's own file.
+            ...(foreign && repoName === undefined ? { disabled: true, title: "The repository hasn't been read yet." } : {}),
             onSelect: () => {
-              useComposerChips.getState().add(threadId, { id: chipId(), kind: "file", path: held.path, line: held.line, excerpt: fileExcerpt(held.saved, held.line), language: languageForPath(held.path) });
+              useComposerChips.getState().add(threadId, {
+                id: chipId(),
+                kind: "file",
+                path: held.path,
+                line: held.line,
+                excerpt: fileExcerpt(held.saved, held.line),
+                language: languageForPath(held.path),
+                ...(repoId === undefined ? {} : { repoId }),
+                ...(repoName === undefined ? {} : { repoName }),
+              });
               pushToast("File added to your message");
             },
           },
-          ]),
         ]
       : []),
     ...(own !== null && primary

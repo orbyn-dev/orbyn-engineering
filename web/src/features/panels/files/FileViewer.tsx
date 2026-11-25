@@ -105,7 +105,7 @@ export function Viewer({ threadId, tabId, path, line, repoId, repoName, locked: 
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
   // Every preview reads the raw route, which takes the repository: another repository's image, PDF, media, archive
   // and document load from its own worktree. The outside editor (`open-in-editor`) and the browser preview
-  // (`previews/file`) take it too, so a foreign tab offers both and names its repository in a line comment.
+  // (`previews/file`) take it too, so a foreign tab offers both; its line comment and its file chip name the repository.
   const foreign = repoId !== undefined;
   const media = mediaKind(path);
   // An archive is read as a folder list rather than as bytes, so it never
@@ -127,6 +127,9 @@ export function Viewer({ threadId, tabId, path, line, repoId, repoName, locked: 
   // Only a complete, non-binary file has text to copy: a media file is never
   // read here, and a truncated one is not all there is.
   const copyable = file.data && !file.data.binary && !file.data.truncated ? file.data.content : null;
+  // A foreign file's chip names its repository, so it waits for the panel to have read that name: a path alone would read as
+  // the thread's own checkout's file of the same path.
+  const attachable = copyable !== null && (repoId === undefined || repoName !== undefined);
   const copyContents = async () => {
     if (copyable === null) return;
     const clipboard = navigator.clipboard;
@@ -186,26 +189,26 @@ export function Viewer({ threadId, tabId, path, line, repoId, repoName, locked: 
         <IconButton label="Copy contents" disabled={copyable === null || copying} onClick={() => void copyContents()}>
           <Copy size={14} aria-hidden />
         </IconButton>
-        {/* The file chip names a checkout's path, not a repository's, so another repository's file offers none. */}
-        {foreign ? null : (
-          <IconButton
-            label="Add file to message"
-            disabled={copyable === null}
-            onClick={() => {
-              useComposerChips.getState().add(threadId, {
-                id: chipId(),
-                kind: "file",
-                path,
-                line,
-                excerpt: copyable === null ? null : fileExcerpt(copyable, line),
-                language: languageForPath(path),
-              });
-              pushToast("File added to your message");
-            }}
-          >
-            <Paperclip size={14} aria-hidden />
-          </IconButton>
-        )}
+        {/* Another repository's file keeps the chip its tab names, client-only, as its line comments do. */}
+        <IconButton
+          label="Add file to message"
+          disabled={!attachable}
+          onClick={() => {
+            useComposerChips.getState().add(threadId, {
+              id: chipId(),
+              kind: "file",
+              path,
+              line,
+              excerpt: copyable === null ? null : fileExcerpt(copyable, line),
+              language: languageForPath(path),
+              ...(repoId === undefined ? {} : { repoId }),
+              ...(repoName === undefined ? {} : { repoName }),
+            });
+            pushToast("File added to your message");
+          }}
+        >
+          <Paperclip size={14} aria-hidden />
+        </IconButton>
         <a className="icon-btn" aria-label="Save file" title="Save file" href={rawUrl(threadId, path, true, repoId)} download onClick={() => pushToast("Download started")}>
           <Download size={14} aria-hidden />
         </a>

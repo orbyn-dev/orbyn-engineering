@@ -67,6 +67,18 @@ describe("composer context", () => {
     // The thread's own checkout has no repository, and its comment reads exactly as before.
     expect(chipLabel(asChip({ kind: "review", path: "notes.txt", line: 2, comment: "why?" })!)).toBe("notes.txt:2");
   });
+
+  it("names a file chip's repository, kept through the clipboard", () => {
+    const chip = asChip({ kind: "file", path: "notes.txt", line: 2, excerpt: "two", language: "text", repoId: "planner", repoName: "orbyn-planner" }, "f")!;
+    expect(chipLabel(chip)).toBe("orbyn-planner/notes.txt:2");
+    expect(chipPrompt(chip)).toContain("File `orbyn-planner/notes.txt:2`");
+    expect(chipsFromClipboard({ json: chipsClipboard([chip])!.json, html: "" })?.[0]).toMatchObject({ repoId: "planner", repoName: "orbyn-planner" });
+    // The thread's own checkout has no repository, and its file reads exactly as before.
+    const own = asChip({ kind: "file", path: "notes.txt", line: 2 }, "o")!;
+    expect(chipLabel(own)).toBe("notes.txt:2");
+    expect(chipPrompt(own)).toBe("File `notes.txt:2`");
+  });
+
   it("renders each kind as a readable prompt block", () => {
     expect(chipPrompt(chip({ kind: "file" }))).toBe("File `src/main.rs:12`\n```rust\nlet a = 1;\n```");
     expect(chipPrompt(chip({ kind: "terminal" }))).toContain("Terminal selection");
@@ -140,12 +152,27 @@ describe("composer context", () => {
 
   it("refetches a pasted file's text and keeps the chip when the read fails", async () => {
     const pasted = chip({ kind: "file", excerpt: null, language: null }) as ComposerChip;
-    const filled = await refillExcerpts([pasted], async () => ({ text: "fn main() {}", language: "rust" }));
+    const filled = await refillExcerpts([pasted], async (wanted) => {
+      // The read is handed the chip itself, so a paste can read another repository's file there.
+      expect(wanted).toMatchObject({ kind: "file", path: "src/main.rs" });
+      return { text: "fn main() {}", language: "rust" };
+    });
     expect(filled[0]).toMatchObject({ excerpt: "fn main() {}", language: "rust" });
     const kept = await refillExcerpts([pasted], async () => {
       throw new Error("gone");
     });
     expect(kept[0]).toMatchObject({ path: "src/main.rs", excerpt: null });
+  });
+
+  it("hands a pasted foreign chip's repository to the read that fills it", async () => {
+    const pasted = asChip({ kind: "file", path: "notes.txt", line: null, excerpt: null, repoId: "planner", repoName: "orbyn-planner" }, "f")!;
+    let asked: string | undefined;
+    const filled = await refillExcerpts([pasted], async (wanted) => {
+      asked = wanted.repoId;
+      return { text: "planner notes" };
+    });
+    expect(asked).toBe("planner");
+    expect(filled[0]).toMatchObject({ excerpt: "planner notes", repoId: "planner", repoName: "orbyn-planner" });
   });
 
   it("reads the language from a path and the lines around a marked one", () => {

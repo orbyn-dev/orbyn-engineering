@@ -31,9 +31,9 @@ export function handleComposerPaste(
   });
   if (carried) {
     event.preventDefault();
-    void refillExcerpts(carried, async (path) => {
-      const found = await readThreadFile(thread.id, path);
-      return { text: fileExcerpt(found.content, null), language: languageForPath(path) };
+    void refillExcerpts(carried, async (chip) => {
+      const found = chip.repoId === undefined ? await readThreadFile(thread.id, chip.path) : await readThreadFile(thread.id, chip.path, undefined, chip.repoId);
+      return { text: fileExcerpt(found.content, null), language: languageForPath(chip.path) };
     }).then((filled) => addChips(thread.id, filled));
     return;
   }
