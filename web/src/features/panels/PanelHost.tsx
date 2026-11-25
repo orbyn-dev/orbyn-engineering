@@ -572,7 +572,7 @@ export function PanelHost({
           </div>
         ) : (
           <div id={`context-${domId(tab)}`} role="tabpanel" aria-labelledby={`${TAB_ID}${domId(tab)}`} className="tabpanel">
-            <PanelBody tab={tab} thread={thread} content={content} />
+            <PanelBody tab={tab} thread={thread} content={content} repoName={target?.kind === "thread" && target.repoId !== undefined ? repoName(target.repoId) : undefined} />
           </div>
         )}
       </div>
