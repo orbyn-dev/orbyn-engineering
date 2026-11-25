@@ -1009,7 +1009,8 @@ fn overlapping_profile_changes_lose_no_update() {
             let seed = first.id.clone();
             std::thread::spawn(move || {
                 for round in 0..10 {
-                    core.create_browser_profile(&format!("p{n}-{round}")).unwrap();
+                    core.create_browser_profile(&format!("p{n}-{round}"))
+                        .unwrap();
                     core.rename_browser_profile(&seed, &format!("Seed {n}-{round}"))
                         .unwrap();
                 }
