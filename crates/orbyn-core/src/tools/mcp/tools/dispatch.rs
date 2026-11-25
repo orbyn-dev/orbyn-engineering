@@ -6,10 +6,10 @@ use super::preview::{page_act, wait_target};
 use super::render::{render_height, render_title};
 use super::{
     ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, PULL_NOTE, is_device_tool,
-    issue_query, issue_ref_value, issue_summary_value, matches_words, number, pull_check_name,
-    pull_checks_value, pull_comment_body, pull_detail_value, pull_filter, pull_limit,
-    pull_list_value, pull_merge_args, pull_merge_refusal, pull_number, pull_reply_to, pull_review,
-    optional_text, pull_update_args, strings, text, wait_seconds,
+    issue_query, issue_ref_value, issue_summary_value, matches_words, number, optional_text,
+    pull_check_name, pull_checks_value, pull_comment_body, pull_detail_value, pull_filter,
+    pull_limit, pull_list_value, pull_merge_args, pull_merge_refusal, pull_number, pull_reply_to,
+    pull_review, pull_update_args, strings, text, wait_seconds,
 };
 use crate::app::Core;
 use crate::error::{CoreError, Result};

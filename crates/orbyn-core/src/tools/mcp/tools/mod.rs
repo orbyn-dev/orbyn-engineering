@@ -106,9 +106,9 @@ fn strings(args: &Value, key: &str) -> Result<Vec<String>> {
         Some(Value::Array(items)) => items
             .iter()
             .map(|item| {
-                item.as_str().map(str::to_owned).ok_or_else(|| {
-                    CoreError::Invalid(format!("{key} must be a list of strings."))
-                })
+                item.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| CoreError::Invalid(format!("{key} must be a list of strings.")))
             })
             .collect(),
         Some(_) => Err(CoreError::Invalid(format!(

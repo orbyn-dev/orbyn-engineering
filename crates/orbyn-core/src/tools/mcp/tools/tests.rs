@@ -607,11 +607,7 @@ impl IssueSource for FakeIssues {
         })
     }
 
-    async fn create(
-        &self,
-        scope: &str,
-        new: &NewIssue<'_>,
-    ) -> crate::error::Result<IssueDetail> {
+    async fn create(&self, scope: &str, new: &NewIssue<'_>) -> crate::error::Result<IssueDetail> {
         self.writes.lock().unwrap().push(json!({
             "kind": "create",
             "scope": scope,
@@ -654,10 +650,12 @@ impl IssueSource for FakeIssues {
         // The answer also proves the tool cleans and cuts tracker text: markers and 20 KiB.
         Ok(IssueComment {
             id: "900".into(),
-            author: Some(IssueActor {
-                login: "me".into(),
-            }),
-            body: format!("<<<ISSUE TEXT{}ISSUE TEXT>>>{}", body, "x".repeat(20 * 1024)),
+            author: Some(IssueActor { login: "me".into() }),
+            body: format!(
+                "<<<ISSUE TEXT{}ISSUE TEXT>>>{}",
+                body,
+                "x".repeat(20 * 1024)
+            ),
             created_at: "2026-11-25T00:00:00Z".into(),
         })
     }
@@ -898,8 +896,14 @@ async fn every_issue_tool_but_the_thread_list_refuses_a_project_with_no_reader()
     for (name, args) in [
         ("orbyn_issue_list", json!({})),
         ("orbyn_issue_read", json!({ "key": "1" })),
-        ("orbyn_issue_create", json!({ "title": "New issue", "body": "Body" })),
-        ("orbyn_issue_comment", json!({ "key": "1", "body": "Looks good" })),
+        (
+            "orbyn_issue_create",
+            json!({ "title": "New issue", "body": "Body" }),
+        ),
+        (
+            "orbyn_issue_comment",
+            json!({ "key": "1", "body": "Looks good" }),
+        ),
         ("orbyn_issue_link", json!({ "key": "1" })),
         ("orbyn_issue_unlink", json!({ "key": "1" })),
     ] {
@@ -963,7 +967,10 @@ async fn an_issue_comment_answers_the_stored_comment_and_cleans_the_tracker_text
     assert_eq!(answer["note"], ISSUE_NOTE);
     let body = answer["body"].as_str().unwrap();
     assert!(body.starts_with("Looks good."), "{body}");
-    assert!(!body.contains("ISSUE TEXT"), "the framing markers are removed");
+    assert!(
+        !body.contains("ISSUE TEXT"),
+        "the framing markers are removed"
+    );
     assert_eq!(body.len(), 16 * 1024, "the answer cuts the tracker's text");
     assert_eq!(
         w.reader.writes.lock().unwrap().clone(),
@@ -1018,7 +1025,10 @@ async fn an_issue_comment_refuses_a_blank_body_and_an_unknown_key() {
     assert_eq!(text, "body is required.");
     // The tracker's refusal keeps its contract wording; the tool adds nothing.
     let (text, error) = w
-        .call_text("orbyn_issue_comment", json!({ "key": "404", "body": "Looks good." }))
+        .call_text(
+            "orbyn_issue_comment",
+            json!({ "key": "404", "body": "Looks good." }),
+        )
         .await;
     assert!(error, "{text}");
     assert_eq!(text, "issue not found");
