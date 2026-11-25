@@ -55,6 +55,7 @@ mod dev_seed;
 mod disk;
 mod draft;
 mod escape_check;
+mod escape_counts;
 mod escape_scan;
 mod escapes;
 mod fake;
