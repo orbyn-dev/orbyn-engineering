@@ -219,6 +219,32 @@ describe("Flow on the real routes", () => {
     expect(writes()).toHaveLength(0);
   });
 
+  it("opens the artifacts view from the zoomed task on its own read, and back", async () => {
+    mock.reset("crew");
+    const user = userEvent.setup();
+    render(<FlowZoom id="task-redirect" onBack={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Artifacts" }));
+    const view = await screen.findByRole("region", { name: "Artifacts" });
+    expect(view).toHaveTextContent("Check 1 of 2");
+    expect(view).toHaveTextContent("test · check-1 · pass");
+    expect(view).toHaveTextContent("2 files · +18 −4");
+    expect(view).toHaveTextContent("0b1e5f0");
+    await user.click(screen.getByRole("button", { name: "Task" }));
+    expect(await screen.findByRole("list", { name: "Stages" })).toBeVisible();
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("says the service has no artifacts read, without an error, and keeps its Planned marks", async () => {
+    mock.reset("crew");
+    const user = userEvent.setup();
+    render(<FlowZoom id="task-queued" onBack={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Artifacts" }));
+    expect(await screen.findByText("This service has no artifacts read")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText(/stay Planned/)).toBeVisible();
+    expect(writes()).toHaveLength(0);
+  });
+
   it("says there are no crews, and a crew with no tasks", async () => {
     await open("crew-empty");
     expect(await screen.findByText("No crews running")).toBeVisible();
