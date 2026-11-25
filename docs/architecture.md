@@ -252,12 +252,13 @@ and size, so a transcript shows what the message carried without asking the engi
 
 A photo can be converted before it is stored: `POST /api/threads/:id/attachments/convert?name=`
 takes the photo as its body and answers `ConvertedPhoto`, the stored attachment the run
-sends instead. A PNG or JPEG over 10 MiB is written smaller until it fits, and one within
-the limit is written again at its own size, so the stored bytes never carry the original's
-EXIF location. The input is capped at 50 MiB, refused from the declared length before the
-body is read, and at 100 megapixels with a 512 MiB decoder allocation, checked from the
-header before a decoder allocates. A HEIC, HEIF or WebP is refused as `415 unsupported_type`
-until a decoder this build can carry is chosen, and the route reads no path from the request.
+sends instead. A PNG, JPEG or WebP over 10 MiB is written smaller until it fits, and one
+within the limit is written again at its own size, so the stored bytes never carry the
+original's EXIF location. The input is capped at 50 MiB, refused from the declared length
+before the body is read, and at 100 megapixels with a 512 MiB decoder allocation, checked
+from the header before a decoder allocates. WebP is decoded by the pure-Rust `image-webp`
+crate; a HEIC or HEIF is refused as `415 unsupported_type` until a decoder this build can
+carry is chosen, and the route reads no path from the request.
 At most two photo conversions decode and encode at once across the service; others wait.
 
 The composer edits a fenced code block as plain text: Tab and Shift+Tab move the
