@@ -234,21 +234,20 @@ impl Core {
     /// The thread a rewind may move, with the words the rewind route shows a person.
     fn rewind_idle_thread(&self, id: &str) -> Result<Thread> {
         let thread = self.store.thread(id).map_err(|error| match error {
-            CoreError::NotFound(_) => refused(
-                404,
-                "not_found",
-                "This thread was not found.",
-            ),
+            CoreError::NotFound(_) => refused(404, "not_found", "This thread was not found."),
             other => other,
         })?;
-        let project = self.store.project(&thread.project_id).map_err(|error| match error {
-            CoreError::NotFound(_) => refused(
-                404,
-                "not_found",
-                "The project for this thread was not found.",
-            ),
-            other => other,
-        })?;
+        let project = self
+            .store
+            .project(&thread.project_id)
+            .map_err(|error| match error {
+                CoreError::NotFound(_) => refused(
+                    404,
+                    "not_found",
+                    "The project for this thread was not found.",
+                ),
+                other => other,
+            })?;
         if !project.trusted {
             return Err(refused(
                 403,
@@ -265,26 +264,21 @@ impl Core {
     /// Restores the files a rewind asked for, before the thread is marked rewound. The
     /// audit row is written only after the files are back, so a failed restore leaves no
     /// record of one.
-    async fn restore_for_rewind(
-        &self,
-        thread: &Thread,
-        run_id: &str,
-        actor: &str,
-    ) -> Result<()> {
+    async fn restore_for_rewind(&self, thread: &Thread, run_id: &str, actor: &str) -> Result<()> {
         let shared = self.store.threads_sharing_checkout(thread)?;
         if !shared.is_empty() {
             return Err(CoreError::SharedDirectory(shared.len()));
         }
-        let checkpoint = self
-            .thread_checkpoint(&thread.id, run_id)
-            .map_err(|error| match error {
-                CoreError::NotFound(_) => refused(
-                    404,
-                    "not_found",
-                    "The checkpoint for this run was not found.",
-                ),
-                other => other,
-            })?;
+        let checkpoint =
+            self.thread_checkpoint(&thread.id, run_id)
+                .map_err(|error| match error {
+                    CoreError::NotFound(_) => refused(
+                        404,
+                        "not_found",
+                        "The checkpoint for this run was not found.",
+                    ),
+                    other => other,
+                })?;
         let target = checkpoint.start;
         let cwd = Path::new(&thread.cwd);
         let safety = checkpoint_ref(&thread.id, &new_id(), "before-restore");
@@ -328,19 +322,20 @@ impl Core {
         actor: &str,
     ) -> Result<RewindResult> {
         let thread = self.rewind_idle_thread(thread_id)?;
-        let _hold = self.runs.hold_for_rewind(thread_id).map_err(|error| match error {
-            CoreError::ThreadBusy => rewind_busy(),
-            other => other,
-        })?;
+        let _hold = self
+            .runs
+            .hold_for_rewind(thread_id)
+            .map_err(|error| match error {
+                CoreError::ThreadBusy => rewind_busy(),
+                other => other,
+            })?;
         let through = self
             .store
             .seq_before_run(thread_id, &request.run_id)
             .map_err(|error| match error {
-                CoreError::NotFound(_) => refused(
-                    404,
-                    "not_found",
-                    "This run was not found in this thread.",
-                ),
+                CoreError::NotFound(_) => {
+                    refused(404, "not_found", "This run was not found in this thread.")
+                }
                 other => other,
             })?;
         // The engine step first: a native rollback notes its point (or rolls the session
@@ -567,18 +562,14 @@ mod tests {
     use std::time::Duration;
 
     use async_trait::async_trait;
-    use orbyn_contracts::{
-        AgUiEvent, EngineCapabilities, EngineTier, PermissionMode, RunState,
-    };
+    use orbyn_contracts::{AgUiEvent, EngineCapabilities, EngineTier, PermissionMode, RunState};
     use tokio::sync::mpsc;
 
     use super::*;
     use crate::agents::claude_history::project_folder_name;
     use crate::agents::driver::claude::ClaudeDriver;
     use crate::agents::driver::host::{EnginePath, HostDriver, HostSpec, Pool, Timings};
-    use crate::agents::driver::{
-        EngineDescriptor, EngineProbe, EngineEvent, RunHandle, RunSpec,
-    };
+    use crate::agents::driver::{EngineDescriptor, EngineEvent, EngineProbe, RunHandle, RunSpec};
     use crate::store::{Admission, NewProject, NewThread, Store};
     use crate::testing::{TempDir, run_git};
 
@@ -600,10 +591,8 @@ mod tests {
     }
 
     fn open_core(dir: &TempDir) -> Arc<Core> {
-        let mut config = crate::CoreConfig::new(
-            dir.path().join("data"),
-            "http://127.0.0.1:1".into(),
-        );
+        let mut config =
+            crate::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
         config.engines.lookup_latest = false;
         Arc::new(Core::open(config).unwrap())
     }
@@ -718,10 +707,7 @@ mod tests {
         )
         .unwrap();
         let driver = HostDriver::new(
-            Arc::new(ClaudeDriver::new(
-                "claude".into(),
-                Duration::from_secs(1),
-            )),
+            Arc::new(ClaudeDriver::new("claude".into(), Duration::from_secs(1))),
             pool.clone(),
             "claude".into(),
         )
