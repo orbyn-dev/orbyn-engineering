@@ -20,6 +20,7 @@ use crate::governance::approvals::WriteScope;
 use crate::host::process::resolve;
 use crate::source_control::git::{git, git_raw};
 use crate::store::AuditRecord;
+use crate::store::thread_repos::ThreadRepoRecord;
 use crate::util::{new_id, sha256_hex};
 
 #[cfg(target_os = "macos")]
@@ -475,6 +476,15 @@ fn link_lands_inside(scope: &WriteScope, full: &Path) -> bool {
         })
 }
 
+/// Whether two path segments name the same entry, as the platform compares them.
+fn same_name(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> bool {
+    if cfg!(windows) {
+        left.to_string_lossy().to_lowercase() == right.to_string_lossy().to_lowercase()
+    } else {
+        left == right
+    }
+}
+
 /// A model can repeat the selected workspace suffix in a relative link. Prefer
 /// the longest matching suffix, but only when its stripped target is a real file.
 fn repeated_workspace_path(cwd: &Path, path: &Path) -> Option<PathBuf> {
@@ -496,19 +506,31 @@ fn repeated_workspace_path(cwd: &Path, path: &Path) -> Option<PathBuf> {
         let matches = cwd[cwd.len() - count..]
             .iter()
             .zip(&parts[..count])
-            .all(|(left, right)| {
-                let right = right.as_os_str();
-                if cfg!(windows) {
-                    left.to_string_lossy().to_lowercase() == right.to_string_lossy().to_lowercase()
-                } else {
-                    *left == right
-                }
-            });
+            .all(|(left, right)| same_name(left, right.as_os_str()));
         if matches {
             return Some(parts[count..].iter().collect());
         }
     }
     None
+}
+
+/// The repository a task-folder reference names with its first segment: a thread's worktrees sit in the
+/// task folder, so `planner/src/x.ts` is the `planner` repository's `src/x.ts`. Answers that repository and
+/// the path inside its worktree; a path whose first segment is no repository's folder is no reference to one.
+fn task_folder_repository<'a>(
+    repos: &'a [ThreadRepoRecord],
+    path: &Path,
+) -> Option<(&'a ThreadRepoRecord, PathBuf)> {
+    let mut parts = path.components();
+    let Some(Component::Normal(first)) = parts.next() else {
+        return None;
+    };
+    let repository = repos.iter().find(|repo| {
+        Path::new(&repo.worktree_path)
+            .file_name()
+            .is_some_and(|folder| same_name(folder, first))
+    })?;
+    Some((repository, parts.as_path().to_path_buf()))
 }
 
 fn navigation_file(scope: &WriteScope, target: &Path) -> Option<String> {
@@ -525,9 +547,10 @@ fn navigation_file(scope: &WriteScope, target: &Path) -> Option<String> {
 
 impl Core {
     /// Resolve navigation coordinates without granting a new filesystem root. A multi-repository
-    /// thread resolves them in the repository asked for (its primary one when none is named), never in
-    /// the task folder: its worktrees are the checkouts. `cwd` stays the folder the caller knows, so a
-    /// thread that moved meanwhile is `StaleOwner`.
+    /// thread resolves them in the repository asked for (its primary one when none is named), and in
+    /// the repository a task-folder reference names by its first segment, never in the task folder: its
+    /// worktrees are the checkouts. `cwd` stays the folder the caller knows, so a thread that moved
+    /// meanwhile is `StaleOwner`, and the answer names the repository its coordinates are in.
     pub async fn resolve_thread_path(
         &self,
         id: &str,
@@ -545,30 +568,80 @@ impl Core {
                 "That path is outside this checkout.".into(),
             ));
         }
+        let input = Path::new(&request.path);
+        // A thread-basis reference is written relative to the task folder, whose children are the
+        // repositories' worktrees, so its first segment can name one of them: that repository's worktree
+        // is the checkout then, and the answer says which repository it is (docs/multi-repo.md,
+        // "Navigation coordinates are one repository's too").
+        let repos = if self.config.multi_repo {
+            self.store.thread_repos(id)?
+        } else {
+            Vec::new()
+        };
+        // The repository this call's checkout is: the one the route named, else the thread's primary one.
+        let asked = repos
+            .iter()
+            .find(|repo| Path::new(&repo.worktree_path) == Path::new(&thread.cwd))
+            .or_else(|| repos.first());
+        let owner = match request.basis {
+            ThreadPathBasis::Thread if !input.is_absolute() => {
+                task_folder_repository(&repos, input)
+            }
+            _ => None,
+        };
+        let (scope, input, repo_id) = match owner {
+            Some((repository, inside))
+                if asked.is_some_and(|repo| repo.repo_id == repository.repo_id) =>
+            {
+                (scope, inside, Some(repository.repo_id.clone()))
+            }
+            Some((repository, inside)) => {
+                // Another repository of the thread: its worktree is the checkout, and it is refused here
+                // when untrusted, as every other call on it is.
+                if repository.repo_id != thread.project_id
+                    && self
+                        .store
+                        .repo(&thread.project_id, &repository.repo_id)?
+                        .is_some_and(|row| !row.trusted)
+                {
+                    return Err(CoreError::RepoUntrusted(
+                        "Trust this repository before using it.".into(),
+                    ));
+                }
+                let mut scoped = thread.clone();
+                scoped.cwd.clone_from(&repository.worktree_path);
+                let scope = scope_of(&self.config.data_dir, &self.workspace.root()?, &scoped);
+                (scope, inside, Some(repository.repo_id.clone()))
+            }
+            None => (
+                scope,
+                input.to_path_buf(),
+                asked.map(|repo| repo.repo_id.clone()),
+            ),
+        };
         let project = self.store.project(&thread.project_id)?;
         let repository = match crate::source_control::git::checkout_root(&scope.checkout).await {
             Ok(root) => Some(root),
             Err(error) if project.is_git => return Err(error),
             Err(_) => None,
         };
-        let input = Path::new(&request.path);
         let target = if input.is_absolute() {
-            input.to_path_buf()
+            input
         } else {
             match request.basis {
                 ThreadPathBasis::Repository => repository
                     .as_ref()
                     .ok_or_else(|| CoreError::Git("This folder is not a Git checkout.".into()))?
-                    .join(input),
+                    .join(&input),
                 ThreadPathBasis::Thread => {
-                    let stripped = repeated_workspace_path(&scope.checkout, input)
+                    let stripped = repeated_workspace_path(&scope.checkout, &input)
                         .map(|path| scope.checkout.join(path));
                     stripped
                         .filter(|path| {
                             !crate::project::outside_files::reaches_remote(path)
                                 && navigation_file(&scope, path).is_some()
                         })
-                        .unwrap_or_else(|| scope.checkout.join(input))
+                        .unwrap_or_else(|| scope.checkout.join(&input))
                 }
             }
         };
@@ -579,6 +652,7 @@ impl Core {
                 cwd: stored.cwd,
                 checkout_path: None,
                 repository_path: None,
+                repo_id,
             });
         }
         let target = crate::governance::approvals::resolve_existing(&target);
@@ -616,6 +690,7 @@ impl Core {
             cwd: current.cwd,
             checkout_path,
             repository_path,
+            repo_id,
         })
     }
 

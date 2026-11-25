@@ -1249,6 +1249,73 @@ fn navigation(cwd: &str, path: &str, repo_id: Option<&str>) -> orbyn_contracts::
     }
 }
 
+/// A navigation request for a reference the engine wrote relative to its task folder, as a message link is.
+fn task_folder_navigation(cwd: &str, path: &str) -> orbyn_contracts::ResolveThreadPath {
+    orbyn_contracts::ResolveThreadPath {
+        basis: orbyn_contracts::ThreadPathBasis::Thread,
+        ..navigation(cwd, path, None)
+    }
+}
+
+/// A task-folder reference names its repository by the folder the worktree sits in, so the coordinates are
+/// that repository's and the answer says which one it is (issue #1581).
+#[tokio::test]
+async fn a_task_folder_reference_resolves_in_the_repository_its_first_segment_names() {
+    let dir = TempDir::new();
+    let (core, project, other_id, _main, _other) = two_trusted(&dir).await;
+    let thread = core
+        .start_repo_thread(
+            &project,
+            start_input(&[(&project, "main"), (&other_id, "main")]),
+        )
+        .await
+        .unwrap();
+    let folder = core.task_folder(&thread.id).await.unwrap();
+    let primary = Path::new(&thread.cwd).join(&folder.repos[0].name);
+    let second = Path::new(&thread.cwd).join(&folder.repos[1].name);
+    // One name with different bytes in each repository, so the answer says whose file it resolved.
+    std::fs::write(primary.join("note.txt"), "primary\n").unwrap();
+    std::fs::write(second.join("note.txt"), "other\n").unwrap();
+    assert_ne!(folder.repos[0].name, folder.repos[1].name);
+    let second_link = format!("{}/note.txt", folder.repos[1].name);
+    let resolved = core
+        .resolve_thread_path(
+            &thread.id,
+            &task_folder_navigation(&thread.cwd, &second_link),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resolved.checkout_path.as_deref(), Some("note.txt"));
+    assert_eq!(resolved.repository_path.as_deref(), Some("note.txt"));
+    assert_eq!(
+        resolved.repo_id.as_deref(),
+        Some(other_id.as_str()),
+        "the answer names the repository the coordinates are in"
+    );
+    assert_eq!(
+        resolved.cwd, thread.cwd,
+        "the fence is still the task folder"
+    );
+    // The primary's own folder name is its file, and the answer names the primary repository.
+    let first_link = format!("{}/note.txt", folder.repos[0].name);
+    let own = core
+        .resolve_thread_path(
+            &thread.id,
+            &task_folder_navigation(&thread.cwd, &first_link),
+        )
+        .await
+        .unwrap();
+    assert_eq!(own.checkout_path.as_deref(), Some("note.txt"));
+    assert_eq!(own.repo_id.as_deref(), Some(project.as_str()));
+    // A path under no repository's folder keeps its older meaning: the primary repository's worktree.
+    let plain = core
+        .resolve_thread_path(&thread.id, &task_folder_navigation(&thread.cwd, "note.txt"))
+        .await
+        .unwrap();
+    assert_eq!(plain.checkout_path.as_deref(), Some("note.txt"));
+    assert_eq!(plain.repo_id.as_deref(), Some(project.as_str()));
+}
+
 #[tokio::test]
 async fn navigation_coordinates_are_resolved_in_the_repository_its_scope_names() {
     use orbyn_contracts::ResolveThreadPath;
@@ -1358,6 +1425,23 @@ async fn navigation_coordinates_of_an_untrusted_repository_are_refused() {
         crate::in_repo(
             Some(added.id.clone()),
             core.resolve_thread_path(&thread, &request)
+        )
+        .await,
+        Err(CoreError::RepoUntrusted(_))
+    ));
+    // A task-folder reference that names the untrusted repository's folder is refused the same way.
+    let name = core
+        .store
+        .thread_repos(&thread)
+        .unwrap()
+        .into_iter()
+        .find(|record| record.repo_id == added.id)
+        .unwrap()
+        .name;
+    assert!(matches!(
+        core.resolve_thread_path(
+            &thread,
+            &task_folder_navigation(&stored.cwd, &format!("{name}/a.txt"))
         )
         .await,
         Err(CoreError::RepoUntrusted(_))
