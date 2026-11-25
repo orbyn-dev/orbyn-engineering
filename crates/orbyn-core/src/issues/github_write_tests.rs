@@ -727,3 +727,311 @@ async fn the_templates_read_answers_none_for_github() {
     let templates = github().templates("acme/app").await.unwrap();
     assert!(templates.is_empty());
 }
+
+/// One fixture for an edit or a state write: the PATCH is recorded with the JSON body it sent, and the issue is read
+/// back as a detail (its two reads). Nothing else is expected.
+fn patch_fixture(calls: Calls) -> GhAnswer {
+    let record = calls.clone();
+    Arc::new(
+        move |_forge: Forge, _cwd: &Path, args: &[&str], input: Option<&str>| -> Result<String> {
+            let args = strings(args);
+            record
+                .lock()
+                .unwrap()
+                .push((args.clone(), input.map(str::to_owned)));
+            if args.first().map(String::as_str) == Some("api")
+                && args.get(1).map(String::as_str) == Some("-X")
+                && args.get(2).map(String::as_str) == Some("PATCH")
+            {
+                return Ok("{}".to_owned());
+            }
+            assert_eq!(args[0], "issue", "{args:?}");
+            if names_field(&args, "closedByPullRequestsReferences") {
+                return Ok("[]".to_owned());
+            }
+            Ok(detail_json().to_string())
+        },
+    )
+}
+
+/// The JSON body the one PATCH of a fixture recorded.
+fn patched_body(calls: &Calls) -> Value {
+    let all = seen(calls);
+    let (args, body) = all
+        .iter()
+        .find(|(args, _)| args.get(2).map(String::as_str) == Some("PATCH"))
+        .expect("one PATCH");
+    assert_eq!(
+        args[3], "repos/acme/app/issues/7",
+        "the PATCH addresses the issue by its repo and number: {args:?}"
+    );
+    serde_json::from_str(body.as_deref().expect("a JSON body")).expect("a JSON body")
+}
+
+#[tokio::test]
+async fn an_update_writes_only_the_fields_it_was_given_and_answers_the_issue_read_back() {
+    let calls = calls();
+    let fixture = patch_fixture(calls.clone());
+    let edit = IssueEdit {
+        title: Some("New title"),
+        body: None,
+        labels: None,
+        assignees: None,
+    };
+    let detail = with_crew_input_fixture(fixture, async {
+        github().update("acme/app", "7", &edit).await
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        detail.summary.title, "Crash on start",
+        "the answer is the issue as it was read back, not the write's own reply"
+    );
+    assert_eq!(
+        detail.states.as_ref().map(Vec::len),
+        Some(3),
+        "a detail read carries the states the issue can move to"
+    );
+    assert_eq!(
+        patched_body(&calls),
+        json!({ "title": "New title" }),
+        "only the present field is written"
+    );
+    assert_eq!(
+        seen(&calls).len(),
+        3,
+        "one PATCH and the detail's two reads"
+    );
+}
+
+#[tokio::test]
+async fn an_update_sends_labels_and_assignees_as_the_whole_new_set() {
+    let first = calls();
+    let fixture = patch_fixture(first.clone());
+    let labels = vec!["bug".to_owned(), "ui".to_owned()];
+    let assignees = vec!["octocat".to_owned()];
+    let edit = IssueEdit {
+        title: None,
+        body: Some("Steps: 1."),
+        labels: Some(&labels),
+        assignees: Some(&assignees),
+    };
+    with_crew_input_fixture(fixture, async {
+        github().update("acme/app", "7", &edit).await
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        patched_body(&first),
+        json!({ "body": "Steps: 1.", "labels": ["bug", "ui"], "assignees": ["octocat"] }),
+        "labels and assignees are the whole new set, as GitHub writes them"
+    );
+    // An empty list clears the set rather than being left out.
+    let clearing_calls = calls();
+    let fixture = patch_fixture(clearing_calls.clone());
+    let none: Vec<String> = Vec::new();
+    let clearing = IssueEdit {
+        title: None,
+        body: None,
+        labels: Some(&none),
+        assignees: None,
+    };
+    with_crew_input_fixture(fixture, async {
+        github().update("acme/app", "7", &clearing).await
+    })
+    .await
+    .unwrap();
+    assert_eq!(patched_body(&clearing_calls), json!({ "labels": [] }));
+}
+
+#[tokio::test]
+async fn a_state_write_closes_with_the_reason_its_name_carries() {
+    for (state, reason, expected) in [
+        (
+            "Closed as not planned",
+            None,
+            json!({ "state": "closed", "state_reason": "not_planned" }),
+        ),
+        (
+            "Closed",
+            Some(IssueCloseReason::Completed),
+            json!({ "state": "closed", "state_reason": "completed" }),
+        ),
+        ("Open", None, json!({ "state": "open" })),
+    ] {
+        let calls = calls();
+        let fixture = patch_fixture(calls.clone());
+        let detail = with_crew_input_fixture(fixture, async {
+            github().set_state("acme/app", "7", state, reason).await
+        })
+        .await
+        .unwrap();
+        assert!(
+            detail.states.is_some(),
+            "a state write answers the issue with its states"
+        );
+        assert_eq!(patched_body(&calls), expected, "{state}");
+    }
+}
+
+#[tokio::test]
+async fn a_state_name_github_does_not_offer_is_refused_before_anything_is_sent() {
+    let calls = calls();
+    let fixture = patch_fixture(calls.clone());
+    let error = with_crew_input_fixture(fixture, async {
+        github()
+            .set_state("acme/app", "7", "Won't fix", None)
+            .await
+            .map(|_| ())
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(error, CoreError::Invalid(_)), "{error:?}");
+    assert!(seen(&calls).is_empty(), "a refused name sends nothing");
+}
+
+#[tokio::test]
+async fn a_scope_or_a_key_that_is_not_plain_is_refused_before_the_patch() {
+    let calls = calls();
+    let fixture = patch_fixture(calls.clone());
+    let edit = IssueEdit {
+        title: Some("T"),
+        body: None,
+        labels: None,
+        assignees: None,
+    };
+    let bad_scope = with_crew_input_fixture(fixture.clone(), async {
+        github()
+            .update("acme/app/extra", "7", &edit)
+            .await
+            .map(|_| ())
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(bad_scope, CoreError::Invalid(_)), "{bad_scope:?}");
+    let bad_key = with_crew_input_fixture(fixture, async {
+        github()
+            .update("acme/app", "--web", &edit)
+            .await
+            .map(|_| ())
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(bad_key, CoreError::Invalid(_)), "{bad_key:?}");
+    assert!(
+        seen(&calls).is_empty(),
+        "the scope and the key are checked before gh runs"
+    );
+}
+
+#[test]
+fn the_two_closed_states_are_named_apart_and_match_what_a_closed_issue_reports() {
+    let states = github_states();
+    assert_eq!(
+        states.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+        ["Open", "Closed", "Closed as not planned"],
+        "GitHub has one closed state with two reasons, and they are named apart"
+    );
+    assert_eq!(states[0].category, IssueStateCategory::Open);
+    assert_eq!(states[1].category, IssueStateCategory::Closed);
+    assert_eq!(states[1].close_reason, Some(IssueCloseReason::Completed));
+    assert_eq!(states[2].close_reason, Some(IssueCloseReason::NotPlanned));
+    // The name a closed issue reports is one of the states it can move to, so its row reads as its own state.
+    for reason in ["COMPLETED", "NOT_PLANNED"] {
+        let reported = named_state(true, reason);
+        assert!(
+            states
+                .iter()
+                .any(|state| state.name == reported.name && state.category == reported.category),
+            "{reason} is offered under the name the read reports: {reported:?}"
+        );
+    }
+    assert_eq!(closing("Open", None).unwrap(), None);
+    assert_eq!(
+        closing("Closed as not planned", Some(IssueCloseReason::Completed)).unwrap(),
+        Some(IssueCloseReason::NotPlanned),
+        "the name carries the reason it names"
+    );
+}
+
+#[tokio::test]
+async fn candidates_offer_the_repository_labels_and_assignable_people() {
+    let calls = calls();
+    let record = calls.clone();
+    let fixture = Arc::new(
+        move |_forge: Forge, _cwd: &Path, args: &[&str], input: Option<&str>| -> Result<String> {
+            let args = strings(args);
+            record
+                .lock()
+                .unwrap()
+                .push((args.clone(), input.map(str::to_owned)));
+            if args[0] == "label" {
+                return Ok(json!([
+                    { "name": "bug", "color": "d73a4a" },
+                    { "name": "ui" }
+                ])
+                .to_string());
+            }
+            assert_eq!(args[0], "api", "{args:?}");
+            Ok(json!([{ "login": "ann" }, { "login": "bo" }]).to_string())
+        },
+    );
+    let found = with_crew_input_fixture(fixture, async { github().candidates("acme/app").await })
+        .await
+        .unwrap();
+    assert_eq!(
+        found
+            .labels
+            .iter()
+            .map(|label| (label.name.as_str(), label.color.as_deref()))
+            .collect::<Vec<_>>(),
+        [("bug", Some("d73a4a")), ("ui", None)]
+    );
+    assert_eq!(
+        found
+            .assignees
+            .iter()
+            .map(|person| (person.login.as_str(), person.id.as_str()))
+            .collect::<Vec<_>>(),
+        [("ann", "ann"), ("bo", "bo")],
+        "GitHub addresses a person by login, so a candidate's id is the login"
+    );
+    assert!(!found.truncated);
+    let all = seen(&calls);
+    assert!(
+        all.iter().any(|(args, _)| args[0] == "api"
+            && args[1].contains("repos/acme/app/assignees?per_page=100&page=1")),
+        "the people are read a page at a time: {all:?}"
+    );
+}
+
+#[tokio::test]
+async fn candidates_say_when_there_were_more_than_the_two_hundred_kept() {
+    let calls = calls();
+    let record = calls.clone();
+    let fixture = Arc::new(
+        move |_forge: Forge, _cwd: &Path, args: &[&str], input: Option<&str>| -> Result<String> {
+            let args = strings(args);
+            record
+                .lock()
+                .unwrap()
+                .push((args.clone(), input.map(str::to_owned)));
+            if args[0] == "label" {
+                return Ok("[]".to_owned());
+            }
+            // Two full pages of a hundred: the second may have more behind it.
+            let rows: Vec<Value> = (0..100)
+                .map(|i| json!({ "login": format!("u{i}") }))
+                .collect();
+            Ok(Value::Array(rows).to_string())
+        },
+    );
+    let found = with_crew_input_fixture(fixture, async { github().candidates("acme/app").await })
+        .await
+        .unwrap();
+    assert_eq!(found.assignees.len(), 200);
+    assert!(
+        found.truncated,
+        "a full last page may have more, so a missing name is not proof of ineligibility"
+    );
+}

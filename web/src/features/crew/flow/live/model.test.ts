@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FlowCell } from "../../../../generated/FlowCell";
 import type { FlowTaskRow } from "../../../../generated/FlowTaskRow";
 import { tasksPath } from "./api";
-import { cellOf, cellView, countOf, decidedBy, laneWord, roundView, shown, stageWord, STAGES, when, resumedNote, wasResumed } from "./model";
+import { cellOf, cellView, checkName, countOf, decidedBy, laneWord, roundView, shortCommit, shown, stageWord, STAGES, when, resumedNote, wasResumed } from "./model";
 
 const row = (over: Partial<FlowTaskRow>): FlowTaskRow => ({ id: "t", name: "n", kind: "implement", owner: "Lead", state: "running", could_not_start: false, resumed: false, round: 1, cells: [], created_at: "", updated_at: "", ...over });
 
@@ -85,6 +85,17 @@ describe("the list's chips, counts and read", () => {
   it("reads a moment on the clock and shows an unreadable one as sent", () => {
     expect(when("not a time")).toBe("not a time");
     expect(when("2026-11-07T14:02:00Z")).toMatch(/Nov/);
+  });
+});
+
+describe("the artifacts view's words", () => {
+  it("labels a check by its kind and id, never by a check's own text, and shortens a commit", () => {
+    expect(checkName({ id: "check-1", kind: "test" })).toBe("test · check-1");
+    expect(checkName({ id: "check-1", kind: "file_scope" })).toBe("file scope · check-1");
+    // A check the task's key does not name (a lead's repro) carries no kind.
+    expect(checkName({ id: "lead-repro-1" })).toBe("lead-repro-1");
+    expect(shortCommit("a41c9e2c0ffee0123456789abcdef0123456789a")).toBe("a41c9e2");
+    expect(shortCommit("")).toBe("");
   });
 });
 
