@@ -130,7 +130,7 @@ function standInGh(dir: string, pulls: PullFixture[], starred = false): { bin: s
   const state = join(dir, "gh-state.json");
   const log = join(dir, "gh-calls.log");
   writeFileSync(log, "");
-  writeFileSync(state, JSON.stringify({ starred, pulls: pulls.map(pullRow), repos: [], next: 100, people: ["ada", "grace"], labels: ["bug", "docs"], template: pullRow({ number: 0, title: "" }), issues: STAND_IN_ISSUES }));
+  writeFileSync(state, JSON.stringify({ starred, pulls: pulls.map(pullRow), repos: [], next: 100, people: ["ada", "grace"], labels: [{ name: "bug", color: "d73a4a", description: "About bug" }, { name: "docs", color: "0075ca", description: "About docs" }], template: pullRow({ number: 0, title: "" }), issues: STAND_IN_ISSUES }));
   if (process.platform === "win32") {
     symlinkSync(STAND_IN_GH, join(bin, "gh.mjs"));
     writeFileSync(join(bin, "gh.cmd"), '@echo off\r\nnode "%~dp0gh.mjs" %*\r\n');
