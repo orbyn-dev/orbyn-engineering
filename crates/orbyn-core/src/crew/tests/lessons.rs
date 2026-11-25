@@ -34,6 +34,24 @@ fn evidence(kind: &str, id: &str) -> LessonEvidence {
     }
 }
 
+/// The lesson of `source` a read returned, found by the source it records rather than by the place the read put it:
+/// the store's ordering is not a fixture a test can rely on.
+fn sourced<'a>(lessons: &'a [CrewLesson], source: &str) -> &'a CrewLesson {
+    lessons
+        .iter()
+        .find(|lesson| lesson.source == source)
+        .unwrap_or_else(|| panic!("no {source} lesson: {lessons:?}"))
+}
+
+/// The lesson evidence of `kind`, found by the kind it records: the write path's order is not a fixture either.
+fn evidence_of<'a>(lesson: &'a CrewLesson, kind: &str) -> &'a LessonEvidence {
+    lesson
+        .evidence
+        .iter()
+        .find(|recorded| recorded.kind == kind)
+        .unwrap_or_else(|| panic!("no {kind} evidence: {:?}", lesson.evidence))
+}
+
 fn decide(project: &str) -> wire::EscapeDecide {
     wire::EscapeDecide {
         project: project.to_owned(),
@@ -102,11 +120,8 @@ async fn two_tasks_of_one_repository_with_the_same_failure_write_one_lesson() {
     .await;
     let lessons = lessons_of(&w, &project);
     assert_eq!(lessons.len(), 1);
-    let lesson = &lessons[0];
-    assert_eq!(
-        (lesson.source.as_str(), lesson.scope.as_str()),
-        ("fingerprint", "repo")
-    );
+    let lesson = sourced(&lessons, "fingerprint");
+    assert_eq!(lesson.scope.as_str(), "repo");
     assert_eq!(lesson.project_id.as_deref(), Some(project.as_str()));
     let ids: Vec<&str> = lesson
         .evidence
@@ -162,7 +177,12 @@ async fn a_possible_escape_writes_nothing_and_a_confirmed_one_writes_one_lesson(
         .core
         .crew_escape_log(&rig.project, None, page())
         .unwrap();
-    let escape = log.rows[0].clone();
+    let escape = log
+        .rows
+        .iter()
+        .find(|row| row.merge_task_id == task)
+        .expect("the reverted merge's escape row")
+        .clone();
     assert_eq!(escape.state, wire::EscapeState::Possible);
     assert!(
         lessons_of(&rig.w, &rig.project).is_empty(),
@@ -175,23 +195,20 @@ async fn a_possible_escape_writes_nothing_and_a_confirmed_one_writes_one_lesson(
         .unwrap();
     let lessons = lessons_of(&rig.w, &rig.project);
     assert_eq!(lessons.len(), 1);
-    assert_eq!(lessons[0].source, "revert");
+    let lesson = sourced(&lessons, "revert");
     assert_eq!(
-        lessons[0].text, "A change in `src/a` was reverted.",
+        lesson.text, "A change in `src/a` was reverted.",
         "{}",
-        lessons[0].text
+        lesson.text
     );
-    assert!(lessons[0].names_path);
+    assert!(lesson.names_path);
     assert_eq!(
-        (
-            lessons[0].check_kind.as_deref(),
-            lessons[0].path_class.as_deref()
-        ),
+        (lesson.check_kind.as_deref(), lesson.path_class.as_deref()),
         (None, Some("src/a")),
         "an escape lesson groups by its first area"
     );
     assert_eq!(
-        lessons[0].evidence,
+        lesson.evidence,
         [evidence("escape", &escape.id), evidence("merge", &task)]
     );
 
@@ -204,7 +221,8 @@ async fn a_possible_escape_writes_nothing_and_a_confirmed_one_writes_one_lesson(
 
     // A person's mark is a confirm: one escape lesson, from the person's recorded reason.
     let marked = rig.merge(&["src/b"], NOW - 2 * DAY).await;
-    rig.w
+    let marked_escape = rig
+        .w
         .core
         .crew_escape_mark(&wire::EscapeMark {
             project: rig.project.clone(),
@@ -215,16 +233,18 @@ async fn a_possible_escape_writes_nothing_and_a_confirmed_one_writes_one_lesson(
         .unwrap();
     let lessons = lessons_of(&rig.w, &rig.project);
     assert_eq!(lessons.len(), 2);
-    let escape_lesson = lessons
-        .iter()
-        .find(|lesson| lesson.source == "escape")
-        .expect("the marked merge's lesson");
+    let escape_lesson = sourced(&lessons, "escape");
     assert_eq!(
         escape_lesson.text,
         "A change in `src/b` escaped: It broke the login page."
     );
-    assert_eq!(escape_lesson.evidence[0].kind, "escape");
-    assert_eq!(escape_lesson.evidence[1].id, marked);
+    assert_eq!(
+        escape_lesson.evidence,
+        [
+            evidence("escape", &marked_escape.id),
+            evidence("merge", &marked)
+        ]
+    );
 }
 
 #[tokio::test]
@@ -260,14 +280,13 @@ async fn a_person_who_reverts_a_merge_leaves_one_revert_lesson() {
         .unwrap();
     let lessons = lessons_of(&m.w, &project);
     assert_eq!(lessons.len(), 1);
-    let lesson = &lessons[0];
-    assert_eq!(lesson.source, "revert");
+    let lesson = sourced(&lessons, "revert");
     assert_eq!(
         lesson.text, "A change in `docs/note.md` was reverted.",
         "{}",
         lesson.text
     );
-    assert_eq!(lesson.evidence[1], evidence("merge", &id));
+    assert_eq!(evidence_of(lesson, "merge"), &evidence("merge", &id));
 
     // A later confirm of the escape it logged does not write a second lesson for one merge.
     let escape = m.w.core.store.crew_escape_of_merge(&id).unwrap().unwrap();
@@ -414,5 +433,7 @@ async fn a_lesson_keeps_at_most_five_evidence_ids_on_every_write_path() {
         .crew_lesson_from_person_correction(LessonScope::Repo(project.clone()), "Use pnpm.", six)
         .unwrap();
     assert_eq!(lesson.evidence.len(), 5, "{:?}", lesson.evidence);
+    // The cap keeps the first evidence ids the caller passed, so the first place here is the truncation contract, not
+    // a fixture read.
     assert_eq!(lesson.evidence[0], evidence("task", "sha256:0"));
 }
