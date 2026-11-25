@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-for (const width of [320, 375]) {
+for (const width of [320, 375, 390]) {
   test(`settings chips fit and remain keyboard accessible at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 768 });
     await page.goto("/__mock/scenario/default");
