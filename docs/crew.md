@@ -1872,7 +1872,11 @@ every old reader still sees `engine_error`. Time the app was off spends no budge
 task's last recorded event, and `downtime_secs` keeps that off time out of later budget checks. The resume
 writes `crew.task.resumed` in the same transaction as the state, attempt and resume counters; a stop writes
 `crew.task.restart_stopped` with `why` (`reviewer`, `already_resumed`, `not_resumable` or `send_failed`) in
-the same transaction as its `stopped`/`engine_error` move.
+the same transaction as its `stopped`/`engine_error` move. A task waiting for a person (`needs_person`) is not
+resumed by KC8, but it is credited its off time at startup the same way: recovery writes the same
+`crew.task.downtime_excused` row and adds the window to `downtime_secs`, so the lead's later resume
+(`crew_resume`, "As built (resume)") counts the minutes from the task's last recorded event rather than the
+time the app was off.
 
 **Device notifications (KC10), as built (service).** A window that wants to show a desktop notification first asks `POST /api/crew/needs-you/notify` with at most 50 `{kind, id}` refs (more is `400 invalid_input`). The answer is the refs it may announce: the ones that are current items of the needs-you list (so never a dismissed one), not announced yet at their current wait. Each is marked announced in the same call (migration 83, `crew_needs_you_notified`: kind, id, the item's `since`, the time; ids and times only), so the first window to ask is given the item and every later one, another window or a restart, is not. An item that waits again with a later `since` is a new wait and is announced again. Nothing behind an item is touched; the route is local, behind Crew Preview, and writes no audit row (it records no decision). The window's own notification, its wording and the settings switch are the web half (Eng 1), not built; a notification carries a kind and a fixed line, never task content or an answer.
 
@@ -2201,6 +2205,49 @@ the person key were merged first (#1342).
   fixed line, cleared when a stop holds.
 - **Not run against a real service.** The routes, the agreement between the live read and the close, the failed-task path, the inbox
   item and the thread's own close are covered by fake-engine and route tests; the web half hides until the Preview flag is on.
+
+## As built (resume)
+
+The lead's resume of a held Crew task (Preview, `crew_resume`). Backend only: the lead calls it over MCP; no screen draws it.
+
+- **What exists.** Core `Core::crew_resume_tool` and the MCP tool `crew_resume` (protocol `crew.resume`), behind the Crew Preview
+  flag. Its argument is `{ "task": "<id>" }`; the answer is `{ task, run, state: "running", worker }`, the worker being its
+  still-recorded thread.
+- **What it resumes.** A builder or fix task waiting in `needs_person` after its worker reported and the checks could not be
+  run or could not decide it. The lead's resume takes the task back to `running` and sends its worker another turn through the same guarded path
+  every retry uses (the leak and secret checks of H1 and H2 applied, never a check or any part of the key), so the same worker
+  thread, answer key and budget carry on where the run stopped. The worker is told a lead resumed the task, to read the repository
+  state, finish what is still missing and call `crew_report` again.
+- **Who.** Only the lead thread that leads the task. A worker's token is refused `not_authorized` before the task is read, so a
+  worker cannot resume its own task; the task must be in this crew (`invalid_object` says "no such task in this crew" otherwise),
+  and the thread must be the one the run records as its lead (`not_authorized`; defence in depth, since the task's crew id and
+  its run's lead thread are written from the same thread).
+- **What it refuses, changing nothing.** An ended task is `run_ended`; any other state than `needs_person` is `invalid_transition`;
+  a task whose worker never ran (`could_not_start`: its start was refused) is `invalid_object` and is started again with
+  `crew_start` (or the person retries it on another engine); a task waiting on a `manual` check is `invalid_object` because the
+  person answers it, not the lead; a review lane is not resumed (KC8's rule: the review machinery asks for the lane again); a
+  merge correction finishes on its own; a task without a worker, a worker still running or with a prompt queued, and a task past
+  its time budget are all refused. A refused call writes no state and no prompt; the
+  `tool.call` row every Crew tool gets is the only row.
+- **How.** The state move is the claim: one transaction takes the task from `needs_person` to `running`, so two windows, a stop or
+  a cancel that lands first makes this one refuse instead of overwriting it (and a caller that loses the race is told what is there
+  now: an ending is `run_ended`, another resume or a move is `invalid_transition`). Then the worker's prompt is queued; if that
+  queueing fails, the task is moved back to `needs_person` rather than left `running` with no worker. The minutes keep counting
+  through the wait the way the live budget timer counts them. Off time is free, and a held task is not running, so a restart credits a held task's whole wait as off time (not a budget bug): a restart credits every task waiting for a person
+  its off time the same way it credits an in-flight one (`recover::excuse_held_downtime`; the credit's audit row is the next
+  restart's boundary), and the resume reads the run again so that credit is counted. A resumed task gets its timer again with what
+  is left of the brief's minutes, so a task held across a restart neither runs with no timer nor pays for the window the app was
+  off.
+- **Audit.** The MCP call is recorded before it happens as the `tool.call` row every Crew tool gets; the state change, the
+  worker's next report and its result are the record. No table, migration or contract change: the lifecycle already allows
+  `needs_person` to `running` (SPEC.md section 6), and nothing new is stored.
+- **Not the person's action.** The person's cancel is unchanged, and a task that could not start keeps its own actions (Retry on
+  another engine, Dismiss). This adds no route and no UI: the person's own resume of a held task is still not built, and the
+  `needs_person` to `routed` edge (a start refused after it was stored) stays with those actions rather than being duplicated
+  here.
+- **Known limits.** A resume cannot undo work the worker already wrote; it asks the same worker to carry on from it. The worker's
+  next turn is an ordinary turn against the task's turns and minutes, so the loop guard and the budget still decide what follows.
+  A stopped or cancelled task cannot be resumed: those are final. Fake-engine tests only; no real engine run.
 
 ## Open risks
 

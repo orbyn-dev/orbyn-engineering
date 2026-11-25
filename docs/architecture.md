@@ -2940,7 +2940,11 @@ and the text is proven free of the key and of secrets before it is queued (H1). 
 needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`). The lead
 that leads a task can stop it (`crew_stop`, the protocol's `crew.stop`): the task moves to `stopped` with the reason `lead_stopped`
 in one transaction, then the same end (leases, its worker's run's stop request, the final result) runs; only that thread's token may stop a task, a
-final task is `run_ended`, and a `briefed` or `routed` one is `invalid_transition`. A task whose
+final task is `run_ended`, and a `briefed` or `routed` one is `invalid_transition`.
+The lead that leads a held task can resume it (`crew_resume`, the protocol's `crew.resume`): a `needs_person` task whose
+worker reported moves to `running` in one transaction and its worker is told to carry on with the same thread, key and budget;
+a task whose worker never ran, one waiting on a person's `manual` check, a review lane, a merge correction, a busy worker and a
+task past its minutes are refused. A task whose
 brief's minutes or turns are spent stops on its next failed attempt with the reason `budget`: the turns are the worker's runs and
 the approvals reserved against the same budget, and a result counts them. A crew's turns are the same tally summed over its tasks:
 a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; set in Settings › General) refuses a new task once its crew
