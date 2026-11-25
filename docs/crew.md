@@ -423,6 +423,8 @@ retries with the reason. The same failure twice means one change of approach, an
 | `crew_post {to, kind: fact\|question\|handoff\|blocker, body, refs}` | Sends to a peer, the lead or `all` |
 | `crew_ask {to, question, wait <= 40 s}` | Blocking question. If there is no answer in time it returns `pending`, and the answer arrives later as a post |
 | `crew_board_read/write {key, value, evidence}` | Shared typed facts, such as an API shape one worker decided and another needs. A write records its author; a conflicting write goes to the lead |
+| `crew_lease_request {paths, mode: read\|write, expires_at}` | Asks for a file lease, behind the Preview flag. A write lease must lie inside the brief's write files, is never a reviewer's, and reaches no protected path; a lease another member holds is refused and the lead is told |
+| `crew_lease_release {paths}` | Releases the leases the caller holds on exactly those paths; one it does not hold is refused |
 
 Delivery:
 

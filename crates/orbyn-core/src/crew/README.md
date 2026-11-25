@@ -25,7 +25,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `start` | `crew_start`: validates the brief and key, refuses a crew that spent its turn budget, routes, grants the leases and runs the worker through `delegate` |
 | `report` | `crew_report`: the worker's result, stamped by the core, then the verifier |
 | `lifecycle` | The task states and transitions of SPEC.md section 6, and the loop guard. Pure |
-| `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use; refuses a worker's file change outside its lease at the gate, before the write |
+| `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use; refuses a worker's file change outside its lease at the gate, before the write. Its member tools (`crew_lease_request`, `crew_lease_release`, behind the flag) let a member ask for a lease inside its brief and release one it holds; a conflict tells the lead, and the grant is the core's own object with the caller as holder |
 | `checks` | The check runners: command kinds, `file_scope`, `diff_size`, `schema`, `secret_scan`, `repo_required`. Any other kind is `skipped` |
 | `http_probe` | The `http_probe` runner: one GET to the key's loopback URL, compared with its `expect_status`. No redirect followed and no retry; no answer is an error, never a pass |
 | `verify` | The verifier: runs the key in the task's checkout, writes Evidence and the Gate, builds the reason a worker may read |
@@ -154,7 +154,7 @@ tool through a real `Core` with a scripted engine driver. `tests/harness.rs` is 
 with a fake worker that writes files in a git checkout and calls `crew_report` over MCP: `runs.rs`
 takes a task from its first turn to the end (fail, retry with the reason, the same failure twice,
 one change of approach, stop; pass; no report; engine error), `starts.rs` covers what a start
-refuses and the lease rules, `lead_stop.rs` the lead's stop and the tokens it refuses, `resume_held.rs` the lead's resume of a held task and the callers it
+refuses and the lease rules, `lease_tools.rs` the member lease tools and the Preview flag, `lead_stop.rs` the lead's stop and the tokens it refuses, `resume_held.rs` the lead's resume of a held task and the callers it
 refuses, `lifecycle.rs` checks the table against the spec's own, and `verify.rs` the reason a worker may read and the check runners. `review.rs` runs the review stages (see the [review README](review/README.md)). `bus.rs` and `bus_guards.rs` run two fake engines (one
 takes input mid-turn, one does not) through the [bus](bus/README.md).
 

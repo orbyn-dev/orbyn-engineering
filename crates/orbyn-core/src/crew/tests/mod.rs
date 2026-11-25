@@ -73,6 +73,7 @@ mod harness;
 mod http_probe;
 mod issues;
 mod lead_stop;
+mod lease_tools;
 mod lessons;
 mod lessons_brief;
 mod lessons_person;
