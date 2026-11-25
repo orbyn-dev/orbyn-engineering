@@ -943,7 +943,6 @@ impl IssueSource for Linear {
         Ok(templates)
     }
 
-
     async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
         team_key(scope)?;
         if new.assignees.len() > 1 {
