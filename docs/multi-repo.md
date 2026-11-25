@@ -441,6 +441,10 @@ over the limit is refused; each write route needs the person key; a failed clone
 does not offer is refused before anything is created; a scan never follows a symlink, caps its results
 and adds nothing; a workspace folder outside the file's folder is listed `refused` and not added; a
 `repo_id` on a file write never resolves a path in another repository; a task folder uses one branch name in
-every repository and a taken name creates nothing; navigation coordinates resolve in the repository their `repo_id` names, the
-primary when it is absent, so a repository's file is found in its own worktree and the task folder is never the checkout; a thread
-that moved answers `409 stale_owner`, an unknown repository is `404` and an untrusted one is refused.
+every repository and a taken name creates nothing; a diff, commits, a commit or branch comparison and a turn's
+checkpoint read the repository their `repo_id` names, the primary (the first stored repository) when it is
+absent, and run Git in that repository's worktree rather than the task folder; checkpoint capture and a file
+restore still use the engine's task folder; navigation coordinates resolve in the repository their `repo_id`
+names too, the primary when absent, so a repository's file is found in its own worktree and the task folder is
+never the checkout, and a thread that moved answers `409 stale_owner`; an unknown repository is `404` and an
+untrusted one is refused.

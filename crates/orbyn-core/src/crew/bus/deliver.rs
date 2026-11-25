@@ -8,13 +8,26 @@
 //! inside a prompt the core already sends (the worker's retry, the lead's result notice: slice 3's
 //! channel, admitted as `user`, capped, and recorded as sent only once accepted), or in the result of the recipient's next bus tool
 //! call. If no turn comes and the recipient calls no bus tool, it is not delivered; the record
-//! says `held`. `live` means the text was handed to the running turn's input. An engine such as
-//! Claude reads that input at its own next opportunity, which can be after the tool call it is in.
+//! says `held`.
+//!
+//! `live` means the text was handed to the running turn's input, not that the engine has read it:
+//! the Claude CLI folds a mid-turn message into the turn it is in, so it may read it only after the
+//! tool call it is in, and Codex is handed it through `turn/steer` at its next step. An engine that
+//! refuses the steer reports `SteerFailed` (a failed Codex `turn/steer`, a host steering request
+//! answered `rejected`), and the hand-over is then corrected with one more delivery row,
+//! `next_turn`, for the same message and recipient: the text is queued and comes with the next
+//! turn. The bus keeps a bounded map from the engine's own steer id to the message and recipient for
+//! this, so a refusal matches the exact hand-over and a person's steer with the same text can never
+//! consume a crew message's entry. A refusal it cannot match writes nothing rather than guess.
 
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use orbyn_contracts::{CrewError, CrewMessage, MessageKind};
 use serde_json::json;
+
+use crate::agents::driver::SteerMessage;
 
 use super::super::guard::{key_needles, refuse_leak, refuse_secret};
 use super::super::leases::internal;
@@ -28,6 +41,9 @@ const CREW_ROLE: &str = "crew";
 /// What a recipient reads when its message may not be shown: no text of the message.
 const WITHHELD: &str = "A crew message for you was withheld because it matched the answer key or held a secret. \
     Ask the lead if you need it.";
+
+/// What a refusal of a live steer records on the message: the text goes with the next turn.
+const REFUSED_LIVE: &str = "the engine refused the live steer; the text comes with the next turn";
 
 /// One recipient of a message.
 pub(in crate::crew) struct Target {
@@ -155,13 +171,50 @@ impl Core {
         let (text, withheld) = self.outbound(message, target.guard, needles);
         let note =
             withheld.then(|| "the text was withheld; a plain notice was sent instead".to_owned());
-        match self.runs.steer_live(thread, &text, CREW_ROLE) {
+        // The bridge records the engine's steer id before the engine can refuse it, so a refusal
+        // sent back at once cannot arrive before the bus knows which message it refuses.
+        let handed = self.runs.steer_live(thread, &text, CREW_ROLE, |handed| {
+            self.crew_bus.live_steers.add(
+                thread,
+                &handed.message_id,
+                message.id.as_str(),
+                &target.recipient,
+            );
+        });
+        match handed {
             Ok(true) => (
                 "live",
                 note.or_else(|| Some("handed to the running turn's input".into())),
             ),
             _ => ("held", Some(HELD.into())),
         }
+    }
+
+    /// The engine refused a steer it was handed mid-turn. When the bus handed that steer live, one
+    /// more delivery row says the text now goes with the next turn: delivery rows are append-only,
+    /// so a correction is a new row for the same message and recipient. The refusal matches the
+    /// engine's steer id, never the text, so a person's steer with the same words is not taken for a
+    /// crew hand-over; a steer the bus did not hand over writes no row rather than guess one.
+    pub(crate) fn crew_steer_failed(&self, thread_id: &str, steer: &SteerMessage) {
+        let Some((message_id, recipient)) =
+            self.crew_bus.live_steers.take(thread_id, &steer.message_id)
+        else {
+            return;
+        };
+        if let Err(error) = self.store.record_crew_delivery(
+            &message_id,
+            &recipient,
+            thread_id,
+            "next_turn",
+            Some(REFUSED_LIVE),
+        ) {
+            tracing::warn!(%error, "could not record a refused live crew steer");
+        }
+    }
+
+    /// A run ended: nothing its thread was handed live can be refused any more.
+    pub(crate) fn crew_forget_live_steers(&self, thread_id: &str) {
+        self.crew_bus.live_steers.clear(thread_id);
     }
 
     /// The messages held for `recipient`, each checked again on the way out, as much as one
@@ -362,6 +415,89 @@ impl Core {
 /// rest stay held and are told of; a prompt over the thread's limit would be refused whole.
 const HELD_MESSAGES: usize = 10;
 const HELD_CHARS: usize = 20_000;
+
+/// The most live hand-overs the bus remembers at once: a refusal of a steer beyond this many newer
+/// ones writes nothing rather than a guessed row.
+const LIVE_STEERS: usize = 64;
+
+/// How long a live hand-over waits for the engine to take or refuse it. A refusal after this
+/// writes nothing: an unrecorded refusal is better than a 'next_turn' row attached by guesswork.
+const LIVE_STEER_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// One crew message handed to a running turn's input, waiting to hear whether the engine took it.
+struct LiveSteer {
+    thread: String,
+    /// The engine's own id for the steer, which a refusal quotes back: unique, unlike the text.
+    steer_id: String,
+    /// The crew message the steer carries, and who it was for.
+    message_id: String,
+    recipient: String,
+    at: Instant,
+}
+
+/// The live hand-overs a running turn has not answered yet, bounded in count and age. Entries are
+/// taken when a refusal matches, dropped when a run on their thread ends, and expired by time.
+/// Nothing else reads the map, so a stale entry can cost a little memory but never a wrong row.
+#[derive(Default)]
+pub(crate) struct LiveSteers(Mutex<VecDeque<LiveSteer>>);
+
+impl LiveSteers {
+    /// Remembers one hand-over, forgetting the oldest entry when the map is full.
+    fn add(&self, thread: &str, steer_id: &str, message_id: &str, recipient: &str) {
+        let now = Instant::now();
+        let mut steers = self.lock();
+        steers.retain(|steer| now.duration_since(steer.at) < LIVE_STEER_TTL);
+        while steers.len() >= LIVE_STEERS {
+            steers.pop_front();
+        }
+        steers.push_back(LiveSteer {
+            thread: thread.to_owned(),
+            steer_id: steer_id.to_owned(),
+            message_id: message_id.to_owned(),
+            recipient: recipient.to_owned(),
+            at: now,
+        });
+    }
+
+    /// The message and recipient of the hand-over the engine refused, taken so one refusal adds one
+    /// row. None when the bus never handed over a steer with this engine id on 'thread', or it
+    /// expired.
+    fn take(&self, thread: &str, steer_id: &str) -> Option<(String, String)> {
+        let now = Instant::now();
+        let mut steers = self.lock();
+        let at = steers.iter().position(|steer| {
+            steer.thread == thread
+                && steer.steer_id == steer_id
+                && now.duration_since(steer.at) < LIVE_STEER_TTL
+        })?;
+        let steer = steers.remove(at)?;
+        Some((steer.message_id, steer.recipient))
+    }
+
+    /// A run ended: every hand-over on its thread is too late to be refused now.
+    fn clear(&self, thread: &str) {
+        self.lock().retain(|steer| steer.thread != thread);
+    }
+
+    /// The entries' lock, held only for the map's own work.
+    fn lock(&self) -> std::sync::MutexGuard<'_, VecDeque<LiveSteer>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+#[cfg(test)]
+impl LiveSteers {
+    /// The engine steer ids still waiting on an answer, for a test that checks a refusal reaches its
+    /// own hand-over and no other.
+    pub(crate) fn waiting(&self) -> Vec<String> {
+        self.lock()
+            .iter()
+            .map(|steer| steer.steer_id.clone())
+            .collect()
+    }
+}
 
 /// Held messages ready to send, not yet recorded as sent.
 pub(crate) struct Held {

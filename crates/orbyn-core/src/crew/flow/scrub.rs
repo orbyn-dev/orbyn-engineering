@@ -134,10 +134,10 @@ mod tests {
     use crate::redaction::Custom;
     use orbyn_contracts::PatternScope;
 
-    fn scrub() -> Scrub {
+    fn scrub_matching(pattern: &str) -> Scrub {
         let acme = Custom {
             name: "Acme key",
-            regex: regex::Regex::new("ACME-[A-Z0-9]{32}").unwrap(),
+            regex: regex::Regex::new(pattern).unwrap(),
             applies_to: PatternScope::Anywhere,
         };
         Scrub {
@@ -145,6 +145,10 @@ mod tests {
             check_needles: Vec::new(),
             person: Arc::new(Redactor::only(vec![acme])),
         }
+    }
+
+    fn scrub() -> Scrub {
+        scrub_matching("ACME-[A-Z0-9]{32}")
     }
 
     #[test]
@@ -170,6 +174,66 @@ mod tests {
                 shown.matches("[hidden: ").count(),
                 shown.matches(']').count(),
                 "{lead}: a marker was cut in two: {shown}"
+            );
+        }
+    }
+
+    /// A value longer than the whole display cut: the cut lands inside the match in the
+    /// stored text, so what the screen shows must be the marker, never the value's head.
+    fn assert_no_value_fragment(shown: &str, value: &str) {
+        assert!(!shown.contains("ACME"), "{shown}");
+        let chars: Vec<char> = value.chars().collect();
+        for window in chars.windows(16) {
+            let window: String = window.iter().collect();
+            assert!(!shown.contains(&window), "{window} survived in {shown}");
+        }
+        assert!(shown.chars().count() <= TEXT_MAX, "{shown}");
+        assert_eq!(
+            shown.matches("[hidden: ").count(),
+            shown.matches(']').count(),
+            "a marker was split: {shown}"
+        );
+    }
+
+    #[test]
+    fn a_person_value_longer_than_the_cut_never_shows_its_head() {
+        // Dropping the run a cut lands in does not drop a word before it: a value whose
+        // match crosses a space only stays out of the text if it was hidden before the cut.
+        let spaced = format!("ACME KEY-{}", "Q9Z8".repeat(100));
+        let spaced_scrub = scrub_matching("ACME KEY-[A-Z0-9]{400}");
+        for lead in [0usize, 100, 290] {
+            let text = format!(
+                "{}{spaced} {} tail",
+                "a ".repeat(lead / 2),
+                "b".repeat(TEXT_MAX + 100)
+            );
+            let shown = spaced_scrub.text(&text, TEXT_MAX);
+            assert_no_value_fragment(&shown, &spaced);
+            assert!(shown.chars().count() <= TEXT_MAX, "{lead}: {shown}");
+        }
+
+        // Longer than TEXT_MAX itself, so even a cut at the cap falls inside the match
+        // rather than after it.
+        let secret = format!("ACME-{}", "Q9Z8".repeat(100));
+        let other = format!("ACME-{}", "X7W6".repeat(100));
+        assert!(secret.chars().count() > TEXT_MAX);
+        let scrub = scrub_matching("ACME-[A-Z0-9]{400}");
+        // The match starts at, before and just before the cut and runs past it; a second
+        // value sits wholly after. At 290 the cut falls in the marker the match became,
+        // and a split marker is dropped, never shown half.
+        for (lead, marker_shown) in [(0usize, true), (100, true), (290, false)] {
+            let text = format!(
+                "{}{secret} {} {other} tail",
+                "a ".repeat(lead / 2),
+                "b".repeat(TEXT_MAX + 100)
+            );
+            let shown = scrub.text(&text, TEXT_MAX);
+            assert_no_value_fragment(&shown, &secret);
+            assert_no_value_fragment(&shown, &other);
+            assert_eq!(
+                shown.contains("[hidden: Acme key]"),
+                marker_shown,
+                "{lead}: {shown}"
             );
         }
     }

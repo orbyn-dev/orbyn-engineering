@@ -14,10 +14,13 @@ import "./profiles.css";
 
 type Open = { kind: "edit"; profile: Profile } | { kind: "new"; seed: ProfileDraft } | { kind: "delete"; profile: Profile };
 
-/** The engine's display name: from the installed list, else the id as given, cut. `null` is "Keep the thread's engine". */
+/**
+ * The engine's display name: from the installed list, else the id as given, cut. `null` is "Keep the thread's engine".
+ * `signedOut` is the engine's own login state, the fact the Providers list draws "Signed out" from.
+ */
 export function useEngineOptions(): { options: EngineOption[]; name(id: string | null): string } {
   const engines = useWorkspace((state) => state.engines.data);
-  const options = (engines ?? []).filter((engine) => engine.installed).map((engine) => ({ id: engine.id, name: engine.name }));
+  const options = (engines ?? []).filter((engine) => engine.installed).map((engine) => ({ id: engine.id, name: engine.name, signedOut: engine.auth === "logged_out" }));
   const names = new Map((engines ?? []).map((engine) => [engine.id, engine.name] as const));
   return { options, name: (id) => (id === null ? "Keep the thread’s engine" : (names.get(id) ?? plain(id, 40))) };
 }
