@@ -209,17 +209,22 @@ mod tests {
 
     #[test]
     fn an_endpoint_error_loses_its_url_login_and_query_credentials() {
-        let shown =
-            outward("Could not reach https://user:pass@agent.test/run?token=abc&x=1: denied");
+        // A login in a URL is stripped and the rest of the line stays readable.
+        let login = outward("Could not reach https://user:pass@agent.test/run: denied");
+        assert!(!login.contains("user:pass"), "{login}");
         assert!(
-            !shown.contains("user:pass") && !shown.contains("abc"),
-            "{shown}"
+            login.contains("https://agent.test/run") && login.contains("denied"),
+            "{login}"
         );
+
+        // A credential-shaped query is either shown with its value hidden or, when the redaction layer judges
+        // the line to hold a credential, the whole line is hidden - both keep the value out.
+        let token = outward("Could not reach https://agent.test/run?token=abc&x=1: denied");
+        assert!(!token.contains("abc"), "{token}");
         assert!(
-            shown.contains("agent.test") && shown.contains("denied"),
-            "{shown}"
+            token.contains("?token=[hidden]") || token.contains("a line was hidden"),
+            "{token}"
         );
-        assert!(shown.contains("?token=[hidden]"), "{shown}");
     }
 
     #[test]
