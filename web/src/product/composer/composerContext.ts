@@ -23,6 +23,10 @@ export interface FileChip extends ChipBase {
   line: number | null;
   /** The last line of a selected range, when the chip names more than one line. */
   endLine?: number;
+  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout. */
+  repoId?: string;
+  /** That repository's name, so the file says where it is; set only with `repoId`. */
+  repoName?: string;
   /** Selected in the Changes diff, so the chip can take the person back to it there. */
   fromDiff?: boolean;
   /** The file's text at the time it was attached; null until read. */
@@ -148,20 +152,22 @@ const terminalCommand = (chip: TerminalChip): string | null => {
   return exit ? `${command}${chip.command.includes("\n") ? "\n" : " "}(${exit})` : command;
 };
 
-/** Where a review comment is: a file of the thread's own checkout by its path, another repository's file under its name. */
-const reviewWhere = (chip: ReviewChip): string => (chip.repoName ? `${chip.repoName}/${chip.path}` : chip.path);
+/** Where a file or a comment on it is: the thread's own checkout by its path, another repository's file under that repository's name. */
+const where = (chip: { path: string; repoName?: string }): string => (chip.repoName ? `${chip.repoName}/${chip.path}` : chip.path);
 
 export function chipLabel(chip: ComposerChip): string {
   switch (chip.kind) {
-    case "file":
-      return chip.line === null ? chip.path : `${chip.path}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `–${chip.endLine}` : ""}`;
+    case "file": {
+      const at = where(chip);
+      return chip.line === null ? at : `${at}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `–${chip.endLine}` : ""}`;
+    }
     case "terminal":
       return chip.exitCode === undefined || chip.exitCode === null
         ? terminalLabel(chip)
         : `${terminalLabel(chip)} · exit ${chip.exitCode}`;
     case "review": {
-      const where = reviewWhere(chip);
-      return chip.line === null ? where : `${where}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `–${chip.endLine}` : ""}`;
+      const at = where(chip);
+      return chip.line === null ? at : `${at}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `–${chip.endLine}` : ""}`;
     }
     case "annotation":
       return chip.selector || chip.url;
@@ -180,22 +186,23 @@ export function chipLabel(chip: ComposerChip): string {
 export function chipPrompt(chip: ComposerChip): string {
   switch (chip.kind) {
     case "file": {
-      const where = chip.line === null ? `File \`${chip.path}\`` : `File \`${chip.path}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `-${chip.endLine}` : ""}\``;
+      const at = where(chip);
+      const atLine = chip.line === null ? `File \`${at}\`` : `File \`${at}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `-${chip.endLine}` : ""}\``;
       const body = chip.excerpt?.trim();
-      if (!body) return where;
+      if (!body) return atLine;
       const language = chip.language ?? "";
-      return `${where}\n\`\`\`${language}\n${fenceSafe(excerptOf(body))}\n\`\`\``;
+      return `${atLine}\n\`\`\`${language}\n${fenceSafe(excerptOf(body))}\n\`\`\``;
     }
     case "terminal": {
       const command = terminalCommand(chip);
       return `${terminalLabel(chip)}${command ? `\n${command}` : ""}\n\`\`\`\n${fenceSafe(excerptOf(chip.output))}\n\`\`\``;
     }
     case "review": {
-      const where = `Review on \`${chipLabel(chip)}\`${chip.stale ? " (the file was edited afterwards: this text may have changed or moved)" : ""}`;
+      const heading = `Review on \`${chipLabel(chip)}\`${chip.stale ? " (the file was edited afterwards: this text may have changed or moved)" : ""}`;
       const excerpt = chip.excerpt?.trim()
         ? `\n\`\`\`\n${fenceSafe(excerptOf(chip.excerpt))}\n\`\`\``
         : "";
-      return `${where}\n${chip.comment.trim()}${excerpt}`;
+      return `${heading}\n${chip.comment.trim()}${excerpt}`;
     }
     case "annotation": {
       const lines = [`Element \`${chip.selector}\` on ${chip.url}`];
@@ -273,6 +280,8 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
     case "file": {
       const path = text(chip.path, 4096);
       if (!path) return null;
+      const repoId = text(chip.repoId, 256);
+      const repoName = text(chip.repoName, 256);
       return {
         id,
         kind: "file",
@@ -280,6 +289,8 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
         line: number(chip.line),
         ...(number(chip.endLine) !== null ? { endLine: number(chip.endLine)! } : {}),
         ...(chip.fromDiff === true ? { fromDiff: true } : {}),
+        ...(repoId === null ? {} : { repoId }),
+        ...(repoName === null ? {} : { repoName }),
         excerpt: text(chip.excerpt),
         language: text(chip.language, 64),
       };
@@ -450,18 +461,19 @@ export const needsExcerpt = (chip: ComposerChip): chip is FileChip =>
   chip.kind === "file" && (chip.excerpt === null || chip.excerpt.trim() === "");
 
 /**
- * Reads the files a pasted chip named but did not carry. A file that cannot be
- * read keeps the chip and its path; the prompt then says only where it was.
+ * Reads the files a pasted chip named but did not carry. The chip says which repository holds its file, so a paste reads
+ * that repository's file and never the thread's own copy of the same path. A file that cannot be read keeps the chip and
+ * its path; the prompt then says only where it was.
  */
 export async function refillExcerpts(
   chips: readonly ComposerChip[],
-  read: (path: string) => Promise<{ text: string; language?: string | null }>,
+  read: (chip: FileChip) => Promise<{ text: string; language?: string | null }>,
 ): Promise<ComposerChip[]> {
   const filled = await Promise.all(
     chips.map(async (chip) => {
       if (!needsExcerpt(chip)) return chip;
       try {
-        const found = await read(chip.path);
+        const found = await read(chip);
         return {
           ...chip,
           excerpt: excerptOf(found.text),
