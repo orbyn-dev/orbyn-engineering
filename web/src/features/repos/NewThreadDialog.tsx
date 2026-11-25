@@ -40,10 +40,12 @@ const Row = ({ label, children }: { label: string; children: ReactNode }) => (
 );
 
 /**
- * New thread in a project with several repositories: which of them the thread works in, the branch each starts from, and the
- * engine and permission it starts with. An untrusted repository is dimmed and cannot be ticked, so nothing runs in one. Start is
- * one click and one write. A permission the engine does not offer is refused by the service (`permission_mode_unsupported`, 400)
- * before anything is made: the reason shows and the dialog stays open. An untrusted repository is listed but cannot be ticked.
+ * New thread in a project with several repositories: which of them the thread works in, the branch each starts from, the optional
+ * first message, and the engine and permission it starts with. An untrusted repository is dimmed and cannot be ticked, so nothing runs
+ * in one. Start is one click and one write. A permission the engine does not offer is refused by the service
+ * (`permission_mode_unsupported`, 400) before anything is made: the reason shows and the dialog stays open. A first message that is
+ * not empty is queued as the thread's first turn; the service's refusal shows the same way. An untrusted repository is listed but
+ * cannot be ticked.
  *
  * The engine and permission pickers are the new-thread flow's own: the host that already owns them hands them in as `engineControl`
  * and `permissionControl`, with the choice they edit as `start`, so this feature does not import the thread feature (which imports
@@ -69,6 +71,8 @@ export function NewThreadDialog({ projectId, projectName, start, engineControl, 
   const branches = edit?.branches ?? {};
   const baseOf = (row: RepoRow) => branches[row.id] ?? row.branch ?? row.branches[0] ?? "";
   const [branchText, setBranchText] = useState("");
+  // Optional: queued as the thread's first turn when it is not empty. Trimming happens at start.
+  const [messageText, setMessageText] = useState("");
   // Repositories the service refused as not trusted (`409 repo_untrusted`), read again from the project's list: the trust prompt is offered for each.
   const [untrusted, setUntrusted] = useState<RepoRow[]>([]);
   const [trusting, setTrusting] = useState<RepoRow | null>(null);
@@ -95,7 +99,8 @@ export function NewThreadDialog({ projectId, projectName, start, engineControl, 
     <ActionDialog title={<>New thread in {plain(projectName)} <Pill tone="info">Beta</Pill></>} confirmLabel={startLabel(ticked.length)} disabled={needsTwo || ticked.length > limit || !view || branchBad}
       onClose={onClose}
       onConfirm={async () => {
-        const thread = await reposApi().startThread(projectId, { repos: ticked.map((repoId) => ({ repo_id: repoId, base_branch: baseOf(rows.find((row) => row.id === repoId)!) })), ...start, ...(taskFolder && branchCheck?.ok ? { branch_name: branchCheck.name } : {}) })
+        const message = messageText.trim();
+        const thread = await reposApi().startThread(projectId, { repos: ticked.map((repoId) => ({ repo_id: repoId, base_branch: baseOf(rows.find((row) => row.id === repoId)!) })), ...start, ...(taskFolder && branchCheck?.ok ? { branch_name: branchCheck.name } : {}), ...(message === "" ? {} : { message }) })
           .catch((failure: unknown) => {
             // The engine does not offer this permission mode: say so, and the dialog stays open for another choice.
             if (failure instanceof ApiFailure && failure.code === "permission_mode_unsupported") throw new ApiFailure(failure.code, `This engine does not offer that permission. ${failure.message} Pick another permission and start again.`, failure.status);
@@ -120,6 +125,9 @@ export function NewThreadDialog({ projectId, projectName, start, engineControl, 
           {(field) => <input {...field} className="dialog-field mono" value={branchText} placeholder="feat/login-fix" spellCheck={false} maxLength={200} onChange={(event) => setBranchText(event.target.value)} />}
         </Field>
       ) : null}
+      <Field label="First message" hint="Optional. The thread starts on this message. Leave it empty to start without one.">
+        {(field) => <textarea {...field} rows={3} value={messageText} onChange={(event) => setMessageText(event.target.value)} />}
+      </Field>
       <Row label="Engine">{engineControl}</Row>
       <Row label="Permission">{permissionControl}</Row>
       {note ? <p className="field-hint" role="note">{note}</p> : null}

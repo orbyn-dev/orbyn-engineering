@@ -1788,7 +1788,7 @@ mod writes {
         let server = Server::start(move |req| {
             let base = base_of(req);
             let path = req.path();
-            if path.contains("/commentsReactions/") {
+            if path.contains("/reactions/") {
                 assert_eq!(req.param("api-version").as_deref(), Some("7.1-preview.1"));
                 if req.line.starts_with("PUT") {
                     *state.lock().unwrap() = true;
@@ -1947,6 +1947,27 @@ mod writes {
             .await
             .expect("a ten-digit comment id is a valid Azure DevOps comment id");
     }
+
+    #[tokio::test]
+    async fn a_create_the_tracker_never_answered_says_it_was_possibly_created() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/workitemtypes") {
+                return Reply::json(&json!({ "value": [{ "name": "Task" }] }));
+            }
+            Reply::status(503)
+        })
+        .await;
+        let error = reader(&server)
+            .create("org/proj", &new_issue("T", "", &[], &[]))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::TrackerUnavailable(m) if m.contains("possibly created") && !m.contains("secret")),
+            "{error:?}"
+        );
+    }
+
 }
 
 mod templates {

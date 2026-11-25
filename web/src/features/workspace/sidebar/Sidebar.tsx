@@ -592,7 +592,7 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
       {renamingThread ? <RenameThreadDialog thread={renamingThread} onClose={() => setRenaming(null)} /> : null}
       {snoozing ? <CustomSnoozeDialog threads={snoozing} onClose={() => setSnoozing(null)} /> : null}
       {deleting ? (
-        <DeleteThreadsDialog threads={deleting} onClose={() => setDeletingState(null)} />
+        <DeleteThreadsDialog key={deleting.map((thread) => thread.id).join(",")} threads={deleting} onClose={() => setDeletingState(null)} />
       ) : null}
     </nav>
   );
