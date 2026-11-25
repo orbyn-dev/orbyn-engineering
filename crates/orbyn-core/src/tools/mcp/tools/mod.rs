@@ -90,6 +90,33 @@ fn text<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
         .ok_or_else(|| CoreError::Invalid(format!("{key} is required.")))
 }
 
+/// An optional text argument: absent and `null` are none, anything but a string is refused.
+fn optional_text(args: &Value, key: &str) -> Result<Option<String>> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(CoreError::Invalid(format!("{key} must be a string."))),
+    }
+}
+
+/// A list of strings: absent and `null` are an empty list, anything else is refused.
+fn strings(args: &Value, key: &str) -> Result<Vec<String>> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| CoreError::Invalid(format!("{key} must be a list of strings.")))
+            })
+            .collect(),
+        Some(_) => Err(CoreError::Invalid(format!(
+            "{key} must be a list of strings."
+        ))),
+    }
+}
+
 fn number(args: &Value, key: &str) -> Result<u64> {
     args.get(key)
         .and_then(Value::as_u64)
