@@ -201,6 +201,13 @@ async fn a_cut_list_says_it_was_cut_and_keeps_the_busiest_engine() {
         (2, false),
         "two engines fit under the bound"
     );
+    // The order is the contract ("busiest first"): the engine with three merges is listed before the one with one.
+    let order: Vec<(&str, u32)> = counts
+        .engines
+        .iter()
+        .map(|row| (row.engine.as_str(), row.merges))
+        .collect();
+    assert_eq!(order, [("alpha", 3), ("beta", 1)], "busiest engine first");
 
     // One row more than the cap: the busiest is kept, the rest is cut and said to be cut, never dropped silently.
     let cut = core
