@@ -2123,6 +2123,118 @@ mod writes {
         assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
         assert_eq!(source.writes(), 0);
     }
+
+    /// A world whose GitHub source builds its edits and declares an open and a closed state.
+    async fn editing() -> (super::super::harness::World, Arc<Writes>) {
+        let (w, _) = connected(TrackerKind::Github, "acme/app", true).await;
+        let source = Writes::editing();
+        w.core.issues.set_source(TrackerKind::Github, source.clone());
+        (w, source)
+    }
+
+    fn update(kind: TrackerKind, scope: &str) -> IssueUpdateInput {
+        IssueUpdateInput {
+            tracker: kind,
+            scope: scope.to_owned(),
+            key: "7".into(),
+            title: Some("New title".into()),
+            body: None,
+            labels: None,
+            assignees: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn an_update_with_nothing_to_change_is_refused_and_sends_nothing() {
+        let (w, source) = editing().await;
+        let mut empty = update(TrackerKind::Github, "acme/app");
+        empty.title = None;
+        let error = w.core.update_issue(empty).await.map(|_| ()).unwrap_err();
+        assert_eq!((error.status(), error.code()), (400, "invalid_input"));
+        assert_eq!(source.writes(), 0);
+        // One present field is written.
+        w.core
+            .update_issue(update(TrackerKind::Github, "acme/app"))
+            .await
+            .unwrap();
+        assert_eq!(source.writes(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_tracker_without_edits_answers_422_unsupported_for_all_three_edit_calls() {
+        for (kind, scope) in [
+            (TrackerKind::Gitlab, "team/app"),
+            (TrackerKind::Forgejo, "team/app"),
+            (TrackerKind::AzureDevops, "acme/app"),
+            (TrackerKind::Linear, "ENG"),
+        ] {
+            let (w, source) = connected(kind, scope, true).await;
+            let wanted = format!("{} issue edits arrive in a later update.", display_name(kind));
+            let update = w.core.update_issue(update(kind, scope)).await.map(|_| ());
+            let state = w
+                .core
+                .set_state_issue(IssueSetStateInput {
+                    tracker: kind,
+                    scope: scope.to_owned(),
+                    key: "7".into(),
+                    state: "Open".into(),
+                    close_reason: None,
+                })
+                .await
+                .map(|_| ());
+            let candidates = w.core.issue_candidates(kind, scope).await.map(|_| ());
+            for (what, refused) in [("update", update), ("state", state), ("candidates", candidates)] {
+                let Err(error) = refused else {
+                    panic!("{kind:?} {what} answered a success");
+                };
+                assert_eq!(error.status(), 422, "{kind:?} {what}: {error:?}");
+                assert_eq!(error.code(), "unsupported", "{kind:?} {what}");
+                assert_eq!(error.public_message(), wanted, "{kind:?} {what}");
+            }
+            assert_eq!(source.writes(), 0, "{kind:?}: nothing reached the tracker");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_close_reason_on_an_open_state_or_an_unknown_state_is_refused_before_a_write() {
+        let (w, source) = editing().await;
+        let state = |name: &str, reason: Option<IssueCloseReason>| IssueSetStateInput {
+            tracker: TrackerKind::Github,
+            scope: "acme/app".into(),
+            key: "7".into(),
+            state: name.to_owned(),
+            close_reason: reason,
+        };
+        for (what, input) in [
+            ("a reason on an open state", state("Open", Some(IssueCloseReason::NotPlanned))),
+            ("a state the issue does not declare", state("Wontfix", None)),
+        ] {
+            let error = w.core.set_state_issue(input).await.map(|_| ()).unwrap_err();
+            assert_eq!((error.status(), error.code()), (400, "invalid_input"), "{what}");
+        }
+        assert_eq!(source.writes(), 0);
+        // A closed state takes a reason, and an open one none.
+        w.core
+            .set_state_issue(state("Closed", Some(IssueCloseReason::NotPlanned)))
+            .await
+            .unwrap();
+        w.core.set_state_issue(state("Open", None)).await.unwrap();
+        assert_eq!(source.writes(), 2);
+    }
+
+    #[tokio::test]
+    async fn candidates_are_cut_to_200_of_each_and_say_so() {
+        let (w, _source) = editing().await;
+        let candidates = w
+            .core
+            .issue_candidates(TrackerKind::Github, "acme/app")
+            .await
+            .unwrap();
+        assert_eq!(candidates.labels.len(), 200);
+        assert_eq!(candidates.assignees.len(), 200);
+        assert!(candidates.truncated, "a source that sent more than 200 is marked");
+    }
+
 }
 
 mod binding {
@@ -2380,116 +2492,5 @@ mod binding {
             matches!(scoped_unbind, Err(CoreError::Invalid(_))),
             "{scoped_unbind:?}"
         );
-    }
-
-    /// A world whose GitHub source builds its edits and declares an open and a closed state.
-    async fn editing() -> (super::super::harness::World, Arc<Writes>) {
-        let (w, _) = connected(TrackerKind::Github, "acme/app", true).await;
-        let source = Writes::editing();
-        w.core.issues.set_source(TrackerKind::Github, source.clone());
-        (w, source)
-    }
-
-    fn update(kind: TrackerKind, scope: &str) -> IssueUpdateInput {
-        IssueUpdateInput {
-            tracker: kind,
-            scope: scope.to_owned(),
-            key: "7".into(),
-            title: Some("New title".into()),
-            body: None,
-            labels: None,
-            assignees: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn an_update_with_nothing_to_change_is_refused_and_sends_nothing() {
-        let (w, source) = editing().await;
-        let mut empty = update(TrackerKind::Github, "acme/app");
-        empty.title = None;
-        let error = w.core.update_issue(empty).await.map(|_| ()).unwrap_err();
-        assert_eq!((error.status(), error.code()), (400, "invalid_input"));
-        assert_eq!(source.writes(), 0);
-        // One present field is written.
-        w.core
-            .update_issue(update(TrackerKind::Github, "acme/app"))
-            .await
-            .unwrap();
-        assert_eq!(source.writes(), 1);
-    }
-
-    #[tokio::test]
-    async fn a_tracker_without_edits_answers_422_unsupported_for_all_three_edit_calls() {
-        for (kind, scope) in [
-            (TrackerKind::Gitlab, "team/app"),
-            (TrackerKind::Forgejo, "team/app"),
-            (TrackerKind::AzureDevops, "acme/app"),
-            (TrackerKind::Linear, "ENG"),
-        ] {
-            let (w, source) = connected(kind, scope, true).await;
-            let wanted = format!("{} issue edits arrive in a later update.", display_name(kind));
-            let update = w.core.update_issue(update(kind, scope)).await.map(|_| ());
-            let state = w
-                .core
-                .set_state_issue(IssueSetStateInput {
-                    tracker: kind,
-                    scope: scope.to_owned(),
-                    key: "7".into(),
-                    state: "Open".into(),
-                    close_reason: None,
-                })
-                .await
-                .map(|_| ());
-            let candidates = w.core.issue_candidates(kind, scope).await.map(|_| ());
-            for (what, refused) in [("update", update), ("state", state), ("candidates", candidates)] {
-                let Err(error) = refused else {
-                    panic!("{kind:?} {what} answered a success");
-                };
-                assert_eq!(error.status(), 422, "{kind:?} {what}: {error:?}");
-                assert_eq!(error.code(), "unsupported", "{kind:?} {what}");
-                assert_eq!(error.public_message(), wanted, "{kind:?} {what}");
-            }
-            assert_eq!(source.writes(), 0, "{kind:?}: nothing reached the tracker");
-        }
-    }
-
-    #[tokio::test]
-    async fn a_close_reason_on_an_open_state_or_an_unknown_state_is_refused_before_a_write() {
-        let (w, source) = editing().await;
-        let state = |name: &str, reason: Option<IssueCloseReason>| IssueSetStateInput {
-            tracker: TrackerKind::Github,
-            scope: "acme/app".into(),
-            key: "7".into(),
-            state: name.to_owned(),
-            close_reason: reason,
-        };
-        for (what, input) in [
-            ("a reason on an open state", state("Open", Some(IssueCloseReason::NotPlanned))),
-            ("a state the issue does not declare", state("Wontfix", None)),
-        ] {
-            let error = w.core.set_state_issue(input).await.map(|_| ()).unwrap_err();
-            assert_eq!((error.status(), error.code()), (400, "invalid_input"), "{what}");
-        }
-        assert_eq!(source.writes(), 0);
-        // A closed state takes a reason, and an open one none.
-        w.core
-            .set_state_issue(state("Closed", Some(IssueCloseReason::NotPlanned)))
-            .await
-            .unwrap();
-        w.core.set_state_issue(state("Open", None)).await.unwrap();
-        assert_eq!(source.writes(), 2);
-    }
-
-    #[tokio::test]
-    async fn candidates_are_cut_to_200_of_each_and_say_so() {
-        let (w, _source) = editing().await;
-        let candidates = w
-            .core
-            .issue_candidates(TrackerKind::Github, "acme/app")
-            .await
-            .unwrap();
-        assert_eq!(candidates.labels.len(), 200);
-        assert_eq!(candidates.assignees.len(), 200);
-        assert!(candidates.truncated, "a source that sent more than 200 is marked");
     }
 }
