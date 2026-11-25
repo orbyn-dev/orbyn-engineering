@@ -332,7 +332,9 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   person presses Refresh, and on re-entering the thread; the repository list is read again with the thread's Changes (a run that ended,
   a repository added or trusted), so one added to a running thread can be picked. A file the row lists opens its tab and no more: it is not dragged into the message and has no outside
   editor, "Reveal" or rendered preview, because the thread names one folder and these paths are repository-relative (the same limit the
-  other repositories' file tabs have). `GET .../files/metadata` still has no web caller: no screen shows a file's metadata. No frame
+  other repositories' file tabs have). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
+  chip and line comments name the file relative to the repository and not to the task folder (the Changes panel has the same shape);
+  carrying the primary's `repo_id` on its tab would fix those and is left to a follow-up. `GET .../files/metadata` still has no web caller: no screen shows a file's metadata. No frame
   draws this row or the explorer's chip, so both reuse what exists: a worktree row (branch label, Git icon, current dot) and the
   repository chip the header, Changes and branch dialogs already draw, in the explorer's own header; listed as undrawn for the Designer.
 - **Not done.** The delete confirm of a thread has no place for notes, so it does not say that a multi-repository thread's worktrees
