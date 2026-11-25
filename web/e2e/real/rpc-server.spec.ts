@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import { startProject, type Service } from "./service";
 
 /**
@@ -36,13 +37,17 @@ test("the server core routes answer: info, settings, engine refresh, keybindings
   const engines = await api<unknown[]>("POST", "/api/engines/refresh");
   expect(Array.isArray(engines)).toBe(true);
 
-  const bindings = await api<{ rules?: unknown[] }>("GET", "/api/keybindings");
+  interface BindingRule { key: string; command: string }
+  const bindings = await api<{ path: string; rules: BindingRule[] }>("GET", "/api/keybindings");
   expect(Array.isArray(bindings.rules)).toBe(true);
-  const rule = (bindings.rules ?? [])[0] as { key?: string; command?: string } | undefined;
-  if (rule?.key && rule.command) {
-    const saved = await api<{ rules?: unknown[] }>("POST", "/api/keybindings", { key: rule.key, command: rule.command, remove: true });
-    expect(Array.isArray(saved.rules)).toBe(true);
-  }
+  expect(bindings.rules.length).toBeGreaterThan(0);
+  const rule = bindings.rules[0]!;
+  const saved = await api<{ rules: BindingRule[] }>("POST", "/api/keybindings", { key: rule.key, command: rule.command, remove: true });
+  // A removal rule is written and the view no longer lists that key for that command.
+  expect(saved.rules.some((entry) => entry.key === rule.key && entry.command === rule.command)).toBe(false);
+  expect(readFileSync(bindings.path, "utf8")).toContain(rule.command);
+  const reread = await api<{ rules: BindingRule[] }>("GET", "/api/keybindings");
+  expect(reread.rules.some((entry) => entry.key === rule.key && entry.command === rule.command)).toBe(false);
 
   // No run yet: the kept report is absent (null), and the preview is the dry run.
   const report = await api<CleanupReport | null>("GET", "/api/storage/cleanup");

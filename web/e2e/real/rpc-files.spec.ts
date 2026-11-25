@@ -1,6 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { existsSync, readFileSync } from "node:fs";
-import { readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { startProject, type Service } from "./service";
 
@@ -96,7 +95,8 @@ test("the browser, metadata, editors and attachments routes answer", async () =>
   const editors = await api<unknown[]>("GET", "/api/editors");
   expect(Array.isArray(editors)).toBe(true);
   const refused = await raw("POST", `/api/threads/${threadId}/files/open`, JSON.stringify({ path: "README.md", editor: "definitely-not-installed" }), { "Content-Type": "application/json" });
-  expect([400, 404, 409]).toContain(refused.status);
+  // An unknown editor is an invalid request from Core, not a missing route.
+  expect(refused.status).toBe(400);
 
   const uploaded = await raw("POST", `/api/threads/${threadId}/attachments?name=rpc.txt`, "hello rpc", { "Content-Type": "text/plain" });
   expect(uploaded.status).toBe(201);
