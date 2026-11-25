@@ -74,12 +74,19 @@ pub fn library(root: &Path) -> PathBuf {
 /// symbolic-link privilege a symlink needs. Both paths are the caller's disposable fixture.
 #[cfg(windows)]
 pub fn junction(link: &Path, target: &Path) {
+    use std::os::windows::process::CommandExt;
+
     // cmd.exe parses its own command line, so a forward slash in a path would read as a switch.
     let path_arg = |path: &Path| path.to_string_lossy().replace('/', "\\");
+    // Both paths travel in the environment: cmd.exe reads a metacharacter in a temporary
+    // folder (an "&", say) as syntax in its own command line, and mklink then never runs.
+    // The command is fixed and quotes each expansion; delayed expansion stays off, so a "!"
+    // in a path is literal too.
     let status = std::process::Command::new("cmd.exe")
-        .args(["/d", "/c", "mklink", "/J"])
-        .arg(path_arg(link))
-        .arg(path_arg(target))
+        .args(["/d", "/v:off", "/c"])
+        .raw_arg(r#"mklink /J "%ORBYN_JUNCTION_LINK%" "%ORBYN_JUNCTION_TARGET%""#)
+        .env("ORBYN_JUNCTION_LINK", path_arg(link))
+        .env("ORBYN_JUNCTION_TARGET", path_arg(target))
         .stdout(std::process::Stdio::null())
         .status()
         .unwrap();
@@ -89,6 +96,21 @@ pub fn junction(link: &Path, target: &Path) {
         link.display(),
         target.display()
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_junction_survives_a_temp_path_with_shell_metacharacters() {
+    let dir = TempDir::new();
+    // A temporary folder can hold "&" or "!", neither of which is syntax outside cmd.exe's
+    // own command line.
+    let target = dir.path().join("target & !dir");
+    std::fs::create_dir(&target).unwrap();
+    let link = dir.path().join("link & !point");
+    junction(&link, &target);
+    std::fs::write(link.join("seen"), b"").unwrap();
+    assert!(target.join("seen").exists());
+    std::fs::remove_dir(&link).unwrap();
 }
 
 /// A shell command that starts, in the background, a child which leaves its process group with `setsid`, optionally ignores SIGTERM,
@@ -186,6 +208,13 @@ pub fn process_alive(pid: u32) -> bool {
         .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
         .output()
         .unwrap();
+    // A failed query is not evidence of a dead process: it must fail the caller, not read as
+    // "gone" and let the reaping assertion pass.
+    assert!(
+        output.status.success(),
+        "tasklist failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
 }
 

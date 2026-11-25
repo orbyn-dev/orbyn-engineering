@@ -140,12 +140,11 @@ async fn dropping_the_owner_kills_descendants() {
     let comspec =
         std::env::var("ComSpec").unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".into());
     // The leader is the owner's direct child; the child it starts sleeps, so only a tree kill ends it.
-    let script = format!(
-        "$p = Start-Process -FilePath '{comspec}' -ArgumentList '/d','/c','ping -n 60 127.0.0.1 >nul' -PassThru -WindowStyle Hidden; Set-Content -LiteralPath '{}' -Value $p.Id; Start-Sleep -Seconds 60",
-        pid_file.display()
-    );
+    // Both paths travel in the environment: a temporary folder can hold an apostrophe that would
+    // end a PowerShell literal, and the pid file would then never be written.
+    let script = "$p = Start-Process -FilePath $env:ORBYN_DESCENDANT_COMSPEC -ArgumentList '/d','/c','ping -n 60 127.0.0.1 >nul' -PassThru -WindowStyle Hidden; Set-Content -LiteralPath $env:ORBYN_DESCENDANT_PID_FILE -Value $p.Id; Start-Sleep -Seconds 60";
     let command = resolve("powershell").expect("Windows process tests require PowerShell");
-    let child = ManagedChild::spawn(engine_command(
+    let mut process = engine_command(
         &command,
         &[
             "-NoProfile".into(),
@@ -154,8 +153,11 @@ async fn dropping_the_owner_kills_descendants() {
             script.into(),
         ],
         dir.path(),
-    ))
-    .unwrap();
+    );
+    process
+        .env("ORBYN_DESCENDANT_COMSPEC", &comspec)
+        .env("ORBYN_DESCENDANT_PID_FILE", &pid_file);
+    let child = ManagedChild::spawn(process).unwrap();
     assert!(
         child.tree.job.is_some(),
         "the owner must hold its job object"
