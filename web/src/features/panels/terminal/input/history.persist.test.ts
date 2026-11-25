@@ -52,12 +52,31 @@ describe("saved history", () => {
     expect(again.historyOf("k").map((e) => e.command)).toEqual(["pwd"]);
   });
 
+  it("drops a literal fallback found in storage, at load", async () => {
+    window.localStorage.setItem(
+      STORE,
+      JSON.stringify({ v: 1, h: { k: [{ command: "API_TOKEN=${TOKEN:-storedhunter2}", ok: null, at: 1 }, { command: "pwd", ok: true, at: 2 }] } }),
+    );
+    const again = await fresh();
+    expect(again.historyOf("k").map((e) => e.command)).toEqual(["pwd"]);
+  });
+
   it.each([
     ["export API_TOKEN=abc123", "abc123"],
     ["OPENAI_API_KEY=sk-abcdefghijklmnop1234 run-tool", "sk-abcdefghijklmnop1234"],
     ["curl -H 'Authorization: Bearer abcdefghijklmnop1234' https://x.test", "abcdefghijklmnop1234"],
     ["git push https://ghp_abcdefghijklmnopqrstuvwxyz0123@github.com/o/r.git", "ghp_abcdefghijklmnopqrstuvwxyz0123"],
     ["aws configure set aws_access_key_id AKIAABCDEFGHIJKLMNOP", "AKIAABCDEFGHIJKLMNOP"],
+    ["export API_TOKEN=${TOKEN:-fallbackhunter2}", "fallbackhunter2"],
+    ["DB_PASS=${PASS:=fallbacks3cret}", "fallbacks3cret"],
+    ["export API_TOKEN=\"${TOKEN:-fallback a b}\"", "fallback a b"],
+    ["export API_TOKEN=$'ansihunter2'", "ansihunter2"],
+    ["export API_TOKEN=$\"localehunter2\"", "localehunter2"],
+    ["TOKEN=${1:-positionalhunter2}", "positionalhunter2"],
+    ["export DB_PASSWORD=\"quotedhunter2\"", "quotedhunter2"],
+    ["export API_TOKEN=${TOKEN:-${PREFIX}nestedhunter2}", "nestedhunter2"],
+    ["API_TOKEN=${TOKEN:-' spacedhunter2'}", "spacedhunter2"],
+    ["export DB_PASSWORD=\" hunter2\"", "hunter2"],
   ])("keeps the secret in %s out of local storage while a harmless line beside it is kept", async (line, secret) => {
     const mod = await fresh();
     mod.recordCommand("k", line, 1);
@@ -77,7 +96,7 @@ describe("saved history", () => {
     },
   );
 
-  it.each(["mkdir -p out/a", "docker run -p 8080:80 app", "tool --password-file ./pw.txt", "git push https://github.com/o/r.git", "mysql -u root -p", "ssh -p 22 host", "curl 'https://host.test?contact=team:x@example.test'", "curl https://host.test/#a:b@c", "tool --password $HOME_PASSWORD", "tool --password \"$HOME_PASSWORD\"", "tool --token=${API_TOKEN}"])(
+  it.each(["mkdir -p out/a", "docker run -p 8080:80 app", "tool --password-file ./pw.txt", "git push https://github.com/o/r.git", "mysql -u root -p", "ssh -p 22 host", "curl 'https://host.test?contact=team:x@example.test'", "curl https://host.test/#a:b@c", "tool --password $HOME_PASSWORD", "tool --password \"$HOME_PASSWORD\"", "tool --token=${API_TOKEN}", "TOKEN=$(gh auth token)", "TOKEN=${VAR}", "TOKEN=${VAR:-$OTHER}", "PATH=${PATH:-/usr/local/bin}", "API_TOKEN=${TOKEN:-`gh auth token`}", "API_TOKEN=\"${TOKEN:-`gh auth token`}\"", "TOKEN=\"${VAR}\"", "TOKEN=\"$(gh auth token)\"", "API_TOKEN=${TOKEN:-${OTHER}}", "API_TOKEN=${TOKEN:-$OTHER}", "API_TOKEN=${TOKEN:- }"])(
     "still keeps the ordinary line %s",
     async (line) => {
       const mod = await fresh();
