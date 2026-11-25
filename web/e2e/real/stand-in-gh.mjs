@@ -137,6 +137,39 @@ function apiCall() {
   }
   const local = path.replace("repos/{owner}/{repo}/", "");
   let match;
+  // The Issues client names the repository's own scope in the endpoint (`repos/o/r/…`) rather than the pull requests'
+  // `{owner}/{repo}` placeholders, so the candidates read and the three edit writes (#1593) are answered here from the
+  // same fixture: the assignable people, one PATCH of the issue's own fields or state, and one comment POST.
+  const named = /^repos\/[^/]+\/[^/]+\/(.*)$/.exec(path)?.[1] ?? "";
+  const [namedRoute] = named.split("?");
+  if (namedRoute === "assignees") return out(state.people.map((login) => ({ login })));
+  if ((match = /^issues\/(\d+)$/.exec(namedRoute)) && method === "PATCH") {
+    const entry = issue(match[1]);
+    const patch = JSON.parse(readFileSync(0, "utf8"));
+    if (typeof patch.title === "string") entry.title = patch.title;
+    if (typeof patch.body === "string") entry.body = patch.body;
+    if (Array.isArray(patch.labels)) entry.labels = patch.labels.map((name) => ({ name }));
+    if (Array.isArray(patch.assignees)) entry.assignees = patch.assignees.map((login) => ({ login }));
+    if (patch.state === "open" || patch.state === "closed") {
+      entry.state = patch.state.toUpperCase();
+      entry.stateReason = patch.state === "closed" ? String(patch.state_reason ?? "").toUpperCase() : "";
+      entry.closedAt = patch.state === "closed" ? new Date().toISOString() : "";
+    }
+    // GitHub moves `updatedAt` on every write, as the Issues list sorts on.
+    entry.updatedAt = new Date().toISOString();
+    save();
+    return out({});
+  }
+  if ((match = /^issues\/(\d+)\/comments$/.exec(namedRoute)) && method === "POST") {
+    const entry = issue(match[1]);
+    const body = JSON.parse(readFileSync(0, "utf8")).body;
+    const id = state.next++;
+    const createdAt = new Date().toISOString();
+    // Stored as `gh issue view` reads a comment back, answered with the REST shape the service parses.
+    entry.comments = [...(entry.comments ?? []), { id: `IC_${id}`, author: { login: state.viewer ?? "me" }, body, createdAt }];
+    save();
+    return out({ id, node_id: `IC_${id}`, user: { login: state.viewer ?? "me" }, body, created_at: createdAt });
+  }
   if (local.startsWith("assignees")) return out(state.people.map((login) => ({ login })));
   if ((match = /^issues\/(\d+)\/comments/.exec(local))) return out(pull(match[1]).issueComments ?? []);
   if ((match = /^issues\/(\d+)\/timeline/.exec(local))) return out(pull(match[1]).timeline ?? []);
@@ -192,9 +225,17 @@ switch (route) {
     save();
     out(`https://github.com/o/${args[2]}`);
     break;
-  case "label list":
-    out(state.labels.map((name) => ({ name, description: `About ${name}` })));
+  // The labels as the fixture holds them: a name, a real GitHub colour and a description, narrowed to the fields the
+  // call asked for, as `gh label list --json` does (the Issues candidates read asks name,color; a pull request asks
+  // name,description).
+  case "label list": {
+    const asked = (flag("--json") ?? "").split(",").map((name) => name.trim()).filter(Boolean);
+    out(state.labels.map((entry) => {
+      const label = typeof entry === "string" ? { name: entry } : entry;
+      return asked.length === 0 ? label : Object.fromEntries(asked.filter((name) => name in label).map((name) => [name, label[name]]));
+    }));
     break;
+  }
   // The issue reads the service makes through `gh`: a listing with its four filters, and one issue as a detail.
   case "issue list": {
     const labels = args.reduce((all, arg, at) => (arg === "--label" && at + 1 < args.length ? [...all, args[at + 1]] : all), []);
