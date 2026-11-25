@@ -252,12 +252,13 @@ and size, so a transcript shows what the message carried without asking the engi
 
 A photo can be converted before it is stored: `POST /api/threads/:id/attachments/convert?name=`
 takes the photo as its body and answers `ConvertedPhoto`, the stored attachment the run
-sends instead. A PNG or JPEG over 10 MiB is written smaller until it fits, and one within
-the limit is written again at its own size, so the stored bytes never carry the original's
-EXIF location. The input is capped at 50 MiB, refused from the declared length before the
-body is read, and at 100 megapixels with a 512 MiB decoder allocation, checked from the
-header before a decoder allocates. A HEIC, HEIF or WebP is refused as `415 unsupported_type`
-until a decoder this build can carry is chosen, and the route reads no path from the request.
+sends instead. A PNG, JPEG or WebP over 10 MiB is written smaller until it fits, and one
+within the limit is written again at its own size, so the stored bytes never carry the
+original's EXIF location. The input is capped at 50 MiB, refused from the declared length
+before the body is read, and at 100 megapixels with a 512 MiB decoder allocation, checked
+from the header before a decoder allocates. WebP is decoded by the pure-Rust `image-webp`
+crate; a HEIC or HEIF is refused as `415 unsupported_type` until a decoder this build can
+carry is chosen, and the route reads no path from the request.
 At most two photo conversions decode and encode at once across the service; others wait.
 
 The composer edits a fenced code block as plain text: Tab and Shift+Tab move the
@@ -1451,7 +1452,8 @@ else `session/load` with its replay discarded; an unknown session ends the run a
 session. The session link is the thread's engine session, so no table or migration exists.
 A cancelled request stops that process and releases the instance for the next request.
 
-A new worktree uses `branch_name_prefix`, `base_branch` or the origin's head when
+A new single-repository worktree's branch name follows `branch_naming_mode` and `branch_name_prefix` (a multi-repository task folder uses its own one branch name in every repository)
+([Text generators](#text-generators)); it starts from `base_branch` or the origin's head when
 `new_worktrees_start_from_origin` is on, falling back to HEAD, and
 `worktree_submodules` through the shared preference resolver. Checkout mode and
 submodule behavior resolve Project override → Environment override → the actual
@@ -1659,9 +1661,15 @@ at either scope; at project scope the engine then inherits the global choice. A 
 (`PUT /api/preferences`, `PUT /api/projects/{id}/preferences` or the scoped settings
 route); there is no text-generator write route.
 
-Branch names and cleanup have no generator in the service yet: branch names come from
-`branch_name_prefix`, and the stored `branch_naming_mode` semantic and custom modes are
-not called, so no branch or cleanup call reaches the resolver.
+A new worktree's branch name is chosen deterministically, without the resolver or an
+engine call: static mode keeps `<branch_name_prefix>/<purpose>`; semantic mode makes a
+lowercase slug from the thread's real title, or the purpose when it has none, capped at
+64 characters and suffixed `-2`, `-3` and so on until it is not one of the project's
+branches; custom mode uses the purpose as the complete branch name. An unusable seed
+falls back to the static name, and a name Git refuses is `invalid_input`, never
+replaced. The stored `branch_name_instructions` is not sent anywhere, so the
+model-written custom name its setting describes is not built, and cleanup has no
+generator either, so neither a branch nor a cleanup call reaches the resolver.
 
 ## Automatic requests
 
