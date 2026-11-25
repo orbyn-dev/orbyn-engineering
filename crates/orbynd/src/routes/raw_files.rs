@@ -1,6 +1,7 @@
 //! `GET /api/threads/:id/files/raw`: a file's bytes over HTTP, with byte ranges so a
 //! video can seek and a large PDF or binary view can read pieces. What may be read and
 //! which types are shown inline are decided in core; this file is the HTTP around it.
+//! A multi-repository thread names its repository with `repo_id`; absent is the primary.
 
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
@@ -164,6 +165,9 @@ pub struct RawQuery {
     path: String,
     #[serde(default)]
     download: bool,
+    /// A multi-repository thread's repository; absent is the primary one.
+    #[serde(default)]
+    repo_id: Option<String>,
 }
 
 pub async fn serve(
@@ -172,7 +176,17 @@ pub async fn serve(
     Query(query): Query<RawQuery>,
     request: HeaderMap,
 ) -> ApiResult<Response> {
-    let raw = state.core.open_raw_file(&id, &query.path, query.download)?;
+    let RawQuery {
+        path,
+        download,
+        repo_id,
+    } = query;
+    // Core resolves the path inside the chosen repository's worktree and refuses one that
+    // leaves it; an absent, unknown or ordinary-thread `repo_id` is that resolver's answer.
+    let raw = orbyn_core::in_repo(repo_id, async {
+        state.core.open_raw_file(&id, &path, download)
+    })
+    .await?;
     respond(raw, request).await
 }
 
