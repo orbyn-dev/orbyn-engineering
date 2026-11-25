@@ -3,7 +3,7 @@
 Issue trackers beside the code: a list of issues from GitHub, GitLab, Azure DevOps, Forgejo and Linear, a
 thread started from an issue, and a link between a thread and the issues it works on. Beta: reads are
 `Local`; create, comment and react are `Person` writes through the person's own account, beside Orbyn's own
-connection writes (connect, disconnect, link, start a thread).
+connection writes (connect, disconnect, bind a project's tracker, link, start a thread).
 Behind a flag until it ships; with the flag off every route here answers `404` and the web app hides Issues.
 
 Field names follow the T3 Code issue schema (MIT, `9168ca73d`, names only) in snake_case. The web side's
