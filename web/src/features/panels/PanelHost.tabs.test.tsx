@@ -304,7 +304,7 @@ describe("surface tabs", () => {
     useUi.setState({ panelTab: "browser" });
     panel();
     await user.click(screen.getByRole("button", { name: "Tab menu" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Close tabCtrl+W", "Close other tabs", "Close all tabs", "Maximise panel"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Close tabAlt+W", "Close other tabs", "Close all tabs", "Maximise panel"]);
     await user.click(screen.getByRole("menuitem", { name: "Close other tabs" }));
     expect(names()).toEqual(["Browser"]);
     expect(screen.getByRole("status")).toHaveTextContent("Other tabs closed");
@@ -714,7 +714,7 @@ describe("unsaved files and the tab menu", () => {
     await user.click(screen.getByRole("tab", { name: "notes.md" }));
     await user.click(screen.getByRole("button", { name: "Tab menu" }));
     const items = screen.getAllByRole("menuitem").map((item) => item.textContent);
-    expect(items).toEqual(expect.arrayContaining(["Copy path", "Copy relative path", "Close tabCtrl+W", "Close other tabs", "Close all tabs", "Maximise panel"]));
+    expect(items).toEqual(expect.arrayContaining(["Copy path", "Copy relative path", "Close tabAlt+W", "Close other tabs", "Close all tabs", "Maximise panel"]));
   });
 });
 
@@ -722,25 +722,45 @@ describe("the Close tab shortcut in the tab menu", () => {
   afterEach(() => vi.restoreAllMocks());
   /** The one Close tab item: the tab menu's own, or the file menu's when a file is the only tab. */
   const closeItem = () => screen.getByRole("menuitem", { name: /^Close tab/ });
+  const shown = () => closeItem().querySelector(".menu-shortcut");
 
-  it("writes Ctrl+W on Windows and ⌘W on a Mac", async () => {
+  it("writes the key a browser answers to on Windows and on a Mac, since the browser keeps Ctrl+W and ⌘W", async () => {
     const user = userEvent.setup();
     const platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
     panel();
     await user.click(screen.getByRole("button", { name: "Tab menu" }));
-    expect(closeItem().querySelector(".menu-shortcut")).toHaveTextContent("Ctrl+W");
+    expect(shown()).toHaveTextContent("Alt+W");
     await user.keyboard("{Escape}");
     platform.mockReturnValue("");
     vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X)");
     await user.click(screen.getByRole("button", { name: "Tab menu" }));
-    expect(closeItem().querySelector(".menu-shortcut")).toHaveTextContent("⌘W");
+    expect(shown()).toHaveTextContent("⌥W");
+  });
+
+  it("writes the key the person rebound it to", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+    vi.mocked(api.keybindings).mockResolvedValue({ rules: [{ key: "ctrl+shift+x", command: "rightPanel.close", when: "!terminalFocus", remove: false }], issues: [] } as never);
+    panel();
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    await waitFor(() => expect(shown()).toHaveTextContent("Ctrl+Shift+X"));
+  });
+
+  it("writes no key once the person removed it", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.keybindings).mockResolvedValue({ rules: [{ key: "mod+w", command: "rightPanel.close", when: "!terminalFocus", remove: true }], issues: [] } as never);
+    panel();
+    await waitFor(() => expect(api.keybindings).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    await waitFor(() => expect(shown()).toBeNull());
   });
 
   it("shows it on the file menu's own Close tab when a file is the only tab", async () => {
     const user = userEvent.setup();
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
     useUi.setState({ panelTabOrder: [FILE], panelTab: FILE });
     panel();
     await user.click(screen.getByRole("button", { name: "Tab menu" }));
-    expect(closeItem().querySelector(".menu-shortcut")).toHaveTextContent("Ctrl+W");
+    expect(shown()).toHaveTextContent("Alt+W");
   });
 });

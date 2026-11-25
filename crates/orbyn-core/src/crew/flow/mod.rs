@@ -27,6 +27,8 @@ mod review_controls;
 mod run_page;
 pub(super) mod scrub;
 
+use std::collections::BTreeMap;
+
 use orbyn_contracts as wire;
 use serde_json::Value;
 
@@ -34,6 +36,7 @@ use self::cells::{cells, in_filter, is_security, latest_rounds, round};
 use self::facts::Facts;
 use self::scrub::{Scrub, TEXT_MAX};
 use super::lifecycle::is_final;
+use super::needs_you::Scope;
 use super::{Page, WORKER_STOPPED_TWICE, valid_id, wire_name};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -153,6 +156,13 @@ impl Core {
         let truncated = tasks.len() > SCAN_MAX as usize;
         tasks.truncate(SCAN_MAX as usize);
 
+        // KC3: the one needs-you field, narrowed to this crew, so the You cell asks it whether a merge waits on a person
+        // instead of deriving its own NeedsYou/ReviewWaiting answer. The Inbox reads the same field, not a second rule.
+        let waits: BTreeMap<String, wire::NeedsYouKind> = self
+            .needs_you_all(Scope::Crew(crew))?
+            .into_iter()
+            .map(|item| (item.id.clone(), item.kind))
+            .collect();
         let mut counts = wire::FlowCounts {
             all: 0,
             needs_you: 0,
@@ -164,7 +174,7 @@ impl Core {
         for task in tasks {
             let state = task.state.clone();
             let facts = self.flow_facts(task)?;
-            let line = cells(&facts);
+            let line = cells(&facts, waits.get(&facts.task.id).copied());
             counts.all += 1;
             let needs = in_filter(&line, &state, wire::FlowFilter::NeedsYou);
             counts.needs_you += u32::from(needs);
@@ -221,7 +231,16 @@ impl Core {
         let person = self.display_redactor()?;
         let facts = self.flow_facts(task)?;
         let scrub = Scrub::of_crew(self, &person, &facts.task.crew_id)?;
-        let line = cells(&facts);
+        // KC3: the same one needs-you field and the same rule as the list read: the You cell asks the field.
+        let wait = match &facts.record {
+            None => None,
+            Some(_) => self
+                .needs_you_all(Scope::Crew(&facts.task.crew_id))?
+                .into_iter()
+                .find(|item| item.id == facts.task.id)
+                .map(|item| item.kind),
+        };
+        let line = cells(&facts, wait);
         let row = flow_row(&facts, line, &scrub);
         let mut truncated = false;
 
