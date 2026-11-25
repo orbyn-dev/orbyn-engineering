@@ -369,6 +369,8 @@ fn multi_thread(core: &Core, project: &str, repos: &[(&str, &str, &Path)]) -> St
                     position: position as u32,
                     name: (*name).to_owned(),
                     branch: "main".into(),
+                    // The fixture writes the rows itself, with no base: it models a thread stored before the column.
+                    base_branch: None,
                     worktree_path: path_text(path),
                 },
                 &crate::util::now(),
@@ -829,6 +831,54 @@ async fn a_thread_in_two_repositories_gets_a_folder_with_a_worktree_on_one_branc
         .await
         .unwrap();
     assert_eq!(second.content, "other\n");
+}
+
+#[tokio::test]
+async fn each_repository_keeps_the_branch_its_worktree_was_cut_from() {
+    let dir = TempDir::new();
+    let (core, project, other_id, _main, other) = two_trusted(&dir).await;
+    // A second branch in the other repository: each worktree is cut from its own choice, not one shared base.
+    run_git(&other, &["branch", "release"]);
+    let mut input = start_input(&[(&project, "main"), (&other_id, "release")]);
+    input.branch_name = Some("feature/bases".into());
+    let thread = core.start_repo_thread(&project, input).await.unwrap();
+    let folder = core.task_folder(&thread.id).await.unwrap();
+    let base = |repos: &[orbyn_contracts::ThreadRepo], repo_id: &str| {
+        repos
+            .iter()
+            .find(|repo| repo.repo_id == repo_id)
+            .and_then(|repo| repo.base_branch.clone())
+    };
+    let listed = core.thread_repos(&thread.id).await.unwrap();
+    assert_eq!(base(&listed, &project).as_deref(), Some("main"));
+    assert_eq!(base(&listed, &other_id).as_deref(), Some("release"));
+    // The task folder read serves the same per-repository base.
+    assert_eq!(base(&folder.repos, &other_id).as_deref(), Some("release"));
+    // A repository added later records the branch its worktree was cut from: the one checked out there.
+    let made = repo(&dir.path().join("made"));
+    run_git(&made, &["checkout", "-q", "-b", "topic"]);
+    let row = core
+        .add_repo_folder(
+            &project,
+            AddRepoFolder {
+                path: path_text(&made),
+            },
+        )
+        .await
+        .unwrap();
+    core.trust_repo(&project, &row.id).await.unwrap();
+    let joined = core
+        .add_thread_repo(
+            &thread.id,
+            orbyn_contracts::AddThreadRepo {
+                repo_id: row.id.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(joined.base_branch.as_deref(), Some("topic"));
+    let listed = core.thread_repos(&thread.id).await.unwrap();
+    assert_eq!(base(&listed, &row.id).as_deref(), Some("topic"));
 }
 
 #[tokio::test]

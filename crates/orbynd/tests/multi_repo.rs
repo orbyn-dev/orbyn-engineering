@@ -102,6 +102,8 @@ async fn repository_reads_name_one_repository_and_never_the_task_folder() {
     let other = seed_repo(&dir.path().join("other"), &[("a.txt", "one\n")]);
     std::fs::write(other.join("a.txt"), "other\n").unwrap();
     run_git(&other, &["commit", "-qam", "other"]);
+    // A second branch to cut this repository's worktree from, so the two choices differ.
+    run_git(&other, &["branch", "release"]);
     // Add it to the project and trust it.
     let (status, added) = service
         .send(
@@ -126,7 +128,7 @@ async fn repository_reads_name_one_repository_and_never_the_task_folder() {
             json!({
                 "repos": [
                     { "repo_id": project, "base_branch": "main" },
-                    { "repo_id": other_id, "base_branch": "main" },
+                    { "repo_id": other_id, "base_branch": "release" },
                 ],
                 "engine": "codex",
                 "model": null,
@@ -146,6 +148,20 @@ async fn repository_reads_name_one_repository_and_never_the_task_folder() {
         !root.join(".git").exists(),
         "the task folder is not a repository"
     );
+    // The repositories read serves each repository's own base: the branch its worktree was cut from.
+    let repos = service
+        .json(&format!("/api/threads/{thread_id}/repos"))
+        .await;
+    let base = |repo_id: &str| -> Option<String> {
+        repos
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|repo| repo["repo_id"] == repo_id)
+            .and_then(|repo| repo["base_branch"].as_str().map(str::to_owned))
+    };
+    assert_eq!(base(&project).as_deref(), Some("main"));
+    assert_eq!(base(&other_id).as_deref(), Some("release"));
     let (primary_dir, other_dir) = (worktree_of(&task, &project), worktree_of(&task, &other_id));
     // The same path changed in both: the reads must not confuse the two files.
     std::fs::write(primary_dir.join("a.txt"), "from the primary\n").unwrap();

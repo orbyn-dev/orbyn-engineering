@@ -121,6 +121,12 @@ pub struct ThreadRepo {
     pub name: String,
     /// The thread's own branch in this repository.
     pub branch: String,
+    /// The branch the thread's branch was cut from here: the base the person chose when the thread started, or
+    /// the branch checked out when the repository was added later. Absent for a repository whose base was not
+    /// recorded (one stored before the column existed); it is then not known and is never guessed.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub base_branch: Option<String>,
     pub added: u32,
     pub deleted: u32,
     pub trusted: bool,
