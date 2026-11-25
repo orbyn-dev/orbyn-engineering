@@ -116,12 +116,16 @@ function SettingsPageContent({ section, sub, unknown, row: addressRow, onClose }
   const accountOn = useAccountAvailable();
   // Crew is Preview: its category exists only while the service says Crew is on.
   const crewOn = useCrewFlag();
+  // This page reads the same connection info the Crew flag comes from. The flag is false until the app's start-time read
+  // answers; before this read answers too, that false is not yet a fact, so the note waits: a Crew that is on would flash it.
+  // Once this read answers it settles the note; what is drawn stays the flag's to decide.
+  const crewOffKnown = info.status === "ready" && info.data.crew_preview !== true;
   // A page that is off on this device opens General with a note that says so (a page that does not exist has its own note).
   const off = (section === "account" && !accountOn) || (section === "crew" && !crewOn);
   const current = off ? "general" : (section ?? "general");
   const note = unknown !== undefined
     ? { key: `unknown:${unknown}`, text: `There is no setting called “${shown(unknown)}” in this app. Showing General instead.` }
-    : off && section ? { key: `off:${section}`, text: `That page is off on this device: “${shown(labels[section])}”. Showing General instead.` } : null;
+    : off && section && (section !== "crew" || crewOffKnown) ? { key: `off:${section}`, text: `That page is off on this device: “${shown(labels[section])}”. Showing General instead.` } : null;
   const View = views[current];
   // A sub-page belongs to its own page only.
   const open = sub && SUBPAGES[sub].parent === current ? sub : null;
@@ -249,7 +253,15 @@ function SettingsPageContent({ section, sub, unknown, row: addressRow, onClose }
             </> : <p role="status">No settings found</p>}
           </div>
         ) : null}
-        <nav className="settings-nav" aria-label="Settings sections">
+        <nav
+          className="settings-nav"
+          aria-label="Settings sections"
+          onFocus={(event) => {
+            // The browser's focus scroll moves the row part-way, centring the chip it reveals, and can stop short of
+            // the end, so at a phone width the last chip stays clipped under the edge. Reveal the chip the keyboard reached.
+            if (event.target instanceof HTMLElement) event.target.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+          }}
+        >
           {groups.map((group) => (
             <div key={group.label ?? group.sections[0]} className="settings-group-list">
               {group.label ? <p className="settings-group">{group.label}</p> : null}
