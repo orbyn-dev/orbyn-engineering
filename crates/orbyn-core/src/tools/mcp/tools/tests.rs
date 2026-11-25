@@ -630,6 +630,7 @@ impl IssueSource for FakeIssues {
             linked_pull_requests: vec![],
             linked_threads: vec![],
             reactions: None,
+            states: None,
         })
     }
 
