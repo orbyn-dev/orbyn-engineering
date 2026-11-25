@@ -470,6 +470,8 @@ async fn a_task_that_is_not_final_shows_no_check_text_and_no_gate_reason() {
             .unwrap()
             .as_nanos()
     );
+    // Template rows: any row of the finished task works, because the graft below replaces every field
+    // a read looks at.
     let evidence = w.core.store.crew_evidence(&done).unwrap().remove(0);
     let gate = w.core.store.crew_gates(&done).unwrap().remove(0);
     for (object, fields) in [
@@ -682,6 +684,7 @@ async fn a_gate_reason_that_quotes_a_repro_or_another_tasks_check_is_withheld() 
         .unwrap();
 
     // The lead's free-text reason on a Gate is checked for secrets when written, not for key text.
+    // Any gate of the task is a template: its reason is replaced below and its id recomputed.
     let mut gate =
         CrewObject::Gate(w.core.store.crew_gates(&subject).unwrap().remove(0)).to_value();
     gate["reason"] = json!(format!("ran {repro_command} and {other_check}"));
