@@ -114,7 +114,9 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   // The chosen repository's own branches, for the base and commit pickers; the primary's read above is the one used when none is chosen.
   const chosenBranches = useAsync(`git-branches:${threadId}${repoSuffix}`, (signal) => repoId === undefined ? Promise.resolve(null) : api.branches(threadId, signal, repoId));
   const pairBranches = repoId === undefined ? (branches.status === "ready" ? branches.data : null) : chosenBranches.status === "ready" ? chosenBranches.data : null;
-  const gitAvailable = branches.status !== "error";
+  // Git availability is the chosen repository's question: a primary checkout that cannot answer it must not hide the
+  // offer for another repository that can. With none chosen, the primary's read is the one that decides.
+  const gitAvailable = repoId === undefined ? branches.status !== "error" : chosenBranches.status !== "error";
   const canCreate = gitAvailable && linkedPulls.status === "ready" && linkedPulls.data.length === 0;
   const [restoring, setRestoring] = useState(false);
   const [creating, setCreating] = useState(false);

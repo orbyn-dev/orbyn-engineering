@@ -263,6 +263,34 @@ it("creates the pull request in the chosen repository, whose links and branches 
   expect(diff.mock.calls.some((call) => String(call[2]).startsWith("branch&base=") && call[3] === "planner")).toBe(true);
 });
 
+// The offer follows the chosen repository's Git availability: a primary checkout whose Git read fails is not the
+// repository the button acts on, and a chosen repository whose own read fails keeps the button off.
+it("offers Create pull request for a chosen repository that answers Git when the primary's read fails", async () => {
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  const { branches } = setup([FILE], "planner");
+  branches.mockImplementation(async (_t, _s, repoId) => {
+    if (repoId === undefined) throw new ApiFailure("unexpected", "Git is not available.", 0);
+    return [{ name: "fix/plan", current: true, remote: false }, { name: "develop", current: false, remote: false }] as never;
+  });
+  chooseRepo("t", "planner");
+  render(<DiffPanel threadId="t" />);
+  await waitFor(() => expect(branches.mock.calls.some((call) => call[2] === "planner")).toBe(true));
+  expect(await screen.findByRole("button", { name: "Create pull request" })).toBeVisible();
+});
+
+it("hides Create pull request when the chosen repository's own Git read fails", async () => {
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  const { branches } = setup();
+  branches.mockImplementation(async (_t, _s, repoId) => {
+    if (repoId === "planner") throw new ApiFailure("unexpected", "Git is not available.", 0);
+    return [{ name: "fix/login", current: true, remote: false }, { name: "main", current: false, remote: false }] as never;
+  });
+  chooseRepo("t", "planner");
+  render(<DiffPanel threadId="t" />);
+  await waitFor(() => expect(branches.mock.calls.some((call) => call[2] === "planner")).toBe(true));
+  expect(screen.queryByRole("button", { name: "Create pull request" })).toBeNull();
+});
+
 it("offers no Create pull request where the chosen repository already has one linked", async () => {
   setReposApi(createReposMock({ threads: { t: repos } }));
   setup([FILE], "planner");

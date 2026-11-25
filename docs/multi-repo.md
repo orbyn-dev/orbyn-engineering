@@ -302,7 +302,9 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   there keeps the button off. The offer counts the chosen repository's own changes: the working-tree, turn and thread lists hold
   every trusted repository's files, and another repository's change is not this one's to carry. The dialog keeps the repository it
   was opened for until it closes, so a repository read that fails while it is open cannot move the pull request to the primary or
-  drop the note naming the repository it acts on. An ordinary thread has no choice and no call changes.
+  drop the note naming the repository it acts on. The offer also follows the chosen repository's Git availability: a primary
+  checkout that cannot answer Git questions no longer hides Create pull request for another repository that can, and a chosen
+  repository that cannot answer hides it. An ordinary thread has no choice and no call changes.
 - **Still primary only.** Pull request screens and Publish repository (a quiet disabled item with a title when another repository is
   chosen) act on the primary repository.
 - **Not verified against a live service.** Checked with the mock and spies on the client; the thread paths have not run against an
