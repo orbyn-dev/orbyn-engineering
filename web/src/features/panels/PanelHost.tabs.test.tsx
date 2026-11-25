@@ -6,15 +6,12 @@ import type { Thread } from "../../api/types";
 import { useWorkspace } from "../../product/state/workspace";
 import { useConnection } from "../../product/state/connection";
 import { fileTabId, useUi, type RightTab } from "../../product/state/ui";
+import { installMockFetch } from "../../test-support";
 import { PanelHost, type PanelMode } from "./PanelHost";
 import { useEditorSessions, type EditorSession } from "./editor/editorSessions";
 
-vi.mock("./browser/BrowserPanel", () => ({ BrowserPanel: () => <div>Browser content</div> }));
-vi.mock("./diff/DiffPanel", () => ({ DiffPanel: () => <div>Diff content</div> }));
-vi.mock("./files/FileTab", () => ({ FileTab: () => <div>Files content</div> }));
-vi.mock("./activity/ActivityPanel", () => ({ ActivityPanel: () => null }));
-
-const thread = { id: "thread-1" } as Thread;
+/** The engine is part of every real thread: the Tools tab names the engine it lists tools for. */
+const thread = { id: "thread-1", engine: "claude" } as Thread;
 /** A file opened from the left bar: the sixth tab, named by its file. */
 const FILE = fileTabId({ kind: "thread", path: "notes.md" });
 const names = () => screen.getAllByRole("tab").map((tab) => tab.getAttribute("aria-label"));
@@ -25,6 +22,8 @@ async function closeOpenTab(user: ReturnType<typeof userEvent.setup>) {
 }
 
 beforeEach(() => {
+  // The panel host draws the real panels; the service is the only fake.
+  installMockFetch();
   vi.spyOn(api, "diff").mockResolvedValue([]);
   vi.spyOn(api, "keybindings").mockResolvedValue({
     rules: [
@@ -93,12 +92,15 @@ describe("surface tabs", () => {
   it("shows the first surface until another is chosen, and keeps the chosen one when its tab is pressed again", async () => {
     const user = userEvent.setup();
     panel();
-    expect(screen.getByText("Diff content")).toBeInTheDocument();
+    // The real DiffPanel draws its scope and, over the empty diff, its working-tree empty state.
+    expect(await screen.findByRole("button", { name: "Scope: Working tree" })).toBeInTheDocument();
+    expect(await screen.findByText("No changes in Working tree.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Open a surface")).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "notes.md" }));
-    expect(screen.getByText("Files content")).toBeInTheDocument();
+    // The real FileTab: this thread has no folder the fake service could resolve it against, so it draws its own loading state.
+    expect(screen.getByText("Loading file")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "notes.md" }));
-    expect(screen.getByText("Files content")).toBeInTheDocument();
+    expect(screen.getByText("Loading file")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Side chat" }));
     expect(screen.getByText("Side chat content")).toBeInTheDocument();
     expect(useUi.getState().panelTab).toBe("side");
@@ -167,7 +169,7 @@ describe("surface tabs", () => {
     await user.click(screen.getByRole("tab", { name: "notes.md" }));
     expect(tabs().filter((tab) => tab.tabIndex === 0)).toEqual([screen.getByRole("tab", { name: "notes.md" })]);
     expect(tabs().filter((tab) => tab.hasAttribute("aria-controls"))).toHaveLength(1);
-    expect(screen.getByRole("tabpanel")).toHaveTextContent("Files content");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("Loading file");
     screen.getByRole("tab", { name: "notes.md" }).focus();
     await user.keyboard("{ArrowLeft}");
     expect(useUi.getState().panelTab).toBe("side");
@@ -209,8 +211,9 @@ describe("surface tabs", () => {
     const user = userEvent.setup();
     panel();
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    // Only entries whose commands have keys show them.
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["ChangesCtrl+D", "BrowserCtrl+Shift+J", "Activity", "Side chat", "Tools", "Linked threads", "Review and comments", "Crew viewsPlanned", "Open file…Ctrl+P"]);
+    // Only entries whose commands have keys show them. The fake service answers 404 for the device routes,
+    // so the real Devices entry is drawn disabled with its reason.
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["ChangesCtrl+D", "BrowserCtrl+Shift+J", "Activity", "Side chat", "Tools", "Linked threads", "Review and comments", "Devices BetaDevices are not available on this service.", "Crew viewsPlanned", "Open file…Ctrl+P"]);
     await user.click(screen.getByRole("menuitem", { name: "Tools" }));
     expect(useUi.getState().panelTab).toBe("tools");
     expect(useUi.getState().panelTabsClosed).toEqual(["linked", "review", "devices", "library"]);
@@ -273,7 +276,8 @@ describe("surface tabs", () => {
   it("keeps Changes for a Jujutsu checkout, which is no Git repository but has changes", async () => {
     const user = userEvent.setup();
     useWorkspace.setState({ projects: { data: [{ id: "p", is_git: false } as never], error: null, loading: false } });
-    vi.spyOn(api, "jjStatus").mockResolvedValue({ change_id: "kxq" } as never);
+    // A complete change: the real DiffPanel draws its bookmarks, description and conflict beside the diff.
+    vi.spyOn(api, "jjStatus").mockResolvedValue({ change_id: "kxq", commit_id: "z1", bookmarks: [], description: "worked", conflict: false, changed_files: 1, additions: 2, deletions: 0 } as never);
     render(<PanelHost thread={{ id: "thread-1", project_id: "p" } as Thread} mode="docked" closing={false} moves={false} maximized={false} onToggleMaximize={() => undefined} onReturn={() => undefined} />);
     await waitFor(() => expect(api.jjStatus).toHaveBeenCalled());
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
@@ -403,7 +407,9 @@ describe("reordering by drag", () => {
       release(10);
       expect(names()).toEqual(["Side chat", "Changes", "Browser", "Activity", "notes.md"]);
       expect(document.querySelector(".ctx-ins")).toBeNull();
-      expect(screen.getByRole("status")).toHaveTextContent("Tab moved");
+      // The panel's own live region: the DiffPanel's loading state has a status role too, so the region is named by
+      // the one attribute only it carries.
+      expect(document.querySelector('[role="status"][aria-live="polite"]')).toHaveTextContent("Tab moved");
       await user.click(screen.getByRole("button", { name: "Open a tab" }));
       await user.click(screen.getByRole("menuitem", { name: "Reset tab order" }));
       expect(names()).toEqual(["Changes", "Browser", "Activity", "Side chat", "notes.md"]);
@@ -500,7 +506,7 @@ describe("connection states in the panel", () => {
     panel();
     expect(screen.getByText("Waiting for the Orbyn service")).toBeInTheDocument();
     expect(screen.getByText("The diff comes back when the service does.")).toBeInTheDocument();
-    expect(screen.queryByText("Diff content")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Scope: Working tree" })).not.toBeInTheDocument();
   });
 
   it("names the maximise button Restore once the panel is maximised", () => {
@@ -525,7 +531,9 @@ describe("connection states in the panel", () => {
     }
     useUi.setState({ panelTab: "browser" });
     panel();
-    expect(screen.getByText("Browser content")).toBeInTheDocument();
+    // The real BrowserPanel is still drawn: its tab strip and start view, not the waiting line.
+    expect(screen.getByRole("tablist", { name: "Browser tabs" })).toBeInTheDocument();
+    expect(screen.getByText("No preview yet")).toBeInTheDocument();
     expect(screen.queryByText("Waiting for the Orbyn service")).not.toBeInTheDocument();
   });
 
@@ -534,7 +542,9 @@ describe("connection states in the panel", () => {
     useUi.setState({ panelTab: "browser" });
     panel();
     expect(document.querySelector("[data-offline]")).toBeNull();
-    expect(screen.getByText("Browser content")).toBeInTheDocument();
+    // The Browser draws its own offline note; the panel draws none for it.
+    expect(screen.getByText("You’re offline")).toBeInTheDocument();
+    expect(document.querySelector(".conn-panel-banner")).toBeNull();
     expect(screen.queryByText("You’re offline.")).not.toBeInTheDocument();
   });
 });
@@ -613,6 +623,8 @@ describe("tabs that do not fit", () => {
     await user.click(screen.getByRole("menuitem", { name: /^Close tab/ }));
     await waitFor(() => expect(screen.getByRole("tab", { selected: true })).toHaveFocus());
     expect(screen.getByRole("tab", { selected: true })).toHaveAttribute("aria-label", "Activity");
+    // The real ActivityPanel over a thread with no log yet: it draws its own empty state instead of looping on the store.
+    expect(screen.getByText("No activity yet")).toBeInTheDocument();
   });
 
   it("fits all six tabs at 320px with Tools open, with no more button", () => {
