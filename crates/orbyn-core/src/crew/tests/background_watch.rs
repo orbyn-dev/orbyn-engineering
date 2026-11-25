@@ -716,12 +716,20 @@ async fn a_finished_template_run_leaves_one_change_row_and_the_watch_reads_nothi
     tick(&w, NOW + BUCKET).await;
     // This test starts one run and the run makes one task, so each list read below has one row: the
     // read's order cannot pick the wrong one.
-    let run = runs(&w, &id).remove(0);
+    let mut started = runs(&w, &id);
+    assert_eq!(
+        started.len(),
+        1,
+        "one run per started template: {started:?}"
+    );
+    let run = started.remove(0);
     let tasks = w.core.store.crew_tasks_in_crew(&run.id).unwrap();
     assert_eq!(tasks.len(), 1, "one task per started run");
     let task = tasks[0].0.id.clone();
     w.until_state(&task, "passed").await;
-    let run = w.core.background_runs(&id, page()).unwrap().runs.remove(0);
+    let mut finished = w.core.background_runs(&id, page()).unwrap().runs;
+    assert_eq!(finished.len(), 1, "still the one started run: {finished:?}");
+    let run = finished.remove(0);
     assert_eq!(
         run.state,
         wire::BackgroundRunState::NeedsReview,
