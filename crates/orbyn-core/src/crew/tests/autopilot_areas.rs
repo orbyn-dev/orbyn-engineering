@@ -7,15 +7,80 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::autopilot_support::events;
-use super::autopilot_watch::{NOW, history};
+use super::autopilot_watch::{NOW, Watched, history};
 use super::harness::{Turn, World, bind, brief, key, world};
 use super::review_support::commit_all;
 use crate::crew::{Mode, ModeScope, Page, ReviewAnswer, WatchOutcome};
-use crate::store::{AreaMode, MergeRecord};
+use crate::store::{AreaEvent, AreaMode, MergeRecord};
 use crate::testing::run_git;
 use orbyn_contracts as wire;
 
 pub(super) const DAY: i64 = 86_400;
+
+/// The stored merge row of a task, as the fixture wrote it.
+fn stored_merge(w: &World, task: &str) -> MergeRecord {
+    w.core.store.crew_merge(task).unwrap().unwrap()
+}
+
+/// The merge among the tasks recorded at a time, found by the time its row records: the fixture dates every
+/// merge apart, so its day names it and the test never counts fixture order.
+fn merged_at(w: &World, tasks: &[String], at: i64) -> String {
+    let mut found = tasks
+        .iter()
+        .filter(|task| stored_merge(w, task).merged_unix == at);
+    let task = found
+        .next()
+        .unwrap_or_else(|| panic!("the merge recorded at {at}"));
+    assert!(found.next().is_none(), "one merge recorded at {at}");
+    task.clone()
+}
+
+/// The merges among the tasks whose row records a revert, in merge order: the seed reverts two of its merges.
+fn reverted(w: &World, tasks: &[String]) -> Vec<String> {
+    let mut reverted: Vec<String> = tasks
+        .iter()
+        .filter(|task| stored_merge(w, task).reverted_commit.is_some())
+        .cloned()
+        .collect();
+    reverted.sort_by_key(|task| stored_merge(w, task).id);
+    reverted
+}
+
+/// The task whose revert tripped the breaker, found by the demotion event it wrote: of the seed's two reverts
+/// only the second trips it, so a test names that one rather than a fixture place.
+fn tripped_merge(w: &World, tasks: &[String]) -> String {
+    let mut tripped = tasks
+        .iter()
+        .filter(|task| !events(w, task, "area_demoted").is_empty());
+    let task = tripped
+        .next()
+        .unwrap_or_else(|| panic!("the revert that tripped the breaker"));
+    assert!(tripped.next().is_none(), "one revert trips it");
+    task.clone()
+}
+
+/// Any merge of the project: the restore check reads the project the task names, never the merge itself.
+fn a_merge(tasks: &[String]) -> String {
+    tasks.first().cloned().expect("the fixture made merges")
+}
+
+/// The one event in a trail: the read names the change, and a test does not count to it.
+fn one_event(trail: &[AreaEvent]) -> &AreaEvent {
+    let [event] = trail else {
+        panic!("one area event, got {trail:?}")
+    };
+    event
+}
+
+/// The watched history's first merge still waiting for review: the fixture wrote every row as waiting, and the
+/// person's answer names the merge it reverts, not its place in the history.
+fn waiting_merge(h: &Watched) -> String {
+    h.tasks
+        .iter()
+        .find(|task| stored_merge(&h.w, task).review_state == "waiting")
+        .cloned()
+        .expect("a merge waiting for review")
+}
 
 pub(super) struct Rig {
     pub(super) w: World,
@@ -140,14 +205,15 @@ impl Rig {
             .unwrap_or_else(|| panic!("no row for {area}"))
     }
 
-    /// Five merges in `src/a` a day apart before `NOW`, the last two reverted at `NOW`: the second revert trips the breaker.
+    /// Five merges in `src/a` a day apart before `NOW`, the two oldest reverted at `NOW`: the second revert trips the breaker.
     pub(super) async fn tripped(&mut self) -> (Vec<String>, String) {
         let mut tasks = Vec::new();
-        for i in 0..5 {
-            tasks.push(self.merge(&["src/a"], NOW - (5 - i) * DAY).await);
+        for age in [5, 4, 3, 2, 1] {
+            tasks.push(self.merge(&["src/a"], NOW - age * DAY).await);
         }
-        self.revert(&tasks[0], NOW);
-        let commit = self.revert(&tasks[1], NOW);
+        // The two oldest carry the reverts; the second one trips the breaker.
+        self.revert(&merged_at(&self.w, &tasks, NOW - 5 * DAY), NOW);
+        let commit = self.revert(&merged_at(&self.w, &tasks, NOW - 4 * DAY), NOW);
         (tasks, commit)
     }
 }
@@ -161,8 +227,9 @@ async fn four_merges_with_two_reverts_do_not_trip_and_five_do() {
         four.merge(&["src/a"], NOW - 2 * DAY).await,
         four.merge(&["src/a"], NOW - DAY).await,
     ];
-    four.revert(&tasks[0], NOW);
-    four.revert(&tasks[1], NOW);
+    // The two oldest merges carry the reverts.
+    four.revert(&merged_at(&four.w, &tasks, NOW - 4 * DAY), NOW);
+    four.revert(&merged_at(&four.w, &tasks, NOW - 3 * DAY), NOW);
     assert!(four.mode("src/a").is_none(), "4 merges is not enough data");
     assert!(four.kinds("src/a").is_empty());
     let row = four.row("src/a", NOW);
@@ -189,8 +256,8 @@ async fn four_merges_with_two_reverts_do_not_trip_and_five_do() {
         .store
         .area_events(&five.project, "src/a", 10)
         .unwrap();
-    assert_eq!(trail.len(), 1, "the first revert did not trip it");
-    let event = &trail[0];
+    // The trail holds the one event the trip wrote: the first revert did not trip it.
+    let event = one_event(&trail);
     assert_eq!(
         (
             event.kind.as_str(),
@@ -208,10 +275,22 @@ async fn four_merges_with_two_reverts_do_not_trip_and_five_do() {
         json!({ "merges": 5, "reverts": 2, "window_days": 14, "escapes": null })
     );
     // Flow shows it on the task whose revert tripped it, and only there.
-    assert_eq!(events(&five.w, &tasks[1], "area_demoted").len(), 1);
-    assert!(events(&five.w, &tasks[0], "area_demoted").is_empty());
+    let reverts = reverted(&five.w, &tasks);
+    assert_eq!(
+        reverts.len(),
+        2,
+        "the fixture reverts two of the five merges"
+    );
+    let tripper = tripped_merge(&five.w, &reverts);
+    let earlier = reverts
+        .iter()
+        .find(|task| task.as_str() != tripper.as_str())
+        .expect("the other revert")
+        .clone();
+    assert_eq!(events(&five.w, &tripper, "area_demoted").len(), 1);
+    assert!(events(&five.w, &earlier, "area_demoted").is_empty());
     // The mode in force is still what the person chose (the ceiling); the merge gate lowers it per area, and the view says so.
-    let crew = five.w.task(&tasks[1]).crew_id;
+    let crew = five.w.task(&tripper).crew_id;
     assert_eq!(
         five.w.core.crew_autopilot_mode(&five.project, &crew),
         Mode::Full
@@ -255,7 +334,7 @@ async fn a_ceiling_of_on_or_off_never_trips_and_the_record_is_still_shown() {
 async fn the_way_back_needs_both_counts_and_a_new_revert_starts_it_again() {
     let mut r = rig().await;
     let (tasks, _) = r.tripped().await;
-    let any = tasks[0].clone();
+    let any = a_merge(&tasks);
     // 4 merges since, 14 days on: not enough merges. A 5th merge, 13 days on: not enough days.
     let mut since = Vec::new();
     for d in 1..=4 {
@@ -284,20 +363,25 @@ async fn the_way_back_needs_both_counts_and_a_new_revert_starts_it_again() {
         ("follows", None, None)
     );
     assert_eq!(r.kinds("src/a"), ["demoted", "restored"]);
-    let restored = r.w.core.store.area_events(&r.project, "src/a", 1).unwrap();
-    assert_eq!(restored[0].cause, format!("restore:{NOW}"));
+    let trail = r.w.core.store.area_events(&r.project, "src/a", 10).unwrap();
+    let restored = trail
+        .iter()
+        .find(|event| event.kind == "restored")
+        .expect("the restore event");
+    assert_eq!(restored.cause, format!("restore:{NOW}"));
     r.w.core.area_restore_check(&any, NOW + 15 * DAY).unwrap();
     assert_eq!(r.kinds("src/a"), ["demoted", "restored"], "it returns once");
 
     // A revert while lowered starts the clock again.
     let mut r = rig().await;
     let (tasks, _) = r.tripped().await;
-    let any = tasks[0].clone();
+    let any = a_merge(&tasks);
     let mut since = Vec::new();
     for d in 1..=5 {
         since.push(r.merge(&["src/a"], NOW + d * DAY).await);
     }
-    r.revert(&since[4], NOW + 6 * DAY);
+    // The merge five days on carries the revert while the area is lowered.
+    r.revert(&merged_at(&r.w, &since, NOW + 5 * DAY), NOW + 6 * DAY);
     assert_eq!(r.kinds("src/a"), ["demoted", "recovery_reset"]);
     assert_eq!(r.mode("src/a").unwrap().recovery_since, Some(NOW + 6 * DAY));
     r.w.core.area_restore_check(&any, NOW + 14 * DAY).unwrap();
@@ -326,14 +410,15 @@ async fn the_way_back_needs_both_counts_and_a_new_revert_starts_it_again() {
 async fn the_same_revert_twice_records_one_event() {
     let mut r = rig().await;
     let (tasks, commit) = r.tripped().await;
-    let again = r.w.core.store.crew_merge(&tasks[1]).unwrap().unwrap();
+    let tripper = tripped_merge(&r.w, &tasks);
+    let again = r.w.core.store.crew_merge(&tripper).unwrap().unwrap();
     let before = r.mode("src/a").unwrap();
     r.w.core
         .area_breaker_after_revert(&again, &commit, NOW + 100)
         .unwrap();
     assert_eq!(r.kinds("src/a"), ["demoted"]);
     assert_eq!(r.mode("src/a").unwrap(), before, "nothing moved");
-    assert_eq!(events(&r.w, &tasks[1], "area_demoted").len(), 1);
+    assert_eq!(events(&r.w, &tripper, "area_demoted").len(), 1);
     // A reset is recorded once too.
     let later = r.merge(&["src/a"], NOW + DAY).await;
     let reset = r.revert(&later, NOW + 2 * DAY);
@@ -430,11 +515,13 @@ async fn areas_are_counted_per_project_and_by_repository() {
     );
     let page = Page::new(Some(200), None).unwrap();
     let there = a.w.core.autopilot_areas(&other.id, page, NOW).unwrap();
-    let row = &there.rows[0];
-    assert_eq!(
-        (row.area.as_str(), row.state),
-        ("src/a", wire::AutopilotAreaState::Follows)
-    );
+    assert_eq!(there.rows.len(), 1, "the other project made one area");
+    let row = there
+        .rows
+        .iter()
+        .find(|row| row.area == "src/a")
+        .expect("the other project's area row");
+    assert_eq!(row.state, wire::AutopilotAreaState::Follows);
     assert_eq!((row.record.merges, row.record.reverts), (5, 0));
     // The trust record reads one repository, or the whole device when none is named.
     let count = |trust: &wire::AutopilotTrust| {
@@ -473,7 +560,8 @@ async fn areas_are_counted_per_project_and_by_repository() {
             .area_breaker_after_revert(&record, &commit, at)
             .unwrap();
     };
-    revert(&theirs[0], NOW);
+    // A revert of the other project's newest merge counts there.
+    revert(&merged_at(&a.w, &theirs, NOW - DAY), NOW);
     assert!(
         a.w.core
             .store
@@ -570,7 +658,14 @@ async fn a_revert_found_by_the_watch_reaches_the_breaker() {
     else {
         panic!("{outcome:?}")
     };
-    assert_eq!(task_id, h.tasks[2]);
+    // The third merge, the one that wrote BAD, is the merge the watch reverted.
+    let broken = merged_at(&h.w, &h.tasks, NOW + 3);
+    assert_eq!(task_id, broken);
+    assert_eq!(
+        stored_merge(&h.w, &task_id).reverted_commit.as_deref(),
+        Some(revert_commit.as_str()),
+        "the row records the watch's revert"
+    );
     let mode =
         h.w.core
             .store
@@ -582,8 +677,8 @@ async fn a_revert_found_by_the_watch_reaches_the_breaker() {
         ("demoted", Some(NOW + 100))
     );
     let trail = h.w.core.store.area_events(&project, "src/x", 5).unwrap();
-    assert_eq!(trail[0].cause, revert_commit);
-    assert_eq!(events(&h.w, &h.tasks[2], "area_demoted").len(), 1);
+    assert_eq!(one_event(&trail).cause, revert_commit);
+    assert_eq!(events(&h.w, &task_id, "area_demoted").len(), 1);
 }
 
 #[tokio::test]
@@ -598,9 +693,15 @@ async fn a_revert_the_person_asks_for_reaches_the_breaker() {
     crowd(&h).await;
     let project = h.w.core.store.thread(&h.w.lead).unwrap().project_id;
     // The branch is not checked out anywhere, as the queue leaves it.
+    // The person's answer names a merge waiting for review, not its place in the fixture.
     let commit =
         h.w.core
-            .crew_answer_review(&h.tasks[1], ReviewAnswer::Revert, &h.target, NOW + 100)
+            .crew_answer_review(
+                &waiting_merge(&h),
+                ReviewAnswer::Revert,
+                &h.target,
+                NOW + 100,
+            )
             .await
             .unwrap()
             .expect("the revert commit");
@@ -612,8 +713,9 @@ async fn a_revert_the_person_asks_for_reaches_the_breaker() {
             .expect("the person's revert tripped the area");
     assert_eq!(mode.state, "demoted");
     let trail = h.w.core.store.area_events(&project, "src/x", 5).unwrap();
+    let event = one_event(&trail);
     assert_eq!(
-        (trail[0].cause.as_str(), trail[0].decided_by.as_str()),
+        (event.cause.as_str(), event.decided_by.as_str()),
         (commit.as_str(), "breaker")
     );
     assert_eq!(
@@ -631,11 +733,12 @@ async fn a_revert_the_person_asks_for_reaches_the_breaker() {
 async fn a_trip_is_evaluated_when_a_merge_is_recorded() {
     let mut r = rig().await;
     let mut tasks = Vec::new();
-    for i in 0..3 {
-        tasks.push(r.merge(&["src/a"], NOW - (6 - i) * DAY).await);
+    for age in [6, 5, 4] {
+        tasks.push(r.merge(&["src/a"], NOW - age * DAY).await);
     }
-    r.revert(&tasks[0], NOW - 4 * DAY);
-    r.revert(&tasks[1], NOW - 4 * DAY);
+    // The two oldest merges carry the reverts; three merges is not enough data.
+    r.revert(&merged_at(&r.w, &tasks, NOW - 6 * DAY), NOW - 4 * DAY);
+    r.revert(&merged_at(&r.w, &tasks, NOW - 5 * DAY), NOW - 4 * DAY);
     assert!(r.mode("src/a").is_none(), "3 merges are not enough data");
     r.merge_recorded(&["src/a"], NOW - 3 * DAY).await;
     assert!(r.mode("src/a").is_none(), "4 merges");
@@ -643,9 +746,9 @@ async fn a_trip_is_evaluated_when_a_merge_is_recorded() {
     let mode = r.mode("src/a").expect("the fifth merge meets the rule");
     assert_eq!(mode.state, "demoted");
     let trail = r.w.core.store.area_events(&r.project, "src/a", 5).unwrap();
-    assert_eq!(trail.len(), 1);
-    assert!(trail[0].cause.starts_with("merge:"), "{}", trail[0].cause);
-    assert_eq!(trail[0].from_mode.as_deref(), Some("full"));
+    let event = one_event(&trail);
+    assert!(event.cause.starts_with("merge:"), "{}", event.cause);
+    assert_eq!(event.from_mode.as_deref(), Some("full"));
     assert_eq!(events(&r.w, &fifth, "area_demoted").len(), 1);
     // Looking again records nothing more.
     let stored = r.w.core.store.crew_merge(&fifth).unwrap().unwrap();
@@ -658,12 +761,10 @@ async fn a_trip_is_evaluated_when_a_merge_is_recorded() {
     on.w.core
         .set_crew_autopilot_mode(&ModeScope::Repo(on.project.clone()), Mode::On)
         .unwrap();
-    let t = [
-        on.merge(&["src/a"], NOW - 6 * DAY).await,
-        on.merge(&["src/a"], NOW - 5 * DAY).await,
-    ];
-    on.revert(&t[0], NOW - 4 * DAY);
-    on.revert(&t[1], NOW - 4 * DAY);
+    let older = on.merge(&["src/a"], NOW - 6 * DAY).await;
+    let newer = on.merge(&["src/a"], NOW - 5 * DAY).await;
+    on.revert(&older, NOW - 4 * DAY);
+    on.revert(&newer, NOW - 4 * DAY);
     for d in [3, 2, 1] {
         on.merge_recorded(&["src/a"], NOW - d * DAY).await;
     }
@@ -674,7 +775,7 @@ async fn a_trip_is_evaluated_when_a_merge_is_recorded() {
 async fn the_way_back_is_shown_in_progress_then_met_and_queuing_never_waits_for_the_lock() {
     let mut r = rig().await;
     let (tasks, _) = r.tripped().await;
-    let any = tasks[0].clone();
+    let any = a_merge(&tasks);
     assert_eq!(r.row("src/a", NOW).state, wire::AutopilotAreaState::Demoted);
     r.merge(&["src/a"], NOW + DAY).await;
     r.merge(&["src/a"], NOW + 2 * DAY).await;
@@ -711,6 +812,8 @@ async fn the_listed_key_finds_the_history() {
         r.w.core
             .autopilot_area_history(&r.project, &row.area_key)
             .unwrap();
-    assert_eq!(history.events.len(), 1);
-    assert_eq!(history.events[0].kind, "demoted");
+    let [event] = history.events.as_slice() else {
+        panic!("one event, got {:?}", history.events)
+    };
+    assert_eq!(event.kind, "demoted");
 }
