@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::{StreamExt, stream};
@@ -17,7 +18,9 @@ use tokio::io::AsyncReadExt;
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::host::process::ManagedChild;
-use crate::util::{canonicalize, sha256_hex};
+use crate::project::workspace::Workspace;
+use crate::store::Store;
+use crate::util::{canonicalize, sha256_hex, swr};
 
 const MAX_PROJECTS: usize = 512;
 pub(crate) const MAX_PROJECT_METADATA_BYTES: usize = 4 * 1024 * 1024;
@@ -461,6 +464,161 @@ fn trim_project_title(name: &str) -> &str {
     crate::project::project_icon_override::js_trim(name)
 }
 
+/// Every input of one catalog observation: the grouping recipe and the selection.
+/// Reads with the same key observe the same workspace, so they share one observation.
+fn catalog_read_key(query: &ProjectScopesQuery) -> String {
+    fn mode(mode: ProjectGroupingMode) -> &'static str {
+        match mode {
+            ProjectGroupingMode::Repository => "repository",
+            ProjectGroupingMode::RepositoryPath => "repository_path",
+            ProjectGroupingMode::Separate => "separate",
+        }
+    }
+    // Overrides name one project each; their order is not an input of the observation.
+    let mut overrides: Vec<(&str, &'static str)> = query
+        .recipe
+        .overrides
+        .iter()
+        .map(|entry| (entry.project_id.as_str(), mode(entry.mode)))
+        .collect();
+    overrides.sort_unstable();
+    let overrides: String = overrides
+        .iter()
+        .flat_map(|(project, mode)| [*project, "=", mode, ";"])
+        .collect();
+    let selection = match &query.selection {
+        None | Some(ProjectSettingsSelection::AllProjects {}) => "all".to_owned(),
+        Some(ProjectSettingsSelection::ProjectGroup { group_key }) => format!("group:{group_key}"),
+        Some(ProjectSettingsSelection::Checkout {
+            group_key,
+            project_id,
+        }) => format!("checkout:{group_key}:{project_id}"),
+    };
+    swr::key(&["catalog", mode(query.recipe.mode), &overrides, &selection])
+}
+
+/// One catalog observation: the registered projects and each one's Git metadata,
+/// bounded together under one deadline.
+async fn observe_catalog(
+    store: Arc<Store>,
+    workspace: Arc<Workspace>,
+    query: ProjectScopesQuery,
+) -> Result<ProjectScopeCatalog> {
+    // Match the existing project sidebar: the harness library is not a
+    // selectable project. Missing workspace state must not broaden targets.
+    let library_root = workspace.root()?;
+    let projects: Vec<_> = store
+        .list_projects()?
+        .into_iter()
+        .filter(|project| Path::new(&project.path) != library_root)
+        .collect();
+    if projects.len() > MAX_PROJECTS || query.recipe.overrides.len() > MAX_PROJECTS {
+        return Err(CoreError::Invalid("Too many local project scopes.".into()));
+    }
+    let known: BTreeSet<_> = projects.iter().map(|project| project.id.as_str()).collect();
+    let mut overrides = BTreeMap::new();
+    for entry in &query.recipe.overrides {
+        if !known.contains(entry.project_id.as_str()) {
+            return Err(CoreError::NotFound("project grouping override".into()));
+        }
+        if overrides
+            .insert(entry.project_id.clone(), entry.mode)
+            .is_some()
+        {
+            return Err(CoreError::Invalid(
+                "A project grouping override is repeated.".into(),
+            ));
+        }
+    }
+    let reader = tokio::time::timeout(CATALOG_BUDGET, workspace.library_reader())
+        .await
+        .ok();
+    // A busy library prevents observing Git, not reading environment defaults.
+    // Return physical targets with incomplete metadata rather than claim a
+    // complete group or misclassify the contention as an app install.
+    let deadline = Instant::now()
+        + if reader.is_some() {
+            CATALOG_BUDGET
+        } else {
+            Duration::ZERO
+        };
+    let members = stream::iter(projects)
+        .map(|project| {
+            let mode = overrides
+                .get(&project.id)
+                .copied()
+                .unwrap_or(query.recipe.mode);
+            checkout(project, mode, deadline)
+        })
+        .buffer_unordered(4)
+        .collect::<Vec<_>>()
+        .await;
+    let mut grouped: BTreeMap<String, Vec<ProjectScopeCheckout>> = BTreeMap::new();
+    for member in members {
+        grouped.entry(group_key(&member)).or_default().push(member);
+    }
+    let mut groups = Vec::new();
+    for (key, mut members) in grouped {
+        members.sort_by(|a, b| a.project_id.cmp(&b.project_id));
+        let names: BTreeSet<_> = members.iter().map(|member| member.name.as_str()).collect();
+        let first = &members[0];
+        let repository_label = first.repository_label.as_deref();
+        let shared_custom_name = names.len() == 1
+            && repository_label.is_none_or(|label| {
+                first.name != label && Some(first.name.as_str()) != label.rsplit('/').next()
+            });
+        let label = if members.len() == 1 || shared_custom_name {
+            first.name.clone()
+        } else {
+            first
+                .repository_label
+                .as_ref()
+                .unwrap_or(&first.name)
+                .clone()
+        };
+        groups.push(ProjectScopeGroup {
+            key,
+            label,
+            members,
+        });
+    }
+    let metadata_complete = groups
+        .iter()
+        .flat_map(|group| &group.members)
+        .all(|member| member.metadata_complete);
+    let membership: Vec<_> = groups
+        .iter()
+        .map(|group| {
+            (
+                &group.key,
+                group
+                    .members
+                    .iter()
+                    .map(|member| {
+                        (
+                            &member.project_id,
+                            &member.physical_key,
+                            member.grouping_mode,
+                            member.unavailable,
+                            member.metadata_complete,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    let bytes = serde_json::to_vec(&(query.recipe.mode, overrides, membership))?;
+    let version = opaque("catalog", &[&sha256_hex(&bytes)]);
+    let selection =
+        resolve_project_settings_scope(&groups, query.selection.as_ref(), metadata_complete);
+    Ok(ProjectScopeCatalog {
+        version,
+        groups,
+        metadata_complete,
+        selection,
+    })
+}
+
 impl Core {
     pub async fn change_project_image(
         &self,
@@ -609,124 +767,22 @@ impl Core {
 
     /// Read-only full-app catalog. Client grouping recipes do not edit project
     /// registration, preferences, remotes or any project file.
+    ///
+    /// One observation spawns Git for every registered project, and a settings screen
+    /// asks several preference questions at once, so identical reads made together
+    /// share one observation. A completed observation is not kept: every read still
+    /// observes the workspace as it is when the read starts.
     pub async fn project_scope_catalog(
         &self,
         query: &ProjectScopesQuery,
     ) -> Result<ProjectScopeCatalog> {
-        // Match the existing project sidebar: the harness library is not a
-        // selectable project. Missing workspace state must not broaden targets.
-        let library_root = self.workspace.root()?;
-        let projects: Vec<_> = self
-            .store
-            .list_projects()?
-            .into_iter()
-            .filter(|project| Path::new(&project.path) != library_root)
-            .collect();
-        if projects.len() > MAX_PROJECTS || query.recipe.overrides.len() > MAX_PROJECTS {
-            return Err(CoreError::Invalid("Too many local project scopes.".into()));
-        }
-        let known: BTreeSet<_> = projects.iter().map(|project| project.id.as_str()).collect();
-        let mut overrides = BTreeMap::new();
-        for entry in &query.recipe.overrides {
-            if !known.contains(entry.project_id.as_str()) {
-                return Err(CoreError::NotFound("project grouping override".into()));
-            }
-            if overrides
-                .insert(entry.project_id.clone(), entry.mode)
-                .is_some()
-            {
-                return Err(CoreError::Invalid(
-                    "A project grouping override is repeated.".into(),
-                ));
-            }
-        }
-        let reader = tokio::time::timeout(CATALOG_BUDGET, self.workspace.library_reader())
+        let key = catalog_read_key(query);
+        let (store, workspace, query) = (self.store.clone(), self.workspace.clone(), query.clone());
+        self.project_scope_reads
+            .get(&key, "project-scopes", false, move || async move {
+                observe_catalog(store, workspace, query).await
+            })
             .await
-            .ok();
-        // A busy library prevents observing Git, not reading environment defaults.
-        // Return physical targets with incomplete metadata rather than claim a
-        // complete group or misclassify the contention as an app install.
-        let deadline = Instant::now()
-            + if reader.is_some() {
-                CATALOG_BUDGET
-            } else {
-                Duration::ZERO
-            };
-        let members = stream::iter(projects)
-            .map(|project| {
-                let mode = overrides
-                    .get(&project.id)
-                    .copied()
-                    .unwrap_or(query.recipe.mode);
-                checkout(project, mode, deadline)
-            })
-            .buffer_unordered(4)
-            .collect::<Vec<_>>()
-            .await;
-        let mut grouped: BTreeMap<String, Vec<ProjectScopeCheckout>> = BTreeMap::new();
-        for member in members {
-            grouped.entry(group_key(&member)).or_default().push(member);
-        }
-        let mut groups = Vec::new();
-        for (key, mut members) in grouped {
-            members.sort_by(|a, b| a.project_id.cmp(&b.project_id));
-            let names: BTreeSet<_> = members.iter().map(|member| member.name.as_str()).collect();
-            let first = &members[0];
-            let repository_label = first.repository_label.as_deref();
-            let shared_custom_name = names.len() == 1
-                && repository_label.is_none_or(|label| {
-                    first.name != label && Some(first.name.as_str()) != label.rsplit('/').next()
-                });
-            let label = if members.len() == 1 || shared_custom_name {
-                first.name.clone()
-            } else {
-                first
-                    .repository_label
-                    .as_ref()
-                    .unwrap_or(&first.name)
-                    .clone()
-            };
-            groups.push(ProjectScopeGroup {
-                key,
-                label,
-                members,
-            });
-        }
-        let metadata_complete = groups
-            .iter()
-            .flat_map(|group| &group.members)
-            .all(|member| member.metadata_complete);
-        let membership: Vec<_> = groups
-            .iter()
-            .map(|group| {
-                (
-                    &group.key,
-                    group
-                        .members
-                        .iter()
-                        .map(|member| {
-                            (
-                                &member.project_id,
-                                &member.physical_key,
-                                member.grouping_mode,
-                                member.unavailable,
-                                member.metadata_complete,
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect();
-        let bytes = serde_json::to_vec(&(query.recipe.mode, overrides, membership))?;
-        let version = opaque("catalog", &[&sha256_hex(&bytes)]);
-        let selection =
-            resolve_project_settings_scope(&groups, query.selection.as_ref(), metadata_complete);
-        Ok(ProjectScopeCatalog {
-            version,
-            groups,
-            metadata_complete,
-            selection,
-        })
     }
 
     /// The registered projects and the checkout record the settings scope catalog
