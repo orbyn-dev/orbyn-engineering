@@ -87,7 +87,7 @@ export const ExplorerRow = memo(function ExplorerRow({
     );
   }
 
-  const expandable = row.kind === "project" || row.kind === "group" || row.kind === "dir" || (row.kind === "worktree" && !row.missing);
+  const expandable = row.kind === "project" || row.kind === "group" || row.kind === "dir" || row.kind === "repo" || (row.kind === "worktree" && !row.missing);
   const cls = ["x2r", row.kind === "thread" ? "x2t" : "", row.kind === "group" ? "x2g" : "", selected ? "on" : "", row.current ? "cur" : "", menuOpen ? "mopen" : "", row.missing ? "xg-miss" : "", row.change === "conflicted" ? "xg-c" : "", row.change === "deleted" ? "xg-d" : ""]
     .filter(Boolean)
     .join(" ");
@@ -118,12 +118,14 @@ export const ExplorerRow = memo(function ExplorerRow({
       {expandable ? (
         row.open ? <ChevronDown size={11} className="xs" aria-hidden /> : <ChevronRight size={11} className="xs" aria-hidden />
       ) : null}
-      {row.kind === "worktree" ? <GitBranch size={13} className="ic" aria-hidden /> : null}
+      {row.kind === "worktree" || row.kind === "repo" ? <GitBranch size={13} className="ic" aria-hidden /> : null}
       {row.kind === "dir" ? <Folder size={13} className="ic" aria-hidden /> : null}
       {row.kind === "file" ? <File size={13} className="ic" aria-hidden /> : null}
       <MiddleName text={row.label} middle={row.kind === "file"} />
       {row.kind === "project" && (row.needs ?? 0) > 0 ? <span className="n amber">{row.needs}</span> : null}
-      {row.kind === "worktree" && row.current ? <span className="xdot" role="img" aria-label="Current worktree" title="Current worktree" /> : null}
+      {row.current && (row.kind === "worktree" || row.kind === "repo") ? (
+        <span className="xdot" role="img" aria-label={row.kind === "repo" ? "This thread\u2019s repository" : "Current worktree"} title={row.kind === "repo" ? "This thread\u2019s repository" : "Current worktree"} />
+      ) : null}
       {row.badge ? <span className="n x2ro">{row.badge}</span> : null}
       {row.kind === "thread" && row.thread ? <ThreadStatus thread={row.thread} /> : null}
       {row.kind === "worktree" && !row.missing ? (

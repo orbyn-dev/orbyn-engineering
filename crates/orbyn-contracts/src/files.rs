@@ -125,6 +125,10 @@ pub struct OpenInEditor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub column: Option<u32>,
+    /// A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_id: Option<String>,
 }
 }
 
