@@ -31,7 +31,9 @@ test("stops and restarts a running engine host against the live service", async 
   try {
     // A host starts on a run or on Restart; no screen offers another way to start an idle one.
     const started = await service.api<Host>("POST", "/api/engine-host/claude/restart", { stop_background: false });
-    expect(started).toMatchObject({ state: "running", host_version: "0.1.0" });
+    expect(started.state).toBe("running");
+    // The host names its own version; a release bump must not need a test edit.
+    expect(started.host_version).toMatch(/^\d+\.\d+\.\d+/);
 
     await page.goto(`${service.page}#/settings/providers`);
     const providers = page.getByRole("table", { name: "Engine host" });
@@ -83,31 +85,36 @@ test("tries a host again after it gave up, and a fixed fault starts it", async (
   test.setTimeout(180_000);
   const folder = mkdtempSync(join(tmpdir(), "orbyn-host-fault-"));
   const program = join(folder, EXE);
-  const { service } = await startProject({ fakeEngines: true, engineHost: { program } });
   try {
-    // There is no program, so each start fails; the service tries five times with backoff, then gives up.
-    const first = await service.api<Host>("POST", "/api/engine-host/claude/restart", { stop_background: false });
-    expect(first).toMatchObject({ state: "restarting", last_crash: { error_kind: "start_failed" } });
-    await expect.poll(async () => (await hostOf(service))?.state, { timeout: 120_000, intervals: [1000] }).toBe("cant_start");
-    expect((await hostOf(service))?.last_crash?.error_kind).toBe("start_failed");
+    const { service } = await startProject({ fakeEngines: true, engineHost: { program } });
+    try {
+      // There is no program, so each start fails; the service tries five times with backoff, then gives up.
+      const first = await service.api<Host>("POST", "/api/engine-host/claude/restart", { stop_background: false });
+      expect(first).toMatchObject({ state: "restarting", last_crash: { error_kind: "start_failed" } });
+      await expect.poll(async () => (await hostOf(service))?.state, { timeout: 120_000, intervals: [1000] }).toBe("cant_start");
+      expect((await hostOf(service))?.last_crash?.error_kind).toBe("start_failed");
 
-    // The fault is fixed, and the person's Try again starts it: the restart route, from the row.
-    copyFileSync(HOST, program);
-    await page.goto(`${service.page}#/settings/providers`);
-    const claude = page.getByRole("table", { name: "Engine host" }).getByRole("row").filter({ hasText: "Claude Code" });
-    await expect(claude.getByText("Can’t start", { exact: true })).toBeVisible();
-    await expect(claude).toContainText("The engine host is unavailable after repeated failures");
-    const retried = postTo(page, "/api/engine-host/claude/restart");
-    await claude.getByRole("button", { name: "Try again" }).click();
-    const answer = await retried;
-    expect(answer.status()).toBe(200);
-    expect(await answer.json()).toMatchObject({ family: "claude", state: "running", host_version: "0.1.0" });
-    await expect.poll(async () => (await hostOf(service))?.state).toBe("running");
-    await expect(claude.getByText("Running", { exact: true })).toBeVisible();
-    await expect(claude.getByRole("button", { name: "Try again" })).toHaveCount(0);
+      // The fault is fixed, and the person's Try again starts it: the restart route, from the row.
+      copyFileSync(HOST, program);
+      await page.goto(`${service.page}#/settings/providers`);
+      const claude = page.getByRole("table", { name: "Engine host" }).getByRole("row").filter({ hasText: "Claude Code" });
+      await expect(claude.getByText("Can’t start", { exact: true })).toBeVisible();
+      await expect(claude).toContainText("The engine host is unavailable after repeated failures");
+      const retried = postTo(page, "/api/engine-host/claude/restart");
+      await claude.getByRole("button", { name: "Try again" }).click();
+      const answer = await retried;
+      expect(answer.status()).toBe(200);
+      const restarted = (await answer.json()) as Host;
+      expect(restarted).toMatchObject({ family: "claude", state: "running" });
+      expect(restarted.host_version).toMatch(/^\d+\.\d+\.\d+/);
+      await expect.poll(async () => (await hostOf(service))?.state).toBe("running");
+      await expect(claude.getByText("Running", { exact: true })).toBeVisible();
+      await expect(claude.getByRole("button", { name: "Try again" })).toHaveCount(0);
+    } finally {
+      // The service stops the host it started before the copied program can be removed on Windows.
+      await service.stop();
+    }
   } finally {
-    // The service stops the host it started before the copied program can be removed on Windows.
-    await service.stop();
     rmSync(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 });
