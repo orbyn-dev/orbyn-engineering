@@ -16,6 +16,7 @@ use super::risk::Risk;
 use super::watch::revert_merge;
 use crate::app::Core;
 use crate::crew::capacity::{FIX_WAITING, paused_by_capacity};
+use crate::crew::needs_you::Scope;
 use crate::crew::wire_name;
 use crate::error::{CoreError, Result};
 use crate::store::MergeRecord;
@@ -150,7 +151,7 @@ impl Core {
         // KC3: what waits elsewhere is read from the one needs-you field, never assembled here. The review waits this
         // queue answers (`MergeWaiting` and `BackgroundReview`) are left out: they are its own lists above.
         let mut elsewhere: BTreeMap<String, (wire::NeedsYouKind, u32)> = BTreeMap::new();
-        for item in self.needs_you_all(&|_, _| true)? {
+        for item in self.needs_you_all(Scope::Device)? {
             match item.kind {
                 wire::NeedsYouKind::MergeWaiting | wire::NeedsYouKind::BackgroundReview => {}
                 kind => {
@@ -167,7 +168,7 @@ impl Core {
         });
         let background = self
             .store
-            .background_reviews()?
+            .background_reviews(None, None)?
             .into_iter()
             .map(|row| BackgroundReview {
                 run_id: row.run.id,

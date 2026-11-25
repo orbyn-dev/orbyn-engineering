@@ -524,16 +524,22 @@ fn navigation_file(scope: &WriteScope, target: &Path) -> Option<String> {
 }
 
 impl Core {
-    /// Resolve navigation coordinates without granting a new filesystem root.
+    /// Resolve navigation coordinates without granting a new filesystem root. A multi-repository
+    /// thread resolves them in the repository asked for (its primary one when none is named), never in
+    /// the task folder: its worktrees are the checkouts. `cwd` stays the folder the caller knows, so a
+    /// thread that moved meanwhile is `StaleOwner`.
     pub async fn resolve_thread_path(
         &self,
         id: &str,
         request: &ResolveThreadPath,
     ) -> Result<ResolvedThreadPath> {
-        let (thread, scope) = self.file_scope(id)?;
-        if thread.cwd != request.cwd {
+        // The fence is the thread's own stored folder, which is what the caller names. Which checkout
+        // the path is resolved in is the repository scope's question.
+        let stored = self.store.thread(id)?;
+        if stored.cwd != request.cwd {
             return Err(CoreError::StaleOwner);
         }
+        let (thread, scope) = self.file_scope(id)?;
         if request.path.len() > 4096 || request.path.is_empty() {
             return Err(CoreError::Invalid(
                 "That path is outside this checkout.".into(),
@@ -570,7 +576,7 @@ impl Core {
         // resolve it.
         if crate::project::outside_files::reaches_remote(&target) {
             return Ok(ResolvedThreadPath {
-                cwd: thread.cwd,
+                cwd: stored.cwd,
                 checkout_path: None,
                 repository_path: None,
             });
@@ -600,11 +606,14 @@ impl Core {
                 .filter(|path| !path.as_os_str().is_empty())
                 .map(|path| path.to_string_lossy().replace('\\', "/"))
         };
-        if self.store.thread(id)?.cwd != request.cwd {
+        // The thread may have moved while the path was resolved; the answer is only good for the
+        // folder the caller named, which stays the thread's even when the checkout is a repository's.
+        let current = self.store.thread(id)?;
+        if current.cwd != request.cwd {
             return Err(CoreError::StaleOwner);
         }
         Ok(ResolvedThreadPath {
-            cwd: thread.cwd,
+            cwd: current.cwd,
             checkout_path,
             repository_path,
         })
