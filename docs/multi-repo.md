@@ -284,8 +284,8 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   absolute path. Its image, PDF, video, audio, font, archive, document, binary and truncated files load from their own repository's
   worktree: the client sends `repo_id` on `GET .../files/raw`, whose bytes, `Range` answers, inline-or-attachment decision and
   `download` are that repository's file (see "As built: repo_id on Git and file calls"). The service's `previews/file` and
-  `files/open` take one now too: the file-tab menu's outside editor and the binary view's Reveal/Open in editor send it, and the
-  media bar's Open in browser and Open in editor carry it once that bar is drawn for a foreign tab.
+  `files/open` take one now too: the file-tab menu's outside editor, the binary view's Reveal/Open in editor and the viewer's Open in
+  browser and Open in editor buttons send it for a foreign tab.
 - **Turn totals.** The turn picker's per-turn figures were the primary repository's alone. In a multi-repository thread each turn's
   totals sum `GET .../diff?scope=turn&run=` over the thread's trusted repositories, one read per repository with its own `repo_id`.
   An untrusted repository is not read and a repository whose read fails is left out, and the row says "N repo not counted" instead of
