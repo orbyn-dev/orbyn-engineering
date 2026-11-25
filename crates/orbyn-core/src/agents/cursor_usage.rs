@@ -133,7 +133,7 @@ async fn read_account(
     }
     // Plain http is for a loopback fake server only: the bearer token never crosses a network in clear.
     let plain = base.starts_with("http://");
-    if plain && !(base.starts_with("http://127.0.0.1") || base.starts_with("http://localhost")) {
+    if plain && !is_loopback(base) {
         return Err(Failure::Generic);
     }
     let client = build_client(!plain)?;
@@ -146,6 +146,17 @@ async fn read_account(
             .extend(read_scope(&client, base, token, since_ms, end_date, team_id, user_id).await?);
     }
     Ok(records)
+}
+
+/// The host of a plain-http endpoint is exactly `localhost`, `127.0.0.1` or `[::1]`: a prefix match would let
+/// `http://localhost.example.test` or `http://127.0.0.1.example.test` take the bearer token in clear.
+fn is_loopback(base: &str) -> bool {
+    reqwest::Url::parse(base).is_ok_and(|url| {
+        url.scheme() == "http"
+            && url.username().is_empty()
+            && url.password().is_none()
+            && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+    })
 }
 
 /// No proxy, no referer and no redirect at all: the bearer token would follow one.
