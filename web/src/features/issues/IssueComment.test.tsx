@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createIssuesMock } from "../../../mock/issues";
@@ -53,6 +53,30 @@ it("one click is one write: a second click while it is in flight sends nothing",
   await user.type(await box(), "Once");
   await user.dblClick(commentButton());
   await waitFor(() => expect(mock.writes).toEqual(["comment:412:Once"]));
+});
+
+it("two submits in the same tick are one write: the page's own guard refuses the second, whatever the button shows", async () => {
+  const mock = createIssuesMock({ delayMs: 30 });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  open();
+  await user.type(await box(), "Once");
+  const form = screen.getByRole("form", { name: "Comment" });
+  // Both fire before React re-renders the busy button, as Enter held down or a double submit can.
+  act(() => { fireEvent.submit(form); fireEvent.submit(form); });
+  await waitFor(() => expect(mock.writes).toEqual(["comment:412:Once"]));
+  await new Promise((done) => setTimeout(done, 80));
+  expect(mock.writes).toEqual(["comment:412:Once"]);
+});
+
+it("sends the comment exactly as typed: the contract refuses a blank body and does not trim a real one", async () => {
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  open();
+  await user.type(await box(), "  hi  ");
+  await user.click(commentButton());
+  await waitFor(() => expect(mock.writes).toEqual(["comment:412:  hi  "]));
 });
 
 it("a failed write loses nothing: the draft stays, the form says nothing changed, and the retry works", async () => {
