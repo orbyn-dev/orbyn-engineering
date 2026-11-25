@@ -1,7 +1,9 @@
 //! The ten cells of a task's line, derived and never stored: a pure function of what `Facts` read. Only a confirmed
 //! finding that still blocks turns a review cell red; a model's review never passes or fails a stage by itself.
 
-use orbyn_contracts::{CheckOutcome, Evidence, FlowCell, FlowCellState, FlowStage, Gate};
+use orbyn_contracts::{
+    CheckOutcome, Evidence, FlowCell, FlowCellState, FlowStage, Gate, NeedsYouKind,
+};
 use serde_json::Value;
 
 use super::facts::Facts;
@@ -259,11 +261,15 @@ fn main_branch(facts: &Facts) -> FlowCellState {
     }
 }
 
-fn you(facts: &Facts) -> FlowCellState {
+/// The person's part after the merge. `wait` is the one needs-you field's kind for this task, when the field names it: a
+/// merge waiting on a person puts this cell at Needs you, from that one field and never from a second rule. A merged change
+/// waiting for the person's ordinary review is `ReviewWaiting` (the Review queue's own list, which the field does not
+/// carry).
+fn you(facts: &Facts, wait: Option<NeedsYouKind>) -> FlowCellState {
     let Some(record) = &facts.record else {
         return FlowCellState::Pending;
     };
-    if record.needs_person.is_some() {
+    if wait == Some(NeedsYouKind::MergeWaiting) {
         return FlowCellState::NeedsYou;
     }
     match record.review_state.as_str() {
@@ -273,8 +279,9 @@ fn you(facts: &Facts) -> FlowCellState {
     }
 }
 
-/// The ten cells, in the order of `FlowStage`.
-pub(super) fn cells(facts: &Facts) -> Vec<FlowCell> {
+/// The ten cells, in the order of `FlowStage`. `wait` is the one needs-you field's kind for this task, when the field names
+/// it; the You cell reads it instead of deriving its own Needs you.
+pub(super) fn cells(facts: &Facts, wait: Option<NeedsYouKind>) -> Vec<FlowCell> {
     let route = if facts.route.is_some() {
         FlowCellState::Done
     } else if facts.could_not_start() {
@@ -294,7 +301,7 @@ pub(super) fn cells(facts: &Facts) -> Vec<FlowCell> {
         cell(FlowStage::Finding, finding(facts)),
         cell(FlowStage::Merge, merge(facts)),
         cell(FlowStage::Main, main_branch(facts)),
-        cell(FlowStage::You, you(facts)),
+        cell(FlowStage::You, you(facts, wait)),
     ]
 }
 
