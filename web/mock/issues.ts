@@ -244,12 +244,20 @@ export function createIssuesMock(init: {
       if (at < 0) throw new ApiFailure("not_found", "No such issue.", 404);
       const now = issues[at]!;
       const people = pool().assignees;
+      // An assignee goes in by the id the candidates gave. A login the issue already carries is a current assignee the
+      // candidates did not list: GitHub addresses a person by login (docs/issues.md, "As built, GitHub"), so it is kept;
+      // one that is neither a candidate's id nor a current login is refused.
+      const assignee = (id: string) => {
+        const who = people.find((person) => person.id === id);
+        if (who) return { login: who.login };
+        if (now.assignees.some((person) => person.login === id)) return { login: id };
+        throw new ApiFailure("invalid", "No such person.", 400);
+      };
       issues[at] = {
         ...now,
         ...(input.title !== undefined ? { title: input.title } : {}),
         ...(input.labels !== undefined ? { labels: input.labels.map((name) => ({ name })) } : {}),
-        // An assignee goes in by the id the candidates gave; one the tracker does not know is refused.
-        ...(input.assignees !== undefined ? { assignees: input.assignees.map((id) => { const who = people.find((person) => person.id === id); if (!who) throw new ApiFailure("invalid", "No such person.", 400); return { login: who.login }; }) } : {}),
+        ...(input.assignees !== undefined ? { assignees: input.assignees.map(assignee) } : {}),
         updated_at: new Date().toISOString(),
       };
       if (input.body !== undefined) bodies.set(`${ref.tracker}:${ref.scope}:${ref.key}`, input.body);

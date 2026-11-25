@@ -271,22 +271,57 @@ it("changes the assignees by the id the candidates carry, not the login", async 
   expect(within(screen.getByRole("group", { name: "Facts" })).getByText("sam", { selector: "dd *" })).toBeVisible();
 });
 
-it("an assignee the candidates cannot address blocks Apply until it is unchecked: it is never dropped silently", async () => {
+it("keeps a current assignee the candidates do not carry, written by its login, so Apply is not blocked", async () => {
+  const sent: unknown[] = [];
+  // The candidates read is cut short before riley, who is on the issue: GitHub addresses a person by login, so the issue's
+  // own login still addresses her and the whole set goes out instead of Apply waiting for her to be unchecked.
   const candidates: IssueCandidates = { labels: [], assignees: [{ login: "sam", id: "u-3" }], truncated: true };
   const mock = createIssuesMock({ candidates });
+  const update = mock.update;
+  mock.update = async (ref, input) => { sent.push(input); return update(ref, input); };
   setIssuesApi(mock);
   const user = userEvent.setup();
   open();
   await user.click(await live("Change assignees"));
   const picker = await screen.findByRole("group", { name: "Change assignees" });
-  await user.click(await within(picker).findByRole("checkbox", { name: "sam" }));
-  expect(within(picker).getByRole("alert")).toHaveTextContent("cannot address riley");
-  expect(within(picker).getByRole("button", { name: "Apply" })).toBeDisabled();
-  await user.click(within(picker).getByRole("checkbox", { name: "riley" }));
+  const riley = await within(picker).findByRole("checkbox", { name: "riley" });
+  expect(riley).toBeChecked();
   expect(within(picker).queryByRole("alert")).toBeNull();
+  // She can be unchecked and checked again like any other row, and nothing else needs a decision.
+  await user.click(riley);
+  expect(riley).not.toBeChecked();
+  await user.click(riley);
+  expect(riley).toBeChecked();
+  expect(within(picker).getByRole("button", { name: "Apply" })).toBeDisabled();
+  await user.click(within(picker).getByRole("checkbox", { name: /^sam/ }));
   await user.click(within(picker).getByRole("button", { name: "Apply" }));
   await waitFor(() => expect(screen.queryByRole("group", { name: "Change assignees" })).toBeNull());
-  expect(mock.writes).toEqual(["update:412:assignees"]);
+  expect(sent).toEqual([{ assignees: ["riley", "u-3"] }]);
+  const facts = screen.getByRole("group", { name: "Facts" });
+  expect(within(facts).getByText("sam", { selector: "dd *" })).toBeVisible();
+  expect(within(facts).getByText("riley", { selector: "dd *" })).toBeVisible();
+});
+
+it("unchecking a current assignee the candidates do not carry removes it in the same one write", async () => {
+  const sent: unknown[] = [];
+  const candidates: IssueCandidates = { labels: [], assignees: [{ login: "sam", id: "u-3" }], truncated: true };
+  const mock = createIssuesMock({ candidates });
+  const update = mock.update;
+  mock.update = async (ref, input) => { sent.push(input); return update(ref, input); };
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  open();
+  await user.click(await live("Change assignees"));
+  const picker = await screen.findByRole("group", { name: "Change assignees" });
+  await user.click(await within(picker).findByRole("checkbox", { name: "riley" }));
+  await user.click(within(picker).getByRole("checkbox", { name: /^sam/ }));
+  await user.click(within(picker).getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Change assignees" })).toBeNull());
+  // The whole set is what a write replaces, so unchecking her is a removal, not a silent drop.
+  expect(sent).toEqual([{ assignees: ["u-3"] }]);
+  const facts = screen.getByRole("group", { name: "Facts" });
+  expect(within(facts).getByText("sam", { selector: "dd *" })).toBeVisible();
+  expect(within(facts).queryByText("riley", { selector: "dd *" })).toBeNull();
 });
 
 it("draws hostile candidate names as text and survives a login called __proto__", async () => {
@@ -308,7 +343,7 @@ it("draws hostile candidate names as text and survives a login called __proto__"
   expect(await within(people).findByText("__proto__ · <b>Bob</b>")).toBeVisible();
   expect([...people.querySelectorAll("b")].some((one) => one.textContent === "Bob")).toBe(false);
   await user.click(within(people).getByRole("checkbox", { name: /^__proto__/ }));
-  // riley is on the issue and not among the candidates, so she cannot be addressed: she is unchecked to go on.
+  // riley is on the issue and not among the candidates: unchecking her still sends only the candidate's id.
   await user.click(within(people).getByRole("checkbox", { name: "riley" }));
   await user.click(within(people).getByRole("button", { name: "Apply" }));
   await waitFor(() => expect(screen.queryByRole("group", { name: "Change assignees" })).toBeNull());

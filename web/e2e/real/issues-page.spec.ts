@@ -8,12 +8,12 @@ import { settled, startProject, threadIdOf, type Service } from "./service";
  * Covered: the list with its tracker, counts, state tabs and the label, assignee and text filters, no-match and closed rows,
  * and the absence of a Load more row; the detail page with body, comments, facts and its linked pull requests card absent
  * (the fixture reports none); the comment box's one write; the description pencil's one update; the label picker's candidates
- * read and one update of the whole set, and an assignee the candidates cannot address; the State menu closing and reopening
- * the issue; the Sort menu's two orders; and Start a thread, the service's framed draft read and one write that creates,
- * links and queues. The issue-edit routes are served for GitHub (#1593), so the candidates probe answers 400 invalid (a live
- * route) and the edit and Sort controls are live; the stand-in `gh` answers the PATCH, comment POST and assignees read those
- * edits make, so they arrive at a tracker (Start a thread, the connect route and the project preferences PUT stay inside
- * the service).
+ * read and one update of the whole set, and a current assignee the candidates do not carry written by its login; the State
+ * menu closing and reopening the issue; the Sort menu's two orders; and Start a thread, the service's framed draft read and
+ * one write that creates, links and queues. The issue-edit routes are served for GitHub (#1593), so the candidates probe
+ * answers 400 invalid (a live route) and the edit and Sort controls are live; the stand-in `gh` answers the PATCH, comment
+ * POST and assignees read those edits make, so they arrive at a tracker (Start a thread, the connect route and the project
+ * preferences PUT stay inside the service).
  *
  * The listing is cached per connection scope and full query for 30 s, and a write does not clear it (crates/orbyn-core/src/
  * issues, `CACHE_FOR` and `scope_list`), so a query key an earlier test already read can answer with the pre-write order. The
@@ -214,7 +214,7 @@ test("the description pencil saves one update through the real route", async ({ 
   expect(detail.body).toBe(body);
 });
 
-test("the label picker reads the real candidates and applies the whole set, and an unaddressable assignee blocks Apply", async ({ page }) => {
+test("the label picker reads the real candidates and applies the whole set, and a current assignee the candidates do not carry is written by login", async ({ page }) => {
   await page.goto(`${service.page}#/issues/github/o%2Fr/7`);
   await expect(page.getByRole("heading", { name: "Retry the queue", exact: true })).toBeVisible({ timeout: 30_000 });
   const facts = page.getByRole("group", { name: "Facts" });
@@ -247,17 +247,29 @@ test("the label picker reads the real candidates and applies the whole set, and 
   await expect(page.getByRole("group", { name: "Change labels" })).toHaveCount(0);
   await expect(facts.locator(".iss-label")).toHaveCount(2);
   await expect(facts).toContainText("docs");
-  // The issue's own assignee "me" is not among the stand-in's assignable people, so the picker says it cannot address it
-  // and blocks Apply rather than dropping it silently.
+  // The issue's own assignee "me" is not among the stand-in's assignable people, but GitHub addresses a person by
+  // login, so she stays checked and the whole set goes out: the picker waits for no one to be unchecked.
   const people = page.getByRole("button", { name: "Change assignees" });
   await expect(people).toBeEnabled();
   await people.click();
   const who = page.getByRole("group", { name: "Change assignees" });
   await expect(who.getByRole("checkbox", { name: "ada" })).toBeVisible();
   await expect(who.getByRole("checkbox", { name: "me" })).toBeChecked();
-  await expect(who.getByRole("alert")).toHaveText("Orbyn cannot address me yet. Uncheck it to continue.");
+  await expect(who.getByRole("alert")).toHaveCount(0);
   await expect(who.getByRole("button", { name: "Apply" })).toBeDisabled();
-  await who.getByRole("button", { name: "Cancel" }).click();
+  await who.getByRole("checkbox", { name: "ada" }).check();
+  const assigneesWritten = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/issues/item/update");
+  await who.getByRole("button", { name: "Apply" }).click();
+  const assigneeWrite = await assigneesWritten;
+  expect(assigneeWrite.status()).toBe(200);
+  expect(assigneeWrite.request().postDataJSON()).toEqual({ tracker: "github", scope: "o/r", key: "7", assignees: ["me", "ada"] });
+  await expect(page.getByRole("group", { name: "Change assignees" })).toHaveCount(0);
+  // The page shows the issue the write answered, and the service stored both people.
+  await expect(facts.locator(".iss-person")).toHaveCount(2);
+  await expect(facts.locator(".iss-person", { hasText: "me" })).toHaveCount(1);
+  await expect(facts.locator(".iss-person", { hasText: "ada" })).toHaveCount(1);
+  const stored = await service.api<{ assignees: { login: string }[] }>("GET", "/api/issues/item?tracker=github&scope=o%2Fr&key=7");
+  expect(stored.assignees.map((who) => who.login).sort()).toEqual(["ada", "me"]);
 });
 
 test("the State menu closes and reopens the issue, one write each way", async ({ page }) => {
