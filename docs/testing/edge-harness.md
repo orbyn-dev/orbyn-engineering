@@ -74,7 +74,7 @@ facts, or it will rebuild harnesses that are already there:
   `a_screenshot_answers_a_png_and_the_log_keeps_no_body_or_image`.
 - **The crash/restart harness exists.** The store Wave 4 report asks for "a crash-and-restart
   harness in orbynd/tests"; `Service::kill()` plus a second `Service::start` on the same data
-  folder already does this in five tests: the four named above plus
+  folder already does this in six tests: the four named above plus preparation_retry.rs:334 (a crashed preparation restarts as a retryable failure without replaying a command) and
   `remote_mode_needs_tls_assertion_and_exchanges_a_hashed_key`. The restart is not new; what is
   missing is a signal a test can wait for before the kill (H3), and the cases.
 - **The old-database fixture exists for schema 1.** `old_database.rs` closed the ledger's
@@ -180,7 +180,7 @@ exercise one file. The edge keeps `ORBYN_DEVICES_FAKE_DIR`; the unit tests keep 
 directory. If the cross-crate `include_str!` is judged fragile, keep the copy and accept the drift,
 but say which file is the source.
 
-**H3, a signal to wait for before the kill.** The restart is not new: five tests already call
+**H3, a signal to wait for before the kill.** The restart is not new: six tests already call
 `Service::kill()` and then a fresh `Service::start` on the same data folder. What a crash case
 needs is a point it can wait for instead of a sleep, plus a small helper that carries the data
 folder and options across the restart (a `Service::restart` convenience over the existing pair, not
