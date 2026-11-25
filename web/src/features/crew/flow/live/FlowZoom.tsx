@@ -6,7 +6,7 @@ import type { FlowTaskDetail } from "../../../../generated/FlowTaskDetail";
 import { ErrorState, Empty, Loading } from "../../../../product/ui/states";
 import { Button } from "../../../../ui/controls";
 import { DownIcon, RightIcon, StageIcon } from "./glyphs";
-import { cellOf, decidedBy, resumedNote, wasResumed, laneWord, plain, roundView, STAGES, stageWord, when } from "./model";
+import { cellOf, decidedBy, resumedNote, wasResumed, laneWord, plain, roundView, STAGES, stageWord, taskFinal, when } from "./model";
 import { checkWord, findingStatusWord, laneFacts } from "../../map/model";
 import { useTaskWrite, WriteStatus } from "../../writes/TaskWrite";
 import { useFlowTask, useRefresh } from "./useFlow";
@@ -15,6 +15,7 @@ import { RequiredLanes } from "./RemoveLane";
 import { flowApi } from "./api";
 import { RunPage } from "../../runpage/RunPage";
 import { TaskArtifacts } from "./TaskArtifacts";
+import { TaskGates } from "./TaskGates";
 
 /** The Review queue is not a tab of the Crew view yet, so Review has nowhere to open. */
 const NO_QUEUE = "The Review queue is not in this app yet";
@@ -54,14 +55,15 @@ export function FlowZoom({ id, onBack, onCrew }: { id: string; onBack(): void; o
 function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: React.ReactNode; onChanged(): Promise<void> | void }) {
   const { row } = detail;
   const round = roundView(row);
-  const final = ["passed", "stopped", "cancelled"].includes(row.state);
+  const final = taskFinal(row.state);
   // The zoom has no card flags: Cancel is for a task that has not ended, and Re-run checks for one that passed (the board's card also
   // offers it for some stopped tasks). The service decides and refuses the rest.
   const write = useTaskWrite({ id: row.id, name: row.name, allowCancel: !final, allowRerun: row.state === "passed", onDone: onChanged });
   const cancel = write.can("cancel");
   const rerun = write.can("rerun");
-  // The Run page and the artifacts view are this task's records as screens of their own, each on its own read. Neither writes.
-  const [view, setView] = useState<"task" | "run" | "artifacts">("task");
+  // The Run page, the artifacts view and the gates view are this task's records as screens of their own: the Run page and the
+  // artifacts view read their own routes, and the gates view reads this task's detail. None of them writes.
+  const [view, setView] = useState<"task" | "run" | "artifacts" | "gates">("task");
   if (view === "run") {
     return (
       <div className="fv-body fv-zoom">
@@ -71,6 +73,9 @@ function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: Rea
   }
   if (view === "artifacts") {
     return <TaskArtifacts id={row.id} name={row.name || "Untitled task"} onBack={() => setView("task")} />;
+  }
+  if (view === "gates") {
+    return <TaskGates id={row.id} name={row.name || "Untitled task"} onBack={() => setView("task")} />;
   }
   return (
     <div className="fv-body fv-zoom">
@@ -82,6 +87,9 @@ function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: Rea
         <span className="fv-spacer" />
         <button type="button" className="fv-off" onClick={() => setView("artifacts")}>
           Artifacts
+        </button>
+        <button type="button" className="fv-off" onClick={() => setView("gates")}>
+          Gates
         </button>
         <button type="button" className="fv-off" onClick={() => setView("run")}>
           Run page

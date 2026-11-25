@@ -5,7 +5,8 @@
  * Preview off. A sample with a `run` answers the Run page route; one without it keeps the older service's 404, so the page
  * falls back to its Flow-based Planned marks. A sample with an `artifacts` answers the artifacts route; one without it keeps
  * the older service's 404 too. The sample tasks exercise every state the real data can have: running, needs
- * you, failed after loops, merged and waiting for review, skipped stages, queued and stopped. Reads only.
+ * you, failed after loops, merged and waiting for review, skipped stages, queued and stopped, and gates decided by
+ * the code, by a person and by a confirmed finding, with a reviewer lane and reasons once the task is over. Reads only.
  *
  * The person's two writes (`POST /api/crew/tasks/{id}/cancel` and `/rerun-checks`) are answered by `board.ts`, for the zoom as well.
  *
@@ -97,7 +98,7 @@ function samples(): Sample[] {
           { lane: "security", group: "security", task: "task-redirect-r4", round: 1, state: "running", engine: "codex", model: "GPT-5.5", findings: 0, confirmed: 0, unconfirmed: 0 },
         ],
         findings: [{ id: "f-1", lane: "Docs", round: 1, severity: "low", path: "docs/login.md", line: 12, claim: "The example uses //evil.com", evidence: "12  next: \"//evil.com\" // a browser reads this as another site", check: "unconfirmed", status: "open", blocks: false, fix_task: null }],
-        gates: [{ stage: "checks", decision: "passed", decided_by: "code", lane: null, reason: null, at: "2026-11-07T14:10:00Z" }],
+        gates: [{ stage: "checks", decision: "pass", decided_by: "code", lane: null, reason: null, at: "2026-11-07T14:10:00Z" }],
         rounds: [{ n: 1, task: "task-redirect", state: "verifying" }],
         merge: null,
         watch: null,
@@ -129,7 +130,7 @@ function samples(): Sample[] {
     },
     {
       row: row("task-failed", "Rename the legacy returnTo helper", "implement", "claude", "failed", 3, line({ brief: "done", route: "done", build: "failed", checks: ["failed", { passed: 2, of: 3 }] }), "13:10"),
-      detail: { brief, route: { engine: "claude", model: "Sonnet 5.5", tier: "builder" }, lanes: [], findings: [], gates: [{ stage: "checks", decision: "failed", decided_by: "code", lane: null, reason: null, at: "2026-11-07T13:20:00Z" }], rounds: [{ n: 1, task: "task-failed", state: "failed" }, { n: 2, task: "task-failed-fix1", state: "failed" }, { n: 3, task: "task-failed-fix2", state: "failed" }], merge: null, watch: null, you: null },
+      detail: { brief, route: { engine: "claude", model: "Sonnet 5.5", tier: "builder" }, lanes: [], findings: [], gates: [{ stage: "checks", decision: "fail", decided_by: "code", lane: null, reason: null, at: "2026-11-07T13:20:00Z" }], rounds: [{ n: 1, task: "task-failed", state: "failed" }, { n: 2, task: "task-failed-fix1", state: "failed" }, { n: 3, task: "task-failed-fix2", state: "failed" }], merge: null, watch: null, you: null },
       // Final: the service now carries each check's command and proves line.
       run: {
         task: "task-failed", crew: MOCK_CREW, state: "failed", finished: true,
@@ -161,8 +162,10 @@ function samples(): Sample[] {
         lanes: [{ lane: "Docs", group: "code", task: "task-merged-r1", round: 1, state: "passed", engine: "codex", model: "GPT-5.5", findings: 0, confirmed: 0, unconfirmed: 0 }],
         findings: [],
         gates: [
-          { stage: "checks", decision: "passed", decided_by: "code", lane: null, reason: "2 of 2 checks ran on the commit and passed", at: "2026-11-07T12:40:00Z" },
-          { stage: "merge", decision: "merged", decided_by: "code", lane: null, reason: "Merged by Crew <b>docs</b>", at: "2026-11-07T12:50:00Z" },
+          { stage: "checks", decision: "pass", decided_by: "code", lane: null, reason: "2 of 2 checks ran on the commit and passed", at: "2026-11-07T12:40:00Z" },
+          { stage: "checks", decision: "pass", decided_by: "person", lane: null, reason: "A person checked this, and it holds.", at: "2026-11-07T12:42:00Z" },
+          { stage: "review", decision: "pass", decided_by: "code", lane: "Docs", reason: "The latest read-only run completed at this commit and no unresolved finding holds the lane.", at: "2026-11-07T12:45:00Z" },
+          { stage: "merge", decision: "pass", decided_by: "code", lane: null, reason: "Merged by Crew <b>docs</b>", at: "2026-11-07T12:50:00Z" },
         ],
         rounds: [{ n: 1, task: "task-merged", state: "passed" }],
         merge: { state: "merged", risk: "low", reasons: ["docs only"], mode: "full" },
@@ -202,7 +205,7 @@ function samples(): Sample[] {
         route: { engine: "codex", model: "Sol", tier: "lead" },
         lanes: [{ lane: "security", group: "security", task: "task-stopped-r1", round: 2, state: "passed", engine: "claude", model: "Opus 5.5", findings: 2, confirmed: 2, unconfirmed: 0 }],
         findings: [{ id: "f-2", lane: "security", round: 2, severity: "high", path: "auth/login.ts", line: 41, claim: "The limit resets on every request", evidence: "41  limit = attempts.length; // rebuilt from this request alone", check: "confirmed", status: "open", blocks: true, fix_task: "task-stopped-fix" }],
-        gates: [{ stage: "finding", decision: "blocks", decided_by: "confirmed_finding", lane: "security", reason: "A confirmed finding still blocks", at: "2026-11-07T11:50:00Z" }],
+        gates: [{ stage: "finding_check", decision: "confirmed", decided_by: "confirmed_finding", lane: null, reason: "A confirmed finding still blocks", at: "2026-11-07T11:50:00Z" }],
         rounds: [{ n: 1, task: "task-stopped", state: "failed" }, { n: 2, task: "task-stopped-fix", state: "stopped" }],
         merge: null,
         watch: null,
