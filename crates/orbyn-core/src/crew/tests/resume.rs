@@ -409,3 +409,32 @@ async fn a_resume_brief_that_cannot_be_sent_stops_send_failed() {
         "a resume that could not be sent is not the second-death wait"
     );
 }
+
+#[tokio::test]
+async fn a_restart_on_the_exact_budget_boundary_stops_without_a_resume() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let (id, worker, _) = dead_task(&w, "worker-edge", 30).await;
+    // The newest recorded event is the second the thirty minutes ran out: exactly nothing is left. The
+    // boundary is the case, not a budget blown long ago (that is a_budget_spent_before_the_restart...):
+    // one second earlier would be a resume and one second of clock drift would hide an off-by-one.
+    let created = crate::util::unix_now() - 2 * DAY;
+    let last = created + 30 * 60;
+    set_times(&w, &id, created, last);
+
+    w.core.recover_crew_tasks().await;
+
+    let task = w.task(&id);
+    assert_eq!(task.state, "stopped");
+    assert_eq!(task.stop_reason.as_deref(), Some("budget"));
+    assert_eq!(task.stop_detail, None);
+    let run = w.core.store.crew_run(&id).unwrap().unwrap();
+    assert_eq!(
+        (run.resume_count, run.attempts),
+        (0, 0),
+        "one resume then a turn were counted"
+    );
+    assert!(run.resumed_at.is_none());
+    assert!(audits(&w, &id, "crew.task.resumed").is_empty());
+    assert!(audits(&w, &id, "crew.task.restart_stopped").is_empty());
+    assert!(w.sent_to(&worker).is_empty(), "no turn was sent");
+}
