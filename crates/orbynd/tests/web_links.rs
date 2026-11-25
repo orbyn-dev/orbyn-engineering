@@ -148,17 +148,14 @@ fn serve_page() -> u16 {
     port
 }
 
-/// Drives an installed Chrome or Edge. Run with `--ignored` where one exists.
+/// Drives a real browser: `support::browser_env` finds one, or says why the test skips.
 #[tokio::test]
-#[ignore = "needs an installed browser"]
 async fn a_web_link_opens_a_preview_on_the_latest_trusted_thread() {
+    let Some(env) = support::browser_env(&[("ORBYN_BROWSER_HEADLESS", "1")]) else {
+        return;
+    };
     let dir = TempDir::new();
-    let (mut service, first) = setup(
-        &dir,
-        desktop(vec![("ORBYN_BROWSER_HEADLESS".into(), "1".into())]),
-        "codex",
-    )
-    .await;
+    let (mut service, first) = setup(&dir, desktop(env), "codex").await;
     let project = service.json(&format!("/api/threads/{first}")).await["project_id"]
         .as_str()
         .unwrap()
