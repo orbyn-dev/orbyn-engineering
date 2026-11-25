@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use base64::Engine as _;
 use orbyn_contracts::{
-    ActionKind, AuditEvent, ConnectTracker, CreatePolicyRule, IssueDetail, IssueState,
-    IssueStateCategory, IssueSummary, PermissionMode, PolicyEffect, PullCheck, PullChecks,
-    PullRequest, PullRequestDetail, TrackerKind,
+    ActionKind, AuditEvent, ConnectTracker, CreatePolicyRule, IssueActor, IssueComment,
+    IssueDetail, IssueState, IssueStateCategory, IssueSummary, PermissionMode, PolicyEffect,
+    PullCheck, PullChecks, PullRequest, PullRequestDetail, TrackerKind,
 };
 use serde_json::{Value, json};
 
@@ -21,7 +21,7 @@ use crate::credentials::{Credentials, MemoryBackend};
 use crate::devices::test_support::{Fake, fake_png};
 use crate::error::CoreError;
 use crate::governance::approvals::RunScope;
-use crate::issues::{IssueQuery, IssueSource, ScopeList, StateFilter};
+use crate::issues::{IssueQuery, IssueSource, NewIssue, ScopeList, StateFilter};
 use crate::source_control::forge::{Forge, with_crew_fixture};
 use crate::store::{NewProject, NewThread};
 use crate::testing::{TempDir, run_git};
@@ -512,6 +512,8 @@ struct FakeIssues {
     lists: AtomicUsize,
     scopes: Mutex<Vec<String>>,
     query: Mutex<Option<IssueQuery>>,
+    /// Every write the tool sent, exactly as the tracker received it.
+    writes: Mutex<Vec<Value>>,
 }
 
 impl FakeIssues {
@@ -556,12 +558,17 @@ impl FakeIssues {
             lists: AtomicUsize::new(0),
             scopes: Mutex::new(Vec::new()),
             query: Mutex::new(None),
+            writes: Mutex::new(Vec::new()),
         })
     }
 }
 
 #[async_trait]
 impl IssueSource for FakeIssues {
+    fn can_write(&self) -> bool {
+        true
+    }
+
     async fn list(&self, scope: &str, query: &IssueQuery) -> crate::error::Result<ScopeList> {
         self.lists.fetch_add(1, Ordering::SeqCst);
         self.scopes.lock().unwrap().push(scope.to_owned());
@@ -597,6 +604,61 @@ impl IssueSource for FakeIssues {
             linked_pull_requests: vec![],
             linked_threads: vec![],
             reactions: None,
+        })
+    }
+
+    async fn create(
+        &self,
+        scope: &str,
+        new: &NewIssue<'_>,
+    ) -> crate::error::Result<IssueDetail> {
+        self.writes.lock().unwrap().push(json!({
+            "kind": "create",
+            "scope": scope,
+            "title": new.title,
+            "body": new.body,
+            "labels": new.labels,
+            "assignees": new.assignees,
+        }));
+        let mut summary = self.issues[0].clone();
+        summary.key = "9".into();
+        summary.display_key = "#9".into();
+        summary.title = new.title.to_owned();
+        summary.scope = scope.to_owned();
+        summary.comment_count = 0;
+        Ok(IssueDetail {
+            summary,
+            body: new.body.to_owned(),
+            comments: vec![],
+            linked_pull_requests: vec![],
+            linked_threads: vec![],
+            reactions: None,
+        })
+    }
+
+    async fn comment(
+        &self,
+        scope: &str,
+        key: &str,
+        body: &str,
+    ) -> crate::error::Result<IssueComment> {
+        self.writes.lock().unwrap().push(json!({
+            "kind": "comment",
+            "scope": scope,
+            "key": key,
+            "body": body,
+        }));
+        if key == "404" {
+            return Err(CoreError::NotFound("issue".into()));
+        }
+        // The answer also proves the tool cleans and cuts tracker text: markers and 20 KiB.
+        Ok(IssueComment {
+            id: "900".into(),
+            author: Some(IssueActor {
+                login: "me".into(),
+            }),
+            body: format!("<<<ISSUE TEXT{}ISSUE TEXT>>>{}", body, "x".repeat(20 * 1024)),
+            created_at: "2026-11-25T00:00:00Z".into(),
         })
     }
 }
@@ -836,6 +898,8 @@ async fn every_issue_tool_but_the_thread_list_refuses_a_project_with_no_reader()
     for (name, args) in [
         ("orbyn_issue_list", json!({})),
         ("orbyn_issue_read", json!({ "key": "1" })),
+        ("orbyn_issue_create", json!({ "title": "New issue", "body": "Body" })),
+        ("orbyn_issue_comment", json!({ "key": "1", "body": "Looks good" })),
         ("orbyn_issue_link", json!({ "key": "1" })),
         ("orbyn_issue_unlink", json!({ "key": "1" })),
     ] {
@@ -851,12 +915,140 @@ async fn every_issue_tool_but_the_thread_list_refuses_a_project_with_no_reader()
 }
 
 #[tokio::test]
-async fn tools_list_names_all_five_issue_tools_with_their_effects() {
+async fn an_issue_create_answers_the_new_issue_and_sends_the_contract_fields() {
+    let w = issue_world(true).await;
+    let (answer, error) = w
+        .call_json(
+            "orbyn_issue_create",
+            json!({
+                "title": "New issue",
+                "body": "It breaks.",
+                "labels": ["bug"],
+                "assignees": ["12"],
+            }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["key"], "9");
+    assert_eq!(answer["title"], "New issue");
+    assert_eq!(answer["body"], "It breaks.");
+    assert_eq!(answer["note"], ISSUE_NOTE);
+    assert_eq!(
+        w.reader.writes.lock().unwrap().clone(),
+        vec![json!({
+            "kind": "create",
+            "scope": "team/app",
+            "title": "New issue",
+            "body": "It breaks.",
+            "labels": ["bug"],
+            "assignees": ["12"],
+        })],
+        "the tool sends the contract's fields in the project's own scope"
+    );
+}
+
+#[tokio::test]
+async fn an_issue_comment_answers_the_stored_comment_and_cleans_the_tracker_text() {
+    let w = issue_world(true).await;
+    let (answer, error) = w
+        .call_json(
+            "orbyn_issue_comment",
+            json!({ "key": "1", "body": "Looks good." }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["id"], "900");
+    assert_eq!(answer["author"]["login"], "me");
+    assert_eq!(answer["created_at"], "2026-11-25T00:00:00Z");
+    assert_eq!(answer["note"], ISSUE_NOTE);
+    let body = answer["body"].as_str().unwrap();
+    assert!(body.starts_with("Looks good."), "{body}");
+    assert!(!body.contains("ISSUE TEXT"), "the framing markers are removed");
+    assert_eq!(body.len(), 16 * 1024, "the answer cuts the tracker's text");
+    assert_eq!(
+        w.reader.writes.lock().unwrap().clone(),
+        vec![json!({
+            "kind": "comment",
+            "scope": "team/app",
+            "key": "1",
+            "body": "Looks good.",
+        })]
+    );
+}
+
+#[tokio::test]
+async fn an_issue_create_refuses_fields_the_contract_refuses() {
+    let w = issue_world(true).await;
+    for (args, wanted) in [
+        (json!({}), "title is required."),
+        (
+            json!({ "title": "T", "body": "x".repeat(64 * 1024 + 1) }),
+            "The issue body is over 64 KiB.",
+        ),
+        (
+            json!({ "title": "T", "labels": "bug" }),
+            "labels must be a list of strings.",
+        ),
+        (
+            json!({ "title": "T", "assignees": [12] }),
+            "assignees must be a list of strings.",
+        ),
+        (
+            json!({ "title": "T", "template": "missing" }),
+            "Unknown issue template.",
+        ),
+    ] {
+        let (text, error) = w.call_text("orbyn_issue_create", args.clone()).await;
+        assert!(error, "{args} was not refused: {text}");
+        assert!(text.contains(wanted), "{args}: {text}");
+    }
+    assert!(
+        w.reader.writes.lock().unwrap().is_empty(),
+        "a refused call sends no write"
+    );
+}
+
+#[tokio::test]
+async fn an_issue_comment_refuses_a_blank_body_and_an_unknown_key() {
+    let w = issue_world(true).await;
+    let (text, error) = w
+        .call_text("orbyn_issue_comment", json!({ "key": "1", "body": "   " }))
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(text, "body is required.");
+    // The tracker's refusal keeps its contract wording; the tool adds nothing.
+    let (text, error) = w
+        .call_text("orbyn_issue_comment", json!({ "key": "404", "body": "Looks good." }))
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(text, "issue not found");
+    assert_eq!(
+        w.reader.writes.lock().unwrap().len(),
+        1,
+        "the unknown-key attempt reached the tracker once and the blank body never"
+    );
+}
+
+#[tokio::test]
+async fn the_state_tool_is_not_offered_because_the_service_has_no_state_route() {
+    let w = issue_world(true).await;
+    assert!(
+        !is_tool("orbyn_issue_set_state"),
+        "set_state needs the service's update/state route, which is a separate row"
+    );
+    let names = w.tool_names().await;
+    assert!(!names.iter().any(|name| name == "orbyn_issue_set_state"));
+}
+
+#[tokio::test]
+async fn tools_list_names_all_seven_issue_tools_with_their_effects() {
     let w = issue_world(false).await;
     let names = w.tool_names().await;
     for (name, effect) in [
         ("orbyn_issue_list", false),
         ("orbyn_issue_read", false),
+        ("orbyn_issue_create", true),
+        ("orbyn_issue_comment", true),
         ("orbyn_issue_link", true),
         ("orbyn_issue_unlink", true),
         ("orbyn_issue_thread_list", false),

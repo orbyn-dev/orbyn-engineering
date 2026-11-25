@@ -9,7 +9,7 @@ use super::{
     issue_query, issue_ref_value, issue_summary_value, matches_words, number, pull_check_name,
     pull_checks_value, pull_comment_body, pull_detail_value, pull_filter, pull_limit,
     pull_list_value, pull_merge_args, pull_merge_refusal, pull_number, pull_reply_to, pull_review,
-    pull_update_args, text, wait_seconds,
+    optional_text, pull_update_args, strings, text, wait_seconds,
 };
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -18,8 +18,9 @@ use crate::issues::ProjectReader;
 use crate::store::AuditRecord;
 use crate::tools::mcp::McpBinding;
 use orbyn_contracts::{
-    ActionKind, AddPullComment, CreateThread, DelegateTask, DeviceActionInput, DeviceActionOutput,
-    IssueKey, MergePull, PermissionMode, TaskSchedule, Thread, UpdateThread, UpsertTask,
+    ActionKind, AddPullComment, CommentIssue, CreateIssue, CreateThread, DelegateTask,
+    DeviceActionInput, DeviceActionOutput, IssueKey, MergePull, PermissionMode, TaskSchedule,
+    Thread, UpdateThread, UpsertTask,
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -123,6 +124,14 @@ impl Core {
                 "orbyn_pull_request_comment" => format!(
                     "Comment on pull request #{} of this project",
                     number(args, "number")?
+                ),
+                "orbyn_issue_create" => format!(
+                    "Create issue \"{}\" in this project's tracker",
+                    text(args, "title")?
+                ),
+                "orbyn_issue_comment" => format!(
+                    "Comment on issue {} in this project's tracker",
+                    text(args, "key")?
                 ),
                 "orbyn_pull_request_update" => {
                     let named: Vec<&str> = ["title", "body", "draft"]
@@ -837,6 +846,43 @@ impl Core {
                 issue["body"] = json!(self.issue_body_for_tool(&detail.body));
                 issue["note"] = json!(ISSUE_NOTE);
                 issue
+            }
+            "orbyn_issue_create" => {
+                let reader = self.issue_reader(&own).await?;
+                let detail = self
+                    .create_issue(CreateIssue {
+                        tracker: reader.tracker,
+                        scope: reader.scope.clone(),
+                        title: text(args, "title")?.to_owned(),
+                        body: optional_text(args, "body")?,
+                        labels: strings(args, "labels")?,
+                        assignees: strings(args, "assignees")?,
+                        template: optional_text(args, "template")?,
+                    })
+                    .await?;
+                let mut issue = issue_summary_value(&detail.summary);
+                issue["body"] = json!(self.issue_body_for_tool(&detail.body));
+                issue["note"] = json!(ISSUE_NOTE);
+                issue
+            }
+            "orbyn_issue_comment" => {
+                let reader = self.issue_reader(&own).await?;
+                let key = issue_key(args, &reader)?;
+                let comment = self
+                    .comment_issue(CommentIssue {
+                        tracker: reader.tracker,
+                        scope: reader.scope.clone(),
+                        key: key.key,
+                        body: text(args, "body")?.to_owned(),
+                    })
+                    .await?;
+                json!({
+                    "id": comment.id,
+                    "author": comment.author,
+                    "created_at": comment.created_at,
+                    "body": self.issue_body_for_tool(&comment.body),
+                    "note": ISSUE_NOTE,
+                })
             }
             "orbyn_issue_link" => {
                 let reader = self.issue_reader(&own).await?;
