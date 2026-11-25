@@ -14,7 +14,7 @@ import { Markdown } from "../content";
 import { issuesApi, useApiVersion, useEditOffered } from "./api";
 import { capText, closedWords, isIssueKey, isTracker, pullWord, stateWord, trackerName } from "./model";
 import type { IssueDetail as Detail, LinkedPullRequest } from "./contract";
-import { PickerEditor, useDescriptionEditor, type EditProps, type IssueWriter } from "./IssueEdit";
+import { IssueTitle, PickerEditor, useDescriptionEditor, type EditProps, type IssueWriter } from "./IssueEdit";
 import { IssueGlyph } from "./IssueGlyph";
 import { IssueStateButton } from "./IssueStateMenu";
 import { reloadIssueLinks, useIssueThreads } from "./links";
@@ -185,7 +185,7 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
   return (
     <>
       <PageBar back={{ name: "issues" }}>
-        <h1 tabIndex={-1} data-page-title>{issue?.title ?? "Issue"}</h1>
+        {issue ? <IssueTitle issue={issue} offered={offered} write={write} writing={writing} /> : <h1 tabIndex={-1} data-page-title>Issue</h1>}
         {issue ? <span className="page-sub"><span className="page-sub-item">{issue.display_key} · {trackerName(issue.tracker)} · {issue.scope}</span><span className="page-sub-item iss-state"><IssueGlyph state={issue.state} />{stateWord(issue.state)}</span></span> : null}
       </PageBar>
       <div className="iss-detail">

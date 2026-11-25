@@ -154,6 +154,122 @@ it("a first write that meets 'no such route' says so, keeps the draft, and the p
   expect(screen.getByRole("button", { name: "Change labels" }).parentElement).toHaveTextContent("Planned");
 });
 
+// ---- the title ----
+
+it("edits the title: one write with the new title, and the page shows what the service answered", async () => {
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  open();
+  await user.click(await live("Edit title"));
+  const box = screen.getByRole("textbox", { name: "Title" });
+  expect(box).toHaveValue("Login sends people back to /home");
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  await user.clear(box);
+  await user.type(box, "Log in returns to the page people came from");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByRole("textbox", { name: "Title" })).toBeNull());
+  expect(screen.getByRole("heading", { name: "Log in returns to the page people came from" })).toBeVisible();
+  expect(mock.writes).toEqual(["update:412:title"]);
+});
+
+it("a failed title write loses nothing: the draft stays as typed, and the heading is as it was", async () => {
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  mock.failNext("update");
+  const user = userEvent.setup();
+  open();
+  await user.click(await live("Edit title"));
+  const box = screen.getByRole("textbox", { name: "Title" });
+  await user.clear(box);
+  await user.type(box, "My careful title");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("GitHub did not answer. Nothing changed.");
+  expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("My careful title");
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  // The retry is the same button, and it works.
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByRole("textbox", { name: "Title" })).toBeNull());
+  expect(screen.getByRole("heading", { name: "My careful title" })).toBeVisible();
+});
+
+it("cancel leaves the title alone and sends nothing", async () => {
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  open();
+  await user.click(await live("Edit title"));
+  await user.type(screen.getByRole("textbox", { name: "Title" }), " and more");
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("textbox", { name: "Title" })).toBeNull();
+  expect(screen.getByRole("heading", { name: "Login sends people back to /home" })).toBeVisible();
+  expect(mock.writes).toEqual([]);
+});
+
+it("refuses an empty or over 256 character title on this side, before anything is sent", async () => {
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  open();
+  await user.click(await live("Edit title"));
+  const box = screen.getByRole("textbox", { name: "Title" });
+  await user.clear(box);
+  expect(screen.getByRole("alert")).toHaveTextContent("The title cannot be empty.");
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  await user.click(box);
+  await user.paste("x".repeat(257));
+  expect(screen.getByRole("alert")).toHaveTextContent("over 256 characters");
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(mock.writes).toEqual([]);
+});
+
+it("a title is text, never markup: it goes back as typed and is drawn as text", async () => {
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  open();
+  await user.click(await live("Edit title"));
+  const box = screen.getByRole("textbox", { name: "Title" });
+  await user.clear(box);
+  await user.click(box);
+  await user.paste('<img src=x onerror="alert(1)"> <b>bold</b>');
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByRole("textbox", { name: "Title" })).toBeNull());
+  expect(screen.getByRole("heading", { name: '<img src=x onerror="alert(1)"> <b>bold</b>' })).toBeVisible();
+  expect(document.querySelector(".topbar img, .topbar b")).toBeNull();
+});
+
+it("while the service does not offer the writes the title pencil is a Planned pill and nothing is sent", async () => {
+  const mock = createIssuesMock({ edits: false });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  open();
+  const pencil = await screen.findByRole("button", { name: "Edit title" });
+  expect(pencil).toBeDisabled();
+  expect(pencil.parentElement).toHaveTextContent("Planned");
+  await user.click(pencil);
+  expect(screen.queryByRole("textbox", { name: "Title" })).toBeNull();
+  expect(mock.writes).toEqual([]);
+});
+
+it("a first title write that meets 'no such route' says so, keeps the draft, and the pencil goes back to Planned", async () => {
+  const mock = createIssuesMock();
+  mock.update = async () => { throw new ApiFailure("http_404", "The server answered 404.", 404); };
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  open();
+  await user.click(await live("Edit title"));
+  await user.type(screen.getByRole("textbox", { name: "Title" }), " edit");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("This service does not offer editing yet. Nothing changed.");
+  expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Login sends people back to /home edit");
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  const pencil = screen.getByRole("button", { name: "Edit title" });
+  expect(pencil).toBeDisabled();
+  expect(pencil.parentElement).toHaveTextContent("Planned");
+});
+
 // ---- labels and assignees ----
 
 it("changes the labels: the picker reads the candidates when it opens, lists the current ones checked, and Apply is one write with the whole set", async () => {
@@ -345,6 +461,7 @@ it("while one write is in flight no other control on the page can start one", as
   open();
   await user.click(await screen.findByRole("button", { name: "State: Open" }));
   await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Closed" }));
+  expect(screen.getByRole("button", { name: "Edit title" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Edit description" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Change labels" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Change assignees" })).toBeDisabled();

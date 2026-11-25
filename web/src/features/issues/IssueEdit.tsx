@@ -9,8 +9,8 @@ import { capText, reasonOf } from "./model";
 import { PlannedControl } from "./Planned";
 
 /**
- * The editors of an issue page: the description, and the label and assignee pickers. They are the minimal inline forms (no frame
- * draws them yet). Every one of them follows the same rules:
+ * The editors of an issue page: the title, the description, and the label and assignee pickers. They are the minimal inline
+ * forms (no frame draws them yet). Every one of them follows the same rules:
  *
  * - The text is the tracker's, and what the person types goes back as a field value. It is shown only through React text and a
  *   controlled `textarea`, never as markup.
@@ -93,6 +93,68 @@ export function useDescriptionEditor({ issue, offered, write, writing }: EditPro
     </form>
   ) : null;
   return { pencil, editor, editing };
+}
+
+/**
+ * The issue's title in its page bar: the heading, and the pencil that edits it. While the form is open it takes the heading's
+ * place in the bar, as the pull request page does; there is no separate card for it. It writes through the page's own guard,
+ * so it shares the one-write-at-a-time rule with the description and the pickers, and a draft stays beside its refusal.
+ * The panel tab stays read only: its comment says the tracker is where an issue is written.
+ */
+export function IssueTitle({ issue, offered, write, writing }: EditProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (editing) input.current?.focus(); }, [editing]);
+  const problem = updateProblem({ title: draft });
+  const unchanged = draft === issue.title;
+  const save = async () => {
+    if (writing || problem || unchanged) return;
+    setError(null);
+    try {
+      const done = await write(() => issuesApi().update(issue, { title: draft }));
+      if (done) setEditing(false);
+    } catch (failure) {
+      // The draft stays exactly as it was typed.
+      setError(failureWords(failure));
+    }
+  };
+  if (editing) {
+    return (
+      <form
+        className="iss-title-form"
+        onSubmit={(event) => { event.preventDefault(); void save(); }}
+        onKeyDown={(event) => { if (event.key === "Escape" && !writing) { event.stopPropagation(); setEditing(false); } }}
+      >
+        <input
+          ref={input}
+          aria-label="Title"
+          value={draft}
+          disabled={writing}
+          aria-invalid={problem !== null || undefined}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <Button small tone="primary" type="submit" busy={writing} disabled={problem !== null || unchanged}>Save</Button>
+        <Button small onClick={() => setEditing(false)} disabled={writing}>Cancel</Button>
+        {problem ? <p className="iss-edit-error" role="alert">{problem}</p> : null}
+        {error ? <p className="iss-edit-error" role="alert">{error}</p> : null}
+      </form>
+    );
+  }
+  const pencil = !offered ? (
+    <PlannedControl label="Edit title" what="Editing the title" className="iss-icb"><Pencil size={13} aria-hidden /></PlannedControl>
+  ) : (
+    <button type="button" className="iss-icb" aria-label="Edit title" aria-expanded={false} disabled={writing} onClick={() => { setDraft(issue.title); setError(null); setEditing(true); }}>
+      <Pencil size={13} aria-hidden />
+    </button>
+  );
+  return (
+    <span className="iss-title-line">
+      <h1 tabIndex={-1} data-page-title>{issue.title}</h1>
+      {pencil}
+    </span>
+  );
 }
 
 type Kind = "labels" | "assignees";

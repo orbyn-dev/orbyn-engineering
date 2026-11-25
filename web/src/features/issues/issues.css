@@ -185,7 +185,12 @@
 .iss-pr-sub { display: flex; flex-wrap: wrap; gap: 6px; color: var(--color-muted); overflow-wrap: anywhere; }
 .iss-pr-state { color: var(--color-muted); }
 
-/* Inline editors: the description, and the label and assignee pickers. Minimal: no frame draws them yet. */
+/* Inline editors: the title, the description, and the label and assignee pickers. Minimal: no frame draws them yet. */
+.iss-title-line { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
+.iss-title-form { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.iss-title-form input { flex: 1 1 240px; min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--color-borderStrong); border-radius: 6px; background: var(--color-surface); color: var(--color-text); font: inherit; font-size: var(--text-body); }
+.iss-title-form input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.iss-title-form .iss-edit-error { flex-basis: 100%; }
 .iss-edit { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
 .iss-edit-label { font-size: var(--text-label); color: var(--color-muted); }
 .iss-edit textarea, .iss-edit input[type="search"] { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--color-borderStrong); border-radius: 6px; background: var(--color-surface); color: var(--color-text); font: inherit; font-size: var(--text-meta); }

@@ -323,13 +323,13 @@ it("says the thread links could not be read, offers Retry, and keeps the facts a
   expect(within(threads).queryByRole("button", { name: "Retry" })).toBeNull();
 });
 
-it("shows the description, labels and assignees controls as Planned while the service does not offer the writes: present, off, and nothing is sent", async () => {
+it("shows the title, description, labels and assignees controls as Planned while the service does not offer the writes: present, off, and nothing is sent", async () => {
   const mock = createIssuesMock({ edits: false });
   setIssuesApi(mock);
   const user = userEvent.setup();
   at(ISSUE);
   await screen.findByRole("group", { name: "Facts" });
-  for (const name of ["Edit description", "Change labels", "Change assignees"]) {
+  for (const name of ["Edit title", "Edit description", "Change labels", "Change assignees"]) {
     const button = screen.getByRole("button", { name });
     expect(button).toBeDisabled();
     expect(button.parentElement).toHaveTextContent("Planned");
