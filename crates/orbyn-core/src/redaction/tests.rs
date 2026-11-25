@@ -929,6 +929,13 @@ fn changes_that_widen_are_audited_by_name_without_the_pattern_text() {
         ours.iter()
             .all(|row| !row.detail.to_string().contains(&text))
     );
+    // The change can only come from the person (Person routes, enforced with the person key),
+    // so the audit row says so rather than leaving the source unknown.
+    assert!(
+        ours.iter().all(|row| row.source == "person"),
+        "{:?}",
+        ours.iter().map(|row| &row.source).collect::<Vec<_>>()
+    );
 }
 
 #[test]
