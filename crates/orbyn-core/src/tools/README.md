@@ -15,6 +15,20 @@ What a running agent can call: Orbyn's per-run MCP server, its tools and the ski
 
 The old paths `tools::mcp_tools` and `tools::mcp_apps` still resolve as aliases in `mod.rs`. Tests of the tools sit in `mcp/tools/tests.rs`.
 
+## Stack budget
+
+A tool call's debug-build cost is frames, not future payloads: the payloads on the device path
+(`McpService::handle` 16 KiB, the device `act`/`list` futures 38 KiB) are small, while an
+unoptimized build keeps every frame of the chain live at once. Measured on a 2 MiB test thread,
+`orbyn_device_screenshot` through the transport needs about 1.4 MiB; before the device tools were
+taken out of `run_orbyn_tool`'s match it needed about 1.8 MiB, and awaiting the device call
+unboxed overflowed the thread. `run_orbyn_tool`'s frame is about 450 KiB here because its match
+holds every arm's locals, so `call_orbyn_tool` dispatches the device tools through
+`run_device_tool` before that frame exists (#1515). The device tool tests call through
+`McpService::handle`, so a change that deepens the chain fails them instead of passing quietly;
+re-measure with
+`cargo test -p orbyn-core --lib -- tools::mcp::tools::tests::the_device_screenshot_succeeds_through_the_mcp_transport`.
+
 `claude_skills` discovers Claude Code skill names and resolves its configuration
 directory. The conversation composer uses discovery, and `workflow_scripts` uses
 the configuration directory to locate scripts. The Claude-specific format does
