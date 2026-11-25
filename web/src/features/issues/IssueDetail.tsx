@@ -14,6 +14,7 @@ import { Markdown } from "../content";
 import { issuesApi, useApiVersion, useEditOffered } from "./api";
 import { capText, closedWords, isIssueKey, isTracker, pullWord, stateWord, trackerName } from "./model";
 import type { IssueDetail as Detail, LinkedPullRequest } from "./contract";
+import { CommentBox } from "./IssueComment";
 import { PickerEditor, useDescriptionEditor, type EditProps, type IssueWriter } from "./IssueEdit";
 import { IssueGlyph } from "./IssueGlyph";
 import { IssueStateButton } from "./IssueStateMenu";
@@ -124,6 +125,8 @@ export function Body({ issue, page = false, edit }: { issue: Detail; page?: bool
           <div className="iss-body"><Markdown text={comment.body} remoteImages="link" /></div>
         </article>
       ))}
+      {/* The page adds the comment box; the panel tab stays read only. */}
+      {page && edit ? <CommentBox issue={issue} write={edit.write} writing={edit.writing} /> : null}
     </div>
   );
 }
