@@ -1545,8 +1545,12 @@ mod writes {
     //! so a refusal can be shown to have sent nothing.
 
     use super::*;
-    use crate::issues::{NewIssue, display_name};
-    use orbyn_contracts::{CommentIssue, CreateIssue, IssueComment, IssueReaction, ReactIssue};
+    use crate::issues::{IssueEdit, NewIssue, display_name};
+    use orbyn_contracts::{
+        CommentIssue, CreateIssue, IssueAssigneeCandidate, IssueCandidateLabel, IssueCandidates,
+        IssueCloseReason, IssueComment, IssueReaction, IssueSetStateInput, IssueState,
+        IssueStateCategory, IssueUpdateInput, ReactIssue,
+    };
 
     /// A source whose write may or may not be built. Every write it receives is counted; a read answers nothing.
     struct Writes {
@@ -1554,6 +1558,9 @@ mod writes {
         creates: AtomicUsize,
         comments: AtomicUsize,
         reactions: AtomicUsize,
+        edits: AtomicUsize,
+        /// The states `get` declares; absent means the issue is not found.
+        states: Option<Vec<IssueState>>,
         templates: Vec<IssueTemplate>,
         /// The labels each create sent, in order: a template's labels must never appear here unrequested.
         sent_labels: Mutex<Vec<Vec<String>>>,
@@ -1570,15 +1577,59 @@ mod writes {
                 creates: AtomicUsize::new(0),
                 comments: AtomicUsize::new(0),
                 reactions: AtomicUsize::new(0),
+                edits: AtomicUsize::new(0),
+                states: None,
                 templates,
                 sent_labels: Mutex::new(Vec::new()),
             })
+        }
+
+        /// A source whose edits are built, whose issue `7` declares an open and a closed state.
+        fn editing() -> Arc<Self> {
+            let mut source = Self {
+                can_write: true,
+                creates: AtomicUsize::new(0),
+                comments: AtomicUsize::new(0),
+                reactions: AtomicUsize::new(0),
+                edits: AtomicUsize::new(0),
+                states: None,
+                templates: Vec::new(),
+                sent_labels: Mutex::new(Vec::new()),
+            };
+            source.states = Some(vec![
+                IssueState {
+                    category: IssueStateCategory::Open,
+                    name: "Open".into(),
+                    close_reason: None,
+                },
+                IssueState {
+                    category: IssueStateCategory::Closed,
+                    name: "Closed".into(),
+                    close_reason: Some(IssueCloseReason::Completed),
+                },
+            ]);
+            Arc::new(source)
         }
 
         fn writes(&self) -> usize {
             self.creates.load(Ordering::SeqCst)
                 + self.comments.load(Ordering::SeqCst)
                 + self.reactions.load(Ordering::SeqCst)
+                + self.edits.load(Ordering::SeqCst)
+        }
+
+        fn detail(&self, scope: &str, key: &str) -> IssueDetail {
+            let mut summary = issue(TrackerKind::Github, key, "2026-11-24T00:00:00Z");
+            summary.scope = scope.to_owned();
+            IssueDetail {
+                summary,
+                body: String::new(),
+                comments: vec![],
+                linked_pull_requests: vec![],
+                linked_threads: vec![],
+                reactions: None,
+                states: self.states.clone(),
+            }
         }
     }
 
@@ -1592,12 +1643,55 @@ mod writes {
             })
         }
 
-        async fn get(&self, _scope: &str, key: &str) -> Result<IssueDetail> {
+        async fn get(&self, scope: &str, key: &str) -> Result<IssueDetail> {
+            if self.states.is_some() {
+                return Ok(self.detail(scope, key));
+            }
             Err(CoreError::NotFound(format!("issue {key}")))
         }
 
         fn can_write(&self) -> bool {
             self.can_write
+        }
+
+        fn can_edit(&self) -> bool {
+            self.states.is_some()
+        }
+
+        async fn update(&self, scope: &str, key: &str, _edit: &IssueEdit<'_>) -> Result<IssueDetail> {
+            self.edits.fetch_add(1, Ordering::SeqCst);
+            Ok(self.detail(scope, key))
+        }
+
+        async fn set_state(
+            &self,
+            scope: &str,
+            key: &str,
+            _state: &str,
+            _close_reason: Option<IssueCloseReason>,
+        ) -> Result<IssueDetail> {
+            self.edits.fetch_add(1, Ordering::SeqCst);
+            Ok(self.detail(scope, key))
+        }
+
+        /// More labels and people than the 200 the route keeps, with no `truncated` of its own.
+        async fn candidates(&self, _scope: &str) -> Result<IssueCandidates> {
+            Ok(IssueCandidates {
+                labels: (0..201)
+                    .map(|n| IssueCandidateLabel {
+                        name: format!("label-{n}"),
+                        color: None,
+                    })
+                    .collect(),
+                assignees: (0..201)
+                    .map(|n| IssueAssigneeCandidate {
+                        login: format!("user-{n}"),
+                        name: None,
+                        id: format!("user-{n}"),
+                    })
+                    .collect(),
+                truncated: false,
+            })
         }
 
         async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
@@ -2286,5 +2380,116 @@ mod binding {
             matches!(scoped_unbind, Err(CoreError::Invalid(_))),
             "{scoped_unbind:?}"
         );
+    }
+
+    /// A world whose GitHub source builds its edits and declares an open and a closed state.
+    async fn editing() -> (super::super::harness::World, Arc<Writes>) {
+        let (w, _) = connected(TrackerKind::Github, "acme/app", true).await;
+        let source = Writes::editing();
+        w.core.issues.set_source(TrackerKind::Github, source.clone());
+        (w, source)
+    }
+
+    fn update(kind: TrackerKind, scope: &str) -> IssueUpdateInput {
+        IssueUpdateInput {
+            tracker: kind,
+            scope: scope.to_owned(),
+            key: "7".into(),
+            title: Some("New title".into()),
+            body: None,
+            labels: None,
+            assignees: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn an_update_with_nothing_to_change_is_refused_and_sends_nothing() {
+        let (w, source) = editing().await;
+        let mut empty = update(TrackerKind::Github, "acme/app");
+        empty.title = None;
+        let error = w.core.update_issue(empty).await.map(|_| ()).unwrap_err();
+        assert_eq!((error.status(), error.code()), (400, "invalid_input"));
+        assert_eq!(source.writes(), 0);
+        // One present field is written.
+        w.core
+            .update_issue(update(TrackerKind::Github, "acme/app"))
+            .await
+            .unwrap();
+        assert_eq!(source.writes(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_tracker_without_edits_answers_422_unsupported_for_all_three_edit_calls() {
+        for (kind, scope) in [
+            (TrackerKind::Gitlab, "team/app"),
+            (TrackerKind::Forgejo, "team/app"),
+            (TrackerKind::AzureDevops, "acme/app"),
+            (TrackerKind::Linear, "ENG"),
+        ] {
+            let (w, source) = connected(kind, scope, true).await;
+            let wanted = format!("{} issue edits arrive in a later update.", display_name(kind));
+            let update = w.core.update_issue(update(kind, scope)).await.map(|_| ());
+            let state = w
+                .core
+                .set_state_issue(IssueSetStateInput {
+                    tracker: kind,
+                    scope: scope.to_owned(),
+                    key: "7".into(),
+                    state: "Open".into(),
+                    close_reason: None,
+                })
+                .await
+                .map(|_| ());
+            let candidates = w.core.issue_candidates(kind, scope).await.map(|_| ());
+            for (what, refused) in [("update", update), ("state", state), ("candidates", candidates)] {
+                let Err(error) = refused else {
+                    panic!("{kind:?} {what} answered a success");
+                };
+                assert_eq!(error.status(), 422, "{kind:?} {what}: {error:?}");
+                assert_eq!(error.code(), "unsupported", "{kind:?} {what}");
+                assert_eq!(error.public_message(), wanted, "{kind:?} {what}");
+            }
+            assert_eq!(source.writes(), 0, "{kind:?}: nothing reached the tracker");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_close_reason_on_an_open_state_or_an_unknown_state_is_refused_before_a_write() {
+        let (w, source) = editing().await;
+        let state = |name: &str, reason: Option<IssueCloseReason>| IssueSetStateInput {
+            tracker: TrackerKind::Github,
+            scope: "acme/app".into(),
+            key: "7".into(),
+            state: name.to_owned(),
+            close_reason: reason,
+        };
+        for (what, input) in [
+            ("a reason on an open state", state("Open", Some(IssueCloseReason::NotPlanned))),
+            ("a state the issue does not declare", state("Wontfix", None)),
+        ] {
+            let error = w.core.set_state_issue(input).await.map(|_| ()).unwrap_err();
+            assert_eq!((error.status(), error.code()), (400, "invalid_input"), "{what}");
+        }
+        assert_eq!(source.writes(), 0);
+        // A closed state takes a reason, and an open one none.
+        w.core
+            .set_state_issue(state("Closed", Some(IssueCloseReason::NotPlanned)))
+            .await
+            .unwrap();
+        w.core.set_state_issue(state("Open", None)).await.unwrap();
+        assert_eq!(source.writes(), 2);
+    }
+
+    #[tokio::test]
+    async fn candidates_are_cut_to_200_of_each_and_say_so() {
+        let (w, _source) = editing().await;
+        let candidates = w
+            .core
+            .issue_candidates(TrackerKind::Github, "acme/app")
+            .await
+            .unwrap();
+        assert_eq!(candidates.labels.len(), 200);
+        assert_eq!(candidates.assignees.len(), 200);
+        assert!(candidates.truncated, "a source that sent more than 200 is marked");
     }
 }
