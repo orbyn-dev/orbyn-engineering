@@ -547,7 +547,9 @@ merge).
     that began under the old guard (which only failed flags added since the start) now fails verification on an existing
     flag. Re-run that task after clearing the flag.
   - The scope, size and changed-path checks read Git without line-ending conversion or the untracked cache, so those settings
-    cannot hide a byte change. Other Git reads keep their normal settings.
+    cannot hide a byte change. They also need Git 2.40 or later, where `GIT_ATTR_SOURCE` keeps the checkout's own
+    `.gitattributes` out of the read; older Git errors the check rather than let an attribute hide a byte change. Other Git
+    reads keep their normal settings.
 - #450 adds source contracts for person once consent, a persistent same-engine route badge, per-lane code-owned
   `review` Gates and reasoned unlocked-lane removal. Migration 46 follows forge migration 45; launch and merge admission
   are covered by focused fake-engine, store and HTTP tests. The live Flow task includes the reasoned removal dialog;
@@ -587,20 +589,24 @@ stay in the [review README](../crates/orbyn-core/src/crew/review/README.md#decis
 - **Hidden paths and index flags — index flags closed; ignored new files accepted.** Any `assume-unchanged` or
   `skip-worktree` entry, sparse checkouts included, refuses admission and fails verification whenever it appears. A new file
   hidden by `.gitignore`, `.git/info/exclude` or `core.excludesFile` stays invisible to the Git-based scope and size checks:
-  counting every ignored file would charge pre-existing caches and local data to a narrow task. A crafted `.git/index` with
-  matching file times, a `.git` file pointing at another folder and a writable `.git` are the same class. Unblocked by isolated
-  checkouts (#436) or a task-start byte baseline; `ignored_new_files_remain_an_accepted_blind_spot`,
-  `an_index_flag_does_not_hide_a_reviewers_edit` and `a_flag_that_was_there_at_the_start_refuses_admission` cover today's
-  behaviour.
+  counting every ignored file would charge pre-existing caches and local data to a narrow task. A tracked `.gitattributes` rule
+  cannot hide a change: the byte-exact reads keep it out on Git 2.40 or later, and an older Git errors the check. A crafted
+  `.git/index` with matching file times, a `.git` file pointing at another folder and a writable `.git` are the same class.
+  Unblocked by isolated checkouts (#436) or a task-start byte baseline; `ignored_new_files_remain_an_accepted_blind_spot`,
+  `an_index_flag_does_not_hide_a_reviewers_edit`, `a_flag_that_was_there_at_the_start_refuses_admission` and
+  `an_in_tree_attributes_rule_cannot_hide_a_byte_change_from_scope_or_size` cover today's behaviour.
 - **The clearing repro runs at the current checkout — blocked on #436.** It must pass now, is not shown to have failed before
   the fix (the Gate says so), and its Evidence records the commit it ran on. Fail-before/pass-after at the finding's exact
   commit needs a throwaway checkout and process ownership in #436. Unblocked by #436.
 - **Byte-exact Git is scoped to the checks that decide — accepted.** Crew's scope, size and changed-path checks run
   `git_byte_exact` (line-ending conversion and the untracked cache off) and refuse a nonempty or unreadable `info/attributes`;
-  `git_hardened` keeps its previous behaviour for every other caller. Adding the flags to every hardened read would change
-  file explorer and merge reads too, and real Windows `core.autocrlf=true` behaviour is unverified ([handoff](handoff.md)).
-  Repository metadata remains writable. Unblocked by auditing every caller and recording Windows evidence;
-  `autocrlf_cannot_hide_a_byte_change_from_scope_or_size` and `only_the_byte_exact_helper_carries_the_crew_flags` cover it.
+  those checks also need Git 2.40 or later, where `GIT_ATTR_SOURCE` keeps the checkout's own `.gitattributes` out of the read,
+  and errors on older Git instead of passing bytes it did not compare. `git_hardened` keeps its previous behaviour for every other
+  caller. Adding the flags to every hardened read would change file explorer and merge reads too, and real Windows
+  `core.autocrlf=true` behaviour is unverified ([handoff](handoff.md)). Repository metadata remains writable. Unblocked by
+  auditing every caller and recording Windows evidence; `autocrlf_cannot_hide_a_byte_change_from_scope_or_size`,
+  `an_in_tree_attributes_rule_cannot_hide_a_byte_change_from_scope_or_size`,
+  `the_byte_exact_checks_need_attr_source_from_git_2_40` and `only_the_byte_exact_helper_carries_the_crew_flags` cover it.
 - **The touched guard and HEAD reads — closed.** `chk-fix-touched` is a core byte comparison in the immutable key, run only for
   a stored fix task, never a shell command; a missing, unreadable or nonregular file cannot pass. The two plain
   `rev-parse HEAD` reads the issue named use `git_hardened`, in `review/lanes.rs` and the start path. Covered by
@@ -1860,7 +1866,10 @@ the same transaction as its `stopped`/`engine_error` move.
 - **Review queue digest:** `crew_review_queue` reads the field for what waits elsewhere — the Inbox's items this queue does not answer, by kind, `waiting_elsewhere` on `GET /api/crew/autopilot/review` — so a page can say "N more wait for you in the Inbox" from the same field the Inbox and Taskboard read, not from a second rule; the waits the queue itself answers are not counted as elsewhere, and the counts need not be equal (the board cards only work tasks).
 - **Dashboard live count:** the `live` field on `GET /api/crew/dashboard` is a "Right now" row that ignores the 30/60/90 day window while the figures beside it are windowed: what waits for this repository now, from the same field, by kind (dismissals included; the same field's items, not a count that must equal the Inbox's), and the workers that own live work now, from the same `working` function, by why. Idle is not served: the store keeps no crew member that holds no task, so a genuinely idle worker cannot be told from one that never joined, and the tile stays Planned.
 - **Dashboard needed-kind:** `tripwire` joins `DASHBOARD_KINDS`, so a task a trip wire stopped and a person then merged by hand is no longer counted as a merge that needed nothing from the person.
-On the web, one shared needs-you read draws the Inbox's watch and could-not-stop rows (#1363, #1415); the board column, the Map words and the dashboard tiles are not drawn from it yet. Tests: the truth table in `working.rs`, the board field tests in `crew::tests::flow_board` (the field's column, a dismissed could-not-start card, the refusal it carries, a fix in flight), the dashboard live-row tests in `crew::tests::dashboard` (the same field, dismissals, the window, another project's workers filtered out), and the Review queue digest test in `crew::tests::background_review`. One needs-you read, not necessarily one count: the board cards only work tasks, a background run's wait has no card, and the dashboard narrows to one repository.
+- **Autopilot digest:** the daily digest's `needs_person` count on `GET /api/crew/autopilot/digest` is the same field, read across the device (the Inbox's items, dismissals included), not a recount of its own merge records: a task waiting on a person counts even with no merge at all, and the day is not quiet while the field holds a wait.
+- **Flow You cell:** the tenth cell of a task's line reads the field's kind for that task: a merge waiting on a person (`MergeWaiting`) is Needs you from that one field, while a merged change waiting for the person's ordinary review is `ReviewWaiting` (the Review queue's own list, which the field does not carry) and a reverted merge is Failed.
+- **Scoped reads:** the Taskboard reads one crew and the dashboard one repository, and both narrow their needs-you reads to it in SQL (`Scope::Crew`/`Scope::Project`), so a screen's refresh never loads every crew's records; the Inbox, the Review queue and the digest read the whole device.
+On the web, one shared needs-you read draws the Inbox's watch and could-not-stop rows (#1363, #1415); the board column, the Map words and the dashboard tiles are not drawn from it yet. Tests: the truth table in `working.rs`, the board field tests in `crew::tests::flow_board` (the field's column, a dismissed could-not-start card, the refusal it carries, a fix in flight, a wait past the Inbox's cap), the dashboard live-row tests in `crew::tests::dashboard` (the same field, dismissals, the window, another project's workers filtered out), the Review queue digest test in `crew::tests::background_review`, the digest count test and the scoped read test in `crew::tests::needs_you`, and the Flow You-cell test in `crew::tests::flow`. One needs-you read, not necessarily one count: the board cards only work tasks, a background run's wait has no card, and the dashboard narrows to one repository.
 
 **As built on 2026-11-23 (main `a48e69e06`):** KC1 tests merged (the bus already steered). KC4 built end to end except the background history row (service #1330, web #1339). KC3 core read merged (#1346); its board, digest and dashboard switch and web are not built. KC8 core merged (#1344) with the web card line (#1340). KC2 web is built and hidden (#1342) and its service side is built (not run against a real service). KC5 has its contract (#1341) and the web list (#1345); its core is not built. KC6 has slice 1 of 3 (#1343). KC7, KC9 and KC10 are not built. All frames are drawn and merged (Crew designs v121). Per-row detail is in [parity.md](parity.md) M21 to M30.
 

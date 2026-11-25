@@ -21,6 +21,7 @@ use super::scrub::Scrub;
 use super::stop_detail;
 use super::{QUERY_MAX, SCAN_MAX};
 use crate::app::Core;
+use crate::crew::needs_you::Scope;
 use crate::crew::working::{flow_working, working};
 use crate::crew::{Page, valid_id, wire_name};
 use crate::error::{CoreError, Result};
@@ -218,9 +219,8 @@ impl Core {
         // passed task whose merge waits and a stopped task whose trip wire stopped it are cards there too, and a dismissed
         // stop is not. A background run's wait has no task and no card; the same read serves the Inbox and the dashboard.
         let waits: BTreeMap<String, wire::NeedsYouItem> = self
-            .needs_you_all(&|_, crew_id| crew_id == crew)?
+            .needs_you_all(Scope::Crew(crew))?
             .into_iter()
-            .filter(|item| item.crew_id.as_deref() == Some(crew))
             .map(|item| (item.id.clone(), item))
             .collect();
         let mut tasks = self.store.crew_work_tasks(crew, SCAN_MAX + 1)?;
