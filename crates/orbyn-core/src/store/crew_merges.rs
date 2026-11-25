@@ -376,14 +376,35 @@ impl Store {
     }
 
     /// Every merge that waits for the person, oldest first, chosen in SQL so the history of settled merges is never read.
-    pub fn crew_waiting_merges(&self) -> Result<Vec<MergeRecord>> {
+    /// `crew` and `project` narrow the query itself, so a read scoped to one crew or one repository never loads another's.
+    pub fn crew_waiting_merges(
+        &self,
+        crew: Option<&str>,
+        project: Option<&str>,
+    ) -> Result<Vec<MergeRecord>> {
+        // The joins only answer the repository filter; a device-wide or one-crew read pays for neither.
+        let mut sql = String::from("SELECT m.* FROM crew_merges m");
+        if project.is_some() {
+            sql.push_str(
+                " LEFT JOIN crew_runs r ON r.task_id = m.task_id
+                  LEFT JOIN threads t ON t.id = r.lead_thread_id",
+            );
+        }
+        sql.push_str(" WHERE m.review_state = 'waiting' AND m.needs_person IS NOT NULL");
+        let mut args: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(crew) = crew {
+            sql.push_str(" AND m.crew_id = ?");
+            args.push(rusqlite::types::Value::Text(crew.to_owned()));
+        }
+        if let Some(project) = project {
+            sql.push_str(" AND t.project_id = ?");
+            args.push(rusqlite::types::Value::Text(project.to_owned()));
+        }
+        sql.push_str(" ORDER BY m.id");
         let conn = self.reader();
-        let mut statement = conn.prepare(
-            "SELECT * FROM crew_merges
-             WHERE review_state = 'waiting' AND needs_person IS NOT NULL ORDER BY id",
-        )?;
+        let mut statement = conn.prepare(&sql)?;
         Ok(statement
-            .query_map([], merge_row)?
+            .query_map(rusqlite::params_from_iter(args.iter()), merge_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 

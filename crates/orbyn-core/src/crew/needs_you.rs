@@ -12,10 +12,12 @@
 //! characters; a task carries its own scrubbed reason when its latest `needs_person` result has one (the question, the refusal
 //! that kept it from starting, a manual check), and every other kind carries fixed core words.
 //!
-//! Since KC3 PR2 this list is the one field: the Taskboard's Needs you column, the Review queue's `waiting_elsewhere` and the
-//! dashboard's `live` row read `needs_you_list` (the same items `crew_needs_you` answers with) instead of deriving their own
-//! rule, so a dismissal hides the wait wherever the field is read. They read the same list, not necessarily equal counts: the
-//! board cards only work tasks and the dashboard narrows to one repository.
+//! Since KC3 PR2 this list is the one field: the Taskboard's Needs you column, the Review queue's `waiting_elsewhere`, the
+//! dashboard's `live` row, the Autopilot digest's `needs_person` count and the Flow `you` cell read it instead of deriving
+//! their own rule, so a dismissal hides the wait wherever the field is read. They read the same list, not necessarily equal
+//! counts: the board cards only work tasks and the dashboard narrows to one repository. The Taskboard and the dashboard are
+//! refreshed while their screen is open, so those reads pass a crew or repository scope the store narrows in SQL and never
+//! load every crew's records; the Inbox, the Review queue and the digest read the whole device.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -39,6 +41,48 @@ pub const WORKER_STOPPED_TWICE: &str = "worker_stopped_twice";
 
 /// The most items one read answers with.
 const CAP: usize = 200;
+
+/// How wide a needs-you read reaches. The Inbox and the Review queue read every crew on the device; the Taskboard reads one
+/// crew and the dashboard one repository. A narrower read passes its crew or project to the store reads too, so the other
+/// crews' rows are never loaded on a screen's 30-second refresh.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Scope<'a> {
+    /// Every crew on this device.
+    Device,
+    /// One crew: the Taskboard's read.
+    Crew(&'a str),
+    /// One repository: the dashboard's read.
+    Project(&'a str),
+}
+
+impl<'a> Scope<'a> {
+    /// Whether an item of this project and crew is in scope. The store reads are already narrowed to a crew or a project;
+    /// this keeps the rule in one place for the reads that still see other rows.
+    fn keeps(self, project: Option<&str>, crew: &str) -> bool {
+        match self {
+            Self::Device => true,
+            Self::Crew(id) => crew == id,
+            Self::Project(id) => project == Some(id),
+        }
+    }
+
+    /// The crew the store reads narrow to, when this read is for one crew.
+    fn crew(self) -> Option<&'a str> {
+        match self {
+            Self::Crew(id) => Some(id),
+            Self::Device | Self::Project(_) => None,
+        }
+    }
+
+    /// The repository the store reads narrow to, when this read is for one repository.
+    fn project(self) -> Option<&'a str> {
+        match self {
+            Self::Project(id) => Some(id),
+            Self::Device | Self::Crew(_) => None,
+        }
+    }
+}
+
 /// The longest reason, in characters.
 const REASON_MAX: usize = 160;
 /// The longest question, in characters.
@@ -117,21 +161,21 @@ impl Core {
         ))
     }
 
-    /// Every item, dismissed or not, before the cap and the order. The first rule for an id wins. `keep` says, from an item's
-    /// project and crew, whether the caller wants it, and is asked before any facts, results or scrubs are loaded for it, so a
-    /// read scoped to one crew or one repository does not pay for the others.
-    fn needs_you_items(
-        &self,
-        keep: &dyn Fn(Option<&str>, &str) -> bool,
-    ) -> Result<Vec<wire::NeedsYouItem>> {
+    /// Every item in `scope`, dismissed or not, before the cap and the order. The first rule for an id wins. The scope narrows
+    /// each store read to its crew or repository, and is asked again per item before any facts, results or scrubs are loaded,
+    /// so a read for one crew never pays for another's.
+    fn needs_you_items(&self, scope: Scope<'_>) -> Result<Vec<wire::NeedsYouItem>> {
         let person = self.display_redactor()?;
         let mut scrubs: BTreeMap<String, Scrub> = BTreeMap::new();
         let mut seen = BTreeSet::new();
         let mut items = Vec::new();
         let mut stopped = Vec::new();
 
-        for waiting in self.store.crew_could_not_stop()? {
-            if !keep(waiting.project_id.as_deref(), &waiting.task.crew_id) {
+        for waiting in self
+            .store
+            .crew_could_not_stop(scope.crew(), scope.project())?
+        {
+            if !scope.keeps(waiting.project_id.as_deref(), &waiting.task.crew_id) {
                 continue;
             }
             if !seen.insert(waiting.task.id.clone()) {
@@ -171,11 +215,12 @@ impl Core {
             });
         }
 
-        for place in self
-            .store
-            .crew_tasks_in_states(&["needs_person", "stopped"])?
-        {
-            if !keep(place.project_id.as_deref(), &place.task.crew_id) {
+        for place in self.store.crew_tasks_in_states(
+            &["needs_person", "stopped"],
+            scope.crew(),
+            scope.project(),
+        )? {
+            if !scope.keeps(place.project_id.as_deref(), &place.task.crew_id) {
                 continue;
             }
             if place.task.state == "stopped" {
@@ -234,11 +279,13 @@ impl Core {
             }
         }
 
-        let merges = self.store.crew_waiting_merges()?;
+        let merges = self
+            .store
+            .crew_waiting_merges(scope.crew(), scope.project())?;
         let task_ids: Vec<String> = merges.iter().map(|merge| merge.task_id.clone()).collect();
         let projects = self.store.crew_projects_of_tasks(&task_ids)?;
         for merge in merges {
-            if !keep(
+            if !scope.keeps(
                 projects.get(&merge.task_id).map(String::as_str),
                 &merge.crew_id,
             ) || !seen.insert(merge.task_id.clone())
@@ -262,9 +309,12 @@ impl Core {
             });
         }
 
-        for review in self.store.background_reviews()? {
+        for review in self
+            .store
+            .background_reviews(scope.crew(), scope.project())?
+        {
             if !review.run.review_waiting
-                || !keep(Some(&review.project_id), &review.run.background_id)
+                || !scope.keeps(Some(&review.project_id), &review.run.background_id)
                 || !seen.insert(review.run.id.clone())
             {
                 continue;
@@ -293,8 +343,10 @@ impl Core {
 
         // A watch beside them: one that turned failing and asked for the person, and one whose last three checks in a row could
         // not run. Both resolve themselves on a check that runs again, so neither is dismissible.
-        for watch in self.store.watch_raised()? {
-            if !seen.insert(watch.crew_id.clone()) {
+        for watch in self.store.watch_raised(scope.crew(), scope.project())? {
+            if !scope.keeps(Some(&watch.project_id), &watch.crew_id)
+                || !seen.insert(watch.crew_id.clone())
+            {
                 continue;
             }
             // The could-not-run kind is the raised one only once the streak reaches three; before that a kept failing row is
@@ -342,7 +394,11 @@ impl Core {
             });
         }
 
-        let tripwire = self.store.crew_tasks_with_autopilot_event("tripwire")?;
+        let tripwire = self.store.crew_tasks_with_autopilot_event(
+            "tripwire",
+            scope.crew(),
+            scope.project(),
+        )?;
         for place in &stopped {
             if !tripwire.contains(&place.task.id) || !seen.insert(place.task.id.clone()) {
                 continue;
@@ -391,13 +447,11 @@ impl Core {
     }
 
     /// Every wait a person has not dismissed, newest first, ties by id, with no cap. The reads that scope the field to one
-    /// crew or one repository (the Taskboard, the dashboard, the Review queue digest) take this, so another crew's newer waits
-    /// can never push this one's out of its own count; a presentation cap belongs after that scoping.
-    pub(super) fn needs_you_all(
-        &self,
-        keep: &dyn Fn(Option<&str>, &str) -> bool,
-    ) -> Result<Vec<wire::NeedsYouItem>> {
-        let mut items = self.needs_you_items(keep)?;
+    /// crew or one repository (the Taskboard, the dashboard) take this, so another crew's newer waits can never push this
+    /// one's out of its own count; a presentation cap belongs after that scoping. The Inbox and the Review queue read every
+    /// crew (`Scope::Device`).
+    pub(super) fn needs_you_all(&self, scope: Scope<'_>) -> Result<Vec<wire::NeedsYouItem>> {
+        let mut items = self.needs_you_items(scope)?;
         let mut dismissed: BTreeMap<(String, String), String> = BTreeMap::new();
         for row in self.store.crew_needs_you_dismissals()? {
             dismissed.insert((row.kind, row.id), row.since);
@@ -417,9 +471,9 @@ impl Core {
         Ok(items)
     }
 
-    /// The items the Inbox shows: `needs_you_all`, at most 200.
+    /// The items the Inbox shows: `needs_you_all` for the whole device, at most 200.
     fn needs_you_list(&self) -> Result<Vec<wire::NeedsYouItem>> {
-        let mut items = self.needs_you_all(&|_, _| true)?;
+        let mut items = self.needs_you_all(Scope::Device)?;
         items.truncate(CAP);
         Ok(items)
     }
@@ -451,7 +505,7 @@ impl Core {
         }
         valid_id(id)?;
         let item = self
-            .needs_you_items(&|_, _| true)?
+            .needs_you_items(Scope::Device)?
             .into_iter()
             .find(|item| item.kind == kind && item.id == id)
             .ok_or_else(|| CoreError::NotFound(format!("needs you item {id}")))?;

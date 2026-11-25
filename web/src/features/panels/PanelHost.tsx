@@ -15,7 +15,7 @@ import { useFileTabNames } from "../workspace";
 import { useWorkspace } from "../../product/state/workspace";
 import { api } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
-import { commandShortcut, formatShortcut } from "../../product/shell/shortcuts";
+import { closeTabShortcut, commandShortcut, formatShortcut } from "../../product/shell/shortcuts";
 import { usePanelShortcuts } from "./usePanelShortcuts";
 import { PanelEmpty } from "./strip/PanelEmpty";
 import { crewViewsItem, deviceLauncherItem } from "./strip/launcher";
@@ -376,22 +376,22 @@ export function PanelHost({
   // The ⋯ under the strip belongs to the open tab. With one tab, closing it is closing the panel (the ×), so only Maximise shows.
   const maximise: MenuItem[] =
     mode === "sheet" ? [] : [{ label: maximized ? "Restore" : "Maximise panel", icon: maximized ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />, onSelect: onToggleMaximize }];
+  const closeKey = closeTabShortcut(keymap.data?.rules);
   const tabMenuItems: MenuItem[] =
     tab === null
       ? []
       : [
           ...(rowIds.length > 1
             ? [
-                { label: "Close tab", icon: <X size={14} aria-hidden />, shortcut: formatShortcut("mod+w"), onSelect: () => closeWithFocus(tab) },
+                { label: "Close tab", icon: <X size={14} aria-hidden />, shortcut: closeKey, onSelect: () => closeWithFocus(tab) },
                 { label: "Close other tabs", icon: <X size={14} aria-hidden />, onSelect: () => guardClose(rowIds.filter((one) => one !== tab), () => { closeOthers(tab); setSaid("Other tabs closed"); focusTab(tab); }) },
                 { label: "Close all tabs", icon: <X size={14} aria-hidden />, onSelect: () => guardClose(rowIds, () => { closeAll(); setSaid("All tabs closed. Nothing is open."); plusButton.current?.focus(); }) },
               ]
             : []),
           ...maximise.map((item, at) => (at === 0 && rowIds.length > 1 ? { ...item, separatorBefore: true } : item)),
         ];
-
   // A file's own items come first and the tab's own menu stays whole after them: Close tab, Close other tabs, Close all tabs, Maximise.
-  const fileItems = useFileTabMenu(thread.id, tab, () => tab && closeWithFocus(tab));
+  const fileItems = useFileTabMenu(thread.id, tab, () => tab && closeWithFocus(tab), closeKey);
   const menuItems = withFileItems(fileItems, tabMenuItems);
   const asked = pending?.ids[0];
   const askedSession = asked ? sessionFor(asked) : undefined;
