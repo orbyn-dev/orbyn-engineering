@@ -1,8 +1,9 @@
 //! EvalHistory samples (migration 88, KC5 slice 4): what each crew task's brief carried and how it ended.
 //!
-//! Recording only. Nothing here routes, scores, verifies or changes a brief, a check or a lease: `EvalHistory` and
-//! `score` keep their exact shape, and every caller still passes `EvalHistory::default()`. A row holds ids, enums and
-//! counts only, never lesson text. Device only, never synced or exported.
+//! Recording, and one read back (`Core::crew_task_samples`, ids and enums only). Nothing here routes, scores, verifies
+//! or changes a brief, a check or a lease: `EvalHistory` and `score` keep their exact shape, and every caller still
+//! passes `EvalHistory::default()`. A row holds ids, enums and counts only, never lesson text. Device only, never
+//! synced or exported.
 //!
 //! Each task records exactly one sample, in the transaction that creates it. Its outcome, engine, project and finish
 //! time are written once, in the transaction that first moves the task to a sampled state; a later move never
