@@ -107,6 +107,25 @@ describe("idle approval polling", () => {
     expect(useWorkspace.getState().approvals.data?.map((entry) => entry.id)).toEqual(["ap"]);
   });
 
+  it("reads approvals while the project catalog fails, then idles again once it reads", async () => {
+    useWorkspace.setState({ projects: ready([a]), threadIds: {}, threads: {}, approvals: ready([]) });
+    const projectsRead = vi.spyOn(api, "projects").mockRejectedValue(new Error("unavailable"));
+    vi.spyOn(api, "allThreads").mockResolvedValue([thread("one", "a")]);
+    const approvals = vi.spyOn(api, "pendingApprovals").mockResolvedValue([{ id: "ap" } as Approval]);
+    // The failed read may hide a project added since the last good one, so its waiting run is unseen.
+    await useWorkspace.getState().refreshAll({ quick: true });
+    expect(useWorkspace.getState().projects.error).not.toBeNull();
+    expect(approvals).toHaveBeenCalledTimes(1);
+    expect(useWorkspace.getState().approvals.data?.map((entry) => entry.id)).toEqual(["ap"]);
+    // The catalog reads again and the pending clears, then the idle poll leaves approvals alone.
+    projectsRead.mockResolvedValue([a]);
+    vi.mocked(api.pendingApprovals).mockResolvedValue([]);
+    await useWorkspace.getState().refreshAll({ quick: true });
+    await useWorkspace.getState().refreshAll({ quick: true });
+    expect(useWorkspace.getState().projects.error).toBeNull();
+    expect(approvals).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps one approvals read a poll while a run known from the last poll can wait on one", async () => {
     const one = active(thread("one", "a"));
     useWorkspace.setState({ projects: ready([a]), threadIds: {}, threads: { one }, approvals: ready([]) });

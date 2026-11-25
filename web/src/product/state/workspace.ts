@@ -478,11 +478,11 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     // One global read: the per-project lists are a slice of it, so reading them separately
     // would only repeat the same thread rows on every full load.
     const threads = get().refreshPolledThreads(projects.map((p) => p.id));
-    // A run known from the last poll is watched at once; otherwise this poll's thread list decides, and
-    // a list read that failed cannot rule a run out, so approvals are read then too.
+    // A run known from the last poll is watched at once; otherwise this poll's thread list decides. A list
+    // or catalog read that failed cannot rule a run out, so approvals are read then too.
     const watching = approvalsToWatch(get().threads, get().approvals);
     const approvals = watching ? get().refreshApprovals()
-      : threads.then((observed) => !observed || approvalsToWatch(get().threads, get().approvals) ? get().refreshApprovals() : undefined);
+      : threads.then((observed) => !observed || get().projects.error || approvalsToWatch(get().threads, get().approvals) ? get().refreshApprovals() : undefined);
     await Promise.all([
       threads,
       approvals,
