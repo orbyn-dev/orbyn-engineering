@@ -121,3 +121,13 @@ it("gives mod+w rules an alt+w alternate in a browser only", async () => {
   expect(isReservedCloseEvent(key("w", mod))).toBe(true);
   expect(isReservedCloseEvent(ctrlW)).toBe(false);
 });
+
+it("writes the Close tab key as the desktop app or a browser answers to it, and none when it is removed", async () => {
+  const { closeTabShortcut, formatShortcut } = await import("./shortcuts");
+  const rule = (key: string, remove = false) => [{ key, command: "rightPanel.close", when: "!terminalFocus", remove }];
+  expect(closeTabShortcut(undefined, true)).toBe(formatShortcut("mod+w"));
+  expect(closeTabShortcut([], false)).toBe(formatShortcut("alt+w"));
+  expect(closeTabShortcut(rule("mod+shift+x"), true)).toBe(formatShortcut("mod+shift+x"));
+  expect(closeTabShortcut(rule("mod+shift+x"), false)).toBe(formatShortcut("mod+shift+x"));
+  expect(closeTabShortcut(rule("mod+w", true), true)).toBeUndefined();
+});
