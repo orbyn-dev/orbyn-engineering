@@ -241,6 +241,11 @@ where
         self.outcome(outcome).await
     }
 
+    async fn cancel_second_factor(&self) {
+        // The challenge handle is dropped: a late code has nothing left to answer.
+        *self.factor.lock().await = None;
+    }
+
     async fn approval_status(&self, request_id: &str) -> Result<ApprovalStatus, DeviceError> {
         self.poll_joined(request_id).await
     }
