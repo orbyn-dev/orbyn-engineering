@@ -6,6 +6,7 @@ import { chipId, fileExcerpt, languageForPath } from "../../../product/composer/
 import { savedContents, sessionOfTab, useEditorSessions } from "./editorSessions";
 import { launchableEditors, primaryEditor } from "../../../product/composer/editorPreferences";
 import { navigate } from "../../../product/state/route";
+import { formatShortcut } from "../../../product/shell/shortcuts";
 import { parseFileTab, useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import type { MenuItem } from "../../../ui/Menu";
@@ -25,7 +26,7 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
   const pushToast = useUi((state) => state.pushToast);
   // What the editor holds, for the two items that read the file: only a file open in the editor has any.
   const held = useEditorSessions((state) => (tab ? sessionOfTab(state.sessions, threadId, cwd, tab) : undefined));
-  const closeItem: MenuItem = { label: "Close tab", icon: <X size={14} aria-hidden />, onSelect: close };
+  const closeItem: MenuItem = { label: "Close tab", icon: <X size={14} aria-hidden />, shortcut: formatShortcut("mod+w"), onSelect: close };
   if (!target) return null;
   if (target.kind === "worktree" || target.kind === "issue") return [closeItem];
   const relative = target.path;

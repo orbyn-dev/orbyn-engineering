@@ -500,6 +500,12 @@ impl RunManager {
                         }
                         EngineEvent::SteerFailed(steer) => {
                             self.requeue_steer(scope, &steer);
+                            // If the crew bus handed this text live, its record is corrected now:
+                            // the text really goes with the next turn. A steer the bus did not hand
+                            // over writes no delivery row.
+                            if let Some(core) = self.crew.get().and_then(std::sync::Weak::upgrade) {
+                                core.crew_steer_failed(&scope.thread_id, &steer);
+                            }
                         }
                         EngineEvent::Limited { resets_at } => {
                             self.limit_signals().insert(scope.run_id.clone(), resets_at);

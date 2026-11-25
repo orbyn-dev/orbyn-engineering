@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 const ROOT = join(process.cwd(), "src");
 
 /** Classes that are meant to carry no rule. Each needs a reason. */
-const UNSTYLED = new Map<string, string>();
+const UNSTYLED = new Map<string, string>([
+  // The Taskboard's Working line is a text hook (`kc3.test.tsx` queries it) and shares `.bd-ln`'s style; it has no rule of its own.
+  ["bd-working", "the Taskboard's Working line shares .bd-ln's style; the class is the text hook kc3.test.tsx queries"],
+]);
 
 const walk = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
