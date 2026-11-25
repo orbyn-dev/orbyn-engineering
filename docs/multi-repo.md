@@ -284,8 +284,8 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   absolute path. Its image, PDF, video, audio, font, archive, document, binary and truncated files load from their own repository's
   worktree: the client sends `repo_id` on `GET .../files/raw`, whose bytes, `Range` answers, inline-or-attachment decision and
   `download` are that repository's file (see "As built: repo_id on Git and file calls"). The service's `previews/file` and
-  `files/open` take one now too: the file-tab menu's outside editor and the binary view's Reveal/Open in editor send it, and the
-  media bar's Open in browser and Open in editor carry it once that bar is drawn for a foreign tab.
+  `files/open` take one now too: the file-tab menu's outside editor, the binary view's Reveal/Open in editor and the viewer's Open in
+  browser and Open in editor buttons send it for a foreign tab.
 - **Turn totals.** The turn picker's per-turn figures were the primary repository's alone. In a multi-repository thread each turn's
   totals sum `GET .../diff?scope=turn&run=` over the thread's trusted repositories, one read per repository with its own `repo_id`.
   An untrusted repository is not read and a repository whose read fails is left out, and the row says "N repo not counted" instead of
@@ -322,13 +322,29 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
 - **Add a repository** uses the popover's existing "Add a repository to this thread…" menu, which lists trusted, finished, Git repositories
   of the project that are not in the thread; the service's refusal (`repo_limit`, `repo_untrusted`, `not_git`, `400` already in the thread,
   a taken branch name, no branch checked out) shows as a notice and the list stays as it was. One click, one write, busy guard.
-- **Not done.** `GET .../files` and `.../files/metadata` take `repo_id` on the service, but the web has no call to either route (the file
-  explorer uses the worktree routes and file reads already send `repo_id`), so there is nothing to change until a screen shows another
-  repository's tree. `ThreadRepo.pull_request`, `repo_id` on pull request routes and on `FileDiff` and removing a repository are now in the service ("As built: pull requests and removal"); the web side draws them (below).
+- **The thread's repository tree.** The left bar's Files view shows a thread in two or more repositories as one checkout row under its
+  project's Worktrees, labelled with the thread's branch and marked as the thread's own. The repository chip above it (the explorer's own,
+  sharing the choice of the header Git menu and the Changes panel: the thread's primary until the person picks another) names the
+  repository shown. Its tree is read through `GET /api/threads/{id}/files?path=&repo_id=` (no `repo_id` for the primary, so it reads as
+  the service's default). A file of the primary repository opens as the thread's own file tab, with no repository on the tab (the shape
+  the rest of the app opens a thread's files with); a file of another repository opens as that repository's tab, whose read and write
+  carry its `repo_id` rather than being resolved against the thread's task folder. A thread in one repository, and every ordinary
+  thread, keeps the explorer it had: no chip, no checkout row and no call to that route. Known limits: the route answers no change
+  letters (the service cuts a folder at 5,000 entries and its answer says nothing about it, so the level is shown as complete), no
+  file watcher covers the thread's worktree, so the tree reads again when the project's data changes (a finished run, for one) or the
+  person presses Refresh, and on re-entering the thread; the repository list is read again with the thread's Changes (a run that ended,
+  a repository added or trusted), so one added to a running thread can be picked. A file the row lists opens its tab and no more: it is not dragged into the message and has no rendered
+  preview, because the thread names one folder and these paths are repository-relative (the same limit the other repositories' file
+  tabs have; their Open in editor, Open in browser and Reveal carry the `repo_id`). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
+  chip and line comments name the file relative to the repository and not to the task folder (the Changes panel has the same shape);
+  carrying the primary's `repo_id` on its tab would fix those and is left to a follow-up. `GET .../files/metadata` still has no web caller: no screen shows a file's metadata. No frame
+  draws this row or the explorer's chip, so both reuse what exists: a worktree row (branch label, Git icon, current dot) and the
+  repository chip the header, Changes and branch dialogs already draw, in the explorer's own header; listed as undrawn for the Designer.
 - **First message and delete.** The new-thread dialog asks for an optional First message; a trimmed non-empty one is sent as `message`
   and the service queues it as the thread's first turn. The delete confirm of one multi-repository thread says every repository's worktree
   stays on disk when it holds changes; several threads, a thread in one repository and a failed repository read keep the existing words
   (the service removes the clean worktrees; see "As built: pull requests and removal").
+- **Not done.** `GET .../files/metadata` still has no web caller. `ThreadRepo.pull_request`, `repo_id` on pull request routes and on `FileDiff` and removing a repository are now in the service ("As built: pull requests and removal"); the web side draws them (below).
 - **Not verified against a live service.** Checked with the mock (which now applies the rules above) and request-level tests of the
   client; the routes have not been run against an `orbynd` with `ORBYN_MULTI_REPO=1`.
 

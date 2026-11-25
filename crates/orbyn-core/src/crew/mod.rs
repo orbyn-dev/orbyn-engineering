@@ -49,6 +49,7 @@ mod score;
 mod settle;
 mod stamp;
 mod start;
+mod stop;
 mod tier_settings;
 mod tiers;
 mod tool;
@@ -96,7 +97,7 @@ pub use router::{RouteFailure, RouteInput, RouteRefusal, route};
 pub use score::{EvalHistory, SEED_PASS_PERMILLE};
 pub use stamp::Stamper;
 pub use tiers::{AcpTierAssignment, RouterConfig, TierWords, WorkerProvider, tier_model};
-pub use tool::{REPORT_TOOL, ROUTE_TOOL, START_TOOL, is_tool, tool_specs};
+pub use tool::{REPORT_TOOL, ROUTE_TOOL, START_TOOL, STOP_TOOL, is_tool, tool_specs};
 pub use verify::Judgement;
 pub use view::EngineView;
 
