@@ -31,9 +31,10 @@ use crate::error::{CoreError, Result};
 use crate::store::{AuditRecord, TrackerConnection, tracker_name, tracker_of};
 use async_trait::async_trait;
 use orbyn_contracts::{
-    CommentIssue, ConnectTracker, CreateIssue, CreateThread, IssueComment, IssueCounts,
-    IssueDetail, IssueDraft, IssueKey, IssueList, IssueListFailure, IssueReaction, IssueRef,
-    IssueSummary, IssueTemplate, Project, ProjectIssueTracker, ReactIssue, SetProjectIssueTracker,
+    CommentIssue, ConnectTracker, CreateIssue, CreateThread, IssueCandidates, IssueCloseReason,
+    IssueComment, IssueCounts, IssueDetail, IssueDraft, IssueKey, IssueList, IssueListFailure,
+    IssueReaction, IssueRef, IssueSetStateInput, IssueStateCategory, IssueSummary, IssueTemplate,
+    IssueUpdateInput, Project, ProjectIssueTracker, ReactIssue, SetProjectIssueTracker,
     StartIssueThread, Thread, TrackerKind, TrackerRow,
 };
 use std::collections::{BTreeMap, HashMap};
@@ -62,6 +63,9 @@ const MAX_ID_CHARS: usize = 200;
 /// "Create, comment, react, templates and project binding").
 const MAX_TEMPLATES: usize = 50;
 const MAX_TEMPLATE_BODY_BYTES: usize = 16 * 1024;
+/// The most labels and the most people one candidates read answers (docs/issues.md, "Issue writes and list
+/// controls"): a scope with more sets `truncated`, so a missing name is not proof the person is ineligible.
+const MAX_CANDIDATES: usize = 200;
 const GITLAB_DEFAULT_HOST: &str = "https://gitlab.com";
 /// The one Linear connection's teams fallback, cached for [`CACHE_FOR`] like a listing.
 const LINEAR_TEAMS: &str = "linear teams";
@@ -138,6 +142,17 @@ pub(crate) struct NewIssue<'a> {
     pub assignees: &'a [String],
 }
 
+/// The fields one edit writes, as the owning tracker receives them (docs/issues.md, "Issue writes and list
+/// controls"). `None` means the field is not written at all, while `Some(&[])` clears a whole set: labels and
+/// assignees are always the whole new set, never an addition. `Core::update_issue` checks every field before a
+/// source sees it.
+pub(crate) struct IssueEdit<'a> {
+    pub title: Option<&'a str>,
+    pub body: Option<&'a str>,
+    pub labels: Option<&'a [String]>,
+    pub assignees: Option<&'a [String]>,
+}
+
 /// What a tracker offers. A scope and a key are checked by the source before anything is sent.
 #[async_trait]
 pub(crate) trait IssueSource: Send + Sync {
@@ -200,6 +215,40 @@ pub(crate) trait IssueSource: Send + Sync {
     /// 404. `Core::issue_templates` keeps at most 50 and cuts a body to 16 KiB.
     async fn templates(&self, _scope: &str) -> Result<Vec<IssueTemplate>> {
         Ok(Vec::new())
+    }
+    /// Whether this reader also edits an issue's own fields (docs/issues.md, "Issue writes and list controls"):
+    /// its title, body, labels and assignees, its state, and the labels and people a picker offers. Only the
+    /// trackers whose edit is built say true; `Core` refuses the edits of the others before anything is sent.
+    fn can_edit(&self) -> bool {
+        false
+    }
+    /// Writes the fields an edit carries and answers the issue as the tracker stored it. Only called when
+    /// [`Self::can_edit`] is true, and only with fields `Core::update_issue` has checked.
+    async fn update(&self, _scope: &str, _key: &str, _edit: &IssueEdit<'_>) -> Result<IssueDetail> {
+        Err(CoreError::Unsupported(
+            "This tracker cannot edit issues from Orbyn yet.".into(),
+        ))
+    }
+    /// Moves one issue to one of the states its own detail declares, and answers it as the tracker stored it.
+    /// Only called with a name the issue offered; a tracker that cannot say `not_planned` closes as completed and
+    /// its answer says what it stored. Only called when [`Self::can_edit`] is true.
+    async fn set_state(
+        &self,
+        _scope: &str,
+        _key: &str,
+        _state: &str,
+        _close_reason: Option<IssueCloseReason>,
+    ) -> Result<IssueDetail> {
+        Err(CoreError::Unsupported(
+            "This tracker cannot change an issue's state from Orbyn yet.".into(),
+        ))
+    }
+    /// The labels and people a picker may offer for one scope, in the tracker's own words. `Core` keeps at most
+    /// 200 of each and says whether there were more.
+    async fn candidates(&self, _scope: &str) -> Result<IssueCandidates> {
+        Err(CoreError::Unsupported(
+            "This tracker cannot list its labels and people from Orbyn yet.".into(),
+        ))
     }
 }
 
@@ -989,7 +1038,10 @@ impl Core {
                 });
             }
         }
-        list.issues.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        list.issues.sort_by(|a, b| match query.sort {
+            query::IssueSort::Updated => b.updated_at.cmp(&a.updated_at),
+            query::IssueSort::Created => b.created_at.cmp(&a.created_at),
+        });
         list.counts = (any && counted).then_some(IssueCounts {
             open: totals.0,
             closed: totals.1,
@@ -1073,6 +1125,106 @@ impl Core {
             key: input.key,
         })?;
         Ok(detail)
+    }
+
+    /// Writes the present fields of one issue (docs/issues.md, "Issue writes and list controls") and answers the
+    /// issue as the tracker stored it. A field that is absent is not written; `labels` and `assignees` are the
+    /// whole new set, so an empty list clears them. A body with none of the four present is `400 invalid`, and
+    /// every field is checked before the tracker is sent anything.
+    pub async fn update_issue(&self, input: IssueUpdateInput) -> Result<IssueDetail> {
+        self.require_connected(input.tracker).await?;
+        self.check_issue_scope(input.tracker, &input.scope).await?;
+        let title = input.title.as_deref().map(checked_title).transpose()?;
+        if let Some(body) = &input.body {
+            checked_body(body, "The issue body")?;
+        }
+        if let Some(labels) = &input.labels {
+            checked_labels(labels)?;
+        }
+        if let Some(assignees) = &input.assignees {
+            checked_assignees(assignees)?;
+        }
+        if title.is_none()
+            && input.body.is_none()
+            && input.labels.is_none()
+            && input.assignees.is_none()
+        {
+            return Err(CoreError::Invalid(
+                "Nothing to change: send a title, a body, labels or assignees.".into(),
+            ));
+        }
+        let source = self.editing_source(input.tracker)?;
+        let mut detail = source
+            .update(
+                &input.scope,
+                &input.key,
+                &IssueEdit {
+                    title: title.as_deref(),
+                    body: input.body.as_deref(),
+                    labels: input.labels.as_deref(),
+                    assignees: input.assignees.as_deref(),
+                },
+            )
+            .await?;
+        detail.linked_threads = self.store.threads_linking(&IssueKey {
+            tracker: input.tracker,
+            scope: input.scope,
+            key: input.key,
+        })?;
+        Ok(detail)
+    }
+
+    /// Moves one issue to one of the states its own detail declares and answers it as the tracker stored it
+    /// (docs/issues.md, "Issue writes and list controls"). The detail is read first, so a name the issue does not
+    /// offer and a `close_reason` on an open state are refused before anything is written.
+    pub async fn set_state_issue(&self, input: IssueSetStateInput) -> Result<IssueDetail> {
+        self.require_connected(input.tracker).await?;
+        self.check_issue_scope(input.tracker, &input.scope).await?;
+        checked_state(&input.state)?;
+        let source = self.editing_source(input.tracker)?;
+        let key = IssueKey {
+            tracker: input.tracker,
+            scope: input.scope.clone(),
+            key: input.key.clone(),
+        };
+        let states = self.issue(&key).await?.states.unwrap_or_default();
+        let wanted = states
+            .iter()
+            .find(|state| state.name == input.state)
+            .ok_or_else(|| CoreError::Invalid("That state is not one this issue offers.".into()))?;
+        let closed = wanted.category == IssueStateCategory::Closed;
+        if !closed && input.close_reason.is_some() {
+            return Err(CoreError::Invalid(
+                "A close reason is only for a closed state.".into(),
+            ));
+        }
+        // A closed state closes as `completed` unless the person said `not_planned`; a tracker that cannot say
+        // `not_planned` answers what it stored.
+        let close_reason =
+            closed.then_some(input.close_reason.unwrap_or(IssueCloseReason::Completed));
+        let mut detail = source
+            .set_state(&input.scope, &input.key, &wanted.name, close_reason)
+            .await?;
+        detail.linked_threads = self.store.threads_linking(&key)?;
+        Ok(detail)
+    }
+
+    /// The labels and people a picker may offer for one scope (docs/issues.md, "Issue writes and list controls"):
+    /// at most 200 of each, `truncated` when the tracker had more, so a missing name is not proof the person is
+    /// ineligible. A scope outside the connection is refused as everywhere else.
+    pub async fn issue_candidates(
+        &self,
+        tracker: TrackerKind,
+        scope: &str,
+    ) -> Result<IssueCandidates> {
+        self.require_connected(tracker).await?;
+        self.check_issue_scope(tracker, scope).await?;
+        let mut candidates = self.editing_source(tracker)?.candidates(scope).await?;
+        candidates.truncated |=
+            candidates.labels.len() > MAX_CANDIDATES || candidates.assignees.len() > MAX_CANDIDATES;
+        candidates.labels.truncate(MAX_CANDIDATES);
+        candidates.assignees.truncate(MAX_CANDIDATES);
+        Ok(candidates)
     }
 
     /// The tracker's own issue templates for one scope: a read, at most 50, each body cut to 16 KiB. A tracker
@@ -1201,6 +1353,19 @@ impl Core {
         }
         Err(CoreError::Unsupported(format!(
             "{} issue writes arrive in a later update.",
+            display_name(kind)
+        )))
+    }
+
+    /// The source that may edit an issue and offer candidates for this tracker. A tracker whose edit is not built
+    /// answers the API's `422 unsupported` with one fixed sentence that names it, and nothing is sent.
+    fn editing_source(&self, kind: TrackerKind) -> Result<Arc<dyn IssueSource>> {
+        let source = self.issue_source(kind)?;
+        if source.can_edit() {
+            return Ok(source);
+        }
+        Err(CoreError::Unsupported(format!(
+            "{} issue edits arrive in a later update.",
             display_name(kind)
         )))
     }
@@ -1499,6 +1664,21 @@ fn checked_assignees(assignees: &[String]) -> Result<()> {
 fn checked_id(id: &str, what: &str) -> Result<()> {
     if id.is_empty() || id.chars().count() > MAX_ID_CHARS || id.chars().any(char::is_control) {
         return Err(CoreError::Invalid(format!("That {what} id is not valid.")));
+    }
+    Ok(())
+}
+
+/// A state name the person picked: 1 to 200 characters, no control characters. Whether the issue offers it is
+/// checked against the detail's own `states` before the tracker is sent anything.
+fn checked_state(state: &str) -> Result<()> {
+    let state = state.trim();
+    if state.is_empty() {
+        return Err(CoreError::Invalid("A state needs a name.".into()));
+    }
+    if state.chars().count() > MAX_LABEL_CHARS || state.chars().any(char::is_control) {
+        return Err(CoreError::Invalid(
+            "That state name is too long or has control characters.".into(),
+        ));
     }
     Ok(())
 }

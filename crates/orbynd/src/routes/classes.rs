@@ -235,6 +235,8 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/issues/item/create"),
     ("POST", "/api/issues/item/comment"),
     ("POST", "/api/issues/item/react"),
+    ("POST", "/api/issues/item/update"),
+    ("POST", "/api/issues/item/state"),
     ("POST", "/api/issues/start-thread"),
     ("POST", "/api/threads/{id}/issue-links"),
     ("POST", "/api/threads/{id}/issue-links/remove"),
@@ -1183,6 +1185,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/issues/item/react",
         "the person adds or takes back a reaction in their own tracker account",
+    ),
+    (
+        "POST",
+        "/api/issues/item/update",
+        "the person edits an issue's title, body, labels and assignees in their own tracker account",
+    ),
+    (
+        "POST",
+        "/api/issues/item/state",
+        "the person moves an issue to another of its states in their own tracker account",
     ),
     (
         "POST",
