@@ -61,7 +61,8 @@ test("the page's own connection works and the launch token is the only credentia
   await page.goto(browser.page);
   expect((await workspace).status()).toBe(200);
   await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible();
-  expect(await call(browser, "GET", "/api/info", {})).toStrictEqual({
+  // The same local read the page just made, now without the launch token.
+  expect(await call(browser, "GET", "/api/workspace", {})).toStrictEqual({
     status: 401,
     body: { code: "unauthorized", message: "Sign in to use this service." },
   });
