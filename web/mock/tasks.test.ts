@@ -7,11 +7,14 @@ it("serves the task list only at the collection, and each subpath its own shape"
   expect(list.status).toBe(200);
   const tasks = list.body as { id: string; name: string; schedule: unknown }[];
   // The task the subpaths below are asked about is really in the list, so none of them is vacuous.
-  expect(tasks.map((task) => task.id)).toContain("task-hook");
+  const hook = tasks.find((task) => task.id === "task-hook");
+  expect(hook).toBeDefined();
 
   // Copy on read: a caller holding this snapshot cannot change the mock's own tasks.
-  tasks[0]!.name = "changed by a caller";
-  expect((api.handle("GET", "/api/tasks").body as { name: string }[])[0]!.name).not.toBe("changed by a caller");
+  const name = hook!.name;
+  hook!.name = "changed by a caller";
+  const reread = api.handle("GET", "/api/tasks").body as { id: string; name: string }[];
+  expect(reread.find((task) => task.id === "task-hook")?.name).toBe(name);
 
   // A subpath must not fall back to the whole task array: the deliveries
   // dialog would render every task as a delivery. A delivery says what the
