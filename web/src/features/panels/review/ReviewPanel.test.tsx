@@ -184,6 +184,16 @@ describe("Review and comments tab", () => {
     expect(reveal).toHaveBeenCalledWith("auth/redirect.ts", 15, { threadId: "t1", cwd: "/r" });
   });
 
+  it("jumps to the repository's file and line of a draft comment", () => {
+    put([draft("a", "notes.txt", 2, "why?", { repoId: "planner", repoName: "orbyn-planner" })]);
+    const reveal = vi.spyOn(useUi.getState(), "revealFile");
+    render(<ReviewPanel threadId="t1" />);
+    // The comment names its repository, so the file opened is that repository's notes.txt.
+    expect(screen.getByText("orbyn-planner/notes.txt:2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open orbyn-planner/notes.txt:2" }));
+    expect(reveal).toHaveBeenCalledWith("notes.txt", 2, { threadId: "t1", cwd: "/r" }, "planner");
+  });
+
   it("shows a forge comment body as text, never as markup", async () => {
     forge([forgeThread("open", { comments: [forgeComment("<img src=x onerror=alert(1)>", "sam")] })]);
     const { container } = render(<ReviewPanel threadId="t1" />);

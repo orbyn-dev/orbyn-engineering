@@ -49,6 +49,10 @@ export interface ReviewChip extends ChipBase {
   line: number | null;
   /** Optional for older one-line diff comments. */
   endLine?: number;
+  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout. */
+  repoId?: string;
+  /** That repository's name, so the comment says where the file is; set only with `repoId`. */
+  repoName?: string;
   /** File annotations belong to the displayed source snapshot, not a later read. */
   sourceRevision?: string;
   sourceCwd?: string;
@@ -144,6 +148,9 @@ const terminalCommand = (chip: TerminalChip): string | null => {
   return exit ? `${command}${chip.command.includes("\n") ? "\n" : " "}(${exit})` : command;
 };
 
+/** Where a review comment is: a file of the thread's own checkout by its path, another repository's file under its name. */
+const reviewWhere = (chip: ReviewChip): string => (chip.repoName ? `${chip.repoName}/${chip.path}` : chip.path);
+
 export function chipLabel(chip: ComposerChip): string {
   switch (chip.kind) {
     case "file":
@@ -152,8 +159,10 @@ export function chipLabel(chip: ComposerChip): string {
       return chip.exitCode === undefined || chip.exitCode === null
         ? terminalLabel(chip)
         : `${terminalLabel(chip)} · exit ${chip.exitCode}`;
-    case "review":
-      return chip.line === null ? chip.path : `${chip.path}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `–${chip.endLine}` : ""}`;
+    case "review": {
+      const where = reviewWhere(chip);
+      return chip.line === null ? where : `${where}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `–${chip.endLine}` : ""}`;
+    }
     case "annotation":
       return chip.selector || chip.url;
     case "citation": {
@@ -300,9 +309,13 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
       const line = number(chip.line);
       const endLine = number(chip.endLine);
       if (chip.endLine !== undefined && (line === null || endLine === null || endLine < line)) return null;
+      const repoId = text(chip.repoId, 256);
+      const repoName = text(chip.repoName, 256);
       return {
         id, kind: "review", path, line, comment, excerpt: text(chip.excerpt),
         ...(endLine === null ? {} : { endLine }),
+        ...(repoId === null ? {} : { repoId }),
+        ...(repoName === null ? {} : { repoName }),
         ...(typeof chip.sourceRevision === "string" ? { sourceRevision: text(chip.sourceRevision, 256) ?? undefined } : {}),
         ...(typeof chip.sourceCwd === "string" ? { sourceCwd: text(chip.sourceCwd, 4096) ?? undefined } : {}),
         ...(chip.stale === true ? { stale: true } : {}),

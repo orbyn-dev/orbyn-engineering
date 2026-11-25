@@ -31,6 +31,8 @@ function FileBody({
   file,
   line,
   cwd,
+  repoId,
+  repoName,
   onSaved,
 }: {
   threadId: string;
@@ -38,6 +40,10 @@ function FileBody({
   file: FileContent;
   line: number | null;
   cwd: string;
+  /** Another repository of the thread whose worktree holds `path`: the save and the line comments carry it. */
+  repoId?: string;
+  /** That repository's name, so a line comment says where the file is. */
+  repoName?: string;
   onSaved(): void;
 }) {
   const kind = previewKind(path);
@@ -49,7 +55,7 @@ function FileBody({
     setSaving(true);
     setError(null);
     try {
-      await saveThreadFile(threadId, { path, content: text, base_revision: file.revision });
+      await saveThreadFile(threadId, { path, content: text, base_revision: file.revision, ...(repoId === undefined ? {} : { repo_id: repoId }) });
       setMode(kind ? "preview" : "source");
       onSaved();
     } catch (failure) {
@@ -75,8 +81,8 @@ function FileBody({
         </button>
       </div>
       {mode === "preview" && kind ? <FilePreview kind={kind} text={file.content} /> : null}
-      {mode === "source" ? <FileComments key={`${threadId}:${cwd}:${path}:${file.revision}`} threadId={threadId} cwd={cwd}
-        path={path} revision={file.revision} text={file.content} revealedLine={line} /> : null}
+      {mode === "source" ? <FileComments key={`${threadId}:${cwd}:${path}:${file.revision}:${repoId ?? ""}`} threadId={threadId} cwd={cwd}
+        path={path} revision={file.revision} repoId={repoId} repoName={repoName} text={file.content} revealedLine={line} /> : null}
       {mode === "edit" ? (
         <div className="file-editor">
           <textarea aria-label={`Edit ${path}`} value={text} spellCheck={false} onChange={(event) => setText(event.target.value)} />
@@ -95,11 +101,11 @@ function FileBody({
 }
 
 /** A file of the thread's checkout, or of another repository it holds, by what it holds. Exported so the bar's own controls can be tested from one file. */
-export function Viewer({ threadId, tabId, path, line, repoId, locked: worktreeLocked = false, onBack }: { threadId: string; tabId: string; path: string; line: number | null; /** Another repository of a multi-repository thread: `path` is relative to it, and every read and write carries its `repo_id`. Absent is the thread's own checkout, as always. */ repoId?: string; /** The thread's own worktree is locked: its files read and are never saved. */ locked?: boolean; onBack?(): void }) {
+export function Viewer({ threadId, tabId, path, line, repoId, repoName, locked: worktreeLocked = false, onBack }: { threadId: string; tabId: string; path: string; line: number | null; /** Another repository of a multi-repository thread: `path` is relative to it, and every read and write carries its `repo_id`. Absent is the thread's own checkout, as always. */ repoId?: string; /** That repository's name, so a line comment says where the file is. */ repoName?: string; /** The thread's own worktree is locked: its files read and are never saved. */ locked?: boolean; onBack?(): void }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
   // Every preview reads the raw route, which takes the repository: another repository's image, PDF, media, archive
   // and document load from its own worktree. The outside editor (`open-in-editor`) and the browser preview
-  // (`previews/file`) take it too, so a foreign tab offers both; its own editor and comments stay for text.
+  // (`previews/file`) take it too, so a foreign tab offers both and names its repository in a line comment.
   const foreign = repoId !== undefined;
   const media = mediaKind(path);
   // An archive is read as a folder list rather than as bytes, so it never
@@ -140,16 +146,18 @@ export function Viewer({ threadId, tabId, path, line, repoId, locked: worktreeLo
     }
   };
   const open = () => openInEditor(threadId, path, line, repoId);
-  // A plain text file is drawn as the editor (Engineer Designs v106), which has no bar of its own: what it offers is in the header and the tab menu.
-  // Another repository's text file is the editor too: line comments and the source view name the thread's checkout, and the save it would
-  // offer already goes through the editor session, so a rendered preview waits for its own read, comments and outside editor (issue #1060).
-  const editing = !media && !zip && !office && (foreign || !previewKind(path)) && !!file.data && !file.data.binary && !file.data.truncated;
-  const plain = !media && !zip && !office && (foreign || !previewKind(path));
+  // Markdown and its siblings are drawn by what they hold, with Source and Edit beside Preview. Any other text file is the
+  // editor (Engineer Designs v106), which has no bar of its own: what it offers is in the header and the tab menu. Another
+  // repository's file is drawn the same way as the thread's own: this read, its save on screen, its rendered preview and its
+  // line comments all carry the tab's repo_id (issue #1060).
+  const preview = !media && !zip && !office && previewKind(path) !== null;
+  const plain = !media && !zip && !office && !preview;
+  const editing = plain && !!file.data && !file.data.binary && !file.data.truncated;
   const locked = plain && !!file.data && file.data.binary;
   // Everything but an error, an unfinished read or a file too big to read in full wears the editor's own frame.
   const bare = plain && file.status !== "error" && !file.data?.truncated;
-  // Another repository's preview keeps the bar that reads and saves it; its text files stay the editor only (the
-  // editor carries its own frame), and a refusal is drawn without one.
+  // A rendered preview keeps the bar that reads it, saves it and copies it; the editor carries its own frame, and a
+  // refusal is drawn without one.
   const bar = !bare && (!foreign || (file.status !== "error" && (!plain || !!file.data?.truncated)));
   const setLock = useEditorSessions((state) => state.lock);
   useEffect(() => {
@@ -233,9 +241,9 @@ export function Viewer({ threadId, tabId, path, line, repoId, locked: worktreeLo
       ) : file.data.truncated ? (
         <FileBytes threadId={threadId} path={path} size={file.data.size} as="text" repoId={repoId} />
       ) : editing ? (
-        <FileEditor threadId={threadId} tabId={tabId} path={path} file={file.data} line={line} cwd={cwd} {...(repoId === undefined ? {} : { repoId })} locked={worktreeLocked} onReload={file.reload} />
+        <FileEditor threadId={threadId} tabId={tabId} path={path} file={file.data} line={line} cwd={cwd} {...(repoId === undefined ? {} : { repoId })} {...(repoName === undefined ? {} : { repoName })} locked={worktreeLocked} onReload={file.reload} />
       ) : (
-        <FileBody threadId={threadId} cwd={cwd} path={path} file={file.data} line={line} onSaved={file.reload} />
+        <FileBody threadId={threadId} cwd={cwd} path={path} file={file.data} line={line} {...(repoId === undefined ? {} : { repoId })} {...(repoName === undefined ? {} : { repoName })} onSaved={file.reload} />
       )}
     </div>
   );
