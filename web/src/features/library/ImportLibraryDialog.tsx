@@ -29,19 +29,49 @@ const sizeText = (bytes: number): string =>
 /** A refusal the sheet replaces the preview with: what happened, and whether another file can fix it. */
 interface Refusal { message: string; detail: string | null; chooseAnother: boolean }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+const isText = (value: unknown): value is string => typeof value === "string";
+/** A count the service sends: an unsigned whole number. */
+const isCount = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0;
+const OUTCOMES = new Set<string>(["created", "renamed", "refused"]);
+
+/** One `lines[]` entry: the fields the report reads, each of the type it reads. */
+const isLine = (value: unknown): boolean =>
+  isRecord(value)
+  && isText(value.kind)
+  && isCount(value.index)
+  && isText(value.outcome)
+  && OUTCOMES.has(value.outcome)
+  && (value.name === undefined || isText(value.name))
+  && (value.code === undefined || isText(value.code));
+
+/** One `problems[]` entry: the stable fields the dropped list reads. */
+const isProblem = (value: unknown): boolean =>
+  isRecord(value) && isText(value.kind) && isCount(value.index) && isText(value.code);
+
 /**
- * The report as this sheet draws it: the dry-run flag it asked for, three counts and two lists. A foreign body is refused as a
- * shape this app does not know, never drawn as counts, so a service that answers something else cannot crash the sheet.
+ * The report as this sheet draws it: the dry-run flag it asked for, three counts and two lists, every entry deep-checked.
+ * A foreign body, and a list entry that is not an object or misses a field the report reads, is refused as a shape this app
+ * does not know, never rendered, so no answer can crash the sheet.
  */
 function readAnswer(value: unknown, dryRun: boolean): ImportAnswer {
-  const answer = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Partial<ImportAnswer>) : null;
-  const known = answer !== null
-    && answer.dry_run === dryRun
-    && Array.isArray(answer.lines)
-    && Array.isArray(answer.problems)
-    && [answer.created, answer.renamed, answer.refused].every((count) => typeof count === "number" && Number.isInteger(count) && count >= 0);
-  if (!known || answer === null) throw new ApiFailure("bad_answer", "The service answered an import in a shape this app does not know.", 502);
-  return answer as ImportAnswer;
+  const known = isRecord(value)
+    && value.dry_run === dryRun
+    && isCount(value.created)
+    && isCount(value.renamed)
+    && isCount(value.refused)
+    && Array.isArray(value.lines)
+    && value.lines.every(isLine)
+    && Array.isArray(value.problems)
+    && value.problems.every(isProblem);
+  if (!known) throw new ApiFailure("bad_answer", "The service answered an import in a shape this app does not know.", 502);
+  return value as unknown as ImportAnswer;
+}
+
+/** The bytes the client sends: the document with `dry_run` beside it, exactly as `importLibrary` builds the body. `false` is the longer flag. */
+function bodyBytes(document: unknown, dryRun: boolean): number {
+  const body = { ...(isRecord(document) ? document : {}), dry_run: dryRun };
+  return new TextEncoder().encode(JSON.stringify(body)).length;
 }
 
 /**
@@ -174,6 +204,9 @@ export function ImportLibraryDialog({ file, limit, onChooseAnother, onApplied, o
         } catch {
           throw new ApiFailure("not_json", "", 400);
         }
+        // The cap is on the request the service reads, not only the file: a document at the edge can grow when it is sent
+        // again with `dry_run` beside it. The longer `false` body is measured, so a preview and its Import both fit.
+        if (typeof limit === "number" && Number.isFinite(limit) && bodyBytes(document, false) > limit) throw new ApiFailure("file_too_large", "", 413);
         if (!live) return;
         const answer = readAnswer(await libraryApi().importLibrary(document, true), true);
         if (live) setPhase({ kind: "preview", document, answer });
