@@ -209,15 +209,20 @@ Threads.
 
 ## Side panel tabs
 
-The side panel starts with no tab in every thread. Its strip is the + launcher (Changes, Browser,
-Activity, Side chat, Tools and, until the left-bar explorer replaces it, Files) and the maximise and
-close buttons; the empty panel offers Changes, Browser and Tools. Tabs are browser-style: the ⋯ under
-the strip closes the tab, the others or all of them, a drag reorders (a line shows where it lands, the other
-slots slide aside over `--m-fast`, Escape cancels) and "Reset tab order" shows only once the order has
-changed. Which tabs are open, their order and the active one are remembered per thread, and closing the
-panel does not forget them. An entry shows the key its command already has (Changes ⌘D, Browser ⌘⇧J, Ctrl on Windows) and the rest show none. Options whose screens do not exist yet (Crew views,
-Open file) stay hidden until they do. Files is the one old destination kept in the launcher while the
-left-bar explorer (shell PR 1b) is built; the explorer removes it, so the two never ship together for long.
+The side panel starts with no tab in every thread. Its strip is the + launcher and the maximise and
+close buttons; the launcher lists the panel's surfaces (Changes, Browser, Activity, Side chat, Tools,
+Linked threads, Review and comments, then Devices and Library when the service reports them), then Crew
+views drawn as Planned and Open file…, which opens the file picker. The empty panel says "Add a tab with
++, or open a file from the left bar." and offers Changes, Browser and Tools. Tabs are browser-style: the
+⋯ under the strip closes the tab, the others or all of them, a drag reorders (a line shows where it
+lands, the other slots slide aside over `--m-fast`, Escape cancels) and "Reset tab order" shows only once
+the order has changed. Which tabs are open, their order and the active one are remembered per thread, and
+closing the panel does not forget them. An entry shows the key its command already has (Changes ⌘D,
+Browser ⌘⇧J, Open file… ⌘P, Ctrl on Windows) and the rest show none; the tab menu's Close tab follows the
+person's keymap for `rightPanel.close` and shows no key once they remove it. Files is no tab: the left bar's
+Files view is the explorer, which opens a file as a tab, and a Files id saved before it is dropped. Crew
+views opens nothing until something reads a thread's crew views; the Crew Review queue is a screen of its
+own and stays preview-only.
 
 ## Settings
 
