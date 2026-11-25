@@ -122,7 +122,32 @@ over 600 characters or `can_approve: false`, `400 secret_refused` as above. An a
 
 ## EvalHistory samples (KC5 slice 4)
 
-Each task records exactly one sample (migration 88): its brief's kind, whether it carried lessons and which lesson ids it used and left out, then its outcome, stop reason, latest routed engine and finish time when it ends. Device only, never synced or exported, ids and enums only. Nothing reads a sample yet: routing, `score`, `EvalHistory`, the brief, checks and leases are unchanged.
+Each task records exactly one sample (migration 88): its brief's kind, whether it carried lessons and which lesson ids it used and left out, then its outcome, stop reason, latest routed engine and finish time when it ends. Device only, never synced or exported, ids and enums only. The one outcome is written once, by the task's first final state, and a later move never overwrites it.
+
+A task's sample is read by `GET /api/crew/tasks/{id}/samples` (class **Local**, behind Crew Preview like every Crew route, and it needs no repository query). An unknown task is `404 not_found`; a task stored before samples existed answers an empty list. The answer is `CrewEvalSamples`:
+
+```json
+{
+  "task_id": "sha256:...",
+  "samples": [
+    {
+      "task_id": "sha256:...",
+      "project_id": null,
+      "kind": "implement",
+      "had_lessons": true,
+      "lesson_ids": ["les_..."],
+      "left_out_ids": [],
+      "outcome": "passed",
+      "stop_reason": null,
+      "engine": "claude",
+      "created_at": "2026-11-25T10:00:00Z",
+      "finished_at": "2026-11-25T10:42:00Z"
+    }
+  ]
+}
+```
+
+The read changes nothing, and no sample reaches the router, the score, the verifier, a brief, a check or a lease: `EvalHistory` and `score` keep their exact shape, every router caller still passes `EvalHistory::default()`, and a test proves the router's decision is identical with and without samples.
 
 ## KC8: resumed after restart
 
