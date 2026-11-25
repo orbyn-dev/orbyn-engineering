@@ -66,7 +66,7 @@ const STATUS: Record<string, [number, string]> = {
   not_found: [404, "That item is not in the library any more."],
 };
 
-export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFixtures> | null; suggestions?: Suggestions | "untrusted"; platform?: "stored" | "planned"; delayMs?: number; limits?: Partial<LibraryLimits> } = {}): LibraryMock {
+export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFixtures> | null; suggestions?: Suggestions | "untrusted"; platform?: "stored" | "planned"; delayMs?: number; limits?: Partial<LibraryLimits>; profiles?: string[] } = {}): LibraryMock {
   const missing = init.fixtures === null;
   const seed = init.fixtures ?? libraryFixtures();
   const workflows = new Map(seed.workflows.map((one) => [one.id, one] as const));
@@ -195,24 +195,98 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
       writes.push(`key.remove:${setId}:${key}`);
       return { name: key, present: false };
     },
+    /**
+     * Mirrors the service's import enough for the dev preview (docs, "Import and export"): sets are created first, a workflow
+     * resolves its set names against the sets it just made and the library's own, a name taken in the document or the library is
+     * renamed, an env value or a set this device has no set for is a `problems[]` line, and profiles count beside the three stored
+     * kinds (there is no profile store in this dev mock). A dry run returns the same report and writes nothing; a real one adds
+     * the entries so the library reread shows them.
+     */
     async importLibrary(document, dryRun): Promise<ImportAnswer> {
       await wait(); preflight();
-      const body = typeof document === "object" && document !== null ? (document as Record<string, unknown>) : {};
+      const body = typeof document === "object" && document !== null && !Array.isArray(document) ? (document as Record<string, unknown>) : {};
+      const entries = (key: string): unknown[] => (Array.isArray(body[key]) ? (body[key] as unknown[]) : []);
+      const record = (value: unknown): Record<string, unknown> => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
+      const text = (value: unknown): string => (typeof value === "string" ? value : "");
+      const nameKey = (name: string): string => name.trim().toLowerCase();
       const lines: ImportAnswer["lines"] = [];
+      const problems: ImportAnswer["problems"] = [];
       let created = 0; let renamed = 0; let refused = 0;
-      for (const [kind, key] of [["workflow", "workflows"], ["prompt", "prompts"], ["env_set", "env_sets"]] as const) {
-        const list = Array.isArray(body[key]) ? (body[key] as { name?: unknown }[]) : [];
-        list.forEach((entry, index) => {
-          const name = typeof entry?.name === "string" ? entry.name.trim() : "";
-          if (name === "") { refused += 1; lines.push({ kind, index, outcome: "refused", code: "invalid_input" }); return; }
-          const all = kind === "workflow" ? workflows : kind === "prompt" ? prompts : sets;
-          const clash = taken(all as Map<string, { id: string; name: string }>, name, null);
-          if (clash) renamed += 1; else created += 1;
-          lines.push({ kind, index, outcome: clash ? "renamed" : "created", name: clash ? `${name} (2)` : name });
-        });
+      type Outcome = ImportAnswer["lines"][number]["outcome"];
+      const add = (kind: string, index: number, outcome: Outcome, name?: string, code?: string) => {
+        if (outcome === "created") created += 1; else if (outcome === "renamed") renamed += 1; else refused += 1;
+        lines.push({ kind, index, outcome, ...(name === undefined ? {} : { name }), ...(code === undefined ? {} : { code }) });
+      };
+      // The first free name in the document and the library, as the service's buckets choose it: Name (2), Name (3), ...
+      const reserve = (taken: Set<string>, asked: string): string => {
+        if (!taken.has(nameKey(asked))) { taken.add(nameKey(asked)); return asked.trim(); }
+        for (let n = 2; n < 1000; n += 1) {
+          const candidate = `${asked.trim()} (${n})`;
+          if (!taken.has(nameKey(candidate))) { taken.add(nameKey(candidate)); return candidate; }
+        }
+        return asked.trim();
+      };
+      const setNames = new Set([...sets.values()].map((one) => nameKey(one.name)));
+      const setIds = new Map([...sets.values()].map((one) => [nameKey(one.name), one.id] as const));
+      for (const [index, value] of entries("env_sets").entries()) {
+        const entry = record(value);
+        const name = text(entry.name).trim();
+        if (name === "") { add("env_set", index, "refused", undefined, "invalid_input"); continue; }
+        const raw = Array.isArray(entry.keys) ? entry.keys : [];
+        const names = raw.flatMap((key) => (typeof key === "string" ? [key] : typeof record(key).name === "string" ? [text(record(key).name)] : []));
+        // The service drops a value in any form (a map, { name, value } objects) and keeps the key names it can read.
+        if ((entry.keys !== undefined && !Array.isArray(entry.keys)) || raw.some((key) => typeof key !== "string")) problems.push({ kind: "env_set", index, code: "value_dropped" });
+        const final = reserve(setNames, name);
+        // The name resolves for a workflow in this document even on a dry run; only a real run stores the set.
+        const id = dryRun ? "" : nextId("01jen");
+        setIds.set(nameKey(final), id);
+        if (!dryRun) sets.set(id, { id, name: final, description: text(entry.description), keys: names.map((key) => ({ name: key, present: false })), keychain: init.platform === "planned" ? "unavailable" : "ok", status: init.platform ?? "stored", ...stamp });
+        add("env_set", index, final === name ? "created" : "renamed", final);
+      }
+      const workflowNames = new Set([...workflows.values()].map((one) => nameKey(one.name)));
+      for (const [index, value] of entries("workflows").entries()) {
+        const entry = record(value);
+        const name = text(entry.name).trim();
+        if (name === "" || typeof entry.command !== "string") { add("workflow", index, "refused", undefined, "invalid_input"); continue; }
+        const ids: string[] = [];
+        for (const named of Array.isArray(entry.env_set_names) ? entry.env_set_names : []) {
+          const id = typeof named === "string" ? setIds.get(nameKey(named)) : undefined;
+          if (id === undefined) {
+            if (typeof named === "string") problems.push({ kind: "workflow", index, code: "unknown_env_set" });
+          } else if (id !== "" && !ids.includes(id)) ids.push(id);
+        }
+        const final = reserve(workflowNames, name);
+        if (!dryRun) {
+          const id = nextId("01jwn");
+          const one: Workflow = { id, name: final, description: text(entry.description), command: text(entry.command), params: Array.isArray(entry.params) ? (entry.params as Param[]) : [], env_set_ids: ids, source: "import", needs_ack: true, ...stamp };
+          workflows.set(id, one);
+        }
+        add("workflow", index, final === name ? "created" : "renamed", final);
+      }
+      const promptNames = new Set([...prompts.values()].map((one) => nameKey(one.name)));
+      for (const [index, value] of entries("prompts").entries()) {
+        const entry = record(value);
+        const name = text(entry.name).trim();
+        if (name === "" || typeof entry.body !== "string") { add("prompt", index, "refused", undefined, "invalid_input"); continue; }
+        const final = reserve(promptNames, name);
+        if (!dryRun) {
+          const id = nextId("01jpn");
+          const one: Prompt = { id, name: final, description: text(entry.description), body: text(entry.body), params: Array.isArray(entry.params) ? (entry.params as Param[]) : [], source: "import", ...stamp };
+          prompts.set(id, one);
+        }
+        add("prompt", index, final === name ? "created" : "renamed", final);
+      }
+      // Profiles have no store in this dev mock; their rows still count, and init.profiles lets a fixture show a rename.
+      const profileNames = new Set((init.profiles ?? []).map(nameKey));
+      for (const [index, value] of entries("profiles").entries()) {
+        const entry = record(value);
+        const name = text(entry.name).trim();
+        if (name === "") { add("profile", index, "refused", undefined, "invalid_input"); continue; }
+        const final = reserve(profileNames, name);
+        add("profile", index, final === name ? "created" : "renamed", final);
       }
       if (!dryRun) writes.push(`import:${created}+${renamed}`);
-      return { dry_run: dryRun, problems: [], created, renamed, refused, lines };
+      return { dry_run: dryRun, problems, created, renamed, refused, lines };
     },
     async suggestions() {
       await wait();

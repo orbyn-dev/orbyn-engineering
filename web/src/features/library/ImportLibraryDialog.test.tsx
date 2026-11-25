@@ -119,6 +119,32 @@ it("draws the counts per kind, the renamed names, the refused entries and the dr
   expect(screen.getByRole("button", { name: "Import 3 items" })).toBeEnabled();
 });
 
+it("draws the profile, dropped-value and unknown-set rows the dev mock answers for a crafted export", async () => {
+  const mock = createLibraryMock({ profiles: ["reviewer"] });
+  mount({ mock, file: file({
+    format: "orbyn-library",
+    version: 1,
+    exported_at: "2026-11-22T00:00:00Z",
+    profiles: [{ name: "Reviewer", description: "", engine: null, model_tier: "balanced", permission_mode: "ask", autopilot_mode: "off" }],
+    env_sets: [{ name: "Staging", description: "", keys: [{ name: "API_TOKEN", value: "s3cr3t" }] }],
+    workflows: [{ name: "Deploy", description: "", command: "deploy", params: [], env_set_names: ["Missing"] }],
+    prompts: [],
+  }) });
+  const table = await screen.findByRole("table", { name: "Import by kind" });
+  expect(cells(within(table).getByRole("row", { name: /^Profiles/ }))).toEqual(["0", "1", "0"]);
+  expect(cells(within(table).getByRole("row", { name: /^Workflows/ }))).toEqual(["1", "0", "0"]);
+  expect(cells(within(table).getByRole("row", { name: /^Env sets/ }))).toEqual(["1", "0", "0"]);
+  expect(screen.getByText(/Saved under a free name: Reviewer \(2\)/)).toBeVisible();
+  const dropped = screen.getByRole("list", { name: "Dropped parts" });
+  expect(within(dropped).getByText("Env sets #0")).toBeVisible();
+  expect(within(dropped).getByText("value_dropped")).toBeVisible();
+  expect(within(dropped).getByText("Workflows #0")).toBeVisible();
+  expect(within(dropped).getByText("unknown_env_set")).toBeVisible();
+  expect(document.body.textContent).not.toContain("s3cr3t");
+  expect(screen.getByRole("button", { name: "Import 3 items" })).toBeEnabled();
+  expect(mock.writes).toEqual([]);
+});
+
 it("posts the dry run first and the real import only when Import is clicked, then reports it", async () => {
   const mock = createLibraryMock();
   const importLibrary = vi.spyOn(mock, "importLibrary");
@@ -203,6 +229,22 @@ it("keeps the preview with the service's words when the import itself fails", as
   expect(calls).toBe(2);
 });
 
+it("refuses a list entry that is not an object, instead of crashing the report", async () => {
+  const bad: Partial<ImportAnswer>[] = [
+    { created: 1, lines: [null] as unknown as ImportAnswer["lines"] },
+    { created: 1, lines: [{ index: 0, outcome: "refused", code: "invalid_input" }] as unknown as ImportAnswer["lines"] },
+    { created: 1, lines: [], problems: [null] as unknown as ImportAnswer["problems"] },
+  ];
+  const mock = createLibraryMock();
+  for (const report of bad) {
+    mock.importLibrary = async () => answer(report);
+    const view = mount({ mock, file: file(ONE) });
+    expect(await screen.findByText("The service answered an import in a shape this app does not know.")).toBeVisible();
+    expect(screen.queryByRole("table")).toBeNull();
+    view.unmount();
+  }
+});
+
 it("refuses an answer that is not the report, and a dry run that says it wrote", async () => {
   const mock = createLibraryMock();
   mock.importLibrary = async () => ({ hello: "world" }) as unknown as ImportAnswer;
@@ -226,5 +268,17 @@ it("refuses a file over the service's cap without reading it", async () => {
   expect(await screen.findByText("This file is too large to import.")).toBeVisible();
   expect(screen.getByText("An import file is at most 2 MiB.")).toBeVisible();
   expect(read).not.toHaveBeenCalled();
+  expect(importLibrary).not.toHaveBeenCalled();
+});
+
+it("refuses a file whose request body would exceed the cap, though the file itself fits", async () => {
+  const mock = createLibraryMock();
+  const importLibrary = vi.spyOn(mock, "importLibrary");
+  const document = { ...ONE, workflows: [{ ...ONE.workflows[0]!, description: "x".repeat(200) }] };
+  const fileSize = new TextEncoder().encode(JSON.stringify(document)).length;
+  const limit = fileSize + 4; // The file fits; the ",\"dry_run\":false" the client adds does not.
+  mount({ mock, file: file(document), limit });
+  expect(await screen.findByText("This file is too large to import.")).toBeVisible();
+  expect(screen.getByText(`An import file is at most ${limit} B.`)).toBeVisible();
   expect(importLibrary).not.toHaveBeenCalled();
 });

@@ -535,6 +535,9 @@ it("imports a library export from the toolbar: the dry run writes nothing, and I
   await waitFor(() => expect(workflows.mock.calls.length).toBeGreaterThan(before));
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
   expect(await screen.findByText("Imported 1 item to Personal.")).toBeVisible();
+  // The mock stores the imported entry, so the reloaded Personal list shows it.
+  await user.click(screen.getByRole("tab", { name: /^Personal/ }));
+  expect(await screen.findByRole("button", { name: /^Imported one/ })).toBeVisible();
   // The reload the apply started reads again; flush its timers inside act so no state lands after the test.
   await act(async () => { await new Promise<void>((resolve) => { setTimeout(resolve, 20); }); });
 });
