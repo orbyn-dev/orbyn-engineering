@@ -1169,7 +1169,9 @@ impl Core {
         let stored = self
             .store
             .project_issue_tracker(project_id)?
-            .ok_or_else(|| CoreError::Internal("the issue tracker binding was not stored".into()))?;
+            .ok_or_else(|| {
+                CoreError::Internal("the issue tracker binding was not stored".into())
+            })?;
         let stored_tracker = tracker_of(&stored.tracker)
             .ok_or_else(|| CoreError::Internal("the stored issue tracker is unknown".into()))?;
         Ok(Some(ProjectIssueTracker {

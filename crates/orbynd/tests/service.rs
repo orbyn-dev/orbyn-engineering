@@ -1008,7 +1008,10 @@ async fn static_ui_has_csp_and_spa_fallback() {
             .unwrap()
             .contains("javascript")
     );
-    assert_eq!(script.headers()["cache-control"], "public, max-age=31536000, immutable");
+    assert_eq!(
+        script.headers()["cache-control"],
+        "public, max-age=31536000, immutable"
+    );
     let script_etag = script.headers()["etag"].to_str().unwrap().to_owned();
     let plain_head = client
         .head(format!("{}/assets/app.js", service.url))
@@ -1026,7 +1029,10 @@ async fn static_ui_has_csp_and_spa_fallback() {
         .unwrap();
     assert_eq!(head.status(), 304);
     assert_eq!(head.headers()["etag"], script_etag);
-    assert_eq!(head.headers()["cache-control"], "public, max-age=31536000, immutable");
+    assert_eq!(
+        head.headers()["cache-control"],
+        "public, max-age=31536000, immutable"
+    );
     assert!(head.headers().contains_key("content-security-policy"));
     assert!(head.bytes().await.unwrap().is_empty());
     let unmatched = client
@@ -1298,7 +1304,10 @@ async fn static_compression_negotiates_and_keeps_representation_validators_separ
         assert_eq!(response.headers()["vary"], "Accept-Encoding");
         assert_eq!(response.headers()["etag"], gzip_tag);
         assert_eq!(response.headers()["content-encoding"], "gzip");
-        assert_eq!(response.headers()["cache-control"], "public, max-age=31536000, immutable");
+        assert_eq!(
+            response.headers()["cache-control"],
+            "public, max-age=31536000, immutable"
+        );
         assert!(response.headers().contains_key("content-security-policy"));
         assert!(response.bytes().await.unwrap().is_empty());
     }
