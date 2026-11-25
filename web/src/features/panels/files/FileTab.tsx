@@ -40,7 +40,8 @@ function ThreadFile({ threadId, tabId, path, locked }: { threadId: string; tabId
   // A link that named a line says it once; the line stays for this open.
   const [line, setLine] = useState<number | null>(null);
   useEffect(() => {
-    if (!reveal || reveal.threadId !== threadId || reveal.path !== path) return;
+    // A reveal that names a repository is that repository's tab's to take, never the thread's own file of the same path.
+    if (!reveal || reveal.repoId !== undefined || reveal.threadId !== threadId || reveal.path !== path) return;
     setLine(reveal.line);
     consume(reveal.nonce);
   }, [reveal, threadId, path, consume]);
@@ -57,8 +58,18 @@ function ThreadFile({ threadId, tabId, path, locked }: { threadId: string; tabId
  * there, so nothing is resolved against the thread's own checkout; a path outside the repository or a repository that is not the
  * thread's comes back from the service as an error the viewer draws.
  */
-function RepoFile({ threadId, tabId, path, repoId }: { threadId: string; tabId: string; path: string; repoId: string }) {
-  return <Viewer threadId={threadId} tabId={tabId} path={path} line={null} repoId={repoId} />;
+function RepoFile({ threadId, tabId, path, repoId, repoName }: { threadId: string; tabId: string; path: string; repoId: string; repoName?: string }) {
+  const reveal = useUi((state) => state.fileReveal);
+  const consume = useUi((state) => state.consumeFileReveal);
+  // A comment in Changes or the Review panel names this repository and its repo-relative path: the line it was made on is
+  // shown in this repository's file, never in the thread's own file of the same path.
+  const [line, setLine] = useState<number | null>(null);
+  useEffect(() => {
+    if (!reveal || reveal.repoId !== repoId || reveal.threadId !== threadId || reveal.path !== path) return;
+    setLine(reveal.line);
+    consume(reveal.nonce);
+  }, [reveal, repoId, threadId, path, consume]);
+  return <Viewer threadId={threadId} tabId={tabId} path={path} line={line} repoId={repoId} {...(repoName === undefined ? {} : { repoName })} />;
 }
 
 /** A file of any worktree, read through the explorer and never written. */
@@ -167,14 +178,14 @@ function MissingWorktree({ target, threadId }: { target: Extract<FileTarget, { k
 }
 
 /** What a file tab shows. With no thread open only the explorer's own tabs can show: a thread file has no thread to name it. */
-export function FileTab({ id, threadId }: { id: FileTabId; threadId: string | null }) {
+export function FileTab({ id, threadId, repoName }: { id: FileTabId; threadId: string | null; /** The repository's name for a tab of another repository's file, as the panel reads it for the tab's own title. */ repoName?: string }) {
   const target = parseFileTab(id);
   if (!target) return null;
   if (target.kind === "issue") return <IssuePanel tracker={target.tracker} scope={target.scope} issueKey={target.key} />;
   if (target.kind === "worktree") return <MissingWorktree target={target} threadId={threadId} />;
   if (target.kind === "thread") {
     if (threadId === null) return null;
-    return target.repoId === undefined ? <ThreadFile threadId={threadId} tabId={id} path={target.path} /> : <RepoFile threadId={threadId} tabId={id} path={target.path} repoId={target.repoId} />;
+    return target.repoId === undefined ? <ThreadFile threadId={threadId} tabId={id} path={target.path} /> : <RepoFile threadId={threadId} tabId={id} path={target.path} repoId={target.repoId} {...(repoName === undefined ? {} : { repoName })} />;
   }
   return <ExplorerFile threadId={threadId} tabId={id} target={target} />;
 }
