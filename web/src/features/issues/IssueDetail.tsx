@@ -17,13 +17,11 @@ import type { IssueDetail as Detail, LinkedPullRequest } from "./contract";
 import { CommentBox } from "./IssueComment";
 import { PickerEditor, useDescriptionEditor, type EditProps, type IssueWriter } from "./IssueEdit";
 import { IssueGlyph } from "./IssueGlyph";
+import { Person } from "./IssuePerson";
+import { ReactionBar } from "./IssueReactions";
 import { IssueStateButton } from "./IssueStateMenu";
 import { reloadIssueLinks, useIssueThreads } from "./links";
 import { StartThreadDialog } from "./StartThreadDialog";
-
-export function Person({ login }: { login: string }) {
-  return <span className="iss-person"><span className="iss-avatar" aria-hidden>{login.slice(0, 2).toUpperCase()}</span>{login}</span>;
-}
 
 function LinkedThreads({ issue, onStart }: { issue: Detail; onStart(): void }) {
   const { threadIds, loaded, failed, retry } = useIssueThreads(issue);
@@ -102,13 +100,14 @@ function Entry({ issue }: { issue: Detail }) {
   );
 }
 
-/** The post with the description editor: the header's pencil, and the editor in place of the text while it is open. */
+/** The post with the description editor and the reaction bar: the header's pencil, and the editor in place of the text while it is open. */
 function EditableEntry({ issue, edit }: { issue: Detail; edit: EditProps }) {
   const { pencil, editor, editing } = useDescriptionEditor(edit);
   return (
     <article className="iss-entry">
       <header>{issue.author ? <Person login={issue.author.login} /> : <span className="iss-quiet">Unknown author</span>}<span className="iss-quiet">opened {relativeTime(issue.created_at).toLowerCase()}</span>{pencil}</header>
       {editing ? editor : <div className="iss-body"><Markdown text={issue.body} remoteImages="link" /></div>}
+      <ReactionBar issue={issue} write={edit.write} writing={edit.writing} />
     </article>
   );
 }

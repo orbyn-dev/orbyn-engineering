@@ -1,4 +1,5 @@
-import type { IssueCandidates, IssueComment, IssueDetail, IssueState, IssueUpdateInput } from "./contract";
+import { ApiFailure } from "../../api/client";
+import type { IssueCandidates, IssueComment, IssueDetail, IssueReactionCount, IssueState, IssueTemplate, IssueUpdateInput } from "./contract";
 
 /**
  * The limits docs/issues.md ("Issue writes and list controls") puts on `POST /api/issues/item/update`, and the checks that keep the
@@ -31,6 +32,20 @@ export function updateProblem(input: IssueUpdateInput): string | null {
   if (labels !== undefined && labels.length > LABELS_MAX) return `An issue can have at most ${LABELS_MAX} labels.`;
   if (assignees !== undefined && assignees.length > ASSIGNEES_MAX) return `An issue can have at most ${ASSIGNEES_MAX} assignees.`;
   return null;
+}
+
+/** Why this new issue cannot be sent, in words for the person, or `null` when it can. The title is the one field a create cannot do without. */
+export function createProblem(input: { title: string; body?: string; labels?: string[]; assignees?: string[] }): string | null {
+  return updateProblem({ title: input.title, body: input.body, labels: input.labels, assignees: input.assignees });
+}
+
+/**
+ * Whether a create's outcome is unknown. The service rewrites a `tracker_unavailable` during the final create to its own
+ * sentence saying the issue was possibly created (`crates/orbyn-core/src/issues/mod.rs`, `possibly_created`), while a refusal
+ * keeps its own meaning; that sentence is the only signal, because both travel under the same status and code.
+ */
+export function outcomeUnknown(failure: unknown): boolean {
+  return failure instanceof ApiFailure && failure.code === "tracker_unavailable" && /possibly created/i.test(failure.message);
 }
 
 /** Why this comment cannot be sent, in words for the person, or `null` when it can. */
@@ -79,6 +94,42 @@ export function readCandidates(value: unknown): IssueCandidates {
   return { labels, assignees, truncated: row.truncated === true || (Array.isArray(row.labels) && row.labels.length > CANDIDATES_MAX) || (Array.isArray(row.assignees) && row.assignees.length > CANDIDATES_MAX) };
 }
 
+const TEMPLATES_MAX = 50;
+const TEMPLATE_BODY_MAX = 16 * 1024;
+
+/** The templates the service answered: at most 50, each with a capped body, and never an entry the create cannot name. */
+export function readTemplates(value: unknown): IssueTemplate[] {
+  const templates: IssueTemplate[] = [];
+  for (const entry of (Array.isArray(value) ? value : []).slice(0, TEMPLATES_MAX)) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const row = entry as Record<string, unknown>;
+    const id = asText(row.id, 200);
+    const name = asText(row.name, 200);
+    if (!id || !name) continue;
+    const labels: IssueTemplate["labels"] = [];
+    for (const label of (Array.isArray(row.labels) ? row.labels : []).slice(0, LABELS_MAX)) {
+      const labelName = typeof label === "object" && label !== null ? asText((label as Record<string, unknown>).name, 200) : null;
+      if (labelName) labels.push({ name: labelName });
+    }
+    templates.push({ id, name, body: (asText(row.body, TEMPLATE_BODY_MAX) ?? ""), labels, ...(asText(row.description, 500) ? { description: asText(row.description, 500) } : {}) });
+  }
+  return templates;
+}
+
+/** The reactions an answer reports: the tracker's own words and its counts, capped; `null` when the answer carried none. */
+export function readReactions(value: unknown): IssueReactionCount[] | null {
+  if (!Array.isArray(value)) return null;
+  const reactions: IssueReactionCount[] = [];
+  for (const entry of value.slice(0, 50)) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const row = entry as Record<string, unknown>;
+    const content = asText(row.content, 80);
+    if (!content || typeof row.count !== "number" || !Number.isFinite(row.count) || row.count < 0) continue;
+    reactions.push({ content, count: Math.floor(row.count) });
+  }
+  return reactions;
+}
+
 /** A stored comment as the service answered it, keeping only the fields the issue page draws and capping its text. */
 export function readComment(value: unknown): IssueComment {
   const row = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
@@ -92,10 +143,20 @@ export function readComment(value: unknown): IssueComment {
   };
 }
 
-/** The detail an update or a state write answers, with what an older answer leaves out filled in, as `get` does. */
+/** The detail a write answers, with what an older answer leaves out filled in, as `get` does. */
 export function readDetail(body: IssueDetail): IssueDetail {
   const list = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
-  const { states, ...detail } = body;
+  const { states, reactions, ...detail } = body;
   const kept = readStates(states);
-  return { ...detail, comments: list(body.comments), linked_pull_requests: list(body.linked_pull_requests), linked_threads: list(body.linked_threads), assignees: list(body.assignees), labels: list(body.labels), ...(kept ? { states: kept } : {}) };
+  return {
+    ...detail,
+    comments: list(body.comments),
+    linked_pull_requests: list(body.linked_pull_requests),
+    linked_threads: list(body.linked_threads),
+    assignees: list(body.assignees),
+    labels: list(body.labels),
+    ...(kept ? { states: kept } : {}),
+    // Absent or null is unknown, never "no reactions": the bar is drawn from the counts an answer actually reports.
+    ...(Array.isArray(reactions) ? { reactions: readReactions(reactions) } : {}),
+  };
 }

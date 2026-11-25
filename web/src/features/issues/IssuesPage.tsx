@@ -11,6 +11,7 @@ import { PageBar } from "../../product/ui/PageBar";
 import { IconButton } from "../../ui/controls";
 import { issuesApi, markNotOffered, useApiVersion, useTrackers } from "./api";
 import type { IssueList, IssueQuery, IssueSummary, TrackerKind, TrackerRow } from "./contract";
+import { NewIssue } from "./IssueCreate";
 import { IssueDetail } from "./IssueDetail";
 import { IssueRows, IssuesHead, IssuesSkeleton, LoadMoreRow } from "./IssueRows";
 import { NoIssues, NoMatch, NotConnected, NotReported, Unreachable } from "./IssueStates";
@@ -151,11 +152,13 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
       {loading || read.refreshing ? <i className="iss-spin spin" aria-hidden /> : <RefreshCw size={14} aria-hidden />}
     </IconButton>
   );
+  // The page bar's one action (issue-write-new): it reads the trackers the list already has, and Check the list re-reads this list.
+  const newIssue = <NewIssue trackers={trackers} preferred={query.tracker} onCheckList={() => void read.reload()} />;
   const status = loading ? "Loading" : read.refreshing ? "Refreshing" : loadedAt ? `Updated ${relativeTime(new Date(loadedAt).toISOString(), now).toLowerCase()}` : "";
 
   return (
     <>
-      <PageBar actions={phone ? refresh : <><span className="iss-upd" role="status">{status}</span>{refresh}</>}>
+      <PageBar actions={phone ? refresh : <>{newIssue}<span className="iss-upd" role="status">{status}</span>{refresh}</>}>
         <h1 tabIndex={-1} data-page-title>Issues</h1>
       </PageBar>
       <IssuesToolbar
