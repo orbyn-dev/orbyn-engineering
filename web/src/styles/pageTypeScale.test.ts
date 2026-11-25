@@ -92,8 +92,14 @@ describe("the page-title scale", () => {
   it("leaves both Settings titles to the shared rule, so no feature styles them apart", () => {
     // Settings draws its visible title in the .settings-title span because its h1 stays for the screen reader; a
     // rule that sized either of them again drew Settings off the shared scale (#1115). Both take the title rule.
-    const hooks = [".settings-title", ".settings-main > h1"];
-    const sizing = RULES.filter((one) => hooks.includes(one.selector) && declaration(one.body, "font-size") !== undefined);
+    // A feature stylesheet can reach a title through a qualified selector too, and .settings-page .settings-title
+    // outranks the shared rule, so a selector counts whether it names the hook alone or qualifies it.
+    /** A selector with one space around each combinator, so `a>b` and `a > b` compare the same. */
+    const normalized = (selector: string) => selector.replace(/\s*([>+~])\s*/g, " $1 ").replace(/\s+/g, " ").trim();
+    const hooks = [".settings-title", ".settings-main > h1"].map(normalized);
+    const sizing = RULES.filter(
+      (one) => hooks.some((hook) => normalized(one.selector).endsWith(hook)) && declaration(one.body, "font-size") !== undefined,
+    );
     expect(sizing.map((one) => one.file + ": " + one.selector)).toEqual([
       "styles/pages.css: .settings-title",
       "styles/pages.css: .settings-main > h1",
