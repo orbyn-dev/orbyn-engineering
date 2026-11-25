@@ -6,7 +6,7 @@ use crate::{
 use orbyn_contracts::{ProjectGroupingOverride, WorkspaceSetup};
 use serde_json::json;
 
-async fn core(dir: &TempDir) -> Core {
+pub(super) async fn core(dir: &TempDir) -> Core {
     let root = library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
     config.engines.lookup_latest = false;
@@ -21,7 +21,7 @@ async fn core(dir: &TempDir) -> Core {
     core
 }
 
-fn repository(path: &Path) {
+pub(super) fn repository(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
     run_git(path, &["init", "-q", "-b", "main"]);
     run_git(
@@ -41,7 +41,7 @@ fn repository(path: &Path) {
     );
 }
 
-fn configure(path: &Path, name: &str, remote: &str) {
+pub(super) fn configure(path: &Path, name: &str, remote: &str) {
     run_git(path, &["config", &format!("remote.{name}.url"), remote]);
 }
 
@@ -401,7 +401,13 @@ async fn exhausted_metadata_budget_is_unknown_and_cannot_hide_group_members() {
     repository(&path);
     configure(&path, "origin", "https://host/Owner/Repo.git");
     let project = core.add_project(path.to_str().unwrap()).await.unwrap();
-    let member = checkout(project, ProjectGroupingMode::Repository, Instant::now()).await;
+    let member = checkout(
+        &ScopeGitFacts::default(),
+        project,
+        ProjectGroupingMode::Repository,
+        Instant::now(),
+    )
+    .await;
     assert!(!member.metadata_complete && member.repository_key.is_none());
     let catalog = core
         .project_scope_catalog(&ProjectScopesQuery::default())
