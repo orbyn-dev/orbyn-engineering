@@ -438,3 +438,54 @@ async fn a_restart_on_the_exact_budget_boundary_stops_without_a_resume() {
     assert!(audits(&w, &id, "crew.task.restart_stopped").is_empty());
     assert!(w.sent_to(&worker).is_empty(), "no turn was sent");
 }
+
+#[tokio::test]
+async fn a_crash_between_the_resume_commit_and_the_prompt_stops_once() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let (id, worker, _) = dead_task(&w, "worker-crash", 30).await;
+    // A restart commits the one resume (resume_crew_task) and then dies before the worker's prompt is
+    // queued: the task is left running with nothing on the worker and the one resume already spent. A crash
+    // at that instruction boundary cannot be injected into the process, so the test takes the commit itself,
+    // which is exactly what recover calls, and skips only the send that would follow it.
+    let run = w.core.store.crew_run(&id).unwrap().unwrap();
+    assert_eq!((run.resume_count, run.attempts), (0, 0));
+    match w.core.store.resume_crew_task(&id).unwrap() {
+        ResumeOutcome::Resumed { task, .. } => assert_eq!(task.state, "running"),
+        ResumeOutcome::Refused(why) => panic!("the resume was refused: {why}"),
+        ResumeOutcome::NotInFlight => panic!("the task was not in flight"),
+    }
+    assert_eq!(w.task(&id).state, "running");
+    assert!(
+        w.core.store.list_queue(&worker).unwrap().is_empty(),
+        "the prompt never reached the worker"
+    );
+
+    // The next start must not resume it a second time (a second turn for one resume): the one resume is
+    // spent, so it stops the task as the second death and tells the person, with no prompt sent.
+    w.core.recover_crew_tasks().await;
+
+    let run = w.core.store.crew_run(&id).unwrap().unwrap();
+    assert_eq!(
+        (run.resume_count, run.attempts),
+        (1, 1),
+        "the resume was taken again"
+    );
+    assert_eq!(audits(&w, &id, "crew.task.resumed").len(), 1);
+    let task = w.task(&id);
+    assert_eq!(task.state, "stopped");
+    assert_eq!(task.stop_reason.as_deref(), Some("engine_error"));
+    assert_eq!(task.stop_detail.as_deref(), Some(WORKER_STOPPED_TWICE));
+    let stopped = audits(&w, &id, "crew.task.restart_stopped");
+    assert_eq!(stopped.len(), 1);
+    assert_eq!(stopped[0].detail, json!({ "why": "already_resumed" }));
+    assert!(w.sent_to(&worker).is_empty(), "no second turn was sent");
+    assert!(
+        w.core
+            .crew_needs_you()
+            .unwrap()
+            .items
+            .iter()
+            .any(|item| item.id == id),
+        "the person is asked about the second death"
+    );
+}
