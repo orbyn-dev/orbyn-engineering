@@ -504,6 +504,12 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   { login, name?, id }[], truncated }`. `id` is how the tracker addresses the person on a write, which is not
   always the login; at most 200 of each are read, `truncated: true` when there were more, so a missing
   name is not proof the person is ineligible. A scope outside the connection is refused as everywhere else.
+- **How the web decides a route is offered** (`web/src/features/issues/edit.ts`, `http.ts`): one
+  `GET /api/issues/candidates` with no query, a read that changes nothing, and the answer decides. A `400` or `409` is the route
+  answering, so the writes and the sort are offered, and so is a `404 not_found` that names the thing the route could not find.
+  "No such route" is a `405`, a `404` whose code is not `not_found`, or the SPA fallback's own `404 not_found` whose message is
+  `No such route.` (`crates/orbynd/src/routes/ui.rs` answers that for any `/api` path no route claimed): those keep each control
+  as the disabled Planned pill and send nothing, and a write that meets one returns to Planned (#1530).
 - A write the tracker refuses answers the usual error (`forbidden`, `not_found`, `rate_limited`,
   `tracker_unavailable`) and changes nothing here. Issue text going in is as untrusted as issue text coming
   out: it is sent as a field value, never in an argument position, and never rendered as markup by this side.
@@ -656,7 +662,8 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
 - **The web client calls `comment` only**: the issue page's comment box under the comments is one
   `POST /api/issues/item/comment` through the page-wide one-write guard, and it shows the comment the service stored
   after the tracker's own, keeps a failed draft and says nothing changed, refuses a blank or over-64 KiB body before
-  sending anything, and goes back to Planned when a first answer is a 404 or 405 that is not `not_found`
+  sending anything, and goes back to Planned when a first answer says the route is not there (a `405`, a `404` whose code is
+  not `not_found`, or the SPA fallback's own `404 not_found`, `No such route.`; the rule is in "Issue writes and list controls")
   (`web/src/features/issues/IssueComment.tsx`, `http.ts`). Its create and react controls stay Planned until a web
   slice builds them against these routes; `web/src/api/personKey.ts` lists all three routes, so the key already
   goes with them.

@@ -49,7 +49,7 @@ export function IssueStateButton({ issue, write, writing }: { issue: IssueDetail
     try {
       await write(() => issuesApi().setState(issue, next));
     } catch (failure) {
-      if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code)) {
+      if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code, failure.message)) {
         markNotOffered("state");
         pushToast("This service does not offer state changes yet. Nothing changed.");
         return;

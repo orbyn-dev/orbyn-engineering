@@ -40,8 +40,21 @@ export function commentProblem(body: string): string | null {
   return null;
 }
 
-/** The one status that says "this service has no such route" rather than "no such issue": a 404 or 405 whose code is not `not_found`. */
-export const routeAbsent = (status: number, code: string): boolean => status === 405 || (status === 404 && code !== "not_found");
+/**
+ * The transport's own sentence for a path no route claimed: a request under `/api` that the router did not claim is answered by
+ * the SPA fallback as `404` `not_found` with this message (`crates/orbynd/src/routes/ui.rs`). A route that exists and cannot find
+ * the thing it was asked for answers `not_found` with a sentence naming that thing, so the two `404`s are different facts.
+ */
+export const NO_SUCH_ROUTE = "No such route.";
+
+/**
+ * Whether an answer says "this service has no such route" rather than "the thing you asked for is not here": a `405`, a `404`
+ * whose code is not `not_found`, or the SPA fallback's own `404 not_found`. The fallback answering a path no route matched is not
+ * an offered route, and a route's own `not_found` is not an absent one: reading either as the other offers controls the service
+ * does not have (#1530) or hides controls it does.
+ */
+export const routeAbsent = (status: number, code: string, message: string): boolean =>
+  status === 405 || (status === 404 && (code !== "not_found" || message === NO_SUCH_ROUTE));
 
 const asText = (value: unknown, length: number): string | null => (typeof value === "string" ? value.slice(0, length) : null);
 

@@ -66,8 +66,8 @@ const refusedListeners = new Set<() => void>();
 
 /**
  * A write or the sort answered "no such route": the control goes back to its Planned pill and stays there, so a service that does
- * not offer it is never shown a success. Called only for a 404 or 405 that is not `not_found` (see `routeAbsent`). It does not
- * change `useApiVersion`, so no screen reads again and no draft is lost.
+ * not offer it is never shown a success. Called only for a 405, a 404 whose code is not `not_found`, or the SPA fallback's own 404
+ * `not_found` (see `routeAbsent`). It does not change `useApiVersion`, so no screen reads again and no draft is lost.
  */
 export function markNotOffered(what: "sort" | "edit" | "state" | "comment"): void {
   if (refused.has(what)) return;

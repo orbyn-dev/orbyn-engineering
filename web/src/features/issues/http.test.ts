@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { forgetPersonKey, PERSON_HEADER } from "../../api/personKey";
 import { createHttpIssuesApi, createLiveIssuesApi } from "./http";
+import { NO_SUCH_ROUTE } from "./edit";
 import type { IssueQuery } from "./contract";
 
 const TOKEN = "glpat-SECRET-0123456789";
@@ -244,10 +245,16 @@ describe("the routes", () => {
     expect(await createHttpIssuesApi().candidates(REF)).toEqual({ labels: [], assignees: [], truncated: false });
   });
 
-  it("offers() reads once, and only a 404 or 405 that is not a missing issue says no", async () => {
+  it("offers() reads once, and only a 405 or a 404 that says the route is absent says no", async () => {
     service(() => json({ code: "invalid", message: "tracker is required" }, 400));
     expect(await createHttpIssuesApi().offers()).toBe(true);
     service(() => json({ code: "tracker_not_connected", message: "m" }, 409));
+    expect(await createHttpIssuesApi().offers()).toBe(true);
+    // The SPA fallback answering a path no route matched: the same code as a missing issue, a different fact (#1530).
+    service(() => json({ code: "not_found", message: NO_SUCH_ROUTE }, 404));
+    expect(await createHttpIssuesApi().offers()).toBe(false);
+    // The route's own 404 about the thing it was asked for: the route is there, and this is its answer.
+    service(() => json({ code: "not_found", message: "issue not found" }, 404));
     expect(await createHttpIssuesApi().offers()).toBe(true);
     service(() => new Response("", { status: 404 }));
     expect(await createHttpIssuesApi().offers()).toBe(false);
@@ -311,7 +318,8 @@ describe("the client the app starts with", () => {
     expect(calls.map((call) => call.url.pathname)).toEqual(["/api/issues/trackers", "/api/issues/candidates"]);
     service((call) => (call.url.pathname === "/api/issues/trackers" ? json([{ tracker: "github", connected: true }]) : json({ code: "invalid", message: "m" }, 400)));
     expect(await createLiveIssuesApi().offers()).toBe(true);
-    service(() => json({ code: "not_found", message: "Not found." }, 404));
+    // A service without the routes answers the SPA fallback's own sentence, not a 404 about an issue (#1530).
+    service(() => json({ code: "not_found", message: NO_SUCH_ROUTE }, 404));
     const absent = createLiveIssuesApi();
     expect(await absent.offers()).toBe(false);
     await expect(absent.update(REF, { body: "x" })).rejects.toThrow(/not reported/);
@@ -319,6 +327,20 @@ describe("the client the app starts with", () => {
     await expect(absent.candidates(REF)).rejects.toThrow(/not reported/);
     await expect(absent.comment(REF, "x")).rejects.toThrow(/not reported/);
     expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
+  });
+
+  it("keeps the writes offered when the probe's 404 is the API's own not_found for an issue", async () => {
+    // The route is there and answered about the issue it was asked for: that is an answer, never "not offered" (#1530).
+    service((call) => (call.url.pathname === "/api/issues/trackers"
+      ? json([{ tracker: "github", connected: true }])
+      : json({ code: "not_found", message: "issue not found" }, 404)));
+    const api = createLiveIssuesApi();
+    expect(await api.offers()).toBe(true);
+    // The write's own not_found is shown as the service's answer, not cached as Planned.
+    await expect(api.update(REF, { body: "x" })).rejects.toMatchObject({ code: "not_found", status: 404 });
+    expect(calls.map((call) => `${call.method} ${call.url.pathname}`)).toEqual([
+      "GET /api/issues/trackers", "GET /api/issues/candidates", "POST /api/issues/item/update",
+    ]);
   });
 
   it("turns the real routes on once the trackers answer, and not before", async () => {

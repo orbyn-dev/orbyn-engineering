@@ -6,11 +6,11 @@ import { settled, startProject, threadIdOf, type Service } from "./service";
  * connection names the `o/r` scope the stand-in answers for.
  *
  * Covered: the list with its tracker, counts, state tabs and the label, assignee and text filters, no-match and closed rows,
- * and the absence of a Load more row; the detail page with body, comments, facts and its linked pull requests card absent
- * (the fixture reports none); and Start a thread, the service's framed draft read and one write that creates, links and queues.
- * `update`, `state` and the `candidates` read are not on this service (create, comment and react are, but the client does not
- * call them); the client's not-offered probe reads this service's fallback 404 as a live route, so Sort starts live and is
- * exercised: a chosen sort is refused 400 invalid and the control then returns to the disabled Planned pill.
+ * and the absence of a Load more row; Sort, which this service offers because the `candidates` route exists (#1593), so the
+ * probe's 400 is read as offered and a chosen sort is accepted; the detail page with body, comments, facts and its linked pull
+ * requests card absent (the fixture reports none); and Start a thread, the service's framed draft read and one write that
+ * creates, links and queues. `update` and `state` are on this service too (create, comment and react as well, but the client
+ * does not call them); the description pencil and the label and assignee pickers are not exercised here.
  */
 
 test.setTimeout(60_000);
@@ -53,10 +53,18 @@ test("the list shows the tracker's issues with counts, state tabs and the filter
   await expect(retry.locator(".iss-state")).toHaveText("Open");
   await expect(retry.locator(".iss-avatar")).toHaveAttribute("title", "me");
   await expect(rows(page).filter({ hasText: "Tidy the docs" })).toContainText("#12 · GitHub · opened by ada");
-  // The update and state writes and the candidates read are not on this service, and the client's not-offered probe reads this
-  // service's SPA fallback 404 as a live route, so Sort starts enabled and a chosen sort is refused 400 (#1530). That is a bug,
-  // not behaviour to pin, so this spec asserts nothing about Sort until #1530 is fixed: the intended case (Sort stays the
-  // disabled Planned pill while the route is absent) belongs here then.
+  // The `candidates` route this service offers answers the probe with 400 (no tracker or scope was sent), which is the route
+  // answering, so the writes and the sort are offered: Sort is a live menu, and a chosen sort reaches the service as
+  // `sort=created` and is accepted. A service without the routes answers the SPA fallback 404 `not_found` (`No such route.`),
+  // which the client reads as not offered (#1530), so there the pill stays the disabled Planned control and nothing is sent.
+  const sort = page.getByRole("button", { name: "Sort: Updated", exact: true });
+  await expect(sort).toBeEnabled();
+  await sort.click();
+  const sorted = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/issues" && new URL(response.url()).searchParams.get("sort") === "created");
+  await page.getByRole("menuitem", { name: "Created" }).click();
+  expect((await sorted).status()).toBe(200);
+  await expect(page.getByRole("button", { name: "Sort: Created", exact: true })).toBeEnabled();
+  await expect(rows(page)).toHaveCount(2);
   // Search: the text goes to the tracker as gh --search, one row, a removable chip and the shown line.
   await search(page).fill("queue");
   await search(page).press("Enter");

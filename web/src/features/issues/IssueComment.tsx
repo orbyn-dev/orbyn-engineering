@@ -17,8 +17,8 @@ import { PlannedNote } from "./Planned";
  *   write, sends nothing.
  * - A failed write loses nothing: the draft stays exactly as it was typed and the form says nothing changed.
  * - A blank comment, or one over 64 KiB, is refused on this side before anything is sent.
- * - A 404 or 405 that is not `not_found` means this service has no comment route: the box goes back to Planned and stays
- *   there for the life of this client.
+ * - A 405, a 404 that is not `not_found`, or the SPA fallback's own 404 `not_found` means this service has no comment route: the
+ *   box goes back to Planned and stays there for the life of this client.
  */
 export function CommentBox({ issue, write, writing }: { issue: IssueDetail; write: IssueWriter; writing: boolean }) {
   const refused = useCommentRefused();
@@ -41,7 +41,7 @@ export function CommentBox({ issue, write, writing }: { issue: IssueDetail; writ
       });
       if (done) setDraft("");
     } catch (failure) {
-      if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code)) {
+      if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code, failure.message)) {
         markNotOffered("comment");
         return;
       }
