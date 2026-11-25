@@ -103,7 +103,7 @@ pub struct CoreConfig {
     pub crew_merge_required_checks: Vec<String>,
     /// Explicit in-service watch schedule, never publication/merging. None is off; 60s..24h only.
     pub crew_merge_watch_interval: Option<Duration>,
-    /// The background listeners' periodic pass (schedule buckets due and CI heads watched), behind the Crew Preview
+    /// The background listeners' periodic pass (schedule windows due and CI heads watched), behind the Crew Preview
     /// flag. None is off: no pass runs, not even at startup; 60s..24h only.
     pub crew_background_watch_interval: Option<Duration>,
     /// Whether a crew worker's process starts under the restriction (and is refused where
