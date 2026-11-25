@@ -337,9 +337,12 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   file watcher covers the thread's worktree, so the tree reads again when the project's data changes (a finished run, for one) or the
   person presses Refresh, and on re-entering the thread; the repository list is read again with the thread's Changes (a run that ended,
   a repository added or trusted), so one added to a running thread can be picked. A file the row lists opens its tab, which draws it
-  by what it holds; it is not dragged into the message, because the thread's composer chips name a checkout's path (its Open in editor,
-  Open in browser, Reveal and line comments carry the `repo_id`, and a comment on another repository's file is context for the next
-  message, never a service write; the Changes panel's comments do not name a repository yet). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
+  by what it holds; another repository's file is dragged into the message and added from its own row, the drag carrying that
+  repository's client-only `repo_id` and name, so the mention and the file chip name `<name>/<path>` and a pasted chip reads that
+  repository's file rather than the thread's own copy of the path (its Open in editor, Open in browser, Reveal and line comments
+  carry the `repo_id`, and a comment on another repository's file is context for the next message, never a service write; the
+  Changes panel's comments do not name a repository yet). The primary repository's file is neither dragged nor added from its row:
+  that row is the thread's own checkout, whose composer chips name a checkout's path. The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
   chip and line comments name the file relative to the repository and not to the task folder (the Changes panel has the same shape);
   carrying the primary's `repo_id` on its tab would fix those and is left to a follow-up. `GET .../files/metadata` still has no web caller: no screen shows a file's metadata. No frame
   draws this row or the explorer's chip, so both reuse what exists: a worktree row (branch label, Git icon, current dot) and the

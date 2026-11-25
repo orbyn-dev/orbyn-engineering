@@ -6,6 +6,7 @@ import type { Run, Thread } from "../../../api/types";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
+import { FILE_MENTION_REPO_TYPE, FILE_MENTION_TYPE } from "../../../product/composer/skillMention";
 import { Composer } from "./Composer";
 import { setPhotoConversionApi } from "./photoConversion";
 import { setTranscriptsApi, TRANSCRIPT_TYPE } from "./transcriptDrop";
@@ -64,6 +65,22 @@ it("turns a dropped transcript into a chip, sends the other files as attachments
   await userEvent.type(screen.getByRole("textbox"), "compare{Enter}");
   await waitFor(() => expect(start).toHaveBeenCalledWith("t1", "compare", ["a1", "tr1"]));
   await waitFor(() => expect(screen.queryByText("Redirect loop on logout")).toBeNull());
+});
+
+it("names a file dragged from the thread's own tree by its path alone, as before", () => {
+  render(<Composer thread={thread} engine={null} showContext />);
+  fireEvent.drop(box(), { dataTransfer: { types: [FILE_MENTION_TYPE], getData: (type: string) => (type === FILE_MENTION_TYPE ? "src/main.rs" : ""), files: [] } });
+  expect(screen.getByRole("textbox")).toHaveValue("@src/main.rs ");
+});
+
+it("names a file dragged from another repository's tree with that repository, so it reads from the right one", () => {
+  render(<Composer thread={thread} engine={null} showContext />);
+  const held: Record<string, string> = {
+    [FILE_MENTION_TYPE]: "planner.ts",
+    [FILE_MENTION_REPO_TYPE]: JSON.stringify({ repoId: "orbyn-planner", repoName: "orbyn-planner" }),
+  };
+  fireEvent.drop(box(), { dataTransfer: { types: [FILE_MENTION_TYPE, FILE_MENTION_REPO_TYPE], getData: (type: string) => held[type] ?? "", files: [] } });
+  expect(screen.getByRole("textbox")).toHaveValue("@orbyn-planner/planner.ts ");
 });
 
 it("holds send while a transcript is being read", async () => {

@@ -26,6 +26,8 @@ export interface ThreadCheckout {
   tabRepoId: string | undefined;
   /** The repository's name, as one line of plain text. */
   name: string;
+  /** The repository's name as the service gives it, which is also its worktree's folder inside the thread's task folder; a message that names its file names this. */
+  repoName: string;
   /** The thread's own branch in it, the same name in every repository of the thread. */
   branch: string;
 }
@@ -304,6 +306,30 @@ export function threadPathOf(worktreePath: string, cwd: string, path: string): s
   if (base === null) return null;
   if (base === "") return path;
   return path.startsWith(`${base}/`) ? path.slice(base.length + 1) : null;
+}
+
+/** How the open thread's message names a file row: its path in the checkout or in its repository, and that repository when the file is another repository's (a client-only shape, never a wire field). */
+export interface FileMention {
+  path: string;
+  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout. */
+  repoId?: string;
+  /** That repository's name, which is also its worktree's folder in the thread's task folder. */
+  repoName?: string;
+}
+
+/**
+ * A file row as the open thread's message names it, or null when the thread's own actions cannot reach the file. A file of
+ * another repository of a multi-repository thread carries that repository's client-only id and name, since its path is
+ * relative to that repository's worktree; the thread's own checkout is named by its path alone, exactly as before.
+ */
+export function fileMention(row: Row, thread: Pick<Thread, "cwd"> | null | undefined): FileMention | null {
+  if (!thread || row.kind !== "file" || row.path === undefined) return null;
+  if (row.checkout) {
+    return row.checkout.tabRepoId === undefined ? null : { path: row.path, repoId: row.checkout.tabRepoId, repoName: row.checkout.repoName };
+  }
+  if (!row.worktree) return null;
+  const path = threadPathOf(row.worktree.path, thread.cwd, row.path);
+  return path === null ? null : { path };
 }
 
 /** The last parts of a folder path, for a deep row's tooltip. */

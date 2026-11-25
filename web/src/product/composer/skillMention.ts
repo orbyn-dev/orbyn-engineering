@@ -39,5 +39,23 @@ export const threadToken = (id: string, title: string) => `[${label(title)}](orb
 
 export const pullToken = (number: number, title: string, url: string) => `[#${number} ${label(title)}](${url})`;
 
-/** A file dragged from the Files tree, by its path in the checkout. */
+/** A file dragged from the Files tree, by its path in the checkout, or in the repository FILE_MENTION_REPO_TYPE names. */
 export const FILE_MENTION_TYPE = "application/x-orbyn-file";
+
+/** The repository of a dragged file of a multi-repository thread: its client-only `repoId` and `repoName`, as JSON. Set only for another repository's file, so the thread's own checkout carries nothing. */
+export const FILE_MENTION_REPO_TYPE = "application/x-orbyn-file-repo";
+
+/** The repository a dragged file belongs to, from the drag's own payload; null for the thread's own checkout. */
+export function draggedRepository(raw: string): { repoId: string; repoName: string } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const { repoId, repoName } = parsed as { repoId?: unknown; repoName?: unknown };
+  return typeof repoId === "string" && repoId !== "" && typeof repoName === "string" && repoName !== ""
+    ? { repoId, repoName }
+    : null;
+}

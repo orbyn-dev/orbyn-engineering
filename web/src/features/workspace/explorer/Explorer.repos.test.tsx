@@ -1,13 +1,15 @@
-import { act, configure, render, screen, waitFor, within } from "@testing-library/react";
+import { act, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { dataChanged } from "../../../api/shell";
 import { App } from "../../../app/App";
 import { createReposMock } from "../../../../mock/repos";
 import { startDataRefresh } from "../../../lib/dataRefresh";
+import { useComposerChips } from "../../../product/state/composerChipStore";
 import { fileTabId, useUi } from "../../../product/state/ui";
 import { useThreadLogs } from "../../../product/state/threadLogs";
 import { installMockFetch } from "../../../test-support";
+import { FILE_MENTION_REPO_TYPE, FILE_MENTION_TYPE } from "../../../product/composer/skillMention";
 import { setReposApi, type RepoRow, type ThreadRepo } from "../../repos";
 import { useExplorer } from "./store";
 
@@ -83,6 +85,7 @@ configure({ asyncUtilTimeout: 8000 });
 
 beforeEach(() => {
   useExplorer.getState().reset();
+  useComposerChips.setState({ chips: {}, reviewDrafts: {} });
   installMockFetch();
   useUi.setState({ projectFolders: true, panelOpen: false, panelTab: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["diff", "browser", "activity", "side", "tools"], layouts: {}, leftBarView: "files", explorerOpen: {}, sidebarWidth: 224 });
   useUi.getState().setPrefs({ welcomeDone: true });
@@ -152,6 +155,47 @@ it("switching loads the other repository's tree with repo_id, and each file open
   await user.click(await screen.findByRole("menuitem", { name: "orbyn-engineering" }));
   await user.click(await findRow(/^main\.ts/));
   expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "main.ts" }));
+});
+
+it("carries another repository's identity when its file is dragged or added, and leaves the primary's file alone", async () => {
+  const user = userEvent.setup();
+  twoRepositories();
+  serveTrees();
+  render(<App />);
+
+  // The primary repository's checkout row is the thread's own: its files stay undraggable and unaddable from here, as before.
+  const primary = await findRow(/^main\.ts/);
+  const primaryDrag = vi.fn();
+  fireEvent.dragStart(primary, { dataTransfer: { setData: primaryDrag } });
+  expect(primaryDrag).not.toHaveBeenCalled();
+  expect(primary).not.toHaveAttribute("draggable");
+
+  // The other repository's file carries its client-only id and name beside the path in its worktree.
+  await waitFor(() => expect(chooser()).toHaveAccessibleName("Repository: orbyn-engineering"));
+  await user.click(chooser());
+  await user.click(await screen.findByRole("menuitem", { name: "orbyn-planner" }));
+  const foreign = await findRow(/^planner\.ts/);
+  const setData = vi.fn();
+  fireEvent.dragStart(foreign, { dataTransfer: { setData } });
+  expect(setData).toHaveBeenCalledWith(FILE_MENTION_TYPE, "planner.ts");
+  expect(setData).toHaveBeenCalledWith(FILE_MENTION_REPO_TYPE, JSON.stringify({ repoId: OTHER, repoName: "orbyn-planner" }));
+
+  // Its own row menu adds it to the open thread's message as that repository's file.
+  await user.pointer({ keys: "[MouseRight]", target: foreign });
+  const menu = await screen.findByRole("menu", { name: "File actions" });
+  expect(within(menu).queryByRole("menuitem", { name: /Add to this thread/ })).toBeInTheDocument();
+  await user.click(within(menu).getByRole("menuitem", { name: /Add to this thread/ }));
+  expect(useComposerChips.getState().chips[THREAD]?.[0]).toMatchObject({
+    kind: "file",
+    path: "planner.ts",
+    repoId: OTHER,
+    repoName: "orbyn-planner",
+  });
+
+  // Put the shared repository choice back to the primary for the tests after this one.
+  await waitFor(() => expect(chooser()).toHaveAccessibleName("Repository: orbyn-planner"));
+  await user.click(chooser());
+  await user.click(await screen.findByRole("menuitem", { name: "orbyn-engineering" }));
 });
 
 it("an ordinary thread draws no chooser and asks for no repository tree", async () => {

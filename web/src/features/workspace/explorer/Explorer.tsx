@@ -22,7 +22,7 @@ import { arrangeThreads, attentionRank } from "../sidebar/groups";
 import { ExplorerRow, type RowHandlers } from "./ExplorerRow";
 import { useExplorerWatch } from "./watch";
 import { LeftBarSwitch } from "./LeftBarSwitch";
-import { buildRows, threadPathOf, type Row, type ThreadCheckout } from "./model";
+import { buildRows, fileMention, threadPathOf, type Row, type ThreadCheckout } from "./model";
 import { RepoChooser, repoLabel, usePickedRepo, useThreadRepos } from "../../repos";
 import { canStartThreadIn, startThreadIn } from "./startThread";
 import { levelKey, repoLevelKey, useExplorer } from "./store";
@@ -83,8 +83,9 @@ export function Explorer({ route }: { route: Route }) {
   const threadCheckout = useMemo<ThreadCheckout | null>(() => {
     const picked = repoChoice.selected;
     if (!currentThreadId || !repoChoice.multi || !picked) return null;
-    // The primary repository's files open as the thread's own tab; another repository's carry its id.
-    return { threadId: currentThreadId, readRepoId: repoChoice.repoId, tabRepoId: repoChoice.repoId, name: repoLabel(picked.name), branch: picked.branch };
+    // The primary repository's files open as the thread's own tab; another repository's carry its id, and its message
+    // names the repository's real name, which is its worktree's folder in the task folder.
+    return { threadId: currentThreadId, readRepoId: repoChoice.repoId, tabRepoId: repoChoice.repoId, name: repoLabel(picked.name), repoName: picked.name, branch: picked.branch };
   }, [currentThreadId, repoChoice.multi, repoChoice.repoId, repoChoice.selected]);
 
   const now = useNow(true, 30_000);
@@ -218,6 +219,8 @@ export function Explorer({ route }: { route: Route }) {
   };
   /** The file as the open thread names it (relative to its own folder), or null when its routes cannot reach the file. */
   const threadPath = (row: Row) => (current && row.worktree && row.path !== undefined ? threadPathOf(row.worktree.path, current.cwd, row.path) : null);
+  /** The file as the open thread's message names it: its checkout path, or another repository's path with that repository's client-only identity. */
+  const mentioned = (row: Row) => fileMention(row, current);
   /** The file is one the open thread's own actions apply to. */
   const ownsFile = (row: Row) => threadPath(row) !== null;
   const outsideEditor = (row: Row) => {
@@ -229,9 +232,18 @@ export function Explorer({ route }: { route: Route }) {
     });
   };
   const addToThread = (row: Row) => {
-    const path = threadPath(row);
-    if (!current || path === null) return;
-    useComposerChips.getState().add(current.id, { id: chipId(), kind: "file", path, line: null, excerpt: null, language: languageForPath(path) });
+    const file = mentioned(row);
+    if (!current || file === null) return;
+    useComposerChips.getState().add(current.id, {
+      id: chipId(),
+      kind: "file",
+      path: file.path,
+      line: null,
+      excerpt: null,
+      language: languageForPath(file.path),
+      ...(file.repoId === undefined ? {} : { repoId: file.repoId }),
+      ...(file.repoName === undefined ? {} : { repoName: file.repoName }),
+    });
     useUi.getState().pushToast("File added to your message");
   };
 
@@ -254,8 +266,12 @@ export function Explorer({ route }: { route: Route }) {
     }
     if (row.kind === "file" && row.checkout && row.path !== undefined) {
       const path = row.path;
+      // Another repository's file is added to the message from here too, naming its repository; the primary repository's is
+      // still named by the thread's own actions and is offered none, as before.
+      const file = mentioned(row);
       setMenu({ x, y, label: "File actions", row, items: [
         { label: "Open", shortcut: "↵", onSelect: () => openFile(row) },
+        ...(file ? [{ label: "Add to this thread", shortcut: "@", onSelect: () => addToThread(row) }] : []),
         { label: "Copy path", onSelect: () => void copyText(path, "Path copied") },
       ] });
       return;
@@ -263,6 +279,7 @@ export function Explorer({ route }: { route: Route }) {
     if (row.kind !== "file" || !row.worktree || row.path === undefined) return;
     const { worktree, path } = row;
     const owned = ownsFile(row);
+    const file = mentioned(row);
     const editor = owned ? primaryEditor(editors.data ?? [], preferred) : null;
     const manager = owned ? (editors.data ?? []).find((one) => one.file_manager) : undefined;
     const separator = worktree.path.includes("\\") ? "\\" : "/";
@@ -274,7 +291,7 @@ export function Explorer({ route }: { route: Route }) {
       items: [
         { label: "Open", shortcut: "↵", onSelect: () => openFile(row) },
         ...(editor ? [{ label: "Open in an outside editor", shortcut: formatShortcut("alt+↵"), onSelect: () => outsideEditor(row) }] : []),
-        ...(owned ? [{ label: "Add to this thread", shortcut: "@", onSelect: () => addToThread(row) }] : []),
+        ...(file ? [{ label: "Add to this thread", shortcut: "@", onSelect: () => addToThread(row) }] : []),
         { label: "Copy path", separatorBefore: true, onSelect: () => void copyText(`${worktree.path.replace(/[\\/]+$/, "")}${separator}${path.split("/").join(separator)}`, "Path copied") },
         { label: "Copy relative path", onSelect: () => void copyText(path, "Path copied") },
         ...(manager && current
@@ -355,7 +372,7 @@ export function Explorer({ route }: { route: Route }) {
         event.preventDefault();
         return row.kind === "file" ? openFile(row) : activate(row, event);
       case "@":
-        if (row.kind === "file" && ownsFile(row)) {
+        if (row.kind === "file" && mentioned(row)) {
           event.preventDefault();
           addToThread(row);
         }
@@ -427,7 +444,7 @@ export function Explorer({ route }: { route: Route }) {
                 selected={isSelected(row)}
                 focusable={row.key === stop?.key}
                 menuOpen={menu?.row.key === row.key}
-                dragPath={row.kind === "file" ? threadPath(row) : null}
+                drag={row.kind === "file" ? mentioned(row) : null}
                 place={places.get(row.key)}
                 handlers={handlers}
               />

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CHIP_ATTRIBUTE,
   MAX_PROMPT_CHARS,
@@ -67,6 +67,15 @@ describe("composer context", () => {
     // The thread's own checkout has no repository, and its comment reads exactly as before.
     expect(chipLabel(asChip({ kind: "review", path: "notes.txt", line: 2, comment: "why?" })!)).toBe("notes.txt:2");
   });
+  it("names a file chip's repository, kept through the clipboard", () => {
+    const chip = asChip({ kind: "file", path: "notes.txt", line: 2, repoId: "planner", repoName: "orbyn-planner" }, "f")!;
+    expect(chipLabel(chip)).toBe("orbyn-planner/notes.txt:2");
+    expect(chipPrompt(chip)).toContain("File `orbyn-planner/notes.txt:2`");
+    expect(chipsFromClipboard({ json: chipsClipboard([chip])!.json, html: "" })?.[0]).toMatchObject({ repoId: "planner", repoName: "orbyn-planner" });
+    // The thread's own checkout has no repository, and its chip reads exactly as before.
+    expect(chipLabel(asChip({ kind: "file", path: "notes.txt", line: null })!)).toBe("notes.txt");
+  });
+
   it("renders each kind as a readable prompt block", () => {
     expect(chipPrompt(chip({ kind: "file" }))).toBe("File `src/main.rs:12`\n```rust\nlet a = 1;\n```");
     expect(chipPrompt(chip({ kind: "terminal" }))).toContain("Terminal selection");
@@ -138,10 +147,13 @@ describe("composer context", () => {
     expect(asChip({ kind: "file", path: "a.ts" })).toMatchObject({ kind: "file", path: "a.ts", line: null });
   });
 
-  it("refetches a pasted file's text and keeps the chip when the read fails", async () => {
-    const pasted = chip({ kind: "file", excerpt: null, language: null }) as ComposerChip;
-    const filled = await refillExcerpts([pasted], async () => ({ text: "fn main() {}", language: "rust" }));
-    expect(filled[0]).toMatchObject({ excerpt: "fn main() {}", language: "rust" });
+  it("refetches a pasted file's text from the repository its chip names, and keeps the chip when the read fails", async () => {
+    const pasted = chip({ kind: "file", excerpt: null, language: null, repoId: "planner", repoName: "orbyn-planner" }) as ComposerChip;
+    const read = vi.fn(async () => ({ text: "fn main() {}", language: "rust" }));
+    const filled = await refillExcerpts([pasted], read);
+    expect(filled[0]).toMatchObject({ excerpt: "fn main() {}", language: "rust", repoId: "planner", repoName: "orbyn-planner" });
+    // The chip itself says which repository to read, never just its path.
+    expect(read).toHaveBeenCalledWith(pasted);
     const kept = await refillExcerpts([pasted], async () => {
       throw new Error("gone");
     });

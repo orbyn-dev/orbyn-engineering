@@ -4,7 +4,7 @@ import type { ExplorerEntry } from "../../../generated/ExplorerEntry";
 import type { ExplorerTree } from "../../../generated/ExplorerTree";
 import type { ExplorerWorktree } from "../../../generated/ExplorerWorktree";
 import { ApiFailure } from "../../../api/client";
-import { buildRows, checkoutFolderKey, checkoutKey, crumb, folderKey, groupKey, insidePath, projectKey, readOnlyOf, readOnlyWhy, samePath, threadPathOf, worktreeKey, type ExplorerInput, type ThreadCheckout } from "./model";
+import { buildRows, checkoutFolderKey, checkoutKey, crumb, fileMention, folderKey, groupKey, insidePath, projectKey, readOnlyOf, readOnlyWhy, samePath, threadPathOf, worktreeKey, type ExplorerInput, type ThreadCheckout } from "./model";
 import { PAGE, levelKey, repoLevelKey, type Kept } from "./store";
 
 const project = { id: "p", name: "app" } as Project;
@@ -129,7 +129,7 @@ describe("explorer rows", () => {
   });
 
   it("draws a multi-repository thread's chosen repository as its own checkout row, read through the thread", () => {
-    const checkout: ThreadCheckout = { threadId: "t", readRepoId: undefined, tabRepoId: undefined, name: "app", branch: "orbyn/1058" };
+    const checkout: ThreadCheckout = { threadId: "t", readRepoId: undefined, tabRepoId: undefined, name: "app", repoName: "app", branch: "orbyn/1058" };
     const worktrees = { p: kept({ project_id: "p", git: true, worktrees: [
       worktree({ id: "own", branch: "orbyn/1058", threads: [] }),
       worktree({ id: "x", branch: "feat/x", is_main: false }),
@@ -154,8 +154,8 @@ describe("explorer rows", () => {
   });
 
   it("switches the checkout row's tree with the repository chosen, keying it by the repository", () => {
-    const primary: ThreadCheckout = { threadId: "t", readRepoId: undefined, tabRepoId: undefined, name: "app", branch: "orbyn/1058" };
-    const other: ThreadCheckout = { ...primary, readRepoId: "planner", tabRepoId: "planner", name: "planner" };
+    const primary: ThreadCheckout = { threadId: "t", readRepoId: undefined, tabRepoId: undefined, name: "app", repoName: "app", branch: "orbyn/1058" };
+    const other: ThreadCheckout = { ...primary, readRepoId: "planner", tabRepoId: "planner", name: "planner", repoName: "orbyn-planner" };
     expect(checkoutKey(primary)).not.toBe(checkoutKey(other));
     const rows = buildRows(base({
       threadCheckout: other,
@@ -163,6 +163,29 @@ describe("explorer rows", () => {
     }));
     expect(keys(rows)).toContain("file:3:plan.md");
     expect(rows.find((row) => row.kind === "repo")?.checkout?.tabRepoId).toBe("planner");
+  });
+
+  it("names another repository's file with its repository, and the thread's own file by its path alone", () => {
+    const other: ThreadCheckout = { threadId: "t", readRepoId: "planner", tabRepoId: "planner", name: "planner", repoName: "orbyn-planner", branch: "orbyn/1058" };
+    const [foreign] = buildRows(base({
+      threadCheckout: other,
+      repoLevels: { [repoLevelKey("p", "t", "planner", "")]: level([entry("plan.md")]) },
+    })).filter((row) => row.kind === "file");
+    expect(fileMention(foreign!, { cwd: "/task" })).toEqual({ path: "plan.md", repoId: "planner", repoName: "orbyn-planner" });
+
+    // The primary repository's file is the thread's own checkout, named by its path: its row is unchanged (no repository).
+    const primary: ThreadCheckout = { ...other, readRepoId: undefined, tabRepoId: undefined, name: "app", repoName: "app" };
+    const [own] = buildRows(base({
+      threadCheckout: primary,
+      repoLevels: { [repoLevelKey("p", "t", undefined, "")]: level([entry("main.ts")]) },
+    })).filter((row) => row.kind === "file");
+    expect(fileMention(own!, { cwd: "/task" })).toBeNull();
+
+    // An ordinary worktree row is named as the thread does, and only when the thread's folder holds it.
+    const [plain] = buildRows(base({ levels: { [levelKey("p", "w", "")]: level([entry("a.ts")]) } })).filter((row) => row.kind === "file");
+    expect(fileMention(plain!, { cwd: "/r" })).toEqual({ path: "a.ts" });
+    expect(fileMention(plain!, { cwd: "/r/sub" })).toBeNull();
+    expect(fileMention(plain!, null)).toBeNull();
   });
 
   it("indents a level 13px and leaves a deep row's place to its depth", () => {
