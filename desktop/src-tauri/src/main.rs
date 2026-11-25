@@ -14,6 +14,7 @@ mod person_key;
 mod presence;
 mod restart_policy;
 mod shell_state;
+mod snap_overlay;
 mod snapshot;
 mod system;
 mod window_actions;
@@ -415,7 +416,7 @@ fn open_window(app: &AppHandle) -> tauri::Result<()> {
     let zoom = *app.state::<Zoom>().0.lock().expect("zoom");
     window.set_zoom(zoom)?;
     #[cfg(windows)]
-    window_frame::install_hit_test(&window, app.state::<window_frame::MaximizeRect>());
+    snap_overlay::install(&window);
     Ok(())
 }
 
@@ -517,7 +518,6 @@ fn main() {
         .manage(WaitingLinks(Mutex::new(Vec::new())))
         .manage(ServicePort::default())
         .manage(Zoom::default())
-        .manage(window_frame::MaximizeRect::default())
         .manage(activity::KeepAwake::default())
         .manage(menu::QuitItem::default())
         .menu(menu::build)

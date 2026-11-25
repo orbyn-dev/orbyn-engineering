@@ -86,6 +86,19 @@
   background: var(--line2);
   color: var(--t1);
 }
+/* Windows offers its snap layouts only where the window under the pointer answers the hit test, and
+   that window is the WebView2 child over this page, so the shell puts a window of its own over the
+   Maximize button. That window holds the pointer, so this page never gets :hover or :active there:
+   the shell reports the state on the root element instead (desktop/src-tauri/src/snap_overlay.rs),
+   and these rules draw the same states as above. */
+[data-window-control="hover"] .window-control-maximize {
+  background: var(--sel);
+  color: var(--t1);
+}
+[data-window-control="press"] .window-control-maximize {
+  background: var(--line2);
+  color: var(--t1);
+}
 .window-control-close:hover {
   background: var(--color-windowCloseHover);
   color: var(--color-onDangerFill);
@@ -121,6 +134,17 @@
   }
   .window-control:active:not(:disabled),
   .window-control-close:active:not(:disabled) {
+    background: ButtonText;
+    color: ButtonFace;
+    border-color: ButtonText;
+  }
+  /* The same states, reported by the shell for the pointer its own hit-test window holds. */
+  [data-window-control="hover"] .window-control-maximize {
+    background: Highlight;
+    color: HighlightText;
+    border-color: ButtonText;
+  }
+  [data-window-control="press"] .window-control-maximize {
     background: ButtonText;
     color: ButtonFace;
     border-color: ButtonText;

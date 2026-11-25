@@ -181,3 +181,12 @@ it("marks the controls inactive while the window has no focus", () => {
   fireEvent.focus(window);
   expect(controls).not.toHaveAttribute("data-inactive");
 });
+
+it("gives the Maximize button the class that carries the shell's own pointer states", () => {
+  withBridge(async () => false);
+  render(<WindowControls />);
+  // The shell covers this button with its snap-layout window, so the page cannot see :hover or
+  // :active there: windowFrame.css draws those two states from this class.
+  expect(screen.getByRole("button", { name: "Maximize" })).toHaveClass("window-control-maximize");
+  expect(screen.getByRole("button", { name: "Close" })).not.toHaveClass("window-control-maximize");
+});
