@@ -16,6 +16,7 @@ use crate::crew::{Mode, ModeScope};
 use crate::error::CoreError;
 use crate::governance::approvals::Verdict;
 use crate::host::presence::PresenceFor;
+use crate::store::AutopilotEvent;
 use crate::testing::run_git;
 use crate::util::unix_now;
 
@@ -44,8 +45,16 @@ fn finished(command: &str, code: Option<i64>) -> ItemRecord {
     }
 }
 
-fn guard_of(event: &crate::store::AutopilotEvent) -> Value {
+fn guard_of(event: &AutopilotEvent) -> Value {
     event.body["guard"].clone()
+}
+
+/// The one event of `kind` the task recorded: the read filters the ledger by kind, so a test asserts a
+/// single row instead of indexing to it.
+fn one_event(w: &World, task: &str, kind: &str) -> AutopilotEvent {
+    let rows = events(w, task, kind);
+    assert_eq!(rows.len(), 1, "one {kind} event");
+    rows.into_iter().next().unwrap()
 }
 
 #[tokio::test]
@@ -67,17 +76,22 @@ async fn under_on_and_off_a_guarded_command_is_denied_and_held_and_no_key_is_ask
 
         let held = w.core.autopilot_held().unwrap();
         assert_eq!(held.items.len(), 1, "{chosen:?}");
-        assert_eq!(held.items[0].state, State::Held);
-        let denied = &events(&w, &id, "denied")[0];
+        let item = held
+            .items
+            .iter()
+            .find(|item| item.task_id == id && item.command == DROP)
+            .expect("the denied command is held");
+        assert_eq!(item.state, State::Held);
+        let denied = one_event(&w, &id, "denied");
         assert_eq!(denied.body["decided_by"], "guard");
         assert_eq!(denied.body["tier"], "guard");
-        let guard = guard_of(denied);
+        let guard = guard_of(&denied);
         assert_eq!(guard["category"], "database");
         assert_eq!(guard["target"], "db.prod.internal");
         assert_eq!(guard["list"], "none");
         assert!(guard["matched_by"].as_str().unwrap().contains("DROP"));
         // The held row says the same.
-        assert_eq!(guard_of(&events(&w, &id, "held")[0]), guard);
+        assert_eq!(guard_of(&one_event(&w, &id, "held")), guard);
     }
 }
 
@@ -92,11 +106,11 @@ async fn in_full_with_no_second_vendor_a_guarded_command_is_denied_and_held() {
     let verdict = request(&w, &id, ActionKind::Command, DROP).await;
     assert!(matches!(verdict, Verdict::Deny(_)));
     assert_eq!(same.calls(), 0);
-    let denied = &events(&w, &id, "denied")[0];
+    let denied = one_event(&w, &id, "denied");
     assert_eq!(denied.body["needs_second_engine"], true);
     assert_eq!(denied.body["decided_by"], "two_keys");
     assert_eq!(denied.body["lead"]["approve"], true);
-    assert_eq!(guard_of(denied)["category"], "database");
+    assert_eq!(guard_of(&denied)["category"], "database");
     assert_eq!(w.core.autopilot_held().unwrap().items.len(), 1);
 }
 
@@ -112,11 +126,21 @@ async fn in_full_two_keys_that_agree_allow_it_with_both_reasons_in_the_ledger() 
     assert_eq!((lead.calls(), second.calls()), (1, 1));
     // The lead was told why the command is guarded.
     let seen = lead.seen.lock().unwrap();
-    assert_eq!(seen[0].tier, "guard");
-    assert!(seen[0].reasons[0].contains("production-linked"));
+    let request = seen
+        .iter()
+        .find(|summary| summary.tier == "guard")
+        .expect("the lead was told the guard tier");
+    assert!(
+        request
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("production-linked")),
+        "{:?}",
+        request.reasons
+    );
     drop(seen);
 
-    let allowed = &events(&w, &id, "allowed")[0];
+    let allowed = one_event(&w, &id, "allowed");
     assert_eq!(allowed.body["decided_by"], "two_keys");
     assert_eq!(allowed.body["lead"]["reason"], "Fits the brief.");
     assert_eq!(allowed.body["second"]["engine"], "beta");
@@ -124,17 +148,17 @@ async fn in_full_two_keys_that_agree_allow_it_with_both_reasons_in_the_ledger() 
         allowed.body["second"]["answer"]["reason"],
         "Fits the brief."
     );
-    assert_eq!(guard_of(allowed)["category"], "database");
+    assert_eq!(guard_of(&allowed)["category"], "database");
 
     // Its exit status lands in the ledger when the engine reports it, once.
     assert_eq!(w.core.crew_autopilot.exits.len(), 1);
     w.core
         .guard_exit_seen(&w.worker(&id), &finished(DROP, Some(0)));
-    let exit = &events(&w, &id, "command_exit")[0];
+    let exit = one_event(&w, &id, "command_exit");
     assert_eq!(exit.body["exit_code"], 0);
     assert_eq!(exit.body["hold"], Value::Null);
     assert_eq!(exit.body["row"], allowed.id);
-    assert_eq!(guard_of(exit), guard_of(allowed));
+    assert_eq!(guard_of(&exit), guard_of(&allowed));
     w.core
         .guard_exit_seen(&w.worker(&id), &finished(DROP, Some(1)));
     assert_eq!(
@@ -154,12 +178,12 @@ async fn in_full_two_keys_that_disagree_deny_it_and_keep_both_reasons() {
 
     let verdict = request(&w, &id, ActionKind::Command, DROP).await;
     assert!(matches!(verdict, Verdict::Deny(_)));
-    let denied = &events(&w, &id, "denied")[0];
+    let denied = one_event(&w, &id, "denied");
     assert_eq!(denied.body["lead"]["approve"], true);
     assert_eq!(denied.body["second"]["answer"]["approve"], false);
-    let disagreement = &events(&w, &id, "disagreement")[0];
+    let disagreement = one_event(&w, &id, "disagreement");
     assert_eq!(disagreement.body["second"]["engine"], "beta");
-    assert_eq!(guard_of(disagreement)["category"], "database");
+    assert_eq!(guard_of(&disagreement)["category"], "database");
     assert_eq!(
         w.core.autopilot_held().unwrap().items.len(),
         1,
@@ -176,7 +200,7 @@ async fn a_lead_that_says_no_denies_it_and_the_second_key_is_not_asked() {
     let verdict = request(&w, &id, ActionKind::Command, DROP).await;
     assert!(matches!(verdict, Verdict::Deny(_)));
     assert_eq!(second.calls(), 0);
-    assert_eq!(events(&w, &id, "denied")[0].body["decided_by"], "lead");
+    assert_eq!(one_event(&w, &id, "denied").body["decided_by"], "lead");
 }
 
 #[tokio::test]
@@ -221,7 +245,7 @@ async fn a_local_target_is_not_guarded_and_goes_to_the_lead_alone() {
     .await;
     assert_eq!(verdict, Verdict::Allow);
     assert_eq!((lead.calls(), second.calls()), (1, 0));
-    assert!(events(&w, &id, "allowed")[0].body.get("guard").is_none());
+    assert!(one_event(&w, &id, "allowed").body.get("guard").is_none());
     assert_eq!(
         w.core.crew_autopilot.exits.len(),
         0,
@@ -270,8 +294,20 @@ async fn the_devices_lists_exempt_force_and_prod_wins() {
     );
     assert_eq!(second.calls(), 2);
     let rows = events(&w, &id, "allowed");
-    assert_eq!(guard_of(&rows[2])["list"], "prod");
-    assert!(rows[0].body.get("guard").is_none());
+    assert_eq!(rows.len(), 3, "one allowed row per command");
+    // The rows are in the requests' order: find each by what it says, not where it sits.
+    let prod = rows
+        .iter()
+        .find(|row| guard_of(row)["target"] == "db.prod.internal")
+        .expect("the prod-listed target's row");
+    assert_eq!(guard_of(prod)["list"], "prod");
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row.body.get("guard").is_none())
+            .count(),
+        1,
+        "only the safe row went without a guard"
+    );
 }
 
 #[tokio::test]
@@ -296,7 +332,7 @@ async fn a_repository_file_cannot_loosen_the_guard() {
     .unwrap();
     let verdict = request(&w, &id, ActionKind::Command, DROP).await;
     assert!(matches!(verdict, Verdict::Deny(_)));
-    assert_eq!(events(&w, &id, "denied")[0].body["decided_by"], "guard");
+    assert_eq!(one_event(&w, &id, "denied").body["decided_by"], "guard");
 }
 
 #[tokio::test]
@@ -315,10 +351,10 @@ async fn approving_a_guard_hold_once_works_through_presence_and_leaves_the_exit_
         .await
         .unwrap();
 
-    let approved = &events(&w, &id, "approved_once")[0];
+    let approved = one_event(&w, &id, "approved_once");
     assert_eq!(approved.body["decided_by"], "person");
     assert_eq!(approved.body["via"], "desktop_presence");
-    assert_eq!(guard_of(approved)["target"], "db.prod.internal");
+    assert_eq!(guard_of(&approved)["target"], "db.prod.internal");
     assert_eq!(
         approved.body["action"]["target"], DROP,
         "the command is in the row"
@@ -334,11 +370,11 @@ async fn approving_a_guard_hold_once_works_through_presence_and_leaves_the_exit_
         Verdict::Deny(_)
     ));
     assert_eq!(state_of(&w, &hold), State::Used);
-    let used = &events(&w, &id, "hold_used")[0];
-    assert_eq!(guard_of(used)["category"], "database");
-    let allowed = &events(&w, &id, "allowed")[0];
+    let used = one_event(&w, &id, "hold_used");
+    assert_eq!(guard_of(&used)["category"], "database");
+    let allowed = one_event(&w, &id, "allowed");
     assert_eq!(allowed.body["decided_by"], "person");
-    assert_eq!(guard_of(allowed)["category"], "database");
+    assert_eq!(guard_of(&allowed)["category"], "database");
 
     // Another command's finish is not this one's; this one's finish is.
     w.core
@@ -348,7 +384,7 @@ async fn approving_a_guard_hold_once_works_through_presence_and_leaves_the_exit_
         &w.worker(&id),
         &finished(&format!("zsh -lc \"{DROP}\""), Some(3)),
     );
-    let exit = &events(&w, &id, "command_exit")[0];
+    let exit = one_event(&w, &id, "command_exit");
     assert_eq!(exit.body["exit_code"], 3);
     assert_eq!(exit.body["hold"], hold);
     assert_eq!(exit.body["row"], allowed.id);
@@ -380,7 +416,7 @@ async fn an_exit_status_that_never_arrives_is_written_as_unknown() {
     w.core.exit_sweep(unix_now() + 60);
     assert!(events(&w, &id, "command_exit").is_empty());
     w.core.exit_sweep(unix_now() + 601);
-    let exit = &events(&w, &id, "command_exit")[0];
+    let exit = one_event(&w, &id, "command_exit");
     assert_eq!(exit.body["exit_code"], "unknown");
     assert_eq!(exit.body["hold"], hold);
     assert_eq!(w.core.crew_autopilot.exits.len(), 0);
@@ -661,7 +697,7 @@ async fn an_approval_is_void_when_the_resolved_target_changed_after_the_hold() {
         &["remote", "add", "origin", "git@github.com:o/r.git"],
     );
     let hold = hold_of(&w, &id, PUSH).await;
-    assert_eq!(events(&w, &id, "held")[0].body["guard"]["category"], "git");
+    assert_eq!(one_event(&w, &id, "held").body["guard"]["category"], "git");
     run_git(
         &tree,
         &["remote", "set-url", "origin", "git@evil.example:o/r.git"],
@@ -720,9 +756,9 @@ async fn a_command_the_parser_cannot_read_is_guarded_through_the_gate() {
     )
     .await;
     assert!(matches!(verdict, Verdict::Deny(_)));
-    let denied = &events(&w, &id, "denied")[0];
+    let denied = one_event(&w, &id, "denied");
     assert_eq!(denied.body["decided_by"], "guard", "{}", denied.body);
-    assert_eq!(guard_of(denied)["category"], "unparsed");
+    assert_eq!(guard_of(&denied)["category"], "unparsed");
 }
 
 #[tokio::test]
@@ -765,7 +801,7 @@ async fn only_guard_holds_are_watched_and_only_for_exactly_their_command() {
     assert!(events(&w, &id, "command_exit").is_empty());
     w.core
         .guard_exit_seen(&thread, &finished(&format!("bash -lc \"{DROP}\""), Some(0)));
-    assert_eq!(events(&w, &id, "command_exit")[0].body["exit_code"], 0);
+    assert_eq!(one_event(&w, &id, "command_exit").body["exit_code"], 0);
 }
 
 #[tokio::test]
