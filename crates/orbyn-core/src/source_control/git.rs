@@ -906,12 +906,20 @@ mod tests {
         std::fs::remove_file(root.join(".git/index")).unwrap();
         crate::testing::run_git(root, &["read-tree", "HEAD"]);
         assert_eq!(
-            text(&git_hardened(root, &["status", "--porcelain"]).await.unwrap()),
+            text(
+                &git_hardened(root, &["status", "--porcelain"])
+                    .await
+                    .unwrap()
+            ),
             "",
             "a hardened read must not report a clean line-ending checkout as changed"
         );
         assert_eq!(
-            text(&git_byte_exact(root, &["status", "--porcelain"]).await.unwrap()),
+            text(
+                &git_byte_exact(root, &["status", "--porcelain"])
+                    .await
+                    .unwrap()
+            ),
             "M f.txt",
             "the byte-exact read that decides must see the byte difference"
         );
