@@ -22,7 +22,7 @@ import { ChangesHeader, DIFF_SOURCES, NARROW, WIDE, type ComparePair, type DiffS
 import { FileView } from "./FileView";
 import { FindBar } from "./FindBar";
 import { commitItems, turnItems, type TurnTotals } from "./pickers";
-import { chooseRepo, plain, RepoChooser, TrustRepo, usePickedRepo, useThreadRepos } from "../../repos";
+import { chooseRepo, plain, RepoChooser, repoLabel, TrustRepo, usePickedRepo, useThreadRepos } from "../../repos";
 import { findHits, shownLimit, parsePatch, withoutWhitespaceChanges, type DiffLine } from "./diffModel";
 
 const TEST_FILE = /(^|\/)(__tests__|tests?|e2e|spec)\/|\.(test|spec)\.[a-z]+$/i;
@@ -105,7 +105,10 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   // Where the turn or commit picker is open, under the header.
   const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null);
   const thread = useWorkspace((state) => state.threads[threadId]);
-  const linkedPulls = useAsync(`diff-linked:${threadId}`, (signal) => pullsApi.linked(threadId, signal));
+  // The chosen repository's linked pull request: a link in another repository is not this one's, so the footer offers
+  // Create pull request per repository, and leaves it off only where this repository already has one.
+  const linkedPulls = useAsync(`diff-linked:${threadId}${repoSuffix}`, (signal) =>
+    repoId === undefined ? pullsApi.linked(threadId, signal) : pullsApi.linked(threadId, signal, repoId));
   // The same read the header's Git menu uses: a checkout that can't answer Git questions hides what needs Git.
   const branches = useAsync(`git-branches:${threadId}`, (signal) => api.branches(threadId, signal));
   // The chosen repository's own branches, for the base and commit pickers; the primary's read above is the one used when none is chosen.
@@ -182,9 +185,11 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   // Whether a pull request has anything to carry is the branch's question, not this view's:
   // a clean working tree after a commit, or Hide test files filtering a test-only change, still
   // leaves commits ahead of the base. The branch diff is read only where a pull could be made.
-  const branchAhead = useAsync(`diff-branch-any:${threadId}:${base}:${canCreate}`, (signal) =>
-    canCreate ? api.diff(threadId, signal, `branch&base=${encodeURIComponent(base)}`) : Promise.resolve([]),
-  );
+  const branchAhead = useAsync(`diff-branch-any:${threadId}:${base}:${canCreate}${repoSuffix}`, (signal) => {
+    if (!canCreate) return Promise.resolve([]);
+    const scope = `branch&base=${encodeURIComponent(base)}`;
+    return repoId === undefined ? api.diff(threadId, signal, scope) : api.diff(threadId, signal, scope, repoId);
+  });
   const ignoreSpace = useUi((state) => state.diffIgnoreWhitespace);
   const hideTests = useUi((state) => state.diffHideTests);
   const collapsed = useUi((state) => state.diffFilesCollapsed);
@@ -490,7 +495,7 @@ export function DiffPanel({ threadId }: { threadId: string }) {
         </div>
       ) : null}
       {restoring && latestRun ? <RestoreFilesDialog threadId={threadId} runId={latestRun} onClose={() => setRestoring(false)} /> : null}
-      {creating && thread ? <GitActionDialog thread={thread} plan={createPullRequestPlan()} onClose={() => setCreating(false)} /> : null}
+      {creating && thread ? <GitActionDialog thread={thread} plan={createPullRequestPlan()} repo={choice.selected ? { id: repoId, name: repoLabel(choice.selected.name) } : undefined} onClose={() => setCreating(false)} /> : null}
     </div>
   );
 }

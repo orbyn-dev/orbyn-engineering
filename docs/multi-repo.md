@@ -297,8 +297,11 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   checkpoint in a repository other than the primary is not known; a refusal there shows as "not counted".
 - **The 200-file cap.** A repository's `ThreadRepo.files` is cut at 200 by the service. A repository group whose list holds 200
   says "200 shown" quietly on its header.
-- **Still primary only.** Pull request screens, Publish repository (a quiet disabled item with a title when another repository is
-  chosen) and the Create pull request base check of the Changes footer act on the primary repository.
+- **The Changes footer's Create pull request** follows the thread's chosen repository: its linked-pull read and branch-ahead check
+  carry the repository's `repo_id` (left out for the primary) and the dialog acts on that repository only, so a linked pull request
+  there keeps the button off. An ordinary thread has no choice and no call changes.
+- **Still primary only.** Pull request screens and Publish repository (a quiet disabled item with a title when another repository is
+  chosen) act on the primary repository.
 - **Not verified against a live service.** Checked with the mock and spies on the client; the thread paths have not run against an
   `orbynd` with `ORBYN_MULTI_REPO=1`.
 

@@ -240,3 +240,48 @@ it("an ordinary thread's turn totals read once, with the three arguments they al
   expect(within(picker).getByRole("menuitem")).not.toHaveTextContent("not counted");
   expect(diff).toHaveBeenCalledWith("t", expect.any(AbortSignal), "turn&run=r1");
 });
+
+// The Changes footer's Create pull request is the thread's chosen repository's, like the header's Git menu: an ordinary
+// thread and the primary repository are unchanged and send no repo_id.
+it("creates the pull request in the chosen repository, whose links and branches are read with its repo_id", async () => {
+  const user = userEvent.setup();
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  const { branches, diff } = setup([FILE], "planner");
+  chooseRepo("t", "planner");
+  const action = vi.spyOn(api, "gitAction").mockResolvedValue({ phases: [] } as never);
+  render(<DiffPanel threadId="t" />);
+  const create = await screen.findByRole("button", { name: "Create pull request" });
+  await waitFor(() => expect(pullsApi.linked).toHaveBeenCalledWith("t", expect.any(AbortSignal), "planner"));
+  await user.click(create);
+  const dialog = await screen.findByRole("dialog", { name: "Create pull request", hidden: true });
+  expect(within(dialog).getByText("Acts on orbyn-planner only.")).toBeVisible();
+  await waitFor(() => expect(branches.mock.calls.some((call) => call[2] === "planner")).toBe(true));
+  await user.click(within(dialog).getByRole("button", { name: "Create pull request" }));
+  await waitFor(() => expect(action).toHaveBeenCalledWith("t", expect.objectContaining({ push: true, pull_request: expect.any(Object), repo_id: "planner" })));
+  // The branch-ahead check, which decides whether there is anything to carry, is that repository's read too.
+  expect(diff.mock.calls.some((call) => String(call[2]).startsWith("branch&base=") && call[3] === "planner")).toBe(true);
+});
+
+it("offers no Create pull request where the chosen repository already has one linked", async () => {
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  setup([FILE], "planner");
+  chooseRepo("t", "planner");
+  vi.mocked(pullsApi.linked).mockImplementation(async (_threadId, _signal, repoId) => (repoId === "planner" ? [{ number: 4 } as never] : []));
+  render(<DiffPanel threadId="t" />);
+  await waitFor(() => expect(pullsApi.linked).toHaveBeenCalledWith("t", expect.any(AbortSignal), "planner"));
+  expect(screen.queryByRole("button", { name: "Create pull request" })).toBeNull();
+});
+
+it("an ordinary thread's Create pull request reads and sends no repository", async () => {
+  const user = userEvent.setup();
+  setReposApi(createReposMock({ threads: {} }));
+  setup();
+  const action = vi.spyOn(api, "gitAction").mockResolvedValue({ phases: [] } as never);
+  render(<DiffPanel threadId="t" />);
+  await user.click(await screen.findByRole("button", { name: "Create pull request" }));
+  const dialog = await screen.findByRole("dialog", { name: "Create pull request", hidden: true });
+  await user.click(within(dialog).getByRole("button", { name: "Create pull request" }));
+  await waitFor(() => expect(action).toHaveBeenCalledWith("t", expect.objectContaining({ push: true, pull_request: expect.any(Object) })));
+  expect(action.mock.calls[0]![1]).not.toHaveProperty("repo_id");
+  expect(vi.mocked(pullsApi.linked).mock.calls.every((call) => call.length === 2)).toBe(true);
+});
