@@ -492,9 +492,21 @@ async fn the_task_sample_read_answers_the_recorded_row_and_the_one_outcome() {
         w.core.crew_task_samples("sha256:none"),
         Err(CoreError::NotFound(_))
     ));
+    // With Preview off the read is refused by the core gate even for a task of that world.
     let off = world(false, Arc::new(|_, _| Turn::Hang)).await;
+    let off_task = sampled_task(&off, "A task in the off world.", "run-off", &[], &[]);
     assert!(matches!(
-        off.core.crew_task_samples(&task),
+        off.core.crew_task_samples(&off_task),
         Err(CoreError::NotFound(_))
     ));
+
+    // A task stored without a sample answers an empty list rather than 404.
+    let bare = w
+        .core
+        .store
+        .create_crew_task(&brief(json!({ "outcome": "bare" })), &key(), "run-bare")
+        .unwrap();
+    let empty = w.core.crew_task_samples(&bare.id).unwrap();
+    assert_eq!(empty.task_id, bare.id);
+    assert!(empty.samples.is_empty());
 }

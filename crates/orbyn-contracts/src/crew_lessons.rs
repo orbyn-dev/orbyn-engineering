@@ -198,6 +198,7 @@ pub struct CrewEvalSample {
     pub stop_reason: Option<String>,
     /// The task's latest route decision engine, when one exists.
     pub engine: Option<String>,
+    /// When the sample was recorded.
     pub created_at: String,
     /// When the outcome was written, once; null until then.
     pub finished_at: Option<String>,
