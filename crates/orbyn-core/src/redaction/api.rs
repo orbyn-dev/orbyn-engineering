@@ -125,8 +125,9 @@ fn audit(actor: &str, action: &str, target: &str, widens: bool) -> AuditRecord {
         action: action.to_owned(),
         target: target.to_owned(),
         decision: None,
-        // The route cannot tell the person from an agent holding the same token.
-        source: "unknown".to_owned(),
+        // Every write here is a Person route (classes.rs, B-01), enforced with the person key,
+        // so the person made it: a service-token agent cannot reach the change.
+        source: "person".to_owned(),
         thread_id: None,
         run_id: None,
         // Ids and names only: a pattern's text is not copied into the log.
