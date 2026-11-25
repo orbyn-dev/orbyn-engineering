@@ -81,7 +81,7 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **Crew, KC3 the Taskboard's words** (Crew Designs v147, `needs-one-source-working-board` and `needs-one-source-board`), on the live Board over the mock's `crew-board-working` and `crew-board-needs-kinds` scenarios: the Working line on each card whose worker owns live work, the empty Needs you column's sentence, and the amber sentence each needs-you kind draws. The dashboard, Map and Inbox frames are separate PRs; "A command needs your approval" and "The review waits for you" have no kind in the field yet, so the frame draws more than the build. `needs-one-source-working-board`, `needs-one-source-board`
 
-**Crew, KC3 the dashboard's Right now row** (Crew Designs v147, `needs-one-source-dashboard`), on the dashboard over the mock's live sample: the Needs you and Working tiles with each kind's own row and the line under each, while the Idle tile and the "A command to approve"/"A review that waits" rows stay Planned because the service has no such kind. `needs-one-source-dashboard`
+**Crew, KC3 the dashboard's Right now row** (Crew Designs v147, `needs-one-source-dashboard`), on the dashboard over the mock's live sample: the Needs you and Working tiles with each kind's own row and the line under each. The frame draws exactly the built row: no Idle tile and no "A command to approve" or "A review that waits" row, because the service has no such kind (Crew Designs pass 185). `needs-one-source-dashboard`
 
 **Crew, KC3 the Map's Working word** (Crew Designs v147, `needs-one-source-working-not-idle`), on the live Map over the mock's `crew-map-working` scenario: "Working" replaces Running and Verifying on a worker that owns live work, the muted why line sits under its task, and the summary above the engines counts workers, those working and those that need you; no idle count, because the service sends none. `needs-one-source-working-not-idle`
 
@@ -100,7 +100,7 @@ It offers Sign in and Dismiss and grants no action.
 
 ## Add a screen
 
-Live Flow review consent and badges: `flow-offline`, `lane-same-engine`, `lane-same-engine-full`.
+Live Flow review consent and badges: `flow-offline`, `lane-same-engine`, `lane-same-engine-full`. The Flow task zoom's artifacts view (Crew Designs, frame `flow-artifacts`), from `GET /api/crew/flow/tasks/{id}/artifacts` on the mock's `crew` scenario, opened from the zoom's Artifacts button: the checks each row names, the artifacts they named and the diff pinned to its base commit. `flow-artifacts`.
 The wide Map tree and the swim lanes, built from the map and message reads: `crew-map`, `lanes-main`.
 Approved review controls: `lane-remove-reason`, `settings-acp-tier-editor`. Crew, Settings › Worker provider (Crew Designs v75): `settings-crew-worker-provider`, `settings-crew-worker-provider-any`, `settings-crew-worker-provider-narrow`. Crew, Settings › Crew's Daily digest row (frame `settings-crew`, designs at git:f6c061bb5da71b7616e9cfc1e197b390a4fab448): `settings-crew`.
 These retain the beta stage list; the planned graph and PR cards are not drawn.

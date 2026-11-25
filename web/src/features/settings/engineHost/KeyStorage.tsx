@@ -271,11 +271,11 @@ function DetailRow({ row, replace }: { row: KeyStorage; replace(next: KeyStorage
   return (
     <>
       {entry.banner ? <Banner text={entry.banner.text} onRetry={entry.banner.retry ? entry.retry : null} busy={entry.busy} label={entry.banner.label} /> : null}
-      <SettingRow title="API key" description={line(entry.name, entry.choice, "detail")}>
+      <SettingRow title="API key" tag={<SetupPill />} description={line(entry.name, entry.choice, "detail")}>
         <StateChip chip={chipOf(entry.choice)} />{entry.actions("detail")}
       </SettingRow>
       {entry.notice ? <p className="setting-line-desc" role="status">{entry.notice}</p> : null}
-      <p className="setting-line-desc eh-caption"><SetupPill /> Built behind a setting, off until you turn it on.</p>
+      <p className="setting-line-desc eh-caption">Built behind a setting, off until you turn it on.</p>
       {entry.dialogs}
     </>
   );

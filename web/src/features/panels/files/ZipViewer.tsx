@@ -22,8 +22,8 @@ interface ZipLoad {
 }
 
 /** The archive's own bytes, through the route that already carries the token. */
-async function loadArchive(threadId: string, path: string, signal: AbortSignal): Promise<ZipLoad> {
-  const response = await fetch(rawUrl(threadId, path), { credentials: "same-origin", signal });
+async function loadArchive(threadId: string, path: string, repoId: string | undefined, signal: AbortSignal): Promise<ZipLoad> {
+  const response = await fetch(rawUrl(threadId, path, false, repoId), { credentials: "same-origin", signal });
   if (!response.ok) {
     throw new ApiFailure(`http_${response.status}`, `The service answered ${response.status}.`, response.status);
   }
@@ -98,8 +98,8 @@ function TreeRows({
  * A zip archive as a folder list, read from its own bytes. Entries are read on
  * demand, so a large archive costs one pass to list and one entry to open.
  */
-export function ZipViewer({ threadId, path, size }: { threadId: string; path: string; size?: number }) {
-  const archive = useAsync(`zip:${threadId}:${path}`, (signal) => loadArchive(threadId, path, signal));
+export function ZipViewer({ threadId, path, size, repoId }: { threadId: string; path: string; size?: number; /** Another repository of a multi-repository thread; absent is the thread's own checkout. */ repoId?: string }) {
+  const archive = useAsync(`zip:${threadId}:${path}${repoId === undefined ? "" : `:${repoId}`}`, (signal) => loadArchive(threadId, path, repoId, signal));
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const [view, setView] = useState<EntryView>({ status: "idle" });
   const [mode, setMode] = useState<"preview" | "source">("source");
@@ -175,7 +175,7 @@ export function ZipViewer({ threadId, path, size }: { threadId: string; path: st
     return (
       <div className="office-refusal">
         {refusal}
-        <BytesFallback threadId={threadId} path={path} size={size} />
+        <BytesFallback threadId={threadId} path={path} size={size} repoId={repoId} />
       </div>
     );
   }

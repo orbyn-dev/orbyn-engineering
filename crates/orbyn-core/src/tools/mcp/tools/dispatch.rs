@@ -5,11 +5,12 @@ use super::guide::{guide_head, guide_stops};
 use super::preview::{page_act, wait_target};
 use super::render::{render_height, render_title};
 use super::{
-    ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, PULL_NOTE, is_device_tool,
-    issue_query, issue_ref_value, issue_summary_value, matches_words, number, pull_check_name,
-    pull_checks_value, pull_comment_body, pull_detail_value, pull_filter, pull_limit,
-    pull_list_value, pull_merge_args, pull_merge_refusal, pull_number, pull_reply_to, pull_review,
-    pull_update_args, text, wait_seconds,
+    ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, PULL_NOTE, device_button,
+    device_orientation, device_tool_summary, hinge_angle, hinge_preset, is_device_tool,
+    issue_query, issue_ref_value, issue_summary_value, matches_words, number, optional_text,
+    pull_check_name, pull_checks_value, pull_comment_body, pull_detail_value, pull_filter,
+    pull_limit, pull_list_value, pull_merge_args, pull_merge_refusal, pull_number, pull_reply_to,
+    pull_review, pull_update_args, strings, text, wait_seconds,
 };
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -18,8 +19,9 @@ use crate::issues::ProjectReader;
 use crate::store::AuditRecord;
 use crate::tools::mcp::McpBinding;
 use orbyn_contracts::{
-    ActionKind, AddPullComment, CreateThread, DelegateTask, DeviceActionInput, DeviceActionOutput,
-    IssueKey, MergePull, PermissionMode, TaskSchedule, Thread, UpdateThread, UpsertTask,
+    ActionKind, AddPullComment, CommentIssue, CreateIssue, CreateThread, DelegateTask,
+    DeviceActionInput, DeviceActionOutput, IssueKey, MergePull, PermissionMode, TaskSchedule,
+    Thread, UpdateThread, UpsertTask,
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -124,6 +126,14 @@ impl Core {
                     "Comment on pull request #{} of this project",
                     number(args, "number")?
                 ),
+                "orbyn_issue_create" => format!(
+                    "Create issue \"{}\" in this project's tracker",
+                    text(args, "title")?
+                ),
+                "orbyn_issue_comment" => format!(
+                    "Comment on issue {} in this project's tracker",
+                    text(args, "key")?
+                ),
                 "orbyn_pull_request_update" => {
                     let named: Vec<&str> = ["title", "body", "draft"]
                         .into_iter()
@@ -159,10 +169,9 @@ impl Core {
                     pull_check_name(args)?,
                     number(args, "number")?
                 ),
-                "orbyn_device_list" => "List the devices on this machine".to_owned(),
-                "orbyn_device_screenshot" => {
-                    format!("Take a screenshot of device {}", text(args, "device_id")?)
-                }
+                // A device tool checks its own arguments here, before the gate asks, so a
+                // value the service would refuse never becomes an approval request.
+                name if is_device_tool(name) => device_tool_summary(name, args)?,
                 _ => format!("Use {name}"),
             };
             let ask = ActionAsk {
@@ -838,6 +847,43 @@ impl Core {
                 issue["note"] = json!(ISSUE_NOTE);
                 issue
             }
+            "orbyn_issue_create" => {
+                let reader = self.issue_reader(&own).await?;
+                let detail = self
+                    .create_issue(CreateIssue {
+                        tracker: reader.tracker,
+                        scope: reader.scope.clone(),
+                        title: text(args, "title")?.to_owned(),
+                        body: optional_text(args, "body")?,
+                        labels: strings(args, "labels")?,
+                        assignees: strings(args, "assignees")?,
+                        template: optional_text(args, "template")?,
+                    })
+                    .await?;
+                let mut issue = issue_summary_value(&detail.summary);
+                issue["body"] = json!(self.issue_body_for_tool(&detail.body));
+                issue["note"] = json!(ISSUE_NOTE);
+                issue
+            }
+            "orbyn_issue_comment" => {
+                let reader = self.issue_reader(&own).await?;
+                let key = issue_key(args, &reader)?;
+                let comment = self
+                    .comment_issue(CommentIssue {
+                        tracker: reader.tracker,
+                        scope: reader.scope.clone(),
+                        key: key.key,
+                        body: text(args, "body")?.to_owned(),
+                    })
+                    .await?;
+                json!({
+                    "id": comment.id,
+                    "author": comment.author,
+                    "created_at": comment.created_at,
+                    "body": self.issue_body_for_tool(&comment.body),
+                    "note": ISSUE_NOTE,
+                })
+            }
             "orbyn_issue_link" => {
                 let reader = self.issue_reader(&own).await?;
                 let key = issue_key(args, &reader)?;
@@ -927,7 +973,9 @@ impl Core {
                 // Rule 6: the row goes before the effect it describes, so it carries fixed
                 // values only; the list's counts are the answer's, not the audit row's.
                 self.audit_device_tool(binding, "device.tool.list", "", json!({}))?;
-                let list = self.devices.list().await;
+                // Boxed: the device call's future is deep and a debug test thread's stack is
+                // small, so it lives on the heap (the #1515 follow-up).
+                let list = Box::pin(self.devices.list()).await;
                 serde_json::to_value(&list)?
             }
             "orbyn_device_screenshot" => {
@@ -940,14 +988,96 @@ impl Core {
                     audit_device_target(id),
                     json!({}),
                 )?;
-                let output = self
-                    .devices
-                    .act(id, DeviceActionInput::Screenshot {})
-                    .await?;
+                let output =
+                    Box::pin(self.devices.act(id, DeviceActionInput::Screenshot {})).await?;
                 screenshot_value(output)?
+            }
+            "orbyn_device_fold" => {
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.fold",
+                    DeviceActionInput::Fold {},
+                )
+                .await?
+            }
+            "orbyn_device_unfold" => {
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.unfold",
+                    DeviceActionInput::Unfold {},
+                )
+                .await?
+            }
+            "orbyn_device_rotate" => {
+                let value = device_orientation(text(args, "value")?)?;
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.rotate",
+                    DeviceActionInput::Rotate { value },
+                )
+                .await?
+            }
+            "orbyn_device_button" => {
+                let value = device_button(text(args, "value")?)?;
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.button",
+                    DeviceActionInput::Button { value },
+                )
+                .await?
+            }
+            "orbyn_device_hinge" => {
+                let angle = hinge_angle(args)?;
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.hinge",
+                    DeviceActionInput::Hinge { angle },
+                )
+                .await?
+            }
+            "orbyn_device_hinge_preset" => {
+                let preset = hinge_preset(text(args, "preset")?)?;
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.hinge_preset",
+                    DeviceActionInput::HingePreset { preset },
+                )
+                .await?
+            }
+            "orbyn_device_power_off" => {
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.power_off",
+                    DeviceActionInput::PowerOff {},
+                )
+                .await?
             }
             other => return Err(CoreError::NotFound(format!("tool {other}"))),
         })
+    }
+
+    /// One typed device action a tool asks for: the audit row is written before the call it
+    /// describes (rule 6), and the answer is the action route's own output.
+    async fn run_device_action(
+        &self,
+        binding: &McpBinding,
+        args: &Value,
+        action: &str,
+        input: DeviceActionInput,
+    ) -> Result<Value> {
+        let id = text(args, "device_id")?;
+        self.audit_device_tool(binding, action, audit_device_target(id), json!({}))?;
+        // Boxed like the list and screenshot calls, so one device action does not hold the
+        // whole deep future on a debug thread's stack.
+        let output = Box::pin(self.devices.act(id, input)).await?;
+        Ok(serde_json::to_value(&output)?)
     }
 
     /// One audit row for a device tool call, written before the call it describes (rule 6): its

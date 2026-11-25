@@ -6,6 +6,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 use ts_rs::TS;
 
+use crate::PullChecks;
+
 wire_enum! {
 pub enum TrackerKind {
     Github,
@@ -35,8 +37,9 @@ pub struct TrackerRow {
 }
 }
 
-wire! {
 /// Connects a tracker. `token` is absent for GitHub, which reads through the person's own `gh`.
+#[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../web/src/generated/")]
 pub struct ConnectTracker {
     #[serde(default)]
     #[ts(optional = nullable)]
@@ -48,6 +51,16 @@ pub struct ConnectTracker {
     #[ts(optional = nullable)]
     pub token: Option<String>,
 }
+
+/// The token is a secret: this type never prints it, as `SetEnvValue` does. The host and scope are shown,
+/// because they are the person's own words and carry no secret.
+impl std::fmt::Debug for ConnectTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectTracker")
+            .field("host", &self.host)
+            .field("scope", &self.scope)
+            .finish_non_exhaustive()
+    }
 }
 
 wire_enum! {
@@ -170,6 +183,11 @@ pub struct IssueLinkedPull {
     pub state: LinkedPullState,
     pub is_draft: bool,
     pub closes_issue: bool,
+    /// Where its CI checks stand, the same counts the pull request list carries. Absent when the tracker does
+    /// not report them or the read did not answer: absent is unknown, never "no checks" (docs/issues.md).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub checks: Option<PullChecks>,
 }
 }
 
@@ -189,6 +207,12 @@ pub struct IssueDetail {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub reactions: Option<Vec<IssueReactionCount>>,
+    /// The states this issue can move to, in the tracker's own words and order (docs/issues.md, "Issue writes and
+    /// list controls"). Absent when the tracker offers no state change here; `[]` when it offers one but has no
+    /// state to name.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub states: Option<Vec<IssueState>>,
 }
 }
 
@@ -300,6 +324,84 @@ pub struct ReactIssue {
 }
 
 wire! {
+/// One issue write's new values (docs/issues.md, "Issue writes and list controls"). Every field is optional and
+/// only the present ones are written; `labels` (at most 50 names) and `assignees` (at most 25 candidate `id`s)
+/// are the whole new set, so an empty list clears them. A body with none of the four present is `400 invalid`.
+pub struct IssueUpdateInput {
+    pub tracker: TrackerKind,
+    pub scope: String,
+    pub key: String,
+    /// One line, 1 to 256 characters. The person's own text, sent as a field value.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub title: Option<String>,
+    /// At most 64 KiB. The person's own text, sent as a field value.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub body: Option<String>,
+    /// The whole new set of label names, at most 50.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub labels: Option<Vec<String>>,
+    /// The whole new set of people, at most 25, each the `id` a candidate gives. `id` is how the tracker
+    /// addresses a person on a write, which is not always the login.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub assignees: Option<Vec<String>>,
+}
+}
+
+wire! {
+/// Moves one issue to one of the states its detail declares (docs/issues.md, "Issue writes and list controls").
+/// `close_reason` is `completed` or `not_planned` and only for a closed state; a tracker that cannot say
+/// `not_planned` closes as completed and its answer says what it stored.
+pub struct IssueSetStateInput {
+    pub tracker: TrackerKind,
+    pub scope: String,
+    pub key: String,
+    /// The `name` of one of the issue's `states`.
+    pub state: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub close_reason: Option<IssueCloseReason>,
+}
+}
+
+wire! {
+/// One label a picker may offer (docs/issues.md, "Issue writes and list controls").
+pub struct IssueCandidateLabel {
+    pub name: String,
+    /// The tracker's own colour for it, when it reports one.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub color: Option<String>,
+}
+}
+
+wire! {
+/// One person a picker may offer, as the tracker addresses them on a write.
+pub struct IssueAssigneeCandidate {
+    pub login: String,
+    /// The person's own name, when the tracker reports one.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub name: Option<String>,
+    /// What a write sends: the tracker's own id for the person, which is not always the login.
+    pub id: String,
+}
+}
+
+wire! {
+/// What a label or assignee picker offers, read when the picker opens: at most 200 of each, `truncated` when
+/// there were more, so a missing name is not proof the person is ineligible.
+pub struct IssueCandidates {
+    pub labels: Vec<IssueCandidateLabel>,
+    pub assignees: Vec<IssueAssigneeCandidate>,
+    pub truncated: bool,
+}
+}
+
+wire! {
 /// One starting point the tracker offers for a new issue (docs/issues.md, "Create, comment, react, templates and
 /// project binding"). The text is the tracker's own and as untrusted as any issue text: it only ever fills the
 /// person's own create form.
@@ -379,8 +481,7 @@ mod tests {
 
     #[test]
     fn a_project_tracker_body_must_name_the_tracker_to_unbind_explicitly() {
-        let explicit: SetProjectIssueTracker =
-            serde_json::from_str(r#"{"tracker":null}"#).unwrap();
+        let explicit: SetProjectIssueTracker = serde_json::from_str(r#"{"tracker":null}"#).unwrap();
         assert_eq!(explicit.tracker, None);
         assert_eq!(explicit.scope, None);
         let missing = serde_json::from_str::<SetProjectIssueTracker>(r#"{"scope":"o/r"}"#);
@@ -407,6 +508,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(described.description.as_deref(), Some("A crash"));
+    }
+
+    #[test]
+    fn a_connect_request_never_prints_its_token() {
+        let connect = ConnectTracker {
+            host: Some("https://dev.azure.com".into()),
+            scope: Some("org/project".into()),
+            token: Some("SECRET-tracker-token".into()),
+        };
+        let printed = format!("{connect:?}");
+        assert!(!printed.contains("SECRET"), "{printed}");
+        assert!(!printed.to_ascii_lowercase().contains("token"), "{printed}");
+        // The non-secret fields stay visible, so a failure that names what was refused is readable.
+        assert!(
+            printed.contains("dev.azure.com") && printed.contains("org/project"),
+            "{printed}"
+        );
+        let parsed: ConnectTracker = serde_json::from_str(
+            r#"{"host":"https://dev.azure.com","scope":"org","token":"SECRET-2"}"#,
+        )
+        .unwrap();
+        assert!(!format!("{parsed:?}").contains("SECRET-2"));
     }
 
     #[test]

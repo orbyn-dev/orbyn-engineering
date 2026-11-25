@@ -8,8 +8,8 @@ use crate::issues::{IssueQuery, IssueSource, ScopeList};
 use crate::store::TrackerConnection;
 use async_trait::async_trait;
 use orbyn_contracts::{
-    ConnectTracker, IssueCounts, IssueDetail, IssueKey, IssueState, IssueStateCategory,
-    IssueSummary, IssueTemplate, StartIssueThread, TrackerKind,
+    ConnectTracker, IssueCounts, IssueDetail, IssueKey, IssueList, IssueListFailure, IssueState,
+    IssueStateCategory, IssueSummary, IssueTemplate, StartIssueThread, TrackerKind,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -117,6 +117,7 @@ impl IssueSource for Fake {
             linked_pull_requests: vec![],
             linked_threads: vec![],
             reactions: None,
+            states: None,
         })
     }
 }
@@ -187,6 +188,15 @@ async fn ready() -> (super::harness::World, Arc<Fake>, Arc<Fake>) {
         .await
         .unwrap();
     (w, gitlab, forgejo)
+}
+
+/// The failure the list reports for `tracker`, found by the tracker it names: a test states which
+/// tracker failed, never where its row sits among the others.
+fn failure(list: &IssueList, tracker: TrackerKind) -> &IssueListFailure {
+    list.failed
+        .iter()
+        .find(|row| row.tracker == tracker)
+        .expect("the tracker that failed")
 }
 
 #[tokio::test]
@@ -355,8 +365,10 @@ async fn a_tracker_that_fails_is_reported_while_another_answers() {
         .unwrap();
     assert_eq!(list.issues.len(), 2, "GitLab still answered");
     assert_eq!(list.failed.len(), 1);
-    assert_eq!(list.failed[0].tracker, TrackerKind::Forgejo);
-    assert_eq!(list.failed[0].message, "The tracker did not answer.");
+    assert_eq!(
+        failure(&list, TrackerKind::Forgejo).message,
+        "The tracker did not answer."
+    );
     assert_eq!(
         list.counts, None,
         "totals are not claimed when one tracker could not say"
@@ -374,8 +386,13 @@ async fn a_link_is_added_read_back_and_removed_from_that_thread_only() {
     w.core.link_issue(&w.lead, &key).await.unwrap();
     w.core.link_issue(&w.lead, &key).await.unwrap();
     let links = w.core.issue_links().unwrap();
-    assert_eq!(links[&w.lead].len(), 1, "linking twice is one link");
-    assert_eq!(links[&w.lead][0].display_key, "#1");
+    let lead_links = links.get(&w.lead).expect("the lead's links");
+    assert_eq!(lead_links.len(), 1, "linking twice is one link");
+    let link = lead_links
+        .iter()
+        .find(|link| link.key == "1")
+        .expect("the link to issue 1");
+    assert_eq!(link.display_key, "#1");
     assert_eq!(
         w.core.issue(&key).await.unwrap().linked_threads,
         std::slice::from_ref(&w.lead)
@@ -572,8 +589,10 @@ mod gitlab {
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
         assert!(list.issues.is_empty());
         assert_eq!(list.failed.len(), 1);
-        assert_eq!(list.failed[0].tracker, TrackerKind::Gitlab);
-        assert_eq!(list.failed[0].message, "GitLab did not answer.");
+        assert_eq!(
+            failure(&list, TrackerKind::Gitlab).message,
+            "GitLab did not answer."
+        );
         let limited = Server::start(|_| Reply::status(429).header("retry-after", "42")).await;
         w.core.issues.set_source(
             TrackerKind::Gitlab,
@@ -584,7 +603,8 @@ mod gitlab {
             )),
         );
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
-        assert!(list.failed[0].message.contains("42 seconds"), "{list:?}");
+        let failed = failure(&list, TrackerKind::Gitlab);
+        assert!(failed.message.contains("42 seconds"), "{list:?}");
         let text = format!("{list:?}");
         assert!(!text.contains("secret"), "{text}");
         let one = w.core.issue(&key("team/app")).await;
@@ -606,7 +626,9 @@ mod gitlab {
         .await;
         let w = connected(&server).await;
         let first = w.core.list_issues(&IssueQuery::default()).await.unwrap();
-        assert_eq!(first.issues[0].key, "1");
+        assert_eq!(first.issues.len(), 1, "the first page holds one issue");
+        let page = first.issues.first().expect("the first page's issue");
+        assert_eq!(page.key, "1");
         assert!(first.next_cursors.contains_key("gitlab team/app"));
         let second = w
             .core
@@ -617,7 +639,8 @@ mod gitlab {
             .await
             .unwrap();
         assert_eq!(second.issues.len(), 1);
-        assert_eq!(second.issues[0].key, "2");
+        let page = second.issues.first().expect("the carried-on page's issue");
+        assert_eq!(page.key, "2");
         assert!(second.next_cursors.is_empty());
         let before = server.seen().len();
         let other = w
@@ -812,8 +835,10 @@ mod forgejo {
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
         assert!(list.issues.is_empty());
         assert_eq!(list.failed.len(), 1);
-        assert_eq!(list.failed[0].tracker, TrackerKind::Forgejo);
-        assert_eq!(list.failed[0].message, "Forgejo did not answer.");
+        assert_eq!(
+            failure(&list, TrackerKind::Forgejo).message,
+            "Forgejo did not answer."
+        );
         let limited = Server::start(|_| Reply::status(429).header("retry-after", "42")).await;
         w.core.issues.set_source(
             TrackerKind::Forgejo,
@@ -824,7 +849,8 @@ mod forgejo {
             )),
         );
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
-        assert!(list.failed[0].message.contains("42 seconds"), "{list:?}");
+        let failed = failure(&list, TrackerKind::Forgejo);
+        assert!(failed.message.contains("42 seconds"), "{list:?}");
         let text = format!("{list:?}");
         assert!(!text.contains("secret"), "{text}");
         let one = w.core.issue(&key("team/app")).await;
@@ -1147,8 +1173,10 @@ mod azure {
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
         assert!(list.issues.is_empty());
         assert_eq!(list.failed.len(), 1);
-        assert_eq!(list.failed[0].tracker, TrackerKind::AzureDevops);
-        assert_eq!(list.failed[0].message, "Azure DevOps did not answer.");
+        assert_eq!(
+            failure(&list, TrackerKind::AzureDevops).message,
+            "Azure DevOps did not answer."
+        );
         let limited = Server::start(|_| Reply::status(429).header("retry-after", "42")).await;
         w.core.issues.set_source(
             TrackerKind::AzureDevops,
@@ -1159,7 +1187,8 @@ mod azure {
             )),
         );
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
-        assert!(list.failed[0].message.contains("42 seconds"), "{list:?}");
+        let failed = failure(&list, TrackerKind::AzureDevops);
+        assert!(failed.message.contains("42 seconds"), "{list:?}");
         let text = format!("{list:?}");
         assert!(!text.contains("secret"), "{text}");
     }
@@ -1424,8 +1453,10 @@ mod linear {
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
         assert!(list.issues.is_empty());
         assert_eq!(list.failed.len(), 1);
-        assert_eq!(list.failed[0].tracker, TrackerKind::Linear);
-        assert_eq!(list.failed[0].message, "Linear did not answer.");
+        assert_eq!(
+            failure(&list, TrackerKind::Linear).message,
+            "Linear did not answer."
+        );
         let text = format!("{list:?}");
         assert!(!text.contains("secret"), "{text}");
 
@@ -1433,7 +1464,8 @@ mod linear {
         w.core.issues.set_linear_test_base(&limited.base);
         let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
         assert_eq!(list.failed.len(), 1);
-        assert!(list.failed[0].message.contains("42 seconds"), "{list:?}");
+        let failed = failure(&list, TrackerKind::Linear);
+        assert!(failed.message.contains("42 seconds"), "{list:?}");
         let one = w.core.issue(&key("ENG", "ENG-1")).await;
         assert!(matches!(one, Err(CoreError::TrackerRateLimited(_))));
     }
@@ -1544,8 +1576,12 @@ mod writes {
     //! so a refusal can be shown to have sent nothing.
 
     use super::*;
-    use crate::issues::{NewIssue, display_name};
-    use orbyn_contracts::{CommentIssue, CreateIssue, IssueComment, IssueReaction, ReactIssue};
+    use crate::issues::{IssueEdit, NewIssue, display_name};
+    use orbyn_contracts::{
+        CommentIssue, CreateIssue, IssueAssigneeCandidate, IssueCandidateLabel, IssueCandidates,
+        IssueCloseReason, IssueComment, IssueReaction, IssueSetStateInput, IssueState,
+        IssueStateCategory, IssueUpdateInput, ReactIssue,
+    };
 
     /// A source whose write may or may not be built. Every write it receives is counted; a read answers nothing.
     struct Writes {
@@ -1553,6 +1589,9 @@ mod writes {
         creates: AtomicUsize,
         comments: AtomicUsize,
         reactions: AtomicUsize,
+        edits: AtomicUsize,
+        /// The states `get` declares; absent means the issue is not found.
+        states: Option<Vec<IssueState>>,
         templates: Vec<IssueTemplate>,
         /// The labels each create sent, in order: a template's labels must never appear here unrequested.
         sent_labels: Mutex<Vec<Vec<String>>>,
@@ -1569,15 +1608,59 @@ mod writes {
                 creates: AtomicUsize::new(0),
                 comments: AtomicUsize::new(0),
                 reactions: AtomicUsize::new(0),
+                edits: AtomicUsize::new(0),
+                states: None,
                 templates,
                 sent_labels: Mutex::new(Vec::new()),
             })
+        }
+
+        /// A source whose edits are built, whose issue `7` declares an open and a closed state.
+        fn editing() -> Arc<Self> {
+            let mut source = Self {
+                can_write: true,
+                creates: AtomicUsize::new(0),
+                comments: AtomicUsize::new(0),
+                reactions: AtomicUsize::new(0),
+                edits: AtomicUsize::new(0),
+                states: None,
+                templates: Vec::new(),
+                sent_labels: Mutex::new(Vec::new()),
+            };
+            source.states = Some(vec![
+                IssueState {
+                    category: IssueStateCategory::Open,
+                    name: "Open".into(),
+                    close_reason: None,
+                },
+                IssueState {
+                    category: IssueStateCategory::Closed,
+                    name: "Closed".into(),
+                    close_reason: Some(IssueCloseReason::Completed),
+                },
+            ]);
+            Arc::new(source)
         }
 
         fn writes(&self) -> usize {
             self.creates.load(Ordering::SeqCst)
                 + self.comments.load(Ordering::SeqCst)
                 + self.reactions.load(Ordering::SeqCst)
+                + self.edits.load(Ordering::SeqCst)
+        }
+
+        fn detail(&self, scope: &str, key: &str) -> IssueDetail {
+            let mut summary = issue(TrackerKind::Github, key, "2026-11-24T00:00:00Z");
+            summary.scope = scope.to_owned();
+            IssueDetail {
+                summary,
+                body: String::new(),
+                comments: vec![],
+                linked_pull_requests: vec![],
+                linked_threads: vec![],
+                reactions: None,
+                states: self.states.clone(),
+            }
         }
     }
 
@@ -1591,12 +1674,60 @@ mod writes {
             })
         }
 
-        async fn get(&self, _scope: &str, key: &str) -> Result<IssueDetail> {
+        async fn get(&self, scope: &str, key: &str) -> Result<IssueDetail> {
+            if self.states.is_some() {
+                return Ok(self.detail(scope, key));
+            }
             Err(CoreError::NotFound(format!("issue {key}")))
         }
 
         fn can_write(&self) -> bool {
             self.can_write
+        }
+
+        fn can_edit(&self) -> bool {
+            self.states.is_some()
+        }
+
+        async fn update(
+            &self,
+            scope: &str,
+            key: &str,
+            _edit: &IssueEdit<'_>,
+        ) -> Result<IssueDetail> {
+            self.edits.fetch_add(1, Ordering::SeqCst);
+            Ok(self.detail(scope, key))
+        }
+
+        async fn set_state(
+            &self,
+            scope: &str,
+            key: &str,
+            _state: &str,
+            _close_reason: Option<IssueCloseReason>,
+        ) -> Result<IssueDetail> {
+            self.edits.fetch_add(1, Ordering::SeqCst);
+            Ok(self.detail(scope, key))
+        }
+
+        /// More labels and people than the 200 the route keeps, with no `truncated` of its own.
+        async fn candidates(&self, _scope: &str) -> Result<IssueCandidates> {
+            Ok(IssueCandidates {
+                labels: (0..201)
+                    .map(|n| IssueCandidateLabel {
+                        name: format!("label-{n}"),
+                        color: None,
+                    })
+                    .collect(),
+                assignees: (0..201)
+                    .map(|n| IssueAssigneeCandidate {
+                        login: format!("user-{n}"),
+                        name: None,
+                        id: format!("user-{n}"),
+                    })
+                    .collect(),
+                truncated: false,
+            })
         }
 
         async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
@@ -1615,6 +1746,7 @@ mod writes {
                 linked_pull_requests: vec![],
                 linked_threads: vec![],
                 reactions: None,
+                states: None,
             })
         }
 
@@ -1653,6 +1785,7 @@ mod writes {
                     content: format!("{reaction:?}"),
                     count: u32::from(on),
                 }]),
+                states: None,
             })
         }
     }
@@ -1872,7 +2005,13 @@ mod writes {
             .react_issue(react(TrackerKind::Gitlab, "team/app"))
             .await
             .unwrap();
-        assert_eq!(detail.reactions.unwrap()[0].count, 1);
+        let reactions = detail.reactions.expect("the write route reports reactions");
+        assert_eq!(reactions.len(), 1, "one reaction per write");
+        let heart = reactions
+            .iter()
+            .find(|reaction| reaction.content == "Heart")
+            .expect("the Heart reaction");
+        assert_eq!(heart.count, 1);
         assert_eq!(source.writes(), 1);
         for comment_id in ["bad\nid".to_owned(), String::new()] {
             let refused = w
@@ -2026,6 +2165,137 @@ mod writes {
         assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
         assert_eq!(source.writes(), 0);
     }
+
+    /// A world whose connected tracker's source builds its edits and declares an open and a closed state. GitLab stands in for
+    /// the one built tracker: connecting GitHub needs a real `gh`, and the core's rules do not depend on which tracker edits.
+    async fn editing() -> (super::super::harness::World, Arc<Writes>) {
+        let (w, _) = connected(TrackerKind::Gitlab, "team/app", true).await;
+        let source = Writes::editing();
+        w.core
+            .issues
+            .set_source(TrackerKind::Gitlab, source.clone());
+        (w, source)
+    }
+
+    fn update(kind: TrackerKind, scope: &str) -> IssueUpdateInput {
+        IssueUpdateInput {
+            tracker: kind,
+            scope: scope.to_owned(),
+            key: "7".into(),
+            title: Some("New title".into()),
+            body: None,
+            labels: None,
+            assignees: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn an_update_with_nothing_to_change_is_refused_and_sends_nothing() {
+        let (w, source) = editing().await;
+        let mut empty = update(TrackerKind::Gitlab, "team/app");
+        empty.title = None;
+        let error = w.core.update_issue(empty).await.map(|_| ()).unwrap_err();
+        assert_eq!((error.status(), error.code()), (400, "invalid_input"));
+        assert_eq!(source.writes(), 0);
+        // One present field is written.
+        w.core
+            .update_issue(update(TrackerKind::Gitlab, "team/app"))
+            .await
+            .unwrap();
+        assert_eq!(source.writes(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_tracker_without_edits_answers_422_unsupported_for_all_three_edit_calls() {
+        for (kind, scope) in [
+            (TrackerKind::Gitlab, "team/app"),
+            (TrackerKind::Forgejo, "team/app"),
+            (TrackerKind::AzureDevops, "acme/app"),
+            (TrackerKind::Linear, "ENG"),
+        ] {
+            let (w, source) = connected(kind, scope, true).await;
+            let wanted = format!(
+                "{} issue edits arrive in a later update.",
+                display_name(kind)
+            );
+            let update = w.core.update_issue(update(kind, scope)).await.map(|_| ());
+            let state = w
+                .core
+                .set_state_issue(IssueSetStateInput {
+                    tracker: kind,
+                    scope: scope.to_owned(),
+                    key: "7".into(),
+                    state: "Open".into(),
+                    close_reason: None,
+                })
+                .await
+                .map(|_| ());
+            let candidates = w.core.issue_candidates(kind, scope).await.map(|_| ());
+            for (what, refused) in [
+                ("update", update),
+                ("state", state),
+                ("candidates", candidates),
+            ] {
+                let Err(error) = refused else {
+                    panic!("{kind:?} {what} answered a success");
+                };
+                assert_eq!(error.status(), 422, "{kind:?} {what}: {error:?}");
+                assert_eq!(error.code(), "unsupported", "{kind:?} {what}");
+                assert_eq!(error.public_message(), wanted, "{kind:?} {what}");
+            }
+            assert_eq!(source.writes(), 0, "{kind:?}: nothing reached the tracker");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_close_reason_on_an_open_state_or_an_unknown_state_is_refused_before_a_write() {
+        let (w, source) = editing().await;
+        let state = |name: &str, reason: Option<IssueCloseReason>| IssueSetStateInput {
+            tracker: TrackerKind::Gitlab,
+            scope: "team/app".into(),
+            key: "7".into(),
+            state: name.to_owned(),
+            close_reason: reason,
+        };
+        for (what, input) in [
+            (
+                "a reason on an open state",
+                state("Open", Some(IssueCloseReason::NotPlanned)),
+            ),
+            ("a state the issue does not declare", state("Wontfix", None)),
+        ] {
+            let error = w.core.set_state_issue(input).await.map(|_| ()).unwrap_err();
+            assert_eq!(
+                (error.status(), error.code()),
+                (400, "invalid_input"),
+                "{what}"
+            );
+        }
+        assert_eq!(source.writes(), 0);
+        // A closed state takes a reason, and an open one none.
+        w.core
+            .set_state_issue(state("Closed", Some(IssueCloseReason::NotPlanned)))
+            .await
+            .unwrap();
+        w.core.set_state_issue(state("Open", None)).await.unwrap();
+        assert_eq!(source.writes(), 2);
+    }
+
+    #[tokio::test]
+    async fn candidates_are_cut_to_200_of_each_and_say_so() {
+        let (w, _source) = editing().await;
+        let candidates = w
+            .core
+            .issue_candidates(TrackerKind::Gitlab, "team/app")
+            .await
+            .unwrap();
+        assert_eq!(candidates.labels.len(), 200);
+        assert_eq!(candidates.assignees.len(), 200);
+        assert!(
+            candidates.truncated,
+            "a source that sent more than 200 is marked"
+        );
+    }
 }
 
 mod binding {
@@ -2090,7 +2360,9 @@ mod binding {
         );
         let stored = w.core.store.project_issue_tracker(&project).unwrap();
         assert_eq!(
-            stored.as_ref().map(|row| (row.tracker.as_str(), row.scope.as_str())),
+            stored
+                .as_ref()
+                .map(|row| (row.tracker.as_str(), row.scope.as_str())),
             Some(("gitlab", "team/app")),
             "the two names are stored, nothing else"
         );
@@ -2100,9 +2372,10 @@ mod binding {
             .filter(|event| event.action == "issues.project.bind")
             .collect();
         assert_eq!(rows.len(), 1, "one audit row");
-        assert_eq!(rows[0].target, project);
+        let row = rows.first().expect("the one audit row");
+        assert_eq!(row.target, project);
         assert_eq!(
-            rows[0].detail,
+            row.detail,
             serde_json::json!({ "project": project, "tracker": "gitlab", "scope": "team/app" })
         );
         // Unbinding is idempotent: the desired end state is "no binding".
@@ -2118,7 +2391,13 @@ mod binding {
             .await
             .unwrap();
         assert_eq!(unbound, None);
-        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
+        assert!(
+            w.core
+                .store
+                .project_issue_tracker(&project)
+                .unwrap()
+                .is_none()
+        );
         let again = w
             .core
             .bind_project_issue_tracker(
@@ -2149,11 +2428,14 @@ mod binding {
             .core
             .bind_project_issue_tracker(&project, request(TrackerKind::Gitlab, "other/repo"))
             .await;
+        assert!(matches!(foreign, Err(CoreError::Invalid(_))), "{foreign:?}");
         assert!(
-            matches!(foreign, Err(CoreError::Invalid(_))),
-            "{foreign:?}"
+            w.core
+                .store
+                .project_issue_tracker(&project)
+                .unwrap()
+                .is_none()
         );
-        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
         assert!(
             !w.core
                 .audit_events(None, 50)
@@ -2179,12 +2461,15 @@ mod binding {
                     },
                 )
                 .await;
-            assert!(
-                matches!(refused, Err(CoreError::Invalid(_))),
-                "{refused:?}"
-            );
+            assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
         }
-        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
+        assert!(
+            w.core
+                .store
+                .project_issue_tracker(&project)
+                .unwrap()
+                .is_none()
+        );
         assert!(
             !w.core
                 .audit_events(None, 50)
@@ -2220,7 +2505,9 @@ mod binding {
             Err(CoreError::Invalid(message)) => {
                 assert!(message.contains("not connected"), "{message}")
             }
-            other => panic!("an unconnected tracker is refused before its scope is read: {other:?}"),
+            other => {
+                panic!("an unconnected tracker is refused before its scope is read: {other:?}")
+            }
         }
         // A forge whose scope no remote names is the same refusal, not a scope refusal.
         let azure = w
@@ -2230,11 +2517,20 @@ mod binding {
             .map(|_| ());
         match azure {
             Err(CoreError::Invalid(message)) => {
-                assert!(message.contains("Azure DevOps is not connected"), "{message}")
+                assert!(
+                    message.contains("Azure DevOps is not connected"),
+                    "{message}"
+                )
             }
             other => panic!("an unconnected forge is refused: {other:?}"),
         }
-        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
+        assert!(
+            w.core
+                .store
+                .project_issue_tracker(&project)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -2253,9 +2549,16 @@ mod binding {
             .core
             .bind_project_issue_tracker(&project, request(TrackerKind::Gitlab, "team/app"))
             .await;
-        assert!(refused.is_err(), "the audit refusal fails the bind: {refused:?}");
         assert!(
-            w.core.store.project_issue_tracker(&project).unwrap().is_none(),
+            refused.is_err(),
+            "the audit refusal fails the bind: {refused:?}"
+        );
+        assert!(
+            w.core
+                .store
+                .project_issue_tracker(&project)
+                .unwrap()
+                .is_none(),
             "the audit row is written before the binding, so a failed audit leaves none"
         );
     }
@@ -2267,7 +2570,10 @@ mod binding {
             .core
             .bind_project_issue_tracker("not-a-project", request(TrackerKind::Gitlab, "team/app"))
             .await;
-        assert!(matches!(missing, Err(CoreError::NotFound(_))), "{missing:?}");
+        assert!(
+            matches!(missing, Err(CoreError::NotFound(_))),
+            "{missing:?}"
+        );
         connect(&w).await;
         let scoped_unbind = w
             .core

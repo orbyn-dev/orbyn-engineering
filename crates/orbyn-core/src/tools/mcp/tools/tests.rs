@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use base64::Engine as _;
 use orbyn_contracts::{
-    ActionKind, AuditEvent, ConnectTracker, CreatePolicyRule, IssueDetail, IssueState,
-    IssueStateCategory, IssueSummary, PermissionMode, PolicyEffect, PullCheck, PullChecks,
-    PullRequest, PullRequestDetail, TrackerKind,
+    ActionKind, AuditEvent, ConnectTracker, CreatePolicyRule, IssueActor, IssueComment,
+    IssueDetail, IssueState, IssueStateCategory, IssueSummary, PermissionMode, PolicyEffect,
+    PullCheck, PullChecks, PullRequest, PullRequestDetail, TrackerKind,
 };
 use serde_json::{Value, json};
 
@@ -21,7 +21,7 @@ use crate::credentials::{Credentials, MemoryBackend};
 use crate::devices::test_support::{Fake, fake_png};
 use crate::error::CoreError;
 use crate::governance::approvals::RunScope;
-use crate::issues::{IssueQuery, IssueSource, ScopeList, StateFilter};
+use crate::issues::{IssueQuery, IssueSource, NewIssue, ScopeList, StateFilter};
 use crate::source_control::forge::{Forge, with_crew_fixture};
 use crate::store::{NewProject, NewThread};
 use crate::testing::{TempDir, run_git};
@@ -512,6 +512,8 @@ struct FakeIssues {
     lists: AtomicUsize,
     scopes: Mutex<Vec<String>>,
     query: Mutex<Option<IssueQuery>>,
+    /// Every write the tool sent, exactly as the tracker received it.
+    writes: Mutex<Vec<Value>>,
 }
 
 impl FakeIssues {
@@ -556,12 +558,17 @@ impl FakeIssues {
             lists: AtomicUsize::new(0),
             scopes: Mutex::new(Vec::new()),
             query: Mutex::new(None),
+            writes: Mutex::new(Vec::new()),
         })
     }
 }
 
 #[async_trait]
 impl IssueSource for FakeIssues {
+    fn can_write(&self) -> bool {
+        true
+    }
+
     async fn list(&self, scope: &str, query: &IssueQuery) -> crate::error::Result<ScopeList> {
         self.lists.fetch_add(1, Ordering::SeqCst);
         self.scopes.lock().unwrap().push(scope.to_owned());
@@ -597,6 +604,61 @@ impl IssueSource for FakeIssues {
             linked_pull_requests: vec![],
             linked_threads: vec![],
             reactions: None,
+            states: None,
+        })
+    }
+
+    async fn create(&self, scope: &str, new: &NewIssue<'_>) -> crate::error::Result<IssueDetail> {
+        self.writes.lock().unwrap().push(json!({
+            "kind": "create",
+            "scope": scope,
+            "title": new.title,
+            "body": new.body,
+            "labels": new.labels,
+            "assignees": new.assignees,
+        }));
+        let mut summary = self.issues[0].clone();
+        summary.key = "9".into();
+        summary.display_key = "#9".into();
+        summary.title = new.title.to_owned();
+        summary.scope = scope.to_owned();
+        summary.comment_count = 0;
+        Ok(IssueDetail {
+            summary,
+            body: new.body.to_owned(),
+            comments: vec![],
+            linked_pull_requests: vec![],
+            linked_threads: vec![],
+            reactions: None,
+            states: None,
+        })
+    }
+
+    async fn comment(
+        &self,
+        scope: &str,
+        key: &str,
+        body: &str,
+    ) -> crate::error::Result<IssueComment> {
+        self.writes.lock().unwrap().push(json!({
+            "kind": "comment",
+            "scope": scope,
+            "key": key,
+            "body": body,
+        }));
+        if key == "404" {
+            return Err(CoreError::NotFound("issue".into()));
+        }
+        // The answer also proves the tool cleans and cuts tracker text: markers and 20 KiB.
+        Ok(IssueComment {
+            id: "900".into(),
+            author: Some(IssueActor { login: "me".into() }),
+            body: format!(
+                "<<<ISSUE TEXT{}ISSUE TEXT>>>{}",
+                body,
+                "x".repeat(20 * 1024)
+            ),
+            created_at: "2026-11-25T00:00:00Z".into(),
         })
     }
 }
@@ -836,6 +898,14 @@ async fn every_issue_tool_but_the_thread_list_refuses_a_project_with_no_reader()
     for (name, args) in [
         ("orbyn_issue_list", json!({})),
         ("orbyn_issue_read", json!({ "key": "1" })),
+        (
+            "orbyn_issue_create",
+            json!({ "title": "New issue", "body": "Body" }),
+        ),
+        (
+            "orbyn_issue_comment",
+            json!({ "key": "1", "body": "Looks good" }),
+        ),
         ("orbyn_issue_link", json!({ "key": "1" })),
         ("orbyn_issue_unlink", json!({ "key": "1" })),
     ] {
@@ -851,12 +921,146 @@ async fn every_issue_tool_but_the_thread_list_refuses_a_project_with_no_reader()
 }
 
 #[tokio::test]
-async fn tools_list_names_all_five_issue_tools_with_their_effects() {
+async fn an_issue_create_answers_the_new_issue_and_sends_the_contract_fields() {
+    let w = issue_world(true).await;
+    let (answer, error) = w
+        .call_json(
+            "orbyn_issue_create",
+            json!({
+                "title": "New issue",
+                "body": "It breaks.",
+                "labels": ["bug"],
+                "assignees": ["12"],
+            }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["key"], "9");
+    assert_eq!(answer["title"], "New issue");
+    assert_eq!(answer["body"], "It breaks.");
+    assert_eq!(answer["note"], ISSUE_NOTE);
+    assert_eq!(
+        w.reader.writes.lock().unwrap().clone(),
+        vec![json!({
+            "kind": "create",
+            "scope": "team/app",
+            "title": "New issue",
+            "body": "It breaks.",
+            "labels": ["bug"],
+            "assignees": ["12"],
+        })],
+        "the tool sends the contract's fields in the project's own scope"
+    );
+}
+
+#[tokio::test]
+async fn an_issue_comment_answers_the_stored_comment_and_cleans_the_tracker_text() {
+    let w = issue_world(true).await;
+    let (answer, error) = w
+        .call_json(
+            "orbyn_issue_comment",
+            json!({ "key": "1", "body": "Looks good." }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["id"], "900");
+    assert_eq!(answer["author"]["login"], "me");
+    assert_eq!(answer["created_at"], "2026-11-25T00:00:00Z");
+    assert_eq!(answer["note"], ISSUE_NOTE);
+    let body = answer["body"].as_str().unwrap();
+    assert!(body.starts_with("Looks good."), "{body}");
+    assert!(
+        !body.contains("ISSUE TEXT"),
+        "the framing markers are removed"
+    );
+    assert_eq!(body.len(), 16 * 1024, "the answer cuts the tracker's text");
+    assert_eq!(
+        w.reader.writes.lock().unwrap().clone(),
+        vec![json!({
+            "kind": "comment",
+            "scope": "team/app",
+            "key": "1",
+            "body": "Looks good.",
+        })]
+    );
+}
+
+#[tokio::test]
+async fn an_issue_create_refuses_fields_the_contract_refuses() {
+    let w = issue_world(true).await;
+    for (args, wanted) in [
+        (json!({}), "title is required."),
+        (
+            json!({ "title": "T", "body": "x".repeat(64 * 1024 + 1) }),
+            "The issue body is over 64 KiB.",
+        ),
+        (
+            json!({ "title": "T", "labels": "bug" }),
+            "labels must be a list of strings.",
+        ),
+        (
+            json!({ "title": "T", "assignees": [12] }),
+            "assignees must be a list of strings.",
+        ),
+        (
+            json!({ "title": "T", "template": "missing" }),
+            "Unknown issue template.",
+        ),
+    ] {
+        let (text, error) = w.call_text("orbyn_issue_create", args.clone()).await;
+        assert!(error, "{args} was not refused: {text}");
+        assert!(text.contains(wanted), "{args}: {text}");
+    }
+    assert!(
+        w.reader.writes.lock().unwrap().is_empty(),
+        "a refused call sends no write"
+    );
+}
+
+#[tokio::test]
+async fn an_issue_comment_refuses_a_blank_body_and_an_unknown_key() {
+    let w = issue_world(true).await;
+    let (text, error) = w
+        .call_text("orbyn_issue_comment", json!({ "key": "1", "body": "   " }))
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(text, "body is required.");
+    // The tracker's refusal keeps its contract wording; the tool adds nothing.
+    let (text, error) = w
+        .call_text(
+            "orbyn_issue_comment",
+            json!({ "key": "404", "body": "Looks good." }),
+        )
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(text, "issue not found");
+    assert_eq!(
+        w.reader.writes.lock().unwrap().len(),
+        1,
+        "the unknown-key attempt reached the tracker once and the blank body never"
+    );
+}
+
+#[tokio::test]
+async fn the_state_tool_is_not_offered_because_the_service_has_no_state_route() {
+    let w = issue_world(true).await;
+    assert!(
+        !is_tool("orbyn_issue_set_state"),
+        "set_state needs the service's update/state route, which is a separate row"
+    );
+    let names = w.tool_names().await;
+    assert!(!names.iter().any(|name| name == "orbyn_issue_set_state"));
+}
+
+#[tokio::test]
+async fn tools_list_names_all_seven_issue_tools_with_their_effects() {
     let w = issue_world(false).await;
     let names = w.tool_names().await;
     for (name, effect) in [
         ("orbyn_issue_list", false),
         ("orbyn_issue_read", false),
+        ("orbyn_issue_create", true),
+        ("orbyn_issue_comment", true),
         ("orbyn_issue_link", true),
         ("orbyn_issue_unlink", true),
         ("orbyn_issue_thread_list", false),
@@ -2119,9 +2323,21 @@ impl DeviceWorld {
                 scratch: false,
             })
             .unwrap();
+        // A device tool is only reachable inside a live run, and the gate asks a person for
+        // an effect like any other, so the world has a live run from the start.
+        let run = core
+            .store
+            .admit_run(crate::store::Admission {
+                thread_id: &thread.id,
+                prompt: "device tools",
+                actor: "test",
+            })
+            .unwrap();
+        core.store.mark_starting(&run.id).unwrap();
+        core.store.mark_running(&run.id).unwrap();
         let binding = McpBinding {
             scope: RunScope {
-                run_id: "run-devices".into(),
+                run_id: run.id.clone(),
                 thread_id: thread.id.clone(),
                 engine: "alpha".into(),
                 family: "alpha".into(),
@@ -2182,6 +2398,12 @@ impl DeviceWorld {
 
     fn audit(&self) -> Vec<AuditEvent> {
         self.core.store.list_audit(None, 100).unwrap()
+    }
+
+    /// The same world with a permission mode that asks the gate, so a test can answer it.
+    fn in_mode(mut self, mode: PermissionMode) -> Self {
+        self.binding.scope.mode = mode;
+        self
     }
 }
 
@@ -2258,16 +2480,41 @@ fn the_device_tools_are_listed_only_when_one_platform_has_its_tools() {
     let fake = Fake::new();
     assert_eq!(
         device_tool_names(&fake.devices()),
-        ["orbyn_device_list", "orbyn_device_screenshot"]
+        [
+            "orbyn_device_list",
+            "orbyn_device_screenshot",
+            "orbyn_device_fold",
+            "orbyn_device_unfold",
+            "orbyn_device_rotate",
+            "orbyn_device_button",
+            "orbyn_device_hinge",
+            "orbyn_device_hinge_preset",
+            "orbyn_device_power_off",
+        ]
     );
     assert_eq!(
         device_tool_names(&fake.unavailable_devices()),
         Vec::<String>::new()
     );
-    for name in ["orbyn_device_list", "orbyn_device_screenshot"] {
+    for name in device_tools() {
         assert!(has_effect(name), "{name}");
         assert!(is_tool(name), "{name}");
     }
+}
+
+/// Every device tool, in the table's order, so a test can walk the whole surface.
+fn device_tools() -> [&'static str; 9] {
+    [
+        "orbyn_device_list",
+        "orbyn_device_screenshot",
+        "orbyn_device_fold",
+        "orbyn_device_unfold",
+        "orbyn_device_rotate",
+        "orbyn_device_button",
+        "orbyn_device_hinge",
+        "orbyn_device_hinge_preset",
+        "orbyn_device_power_off",
+    ]
 }
 
 #[tokio::test]
@@ -2277,7 +2524,11 @@ async fn the_device_tools_are_hidden_from_a_machine_without_platform_tools() {
     assert!(!names.iter().any(|name| is_device_tool(name)), "{names:?}");
     // A hidden tool is as unknown as a name the table never held: the dispatch entry the
     // MCP layer calls answers that tool's NotFound, exactly as it does for an unknown name.
-    for name in ["orbyn_device_list", "orbyn_no_such_tool"] {
+    for name in [
+        "orbyn_device_list",
+        "orbyn_device_power_off",
+        "orbyn_no_such_tool",
+    ] {
         let (text, error) = w.call_text(name, json!({})).await;
         assert!(error, "{name}: {text}");
         assert_eq!(text, format!("tool {name} not found"));
@@ -2370,6 +2621,34 @@ async fn a_denied_device_call_answers_the_denial_and_runs_nothing() {
             "orbyn_device_screenshot",
             json!({ "device_id": "android:Pixel_8" }),
         ),
+        (
+            "orbyn_device_fold",
+            json!({ "device_id": "android:Pixel_Fold" }),
+        ),
+        (
+            "orbyn_device_unfold",
+            json!({ "device_id": "android:Pixel_Fold" }),
+        ),
+        (
+            "orbyn_device_rotate",
+            json!({ "device_id": "android:Pixel_8", "value": "portrait" }),
+        ),
+        (
+            "orbyn_device_button",
+            json!({ "device_id": "android:Pixel_8", "value": "home" }),
+        ),
+        (
+            "orbyn_device_hinge",
+            json!({ "device_id": "android:Pixel_Fold", "angle": 90 }),
+        ),
+        (
+            "orbyn_device_hinge_preset",
+            json!({ "device_id": "android:Pixel_Fold", "preset": "open" }),
+        ),
+        (
+            "orbyn_device_power_off",
+            json!({ "device_id": "android:Pixel_8" }),
+        ),
     ] {
         let w = DeviceWorld::new(Fake::devices).await;
         w.core
@@ -2411,6 +2690,34 @@ async fn a_crew_worker_is_refused_the_device_tools_before_the_gate() {
         ("orbyn_device_list", json!({})),
         (
             "orbyn_device_screenshot",
+            json!({ "device_id": "android:Pixel_8" }),
+        ),
+        (
+            "orbyn_device_fold",
+            json!({ "device_id": "android:Pixel_Fold" }),
+        ),
+        (
+            "orbyn_device_unfold",
+            json!({ "device_id": "android:Pixel_Fold" }),
+        ),
+        (
+            "orbyn_device_rotate",
+            json!({ "device_id": "android:Pixel_8", "value": "portrait" }),
+        ),
+        (
+            "orbyn_device_button",
+            json!({ "device_id": "android:Pixel_8", "value": "home" }),
+        ),
+        (
+            "orbyn_device_hinge",
+            json!({ "device_id": "android:Pixel_Fold", "angle": 90 }),
+        ),
+        (
+            "orbyn_device_hinge_preset",
+            json!({ "device_id": "android:Pixel_Fold", "preset": "open" }),
+        ),
+        (
+            "orbyn_device_power_off",
             json!({ "device_id": "android:Pixel_8" }),
         ),
     ] {
@@ -2578,9 +2885,612 @@ async fn a_path_like_device_id_never_reaches_the_audit_target() {
     }
 }
 
+/// Every argv the fake platform tool ran, as the words after the tool name.
+fn device_calls(w: &DeviceWorld, tool: &str) -> Vec<Vec<String>> {
+    w.fake
+        .calls()
+        .into_iter()
+        .filter(|call| call["tool"] == tool)
+        .map(|call| {
+            call["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|arg| arg.as_str().unwrap().to_owned())
+                .collect()
+        })
+        .collect()
+}
+
+/// Whether an argv ends with exactly these words.
+fn argv_ends_with(argv: &[String], tail: &[&str]) -> bool {
+    argv.len() >= tail.len()
+        && argv[argv.len() - tail.len()..]
+            .iter()
+            .zip(tail)
+            .all(|(word, wanted)| word == wanted)
+}
+
+/// The approvals waiting for a person, once a tool has asked the gate in a mode that asks.
+async fn wait_for_pending_approval(w: &DeviceWorld) -> Vec<orbyn_contracts::Approval> {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let pending = w
+                .core
+                .store
+                .list_approvals(Some(orbyn_contracts::ApprovalState::Pending))
+                .unwrap();
+            if !pending.is_empty() {
+                return pending;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the tool never asked the gate")
+}
+
+#[test]
+fn every_device_action_tool_is_an_effect_tool_that_takes_a_device_id() {
+    for name in [
+        "orbyn_device_fold",
+        "orbyn_device_unfold",
+        "orbyn_device_rotate",
+        "orbyn_device_button",
+        "orbyn_device_hinge",
+        "orbyn_device_hinge_preset",
+        "orbyn_device_power_off",
+    ] {
+        assert!(is_tool(name), "{name}");
+        assert!(has_effect(name), "{name}");
+        let tool = TOOLS.iter().find(|tool| tool.name == name).expect(name);
+        assert!(tool.effect, "{name} must go through the gate");
+        assert_eq!(tool.required.first().copied(), Some("device_id"), "{name}");
+    }
+}
+
+#[test]
+fn the_device_action_arguments_are_checked_against_the_services_own_sets() {
+    for value in [
+        "portrait",
+        "landscape_left",
+        "portrait_upside_down",
+        "landscape_right",
+    ] {
+        assert!(device_orientation(value).is_ok(), "{value}");
+    }
+    assert_eq!(
+        invalid(device_orientation("sideways")),
+        "value must be portrait, landscape_left, portrait_upside_down or landscape_right."
+    );
+    for value in ["home", "back", "recents"] {
+        assert!(device_button(value).is_ok(), "{value}");
+    }
+    assert_eq!(
+        invalid(device_button("power")),
+        "value must be home, back or recents."
+    );
+    for value in ["closed", "half_open", "open"] {
+        assert!(hinge_preset(value).is_ok(), "{value}");
+    }
+    assert_eq!(
+        invalid(hinge_preset("tent")),
+        "preset must be closed, half_open or open."
+    );
+    for angle in [1, 90, 179] {
+        assert_eq!(hinge_angle(&json!({ "angle": angle })).unwrap(), angle);
+    }
+    assert_eq!(invalid(hinge_angle(&json!({}))), "angle is required.");
+    for angle in [json!(0), json!(180), json!(1000), json!(-1), json!(90.5)] {
+        assert_eq!(
+            invalid(hinge_angle(&json!({ "angle": angle }))),
+            "angle must be a whole number from 1 to 179.",
+            "{angle}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_invalid_device_action_is_refused_before_the_gate_asks() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    for (tool, args, wanted) in [
+        ("orbyn_device_fold", json!({}), "device_id is required."),
+        (
+            "orbyn_device_rotate",
+            json!({ "device_id": "android:Pixel_8", "value": "sideways" }),
+            "value must be portrait, landscape_left, portrait_upside_down or landscape_right.",
+        ),
+        (
+            "orbyn_device_button",
+            json!({ "device_id": "android:Pixel_8", "value": "power" }),
+            "value must be home, back or recents.",
+        ),
+        (
+            "orbyn_device_hinge",
+            json!({ "device_id": "android:Pixel_Fold" }),
+            "angle is required.",
+        ),
+        (
+            "orbyn_device_hinge",
+            json!({ "device_id": "android:Pixel_Fold", "angle": 0 }),
+            "angle must be a whole number from 1 to 179.",
+        ),
+        (
+            "orbyn_device_hinge_preset",
+            json!({ "device_id": "android:Pixel_Fold", "preset": "tent" }),
+            "preset must be closed, half_open or open.",
+        ),
+        (
+            "orbyn_device_power_off",
+            json!({ "device_id": "  " }),
+            "device_id is required.",
+        ),
+    ] {
+        let (text, error) = w.call_text(tool, args).await;
+        assert!(error, "{tool}: {text}");
+        assert_eq!(text, wanted, "{tool}");
+    }
+    // Refused before the gate and before any platform tool: no decision, no effect.
+    assert!(
+        w.fake.calls().is_empty(),
+        "an invalid action reached a tool"
+    );
+    let audit = w.audit();
+    assert!(
+        audit
+            .iter()
+            .all(|row| row.action != "action.allow" && row.action != "action.deny"),
+        "{audit:?}"
+    );
+    assert!(
+        audit
+            .iter()
+            .all(|row| !row.action.starts_with("device.tool.")),
+        "{audit:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_fold_and_unfold_tools_send_the_emulator_commands_and_answer_the_read_back() {
+    for (tool, action, posture) in [
+        ("orbyn_device_fold", "fold", "closed"),
+        ("orbyn_device_unfold", "unfold", "opened"),
+    ] {
+        let w = DeviceWorld::new(Fake::devices).await;
+        w.fake.set("android_mode", "foldable");
+        let (answer, error) = w
+            .call_json(tool, json!({ "device_id": "android:Pixel_Fold" }))
+            .await;
+        assert!(!error, "{tool}: {answer}");
+        assert_eq!(answer["ok"], true, "{tool}");
+        assert_eq!(answer["device"]["id"], "android:Pixel_Fold", "{tool}");
+        assert_eq!(answer["device"]["fold"]["posture"], posture, "{tool}");
+        assert!(
+            device_calls(&w, "adb")
+                .iter()
+                .any(|argv| argv_ends_with(argv, &["emu", action])),
+            "{tool}: {:?}",
+            device_calls(&w, "adb")
+        );
+        let audit = w.audit();
+        the_gate_allowed_once(&audit, tool);
+        let row = the_one(&audit, &format!("device.tool.{action}"));
+        assert_eq!(row.actor, "engine:alpha", "{tool}");
+        assert_eq!(row.target, "android:Pixel_Fold", "{tool}");
+        assert_eq!(row.detail, json!({}), "{tool}");
+    }
+}
+
+#[tokio::test]
+async fn the_rotate_tool_sends_the_orientation_the_caller_chose() {
+    for (value, rotation) in [
+        ("portrait", "0"),
+        ("landscape_left", "1"),
+        ("portrait_upside_down", "2"),
+        ("landscape_right", "3"),
+    ] {
+        let w = DeviceWorld::new(Fake::devices).await;
+        let (answer, error) = w
+            .call_json(
+                "orbyn_device_rotate",
+                json!({ "device_id": "android:Pixel_8", "value": value }),
+            )
+            .await;
+        assert!(!error, "{value}: {answer}");
+        assert_eq!(answer["ok"], true, "{value}");
+        assert_eq!(answer["device"]["id"], "android:Pixel_8", "{value}");
+        // The service reads the display back rather than trusting the request.
+        assert_eq!(answer["device"]["orientation"], value, "{value}");
+        let calls = device_calls(&w, "adb");
+        assert!(
+            calls.iter().any(|argv| argv_ends_with(
+                argv,
+                &[
+                    "shell",
+                    "settings",
+                    "put",
+                    "system",
+                    "accelerometer_rotation",
+                    "0"
+                ]
+            )),
+            "{value}: {calls:?}"
+        );
+        assert!(
+            calls.iter().any(|argv| argv_ends_with(
+                argv,
+                &[
+                    "shell",
+                    "settings",
+                    "put",
+                    "system",
+                    "user_rotation",
+                    rotation
+                ]
+            )),
+            "{value}: {calls:?}"
+        );
+        let audit = w.audit();
+        the_gate_allowed_once(&audit, "orbyn_device_rotate");
+        let row = the_one(&audit, "device.tool.rotate");
+        assert_eq!(row.target, "android:Pixel_8");
+        assert_eq!(row.detail, json!({}));
+    }
+}
+
+#[tokio::test]
+async fn the_button_tool_presses_the_named_button() {
+    for (value, key) in [
+        ("home", "KEYCODE_HOME"),
+        ("back", "KEYCODE_BACK"),
+        ("recents", "KEYCODE_APP_SWITCH"),
+    ] {
+        let w = DeviceWorld::new(Fake::devices).await;
+        let (answer, error) = w
+            .call_json(
+                "orbyn_device_button",
+                json!({ "device_id": "android:Pixel_8", "value": value }),
+            )
+            .await;
+        assert!(!error, "{value}: {answer}");
+        assert_eq!(answer["device"]["id"], "android:Pixel_8", "{value}");
+        assert!(
+            device_calls(&w, "adb")
+                .iter()
+                .any(|argv| argv_ends_with(argv, &["shell", "input", "keyevent", key])),
+            "{value}: {:?}",
+            device_calls(&w, "adb")
+        );
+        let audit = w.audit();
+        the_gate_allowed_once(&audit, "orbyn_device_button");
+        let row = the_one(&audit, "device.tool.button");
+        assert_eq!(row.target, "android:Pixel_8");
+        assert_eq!(row.detail, json!({}));
+    }
+    // iOS has home only, through simctl.
+    let w = DeviceWorld::new(Fake::devices).await;
+    let (answer, error) = w
+        .call_json(
+            "orbyn_device_button",
+            json!({ "device_id": "ios:UDID-1", "value": "home" }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["device"]["id"], "ios:UDID-1");
+    assert!(
+        device_calls(&w, "xcrun")
+            .iter()
+            .any(|argv| argv_ends_with(argv, &["simctl", "ui", "UDID-1", "home"])),
+        "{:?}",
+        device_calls(&w, "xcrun")
+    );
+    let audit = w.audit();
+    the_gate_allowed_once(&audit, "orbyn_device_button");
+    the_one(&audit, "device.tool.button");
+}
+
+#[tokio::test]
+async fn the_hinge_tool_sends_the_angle_and_answers_the_read_back() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    w.fake.set("android_mode", "foldable");
+    let (answer, error) = w
+        .call_json(
+            "orbyn_device_hinge",
+            json!({ "device_id": "android:Pixel_Fold", "angle": 90 }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["ok"], true);
+    assert_eq!(answer["device"]["id"], "android:Pixel_Fold");
+    assert_eq!(answer["device"]["fold"]["posture"], "half_opened");
+    assert_eq!(answer["device"]["fold"]["hinge_angle"].as_f64(), Some(90.0));
+    assert!(
+        device_calls(&w, "adb")
+            .iter()
+            .any(|argv| argv_ends_with(argv, &["emu", "sensor", "set", "hinge-angle0", "90"])),
+        "{:?}",
+        device_calls(&w, "adb")
+    );
+    let audit = w.audit();
+    the_gate_allowed_once(&audit, "orbyn_device_hinge");
+    let row = the_one(&audit, "device.tool.hinge");
+    assert_eq!(row.target, "android:Pixel_Fold");
+    assert_eq!(row.detail, json!({}));
+}
+
+#[tokio::test]
+async fn the_hinge_preset_tool_sends_the_services_own_pose() {
+    for (preset, action, posture, angle) in [
+        ("closed", &["emu", "fold"][..], "closed", 0.0),
+        (
+            "half_open",
+            &["emu", "sensor", "set", "hinge-angle0", "130"],
+            "half_opened",
+            130.0,
+        ),
+        ("open", &["emu", "unfold"][..], "opened", 180.0),
+    ] {
+        let w = DeviceWorld::new(Fake::devices).await;
+        w.fake.set("android_mode", "foldable");
+        let (answer, error) = w
+            .call_json(
+                "orbyn_device_hinge_preset",
+                json!({ "device_id": "android:Pixel_Fold", "preset": preset }),
+            )
+            .await;
+        assert!(!error, "{preset}: {answer}");
+        assert_eq!(answer["device"]["id"], "android:Pixel_Fold", "{preset}");
+        assert_eq!(answer["device"]["fold"]["posture"], posture, "{preset}");
+        assert_eq!(
+            answer["device"]["fold"]["hinge_angle"].as_f64(),
+            Some(angle),
+            "{preset}"
+        );
+        assert!(
+            device_calls(&w, "adb")
+                .iter()
+                .any(|argv| argv_ends_with(argv, action)),
+            "{preset}: {:?}",
+            device_calls(&w, "adb")
+        );
+        let audit = w.audit();
+        the_gate_allowed_once(&audit, "orbyn_device_hinge_preset");
+        let row = the_one(&audit, "device.tool.hinge_preset");
+        assert_eq!(row.target, "android:Pixel_Fold");
+        assert_eq!(row.detail, json!({}));
+    }
+}
+
+#[tokio::test]
+async fn the_power_off_tool_shuts_the_device_down_and_answers_the_read_back() {
+    // Android: the emulator console's kill, then the list reads it back as shutdown.
+    let w = DeviceWorld::new(Fake::devices).await;
+    let (answer, error) = w
+        .call_json(
+            "orbyn_device_power_off",
+            json!({ "device_id": "android:Pixel_8" }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["ok"], true);
+    assert_eq!(answer["device"]["id"], "android:Pixel_8");
+    assert_eq!(answer["device"]["state"], "shutdown");
+    assert!(
+        device_calls(&w, "adb")
+            .iter()
+            .any(|argv| argv_ends_with(argv, &["emu", "kill"])),
+        "{:?}",
+        device_calls(&w, "adb")
+    );
+    let audit = w.audit();
+    the_gate_allowed_once(&audit, "orbyn_device_power_off");
+    let row = the_one(&audit, "device.tool.power_off");
+    assert_eq!(row.actor, "engine:alpha");
+    assert_eq!(row.target, "android:Pixel_8");
+    assert_eq!(row.detail, json!({}));
+    // iOS: simctl shutdown, then the list reads it back as shutdown.
+    let w = DeviceWorld::new(Fake::devices).await;
+    let (answer, error) = w
+        .call_json(
+            "orbyn_device_power_off",
+            json!({ "device_id": "ios:UDID-1" }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["device"]["id"], "ios:UDID-1");
+    assert_eq!(answer["device"]["state"], "shutdown");
+    assert!(
+        device_calls(&w, "xcrun")
+            .iter()
+            .any(|argv| argv_ends_with(argv, &["simctl", "shutdown", "UDID-1"])),
+        "{:?}",
+        device_calls(&w, "xcrun")
+    );
+    let audit = w.audit();
+    the_gate_allowed_once(&audit, "orbyn_device_power_off");
+    the_one(&audit, "device.tool.power_off");
+}
+
+#[tokio::test]
+async fn the_device_action_tools_pass_the_services_refusals_through() {
+    // A device that does not fold.
+    let w = DeviceWorld::new(Fake::devices).await;
+    let (text, error) = w
+        .call_text(
+            "orbyn_device_fold",
+            json!({ "device_id": "android:Pixel_8" }),
+        )
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(text, crate::devices::NOT_FOLDABLE_MESSAGE);
+    assert!(
+        !device_calls(&w, "adb")
+            .iter()
+            .any(|argv| argv_ends_with(argv, &["emu", "fold"])),
+        "a fold reached the emulator"
+    );
+    // The row is written before the call, so the failed action still has its one row.
+    let audit = w.audit();
+    let row = the_one(&audit, "device.tool.fold");
+    assert_eq!(row.target, "android:Pixel_8");
+
+    // A shutdown device lists no action: power off refuses it the same way.
+    let w = DeviceWorld::new(Fake::devices).await;
+    let (text, error) = w
+        .call_text(
+            "orbyn_device_button",
+            json!({ "device_id": "android:Tablet", "value": "home" }),
+        )
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(text, crate::devices::DEVICE_NOT_BOOTED_MESSAGE);
+
+    let w = DeviceWorld::new(Fake::devices).await;
+    let (text, error) = w
+        .call_text(
+            "orbyn_device_power_off",
+            json!({ "device_id": "android:Tablet" }),
+        )
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(text, crate::devices::DEVICE_NOT_BOOTED_MESSAGE);
+    let audit = w.audit();
+    let row = the_one(&audit, "device.tool.power_off");
+    assert_eq!(row.target, "android:Tablet");
+
+    // iOS has no rotate, back or recents.
+    for (tool, args) in [
+        (
+            "orbyn_device_rotate",
+            json!({ "device_id": "ios:UDID-1", "value": "portrait" }),
+        ),
+        (
+            "orbyn_device_button",
+            json!({ "device_id": "ios:UDID-1", "value": "back" }),
+        ),
+        (
+            "orbyn_device_button",
+            json!({ "device_id": "ios:UDID-1", "value": "recents" }),
+        ),
+    ] {
+        let w = DeviceWorld::new(Fake::devices).await;
+        let (text, error) = w.call_text(tool, args).await;
+        assert!(error, "{tool}: {text}");
+        assert_eq!(text, crate::devices::ACTION_UNSUPPORTED_MESSAGE, "{tool}");
+    }
+}
+
+#[tokio::test]
+async fn a_device_action_answers_tool_missing_when_that_platforms_tools_are_gone() {
+    let w = DeviceWorld::new(Fake::android_less_devices).await;
+    let (text, error) = w
+        .call_text(
+            "orbyn_device_power_off",
+            json!({ "device_id": "android:Pixel_8" }),
+        )
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(
+        text,
+        "Android tools were not found. Install Android platform-tools and the emulator."
+    );
+    // The row is written before the service answers its fixed copy.
+    let audit = w.audit();
+    let row = the_one(&audit, "device.tool.power_off");
+    assert_eq!(row.target, "android:Pixel_8");
+}
+
+#[tokio::test]
+async fn a_path_like_device_id_never_reaches_a_device_action_row() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    let (text, error) = w
+        .call_text(
+            "orbyn_device_power_off",
+            json!({ "device_id": "/Users/alice/private.png" }),
+        )
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(text, crate::devices::DEVICE_NOT_FOUND_MESSAGE);
+    let audit = w.audit();
+    let row = the_one(&audit, "device.tool.power_off");
+    assert_eq!(row.target, "-");
+    assert_eq!(row.detail, json!({}));
+    let serialized = serde_json::to_string(row).unwrap();
+    assert!(!serialized.contains('/'), "{serialized}");
+    assert!(!serialized.contains("alice"), "{serialized}");
+    assert!(!serialized.contains("private"), "{serialized}");
+}
+
+#[tokio::test]
+async fn the_device_action_row_is_written_before_the_device_answers() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    // The fake logs the button command and then holds its answer, so the row has to be
+    // there while the call is still running.
+    w.fake.set("action_delay_ms", 1000);
+    let core = w.core.clone();
+    let binding = w.binding.clone();
+    let args = json!({ "device_id": "android:Pixel_8", "value": "home" });
+    let call = tokio::spawn(async move {
+        core.call_orbyn_tool(&binding, "orbyn_device_button", &args)
+            .await
+    });
+    w.fake.wait_for_call("adb", "keyevent").await;
+    let audit = w.audit();
+    let row = the_one(&audit, "device.tool.button");
+    assert_eq!(row.target, "android:Pixel_8");
+    assert_eq!(row.detail, json!({}));
+    let answer = call.await.unwrap().unwrap();
+    assert_eq!(answer["ok"], true);
+    // One row for the one call, not a second one after the answer.
+    let audit = w.audit();
+    assert_eq!(
+        audit
+            .iter()
+            .filter(|row| row.action == "device.tool.button")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn the_power_off_tool_asks_a_person_to_power_off_that_device() {
+    let w = DeviceWorld::new(Fake::devices)
+        .await
+        .in_mode(PermissionMode::Supervised);
+    let core = w.core.clone();
+    let binding = w.binding.clone();
+    let call = tokio::spawn(async move {
+        core.call_orbyn_tool(
+            &binding,
+            "orbyn_device_power_off",
+            &json!({ "device_id": "android:Pixel_8" }),
+        )
+        .await
+    });
+    let pending = wait_for_pending_approval(&w).await;
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    let ask = &pending[0];
+    assert_eq!(ask.kind, ActionKind::Tool);
+    // The confirmation names the one device the call is allowed to touch.
+    assert_eq!(ask.summary, "Power off device android:Pixel_8");
+    assert_eq!(ask.detail, json!({ "device_id": "android:Pixel_8" }));
+    // Nothing ran while the person decides.
+    assert!(
+        w.fake.calls().is_empty(),
+        "the device was powered off before the answer"
+    );
+    w.core.gate.decide(&ask.id, true, false, "test").unwrap();
+    let answer = call.await.unwrap().unwrap();
+    assert_eq!(answer["ok"], true);
+    assert_eq!(answer["device"]["state"], "shutdown");
+    let audit = w.audit();
+    let row = the_one(&audit, "device.tool.power_off");
+    assert_eq!(row.target, "android:Pixel_8");
+}
+
 #[test]
 fn a_crew_worker_cannot_use_the_device_tools() {
-    for name in ["orbyn_device_list", "orbyn_device_screenshot"] {
+    for name in device_tools() {
         assert_eq!(
             crate::crew::worker_refusal(
                 name,

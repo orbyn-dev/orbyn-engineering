@@ -170,6 +170,7 @@ pub use crew_needs_you::{NeedsYouDismissal, NeedsYouTask};
 pub use crew_paused_starts::{PAUSED_STARTS_PER_PROJECT, PausedStartRow};
 pub use crew_provenance::StoredHunk;
 pub use crew_resume::ResumeOutcome;
+pub(crate) use crew_resume::{Lane, lane};
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
 pub(crate) use crew_review_controls::{ReviewConsent, ReviewControl};
 pub(crate) use crew_review_publications::{Publication, PublicationState};

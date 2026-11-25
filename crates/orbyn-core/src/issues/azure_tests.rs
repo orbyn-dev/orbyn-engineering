@@ -578,6 +578,31 @@ fn a_host_that_is_not_https_is_refused_before_anything_is_sent() {
     );
 }
 
+#[tokio::test]
+async fn a_port_on_a_cloud_host_is_refused_before_anything_is_sent() {
+    // A server that would record any request; the refused readers never exist, so none can reach it.
+    let server = Server::start(|_| Reply::json(&json!({ "workItems": [] }))).await;
+    for bad in [
+        "https://dev.azure.com:8443",
+        "https://dev.azure.com:8443/org",
+        "https://acme.visualstudio.com:8443",
+        "https://acme.visualstudio.com:443",
+    ] {
+        assert!(
+            matches!(
+                Azure::new(bad, Zeroizing::new(TOKEN.to_owned())),
+                Err(CoreError::Invalid(_))
+            ),
+            "{bad:?} was accepted"
+        );
+        assert!(check_connect_host(bad).is_err(), "{bad:?} at connect");
+    }
+    assert!(check_connect_host("https://dev.azure.com").is_ok());
+    assert!(check_connect_host("https://dev.azure.com/org").is_ok());
+    assert!(check_connect_host("https://acme.visualstudio.com").is_ok());
+    assert!(server.seen().is_empty(), "nothing reached any server");
+}
+
 #[test]
 fn another_https_host_is_not_an_azure_devops_host() {
     assert!(matches!(
@@ -1763,7 +1788,7 @@ mod writes {
         let server = Server::start(move |req| {
             let base = base_of(req);
             let path = req.path();
-            if path.contains("/commentsReactions/") {
+            if path.contains("/reactions/") {
                 assert_eq!(req.param("api-version").as_deref(), Some("7.1-preview.1"));
                 if req.line.starts_with("PUT") {
                     *state.lock().unwrap() = true;
@@ -1922,6 +1947,27 @@ mod writes {
             .await
             .expect("a ten-digit comment id is a valid Azure DevOps comment id");
     }
+
+    #[tokio::test]
+    async fn a_create_the_tracker_never_answered_says_it_was_possibly_created() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/workitemtypes") {
+                return Reply::json(&json!({ "value": [{ "name": "Task" }] }));
+            }
+            Reply::status(503)
+        })
+        .await;
+        let error = reader(&server)
+            .create("org/proj", &new_issue("T", "", &[], &[]))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::TrackerUnavailable(m) if m.contains("possibly created") && !m.contains("secret")),
+            "{error:?}"
+        );
+    }
+
 }
 
 mod templates {

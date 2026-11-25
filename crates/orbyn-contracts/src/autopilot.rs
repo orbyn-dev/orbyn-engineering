@@ -567,6 +567,20 @@ pub struct AutopilotLogRow {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub mode: Option<String>,
+    /// The task's title as it stood when the row was written (the lead thread's title), so the person reads
+    /// which work the row was for rather than an id alone. Absent when the title could not be read then.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub title: Option<String>,
+    /// The engine of the run that asked, when a run asked: the answer is the same one the gate decided on.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub asker_engine: Option<String>,
+    /// The model the asking run's thread was on, when the store knows one. Absent for a run with no model
+    /// recorded and for rows no run asked for.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub asker_model: Option<String>,
     #[serde(default)]
     #[ts(optional = nullable)]
     pub action_kind: Option<String>,
