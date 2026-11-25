@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import type { Thread } from "../../../api/types";
-import type { ReviewChip } from "../../../product/composer/composerContext";
+import { chipLabel, type ReviewChip } from "../../../product/composer/composerContext";
 import { batchSummary, groupByFile, reviewMessage } from "../../../product/composer/reviewBatch";
 import { useUi } from "../../../product/state/ui";
 import { ConfirmDialog } from "../../../ui/Dialog";
@@ -39,7 +39,7 @@ export function SendAllDialog({ thread, drafts, onClose }: { thread: Thread; dra
       <ul className="review-send-list">
         {groupByFile(drafts).map((group) => <li key={group.path}>
           <span className="review-path">{group.path}</span> <span className="t3">· {plural(group.drafts.length, "comment", "comments")}</span>
-          <ul>{group.drafts.map((draft) => <li key={draft.id}><code>{draft.path}:{draft.line ?? ""}</code> {draft.comment}</li>)}</ul>
+          <ul>{group.drafts.map((draft) => <li key={draft.id}><code>{chipLabel(draft)}</code> {draft.comment}</li>)}</ul>
         </li>)}
       </ul>
       <details className="review-send-exact">
