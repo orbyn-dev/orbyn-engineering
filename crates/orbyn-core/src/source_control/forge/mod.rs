@@ -33,6 +33,7 @@ pub use merge::{
     check_head, current_head, head_changed, head_in, head_precheck_needed, merge, pull_action,
     strip_agent_credits, update_pull,
 };
+pub(crate) use parse::github_checks;
 pub use parse::parse_pull;
 pub(crate) use process::call_input;
 #[cfg(test)]

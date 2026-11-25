@@ -264,6 +264,8 @@ function seedFor(scenario: string): Seed {
       },
     };
   }
+  // The same watch whose newest change started a template run, but its runs read holds none: no "Open the run".
+  if (scenario === "crew-background-watch-template-no-run") return { ...seedFor("crew-background-watch-template"), runs: [] };
   if (scenario === "crew-background-watch-template") {
     return {
       crews: [watch("bg-watch-main", "Main build", "npm run build", 1, "template", true)],
