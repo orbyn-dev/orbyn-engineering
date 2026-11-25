@@ -2299,7 +2299,9 @@ mod binding {
         );
         let stored = w.core.store.project_issue_tracker(&project).unwrap();
         assert_eq!(
-            stored.as_ref().map(|row| (row.tracker.as_str(), row.scope.as_str())),
+            stored
+                .as_ref()
+                .map(|row| (row.tracker.as_str(), row.scope.as_str())),
             Some(("gitlab", "team/app")),
             "the two names are stored, nothing else"
         );
@@ -2327,7 +2329,13 @@ mod binding {
             .await
             .unwrap();
         assert_eq!(unbound, None);
-        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
+        assert!(
+            w.core
+                .store
+                .project_issue_tracker(&project)
+                .unwrap()
+                .is_none()
+        );
         let again = w
             .core
             .bind_project_issue_tracker(
@@ -2358,11 +2366,14 @@ mod binding {
             .core
             .bind_project_issue_tracker(&project, request(TrackerKind::Gitlab, "other/repo"))
             .await;
+        assert!(matches!(foreign, Err(CoreError::Invalid(_))), "{foreign:?}");
         assert!(
-            matches!(foreign, Err(CoreError::Invalid(_))),
-            "{foreign:?}"
+            w.core
+                .store
+                .project_issue_tracker(&project)
+                .unwrap()
+                .is_none()
         );
-        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
         assert!(
             !w.core
                 .audit_events(None, 50)
@@ -2388,12 +2399,15 @@ mod binding {
                     },
                 )
                 .await;
-            assert!(
-                matches!(refused, Err(CoreError::Invalid(_))),
-                "{refused:?}"
-            );
+            assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
         }
-        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
+        assert!(
+            w.core
+                .store
+                .project_issue_tracker(&project)
+                .unwrap()
+                .is_none()
+        );
         assert!(
             !w.core
                 .audit_events(None, 50)
@@ -2429,7 +2443,9 @@ mod binding {
             Err(CoreError::Invalid(message)) => {
                 assert!(message.contains("not connected"), "{message}")
             }
-            other => panic!("an unconnected tracker is refused before its scope is read: {other:?}"),
+            other => {
+                panic!("an unconnected tracker is refused before its scope is read: {other:?}")
+            }
         }
         // A forge whose scope no remote names is the same refusal, not a scope refusal.
         let azure = w
@@ -2439,11 +2455,20 @@ mod binding {
             .map(|_| ());
         match azure {
             Err(CoreError::Invalid(message)) => {
-                assert!(message.contains("Azure DevOps is not connected"), "{message}")
+                assert!(
+                    message.contains("Azure DevOps is not connected"),
+                    "{message}"
+                )
             }
             other => panic!("an unconnected forge is refused: {other:?}"),
         }
-        assert!(w.core.store.project_issue_tracker(&project).unwrap().is_none());
+        assert!(
+            w.core
+                .store
+                .project_issue_tracker(&project)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -2462,9 +2487,16 @@ mod binding {
             .core
             .bind_project_issue_tracker(&project, request(TrackerKind::Gitlab, "team/app"))
             .await;
-        assert!(refused.is_err(), "the audit refusal fails the bind: {refused:?}");
         assert!(
-            w.core.store.project_issue_tracker(&project).unwrap().is_none(),
+            refused.is_err(),
+            "the audit refusal fails the bind: {refused:?}"
+        );
+        assert!(
+            w.core
+                .store
+                .project_issue_tracker(&project)
+                .unwrap()
+                .is_none(),
             "the audit row is written before the binding, so a failed audit leaves none"
         );
     }
@@ -2476,7 +2508,10 @@ mod binding {
             .core
             .bind_project_issue_tracker("not-a-project", request(TrackerKind::Gitlab, "team/app"))
             .await;
-        assert!(matches!(missing, Err(CoreError::NotFound(_))), "{missing:?}");
+        assert!(
+            matches!(missing, Err(CoreError::NotFound(_))),
+            "{missing:?}"
+        );
         connect(&w).await;
         let scoped_unbind = w
             .core
