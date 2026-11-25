@@ -207,7 +207,8 @@ test("the chip links and unlinks with its own form, refuses an unknown issue, an
   // the row is its open click, which navigates to the issue). Playwright's mouse also hovers, so the hold is proven by the
   // row's own data-armed attribute, not by hover; the Unlink is then one route write.
   const open = sheet.getByRole("button", { name: "#7 Retry the queue" });
-  const prow = sheet.locator(".iss-prow").filter({ hasText: "#7 Retry the queue" });
+  // The row's text is split across its key and title spans (#7 + Retry the queue, no space between), so match the title.
+  const prow = sheet.locator(".iss-prow").filter({ hasText: "Retry the queue" });
   const unlink = sheet.getByRole("button", { name: "Unlink #7" });
   await expect(prow).not.toHaveAttribute("data-armed", "true");
   // hover() waits for the row to be stable (the sheet is still rising), so the raw mouse press cannot land off it.
