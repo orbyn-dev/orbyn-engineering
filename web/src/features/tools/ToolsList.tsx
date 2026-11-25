@@ -3,7 +3,6 @@ import { useState } from "react";
 import type { EngineTools, ToolEntry, ToolGroup } from "../../api/types";
 import { Button } from "../../ui/controls";
 import { navigate } from "../../product/state/route";
-import { isCodeToolName } from "../codemode";
 import { GROUP_LABEL, notReportedNotes } from "./toolsModel";
 
 /** Groups that start open: the ones a person set up. The rest are always there. */
@@ -66,14 +65,7 @@ function ToolRow({ entry, group, mode }: { entry: ToolEntry; group: string; mode
     <li className={`tg-row${tint}`}>
       <Icon size={14} aria-hidden className="tg-icon" />
       <span className="tg-name">
-        {group === "orbyn" && isCodeToolName(entry.name) ? (
-          <span className="cm-name-row">
-            <b>{entry.name}</b>
-            <span className="cm-planned">Planned</span>
-          </span>
-        ) : (
-          <b>{entry.name}</b>
-        )}
+        <b>{entry.name}</b>
         {line ? <small>{line}</small> : null}
         {entry.reason && entry.state !== "ready" ? <small className="tg-why">{entry.reason}</small> : null}
         {open && entry.detail ? <code className="tg-detail">{entry.detail}</code> : null}

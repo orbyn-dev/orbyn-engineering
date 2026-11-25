@@ -321,6 +321,214 @@ async fn metadata_needs_a_trusted_folder() {
     assert_eq!(code, 403);
 }
 
+/// A Git repository on `main` at `root`, with one commit holding `files`.
+fn repository(root: &std::path::Path, files: &[(&str, &str)]) -> std::path::PathBuf {
+    std::fs::create_dir_all(root).unwrap();
+    run_git(root, &["init", "-q", "-b", "main"]);
+    run_git(root, &["config", "user.email", "t@example.com"]);
+    run_git(root, &["config", "user.name", "T"]);
+    for (name, content) in files {
+        std::fs::write(root.join(name), content).unwrap();
+    }
+    run_git(root, &["add", "."]);
+    run_git(root, &["commit", "-q", "-m", "first"]);
+    root.to_path_buf()
+}
+
+/// The entries of a thread's file tree, for `repo`: absent is the primary repository.
+async fn tree(service: &Service, thread: &str, repo: Option<&str>) -> (u16, Value) {
+    let mut request = service.get(&format!("/api/threads/{thread}/files"));
+    if let Some(repo) = repo {
+        request = request.query(&[("repo_id", repo)]);
+    }
+    let response = request.send().await.unwrap();
+    let status = response.status().as_u16();
+    (status, response.json().await.unwrap_or(Value::Null))
+}
+
+/// One path's metadata, for `repo`: absent is the primary repository.
+async fn metadata_in(
+    service: &Service,
+    thread: &str,
+    path: &str,
+    repo: Option<&str>,
+) -> (u16, Value) {
+    let mut request = service
+        .get(&format!("/api/threads/{thread}/files/metadata"))
+        .query(&[("path", path)]);
+    if let Some(repo) = repo {
+        request = request.query(&[("repo_id", repo)]);
+    }
+    let response = request.send().await.unwrap();
+    let status = response.status().as_u16();
+    (status, response.json().await.unwrap_or(Value::Null))
+}
+
+/// The file names of a tree answer, in order; anything but `200` fails here.
+fn names((status, body): (u16, Value)) -> Vec<String> {
+    assert_eq!(status, 200, "{body}");
+    body.as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_repo_id_reads_the_named_repositories_tree_and_metadata() {
+    let dir = TempDir::new();
+    // A multi-repository thread needs the beta flag on.
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            env: vec![("ORBYN_MULTI_REPO".to_owned(), "1".to_owned())],
+            ..Options::default()
+        },
+    );
+    service.ensure_workspace(dir.path()).await;
+    let primary = repository(
+        &dir.path().join("work/primary"),
+        &[("base.txt", "base\n"), ("same.txt", "one\n")],
+    );
+    let other = repository(
+        &dir.path().join("work/other"),
+        &[("other.txt", "other\n"), ("same.txt", "other repo\n")],
+    );
+    let (code, project) = service
+        .send("/api/projects/add", json!({ "path": primary }))
+        .await;
+    assert_eq!(code, 201, "{project}");
+    let project_id = project["id"].as_str().unwrap().to_owned();
+    let (code, _) = service
+        .send(&format!("/api/projects/{project_id}/trust"), json!({}))
+        .await;
+    assert_eq!(code, 200);
+    let (code, added) = service
+        .send(
+            &format!("/api/projects/{project_id}/repos/add-folder"),
+            json!({ "path": other }),
+        )
+        .await;
+    assert_eq!(code, 200, "{added}");
+    let other_id = added["id"].as_str().unwrap().to_owned();
+    assert_eq!(added["trusted"], false);
+
+    // No route can put an untrusted repository in a thread: the start refuses it here,
+    // and adding one to a running thread is refused the same way. So the file routes'
+    // own untrusted gate (`scoped_thread` -> `409 repo_untrusted`) runs on state no
+    // route can build; the core test
+    // `an_unknown_untrusted_or_flagged_off_repository_is_refused_at_every_entry` asserts it.
+    let start = json!({
+        "repos": [
+            { "repo_id": project_id, "base_branch": "main" },
+            { "repo_id": other_id, "base_branch": "main" },
+        ],
+        "engine": "codex",
+        "model": null,
+        "permission_mode": "supervised",
+    });
+    let (code, refused) = service
+        .send(
+            &format!("/api/projects/{project_id}/repo-threads"),
+            start.clone(),
+        )
+        .await;
+    assert_eq!(code, 409, "{refused}");
+    assert_eq!(refused["code"], "repo_untrusted", "{refused}");
+
+    let (code, trusted) = service
+        .send(
+            &format!("/api/projects/{project_id}/repos/{other_id}/trust"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(code, 200, "{trusted}");
+    assert_eq!(trusted["trusted"], true);
+
+    // Two repositories make a task folder: one worktree per repository, one branch.
+    let (code, thread) = service
+        .send(&format!("/api/projects/{project_id}/repo-threads"), start)
+        .await;
+    assert_eq!(code, 200, "{thread}");
+    let thread = thread["id"].as_str().unwrap().to_owned();
+
+    // No repo_id is the primary repository, and naming it explicitly reads the same
+    // worktree. Each repository has a file of its own, so a tree is one repository's.
+    assert_eq!(
+        names(tree(&service, &thread, None).await),
+        ["base.txt", "same.txt"]
+    );
+    assert_eq!(
+        names(tree(&service, &thread, Some(&project_id)).await),
+        ["base.txt", "same.txt"]
+    );
+    assert_eq!(
+        names(tree(&service, &thread, Some(&other_id)).await),
+        ["other.txt", "same.txt"]
+    );
+
+    // Metadata resolves the path inside the named repository's worktree only, so the
+    // same file name is two files and each size is the one on that repository's disk.
+    let folder = service
+        .json(&format!("/api/threads/{thread}/task-folder"))
+        .await;
+    let root = std::path::PathBuf::from(folder["root"].as_str().unwrap());
+    let worktree = |repo: &str| {
+        let name = folder["repos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["repo_id"] == repo)
+            .unwrap()["name"]
+            .as_str()
+            .unwrap();
+        root.join(name)
+    };
+    let on_disk = |repo: &str| {
+        std::fs::metadata(worktree(repo).join("same.txt"))
+            .unwrap()
+            .len()
+    };
+    let (code, primary_same) = metadata_in(&service, &thread, "same.txt", None).await;
+    assert_eq!(code, 200, "{primary_same}");
+    assert_eq!(primary_same["size"], on_disk(&project_id));
+    let (code, other_same) = metadata_in(&service, &thread, "same.txt", Some(&other_id)).await;
+    assert_eq!(code, 200, "{other_same}");
+    assert_eq!(other_same["size"], on_disk(&other_id));
+    assert_ne!(primary_same["size"], other_same["size"]);
+    assert_eq!(other_same["kind"], "file");
+    // A file only the other repository has is absent from the primary read.
+    let (code, absent) = metadata_in(&service, &thread, "other.txt", None).await;
+    assert_eq!(code, 200, "{absent}");
+    assert_eq!(absent["exists"], false);
+    let (code, found) = metadata_in(&service, &thread, "other.txt", Some(&other_id)).await;
+    assert_eq!(code, 200, "{found}");
+    assert_eq!(found["exists"], true);
+
+    // A repository that is not the thread's is not found, as on the Git routes.
+    assert_eq!(tree(&service, &thread, Some("no-such")).await.0, 404);
+    assert_eq!(
+        metadata_in(&service, &thread, "same.txt", Some("no-such"))
+            .await
+            .0,
+        404
+    );
+
+    // An ordinary thread has one checkout and no repositories, so any repo_id is 404.
+    let plain = service.thread(&project_id, "codex").await;
+    assert_eq!(
+        names(tree(&service, &plain, None).await),
+        ["base.txt", "same.txt"]
+    );
+    assert_eq!(tree(&service, &plain, Some(&other_id)).await.0, 404);
+    assert_eq!(
+        metadata_in(&service, &plain, "same.txt", Some(&other_id))
+            .await
+            .0,
+        404
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn metadata_reports_permission_bits_and_a_link_as_itself() {

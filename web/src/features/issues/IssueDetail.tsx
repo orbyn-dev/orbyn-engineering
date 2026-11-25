@@ -128,12 +128,14 @@ export function Body({ issue, page = false, edit }: { issue: Detail; page?: bool
   );
 }
 
-function Facts({ issue, edit }: { issue: Detail; edit: EditProps }) {
+/** The issue's facts. `host` is the host the tracker reports for its connection, shown as text only when there is one. */
+function Facts({ issue, edit, host }: { issue: Detail; edit: EditProps; host?: string | null }) {
   return (
     <section className="iss-card" role="group" aria-label="Facts">
       <dl>
         <dt>State</dt><dd><IssueStateButton issue={issue} write={edit.write} writing={edit.writing} /></dd>
         <dt>Tracker</dt><dd>{trackerName(issue.tracker)}</dd>
+        {host ? <><dt>Host</dt><dd>{host}</dd></> : null}
         <dt>Author</dt><dd>{issue.author?.login ?? "Unknown"}</dd>
         <dt>Assignees</dt><dd>{issue.assignees.length === 0 ? <span className="iss-quiet">None</span> : issue.assignees.map((who) => <Person key={who.login} login={who.login} />)}<PickerEditor kind="assignees" {...edit} /></dd>
         <dt>Labels</dt><dd>{issue.labels.length === 0 ? <span className="iss-quiet">None</span> : issue.labels.map((label, at) => <span key={`${at}:${label.name}`} className="iss-label">{label.name}</span>)}<PickerEditor kind="labels" {...edit} /></dd>
@@ -146,7 +148,7 @@ function Facts({ issue, edit }: { issue: Detail; edit: EditProps }) {
 }
 
 /** One issue as a page. Start a thread is a click; the state, description, labels and assignees are written only when the service offers them, one write at a time. */
-export function IssueDetail({ tracker, scope, issueKey }: { tracker: string; scope: string; issueKey: string }) {
+export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: string; scope: string; issueKey: string; host?: string | null }) {
   const version = useApiVersion();
   const phone = useLayoutWidth() === "phone";
   const [starting, setStarting] = useState(false);
@@ -205,7 +207,7 @@ export function IssueDetail({ tracker, scope, issueKey }: { tracker: string; sco
               <Body issue={read.data} page edit={{ issue: read.data, offered, write, writing }} />
             </div>
             <aside className="iss-right">
-              <Facts issue={read.data} edit={{ issue: read.data, offered, write, writing }} />
+              <Facts issue={read.data} edit={{ issue: read.data, offered, write, writing }} host={host} />
               <LinkedThreads issue={read.data} onStart={() => setStarting(true)} />
             </aside>
           </div>

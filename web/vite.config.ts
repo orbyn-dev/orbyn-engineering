@@ -11,6 +11,45 @@ import { mockApi } from "./mock/plugin.ts";
  */
 const realApi = process.env.ORBYN_API;
 
+/**
+ * Production chunk split, so a deploy re-downloads only what changed instead of a single app script:
+ * the vendor chunks change with a dependency upgrade, `app-core` holds the shared layers, and the UI
+ * is split along feature boundaries. Chunk names follow web/src/features.
+ *
+ * Vite 8's rolldown bundler deprecates rollupOptions/manualChunks in favour of output.codeSplitting.
+ * Groups are ordered the way features depend on each other: a group's imports already sit in a group
+ * above it, and a chunk does not pull its dependencies in (includeDependenciesRecursively is off), so
+ * every chunk imports only chunks ordered before it. That keeps the chunk graph acyclic, and each
+ * chunk's top-level code executes after what it imports.
+ */
+const chunkGroups = [
+  // Vite injects a preload helper into the chunk that hosts it; give it its own chunk so no other
+  // chunk has to import the entry chunk back to reach it.
+  { name: "vendor-runtime", test: /preload-helper/ },
+  { name: "vendor-react", test: /node_modules[\\/](?:react|react-dom|scheduler)[\\/]/ },
+  // `$initial` keeps lucide's thousands of dynamic icon modules out: only the icons the app imports
+  // statically, and the name-to-loader map the project icon picker searches, join this chunk.
+  { name: "vendor-icons", test: /node_modules[\\/]lucide-react[\\/]/, tags: ["$initial" as const] },
+  // The shared layers, and the only other static dependency shared between them (zustand).
+  {
+    name: "app-core",
+    test: (id: string) =>
+      /[\\/]src[\\/](?:api|generated|lib|product|styles|ui)[\\/]/.test(id) || /node_modules[\\/]zustand[\\/]/.test(id),
+  },
+  // Features the rest build on: none of these imports another feature.
+  { name: "app-foundation", test: /[\\/]src[\\/]features[\\/](?:account|codemode|content|cursorthread|devices|enginehost|library|platform|profiles|snapshot|usage)[\\/]/ },
+  { name: "app-crew", test: /[\\/]src[\\/]features[\\/]crew[\\/]/ },
+  // Source-control and workspace pages, built on the chunks above.
+  { name: "app-pages", test: /[\\/]src[\\/]features[\\/](?:family|issues|pulls|repos|skills|tools|workspace)[\\/]/ },
+  { name: "app-panels", test: /[\\/]src[\\/]features[\\/]panels[\\/]/ },
+  { name: "app-thread", test: /[\\/]src[\\/]features[\\/]thread[\\/]/ },
+  // Settings reaches every feature; onboarding reaches thread and workspace.
+  { name: "app-settings", test: /[\\/]src[\\/]features[\\/](?:onboarding|settings)[\\/]/ },
+  // A feature not named above waits for every group it might import; a feature that others import
+  // instead belongs in the group before its dependents.
+  { name: "app-features", test: /[\\/]src[\\/]features[\\/]/ },
+];
+
 /** The service accepts only its own Origin, and the browser's here is the dev port. */
 const dropOrigin = (proxy: { on(event: "proxyReq", listener: (request: ClientRequest) => void): unknown }) =>
   proxy.on("proxyReq", (request) => request.removeHeader("origin"));
@@ -42,7 +81,10 @@ export default defineConfig(({ mode }) => ({
   build: {
     target: "es2022",
     sourcemap: false,
-    chunkSizeWarningLimit: 700,
+    // A chunk that outgrows the default 500 kB warning is a split to revisit, not to hide.
+    rolldownOptions: {
+      output: { codeSplitting: { includeDependenciesRecursively: false, groups: chunkGroups } },
+    },
     assetsInlineLimit: (filePath) => (fontAsset.test(filePath) ? false : undefined),
   },
   test: {

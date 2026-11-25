@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createIssuesMock, issueFixtures } from "../../../mock/issues";
+import { ApiFailure } from "../../api/client";
 import type { Project, Thread } from "../../api/types";
 import { fileTabId, parseFileTab, useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
@@ -236,7 +237,8 @@ it("a refused link says so, links nothing and leaves the dialog open", async () 
   render(<IssuesRow thread={thread} />);
   const dialog = await openPicker(user);
   await user.click((await within(dialog).findAllByRole("option"))[0]!);
-  vi.spyOn(mock, "link").mockRejectedValueOnce(new Error("The tracker said no."));
+  // A refusal carries the service's own status: a 404 here would read as "No issue …" instead (LinkIssueDialog).
+  vi.spyOn(mock, "link").mockRejectedValueOnce(new ApiFailure("tracker_unavailable", "The tracker said no.", 502));
   await user.click(within(dialog).getByRole("button", { name: "Link" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent("Couldn’t link it. Nothing changed. The tracker said no.");
   expect(screen.getByRole("dialog")).toBeVisible();

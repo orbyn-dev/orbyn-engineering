@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../../mock/api";
+import { ApiFailure } from "../../../../api/client";
 import { installMockFetch } from "../../../../test-support";
 import { ApprovalsTab } from "./ApprovalsTab";
 import { ApprovalCards } from "./ApprovalRows";
@@ -219,12 +220,20 @@ describe("the decision chain", () => {
     await user.click(screen.getByRole("button", { name: /gen-migration/ }));
     await act(async () => {
       if (outcome === "success") resolve({ dismissed: true });
-      else reject(new Error("Temporary failure"));
+      // A refusal the client can actually throw: the service's code, status and sentence, which the error state shows.
+      else reject(new ApiFailure("internal", "The ledger could not be read.", 500));
       await pending.catch(() => undefined);
     });
     expect(screen.getByRole("complementary")).toHaveTextContent("gen-migration");
     if (outcome === "failure") {
-      await user.click(await screen.findByRole("button", { name: "Retry" }));
+      const banner = (await screen.findByText("Can’t dismiss this notice")).closest("[role=alert]") as HTMLElement;
+      // The service's own sentence, not the client's fallback for a failure it cannot name.
+      expect(banner).toHaveTextContent("The ledger could not be read.");
+      expect(banner).not.toHaveTextContent("Something went wrong.");
+      // The disclosure names the service's stable code, so the refusal can be traced.
+      const details = within(banner).getByText("Details").closest("details")!;
+      expect(details.querySelector("code")).toHaveTextContent("internal");
+      await user.click(within(banner).getByRole("button", { name: "Retry" }));
       await waitFor(() => expect(dismiss).toHaveBeenCalledTimes(2));
       expect(dismiss.mock.calls).toEqual([[2], [2]]);
       expect(screen.getByRole("complementary")).toHaveTextContent("gen-migration");
