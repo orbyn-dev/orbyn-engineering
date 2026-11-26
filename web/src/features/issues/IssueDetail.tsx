@@ -182,9 +182,22 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
   const phone = useLayoutWidth() === "phone";
   const [starting, setStarting] = useState(false);
   const offered = useEditOffered();
-  const read = useAsync(`issues:detail:${version}:${tracker}:${scope}:${issueKey}`, async (signal) => {
+  const detailKey = `issues:detail:${version}:${tracker}:${scope}:${issueKey}`;
+  const activeKey = useRef(detailKey);
+  activeKey.current = detailKey;
+  const metadata = useRef<{ key: string; states: Detail["states"]; reactions: Detail["reactions"] } | null>(null);
+  const metadataRead = useRef(0);
+  const read = useAsync(detailKey, async (signal) => {
     if (!isTracker(tracker) || !isIssueKey(issueKey)) throw new ApiFailure("not_found", "No such tracker.", 404);
-    return issuesApi().get({ tracker, scope, key: issueKey }, signal);
+    const generation = ++metadataRead.current;
+    const next = await issuesApi().get({ tracker, scope, key: issueKey }, signal);
+    const held = metadata.current?.key === detailKey ? metadata.current : null;
+    const merged = { ...next, states: next.states ?? held?.states, reactions: next.reactions ?? held?.reactions };
+    // A stale read or a previous connection must not replace current issue metadata.
+    if (generation === metadataRead.current && activeKey.current === detailKey) {
+      metadata.current = { key: detailKey, states: merged.states, reactions: merged.reactions };
+    }
+    return merged;
   });
   const waited = useWaited(read.status === "loading");
   // One write at a time on this page, whichever control makes it: a second click, or another control, while one is in flight is
@@ -201,7 +214,13 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
       const next = await call();
       // States and the reaction counts come from some answers only (a plain detail read carries no reactions), so a write must not
       // empty what the page already showed: the bar would blink off after an unrelated edit.
-      read.setData({ ...next, states: next.states ?? shown.current?.states, reactions: next.reactions ?? shown.current?.reactions });
+      const previous = activeKey.current === detailKey ? shown.current : null;
+      const merged = { ...next, states: next.states ?? previous?.states, reactions: next.reactions ?? previous?.reactions };
+      if (activeKey.current === detailKey && next.tracker === tracker && next.scope === scope && next.key === issueKey) {
+        metadataRead.current += 1;
+        metadata.current = { key: detailKey, states: merged.states, reactions: merged.reactions };
+      }
+      read.setData(merged);
       void reloadIssueLinks(version);
       return next;
     } finally {
@@ -218,6 +237,13 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
     setWriting(true);
     try {
       await issuesApi().link(threadId, target);
+      // The write confirmed this link even if the later detail read fails. Merge into the current
+      // issue, not the pre-write snapshot, and never copy another issue's fields after navigation.
+      const current = shown.current;
+      if (activeKey.current === detailKey && current && current.tracker === target.tracker && current.scope === target.scope && current.key === target.key) {
+        metadataRead.current += 1;
+        read.setData({ ...current, linked_threads: [...new Set([...current.linked_threads, threadId])] });
+      }
       await reloadIssueLinks(version, { afterWrite: true });
       return true;
     } finally {
