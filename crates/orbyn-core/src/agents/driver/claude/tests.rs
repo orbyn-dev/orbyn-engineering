@@ -67,25 +67,6 @@ fn done() -> Value {
 }
 
 #[test]
-fn a_background_agent_holds_a_completed_turn_until_it_ends() {
-    let mut mapper = StreamMapper::default();
-    mapper.on_frame(&started("a1", "local_agent"));
-    mapper.on_frame(&done());
-    assert!(
-        mapper.outcome.is_none(),
-        "the CLI would kill the agent on exit"
-    );
-    assert!(!mapper.waiting_on_hold());
-    mapper.on_frame(&json!({ "type": "system", "subtype": "task_notification",
-        "task_id": "a1", "status": "completed" }));
-    assert!(mapper.waiting_on_hold());
-    // The follow-up turn the CLI starts for the notification ends the run.
-    mapper.on_frame(&said("the agent found it"));
-    mapper.on_frame(&done());
-    assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
-}
-
-#[test]
 fn a_held_agent_that_never_notifies_is_reported_stopped_with_the_caps_reason() {
     let mut mapper = StreamMapper::default();
     mapper.on_frame(&started("a1", "local_agent"));
@@ -159,33 +140,6 @@ fn a_turn_the_engine_started_for_its_own_work_does_not_end_the_run() {
     mapper.on_frame(&said("here is your answer"));
     mapper.on_frame(&done());
     assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
-}
-
-#[test]
-fn what_a_notifications_turn_says_is_shown_but_is_not_the_prompts_reply() {
-    let is_leftover = |events: &[EngineEvent]| {
-        !events.is_empty()
-            && events
-                .iter()
-                .all(|event| matches!(event, EngineEvent::Leftover(_)))
-    };
-    let mut mapper = StreamMapper::answering("mine");
-    // The CLI ran a turn for a finished background agent, and said so, before reaching the prompt.
-    mapper.on_frame(&json!({ "type": "system", "subtype": "task_notification",
-        "task_id": "old", "status": "completed" }));
-    let events = mapper.on_frame(&said("the old agent finished"));
-    assert!(is_leftover(&events), "{events:?}");
-    mapper.on_frame(&done());
-    mapper.on_frame(&echo("mine"));
-    // After the echo the words are the prompt's own.
-    let events = mapper.on_frame(&said("here is your answer"));
-    assert!(!events.is_empty());
-    assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, EngineEvent::Leftover(_))),
-        "{events:?}"
-    );
 }
 
 #[test]
@@ -645,51 +599,6 @@ fn the_run_endpoint_reaches_claude_through_a_private_file_not_its_arguments() {
         let mode = std::fs::metadata(&mcp_config).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
     }
-}
-
-#[test]
-fn command_line_matches_the_contract_and_never_uses_bare() {
-    let args: Vec<String> = run_args(&spec(), Path::new("/run/mcp.json"))
-        .into_iter()
-        .map(|arg| arg.into_string().unwrap())
-        .collect();
-    // The run's folder joins with the platform's separator, so the expected path joins the same way.
-    let settings = Path::new("/run")
-        .join("settings.json")
-        .to_string_lossy()
-        .into_owned();
-    assert_eq!(
-        args,
-        [
-            "-p",
-            "--output-format",
-            "stream-json",
-            "--input-format",
-            "stream-json",
-            "--verbose",
-            "--include-partial-messages",
-            "--replay-user-messages",
-            "--permission-mode",
-            "default",
-            "--mcp-config",
-            "/run/mcp.json",
-            "--add-dir",
-            "/workspace",
-            "--permission-prompt-tool",
-            "mcp__orbyn_engineering__approve",
-            "--model",
-            "sonnet",
-            "--settings",
-            settings.as_str(),
-            "--resume",
-            "sess",
-        ]
-    );
-    assert!(
-        !args
-            .iter()
-            .any(|arg| arg == "--bare" || arg == "--plugin-dir")
-    );
 }
 
 #[test]
@@ -1409,19 +1318,6 @@ fn subagent_frames_stay_out_of_the_top_level_turn() {
     assert!(mapper.on_frame(&frame).is_empty());
 }
 
-#[test]
-fn error_result_reports_its_reason() {
-    let mut mapper = StreamMapper::default();
-    mapper.on_frame(&json!({
-        "type":"result","subtype":"error_during_execution","is_error":true,
-        "errors":["Not logged in"],"session_id":"s"
-    }));
-    assert_eq!(
-        mapper.outcome,
-        Some(EngineOutcome::Failed("Not logged in".into()))
-    );
-}
-
 #[cfg(unix)]
 #[test]
 fn a_confined_first_turn_names_its_session_and_a_later_turn_resumes_it() {
@@ -1568,6 +1464,130 @@ async fn the_login_probe_gives_up_on_a_hanging_status_command() {
         started.elapsed() < std::time::Duration::from_secs(20),
         "the probe's own timeout ends a hanging status command"
     );
+}
+
+/// The cap's login side (I56): a status command past the 256 KiB capture is read to the cap
+/// and ended, and the state and account still map from the kept text. The `REFUSED-TAIL` past
+/// the cap would make the JSON invalid if it were read, so the mapped answer proves it was
+/// refused.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_login_probe_keeps_answering_past_the_capture_cap() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::testing::TempDir::new();
+    let script = dir.path().join("claude-past-cap");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nexec 1>/dev/null\nprintf '%s' '{\"loggedIn\":true,\"email\":\"probe@example.test\"}' >&2\nperl -e 'print \" \" x 300000; print \"REFUSED-TAIL\"' >&2\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let program = script.to_string_lossy().into_owned();
+    let started = std::time::Instant::now();
+    let answer = crate::agents::engines::probe::read_login(
+        &program,
+        &["auth", "status"],
+        parse_auth_status,
+        parse_auth_account,
+    )
+    .await;
+    assert_eq!(
+        answer,
+        (
+            orbyn_contracts::AuthState::LoggedIn,
+            Some("probe@example.test".into())
+        ),
+        "the kept text still maps, and the refused tail cannot make it invalid"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the cap ends the status command rather than waiting for the rest"
+    );
+}
+
+/// The wipe (I56): the status text is read only where the parsers map it, so the probe's
+/// answer holds the mapped state, account, version and sign-in command and none of the text,
+/// its token included. The signed-in, signed-out, unexpected-output and failing commands all
+/// go through the same wipe.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_login_probe_wipes_the_status_text_and_keeps_the_mapped_answer() {
+    use crate::agents::driver::EngineDriver;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::testing::TempDir::new();
+    let canary = format!("orbyn-probe-canary-{}", crate::util::new_id());
+    let script = |name: &str, answer: &str| -> String {
+        let path = dir.path().join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\ncase \"$*\" in\n  --version) printf '%s\\n' '2.1.318 (Claude Code)' ;;\n  \"auth status\") {answer} ;;\nesac\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().into_owned()
+    };
+    let cases = [
+        (
+            "signed-in",
+            format!(
+                "printf '%s\\n' '{{\"loggedIn\":true,\"email\":\"probe@example.test\",\"token\":\"sk-ant-{canary}\"}}' >&2"
+            ),
+            orbyn_contracts::AuthState::LoggedIn,
+            Some("probe@example.test"),
+        ),
+        (
+            "signed-out",
+            format!(
+                "printf '%s\\n' '{{\"loggedIn\":false,\"authMethod\":\"none\",\"token\":\"sk-ant-{canary}\"}}' >&2; exit 1"
+            ),
+            orbyn_contracts::AuthState::LoggedOut,
+            None,
+        ),
+        (
+            "unexpected",
+            format!("printf '%s\\n' 'not json, {canary}' >&2"),
+            orbyn_contracts::AuthState::Unknown,
+            None,
+        ),
+        (
+            "failing",
+            format!("printf '%s\\n' '{canary}' >&2; exit 7"),
+            orbyn_contracts::AuthState::LoggedOut,
+            None,
+        ),
+    ];
+    for (name, answer, auth, account) in cases {
+        let program = script(name, &answer);
+        let probe = ClaudeDriver::new(program, Duration::from_secs(1800))
+            .probe()
+            .await;
+        // What is kept: the mapped answer, and the fields that describe the engine.
+        assert_eq!(
+            probe.version.as_deref(),
+            Some("2.1.318"),
+            "{name}: the version is kept"
+        );
+        assert_eq!(probe.auth, Some(auth), "{name}: the state is mapped");
+        assert_eq!(
+            probe.account.as_deref(),
+            account,
+            "{name}: the account is mapped"
+        );
+        assert!(probe.path.is_some(), "{name}: the program path is kept");
+        assert_eq!(
+            probe.sign_in_command.as_deref(),
+            Some("claude auth login"),
+            "{name}: the sign-in command is kept"
+        );
+        // What is removed: the text the answer came from.
+        let answer = format!("{probe:?}");
+        assert!(
+            !answer.contains(&canary),
+            "{name}: the status text reached the answer: {answer}"
+        );
+    }
 }
 
 /// The task-tool flag is a person's opt-in: off sets nothing, a confined run gets

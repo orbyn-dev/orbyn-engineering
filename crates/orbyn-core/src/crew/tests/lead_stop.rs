@@ -177,6 +177,7 @@ async fn another_crew_cannot_stop_a_task() {
             base_branch: None,
             effort: None,
             options: Default::default(),
+            branch_name_seed: None,
         })
         .await
         .unwrap();

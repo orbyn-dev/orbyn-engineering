@@ -245,6 +245,72 @@ describe("the routes", () => {
     expect(await createHttpIssuesApi().candidates(REF)).toEqual({ labels: [], assignees: [], truncated: false });
   });
 
+  it("reads the tracker's templates for a scope, with string labels, capped bodies and no entry a create cannot name", async () => {
+    service(() => json([
+      { id: "bug", name: "Bug report", description: "Something is broken", body: "Steps to reproduce:", labels: ["bug", 7, ""] },
+      { id: "no-name", body: "x" },
+      { id: "feature", name: "Feature", body: "y".repeat(20_000), labels: "nope" },
+      "nonsense",
+    ]));
+    const found = await createHttpIssuesApi().templates(REF);
+    expect(`${calls[0]!.method} ${calls[0]!.url.pathname}`).toBe("GET /api/issues/templates");
+    expect(Object.fromEntries(calls[0]!.url.searchParams)).toEqual({ tracker: "github", scope: "orbyn-dev/orbyn-engineering" });
+    expect(calls[0]!.headers.has(PERSON_HEADER)).toBe(false);
+    expect(found).toEqual([
+      { id: "bug", name: "Bug report", description: "Something is broken", body: "Steps to reproduce:", labels: ["bug"] },
+      { id: "feature", name: "Feature", body: "y".repeat(16 * 1024), labels: [] },
+    ]);
+    // Anything but a list is a tracker with no templates, not a failed read.
+    service(() => json("nonsense"));
+    expect(await createHttpIssuesApi().templates(REF)).toEqual([]);
+  });
+
+  it("writes the create with the person key: the title, the fields given and the whole sets, and answers the stored issue", async () => {
+    service(() => json({ ...REF, key: "500", display_key: "#500", body: "b", reactions: [{ content: "HEART", count: 2 }], comments: [] }));
+    const api = createHttpIssuesApi();
+    const created = await api.create({ tracker: "github", scope: "orbyn-dev/orbyn-engineering", title: "A title", body: "A body", labels: ["bug"], assignees: ["u-1"], template: "bug" });
+    expect(`${calls[0]!.method} ${calls[0]!.url.pathname}`).toBe("POST /api/issues/item/create");
+    expect(calls[0]!.url.search).toBe("");
+    expect(calls[0]!.headers.get(PERSON_HEADER)).toBe("shell-key");
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ tracker: "github", scope: "orbyn-dev/orbyn-engineering", title: "A title", labels: ["bug"], assignees: ["u-1"], body: "A body", template: "bug" });
+    expect(created.comments).toEqual([]);
+    expect(created.reactions).toEqual([{ content: "HEART", count: 2 }]);
+    // The fields it leaves out are absent, and the sets travel as empty lists, as the contract defaults them.
+    service(() => json({ ...REF, body: "b" }));
+    await api.create({ tracker: "github", scope: "o/r", title: "T" });
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ tracker: "github", scope: "o/r", title: "T", labels: [], assignees: [] });
+  });
+
+  it("refuses a create with no title or over a limit before anything is sent", async () => {
+    service(() => json({ ...REF, body: "b" }));
+    const api = createHttpIssuesApi();
+    const draft = { tracker: "github", scope: "o/r", title: "T" } as const;
+    await expect(api.create({ ...draft, title: "" })).rejects.toThrow(/empty/i);
+    await expect(api.create({ ...draft, title: "   " })).rejects.toThrow(/empty/i);
+    await expect(api.create({ ...draft, title: "a\nb" })).rejects.toThrow(/one line/i);
+    await expect(api.create({ ...draft, title: "x".repeat(257) })).rejects.toThrow(/256/);
+    await expect(api.create({ ...draft, body: "é".repeat(33_000) })).rejects.toThrow(/64 KiB/);
+    await expect(api.create({ ...draft, labels: Array.from({ length: 51 }, (_, at) => `l${at}`) })).rejects.toThrow(/50 labels/);
+    await expect(api.create({ ...draft, assignees: Array.from({ length: 26 }, (_, at) => `u${at}`) })).rejects.toThrow(/25 assignees/);
+    expect(calls).toEqual([]);
+    // At the limits it is sent.
+    await api.create({ ...draft, title: "x".repeat(256), body: "a".repeat(65_536), labels: Array.from({ length: 50 }, (_, at) => `l${at}`), assignees: Array.from({ length: 25 }, (_, at) => `u${at}`) });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("writes a reaction with the person key and answers the issue's counts, dropping ones that are not a count", async () => {
+    service(() => json({ ...REF, body: "b", reactions: [{ content: "THUMBS_UP", count: 3 }, { content: "", count: 2 }, { content: "HEART", count: -1 }, { content: "ROCKET", count: 1.5 }], comments: [] }));
+    const detail = await createHttpIssuesApi().react(REF, "thumbs_up", true);
+    expect(`${calls[0]!.method} ${calls[0]!.url.pathname}`).toBe("POST /api/issues/item/react");
+    expect(calls[0]!.url.search).toBe("");
+    expect(calls[0]!.headers.get(PERSON_HEADER)).toBe("shell-key");
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ ...REF, reaction: "thumbs_up", on: true });
+    expect(detail.reactions).toEqual([{ content: "THUMBS_UP", count: 3 }, { content: "ROCKET", count: 1 }]);
+    // A write answer that reports no reactions leaves them unknown, never "none".
+    service(() => json({ ...REF, body: "b", reactions: null }));
+    expect((await createHttpIssuesApi().react(REF, "eyes", false)).reactions).toBeUndefined();
+  });
+
   it("offers() reads once, and only a 405 or a 404 that says the route is absent says no", async () => {
     service(() => json({ code: "invalid", message: "tracker is required" }, 400));
     expect(await createHttpIssuesApi().offers()).toBe(true);
@@ -326,6 +392,10 @@ describe("the client the app starts with", () => {
     await expect(absent.setState(REF, { category: "open", name: "Open" })).rejects.toThrow(/not reported/);
     await expect(absent.candidates(REF)).rejects.toThrow(/not reported/);
     await expect(absent.comment(REF, "x")).rejects.toThrow(/not reported/);
+    await expect(absent.create({ tracker: "github", scope: "o/r", title: "T" })).rejects.toThrow(/not reported/);
+    await expect(absent.react(REF, "thumbs_up", true)).rejects.toThrow(/not reported/);
+    // The templates read is quiet: a service that reports no issues has none, so the dialog draws no Template row.
+    await expect(absent.templates(REF)).resolves.toEqual([]);
     expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
   });
 
