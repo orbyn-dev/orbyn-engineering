@@ -13,7 +13,8 @@ import { openExplorer, send, settled, startProject, type Service } from "./servi
  * worktree is a folder of the thread's task folder. This runs a real service with ORBYN_MULTI_REPO=1 and a
  * thread in two repositories whose same-named files differ, opens the second repository's file from the left bar's Files
  * explorer and asserts what the real UI draws and sends. The foreign tab actions are stacked from PR #1695: before it, a
- * foreign tab offered no file chip and its Copy path was off.
+ * foreign tab offered no file chip and its Copy path was off. The primary repository's own tab names that repository (PR
+ * #1706), while an ordinary single-repository thread's tab is still named by its file alone.
  */
 
 test.setTimeout(120_000);
@@ -185,11 +186,12 @@ test("the foreign tab renders that repository's Markdown preview, its source and
   await expect(page.getByRole("tab", { name: `notes.txt (${secondName})`, exact: true })).toBeVisible();
   await expect(viewer.getByRole("textbox", { name: "Edit notes.txt" })).toHaveValue(SECOND_NOTES);
 
-  // The primary repository's file opens as the thread's ordinary tab, unchanged: no repository on the tab, its own file.
+  // The primary repository's file opens as the thread's own tab that names the repository (#1706), while its content stays
+  // the primary repository's own.
   tree = await pickRepository(page, primaryName, "primary-only.txt");
   await openFile(tree, "README.md");
-  await expect(page.getByRole("tab", { name: "README.md", exact: true })).toBeVisible();
-  await expect(page.locator(".ctx-title b")).toHaveText("README.md");
+  await expect(page.getByRole("tab", { name: `README.md (${primaryName})`, exact: true })).toBeVisible();
+  await expect(page.locator(".ctx-title b")).toHaveText(`README.md (${primaryName})`);
   await expect(viewer.getByRole("heading", { name: "Primary checkout" })).toBeVisible();
 });
 
@@ -237,12 +239,15 @@ test("a foreign tab's line comment, file chip and Copy path name its repository"
   expect(messages).toContain("Only the second repository says this.");
   expect(messages).not.toContain("Only the primary repository says this.");
 
-  // The primary repository's tab keeps its ordinary file chip: no repository on the label.
+  // The primary repository's tab names it too (#1706), and its chip carries that name: the send above took the foreign
+  // chip with it, so the shelf holds this one chip alone.
   const primaryTree = await pickRepository(page, primaryName, "primary-only.txt");
   await openFile(primaryTree, "README.md");
-  await expect(page.getByRole("tab", { name: "README.md", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: `README.md (${primaryName})`, exact: true })).toBeVisible();
   await page.locator(".files-viewer").getByRole("button", { name: "Add file to message", exact: true }).click();
-  await expect(chipShelf(page).locator("li[data-kind=file] span[title]")).toHaveAttribute("title", "README.md");
+  const primaryChip = chipShelf(page).locator("li[data-kind=file] span[title]");
+  await expect(primaryChip).toHaveCount(1);
+  await expect(primaryChip).toHaveAttribute("title", `${primaryName}/README.md`);
 });
 
 test("a foreign image tab renders the second repository's own PNG, and the primary is unaffected", async ({ page }) => {
@@ -280,16 +285,51 @@ test("a foreign image tab renders the second repository's own PNG, and the prima
   // A broken element reports no pixels; this one decoded the second repository's 2x3 PNG.
   await expect.poll(() => foreignImage.evaluate((element: HTMLImageElement) => ({ complete: element.complete, width: element.naturalWidth, height: element.naturalHeight }))).toEqual({ complete: true, ...FOREIGN_SIZE });
 
-  // The primary repository is unaffected: its tree has no foreign image, and its own PNG opens as the thread's ordinary
-  // tab from the thread's checkout, with no repository on the tab or on the raw request.
+  // The primary repository is unaffected: its tree has no foreign image, and its own PNG opens from the thread's checkout
+  // as the tab that names the primary repository (#1706), with no repository on the raw request.
   const primaryTree = await pickRepository(page, primaryName, "primary-only.txt");
   await expect(primaryTree.getByRole("treeitem", { name: named(FOREIGN_IMAGE) })).toHaveCount(0);
   await openFile(primaryTree, PRIMARY_IMAGE);
-  await expect(page.getByRole("tab", { name: PRIMARY_IMAGE, exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: `${PRIMARY_IMAGE} (${primaryName})`, exact: true })).toBeVisible();
   const ownImage = viewer.getByRole("img", { name: PRIMARY_IMAGE });
   await expect(ownImage).toBeVisible();
   const ownSrc = new URL((await ownImage.getAttribute("src")) ?? "", service.page);
   expect(ownSrc.searchParams.get("path")).toBe(PRIMARY_IMAGE);
   expect(ownSrc.searchParams.get("repo_id")).toBeNull();
   await expect.poll(() => ownImage.evaluate((element: HTMLImageElement) => ({ complete: element.complete, width: element.naturalWidth, height: element.naturalHeight }))).toEqual({ complete: true, ...PRIMARY_SIZE });
+});
+
+test("the primary repository's file tab names it, while an ordinary thread's tab keeps its file name", async ({ page }) => {
+  await page.setViewportSize(WINDOW);
+  await page.goto(`${service.page}#/threads/${threadId}`);
+  await expect(page.getByRole("textbox", { name: /^Message/ })).toBeVisible();
+
+  // #1706: in a multi-repository thread the primary repository's file opens from the explorer as a tab that names the
+  // repository, exactly as the panel's own naming does: "<file> (<repository>)".
+  const tree = await pickRepository(page, primaryName, "primary-only.txt");
+  await openFile(tree, "README.md");
+  await expect(page.getByRole("tab", { name: `README.md (${primaryName})`, exact: true })).toBeVisible();
+  await expect(page.locator(".ctx-title b")).toHaveText(`README.md (${primaryName})`);
+  // The tab still reads as the thread's own: the preview is the primary repository's file, not another repository's.
+  await expect(page.locator(".files-viewer").getByRole("heading", { name: "Primary checkout" })).toBeVisible();
+
+  // Another repository's tab still names that repository, so the two same-named files are told apart by their tabs.
+  const foreignTree = await pickRepository(page, secondName, "second-only.txt");
+  await openFile(foreignTree, "README.md");
+  await expect(page.getByRole("tab", { name: `README.md (${secondName})`, exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: `README.md (${primaryName})`, exact: true })).toBeVisible();
+
+  // An ordinary thread in the same project keeps the file tab it always had: the command palette opens its file as the
+  // thread's own tab, named by the file alone, and there is no repository chooser because it works in one repository.
+  const ordinary = await service.api<{ id: string }>("POST", "/api/threads", { project_id: projectId, engine: "codex", title: "Ordinary thread" });
+  await page.goto(`${service.page}#/threads/${ordinary.id}`);
+  await expect(page.getByRole("textbox", { name: /^Message/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Repository:/ })).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+p");
+  const palette = page.getByRole("dialog", { name: "Command palette" });
+  await palette.getByRole("combobox", { name: "Search" }).fill("README.md");
+  await palette.getByRole("button", { name: /README\.md/ }).first().click();
+  await expect(page.getByRole("tab", { name: "README.md", exact: true })).toBeVisible();
+  await expect(page.locator(".ctx-title b")).toHaveText("README.md");
+  await expect(page.locator(".files-viewer").getByRole("heading", { name: "Repo" })).toBeVisible();
 });
