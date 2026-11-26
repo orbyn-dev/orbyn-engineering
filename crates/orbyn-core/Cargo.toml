@@ -33,7 +33,7 @@ ed25519-dalek.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 icu_properties = "=2.4.0"
-ignore = "=0.4.34"
+ignore = "=0.4.35"
 notify = "=8.2.2"
 image.workspace = true
 portable-pty.workspace = true
