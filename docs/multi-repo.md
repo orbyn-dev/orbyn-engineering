@@ -299,8 +299,11 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   says "200 shown" quietly on its header.
 - **Still primary only.** Pull request screens, Publish repository (a quiet disabled item with a title when another repository is
   chosen) and the Create pull request base check of the Changes footer act on the primary repository.
-- **Not verified against a live service.** Checked with the mock and spies on the client; the thread paths have not run against an
-  `orbynd` with `ORBYN_MULTI_REPO=1`.
+- **Run against a live service, in part.** The repository choice in the header Git menu, the branch dialog and the commit picker
+  ran against an `orbynd` with `ORBYN_MULTI_REPO=1` (`web/e2e/real/multi-repo-git.spec.ts`, 4 passed): the reads of the chosen
+  repository carry its `repo_id` in the query and the primary's carry none, the dialog's write names it in the body, a branch
+  created there is in that repository's worktree alone and the Git menu's commit lands only there. The rest of the thread paths
+  below are checked with the mock and spies on the client.
 
 ### As built: web UI (repo threads)
 
@@ -349,8 +352,9 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   stays on disk when it holds changes; several threads, a thread in one repository and a failed repository read keep the existing words
   (the service removes the clean worktrees; see "As built: pull requests and removal").
 - **Not done.** `GET .../files/metadata` still has no web caller. `ThreadRepo.pull_request`, `repo_id` on pull request routes and on `FileDiff` and removing a repository are now in the service ("As built: pull requests and removal"); the web side draws them (below).
-- **Not verified against a live service.** Checked with the mock (which now applies the rules above) and request-level tests of the
-  client; the routes have not been run against an `orbynd` with `ORBYN_MULTI_REPO=1`.
+- **Run against a live service, in part.** The repository choice in the header Git menu, the branch dialog and the commit picker
+  have (`web/e2e/real/multi-repo-git.spec.ts`, 4 passed); the new-thread dialog, the Repos popover and the rest of the routes
+  above are checked with the mock (which applies the rules they state) and request-level tests of the client.
 
 ## As built: repo_id on Git and file calls
 
