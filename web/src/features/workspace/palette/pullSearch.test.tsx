@@ -113,4 +113,18 @@ describe("while the pull request list is read, and when it cannot be (palette-pr
     expect(new URL(calls[1] ?? "", "http://localhost").searchParams.get("refresh")).toBe("1");
     await waitFor(() => expect(screen.queryByText(/Couldn’t read pull requests/)).toBeNull());
   });
+
+  it("keeps one Pull requests heading when rows arrived and a project could not be read", async () => {
+    const first = await firstPull();
+    const failed = [{ project_id: "unreadable", message: "GraphQL: Could not resolve to a Repository with the name 'o/r'." }];
+    pullsAnswer(async () => new Response(JSON.stringify({ pulls: [first], failed }), { status: 200 }));
+    const user = userEvent.setup();
+    render(<CommandPalette start="root" onClose={() => undefined} />);
+    await user.type(await screen.findByRole("combobox"), first.word);
+    // The rows that did arrive draw the group's heading; the note under them says the rest could not be read.
+    expect(await screen.findByRole("button", { name: new RegExp(`#${first.pull.number}$`) })).toBeVisible();
+    expect(await screen.findByText("Couldn’t read pull requests. Threads and commands still work.")).toBeVisible();
+    expect(screen.getAllByText("Pull requests", { exact: true })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
 });
