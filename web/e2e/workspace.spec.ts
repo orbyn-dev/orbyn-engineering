@@ -93,11 +93,12 @@ test("keyboard focus is visible and reduced motion stops animation", async ({ pa
   expect(Number.parseFloat(duration)).toBeLessThan(0.01);
 });
 
-test("first run opens on the draft flow with nothing to set up", async ({ page }) => {
+test("first run opens the welcome steps and leaves them for the Welcome page, with nothing to set up", async ({ page }) => {
   await page.goto("/__mock/scenario/first-run");
-  // The welcome steps open first and are never a gate: one click leaves them for the draft flow.
+  // The welcome steps open first and are never a gate: one click leaves them for the Welcome page.
   await page.getByRole("button", { name: "Skip for now" }).click();
-  await expect(page.getByRole("heading", { name: "Add your first project" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to Orbyn Engineering", level: 1 })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Projects" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible();
   await expect(page.getByText(/set up/i)).toHaveCount(0);
 });
@@ -105,7 +106,7 @@ test("first run opens on the draft flow with nothing to set up", async ({ page }
 test("unavailable skills get a quiet line, never a blocking screen", async ({ page }) => {
   await page.goto("/__mock/scenario/no-skills");
   await page.getByRole("button", { name: "Skip for now" }).click();
-  await expect(page.getByRole("heading", { name: "Add your first project" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to Orbyn Engineering", level: 1 })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Skills aren't available right now" })).toBeVisible();
   // The empty home no longer offers a project-less start; its draft is still the scratch route.
   await page.evaluate(() => (location.hash = "#/new/scratch"));

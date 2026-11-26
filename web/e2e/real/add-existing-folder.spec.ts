@@ -24,10 +24,12 @@ test("an existing folder is added from the browse list, through its rows and the
   await page.setViewportSize(WINDOW);
   await page.goto(service.page);
   await page.getByRole("button", { name: "Skip for now" }).click();
-  await expect(page.getByRole("heading", { name: "Add your first project" })).toBeVisible();
-  // The empty home's Add a folder opens the add-project palette on its browse list.
+  // The shipped empty home is the Welcome page; its Projects section adds a folder.
+  await expect(page.getByRole("heading", { name: "Welcome to Orbyn Engineering", level: 1 })).toBeVisible();
+  const projects = page.getByRole("region", { name: "Projects" });
+  // The Welcome page's Add a folder opens the add-project palette on its browse list.
   const browsed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/fs/browse");
-  await page.locator(".no-projects").getByRole("button", { name: "Add a folder" }).click();
+  await projects.getByRole("button", { name: "Add a folder" }).click();
   await browsed;
   const palette = page.getByRole("dialog", { name: "Command palette" });
   const field = palette.getByLabel("Folder path");
