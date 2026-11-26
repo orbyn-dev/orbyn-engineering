@@ -41,9 +41,16 @@ test("a published render produces a nonblank screenshot without browser errors",
   page.on("console", (message) => {
     if (message.type() !== "error") return;
     // With Issues off the app still asks GET /api/issues/trackers once, and the service answers its designed 404
-    // (web/src/features/issues/http.ts); the browser's failed-resource line is that probe, not an app error.
-    const probe = message.text().startsWith("Failed to load resource") && message.location().url.includes("/api/issues/trackers");
-    if (!probe) errors.push(message.text());
+    // (web/src/features/issues/http.ts); the browser's failed-resource line is that probe, not an app error. Only that
+    // exact endpoint's 404 is expected: any other console error, another status or a failed request stays fatal.
+    const text = message.text();
+    const location = text.startsWith("Failed to load resource") ? new URL(message.location().url) : null;
+    const probe =
+      location !== null &&
+      location.origin === new URL(service.page).origin &&
+      location.pathname === "/api/issues/trackers" &&
+      text.includes("a status of 404");
+    if (!probe) errors.push(text);
   });
   page.on("pageerror", (error) => errors.push(error.message));
   await page.evaluate(({ url, token }) => {
