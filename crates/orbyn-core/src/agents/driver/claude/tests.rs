@@ -1582,7 +1582,7 @@ async fn the_login_probe_keeps_answering_past_the_capture_cap() {
     let script = dir.path().join("claude-past-cap");
     std::fs::write(
         &script,
-        "#!/bin/sh\nprintf '%s' '{\"loggedIn\":true,\"email\":\"probe@example.test\"}' >&2\nperl -e 'print \" \" x 300000; print \"REFUSED-TAIL\"' >&2\n",
+        "#!/bin/sh\nexec 1>/dev/null\nprintf '%s' '{\"loggedIn\":true,\"email\":\"probe@example.test\"}' >&2\nperl -e 'print \" \" x 300000; print \"REFUSED-TAIL\"' >&2\n",
     )
     .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();

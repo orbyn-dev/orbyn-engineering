@@ -322,11 +322,14 @@ mod tests {
             "no byte of the answer is replaced"
         );
 
-        // stdout past the cap: exactly the first 256 KiB is kept, and the tail is refused.
+        // stdout past the cap: exactly the first 256 KiB is kept, and the tail is refused. Its
+        // unused stderr is closed first, so the capture's other read reaches EOF and a small
+        // pipe cannot block the writer before the cap is reached.
         let over = status_script(
             dir.path(),
             "over",
             concat!(
+                "exec 2>/dev/null\n",
                 r#"printf '%s' '{"loggedIn":true,"email":"probe@example.test"}'"#,
                 "\n",
                 r#"perl -e 'print " " x 300000'"#,
@@ -353,11 +356,13 @@ mod tests {
             "the tail past the cap is refused"
         );
 
-        // stderr past the cap: the same bound, separately, while stdout stays empty.
+        // stderr past the cap: the same bound, separately, while stdout is closed first so
+        // its read reaches EOF and a small pipe cannot block the writer before the cap.
         let stderr_over = status_script(
             dir.path(),
             "stderr-over",
             concat!(
+                "exec 1>/dev/null\n",
                 r#"printf '%s' '{"loggedIn":true,"email":"probe@example.test"}' >&2"#,
                 "\n",
                 r#"perl -e 'print " " x 300000; print "REFUSED-TAIL"' >&2"#,
@@ -370,19 +375,28 @@ mod tests {
         assert_eq!(output.stderr.len(), cap, "only the cap is kept from stderr");
         assert!(output.stderr.starts_with(status_json));
         assert!(
+            output.stderr[status_json.len()..]
+                .bytes()
+                .all(|byte| byte == b' '),
+            "the kept stderr is the first cap bytes"
+        );
+        assert!(
             !output.stderr.contains("REFUSED-TAIL"),
             "the tail past the cap on stderr is refused"
         );
 
         // A program that keeps writing past the cap is ended, not waited for: if it were
         // waited for it would sleep 60 s and then leave this marker. Its stderr is closed so
-        // the capture's other read reaches EOF and the cap alone decides to end it.
+        // the capture's other read reaches EOF and the cap alone decides to end it. The pid
+        // is checked directly, because the marker path goes with the test folder.
         let marker = dir.path().join("kept-writing");
+        let pid_file = dir.path().join("kept-writing.pid");
         let endless = status_script(
             dir.path(),
             "endless",
             &format!(
-                "exec 2>/dev/null\nperl -e 'print \"b\" x 262145'\nsleep 60\nprintf survived > '{}'",
+                "exec 2>/dev/null\nprintf '%s' $$ > '{}'\nperl -e 'print \"b\" x 262145'\nsleep 60\nprintf survived > '{}'",
+                pid_file.display(),
                 marker.display()
             ),
         );
@@ -395,6 +409,13 @@ mod tests {
             started.elapsed() < Duration::from_secs(5),
             "the cap ended the program at once"
         );
+        let pid: i32 = std::fs::read_to_string(&pid_file)
+            .expect("the program wrote its pid before writing past the cap")
+            .trim()
+            .parse()
+            .expect("a pid");
+        crate::testing::assert_process_reaped(pid, "a program that wrote past the capture cap")
+            .await;
         assert!(
             !marker.exists(),
             "the program never reached its line after the write"
