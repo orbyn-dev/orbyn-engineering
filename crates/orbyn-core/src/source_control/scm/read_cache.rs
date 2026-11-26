@@ -3,6 +3,7 @@
 //! pull request screens ask for eight of them at once, so each answer is kept by every
 //! input of its read and refreshed in the background (see `util::swr`).
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -44,7 +45,7 @@ pub struct ScmReads {
     pub(super) checks: Swr<Vec<PullCheck>>,
     pub(super) conversation: Swr<PullConversation>,
     pub(super) timeline: Swr<Vec<PullTimelineEvent>>,
-    pub(super) files: Swr<Vec<PullFile>>,
+    pub(super) files: Swr<PullFilesRead>,
     pub(super) revisions: Swr<Vec<PullRevision>>,
     pub(super) stack: Swr<PullStack>,
     pub(super) reviewers: Swr<Vec<PullCandidate>>,
@@ -171,6 +172,50 @@ fn pull_key(project: &Project, number: u64) -> String {
     key(&[&project.id, &number.to_string(), &project.path])
 }
 
+/// Where one files read's viewed state came from.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum ForgeViewed {
+    /// GitHub answered: the pull request's node id for the mark mutations, and each changed
+    /// file's own viewed state.
+    GitHub {
+        pull_id: String,
+        states: HashMap<String, bool>,
+    },
+    /// A GitHub pull request whose viewed state could not be read; this service's kept marks
+    /// stand in, unchanged from before the sync existed.
+    Unavailable,
+    /// The forge keeps no viewed state of its own.
+    NotApplicable,
+}
+
+/// One files read: the forge's changed files, and where a viewed mark comes from.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct PullFilesRead {
+    pub(super) files: Vec<PullFile>,
+    pub(super) viewed: ForgeViewed,
+}
+
+/// The forge's changed files and, on GitHub, its own viewed state. A viewed read that does not
+/// name every changed file is not used at all, so no file is reported unviewed from a short answer.
+async fn read_pull_files(forge: Forge, cwd: PathBuf, number: u64) -> Result<PullFilesRead> {
+    let mut files = crate::source_control::forge::pull_files(forge, &cwd, number).await?;
+    let viewed = match forge {
+        Forge::GitHub => match crate::source_control::forge::pull_viewed(forge, &cwd, number).await
+        {
+            Ok((pull_id, states)) if files.iter().all(|file| states.contains_key(&file.path)) => {
+                ForgeViewed::GitHub { pull_id, states }
+            }
+            _ => ForgeViewed::Unavailable,
+        },
+        _ => ForgeViewed::NotApplicable,
+    };
+    for file in &mut files {
+        file.viewed = false;
+        file.viewed_synced = false;
+    }
+    Ok(PullFilesRead { files, viewed })
+}
+
 /// One pull request read: the forge is found from the folder on a miss only, so an
 /// answer that is kept costs no process.
 async fn read_pull<V, F, Fut>(
@@ -282,8 +327,10 @@ impl Core {
         .await
     }
 
-    /// The viewed marks are this service's own, so they are read on every call and
-    /// never kept with the forge's answer.
+    /// Viewed marks are GitHub's own when it answers: a mark this service kept because GitHub
+    /// did not save it is never dropped, and it goes as soon as GitHub reports the same state so a
+    /// later change on GitHub is not overridden by it. Another forge, or GitHub when it cannot be
+    /// asked, keeps this service's marks, as before the sync existed.
     pub(super) async fn cached_files(
         &self,
         project_id: &str,
@@ -291,21 +338,77 @@ impl Core {
         refresh: bool,
     ) -> Result<Vec<PullFile>> {
         let project = self.trusted_project(project_id)?;
-        let mut files = read_pull(
+        let mut read = read_pull(
             &self.scm_reads.files,
             project,
             number,
             refresh,
-            move |forge, cwd| async move {
-                crate::source_control::forge::pull_files(forge, &cwd, number).await
-            },
+            move |forge, cwd| async move { read_pull_files(forge, cwd, number).await },
         )
         .await?;
-        let viewed = self.store.viewed_files(project_id, number)?;
-        for file in &mut files {
-            file.viewed = viewed.contains(&file.path);
+        let kept = self.store.viewed_files(project_id, number)?;
+        let mut reported = Vec::new();
+        let PullFilesRead { files, viewed } = &mut read;
+        for file in files {
+            let kept_here = kept.contains(&file.path);
+            match viewed {
+                ForgeViewed::GitHub { states, .. } => {
+                    let on_github = states.get(&file.path).copied().unwrap_or(false);
+                    file.viewed = kept_here || on_github;
+                    file.viewed_synced = on_github;
+                    if kept_here && on_github {
+                        reported.push(file.path.clone());
+                    }
+                }
+                // GitHub could not confirm the mark, and another forge has no viewed files of its
+                // own: either way the mark is this service's, and it says so.
+                ForgeViewed::Unavailable | ForgeViewed::NotApplicable => {
+                    file.viewed = kept_here;
+                }
+            }
         }
-        Ok(files)
+        if !reported.is_empty() {
+            self.store
+                .set_files_viewed(project_id, number, &reported, false)?;
+        }
+        Ok(read.files)
+    }
+
+    /// The pull request's node id from a kept files read, for a mark mutation that needs it.
+    pub(super) fn kept_pull_id(&self, project_id: &str, number: u64) -> Option<String> {
+        let project = self.store.project(project_id).ok()?;
+        match self
+            .scm_reads
+            .files
+            .peek(&pull_key(&project, number))?
+            .viewed
+        {
+            ForgeViewed::GitHub { pull_id, .. } => Some(pull_id),
+            ForgeViewed::Unavailable | ForgeViewed::NotApplicable => None,
+        }
+    }
+
+    /// GitHub now reports this viewed state for one file: keep it in the files read already kept,
+    /// so the next read shows it without another forge call.
+    pub(super) fn file_viewed_changed(
+        &self,
+        project_id: &str,
+        number: u64,
+        path: &str,
+        viewed: bool,
+    ) {
+        let Ok(project) = self.store.project(project_id) else {
+            return;
+        };
+        let key = pull_key(&project, number);
+        let Some(mut read) = self.scm_reads.files.peek(&key) else {
+            return;
+        };
+        let ForgeViewed::GitHub { states, .. } = &mut read.viewed else {
+            return;
+        };
+        states.insert(path.to_owned(), viewed);
+        self.scm_reads.files.put(&key, read);
     }
 
     pub(super) async fn cached_revisions(
