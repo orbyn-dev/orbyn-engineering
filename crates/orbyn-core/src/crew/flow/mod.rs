@@ -1,10 +1,13 @@
 //! Crew Flow (Preview): the read side of the Flow screens. It lists a crew's work tasks with the ten cells of each
 //! task's line, and zooms into one task's lanes, findings, gates and rounds. Nothing here writes: every function reads
-//! through the store's read connection, starts no process and takes no lock beyond it. It approves, merges and reverts
+//! through the store's read connection, starts no process and takes no lock beyond it, but for the two reads that need the
+//! task's own checkout read-only through git (`artifacts`, and a lane's change). It approves, merges and reverts
 //! nothing; the person's answers are `autopilot`'s.
 //!
 //! One reviewer lane can also be read on its own: the row the zoom shows, what it was given (the work's purpose, the
-//! commit it read, the checks its brief named) and the findings it filed, with the reviewer's own evidence.
+//! commit it read, the checks its brief named and the change it read), the repository rule that asked for it, and the
+//! findings it filed, with the reviewer's own evidence. The rule and the change are not stored: they are read from the
+//! checkout at the commit the work started from and the commit the lane read, read-only, and never as a patch.
 //!
 //! What every view but the Run page never returns: the answer key, or any part of a check (command, output, what it
 //! proves), a repro, a thread id, a path on this machine, a bus message. A text is redacted, the key's text withheld and
@@ -458,9 +461,10 @@ impl Core {
     }
 
     /// One reviewer lane of a work task: the row the task zoom shows, what the lane was given (the work's purpose, the
-    /// commit it read and the checks its brief named) and the findings it filed in every round, with the reviewer's own
-    /// evidence. `lane` is the lane's own name, as the zoom shows it. A lane that did not run on this work is not found.
-    pub fn crew_flow_lane(&self, id: &str, lane: &str) -> Result<wire::FlowLaneDetail> {
+    /// commit it read, the checks its brief named and the change it read), the repository rule that asked for it and the
+    /// findings it filed in every round, with the reviewer's own evidence. `lane` is the lane's own name, as the zoom shows
+    /// it. A lane that did not run on this work is not found.
+    pub async fn crew_flow_lane(&self, id: &str, lane: &str) -> Result<wire::FlowLaneDetail> {
         self.crew_preview_only()?;
         valid_id(id)?;
         if wire::CrewToken::new(lane).is_err() {
@@ -468,6 +472,7 @@ impl Core {
         }
         // The zoom already builds the row, the checks cell and every finding, so a lane reads the same values it shows.
         let detail = self.crew_flow_task(id)?;
+        let crew = detail.crew.clone();
         let row = detail
             .lanes
             .into_iter()
@@ -484,18 +489,99 @@ impl Core {
             .into_iter()
             .filter(|finding| finding.lane == lane)
             .collect();
+        // The rule that asked for the lane and the change it read are not stored: both are read from the task's own
+        // checkout, read-only, at the commits that decide them (the one the work started from, and the one the lane read).
+        let run = self.store.crew_run(id)?;
+        let (checkout, base) = run.as_ref().map_or((None, None), |run| {
+            (run.worktree.as_deref(), run.base_commit.as_deref())
+        });
+        let person = self.display_redactor()?;
+        let scrub = Scrub::of_crew(self, &person, &crew)?;
+        let (rule, rule_absent) = lane_rule(checkout, base, lane, &scrub).await;
+        let (diff, diff_absent) = lane_diff(checkout, base, row.commit.as_deref(), &scrub).await;
         Ok(wire::FlowLaneDetail {
-            crew: detail.crew,
+            crew,
             task: detail.row.id,
             given: wire::FlowLaneGiven {
                 purpose: detail.brief.purpose,
                 commit: row.commit.clone(),
                 checks_passed,
                 checks_of,
+                diff,
+                diff_absent,
             },
             lane: row,
+            rule,
+            rule_absent,
             findings,
             truncated: detail.truncated,
         })
     }
+}
+
+/// The longest path a rule's condition shows, in characters.
+const RULE_PATH_MAX: usize = 400;
+
+/// The repository rule that asked for `lane`, read at `base`, the commit the work started from: `.orbyn/crew.json`'s
+/// `lanes`, the same file the review that started the lane read. A rule that names no paths always asks for the lane; one
+/// that names them asks for it only when the change touches one. `None` with the reason when there is no answer: no
+/// checkout, no base commit, or a file that cannot be read as rules.
+async fn lane_rule(
+    checkout: Option<&str>,
+    base: Option<&str>,
+    lane: &str,
+    scrub: &Scrub,
+) -> (Option<wire::FlowLaneRule>, Option<String>) {
+    let Some(checkout) = checkout else {
+        return (None, Some("no_checkout".to_owned()));
+    };
+    let Some(base) = base else {
+        return (None, Some("no_base".to_owned()));
+    };
+    let root = std::path::Path::new(checkout);
+    if !root.is_dir() {
+        return (None, Some("no_checkout".to_owned()));
+    }
+    let Ok(rules) = super::review::read_rules_at(root, base).await else {
+        return (None, Some("unreadable".to_owned()));
+    };
+    let named: Vec<&super::review::RuleLane> = rules
+        .iter()
+        .filter(|rule| rule.lane.as_str() == lane)
+        .collect();
+    let mut paths: Vec<String> = Vec::new();
+    let mut always = false;
+    for rule in &named {
+        match rule.condition_paths() {
+            Some(condition) => paths.extend(
+                condition
+                    .iter()
+                    .map(|path| scrub.text(path.as_str(), RULE_PATH_MAX)),
+            ),
+            None => always = true,
+        }
+    }
+    (
+        Some(wire::FlowLaneRule {
+            by_rule: !named.is_empty(),
+            locked: named.iter().any(|rule| rule.locked),
+            // A rule that always asks for the lane answers no paths; neither does a lane no rule names.
+            when_paths: (!always && !paths.is_empty()).then_some(paths),
+        }),
+        None,
+    )
+}
+
+/// The change the lane read: from `base`, the commit the work started from, to `commit`, the commit the lane read. Absent
+/// with the reason when the lane recorded no commit, or when git cannot read the range.
+async fn lane_diff(
+    checkout: Option<&str>,
+    base: Option<&str>,
+    commit: Option<&str>,
+    scrub: &Scrub,
+) -> (Option<wire::FlowTaskDiff>, Option<String>) {
+    let Some(commit) = commit else {
+        return (None, Some("no_commit".to_owned()));
+    };
+    artifacts::diff_between(checkout, base, Some(commit), scrub).await
 }

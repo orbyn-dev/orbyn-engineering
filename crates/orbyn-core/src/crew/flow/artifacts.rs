@@ -2,8 +2,9 @@
 //! artifacts those rows name, and the change the checks read, as a summary of files and counts.
 //!
 //! **What it reads.** The store's read connection for the rows, and read-only git on the task's own checkout for the change
-//! (see [`changed_since`]): two `git diff` calls, no patch, no write to the repository, no lock beyond the read. It is the
-//! one Flow read that runs a program, because a diff is not stored.
+//! (see [`changed_since`]): two `git diff` calls, no patch, no write to the repository, no lock beyond the read. It is one
+//! of the two Flow reads that run a program, because a diff is not stored; a reviewer lane's read (`flow::crew_flow_lane`)
+//! reads the same change pinned at the commit the lane read.
 //!
 //! **What it never returns.** The answer key or any part of a check beyond its id and kind: not its command, its output, what
 //! it proves, and not an Evidence id. The task's key is read for its checks' ids and kinds only, to label a row, which is the
@@ -132,20 +133,33 @@ fn flow_check(
 /// The change the checks read, or the reason there is none. A task with no checkout, no base commit or a checkout git cannot
 /// read still answers: its rows are there, and this names what is missing.
 async fn diff_of(facts: &Facts, scrub: &Scrub) -> (Option<wire::FlowTaskDiff>, Option<String>) {
-    let Some(run) = facts.run.as_ref() else {
+    let (checkout, base) = match facts.run.as_ref() {
+        Some(run) => (run.worktree.as_deref(), run.base_commit.as_deref()),
+        None => (None, None),
+    };
+    diff_between(checkout, base, None, scrub).await
+}
+
+/// The change from `base` to `head` (`None` is the checkout's own head), as a summary of files and counts, or the reason
+/// there is none: `no_checkout`, `no_base` or a git read that failed. Shared by the task's artifacts read, which counts the
+/// work now, and a reviewer lane's read, which counts the change it was given, pinned at the commit it read.
+pub(super) async fn diff_between(
+    checkout: Option<&str>,
+    base: Option<&str>,
+    head: Option<&str>,
+    scrub: &Scrub,
+) -> (Option<wire::FlowTaskDiff>, Option<String>) {
+    let Some(checkout) = checkout else {
         return (None, Some("no_checkout".to_owned()));
     };
-    let Some(checkout) = run.worktree.as_deref() else {
-        return (None, Some("no_checkout".to_owned()));
-    };
-    let Some(base) = run.base_commit.as_deref() else {
+    let Some(base) = base else {
         return (None, Some("no_base".to_owned()));
     };
     let root = Path::new(checkout);
     if !root.is_dir() {
         return (None, Some("no_checkout".to_owned()));
     }
-    match changed_since(root, base, scrub).await {
+    match changed_since(root, base, head, scrub).await {
         Ok(change) => (
             Some(wire::FlowTaskDiff {
                 base: base.to_owned(),
@@ -161,11 +175,20 @@ async fn diff_of(facts: &Facts, scrub: &Scrub) -> (Option<wire::FlowTaskDiff>, O
     }
 }
 
-/// The files the checkout changed since `base`, as counts: `git diff` by status and by number, both read-only and both
-/// byte exact, and no patch. A file the task left untracked is not one git tracks, so it is not listed.
-async fn changed_since(root: &Path, base: &str, scrub: &Scrub) -> Result<Change> {
+/// The files the checkout changed since `base`, up to `head` when one is given, as counts: `git diff` by status and by
+/// number, both read-only and both byte exact, and no patch. A file the task left untracked is not one git tracks, so it is
+/// not listed.
+async fn changed_since(
+    root: &Path,
+    base: &str,
+    head: Option<&str>,
+    scrub: &Scrub,
+) -> Result<Change> {
     use crate::source_control::git::git_byte_exact as git;
     if !crate::source_control::git::is_revision(base) {
+        return Err(CoreError::Invalid("That is not a commit.".into()));
+    }
+    if head.is_some_and(|head| !crate::source_control::git::is_revision(head)) {
         return Err(CoreError::Invalid("That is not a commit.".into()));
     }
     // A rename is read as a deletion and an addition, so every row is one path and the counts stay unambiguous.
@@ -173,12 +196,16 @@ async fn changed_since(root: &Path, base: &str, scrub: &Scrub) -> Result<Change>
     let mut statuses_args = vec!["diff"];
     statuses_args.extend(flags);
     statuses_args.extend(["--name-status", "-z", base]);
-    let statuses = timeout(GIT_READ_MAX, git(root, &statuses_args))
-        .await
-        .map_err(|_| CoreError::Git("The change took too long to read.".into()))??;
     let mut counts_args = vec!["diff"];
     counts_args.extend(flags);
     counts_args.extend(["--numstat", "-z", base]);
+    if let Some(head) = head {
+        statuses_args.push(head);
+        counts_args.push(head);
+    }
+    let statuses = timeout(GIT_READ_MAX, git(root, &statuses_args))
+        .await
+        .map_err(|_| CoreError::Git("The change took too long to read.".into()))??;
     let counts = timeout(GIT_READ_MAX, git(root, &counts_args))
         .await
         .map_err(|_| CoreError::Git("The change took too long to read.".into()))??;

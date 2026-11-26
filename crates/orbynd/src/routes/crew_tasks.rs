@@ -88,7 +88,7 @@ async fn lanes(
         .get("lane")
         .map(String::as_str)
         .ok_or_else(|| CoreError::Invalid("lane is required".into()))?;
-    Ok(Json(state.core.crew_flow_lane(&id, lane)?))
+    Ok(Json(state.core.crew_flow_lane(&id, lane).await?))
 }
 
 /// One task's Run page: its prompt, the checks the verifier ran, what was not verified and the pull request it made.
