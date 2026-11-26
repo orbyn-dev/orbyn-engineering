@@ -15,6 +15,8 @@ use crate::http::AppState;
 use crate::http::access::Access;
 
 const DASHBOARD: &str = "/api/crew/dashboard";
+/// The project menu's counts: the same family, one path segment further in.
+const PROJECTS: &str = "/api/crew/dashboard/projects";
 
 struct Served {
     port: u16,
@@ -168,4 +170,45 @@ async fn the_request_shape_is_checked_before_anything_is_read() {
         .get(&format!("{DASHBOARD}?project={project}&days=90"), true)
         .await;
     assert_eq!(status, 200, "a 90 day window is one of the three");
+}
+
+/// The project menu's count (`/api/crew/dashboard/projects`): the same gate, credential and request shape as the
+/// dashboard read, and a row for every repository the service lists. The counts themselves are tested in
+/// `orbyn-core` (`crew/tests/dashboard.rs`); here it is the route.
+#[tokio::test]
+async fn the_projects_read_needs_the_flag_the_token_and_answers_a_row_for_every_repository() {
+    let off = serve("projects-off", false, false).await;
+    let (status, body) = off.get(PROJECTS, true).await;
+    assert_eq!((status, &body["code"]), (404, &json!("not_found")));
+
+    let on = serve("projects", true, false).await;
+    let (status, _) = on.get(PROJECTS, false).await;
+    assert_eq!(status, 401);
+
+    let project = fixtures::add_project(&on.core, on.dir.join("project").to_str().unwrap());
+    let (status, answer) = on.get(PROJECTS, true).await;
+    assert_eq!(status, 200);
+    assert_eq!(answer["days"], json!(60), "30 or 60 or 90; 60 when none is asked");
+    assert!(answer["as_of"].as_i64().unwrap_or_default() > 0);
+    assert_eq!(answer["truncated"], json!(false));
+    assert_eq!(
+        answer["projects"],
+        json!([{ "project": project, "merges": 0 }]),
+        "a repository with no Crew use is a row with no merges, never left out"
+    );
+
+    // The request shape: one of the three windows, or nothing.
+    for path in [
+        format!("{PROJECTS}?days=45"),
+        format!("{PROJECTS}?days=ninety"),
+    ] {
+        let (status, body) = on.get(&path, true).await;
+        assert_eq!(
+            (status, &body["code"]),
+            (400, &json!("invalid_input")),
+            "{path}"
+        );
+    }
+    let (status, answer) = on.get(&format!("{PROJECTS}?days=90"), true).await;
+    assert_eq!((status, &answer["days"]), (200, &json!(90)));
 }

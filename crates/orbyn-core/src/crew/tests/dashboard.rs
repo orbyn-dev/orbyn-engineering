@@ -1307,3 +1307,242 @@ async fn a_fix_in_flight_reads_working_in_the_live_row() {
         .unwrap();
     assert!(r.read(Some(30), 0, NOW).live.working.is_empty());
 }
+
+// The project menu's counts (issue 975: "per-project merge counts in the project menu", which "needs a read of every
+// repository first"). One read answers every repository the service lists, so the menu never makes a request per
+// repository before it can name a count.
+
+/// A second repository with one crew task of its own and its merge at `merged`: the counts read spans every
+/// repository, so a test needs a merge whose task was led from a project that is not the rig's.
+fn merged_elsewhere(r: &Rig, name: &str, merged: i64) -> String {
+    let folder = r.w.repo.parent().unwrap().join(name);
+    std::fs::create_dir_all(&folder).unwrap();
+    let other =
+        r.w.core
+            .store
+            .add_project(crate::store::NewProject {
+                path: folder.to_str().unwrap(),
+                name,
+                is_git: false,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+    let thread =
+        r.w.core
+            .store
+            .create_thread(crate::store::NewThread {
+                project_id: other.id.clone(),
+                title: "Elsewhere".into(),
+                engine: "alpha".into(),
+                model: None,
+                cwd: folder.to_str().unwrap().to_owned(),
+                worktree: None,
+                skill_profile: None,
+                parent_thread_id: None,
+                relation: None,
+                scratch: false,
+            })
+            .unwrap();
+    let mut stamper = super::fake::stamper();
+    stamper.crew_id = orbyn_contracts::CrewId::new(thread.id.clone()).unwrap();
+    let draft = super::fake::draft(json!({ "outcome": "Elsewhere." }));
+    let task_brief = stamper.brief(&draft).unwrap();
+    let sealed = stamper.answer_key(&key(), &task_brief.id).unwrap();
+    let task = r
+        .w
+        .core
+        .store
+        .create_crew_task(&task_brief, &sealed, &format!("run-{name}"))
+        .unwrap();
+    r.w.core
+        .store
+        .add_crew_run(task.id.as_str(), &thread.id, "worker-elsewhere")
+        .unwrap();
+    r.w.core
+        .store
+        .add_crew_merge(&MergeRecord {
+            id: 0,
+            task_id: task.id.clone(),
+            crew_id: task.crew_id.clone(),
+            repo: folder.to_string_lossy().into_owned(),
+            branch: "fake-main".into(),
+            before_commit: format!("{:040x}", 2),
+            merge_commit: format!("{:040x}", 3),
+            candidate: format!("{:040x}", 3),
+            risk: "medium".into(),
+            reasons: json!(["ordinary feature work"]),
+            areas: vec!["src/elsewhere".into()],
+            engine: "alpha".into(),
+            mode: "full".into(),
+            files: 1,
+            lines: 1,
+            proof: json!({}),
+            not_verified: json!([]),
+            merged_unix: merged,
+            due_unix: None,
+            review_state: "waiting".into(),
+            comment: None,
+            watch: "unknown".into(),
+            reverted_commit: None,
+            needs_person: None,
+        })
+        .unwrap();
+    other.id
+}
+
+/// A repository the person has never used Crew in: a project, no task, no merge.
+fn unused_project(r: &Rig, name: &str) -> String {
+    let folder = r.w.repo.parent().unwrap().join(name);
+    std::fs::create_dir_all(&folder).unwrap();
+    r.w.core
+        .store
+        .add_project(crate::store::NewProject {
+            path: folder.to_str().unwrap(),
+            name,
+            is_git: false,
+            managed: false,
+            scratch: false,
+        })
+        .unwrap()
+        .id
+}
+
+/// The count a read answers for one repository.
+fn count_of(answer: &wire::CrewDashboardProjects, project: &str) -> u32 {
+    answer
+        .projects
+        .iter()
+        .find(|row| row.project == project)
+        .unwrap_or_else(|| panic!("a row for project {project}"))
+        .merges
+}
+
+/// Every repository the service lists is a row, its own merges are the count, and the window is the one asked: the
+/// figure is the same one the one-repository dashboard read answers, so the menu and the page never disagree.
+#[tokio::test]
+async fn the_projects_read_counts_every_repository_and_only_the_window() {
+    let mut r = rig().await;
+    let now = crate::util::unix_now();
+    r.merge("src/a/**", now - 2 * DAY, "alpha", json!({})).await;
+    r.merge("src/b/**", now - 40 * DAY, "alpha", json!({}))
+        .await; // inside 60, outside 30
+    r.merge("src/c/**", now - 100 * DAY, "alpha", json!({}))
+        .await; // outside every window
+    let elsewhere = merged_elsewhere(&r, "counts-elsewhere", now - DAY);
+    let unused = unused_project(&r, "counts-unused");
+
+    for (days, merges) in [(Some(30), 1), (Some(60), 2), (Some(90), 2)] {
+        let answer = r.w.core.crew_dashboard_projects(days, now).unwrap();
+        assert_eq!(answer.days, days.unwrap(), "the window asked is the one read");
+        assert_eq!(
+            count_of(&answer, &r.project),
+            merges,
+            "days {days:?}: only the window's merges are counted"
+        );
+        assert_eq!(
+            merges, r.read(days, 0, now).merges,
+            "days {days:?}: the menu's count is the page's own figure"
+        );
+        // A second repository's merge is its own row, never added to another's.
+        assert_eq!(count_of(&answer, &elsewhere), 1);
+        assert_eq!(count_of(&answer, &unused), 0, "no Crew use is zero, never left out");
+        assert!(!answer.truncated);
+        assert!(answer.as_of > 0);
+    }
+    let answer = r.w.core.crew_dashboard_projects(None, now).unwrap();
+    assert_eq!(answer.days, 60, "60 days when none is asked");
+
+    // Every repository the service lists has a row, and no other row is invented.
+    let listed: Vec<String> = r
+        .w
+        .core
+        .store
+        .list_projects()
+        .unwrap()
+        .into_iter()
+        .map(|project| project.id)
+        .collect();
+    let mut rows: Vec<String> = answer
+        .projects
+        .iter()
+        .map(|row| row.project.clone())
+        .collect();
+    let mut expected = listed.clone();
+    rows.sort();
+    expected.sort();
+    assert_eq!(rows, expected);
+}
+
+/// A window the dashboard does not serve is refused, and with Crew Preview off the read is not there at all.
+#[tokio::test]
+async fn the_projects_read_refuses_a_window_it_does_not_serve_and_the_flag_being_off() {
+    let r = rig().await;
+    let now = crate::util::unix_now();
+    for days in [Some(0), Some(45), Some(120)] {
+        assert!(
+            matches!(
+                r.w.core.crew_dashboard_projects(days, now),
+                Err(CoreError::Invalid(_))
+            ),
+            "days {days:?} was accepted"
+        );
+    }
+    let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+    let refused = w.core.crew_dashboard_projects(None, crate::util::unix_now());
+    assert!(
+        matches!(refused, Err(CoreError::NotFound(_))),
+        "{refused:?}"
+    );
+}
+
+/// The count read changes no row of any table: it is a read of records the queue already wrote.
+#[tokio::test]
+async fn the_projects_read_writes_nothing() {
+    let mut r = rig().await;
+    let now = crate::util::unix_now();
+    r.merge("src/a/**", now - DAY, "alpha", json!({})).await;
+    merged_elsewhere(&r, "counts-writes", now - DAY);
+    let before = dump(&r);
+    let answer = r.w.core.crew_dashboard_projects(None, now).unwrap();
+    assert_eq!(dump(&r), before, "the read changed no row of any table");
+    assert_eq!(answer.projects.len(), 2);
+}
+
+/// A repository list longer than one answer holds is cut and says so, so the menu can say the count is partial
+/// rather than draw an incomplete list as complete.
+#[tokio::test]
+async fn the_projects_read_says_when_the_menu_lists_more_repositories_than_one_answer_holds() {
+    let r = rig().await;
+    let now = crate::util::unix_now();
+    unused_project(&r, "counts-second");
+    let full = r.w.core.crew_dashboard_projects(None, now).unwrap();
+    assert_eq!(full.projects.len(), 2);
+    assert!(!full.truncated);
+    let cut = r
+        .w
+        .core
+        .crew_dashboard_projects_with_cap(None, now, 1)
+        .unwrap();
+    assert_eq!(cut.projects.len(), 1);
+    assert!(cut.truncated, "a cut list says so");
+}
+
+/// The records cannot be read: the answer is the contract's `history_unreadable`, never an empty menu, which would
+/// read as "this device has no merges at all".
+#[tokio::test]
+async fn the_projects_read_answers_history_unreadable_when_the_records_cannot_be_read() {
+    let r = rig().await;
+    r.w.core.store.break_crew_dashboard_for_test();
+    let refused = r.w.core.crew_dashboard_projects(None, crate::util::unix_now());
+    assert!(
+        matches!(
+            refused,
+            Err(CoreError::Refused {
+                code: "history_unreadable",
+                ..
+            })
+        ),
+        "{refused:?}"
+    );
+}
