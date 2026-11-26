@@ -11,7 +11,7 @@ use super::harness::{Turn, World, world};
 use crate::crew::lessons::LessonScope;
 use crate::crew::lessons_view::LessonFilter;
 use crate::error::CoreError;
-use crate::store::{CrewLesson, LessonEvidence, NewCrewLesson};
+use crate::store::{CrewLesson, LessonEvidence, NewCrewLesson, UNDO_SECS};
 use crate::util::{format_unix, parse_time, unix_now};
 
 macro_rules! example {
@@ -560,12 +560,17 @@ async fn a_deleted_lesson_is_restored_by_undo_with_a_new_rev() {
     let w = quiet().await;
     let project = project_of(&w);
     let lesson = add_repo(&w, &project, "Use pnpm.");
+    // The deletion stamps its own real now; bracket that one call rather than reading the wall
+    // clock again, so a loaded box between the delete and the assertion cannot fail a correct
+    // window. The window is exactly `UNDO_SECS` from that stamp.
+    let before = unix_now();
     let (id, undo_until) = w.core.crew_lesson_delete(&lesson.id, lesson.rev).unwrap();
+    let after = unix_now();
     assert_eq!(id, lesson.id);
     let until = parse_time(&undo_until).expect("an RFC 3339 undo time");
     assert!(
-        until > unix_now() && until <= unix_now() + 12,
-        "the undo window is about ten seconds: {undo_until}"
+        (before + UNDO_SECS..=after + UNDO_SECS).contains(&until),
+        "the undo window is {UNDO_SECS} seconds from the delete: {undo_until}"
     );
 
     assert!(w.core.store.crew_lesson(&id).unwrap().is_none());
