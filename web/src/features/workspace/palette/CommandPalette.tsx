@@ -68,16 +68,27 @@ function useMessageSearch(query: string, enabled: boolean) {
   return hits.data ?? [];
 }
 
-type PullEntry = Awaited<ReturnType<typeof pullsApi.list>>["pulls"][number];
+type PullList = Awaited<ReturnType<typeof pullsApi.list>>;
+type PullEntry = PullList["pulls"][number];
 
-/** Open pull requests across projects, read from the list the Pull requests page uses, only once a query is typed. */
+/**
+ * Open pull requests across projects, read from the list the Pull requests page uses, only once a query is typed.
+ * A project whose forge could not be read is named by the service in the list's own `failed` rows rather than by
+ * failing the whole answer, so those rows are what mark the group unreadable. Retry is the person's own re-read: the
+ * service keeps a list for a while, so it asks for a fresh one instead of the answer it already served.
+ */
 function usePullSearch(query: string, enabled: boolean): { pulls: PullEntry[]; status: "idle" | "loading" | "error"; retry(): void } {
   const on = enabled && query.trim().length >= MESSAGE_SEARCH_MIN;
-  const list = useAsync(`palette:pulls:${on ? "on" : "off"}`, async (signal) => {
-    if (!on) return [];
-    return (await pullsApi.list("open", "", signal)).pulls;
+  const list = useAsync<PullList>(`palette:pulls:${on ? "on" : "off"}`, async (signal, how) => {
+    if (!on) return { pulls: [], failed: [] };
+    return pullsApi.list("open", "", signal, undefined, how.force);
   });
-  return { pulls: list.data ?? [], status: !on ? "idle" : list.status === "loading" ? "loading" : list.status === "error" ? "error" : "idle", retry: list.reload };
+  const unreadable = list.status === "error" || (list.data?.failed ?? []).length > 0;
+  return {
+    pulls: list.data?.pulls ?? [],
+    status: !on ? "idle" : list.status === "loading" ? "loading" : unreadable ? "error" : "idle",
+    retry: list.reloadNow,
+  };
 }
 
 /** What the palette says in the Pull requests group while the list is read or cannot be (palette-prs-loading, palette-prs-unreadable). */

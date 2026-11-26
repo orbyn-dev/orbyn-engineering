@@ -96,4 +96,21 @@ describe("while the pull request list is read, and when it cannot be (palette-pr
     await screen.findByText(/Couldn’t read pull requests/);
     expect(document.body.textContent).not.toContain("ghp_secret");
   });
+
+  it("treats a project the service could not read as the unreadable line, and Retry asks for a fresh list", async () => {
+    let failed: { project_id: string; message: string }[] = [{ project_id: "p1", message: "GraphQL: Could not resolve to a Repository with the name 'o/r'." }];
+    const calls = pullsAnswer(async () => new Response(JSON.stringify({ pulls: [], failed }), { status: 200 }));
+    const user = userEvent.setup();
+    render(<CommandPalette start="root" onClose={() => undefined} />);
+    await user.type(await screen.findByRole("combobox"), "ne");
+    // The answer is a 200 with the project named in its failed rows; the palette draws the frame's line for it.
+    expect(await screen.findByText("Couldn’t read pull requests. Threads and commands still work.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+    failed = [];
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(calls.length).toBe(2));
+    // Retry is the person's own read, so the service is asked to read the list now rather than serve what it kept.
+    expect(new URL(calls[1] ?? "", "http://localhost").searchParams.get("refresh")).toBe("1");
+    await waitFor(() => expect(screen.queryByText(/Couldn’t read pull requests/)).toBeNull());
+  });
 });
