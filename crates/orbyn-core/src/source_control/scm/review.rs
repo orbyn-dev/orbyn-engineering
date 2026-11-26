@@ -80,6 +80,54 @@ impl Core {
         outcome
     }
 
+    /// Replies inside one review thread and/or sets its resolved state: one write and one audit
+    /// row. A resolution that fails after the reply was posted says so, so a retry without the
+    /// body does not post it twice.
+    pub async fn respond_pull_thread(
+        &self,
+        project_id: &str,
+        number: u64,
+        thread: &str,
+        body: Option<&str>,
+        resolved: Option<bool>,
+        actor: &str,
+    ) -> Result<()> {
+        check_opaque(thread)?;
+        if body.is_some_and(|body| body.trim().is_empty()) {
+            return Err(CoreError::Invalid("Write a reply first.".into()));
+        }
+        if body.is_none() && resolved.is_none() {
+            return Err(CoreError::Invalid(
+                "Name a reply, a resolved value, or both.".into(),
+            ));
+        }
+        let (project, forge) = self.pull_site(project_id).await?;
+        self.scm_audit(actor, "git.pull_thread_respond", thread, None)?;
+        let cwd = Path::new(&project.path);
+        let outcome = async {
+            if let Some(body) = body {
+                forge::reply_to_thread(forge, cwd, number, thread, body).await?;
+            }
+            if let Some(resolved) = resolved
+                && let Err(error) =
+                    forge::set_thread_resolved(forge, cwd, number, thread, resolved).await
+            {
+                if body.is_some() {
+                    return Err(CoreError::Git(format!(
+                        "The reply was posted, but setting the thread {} failed: {} Retry without body.",
+                        if resolved { "resolved" } else { "unresolved" },
+                        error.public_message()
+                    )));
+                }
+                return Err(error);
+            }
+            Ok(())
+        }
+        .await;
+        self.scm_reads.pull_changed(project_id, number);
+        outcome
+    }
+
     pub async fn submit_pull_review(
         &self,
         project_id: &str,
