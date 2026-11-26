@@ -220,25 +220,162 @@ pub fn parse_cmd_shim(text: &str) -> Option<String> {
 
 /// The script a shim sets in a variable before launching it. npm's own npx.cmd
 /// and npm.cmd write `SET "NODE_EXE=%~dp0\node.exe"` and a prefix helper before the
-/// CLI, and launch only the CLI in the file's last `"%NAME%"`, so the last
-/// launchable assignment the file expands wins.
+/// CLI, then launch the CLI in the file's last command line.
+///
+/// A `SET` outside an `IF`/`FOR` block replaces the variable's earlier value,
+/// even when the new value is not launchable: a shim that supersedes `old.js`
+/// with an unsupported path is refused rather than followed to the stale script.
+/// A `SET` inside a block may not run, so it never replaces the value the file
+/// already set (npm's conditional prefix fallback relies on that). The launch is
+/// the last command line that expands a variable the file set, and its last
+/// launchable one wins, so a helper launched before the payload cannot win by
+/// assignment order.
 fn assigned_script(text: &str) -> Option<String> {
-    let lower = text.to_ascii_lowercase();
-    let mut assigned: Vec<(String, String)> = Vec::new();
+    let mut depth = 0usize;
+    let mut assigned: Vec<(String, Option<String>)> = Vec::new();
+    let mut launched: Option<Vec<Option<String>>> = None;
     for line in text.lines() {
-        if let Some((name, value)) = set_assignment(line)
-            && let Some(script) = dp0_script(value)
-        {
-            assigned.push((name.to_ascii_lowercase(), script));
+        let conditional = depth > 0;
+        depth = block_depth(depth, line);
+        if let Some((name, value)) = set_assignment(line) {
+            if !conditional {
+                let name = name.to_ascii_lowercase();
+                let script = dp0_script(value);
+                match assigned.iter_mut().find(|(known, _)| *known == name) {
+                    Some((_, current)) => *current = script,
+                    None => assigned.push((name, script)),
+                }
+            }
+        } else if let Some(references) = launch_references(line, &assigned) {
+            launched = Some(references);
         }
     }
-    let launched = assigned
-        .iter()
-        .rev()
-        .find(|(name, _)| lower.contains(&format!("\"%{name}%\"")));
-    launched
-        .or_else(|| assigned.last())
+    let references = launched?;
+    references.into_iter().flatten().next_back()
+}
+
+/// The scripts a command line expands, in order, when the line starts a program.
+/// `None` in the result marks a variable the file sets to something this
+/// resolver cannot start, so a final launch naming only that value is refused
+/// rather than guessed.
+fn launch_references(
+    line: &str,
+    assigned: &[(String, Option<String>)],
+) -> Option<Vec<Option<String>>> {
+    if !starts_command(line) {
+        return None;
+    }
+    let references: Vec<Option<String>> = cmd_tokens(line)
+        .into_iter()
+        .filter_map(variable_name)
+        .filter_map(|name| {
+            assigned
+                .iter()
+                .find(|(known, _)| known.eq_ignore_ascii_case(name))
+        })
         .map(|(_, script)| script.clone())
+        .collect();
+    (!references.is_empty()).then_some(references)
+}
+
+/// Whether a line starts a program rather than a batch keyword, a label or the
+/// closing line of a block. `SET` lines are handled before this is called.
+fn starts_command(line: &str) -> bool {
+    let line = line.trim_start();
+    let line = line.trim_start_matches('@').trim_start();
+    if line.is_empty() || line.starts_with(':') || line.starts_with(')') {
+        return false;
+    }
+    let word = line.split_ascii_whitespace().next().unwrap_or_default();
+    if word.starts_with('"') || word.starts_with('%') {
+        return true;
+    }
+    !matches!(
+        word.to_ascii_lowercase().as_str(),
+        "if" | "for"
+            | "set"
+            | "setlocal"
+            | "endlocal"
+            | "echo"
+            | "rem"
+            | "goto"
+            | "exit"
+            | "pause"
+            | "title"
+            | "cls"
+            | "color"
+            | "cd"
+            | "chdir"
+            | "pushd"
+            | "popd"
+            | "shift"
+            | "verify"
+            | "del"
+            | "erase"
+            | "rd"
+            | "rmdir"
+            | "md"
+            | "mkdir"
+            | "copy"
+            | "xcopy"
+            | "move"
+            | "ren"
+            | "rename"
+            | "type"
+            | "dir"
+            | "break"
+    )
+}
+
+/// The words of a command line, quotes kept. Batch operators (`&`, `|`, `<`, `>`,
+/// parentheses) separate words too, so a variable matches only as a whole word
+/// and never inside a larger argument.
+fn cmd_tokens(line: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut start = None;
+    let mut quoted = false;
+    for (index, character) in line.char_indices() {
+        if character == '"' {
+            quoted = !quoted;
+            start.get_or_insert(index);
+        } else if !quoted && (character.is_ascii_whitespace() || "&|<>()".contains(character)) {
+            if let Some(begin) = start.take() {
+                tokens.push(&line[begin..index]);
+            }
+        } else {
+            start.get_or_insert(index);
+        }
+    }
+    if let Some(begin) = start {
+        tokens.push(&line[begin..]);
+    }
+    tokens
+}
+
+/// The variable a word expands, from `%NAME%` or `"%NAME%"`; a path or a partial
+/// expansion is not a variable reference.
+fn variable_name(word: &str) -> Option<&str> {
+    let name = word
+        .trim_matches('"')
+        .strip_prefix('%')?
+        .strip_suffix('%')?;
+    (!name.is_empty() && !name.contains('%')).then_some(name)
+}
+
+/// The `IF`/`FOR` block depth after a line, counting parentheses outside quotes.
+/// A `SET` inside a block is conditional and may not run.
+fn block_depth(depth: usize, line: &str) -> usize {
+    let mut depth = depth;
+    let mut quoted = false;
+    for character in line.chars() {
+        match character {
+            '"' => quoted = !quoted,
+            '(' if !quoted => depth += 1,
+            ')' if !quoted => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    depth
 }
 
 /// The name and value of a `SET` line, written `SET "NAME=value"` or
@@ -728,6 +865,40 @@ mod tests {
         );
         let expected =
             ["node_modules", "npm", "bin", "npx-cli.js"].join(std::path::MAIN_SEPARATOR_STR);
+        assert_eq!(parse_cmd_shim(shim), Some(expected));
+    }
+
+    /// A later top-level `SET` replaces the earlier value, so a superseded script
+    /// is never launched: replacing a launchable script with an unsupported path
+    /// is refused, and replacing it with another script follows the new one.
+    #[test]
+    fn an_unconditional_reassignment_supersedes_the_earlier_script() {
+        let shim = concat!(
+            "SET \"TOOL=%~dp0\\old.js\"\r\n",
+            "SET \"TOOL=%~dp0\\replacement.ps1\"\r\n",
+            "\"%TOOL%\" %*\r\n",
+        );
+        assert_eq!(parse_cmd_shim(shim), None);
+        let shim = concat!(
+            "SET \"TOOL=%~dp0\\old.js\"\r\n",
+            "SET \"TOOL=%~dp0\\new.js\"\r\n",
+            "\"%TOOL%\" %*\r\n",
+        );
+        assert_eq!(parse_cmd_shim(shim), Some("new.js".to_owned()));
+    }
+
+    /// The last command line decides what runs: setting the CLI first and a helper
+    /// after it cannot make the helper the payload when the file launches the
+    /// helper first and the CLI last.
+    #[test]
+    fn the_final_launch_selects_the_script_not_the_last_assignment() {
+        let shim = concat!(
+            "SET \"CLI=%~dp0\\lib\\cli.js\"\r\n",
+            "SET \"HELPER=%~dp0\\lib\\helper.js\"\r\n",
+            "\"%HELPER%\" prepare\r\n",
+            "\"%CLI%\" %*\r\n",
+        );
+        let expected = ["lib", "cli.js"].join(std::path::MAIN_SEPARATOR_STR);
         assert_eq!(parse_cmd_shim(shim), Some(expected));
     }
 
