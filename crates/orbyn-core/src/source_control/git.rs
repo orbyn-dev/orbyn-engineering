@@ -816,8 +816,11 @@ fn split_git_patch(patch: &[u8]) -> Vec<&[u8]> {
     chunks
 }
 
-/// Whether a chunk's header names path on its new side: the default "a/<path> b/<path>", the
-/// no-prefix form, or the mnemonic prefixes. A quoted header is unescaped first.
+/// Whether a chunk's header names path on its new side: the default "a/<path> b/<path>", a
+/// mnemonic "c/<path> w/<path>", or the no-prefix "<path> <path>" form. The whole header is
+/// compared, so the trailing " b/x" of a header for "folder b/x" cannot stand in for "x"; a header
+/// that reads two ways is left to the per-file fallback. Renames and copies never reach here, so
+/// both sides of the header name the same path.
 fn patch_chunk_is_for(chunk: &[u8], path: &str) -> bool {
     let Some(header) = chunk.split(|byte| *byte == b'\n').next() else {
         return false;
@@ -826,43 +829,60 @@ fn patch_chunk_is_for(chunk: &[u8], path: &str) -> bool {
         return false;
     };
     let path = path.as_bytes();
-    if rest.len() >= path.len() + 3 {
-        let prefix = &rest[rest.len() - path.len() - 3..rest.len() - path.len()];
-        // " i/<path>" is the mnemonic prefix; " b/<path>" the default one.
-        if prefix[0] == b' '
-            && prefix[1].is_ascii_alphanumeric()
-            && prefix[2] == b'/'
-            && rest.ends_with(path)
-        {
-            return true;
-        }
+    if rest.first() == Some(&b'"') {
+        // The quoted form keeps the path's spaces inside the quotes; unescape it, then compare
+        // both complete fields.
+        return quoted_header_fields(header).is_some_and(|(source, destination)| {
+            header_fields_are_for(&source, &destination, path)
+        });
     }
-    if rest.len() >= path.len() + 1 {
-        let prefix = &rest[rest.len() - path.len() - 1..rest.len() - path.len()];
-        // A diff started with diff.noprefix writes the path on its own.
-        if prefix == b" " && rest.ends_with(path) {
-            return true;
-        }
-    }
-    header_new_path(header).is_some_and(|named| named == path)
+    // An unquoted path can hold spaces, so its two fields cannot be split at a space. Their widths
+    // follow from the path itself, and a space has to separate them.
+    let fields = if rest.len() == 2 * path.len() + 5 && rest[2 + path.len()] == b' ' {
+        Some((&rest[..2 + path.len()], &rest[3 + path.len()..]))
+    } else if rest.len() == 2 * path.len() + 1 && rest[path.len()] == b' ' {
+        Some((&rest[..path.len()], &rest[path.len() + 1..]))
+    } else {
+        None
+    };
+    fields.is_some_and(|(source, destination)| header_fields_are_for(source, destination, path))
 }
 
-/// The path a diff --git header names on its new side, with Git's C-style quoting undone; None
-/// when the header is not the quoted form.
-fn header_new_path(header: &[u8]) -> Option<Vec<u8>> {
-    let rest = header.strip_prefix(b"diff --git ")?;
-    let (_, rest) = unquote_git_path(rest)?;
-    let rest = rest.strip_prefix(b" ")?;
-    let mut path = if rest.first() == Some(&b'"') {
-        unquote_git_path(rest).map(|(path, _)| path)?
-    } else {
-        rest.to_vec()
-    };
-    // The quoted form keeps the a/ and b/ prefixes (or a mnemonic one) inside the quotes.
-    if path.len() >= 2 && path[1] == b'/' && path[0].is_ascii_alphanumeric() {
-        path.drain(..2);
+/// Whether a header's two complete fields name path: both on their own for "diff.noprefix", or both
+/// behind a one-byte prefix, the default "a/" and "b/" or a mnemonic pair such as "c/" and "w/".
+/// Two equal prefixes can be read as either form, so they are left to the per-file fallback; Git
+/// never writes them for a non-rename.
+fn header_fields_are_for(source: &[u8], destination: &[u8], path: &[u8]) -> bool {
+    if source == path && destination == path {
+        return true;
     }
-    Some(path)
+    let (Some((source_prefix, source_path)), Some((destination_prefix, destination_path))) = (
+        strip_git_path_prefix(source),
+        strip_git_path_prefix(destination),
+    ) else {
+        return false;
+    };
+    source_prefix != destination_prefix && source_path == path && destination_path == path
+}
+
+/// The one-byte Git diff prefix ("a/", "b/", "c/", "w/") and the path behind it; None when the
+/// field carries no such prefix.
+fn strip_git_path_prefix(field: &[u8]) -> Option<(u8, &[u8])> {
+    (field.len() >= 3 && field[0].is_ascii_alphanumeric() && field[1] == b'/')
+        .then(|| (field[0], &field[2..]))
+}
+
+/// The two complete paths a quoted diff --git header names, with Git's C-style quoting undone; None
+/// when the header is not the quoted form.
+fn quoted_header_fields(header: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+    let rest = header.strip_prefix(b"diff --git ")?;
+    let (source, rest) = unquote_git_path(rest)?;
+    let rest = rest.strip_prefix(b" ")?;
+    if rest.first() == Some(&b'"') {
+        let (destination, rest) = unquote_git_path(rest)?;
+        return rest.is_empty().then_some((source, destination));
+    }
+    Some((source, rest.to_vec()))
 }
 
 /// Git's quoted path syntax: a leading quote, C-style escapes and octal bytes, then a closing
@@ -928,10 +948,16 @@ async fn untracked_diff(cwd: &Path, path: &str) -> Result<FileDiff> {
     })
 }
 
+/// Files larger than this keep Git's own patch: the file and its patch would otherwise both sit
+/// in memory at file size, and a patch that large is unfit for the Changes read anyway. One Git
+/// call answers byte for byte.
+const MAX_SYNTHESIZED_UNTRACKED_BYTES: u64 = 8 * 1024 * 1024;
+
 /// The patch Git writes for a new file, built from the file's own bytes instead of a run of Git
-/// per file. None when Git should answer: a binary file, a symlink, a path Git would quote, or a
-/// file that cannot be read. Raw bytes go in unchanged, so line endings stay the file's own; the
-/// index line Git prints is left out because its hash covers the converted content.
+/// per file. None when Git should answer: a binary file, a symlink, a path Git would quote, a file
+/// over the synthesis limit, or a file that cannot be read. Raw bytes go in unchanged, so line
+/// endings stay the file's own; the index line Git prints is left out because its hash covers the
+/// converted content.
 fn synthesized_untracked_patch(cwd: &Path, path: &str) -> Option<String> {
     if !path
         .bytes()
@@ -941,7 +967,7 @@ fn synthesized_untracked_patch(cwd: &Path, path: &str) -> Option<String> {
     }
     let file = cwd.join(path);
     let metadata = std::fs::symlink_metadata(&file).ok()?;
-    if !metadata.is_file() {
+    if !metadata.is_file() || metadata.len() > MAX_SYNTHESIZED_UNTRACKED_BYTES {
         return None;
     }
     let content = std::fs::read(&file).ok()?;
@@ -1696,6 +1722,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn an_untracked_file_over_the_synthesis_limit_keeps_gits_own_patch() {
+        let dir = TempDir::new();
+        let file = dir.path().join("large.txt");
+        std::fs::write(&file, vec![b'a'; MAX_SYNTHESIZED_UNTRACKED_BYTES as usize]).unwrap();
+        assert!(
+            synthesized_untracked_patch(dir.path(), "large.txt").is_some(),
+            "a file at the limit is still synthesized"
+        );
+        let mut append = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .unwrap();
+        std::io::Write::write_all(&mut append, b"a").unwrap();
+        assert!(
+            synthesized_untracked_patch(dir.path(), "large.txt").is_none(),
+            "a file over the limit keeps Git's own patch"
+        );
+    }
+
     fn without_index_line(patch: &[u8]) -> Vec<u8> {
         patch
             .split_inclusive(|byte| *byte == b'\n')
@@ -1718,6 +1764,33 @@ mod tests {
         assert!(patch_chunk_is_for(chunks[0], "a.txt"));
         assert!(patch_chunk_is_for(chunks[1], "unicodé.txt"));
         assert!(!patch_chunk_is_for(chunks[1], "a.txt"));
+    }
+
+    #[test]
+    fn a_header_must_name_the_whole_path() {
+        let header = |line: &str| format!("{line}\n").into_bytes();
+        // The trailing " b/x" belongs to the path "folder b/x", not to "x".
+        let spaced = header("diff --git a/folder b/x b/folder b/x");
+        assert!(patch_chunk_is_for(&spaced, "folder b/x"));
+        assert!(!patch_chunk_is_for(&spaced, "x"));
+        // A one-letter first component is not a prefix when the header carries none.
+        let bare = header("diff --git x/file x/file");
+        assert!(patch_chunk_is_for(&bare, "x/file"));
+        assert!(!patch_chunk_is_for(&bare, "file"));
+        // Behind the default prefixes the same path still matches.
+        assert!(patch_chunk_is_for(
+            &header("diff --git a/x/file b/x/file"),
+            "x/file"
+        ));
+        // Mnemonic prefixes are understood, and both sides must name the path.
+        assert!(patch_chunk_is_for(
+            &header("diff --git c/plain.txt w/plain.txt"),
+            "plain.txt"
+        ));
+        assert!(!patch_chunk_is_for(
+            &header("diff --git c/plain.txt w/other.txt"),
+            "plain.txt"
+        ));
     }
 
     #[test]
