@@ -29,6 +29,12 @@ pub(crate) const DEFAULTS: &[(&str, &str, &str)] = &[
         "rightPanel.new",
         "rightPanelOpen && !terminalFocus",
     ),
+    // Maximise is the shift variant of the panel toggle, as appearance.cycle is of theme.select.
+    (
+        "mod+alt+shift+b",
+        "rightPanel.maximize",
+        "rightPanelOpen && !terminalFocus",
+    ),
     ("mod+d", "terminal.split", "terminalFocus"),
     ("mod+shift+d", "terminal.splitVertical", "terminalFocus"),
     ("mod+n", "terminal.new", "terminalFocus"),
@@ -704,6 +710,31 @@ mod tests {
             "{:?}",
             conflicts(&defaults())
         );
+    }
+
+    #[test]
+    fn the_right_panel_commands_are_bound_in_the_scheme_they_follow() {
+        let rules = defaults();
+        let one = |command: &str| {
+            rules
+                .iter()
+                .find(|rule| rule.command == command)
+                .unwrap_or_else(|| panic!("{command} has no binding"))
+        };
+        let new = one("rightPanel.new");
+        assert_eq!(new.key, "mod+t");
+        assert_eq!(
+            new.when.as_deref(),
+            Some("rightPanelOpen && !terminalFocus")
+        );
+        // Maximise is the shift variant of the panel toggle (mod+alt+b), as appearance.cycle is of theme.select.
+        let maximize = one("rightPanel.maximize");
+        assert_eq!(maximize.key, "mod+alt+shift+b");
+        assert_eq!(
+            maximize.when.as_deref(),
+            Some("rightPanelOpen && !terminalFocus")
+        );
+        assert!(conflicts(&rules).is_empty(), "{:?}", conflicts(&rules));
     }
 
     #[test]
