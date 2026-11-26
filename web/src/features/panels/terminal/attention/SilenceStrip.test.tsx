@@ -17,7 +17,7 @@ describe("the silence strip", () => {
     act(() => useAttention.getState().receive(at(1, waiting())));
     const { container } = render(<SilenceStrip threadId="t1" terminalIds={["tm1"]} />);
     expect(container.textContent).toBe("Waiting for you · Claude Code has been silent for 38 s");
-    expect(container.querySelector(".status-dot.tone-warn")).not.toBeNull();
+    expect(container.querySelector(".status-dot.term-wait-dot")).not.toBeNull();
     for (const absent of ["Answer here", "Yes", "No", "Dismiss"]) expect(container.textContent).not.toContain(absent);
   });
 

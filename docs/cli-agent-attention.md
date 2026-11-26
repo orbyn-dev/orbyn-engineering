@@ -2,11 +2,13 @@
 
 What the service must tell the web so that an engine running in a terminal (an engine console) shows a Needs you item and a
 notification when it stops and waits for the person. **Built in the service**: detection, redaction, the event on the thread's
-log and the open-items read. **The web side is built and observed against a real service** (`web/e2e/real/terminal-attention.spec.ts`):
-the window follows a thread's log after the shell stream's `thread_event` notice and raises the toast, reads the thread's current open
-items once when it starts for threads with an open terminal and once before a notice's follow, and draws the item, the silence strip,
-the tab and row dots and the two Settings rows; a dev-only preview
-(`#/preview/attention`) installs the mock in `web/mock/attention.ts`. Names here change only if the service pull request says so.
+log and the open-items read. **The web side is built; a real service has observed its notice, toast, item, open-items read and
+silence strip** (`web/e2e/real/terminal-attention.spec.ts`): the window follows a thread's log after the shell stream's
+`thread_event` notice and raises the toast, reads the thread's current open items once when it starts for threads with an open
+terminal and once before a notice's follow, and draws the item and the silence strip. The several-terminals item, a secret prompt, the
+tab and row dots, the system notification and the two Settings rows are built and tested against a mock client, not yet observed
+against a real service. A dev-only preview (`#/preview/attention`) installs the mock in `web/mock/attention.ts`. Names here change
+only if the service pull request says so.
 It extends G14 (engine console, row G14 in [parity](parity.md)); the product row is W10 in [crew](crew.md). Frames: `attention-*` in
 Engineer Designs. Owner of the detection and the event: Eng 2.
 
@@ -143,7 +145,8 @@ a terminal of the thread waits and is not dismissed here, `AttentionPreview.tsx`
 bundle: `scripts/assert-no-previews.mjs` fails the build if its marker or the route appears. Observed against a real `orbynd` in
 `web/e2e/real/terminal-attention.spec.ts`: a fake engine console prints a question and goes quiet, the notice makes the window follow
 the thread's log and raise the toast for a thread that is not on screen, and a later window's open-items read is seen on the wire,
-drawn without a notice, and the silence strip draws it for the console on screen.
+drawn without a notice, and the silence strip draws it for the console on screen. The several-terminals and secret items, the tab and
+row dots, the system notification and the Settings rows are not in this run.
 
 ## Decisions
 

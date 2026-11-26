@@ -4,7 +4,8 @@ import { send, settled, startProject } from "./service";
 /**
  * CLI-agent attention (W10, docs/cli-agent-attention.md) against a real orbynd: the shell stream's `thread_event` notice makes the
  * window follow that thread's log and raise the toast (In-app notifications), and a window that opens later reads the thread's open
- * items once when the thread's terminal opens, drawing the same item with no notice.
+ * items once when the thread's terminal opens, drawing the same item with no notice. The engine console runs the fake engine binary
+ * (`orbyn-fake-engine`), not a real Claude Code or Codex, so this observes the wiring, not a real engine's prompt.
  */
 
 test("a waiting engine console raises the notice toast, and a later window draws the item from the open-items read", async ({ page }) => {

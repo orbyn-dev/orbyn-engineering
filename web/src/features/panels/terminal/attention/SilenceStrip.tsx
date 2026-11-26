@@ -17,7 +17,7 @@ export function SilenceStrip({ threadId, terminalIds }: { threadId: string; term
   const silent = Math.max(0, Math.round((now - waiting.since) / 1000));
   return (
     <div className="term-wait">
-      <span className="status-dot tone-warn" aria-hidden />
+      <span className="status-dot term-wait-dot" aria-hidden />
       <span>
         <span className="term-wait-label">Waiting for you</span> · {engineName(waiting.engine)} has been silent for {silent} s
       </span>

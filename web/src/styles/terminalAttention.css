@@ -117,6 +117,10 @@
   color: var(--color-warnText);
   font-weight: 500;
 }
+/* The frame's dot is filled with its amber text token (--amber-text), not the tab dot's amber. */
+.term-wait .term-wait-dot {
+  background: var(--color-warnText);
+}
 /* Narrow: the box keeps the question line only, and the buttons stay on one row. */
 @container ta (max-width: 420px) {
   .ta-engine,
