@@ -206,8 +206,14 @@ pub struct PullFile {
     pub additions: u64,
     pub deletions: u64,
     pub patch: Option<String>,
-    /// Marked viewed in Orbyn. Marks are kept by this service, per project.
+    /// Marked viewed. On a GitHub pull request this is GitHub's own `viewerViewedState` for the
+    /// file; on a forge without viewed files, or while GitHub cannot be asked, it is this
+    /// service's mark, kept per project.
     pub viewed: bool,
+    /// The mark is GitHub's own. False when this service keeps the mark itself: on a forge with no
+    /// viewed files, while GitHub's state cannot be read, or when GitHub did not save a mark the
+    /// person made here (the mark is then still shown, never dropped).
+    pub viewed_synced: bool,
 }
 }
 

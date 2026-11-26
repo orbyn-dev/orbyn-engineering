@@ -82,4 +82,15 @@ describe("remapReviewChips", () => {
     const none = [review({ path: "z.ts" })];
     expect(run(none)).toBe(none);
   });
+  it("moves only the comments of the repository whose file was saved", () => {
+    const mine = review({ id: "mine", repoId: "planner", repoName: "orbyn-planner" });
+    const primary = review({ id: "primary" });
+    const other = review({ id: "other", repoId: "docs" });
+    const before = base;
+    const after = lines("top", ...base.split("\n"));
+    const moved = remapReviewChips([mine, primary, other], { cwd: "/w", path: "a.ts", repoId: "planner", fromRevision: "rev1", toRevision: "rev2", before, after });
+    expect(moved[0]).toMatchObject({ line: 4, endLine: 4, sourceRevision: "rev2" });
+    expect(moved[1]).toBe(primary);
+    expect(moved[2]).toBe(other);
+  });
 });

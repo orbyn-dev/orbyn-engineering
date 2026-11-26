@@ -3,20 +3,27 @@
  * the service, and only a test or the dev-only preview (`#/preview/issues`) installs this through `setIssuesApi`. Fixtures follow
  * the Engineer frames `t3gap-issue*`; none holds a credential, because the contract has no field for one on the way out. The mock
  * also answers the Issue writes and list controls of docs/issues.md ("Issue writes and list controls"): `sort`, `update`, `state`
- * and `candidates`, which the service does not build yet. `edits: false` is a service without them (the 404 the real one would
- * send), and `noStates: true` a detail that carries no `states`.
+ * and `candidates`; and the writes of "Create, comment, react, templates and project binding": `templates`, one
+ * `POST /api/issues/item/create` adds the issue it answers, `comment` appends the stored comment, and `react` answers the issue's
+ * counts. `edits: false` is a service without the edit writes (the 404 the real one would send), `noCreate: true` one without
+ * the create route, `noComment: true` one without the comment route, `noReact: true` one without the react route,
+ * `createUnknown: true` one whose create answers "possibly created", and `noStates: true` a detail that carries no `states`.
  */
 import { ApiFailure } from "../src/api/client.ts";
 import type { Thread } from "../src/api/types.ts";
 import {
-  TRACKER_KINDS,
-  type IssueCandidates, type IssueDetail, type IssueList, type IssueUpdateInput, type IssueState, type IssueQuery, type IssueRef, type IssueSummary, type IssuesApi, type LinkedPullRequest, type IssueTarget, type StartThreadInput, type TrackerKind, type TrackerRow,
+  TRACKER_KINDS, TRACKER_NAMES,
+  type CreateIssueInput, type IssueCandidates, type IssueComment, type IssueDetail, type IssueList, type IssueReaction, type IssueReactionCount, type IssueTemplate, type IssueUpdateInput, type IssueState, type IssueQuery, type IssueRef, type IssueSummary, type IssuesApi, type LinkedPullRequest, type IssueTarget, type StartThreadInput, type TrackerKind, type TrackerRow,
 } from "../src/features/issues/contract.ts";
 import { applyQuery } from "../src/features/issues/model.ts";
-import { updateProblem } from "../src/features/issues/edit.ts";
+import { commentProblem, createProblem, updateProblem } from "../src/features/issues/edit.ts";
 
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 const REPO = "orbyn-dev/orbyn-engineering";
+/** The tracker's own words, as GitHub reports them, for each reaction value the write takes. */
+const REACTION_WORDS: Record<IssueReaction, string> = {
+  thumbs_up: "THUMBS_UP", thumbs_down: "THUMBS_DOWN", laugh: "LAUGH", hooray: "HOORAY", confused: "CONFUSED", heart: "HEART", rocket: "ROCKET", eyes: "EYES",
+};
 
 const issue = (key: string, title: string, minutes: number, extra: Partial<IssueSummary> = {}): IssueSummary => ({
   tracker: "github", scope: REPO, key, display_key: `#${key}`, title, url: `https://github.com/${REPO}/issues/${key}`,
@@ -73,13 +80,15 @@ export interface IssuesMock extends IssuesApi {
   writes: string[];
   /** The first message of every thread started, exactly as the screen sent it. */
   messages: string[];
+  /** Every create the screen sent, as the screen sent it. */
+  creates: CreateIssueInput[];
   /**
    * Make the next call of that kind fail: `reject` is a token the tracker does not accept, `unreachable` a host that does not
    * answer, `host` an address the service refuses, `token` a locked keychain, `keychain` a keychain that cannot be used.
    */
   /** Every list read, in order: the query and the `cursors` it carried (`undefined` for the first page). */
   listed: { query: IssueQuery; cursors: Record<string, string> | undefined }[];
-  failNext(what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates" | "token" | "keychain" | "host" | "reject" | "unreachable" | null): void;
+  failNext(what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates" | "comment" | "create" | "templates" | "react" | "token" | "keychain" | "host" | "reject" | "unreachable" | null): void;
   /** Every candidates read, as `<tracker> <scope>`. */
   candidatesRead: string[];
 }
@@ -90,8 +99,13 @@ export function createIssuesMock(init: {
   fixedState?: TrackerKind[];
   /** A service that has no Issue writes, candidates or sort: those routes answer the 404 a missing route gives. Default: it has them. */
   edits?: boolean;
+  /** A service that has no comment route: `POST /api/issues/item/comment` answers the 404 a missing route gives. Default: it has one. */
+  noComment?: boolean;
   /** A detail that carries no `states`: the service has no state change. */
   noStates?: boolean;
+  /** Trackers whose label and people list is not built: their candidates read is the service's `422 unsupported` (GitLab, Forgejo,
+   * Azure DevOps and Linear today; only GitHub builds it). */
+  unsupportedCandidates?: TrackerKind[];
   /** Answer the candidates with this many fewer than exist, and `truncated: true`. */
   truncateCandidates?: boolean;
   /** The candidates the service answers, instead of the fixtures. */
@@ -100,19 +114,31 @@ export function createIssuesMock(init: {
   pageSize?: number;
   /** The pull requests the tracker reports against an issue, by the issue's key. Absent: none. */
   pullRequests?: Record<string, LinkedPullRequest[]>;
+  /** The tracker's own issue templates, by tracker. A tracker absent or empty here answers none: GitHub, Forgejo and Azure DevOps
+   * have no issue-template endpoint, so the create dialog draws no Template row for them. */
+  templates?: Partial<Record<TrackerKind, IssueTemplate[]>>;
+  /** A service that has no create route: `POST /api/issues/item/create` answers the 404 a missing route gives. */
+  noCreate?: boolean;
+  /** A service that has no react route: `POST /api/issues/item/react` answers the 404 a missing route gives. */
+  noReact?: boolean;
+  /** The create this mock runs answers the service's "possibly created" sentence: the outcome is unknown and nothing was stored. */
+  createUnknown?: boolean;
+  /** The reaction counts an answer already reports, by the issue's key (the frame's state: the real plain detail read carries none). */
+  reactions?: Record<string, IssueReactionCount[]>;
 } = {}): IssuesMock {
   let trackers = init.trackers === undefined ? trackerFixtures() : init.trackers;
   const issues = init.issues ?? issueFixtures();
   let links: Record<string, IssueRef[]> = init.links ?? (issues[0] ? { "thread-1": [refOf(issues[0])] } : {});
   const writes: string[] = [];
   const messages: string[] = [];
+  const creates: CreateIssueInput[] = [];
   const listed: IssuesMock["listed"] = [];
   let fail: Parameters<IssuesMock["failNext"]>[0] = null;
   const wait = () => new Promise<void>((resolve) => setTimeout(resolve, init.delayMs ?? 0));
   const bodies = new Map<string, string>();
   const candidatesRead: string[] = [];
   const noRoute = () => new ApiFailure("http_404", "The server answered 404.", 404);
-  const take = (what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates") => {
+  const take = (what: Exclude<Parameters<IssuesMock["failNext"]>[0], "token" | "keychain" | "host" | "reject" | "unreachable" | null>) => {
     if (fail !== what) return;
     fail = null;
     throw new ApiFailure("tracker_unavailable", "GitHub did not answer.", 502);
@@ -120,11 +146,22 @@ export function createIssuesMock(init: {
   const connectedIssues = () => issues.filter((one) => trackers?.some((row) => row.tracker === one.tracker && row.connected));
   const find = (ref: IssueTarget) => connectedIssues().find((one) => one.tracker === ref.tracker && one.scope === ref.scope && one.key === ref.key);
   const same = (a: IssueTarget, b: IssueTarget) => a.tracker === b.tracker && a.scope === b.scope && a.key === b.key;
+  const comments = new Map<string, IssueComment[]>();
+  const commentKey = (one: Pick<IssueSummary, "tracker" | "scope" | "key">) => `${one.tracker}:${one.scope}:${one.key}`;
+  // A plain detail read carries no reactions (docs/issues.md): only a react write puts counts here, as the write answer reports them.
+  const reactions = new Map<string, IssueReactionCount[]>(Object.entries(init.reactions ?? {}));
+  const templatesOf = (tracker: TrackerKind): IssueTemplate[] => init.templates?.[tracker] ?? [];
+  /** The tracker's comments for one issue: the fixtures until someone comments here, oldest first. */
+  const commentsOf = (one: IssueSummary): IssueComment[] => comments.get(commentKey(one)) ?? [
+    { id: "c1", author: { login: "sam" }, body: "Reproduced. The redirect reads `next` but never uses it.", created_at: ago(1440) },
+    { id: "c2", author: { login: "mika" }, body: "The picker has the same problem when it is opened from a link.", created_at: ago(240) },
+  ];
   const detailOf = (one: IssueSummary): IssueDetail => ({
     ...one, labels: [...one.labels], assignees: [...one.assignees], linked_pull_requests: init.pullRequests?.[one.key] ?? [], linked_threads: Object.keys(links).filter((id) => links[id]!.some((held) => same(held, one))),
     ...(init.noStates ? {} : { states: init.fixedState?.includes(one.tracker) ? [] : transitionFixtures(one.tracker) }),
+    ...(reactions.has(one.key) ? { reactions: reactions.get(one.key)!.map((reaction) => ({ ...reaction })) } : {}),
     body: bodies.get(`${one.tracker}:${one.scope}:${one.key}`) ?? DETAIL_BODY,
-    comments: [{ id: "c1", author: { login: "sam" }, body: "Reproduced. The redirect reads `next` but never uses it.", created_at: ago(1440) }, { id: "c2", author: { login: "mika" }, body: "The picker has the same problem when it is opened from a link.", created_at: ago(240) }],
+    comments: commentsOf(one),
   });
   const pool = (): IssueCandidates => init.candidates ?? {
     labels: [...new Set([...issues.flatMap((one) => one.labels.map((label) => label.name)), "good first issue", "docs"])].map((name) => ({ name })),
@@ -139,6 +176,7 @@ export function createIssuesMock(init: {
   return {
     writes,
     messages,
+    creates,
     listed,
     candidatesRead,
     failNext: (what) => { fail = what; },
@@ -189,8 +227,9 @@ export function createIssuesMock(init: {
     candidates: async (ref) => {
       await wait();
       if (!edits) throw noRoute();
+      if (init.unsupportedCandidates?.includes(ref.tracker)) throw new ApiFailure("unsupported", `${TRACKER_NAMES[ref.tracker]} issue edits arrive in a later update.`, 422);
       take("candidates");
-      if (!find(ref)) throw new ApiFailure("not_found", "No such issue.", 404);
+      // The route is a read of the tracker and scope alone: the create dialog asks for those, before any issue exists.
       candidatesRead.push(`${ref.tracker} ${ref.scope}`);
       return pool();
     },
@@ -227,6 +266,89 @@ export function createIssuesMock(init: {
       if (!transitionFixtures(ref.tracker).some((offered) => offered.name === state.name && offered.category === state.category && (offered.close_reason ?? null) === (state.close_reason ?? null))) throw new ApiFailure("invalid", "That state is not one of this issue's states.", 400);
       issues[at] = { ...issues[at]!, state, updated_at: new Date().toISOString() };
       refresh(at, ref);
+      return detailOf(issues[at]!);
+    },
+    // One POST /api/issues/item/comment, the body as typed: the route checks it and answers the stored comment, which the
+    // screen appends where the tracker's comments are. A blank or over-limit body is the route's own 400, as the service gives.
+    comment: async (ref, body) => {
+      writes.push(`comment:${ref.key}:${body}`);
+      await wait();
+      if (init.noComment) throw noRoute();
+      take("comment");
+      const problem = commentProblem(body);
+      if (problem) throw new ApiFailure("invalid", problem, 400);
+      const at = issues.findIndex((one) => same(one, ref));
+      if (at < 0) throw new ApiFailure("not_found", "No such issue.", 404);
+      const stored: IssueComment = { id: `c${commentsOf(issues[at]!).length + 1}`, author: { login: init.viewer ?? "riley" }, body, created_at: new Date().toISOString() };
+      comments.set(commentKey(ref), [...commentsOf(issues[at]!), stored]);
+      issues[at] = { ...issues[at]!, comment_count: issues[at]!.comment_count + 1 };
+      refresh(at, ref);
+      return stored;
+    },
+    // The tracker's own templates for the scope; a tracker with none answers [] (GitHub, Forgejo and Azure DevOps).
+    templates: async (target) => {
+      await wait();
+      take("templates");
+      return templatesOf(target.tracker).map((one) => ({ ...one, labels: [...one.labels] }));
+    },
+    // One POST /api/issues/item/create: one call creates one issue, and the answer is the stored issue. A tracker with no candidate
+    // read is still writable here; a template fills a missing body and its labels are never merged in (docs/issues.md).
+    create: async (input: CreateIssueInput) => {
+      writes.push(`create:${input.tracker}:${input.title}`);
+      creates.push(input);
+      await wait();
+      take("create");
+      if (init.noCreate) throw noRoute();
+      if (init.createUnknown) throw new ApiFailure("tracker_unavailable", `${TRACKER_NAMES[input.tracker]} did not answer, so the issue was possibly created. Re-read the list before writing it again.`, 502);
+      const problem = createProblem(input);
+      if (problem) throw new ApiFailure("invalid", problem, 400);
+      const held = templatesOf(input.tracker).find((one) => one.id === input.template);
+      if (input.template !== undefined && !held) throw new ApiFailure("invalid", "Unknown issue template.", 400);
+      const row = trackers?.find((one) => one.tracker === input.tracker);
+      if (!row?.connected) throw new ApiFailure("tracker_not_connected", "That tracker is not connected.", 409);
+      const body = input.body ?? held?.body ?? "";
+      const people = pool().assignees;
+      const number = 500 + issues.filter((one) => one.tracker === input.tracker).length;
+      const created: IssueSummary = {
+        tracker: input.tracker,
+        scope: input.scope,
+        key: String(number),
+        display_key: `#${number}`,
+        title: input.title,
+        url: `https://github.com/${input.scope}/issues/${number}`,
+        author: { login: init.viewer ?? "riley" },
+        state: { category: "open", name: "Open" },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        closed_at: null,
+        assignees: (input.assignees ?? []).flatMap((id) => { const who = people.find((person) => person.id === id); return who ? [{ login: who.login }] : []; }),
+        labels: (input.labels ?? []).map((name) => ({ name })),
+        comment_count: 0,
+      };
+      issues.push(created);
+      if (body !== "") bodies.set(`${created.tracker}:${created.scope}:${created.key}`, body);
+      return detailOf(created);
+    },
+    // One POST /api/issues/item/react: the answer is the issue with the counts the tracker reports, in its own words. The page adds
+    // only, but both directions are here as the contract has them (idempotent, as GitHub's mutations are).
+    react: async (ref, reaction, on) => {
+      writes.push(`react:${ref.key}:${reaction}:${on ? "on" : "off"}`);
+      await wait();
+      if (init.noReact) throw noRoute();
+      take("react");
+      const at = issues.findIndex((one) => same(one, ref));
+      if (at < 0) throw new ApiFailure("not_found", "No such issue.", 404);
+      const word = REACTION_WORDS[reaction];
+      const counts = [...(reactions.get(ref.key) ?? [])];
+      const found = counts.findIndex((one) => one.content === word);
+      if (on && found < 0) counts.push({ content: word, count: 1 });
+      else if (on) counts[found] = { content: word, count: counts[found]!.count + 1 };
+      else if (found >= 0) {
+        const left = counts[found]!.count - 1;
+        if (left <= 0) counts.splice(found, 1);
+        else counts[found] = { content: word, count: left };
+      }
+      reactions.set(ref.key, counts);
       return detailOf(issues[at]!);
     },
     // What the service builds (docs/issues.md, "Issue text is untrusted"): the title on one line, the body cut at 16 KiB with the

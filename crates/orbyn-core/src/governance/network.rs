@@ -16,6 +16,8 @@ const AUTO_PULL_SETTING: &str = "auto_pull";
 const TELEMETRY_CONTROL: &str = "Clear the endpoint URLs under OpenTelemetry export";
 const TELEMETRY_SETTING: &str = "observability";
 const TITLES_SETTING: &str = crate::agents::titles::AUTO_TITLES_SETTING;
+const BRANCH_SETTING: &str = "branch_naming_mode";
+const BRANCH_INSTRUCTIONS: &str = "branch_name_instructions";
 
 /// The list with no state filled in, which is what stays true of it.
 fn listed() -> Vec<NetworkRequest> {
@@ -71,6 +73,12 @@ fn listed() -> Vec<NetworkRequest> {
             "The auto_thread_titles preference",
         ),
         row(
+            "A new worktree's custom branch name, through the engine's own CLI",
+            "The thread's engine",
+            "Once, when a custom-named worktree is created with branch name instructions",
+            "The branch_naming_mode preference, custom, with branch_name_instructions set",
+        ),
+        row(
             "Warnings, errors and resource samples, as OpenTelemetry",
             "The configured collector",
             "Every 15 seconds while there is something new to send",
@@ -100,6 +108,11 @@ impl Core {
         let on = |key: &str| -> Result<bool> { Ok(self.preference(key, None)? == true) };
         let (pulls, auto_pull) = (on(PULLS_SETTING)?, on(AUTO_PULL_SETTING)?);
         let titles = on(TITLES_SETTING)?;
+        let custom_branch = self.preference(BRANCH_SETTING, None)?.as_str() == Some("custom")
+            && self
+                .preference(BRANCH_INSTRUCTIONS, None)?
+                .as_str()
+                .is_some_and(|text| !text.trim().is_empty());
         let telemetry = self.telemetry_export_configured()?;
         Ok(listed()
             .into_iter()
@@ -116,6 +129,8 @@ impl Core {
                     (Some(TELEMETRY_SETTING), telemetry)
                 } else if row.control.contains(TITLES_SETTING) {
                     (Some(TITLES_SETTING), titles)
+                } else if row.control.contains(BRANCH_SETTING) {
+                    (Some(BRANCH_SETTING), custom_branch)
                 } else {
                     (None, false)
                 };

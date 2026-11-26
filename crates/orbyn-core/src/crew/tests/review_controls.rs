@@ -26,7 +26,42 @@ async fn request(w: &World, subject: &str, lane: &str) -> Value {
         .lead("crew_review", json!({"task":subject,"lanes":[lane]}))
         .await;
     assert!(!error, "{answer}");
-    answer["lanes"][0].clone()
+    // A review answer lists its lanes in start order and names each one, so the lane asked for is found by name.
+    answer["lanes"]
+        .as_array()
+        .expect("the review answer lists its lanes")
+        .iter()
+        .find(|lane_answer| lane_answer["lane"] == lane)
+        .unwrap_or_else(|| panic!("the review answer has the {lane} lane: {answer}"))
+        .clone()
+}
+
+/// The review task of the one lane a test asks for. A review answer lists its lanes in start order, and a lane a repo
+/// rule adds must not become the lane the test waits on.
+fn one_lane(mut lanes: Vec<String>) -> String {
+    assert_eq!(
+        lanes.len(),
+        1,
+        "the test asks for one lane, and no rule adds another: {lanes:?}"
+    );
+    lanes.pop().expect("the lane's review task")
+}
+
+/// The status row of the `round` of `lane`, found by lane name and the round number the status records: the status
+/// orders its lanes by name, so neither the lane nor the round under test is a place in a list.
+fn lane_round<'a>(status: &'a Value, lane: &str, round: u32) -> &'a Value {
+    let row = status["lanes"]
+        .as_array()
+        .expect("the review status lists its lanes")
+        .iter()
+        .find(|row| row["lane"].as_str() == Some(lane))
+        .unwrap_or_else(|| panic!("the review status has the {lane} lane"));
+    row["rounds"]
+        .as_array()
+        .expect("the review status lists a lane's rounds")
+        .iter()
+        .find(|row| row["round"] == round)
+        .unwrap_or_else(|| panic!("the review status has the {lane} lane's round {round}"))
 }
 
 #[tokio::test]
@@ -40,8 +75,13 @@ async fn same_engine_requires_the_person_once_then_asks_again_for_the_next_round
     let id = waiting["same_engine_consent"]["id"].as_str().unwrap();
     let view = w.core.crew_flow_task(&subject).unwrap();
     assert_eq!(view.review_consents.len(), 1);
-    assert_eq!(view.review_consents[0].id, id);
-    assert!(view.review_consents[0].can_answer);
+    let consent = view.review_consents.first().expect("the pending consent");
+    assert_eq!(consent.id, id);
+    assert_eq!(
+        consent.lane, "correctness",
+        "the consent names the waiting lane"
+    );
+    assert!(consent.can_answer);
     assert_eq!(
         view.row
             .cells
@@ -74,16 +114,25 @@ async fn same_engine_requires_the_person_once_then_asks_again_for_the_next_round
     w.until_state(reviewer, "passed").await;
     let status = w.status(&subject);
     assert_eq!(
-        status["lanes"][0]["rounds"][0]["same_engine_as_author"],
+        lane_round(&status, "correctness", 1)["same_engine_as_author"],
         true
     );
     let stored = w.core.store.crew_review_controls(&subject).unwrap();
-    assert_eq!(stored[0].actor, "person");
-    assert_eq!(stored[0].state, "consumed");
+    let consumed = stored
+        .iter()
+        .find(|control| control.id.as_str() == id)
+        .expect("the answered consent's row");
+    assert_eq!(consumed.actor, "person");
+    assert_eq!(consumed.state, "consumed");
     let view = w.core.crew_flow_task(&subject).unwrap();
     assert!(view.review_consents.is_empty());
+    let lane = view
+        .lanes
+        .iter()
+        .find(|lane| lane.lane == "correctness")
+        .expect("the correctness lane's row");
     assert_eq!(
-        view.lanes[0].same_engine_allowed_by,
+        lane.same_engine_allowed_by,
         Some(orbyn_contracts::CrewSameEngineAllowedBy::PersonOnce)
     );
     let next = request(&w, &subject, "correctness").await;
@@ -139,10 +188,20 @@ async fn full_security_exception_uses_a_separate_lead_run_badge_and_high_risk() 
     w.until_state(reviewer, "passed").await;
     assert_ne!(w.worker(reviewer), w.worker(&subject));
     let routes = w.core.store.crew_route_decisions(reviewer).unwrap();
-    assert_eq!(routes[0].tier, orbyn_contracts::RouteTier::Lead);
-    assert!(w.core.review_security_requires_high(&subject).unwrap());
+    let route = routes
+        .iter()
+        .find(|route| route.role == orbyn_contracts::RouteRole::Review)
+        .expect("the reviewer's route decision");
     assert_eq!(
-        w.status(&subject)["lanes"][0]["rounds"][0]["same_engine_as_author"],
+        route.lane.as_ref().map(|lane| lane.as_str()),
+        Some("security"),
+        "the security lane's own decision"
+    );
+    assert_eq!(route.tier, orbyn_contracts::RouteTier::Lead);
+    assert!(w.core.review_security_requires_high(&subject).unwrap());
+    let status = w.status(&subject);
+    assert_eq!(
+        lane_round(&status, "security", 1)["same_engine_as_author"],
         true
     );
     assert!(
@@ -158,8 +217,13 @@ async fn full_security_exception_uses_a_separate_lead_run_badge_and_high_risk() 
         .unwrap();
     let view = w.core.crew_flow_task(&subject).unwrap();
     assert!(view.same_engine_security_high);
+    let lane = view
+        .lanes
+        .iter()
+        .find(|lane| lane.lane == "security")
+        .expect("the security lane's row");
     assert_eq!(
-        view.lanes[0].same_engine_allowed_by,
+        lane.same_engine_allowed_by,
         Some(orbyn_contracts::CrewSameEngineAllowedBy::AutopilotFull),
         "the receipt comes from launch, not the later current mode"
     );
@@ -306,8 +370,15 @@ async fn person_lane_removal_is_reasoned_never_locked_and_uses_pinned_rules() {
         )
         .await
         .unwrap();
-    assert_eq!(removed["controls"][0]["state"], "removed");
-    assert_eq!(removed["controls"][0]["actor"], "person");
+    let removal = removed["controls"]
+        .as_array()
+        .expect("the removal answer lists its controls")
+        .iter()
+        .find(|control| control["lane"] == "licence")
+        .expect("the licence lane's removal receipt");
+    assert_eq!(removal["kind"], "remove_lane");
+    assert_eq!(removal["state"], "removed");
+    assert_eq!(removal["actor"], "person");
     let view = w.core.crew_review_control_view(&subject).await.unwrap();
     let receipt = view.lanes.iter().find(|l| l.lane == "licence").unwrap();
     assert!(!receipt.can_remove);
@@ -360,8 +431,8 @@ async fn a_lane_waiver_never_clears_a_confirmed_finding() {
     }))
     .await;
     let subject = w.built_work().await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+    let lane = one_lane(w.review(&subject, &["correctness"]).await);
+    w.until_state(&lane, "passed").await;
     let id = w.first_finding(&subject);
     let (checked, error) = w
         .lead(

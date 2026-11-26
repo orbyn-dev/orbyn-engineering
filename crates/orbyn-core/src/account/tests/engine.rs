@@ -888,6 +888,7 @@ fn new_thread() -> orbyn_contracts::CreateThread {
         base_branch: None,
         effort: None,
         options: std::collections::BTreeMap::new(),
+        branch_name_seed: None,
     }
 }
 
