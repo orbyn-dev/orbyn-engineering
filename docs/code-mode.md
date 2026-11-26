@@ -156,7 +156,9 @@ Defaults, all in one `Limits` value, so a test can set them small:
 | Run wall clock | 15 min | `limit` |
 
 The interrupt hook is checked on a counter, not a timer thread, so a tight loop cannot outrun it. The
-sandbox is dropped as soon as the run ends, whatever the end.
+heap is counted by the executor's own allocator, which records a refusal; the run's class is read from
+those records, so a full heap that leaves QuickJS unable to build its "out of memory" error is still
+`limit`. The sandbox is dropped as soon as the run ends, whatever the end.
 
 ## How inner calls re-enter the core
 

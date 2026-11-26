@@ -4,12 +4,14 @@ use crate::{
     CodeExecutor, ErrorKind, Limits, Run, RunError, RunSeed, Step, ToolFailure, ToolHost, strip,
 };
 use async_trait::async_trait;
+use rquickjs::allocator::{Allocator, RustAllocator};
 use rquickjs::prelude::Async;
 use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, Promise};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
+use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -35,6 +37,7 @@ struct Logs {
 struct Shared {
     clock: Mutex<Clock>,
     cpu_hit: AtomicBool,
+    heap_hit: AtomicBool,
     calls: AtomicUsize,
     logs: Mutex<Logs>,
 }
@@ -72,6 +75,107 @@ impl Shared {
 
 type Job = Pin<Box<dyn Future<Output = Step> + Send>>;
 
+/// The sandbox heap: every byte the engine asks for is counted against its limit, and a request
+/// the limit refuses is recorded in `heap_hit`.
+///
+/// The record is needed because the engine cannot always say what happened. With the heap full it
+/// cannot allocate the error that says "out of memory" either, and throws `null` instead (see
+/// `JS_ThrowError2` in `quickjs.c`), so the text `classify` used to match is not there. Counting
+/// the bytes ourselves makes the refusal an observed fact.
+struct Heap {
+    used: usize,
+    limit: usize,
+    shared: Arc<Shared>,
+}
+
+impl Heap {
+    /// A limit of 0 is no limit, which is how [`Limits::heap_bytes`] reads.
+    fn new(limit: usize, shared: Arc<Shared>) -> Self {
+        Self {
+            used: 0,
+            limit: if limit == 0 { usize::MAX } else { limit },
+            shared,
+        }
+    }
+
+    /// Whether `add` bytes fit once `free` bytes are given back, and the record of a refusal.
+    fn fits(&mut self, free: usize, add: usize) -> bool {
+        let held = self.used.saturating_sub(free);
+        let total = held.saturating_add(add);
+        if total > self.limit {
+            self.shared.heap_hit.store(true, Ordering::SeqCst);
+            return false;
+        }
+        true
+    }
+}
+
+// SAFETY: every method hands QuickJS a block from `RustAllocator`, which returns null or memory
+// aligned to a `u64` of at least the size asked for, so the trait's contract holds. `usable_size`
+// is the size of the block that same allocator handed out.
+unsafe impl Allocator for Heap {
+    fn alloc(&mut self, size: usize) -> *mut u8 {
+        if !self.fits(0, size) {
+            return ptr::null_mut();
+        }
+        let pointer = RustAllocator.alloc(size);
+        if !pointer.is_null() {
+            self.used = self
+                .used
+                .saturating_add(unsafe { RustAllocator::usable_size(pointer) });
+        }
+        pointer
+    }
+
+    fn calloc(&mut self, count: usize, size: usize) -> *mut u8 {
+        let Some(bytes) = count.checked_mul(size) else {
+            return ptr::null_mut();
+        };
+        if !self.fits(0, bytes) {
+            return ptr::null_mut();
+        }
+        let pointer = RustAllocator.calloc(count, size);
+        if !pointer.is_null() {
+            self.used = self
+                .used
+                .saturating_add(unsafe { RustAllocator::usable_size(pointer) });
+        }
+        pointer
+    }
+
+    unsafe fn dealloc(&mut self, pointer: *mut u8) {
+        let size = unsafe { RustAllocator::usable_size(pointer) };
+        self.used = self.used.saturating_sub(size);
+        unsafe { RustAllocator.dealloc(pointer) };
+    }
+
+    unsafe fn realloc(&mut self, pointer: *mut u8, new_size: usize) -> *mut u8 {
+        if pointer.is_null() {
+            return self.alloc(new_size);
+        }
+        let free = unsafe { RustAllocator::usable_size(pointer) };
+        if !self.fits(free, new_size) {
+            return ptr::null_mut();
+        }
+        let moved = unsafe { RustAllocator.realloc(pointer, new_size) };
+        if !moved.is_null() {
+            self.used = self
+                .used
+                .saturating_sub(free)
+                .saturating_add(unsafe { RustAllocator::usable_size(moved) });
+        }
+        moved
+    }
+
+    unsafe fn usable_size(pointer: *mut u8) -> usize {
+        if pointer.is_null() {
+            0
+        } else {
+            unsafe { RustAllocator::usable_size(pointer) }
+        }
+    }
+}
+
 struct QuickJsRun {
     job: Job,
     finished: Option<Step>,
@@ -101,18 +205,19 @@ impl CodeExecutor for QuickJsExecutor {
             line: None,
             code: None,
         };
-        let runtime = AsyncRuntime::new().map_err(engine)?;
-        runtime.set_memory_limit(limits.heap_bytes).await;
-        runtime.set_max_stack_size(limits.stack_bytes).await;
         let shared = Arc::new(Shared {
             clock: Mutex::new(Clock {
                 used: Duration::ZERO,
                 since: None,
             }),
             cpu_hit: AtomicBool::new(false),
+            heap_hit: AtomicBool::new(false),
             calls: AtomicUsize::new(0),
             logs: Mutex::new(Logs::default()),
         });
+        let runtime = AsyncRuntime::new_with_alloc(Heap::new(limits.heap_bytes, shared.clone()))
+            .map_err(engine)?;
+        runtime.set_max_stack_size(limits.stack_bytes).await;
         let watched = shared.clone();
         let cpu = limits.cpu;
         runtime
@@ -263,7 +368,7 @@ async fn execute<'js>(
     );
     let promise: Promise = match ctx.eval_promise(source).catch(ctx) {
         Ok(promise) => promise,
-        Err(caught) => return Err(classify(&caught.to_string(), shared)),
+        Err(caught) => return Err(classify(&caught, shared)),
     };
     let settled = promise.into_future::<rquickjs::Value>().await.catch(ctx);
     shared.pause_clock();
@@ -277,7 +382,7 @@ async fn execute<'js>(
 }
 
 fn classify_caught(ctx: &Ctx<'_>, caught: &rquickjs::CaughtError<'_>, shared: &Shared) -> RunError {
-    let mut error = classify(&caught.to_string(), shared);
+    let mut error = classify(caught, shared);
     if let rquickjs::CaughtError::Exception(exception) = caught {
         let code: Option<String> = exception.get("code").ok();
         if code.as_deref() == Some("limit") {
@@ -299,18 +404,61 @@ fn first_line(stack: &str) -> Option<u32> {
     })
 }
 
-fn classify(message: &str, shared: &Shared) -> RunError {
-    let lower = message.to_lowercase();
-    if shared.cpu_hit.load(Ordering::SeqCst) || lower.contains("interrupted") {
+/// The engine's own error class and message, when the run ended with a JavaScript `Error`.
+fn engine_error(caught: &rquickjs::CaughtError<'_>) -> Option<(String, String)> {
+    let rquickjs::CaughtError::Exception(exception) = caught else {
+        return None;
+    };
+    Some((
+        exception.get::<_, Option<String>>("name").ok().flatten()?,
+        exception.message()?,
+    ))
+}
+
+/// Whether what ended the run says nothing about why: `null`, `undefined`, a blank string, an
+/// `Error` with an empty message, or an allocation the Rust side could not make. Anything else,
+/// including a thrown number or object, is what the script threw and is reported as it is.
+fn carries_no_reason(caught: &rquickjs::CaughtError<'_>) -> bool {
+    match caught {
+        rquickjs::CaughtError::Exception(_) => {
+            engine_error(caught).is_none_or(|(_, message)| message.trim().is_empty())
+        }
+        rquickjs::CaughtError::Value(value) => {
+            if value.is_null() || value.is_undefined() {
+                return true;
+            }
+            value
+                .as_string()
+                .is_some_and(|text| text.to_string().map_or(true, |text| text.trim().is_empty()))
+        }
+        rquickjs::CaughtError::Error(error) => matches!(error, rquickjs::Error::Allocation),
+    }
+}
+
+fn classify(caught: &rquickjs::CaughtError<'_>, shared: &Shared) -> RunError {
+    let message = caught.to_string();
+    // The engine records why it stopped the script, so a limit is read from that record and never
+    // from the words in the error: `cpu_hit` from the interrupt hook, `heap_hit` from the heap.
+    if shared.cpu_hit.load(Ordering::SeqCst) {
         return limit_error("The script used more than its CPU time.".into());
     }
-    if lower.contains("out of memory") {
+    let engine = engine_error(caught);
+    // `InternalError` is the class the engine uses for its own resources, and is the only thing
+    // that says "out of memory"; a script throwing an `Error` with those words stays a runtime
+    // error. A heap that refuses an allocation and explains nothing is the heap limit as well.
+    let engine_says = |class: &str, text: &str| match &engine {
+        Some((name, message)) => name.as_str() == class && message.as_str() == text,
+        None => false,
+    };
+    if engine_says("InternalError", "out of memory")
+        || (shared.heap_hit.load(Ordering::SeqCst) && carries_no_reason(caught))
+    {
         return limit_error("The script used more than its memory limit (heap).".into());
     }
-    if lower.contains("call stack") || lower.contains("stack overflow") {
+    if engine_says("RangeError", "Maximum call stack size exceeded") {
         return limit_error("The script used more than its stack limit.".into());
     }
-    let syntax = lower.contains("syntaxerror") || lower.contains("unexpected token");
+    let syntax = engine.is_some_and(|(name, _)| name == "SyntaxError");
     RunError {
         kind: if syntax {
             ErrorKind::Syntax

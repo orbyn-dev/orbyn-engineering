@@ -57,6 +57,19 @@ async fn finish(code: &str, limits: Limits) -> Step {
     run.drive(Instant::now() + Duration::from_secs(60)).await
 }
 
+/// The class a run ends with and the message a person would read, whether `prepare` refused the
+/// source or the run failed.
+async fn failure(code: &str, limits: Limits) -> (ErrorKind, String) {
+    let host = Arc::new(Host {
+        calls: AtomicUsize::new(0),
+    });
+    let error = match QuickJsExecutor.prepare(code, limits, seed(), host).await {
+        Err(error) => error,
+        Ok(mut run) => failed(run.drive(Instant::now() + Duration::from_secs(60)).await),
+    };
+    (error.kind, error.message)
+}
+
 fn done(step: Step) -> Value {
     match step {
         Step::Done { result, .. } => result,
@@ -309,4 +322,121 @@ async fn the_wall_clock_ends_a_run() {
     let (mut run, _) = start("await tools.slow({ ms: 5000 }); return 1;", limits).await;
     let error = failed(run.drive(Instant::now() + Duration::from_secs(30)).await);
     assert_eq!(error.kind, ErrorKind::Limit);
+}
+
+#[tokio::test]
+async fn each_failure_lands_in_its_own_class() {
+    let heap = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        ..Limits::default()
+    };
+    let cpu = Limits {
+        cpu: Duration::from_millis(200),
+        ..Limits::default()
+    };
+    let wall = Limits {
+        wall: Duration::from_millis(100),
+        ..Limits::default()
+    };
+    // The first row is the one that was classified as a runtime error: a heap full of live data
+    // leaves QuickJS unable to build even the error that says "out of memory", so it throws
+    // `null` and the text to match is gone. Every other row must keep its own class.
+    let cases = [
+        (
+            "heap limit, grown in a loop",
+            "const a = []; while (true) a.push('x'.repeat(1000));",
+            heap.clone(),
+            ErrorKind::Limit,
+            "heap",
+        ),
+        (
+            "heap limit, refused in one allocation",
+            "const a = 'x'.repeat(64 * 1024 * 1024); return a.length;",
+            heap.clone(),
+            ErrorKind::Limit,
+            "heap",
+        ),
+        (
+            "own throw after a heap refusal",
+            "try { 'x'.repeat(64 * 1024 * 1024); } catch (e) {} throw new Error('recovered');",
+            heap.clone(),
+            ErrorKind::Runtime,
+            "recovered",
+        ),
+        (
+            "syntax error",
+            "const a = 1;\nconst = ;",
+            Limits::default(),
+            ErrorKind::Syntax,
+            "syntax",
+        ),
+        ("cpu limit", "while (true) {}", cpu, ErrorKind::Limit, "cpu"),
+        (
+            "wall clock",
+            "await tools.slow({ ms: 5000 }); return 1;",
+            wall,
+            ErrorKind::Limit,
+            "time limit",
+        ),
+        (
+            "ordinary throw",
+            "throw new Error('boom');",
+            Limits::default(),
+            ErrorKind::Runtime,
+            "boom",
+        ),
+        (
+            "null throw",
+            "throw null;",
+            Limits::default(),
+            ErrorKind::Runtime,
+            "",
+        ),
+    ];
+    for (name, code, limits, kind, message) in cases {
+        let (got, text) = failure(code, limits).await;
+        assert_eq!(got, kind, "{name}: {text}");
+        assert!(text.to_lowercase().contains(message), "{name}: {text}");
+    }
+}
+
+#[tokio::test]
+async fn a_heap_under_its_limit_is_fine() {
+    // The heap is counted by the executor, so a run that stays under the limit must still hold
+    // what it allocated: a limit that refuses too much, or that forgets what was freed, fails
+    // these. The second run allocates 200 MiB through a 8 MiB heap, one string at a time.
+    let limits = Limits {
+        heap_bytes: 8 * 1024 * 1024,
+        ..Limits::default()
+    };
+    let step = finish(
+        "const a = 'x'.repeat(4 * 1024 * 1024); return a.length;",
+        limits.clone(),
+    )
+    .await;
+    assert_eq!(done(step), json!(4 * 1024 * 1024));
+    let step = finish(
+        "for (let i = 0; i < 2000; i++) { const a = 'x'.repeat(100_000); } return 'done';",
+        limits,
+    )
+    .await;
+    assert_eq!(done(step), json!("done"));
+}
+
+#[tokio::test]
+async fn a_script_message_is_not_a_limit() {
+    // A class of its own is read from the engine's error, never from the words in it: a script
+    // that copies a limit's message has still just thrown, and stays a runtime error.
+    for message in [
+        "The script used more than its CPU time.",
+        "The script used more than its memory limit (heap).",
+        "interrupted",
+        "out of memory",
+        "Maximum call stack size exceeded",
+    ] {
+        let (kind, text) =
+            failure(&format!("throw new Error({message:?});"), Limits::default()).await;
+        assert_eq!(kind, ErrorKind::Runtime, "{message}: {text}");
+        assert!(text.contains(message), "{message}: {text}");
+    }
 }
