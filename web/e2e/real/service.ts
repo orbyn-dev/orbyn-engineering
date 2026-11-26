@@ -409,6 +409,11 @@ export async function startProject(options: ServiceOptions = {}) {
 export async function send(page: Page, text: string) {
   const box = page.getByRole("textbox", { name: /^Message/ });
   await box.fill(text);
+  // The composer ignores Enter until it can send: the draft's Send control stays disabled while
+  // the model defaults, the engine list and the checkout load, and a press made in that window is
+  // dropped, so no run request ever leaves. Wait for the control itself to say the composer is ready.
+  const composer = page.locator("form.composer").filter({ has: box });
+  await expect(composer.locator('button.send-btn[type="submit"]')).toBeEnabled();
   const taken = text.startsWith("/")
     ? null
     : page.waitForResponse(
