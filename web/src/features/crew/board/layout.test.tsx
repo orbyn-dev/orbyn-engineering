@@ -24,6 +24,7 @@ afterEach(() => vi.useRealTimers());
 const calls = (part: string) => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes(part));
 const writes = () => vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method && init.method !== "GET");
 const column = (name: RegExp) => screen.getByRole("region", { name });
+const cardOf = (name: RegExp, id: string) => column(name).querySelector<HTMLElement>(`[data-task="${id}"]`)!;
 
 /** A ResizeObserver that measures every element it watches at one width, as a panel that wide would report. */
 function panelWidth(width: number) {
@@ -40,8 +41,8 @@ function panelWidth(width: number) {
   );
 }
 
-it("opens Needs you and Running first in a narrow panel, and leaves the rest behind their counts", async () => {
-  panelWidth(600);
+it("measures the 320 px panel: Needs you and Running open first, and the rest behind their counts", async () => {
+  panelWidth(320);
   mock.reset("crew");
   render(<BoardView />);
   await screen.findByRole("region", { name: /^Queued/ });
@@ -52,6 +53,29 @@ it("opens Needs you and Running first in a narrow panel, and leaves the rest beh
   for (const name of [/^Queued/, /^Routed/, /^Verifying/, /^Passed/, /^Stopped/]) {
     expect(within(column(name)).getByRole("button", { name: /,?\s*\d+$/ })).toHaveAttribute("aria-expanded", "false");
   }
+  expect(writes()).toHaveLength(0);
+});
+
+/**
+ * The KC3 320 px panel frame (`needs-one-source-board-narrow-panel`): the same Needs you cards in the panel's state-group list,
+ * each keeping its kind, its title, the engine and the one amber sentence. The panel's arrangement is
+ * `crew-board-narrow-panel`'s (Needs you and Running open); this measures the KC3 words in it, so the design pass that flips
+ * that frame has a width test to cite.
+ */
+it("measures the 320 px panel: the Needs you group keeps the one field's words, kind, title and engine", async () => {
+  panelWidth(320);
+  mock.reset("crew-board-needs-kinds");
+  render(<BoardView />);
+  await screen.findByRole("region", { name: /^Queued/ });
+  const needs = within(column(/^Needs you/));
+  expect(needs.getByRole("button", { name: /Needs you/ })).toHaveAttribute("aria-expanded", "true");
+  const question = cardOf(/^Needs you/, "b-question");
+  expect(within(question).getByText("research")).toBeVisible();
+  expect(within(question).getByText("Which target wins when both next and returnTo are set?")).toBeVisible();
+  expect(within(question).getByText("opencode")).toBeVisible();
+  expect(question.querySelector(".bd-amber")).toHaveTextContent("Asked you a question · Which target wins when both next and returnTo are set?");
+  expect(cardOf(/^Needs you/, "b-merge").querySelector(".bd-amber")).toHaveTextContent("The merge waits for you");
+  expect(cardOf(/^Needs you/, "b-manual").querySelector(".bd-amber")).toHaveTextContent("A check only a person can make is waiting.");
   expect(writes()).toHaveLength(0);
 });
 
