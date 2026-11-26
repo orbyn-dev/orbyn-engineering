@@ -404,6 +404,19 @@ a failure. No new exit code is synthesized. Older logs and unsupported outcomes
 stay unknown. Group and finished-turn summaries count only reported successful
 actions, list failures separately, and use neutral wording for missing results.
 
+A single call's row says what the engine reported in the place where a succeeded call
+shows its duration: `Failed · exit code N` (the code only when the engine sent a
+nonzero one), `No result reported · ended without one`, or `Outcome unknown · run
+interrupted` (only when the run stopped the call before it answered; `Outcome
+unknown` alone for an answered older log or a lost state). The red cross marks a
+failure; the muted minus marks a call with no result or an unknown outcome. A
+finished turn's count line counts every call it ran, then lists only the outcomes
+present: `N tool calls · S succeeded · F failed · P no result reported · U outcome
+unknown`; a call still running is counted in the total but not as missing, and a fold
+reads running from its own run span, not from whether another run is live. The line
+draws under the turn's trail even with one group; Expand all and Collapse all join it
+once the turn has four or more groups.
+
 Consecutive work groups contain at most five tool calls and at most thirty
 activities including reasoning. The live view retains whole recent groups within
 thirty activities, preserving group keys and expanded state as calls arrive. Older
@@ -441,8 +454,10 @@ Agent-published HTML renders retain their separate publishing boundary.
 
 ## Engine failures
 
-Failure text is cleaned before anyone sees it: terminal codes go, and a line that looks
-like a credential, by key name, vendor prefix or shape, is dropped whole. A run that
+Failure text is cleaned before anyone sees it: terminal codes go, a line that looks
+like a credential, by key name, vendor prefix or shape, is dropped whole, and a URL's login
+(`user:pass@`) and credential-named query values are removed so an endpoint that answers with
+its own address cannot leak one. A run that
 failed for want of a login says so and names the vendor's command, such as `claude auth
 login`, and logs `CUSTOM engine.sign_in_required`. Orbyn only names the command, under
 rule 1. A run that failed because its engine host stopped carries the stable `RUN_ERROR`
@@ -547,8 +562,9 @@ limits appear only where an engine reports them itself, as Codex does through
 the supported drivers do not expose an authoritative current account/workspace binding
 that can validate a kept report. Email, plan and cached signed-in status are not identities.
 A failed read returns unavailable without an old-account fallback, including in the client;
-opening or refreshing Limits waits for the bounded provider read. An overlapping older read
-cannot answer after a newer read, a forget or an engine configuration change. No subscription
+opening or refreshing Limits waits for the bounded provider read. An older read cannot answer
+after an explicit usage refresh (`POST /api/usage/refresh`), the only call that forgets; overlapping
+reads do not fence one another, and neither does an engine configuration change. No subscription
 report is exposed through the no-I/O `cached_limits` path: Crew treats it as not reported,
 and scheduled near-limit checks still ask the engine afresh. Only Codex's `rateLimits`,
 `rateLimitsByLimitId` and plan leave the driver; its account ID, upsell copy and
@@ -745,7 +761,8 @@ for again for 2 minutes, `fresh` included. `ForgeStatus.viewer` is the login the
 signed in as, read on each `GET /api/forges` rescan. Pull request reads (the lists, a pull
 request's detail, checks, comments, timeline, files, revisions and stack, and the reviewer and
 label candidates) answer from the last known value and take `?refresh=1`; any write to a pull
-request drops what was kept for it ([Instant reads](#instant-reads)).
+request drops what was kept for it ([Instant reads](#instant-reads)), except a viewed mark: the
+files read already kept takes GitHub's new state, so no second forge read is needed to show it.
 
 The detail page keys its extras read by the selected project, number and loaded pull
 revision. Local mutations and manual retries force a fresh extras read; an older
@@ -790,7 +807,16 @@ check fails, all checks pass, the branch starts to conflict, or someone else com
 or reviews; the viewer's own comments are not news. It ends at a merge or close, after
 10 wakes in a row that bring only comments, after 8 failed reads in a row, on an
 unlink, or when the thread settles or archives. A subagent thread cannot watch.
-Viewed-file marks are this service's own, per project, and never reach the forge.
+Viewed-file marks are GitHub's own on a GitHub pull request. The files read asks GitHub's
+GraphQL `files` connection for every changed file's `viewerViewedState`, so GitHub's state is
+what it shows; a mark or unmark made here runs GitHub's `markFileAsViewed` or
+`unmarkFileAsViewed` mutation through `gh`, audited as `git.pull_viewed` before it happens,
+and the files read it already kept carries the new state, so the box does not wait for another
+forge read. A mark GitHub refuses is kept by this service and the route answers
+`502 viewed_unsynced` saying GitHub did not save it; the files read keeps showing that mark,
+with `viewed_synced` false, so it is never lost and never mistaken for GitHub's. When GitHub's
+state cannot be read, the service's kept marks stand in as before, and a forge with no viewed
+files of its own keeps them, with `viewed_synced` false.
 
 A review guide is an agent's stop-by-stop reading order for one pull request, also
 this service's own. Orbyn does not generate it itself: writing a guide starts an
@@ -1641,9 +1667,15 @@ in it.
 
 ## Text generators
 
-Two one-shot calls spend engine usage for text a person did not ask a model for: a
-thread's first-message title and a confirmed Git action's commit or pull request text.
-Both go through one resolver: the model `text_generation_models` names for the thread's
+Three one-shot calls spend engine usage for text a person did not ask a model for: a
+thread's first-message title, a confirmed Git action's commit or pull request text, and a
+new worktree's custom branch name, which spends only once the custom naming mode has
+instructions to follow. The branch-name call is listed with the
+[automatic requests](#automatic-requests), on while `branch_naming_mode` is custom and
+`branch_name_instructions` is not empty; it waits at most 20 seconds and has no cancel
+or progress, so a slow reply can outlive the client's slow-service notice; its attempt is
+audited before the engine is asked, as the title call's is, so a refusing engine still
+leaves the row. All three go through one resolver: the model `text_generation_models` names for the thread's
 engine when that engine lists it, then the legacy `text_generation_model` when that
 engine lists it, then the engine's small model (a `haiku`, `luna`, `mini`, `flash` or
 `small` family name), then the thread's model. The reason travels with the choice
@@ -1672,22 +1704,31 @@ at either scope; at project scope the engine then inherits the global choice. A 
 (`PUT /api/preferences`, `PUT /api/projects/{id}/preferences` or the scoped settings
 route); there is no text-generator write route.
 
-A new worktree's branch name is chosen deterministically, without the resolver or an
-engine call: static mode keeps `<branch_name_prefix>/<purpose>`; semantic mode makes a
-lowercase slug from the thread's real title, or the purpose when it has none, capped at
-64 characters and suffixed `-2`, `-3` and so on until it is not one of the project's
-branches; custom mode uses the purpose as the complete branch name. An unusable seed
-falls back to the static name, and a name Git refuses is `invalid_input`, never
-replaced. The stored `branch_name_instructions` is not sent anywhere, so the
-model-written custom name its setting describes is not built, and cleanup has no
-generator either, so neither a branch nor a cleanup call reaches the resolver.
+A new worktree's branch name is chosen before `git worktree add -b` runs. Static mode
+keeps `<branch_name_prefix>/<purpose>`. Semantic mode makes a lowercase slug from the
+request's `branch_name_seed` (the Web draft's typed goal, whitespace normalized and cut
+to 53 characters), else the thread's real title, else the purpose, capped at 64
+characters and suffixed `-2`, `-3` and so on until it is not one of the project's
+branches, and an unusable seed falls back to the static name. The seed names only the
+branch: a thread created without a title keeps `New thread`, so its first-message title
+generation still runs. Custom mode asks the thread's engine, through the
+[Text generators](#text-generators) resolver, to write the complete branch name from the
+stored `branch_name_instructions` and the same seed, title or purpose; the reply's
+first line must be one valid branch name that no project branch has, and when no
+instruction is stored, the engine refuses or fails, the reply is not a ref, its name is
+already a branch, or the 20-second wait runs out, the purpose is the complete name. A
+model-written name Git would refuse is therefore never sent; a name Git still refuses is
+`invalid_input`, never replaced. Cleanup has no generator, so no cleanup call reaches
+the resolver.
 
 ## Automatic requests
 
 `GET /api/network` and `crates/orbyn-core/src/governance/network.rs` list every outbound request
 Orbyn makes without being asked, with host, cadence, what turns it off, the key that does
 and whether it is on now. A new one is added there in the same change, with a switch.
-The two-minute pull request poll has its own, `poll_pull_requests`. Engines make their own requests under their own terms.
+The two-minute pull request poll has its own, `poll_pull_requests`. The custom
+branch-name one-shot is listed too, and is on only when custom naming has instructions
+to follow. Engines make their own requests under their own terms.
 
 A thread's first message also spends one short engine call on its title, in the
 background, unless `auto_thread_titles` is off. It sees only that message and goes through
@@ -2174,7 +2215,9 @@ existing outcome with `409 already_decided`. Run cancellation and driver exit
 expire open approvals, and the engine receives a denial. Policy is evaluated
 first: `deny` wins over `ask`, `ask` wins over `allow`, and no matching rule means
 `ask`. Policy and audit are internal safety: the product surface is the permission
-mode, and no client offers rule editing or an audit log. A timed-out approval expires and denies. A wildcard `allow` on a `command`
+mode, and no client offers rule editing or an audit log. A run holds at most 32 approvals
+waiting at once; past that the engine is denied plainly, so a stalled or hostile engine cannot
+grow the gate or the store's pending list without bound. A timed-out approval expires and denies. A wildcard `allow` on a `command`
 never matches a compound command (`;`, `|`, `&`, redirection, substitution), so
 `git *` cannot grant `git log; rm -rf /`. `remember` stores an exact rule, written
 `=<target>`, so a target containing `*` does not become a wildcard.
@@ -2216,7 +2259,12 @@ endpoint `POST /agui/threads/:id` projects the same pause as
 `RUN_FINISHED(outcome: interrupt)` and maps `resume[]` to approval decisions while
 holding the engine process. A resume must answer every open interrupt, replaying
 one is safe, and new input on a paused thread gets `RUN_ERROR`. `payload.approved`
-carries the decision and anything but `true` denies.
+carries the decision and anything but `true` denies. The endpoint's response is read as
+SSE with an 8 MiB cap on a line and on one event's data: a stream that passes it fails the run
+with a plain sentence instead of buffering without bound. Each engine driver reads its stdio through a
+bounded queue, so a flooding engine waits on its own pipe rather than growing the service's
+memory (the host driver's per-run route channels are a separate path that is still unbounded; it is
+recorded for the next security pass).
 
 ## Instant reads
 
@@ -3083,7 +3131,9 @@ re-fetches the selected project's validation view; no file write or permission c
 With Preview enabled the service registers request-scoped engine approvers. The lead's engine, family, model, effort and options
 are captured for a separate short delegated turn; a busy lead receives no injected work. A second key must pass the registry, quota,
 data-class and lead-tier filters on a different vendor. The shared deadline is 30 seconds or the task's remaining minute budget,
-whichever is shorter. Each approval atomically reserves one existing brief turn, counting prior approval reservations and known
+whichever is shorter; a test build gives it ten minutes instead, because a test calls the core directly and shares the machine
+with other work, and the production 30 seconds is pinned at compile time.
+Each approval atomically reserves one existing brief turn, counting prior approval reservations and known
 worker admissions; a task whose turns are spent stops on its next failed attempt, and a crew that has spent its Settings turn
 budget starts no new task (see above). Reported usage is recorded even when the answer is rejected, and
 missing usage is unknown. The Claude adapter requires version 2.1.295+, no builtin tools, strict empty MCP, hooks/customizations off,
@@ -3210,8 +3260,8 @@ says so.
 
 `orbyn_pull_guide_write` stores a review guide the calling agent wrote, one per project
 and pull request number, replacing the earlier one; `orbyn_pull_guide_read` returns it
-or `null`. Like viewed-file marks, a guide is this service's own and never reaches the
-forge. The write carries an effect, so the gate asks, and it fails while the project's
+or `null`. A guide is this service's own and never reaches the forge. The write carries an
+effect, so the gate asks, and it fails while the project's
 `review_guides_enabled` preference is off. Its stops are rebuilt with only their known
 fields (title, summary, files with a path and note, questions) and are bounded: 30
 stops, a stored size of 128 KiB. Neither tool checks that the number names a real pull
@@ -3224,7 +3274,7 @@ no raw comment or check blobs and dropping the forge's check `description`, so f
 is only ever a JSON string value. `orbyn_pull_request_ci_logs` reads one named check's
 failed-jobs log without an effect, redacted with Crew's fixed set and only then cut to the
 last 32 KiB, because a failure ends a log; GitHub only. `orbyn_pull_request_comment`,
-`orbyn_pull_request_update`, `orbyn_pull_request_review`,
+`orbyn_pull_request_respond`, `orbyn_pull_request_update`, `orbyn_pull_request_review`,
 `orbyn_pull_request_merge` and `orbyn_pull_request_ci_rerun` are the write tools: each
 carries an effect, so the gate asks as for every effect tool, and every approval prompt
 names the action and the pull request number. The update tool takes only title, body and
@@ -3235,8 +3285,19 @@ read with `orbyn_pull_request_read`, never auto-merges, and re-reads the pull re
 first: it refuses a closed, draft, conflicting, failing, pending or changes-requested
 pull request, or one whose head moved. The re-run tool re-runs only the failed jobs of
 the named check, and it too is GitHub only; on every other forge both CI tools answer that
-the forge cannot do it. A crew worker cannot call any of them. Creating a pull request
-and resolving review threads are still missing.
+the forge cannot do it. The respond tool is the toolkit's review-thread write: `thread`
+is the review thread id, `body` the reply and `resolved` the thread's state, and at least
+one of the reply or the state is required. GitHub names a thread only by its GraphQL node
+id, so there the reply is `addPullRequestReviewThreadReply` and the state is
+`resolveReviewThread` or `unresolveReviewThread`; GitLab replies with its discussion
+notes endpoint and sets the discussion's resolved flag. A resolution that fails after the
+reply was posted says so, so a caller that retries without the body does not post it
+twice. It writes one audit row, `git.pull_thread_respond`, before either call, and it
+answers what it did: whether it replied and the thread state it was asked to set, or
+`null` when it was not asked. A crew worker cannot call any of these write tools. Creating
+a pull request is still missing, deliberately: `git_action` requires an idle thread, so a
+tool called from inside a run could never succeed, and the shell route and the app's
+Create PR already exist.
 
 ## Computer gateway
 
@@ -3987,12 +4048,12 @@ every method, path and which routes need a credential.
 | `GET /api/projects/:id/pulls/reviewers`, `/labels` | `PullCandidate[]` |
 | `POST /api/projects/:id/workflows/:run/approve` | Let a fork's waiting workflow run; GitHub only |
 | `GET, PATCH /api/projects/:id/pulls/:number` | `PullRequestDetail`; `UpdatePull` for title, body, base, draft, maintainer edits |
-| `GET .../pulls/:number/checks`, `/timeline`, `/files` | `PullCheck[]`, `PullTimelineEvent[]`, `PullFile[]` with viewed marks |
+| `GET .../pulls/:number/checks`, `/timeline`, `/files` | `PullCheck[]`, `PullTimelineEvent[]`, `PullFile[]` with viewed marks: GitHub's own `viewerViewedState` on GitHub, this service's marks elsewhere, and `viewed_synced` saying which |
 | `GET .../pulls/:number/breakdown`, `/linked-threads` | `PullChangeBreakdown`: counts by change kind and lines over the same files rows; `Thread[]` linked to the pull request, from the service's own links |
 | `GET, POST .../pulls/:number/comments` | `PullConversation`; `AddPullComment` with optional `path`, `line`, `reply_to` |
 | `PATCH .../comments/:comment`, `POST .../comments/:comment/react` | `EditPullComment`; `ReactPullComment` |
 | `POST .../pulls/:number/threads/:thread/resolve` | `ResolvePullThread` |
-| `POST .../pulls/:number/viewed` | `SetFilesViewed` (`204`) |
+| `POST .../pulls/:number/viewed` (`Person`) | `SetFilesViewed` (`204`); on GitHub the mark runs its own mutation as the person, and a mark GitHub refuses is kept here with `502 viewed_unsynced` |
 | `POST .../pulls/:number/review` | `SubmitReview`, with line comments |
 | `POST .../pulls/:number/reviewers`, `/labels` | `SetPullPeople` |
 | `POST .../pulls/:number/merge` | `MergePull`: method, `auto`, `delete_branch`, `subject`, `body`, `strip_credits`, `expected_head`. A head that moved is `409 pull_head_changed`. Only GitHub and GitLab (not a rebase) are fully guarded, because the forge refuses the moved head itself. Azure, Forgejo, Bitbucket and a GitLab rebase read the head just before merging and refuse a mismatch, with a small race window between that read and the merge; a head that cannot be read refuses the merge |

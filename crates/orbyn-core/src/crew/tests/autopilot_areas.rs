@@ -475,6 +475,7 @@ async fn areas_are_counted_per_project_and_by_repository() {
                 base_branch: None,
                 effort: None,
                 options: Default::default(),
+                branch_name_seed: None,
             })
             .await
             .unwrap();

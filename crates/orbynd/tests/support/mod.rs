@@ -126,7 +126,41 @@ impl Drop for TempDir {
     }
 }
 
-#[derive(Default)]
+/// The newest schema this build knows: what a start upgrades an old database to.
+pub fn latest_schema() -> i64 {
+    orbyn_core::store::MIGRATIONS
+        .last()
+        .expect("a migration list")
+        .0
+}
+
+/// Builds the database the service opens in `data` at exactly schema version `through`, the way an
+/// install of that release left it, by applying the real migration list and recording each version.
+/// The returned connection writes the fixture rows a case needs; the migration list stays the source
+/// of truth, so the fixture cannot drift from the schema a later release upgrades.
+pub fn old_database(data: &Path, through: i64) -> rusqlite::Connection {
+    std::fs::create_dir_all(data).unwrap();
+    let conn = rusqlite::Connection::open(data.join("orbyn.sqlite3")).unwrap();
+    conn.execute_batch(
+        "PRAGMA foreign_keys=ON;
+         CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)",
+    )
+    .unwrap();
+    for (version, sql) in orbyn_core::store::MIGRATIONS
+        .iter()
+        .filter(|(version, _)| *version <= through)
+    {
+        conn.execute_batch(sql).unwrap();
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 'fixture')",
+            [version],
+        )
+        .unwrap();
+    }
+    conn
+}
+
+#[derive(Clone, Default)]
 pub struct Options {
     pub env: Vec<(String, String)>,
     pub args: Vec<String>,
@@ -142,6 +176,10 @@ pub struct Service {
     pub child: Child,
     /// Everything after the ready line, for tests of the shell channel.
     pub stdout: BufReader<std::process::ChildStdout>,
+    /// The folder handed to `serve --data-dir`, which a restart opens again.
+    data: PathBuf,
+    /// The options this service started with, which a restart passes on.
+    options: Options,
 }
 
 impl Service {
@@ -189,15 +227,29 @@ impl Service {
             return Err(text);
         }
         let start: Value = serde_json::from_str(&line).unwrap();
-        Ok(Self {
-            url: start["url"].as_str().unwrap().to_owned(),
-            token: start["token"].as_str().unwrap().to_owned(),
-            access_key: start["access_key"].as_str().map(str::to_owned),
-            person_key: start["person_key"].as_str().map(str::to_owned),
+        Ok(Self::adopt(data, options, &start, child, stdout))
+    }
+
+    /// Adopts a service a test started itself with `serve --data-dir`, from its ready line and its
+    /// pipes, so it still owns the process and can be restarted like one started here.
+    pub fn adopt(
+        data: &Path,
+        options: Options,
+        ready: &Value,
+        child: Child,
+        stdout: BufReader<std::process::ChildStdout>,
+    ) -> Self {
+        Self {
+            url: ready["url"].as_str().unwrap().to_owned(),
+            token: ready["token"].as_str().unwrap().to_owned(),
+            access_key: ready["access_key"].as_str().map(str::to_owned),
+            person_key: ready["person_key"].as_str().map(str::to_owned),
             client: reqwest::Client::new(),
             child,
             stdout,
-        })
+            data: data.to_owned(),
+            options,
+        }
     }
 
     pub fn get(&self, path: &str) -> reqwest::RequestBuilder {
@@ -372,7 +424,7 @@ impl Service {
                 .expect("event stream stalled")
                 .expect("event stream ended")
                 .unwrap();
-            for frame in parser.push(&chunk) {
+            for frame in parser.push(&chunk).expect("test SSE frames fit the cap") {
                 let event: Value = serde_json::from_str(&frame).unwrap();
                 let done = stop(&event);
                 events.push(event);
@@ -460,6 +512,51 @@ impl Service {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+
+    /// Kills this process and starts a fresh service on the same data folder with the same
+    /// options, so a crash case reads the recovered state through the routes.
+    pub fn restart(mut self) -> Service {
+        self.kill();
+        Service::start(&self.data, self.options.clone())
+    }
+
+    /// The fake engine's launch records so far, one per line of `ORBYN_FAKE_LAUNCH_FILE`.
+    pub fn launches(&self) -> Vec<Value> {
+        let file = self.signal_file("ORBYN_FAKE_LAUNCH_FILE");
+        std::fs::read_to_string(file)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
+    }
+
+    /// Waits until the fake engine has recorded a launch with `mode`, and returns that record.
+    /// This is the kill point a crash case waits for instead of sleeping: the engine itself
+    /// says it reached the step, so the test kills at a chosen point, not a guessed one.
+    pub async fn wait_for_launch(&self, mode: &str) -> Value {
+        for _ in 0..1000 {
+            if let Some(record) = self
+                .launches()
+                .into_iter()
+                .find(|record| record["mode"] == mode)
+            {
+                return record;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the fake engine recorded no {mode} launch");
+    }
+
+    /// The path of a record file this service's options give the fake engine.
+    fn signal_file(&self, name: &str) -> PathBuf {
+        let value = self
+            .options
+            .env
+            .iter()
+            .find_map(|(key, value)| (key == name).then_some(value))
+            .unwrap_or_else(|| panic!("the test's options set no {name}"));
+        PathBuf::from(value)
+    }
 }
 
 /// An open SSE response, read frame by frame.
@@ -480,7 +577,11 @@ impl SseReader {
                 .await
                 .expect("stream stalled")
                 .unwrap_or(None)?;
-            for frame in self.parser.push(&chunk) {
+            for frame in self
+                .parser
+                .push(&chunk)
+                .expect("test SSE frames fit the cap")
+            {
                 self.pending
                     .push_back(serde_json::from_str(&frame).unwrap());
             }
