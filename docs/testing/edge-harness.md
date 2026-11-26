@@ -74,7 +74,8 @@ facts, or it will rebuild harnesses that are already there:
   executables on `PATH` and covers list, detail, a screenshot, the fixed error copy and log
   redaction: `device_reads_are_local_and_every_action_is_person_class`,
   `a_shell_less_service_answers_desktop_required`, `device_errors_have_the_fixed_copy`,
-  `a_screenshot_answers_a_png_and_the_log_keeps_no_body_or_image`.
+  `a_screenshot_answers_a_png_and_the_log_keeps_no_body_or_image`, and the H2 shared-fake busy case
+  `a_second_action_while_one_runs_is_device_busy_and_starts_no_tool`.
 - **The crash/restart harness exists.** The store Wave 4 report asks for "a crash-and-restart
   harness in orbynd/tests"; `Service::kill()` plus a second `Service::start` on the same data
   folder already does this in six tests: the four named above plus preparation_retry.rs:334 (a crashed preparation restarts as a retryable failure without replaying a command) and
@@ -308,5 +309,6 @@ wave-4 line of the test ledgers). Steps 3 and 4's tests and break-checks ran on 
 
 The break-checks were applied one at a time, each failed the delivered test for the stated reason,
 and the files were restored. No product behaviour changed: the new frames and the shared JS program
-are test doubles, and the only `src/` edits are inside the fake engine's own binary.
+are test doubles, and the only `src/` edits are `#[cfg(test)]`-gated (the fake engine's own binary and
+`crates/orbyn-core/src/devices/test_support.rs`).
 Windows behaviour of the device fake and the `.cmd` shims is unobserved here; the CI matrix owns it.

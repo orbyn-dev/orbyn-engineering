@@ -4,7 +4,7 @@
 // `node <script> <tool> <fake-dir> <args...>`; the files in the fake dir pick the
 // answer, so each case is a fixture file rather than a different program.
 //
-// Every call is appended to calls.ndjson before it answers. Files the tests use:
+// Every call is appended to calls.ndjson before it answers. Files the tests use (for example):
 //   calls.ndjson          every {tool, args} this program was run with
 //   action_started        the pid of the action that is running now
 //   action_delay_ms       sleep before an action answers (the busy case)
