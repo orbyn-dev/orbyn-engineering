@@ -9,7 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
-use support::{Options, Service, TempDir, run_git, setup};
+use support::{Options, Service, TempDir, run_git, setup, text_of};
 
 struct Fixture {
     _dir: TempDir,
@@ -29,6 +29,39 @@ pull() {
 viewed() { grep -qx "$1" "$GH_VIEWED" 2>/dev/null && echo VIEWED || echo UNVIEWED; }
 arg_path() { for arg in "$@"; do case "$arg" in path=*) echo "${arg#path=}";; esac; done; }
 refuse_write() { [ -f "$GH_FAIL" ] && { echo "HTTP 403: Resource not accessible by integration (https://api.github.com/graphql)" >&2; exit 1; }; }
+# gh api graphql binds each -f/-F field other than query and operationName as a GraphQL variable,
+# and real GitHub rejects a non-null declared variable that is not provided. Match that here, so a
+# mutation whose arguments do not bind cannot pass this stand-in.
+graphql_variables() {
+  gql_query=""
+  gql_provided=""
+  for gql_arg in "$@"; do
+    case "$gql_arg" in
+      query=*) gql_query=${gql_arg#query=} ;;
+      operationName=*) ;;
+      *=*) gql_provided="$gql_provided ${gql_arg%%=*}" ;;
+    esac
+  done
+  case "$gql_query" in
+    *'('*) gql_declarations=$(printf '%s' "$gql_query" | sed 's/^[^(]*(//; s/).*$//') ;;
+    *) gql_declarations="" ;;
+  esac
+  gql_old_ifs=$IFS
+  IFS=','
+  for gql_declaration in $gql_declarations; do
+    gql_variable=$(printf '%s' "$gql_declaration" | sed 's/^[[:space:]]*\$//; s/:.*//; s/[[:space:]]//g')
+    [ -n "$gql_variable" ] || continue
+    case "$gql_declaration" in
+      *'!'*) gql_required=1 ;;
+      *) gql_required=0 ;;
+    esac
+    if [ "$gql_required" = 1 ] && ! printf ' %s ' "$gql_provided" | grep -q " $gql_variable "; then
+      echo "GraphQL: Variable \$$gql_variable was not provided" >&2
+      exit 1
+    fi
+  done
+  IFS=$gql_old_ifs
+}
 case "$1 $2" in
   "pr create") [ -f "$GH_FAIL" ] && { echo "no permission" >&2; exit 1; }
     echo "https://github.com/o/r/pull/12" ;;
@@ -43,7 +76,7 @@ case "$1 $2" in
   "pr close") [ "$3" = 66 ] && { echo "refused" >&2; exit 1; } ;;
   "label list") echo '[{"name":"bug","description":"Broken"}]' ;;
   "api user") echo '{"login":"me"}' ;;
-  "api graphql") case "$*" in
+  "api graphql") graphql_variables "$@"; case "$*" in
       *UnmarkFileAsViewed*) refuse_write
         file=$(arg_path "$@")
         { grep -vx "$file" "$GH_VIEWED" 2>/dev/null || true; } > "$GH_VIEWED.tmp"
@@ -69,6 +102,12 @@ case "$1 $2" in
       *reviewRequests*) [ -f "$GH_FAIL" ] && { echo "Something went wrong" >&2; exit 1; }
         [ -f "$GH_RATE" ] && { echo "GraphQL: API rate limit already exceeded" >&2; exit 1; }
         echo '{"data":{"viewer":{"login":"me"},"repository":{"p3":{"createdAt":"2026-01-02T03:04:05Z","reviewRequests":{"pageInfo":{"hasNextPage":false},"nodes":[{"requestedReviewer":{"__typename":"User","login":"sam"}},{"requestedReviewer":{"__typename":"Team","slug":"core"}}]},"latestReviews":{"pageInfo":{"hasNextPage":false},"nodes":[{"author":null,"state":"APPROVED"},{"author":{"login":"me"},"state":"CHANGES_REQUESTED"}]},"comments":{"totalCount":2},"reviews":{"totalCount":2,"pageInfo":{"hasNextPage":false},"nodes":[{"comments":{"totalCount":3}},{"comments":{"totalCount":0}}]}},"p4":{"createdAt":"2026-02-02T00:00:00Z","reviewRequests":{"pageInfo":{"hasNextPage":false},"nodes":[]},"latestReviews":{"pageInfo":{"hasNextPage":false},"nodes":[]},"comments":{"totalCount":1},"reviews":{"totalCount":0,"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}' ;;
+      *addPullRequestReviewThreadReply*) refuse_write
+        echo '{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"C_1"}}}}' ;;
+      *unresolveReviewThread*) refuse_write
+        echo '{"data":{"unresolveReviewThread":{"thread":{"id":"T1","isResolved":false}}}}' ;;
+      *resolveReviewThread*) refuse_write
+        echo '{"data":{"resolveReviewThread":{"thread":{"id":"T1","isResolved":true}}}}' ;;
       *) echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"T1","isResolved":false,"path":"a.rs","line":2,"comments":{"nodes":[{"databaseId":11,"body":"line","author":{"login":"them"}}]}}]}}}}}' ;;
     esac ;;
   "auth status") echo "  Logged in to github.com account octo (keyring)" >&2 ;;
@@ -839,6 +878,130 @@ async fn writes_reach_the_forge_with_their_arguments_and_are_audited() {
             .unwrap()
             .iter()
             .any(|row| row["action"] == "git.merge")
+    );
+}
+
+#[tokio::test]
+async fn the_pull_respond_tool_replies_and_resolves_through_the_stand_in_gh() {
+    let f = fixture().await;
+    f.hosted();
+    let (code, body) = f
+        .service
+        .patch(&f.thread, json!({ "permission_mode": "full_access" }))
+        .await;
+    assert_eq!(code, 200, "{body}");
+    let call = |args: Value| format!("[mcp-call:orbyn_pull_request_respond]{args}[/mcp-call]");
+
+    // One call replies inside the thread and resolves it: both GraphQL mutations run in order.
+    let run = f
+        .service
+        .admit(
+            &f.thread,
+            &call(json!({ "number": 12, "thread": "T1", "body": "Thanks", "resolved": true })),
+        )
+        .await;
+    let events = f
+        .service
+        .events_until(&f.thread, None, |event| {
+            event["event"]["type"] == "RUN_FINISHED" && event["event"]["runId"] == run
+        })
+        .await;
+    let seen = events.last().unwrap()["seq"].as_i64();
+    let text = text_of(&events);
+    assert_eq!(f.service.finished(&f.thread).await, "completed");
+    assert!(text.contains("tool error=false"), "{text}");
+    assert!(text.contains("\"replied\":true"), "{text}");
+    assert!(text.contains("\"resolved\":true"), "{text}");
+    let log = f.log();
+    assert!(log.contains("addPullRequestReviewThreadReply"), "{log}");
+    assert!(log.contains("pullRequestReviewThreadId=T1"), "{log}");
+    assert!(log.contains("body=Thanks"), "{log}");
+    assert!(log.contains("resolveReviewThread"), "{log}");
+    assert!(log.contains("id=T1"), "{log}");
+    let audit = f.service.json("/api/audit?limit=100").await;
+    assert!(
+        audit
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| { row["action"] == "git.pull_thread_respond" && row["target"] == "T1" }),
+        "{audit}"
+    );
+
+    // A thread can be reopened without a reply.
+    let before = f.log().len();
+    let run = f
+        .service
+        .admit(
+            &f.thread,
+            &call(json!({ "number": 12, "thread": "T1", "resolved": false })),
+        )
+        .await;
+    let events = f
+        .service
+        .events_until(&f.thread, seen, |event| {
+            event["event"]["type"] == "RUN_FINISHED" && event["event"]["runId"] == run
+        })
+        .await;
+    let text = text_of(&events);
+    assert_eq!(f.service.finished(&f.thread).await, "completed");
+    assert!(text.contains("tool error=false"), "{text}");
+    assert!(text.contains("\"replied\":false"), "{text}");
+    assert!(f.log()[before..].contains("unresolveReviewThread"));
+
+    // GitHub refusing the mutation reaches the tool as its own answer, and the write is still
+    // audited first.
+    std::fs::write(f._dir.path().join("gh-fail"), "").unwrap();
+    let run = f
+        .service
+        .admit(
+            &f.thread,
+            &call(json!({ "number": 12, "thread": "T1", "resolved": true })),
+        )
+        .await;
+    let events = f
+        .service
+        .events_until(&f.thread, None, |event| {
+            event["event"]["type"] == "RUN_FINISHED" && event["event"]["runId"] == run
+        })
+        .await;
+    let text = text_of(&events);
+    assert!(text.contains("tool error=true"), "{text}");
+    assert!(text.contains("HTTP 403"), "{text}");
+    let audit = f.service.json("/api/audit?limit=100").await;
+    assert!(
+        audit
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["action"] == "git.pull_thread_respond"),
+        "{audit}"
+    );
+}
+
+#[test]
+fn the_stand_in_gh_refuses_a_mutation_whose_variable_is_not_bound() {
+    let dir = TempDir::new();
+    let gh = dir.path().join("gh");
+    std::fs::write(&gh, GH).unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let output = std::process::Command::new(&gh)
+        .args([
+            "api",
+            "graphql",
+            "-f",
+            "query=mutation($thread:ID!){resolveReviewThread(input:{threadId:$thread}){thread{id}}}",
+            "-f",
+            "pullRequestReviewThreadId=T1",
+        ])
+        .env("GH_LOG", dir.path().join("gh-log"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "the unbound mutation passed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Variable $thread was not provided"),
+        "{stderr}"
     );
 }
 
