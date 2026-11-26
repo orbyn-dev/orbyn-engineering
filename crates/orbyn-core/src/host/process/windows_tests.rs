@@ -77,6 +77,31 @@ fn resolver_fixture() {
     assert!(shim_target(&unsupported).is_none());
 }
 
+/// A shim that starts a native program directly keeps it as the program, while
+/// one that asks the Node host to run one is refused: the host would read the
+/// executable as a module, so following it would run something else.
+#[test]
+fn a_native_executable_is_never_a_node_payload() {
+    let dir = crate::testing::TempDir::new();
+    let direct = dir.path().join("tool.cmd");
+    std::fs::write(&direct, "SET \"TOOL=%~dp0\\tool.exe\"\r\n\"%TOOL%\" %*\r\n").unwrap();
+    let resolved = shim_target(&direct).unwrap();
+    assert_eq!(resolved.program, dir.path().join("tool.exe"));
+    assert!(resolved.prefix.is_empty());
+
+    let node_payload = dir.path().join("worker.cmd");
+    std::fs::write(
+        &node_payload,
+        concat!(
+            "SET \"NODE_EXE=%~dp0\\node.exe\"\r\n",
+            "SET \"WORKER=%~dp0\\worker.exe\"\r\n",
+            "\"%NODE_EXE%\" \"%WORKER%\" %*\r\n",
+        ),
+    )
+    .unwrap();
+    assert!(shim_target(&node_payload).is_none());
+}
+
 #[test]
 fn relative_path_shim_survives_a_child_cwd_change() {
     run_fixture("relative");

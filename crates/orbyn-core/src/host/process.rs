@@ -221,7 +221,8 @@ pub fn parse_cmd_shim(text: &str) -> Option<String> {
 /// What a shim set a variable that a later command line expands to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum AssignedValue {
-    /// A local script or program this resolver may start itself.
+    /// A local payload this resolver may start itself: a native program launched
+    /// directly, or JavaScript the Node host runs as its argument.
     Script(String),
     /// The Node host that runs the payload argument, `node.exe` or `node`.
     Host,
@@ -246,7 +247,8 @@ enum AssignedValue {
 /// conditional prefix fallback relies on that). The launch is the last command
 /// line that expands a variable the file set; its first reference names the
 /// program, so a helper launched before the payload cannot win by assignment
-/// order.
+/// order. The Node host loads its payload as JavaScript, so naming a native
+/// executable as its argument is refused rather than started as itself.
 fn assigned_script(text: &str) -> Option<String> {
     let mut depth = 0usize;
     let mut assigned: Vec<(String, AssignedValue)> = Vec::new();
@@ -310,6 +312,16 @@ fn is_node_host(value: &str) -> bool {
     name.eq_ignore_ascii_case("node") || name.eq_ignore_ascii_case("node.exe")
 }
 
+/// Whether a payload the Node host runs is JavaScript it can load as a module.
+/// A native executable assigned to such a name would be read as a module, not
+/// started as itself, so a launch that depends on one is refused.
+fn is_javascript_payload(file: &str) -> bool {
+    let lower = file.to_ascii_lowercase();
+    [".js", ".cjs", ".mjs"]
+        .iter()
+        .any(|extension| lower.ends_with(extension))
+}
+
 /// Whether a `SET` value names something a launch can be followed through. A
 /// value this resolver cannot follow is never allowed to replace one it knows.
 fn followable(value: &AssignedValue) -> bool {
@@ -339,7 +351,11 @@ fn launch_target(line: &str, assigned: &[(String, AssignedValue)]) -> Option<Opt
     match references.next()? {
         AssignedValue::Script(script) => Some(Some(script.clone())),
         AssignedValue::Host => match references.next() {
-            Some(AssignedValue::Script(script)) => Some(Some(script.clone())),
+            // The host loads its argument as JavaScript; a native executable
+            // named here would be read as a module, so the launch is refused.
+            Some(AssignedValue::Script(payload)) if is_javascript_payload(payload) => {
+                Some(Some(payload.clone()))
+            }
             _ => Some(None),
         },
         AssignedValue::Unfollowable => Some(None),
@@ -1053,6 +1069,41 @@ mod tests {
         );
         let expected = ["lib", "cli.js"].join(std::path::MAIN_SEPARATOR_STR);
         assert_eq!(parse_cmd_shim(shim), Some(expected));
+    }
+
+    /// A native program is launched as itself, but the Node host loads its
+    /// argument as JavaScript: a native executable named as that argument is
+    /// refused rather than started directly, which is not what the shim would do.
+    #[test]
+    fn a_node_host_only_runs_javascript_payloads() {
+        // The native-exe shim launches its program directly.
+        let shim = concat!("SET \"TOOL=%~dp0\\tool.exe\"\r\n", "\"%TOOL%\" %*\r\n");
+        assert_eq!(parse_cmd_shim(shim), Some("tool.exe".to_owned()));
+        // Node would read a native executable as a module, never start it.
+        let shim = concat!(
+            "SET \"NODE_EXE=%~dp0\\node.exe\"\r\n",
+            "SET \"WORKER=%~dp0\\worker.exe\"\r\n",
+            "\"%NODE_EXE%\" \"%WORKER%\" %*\r\n",
+        );
+        assert_eq!(parse_cmd_shim(shim), None);
+        // npm launches its CLI through the Node host: the JavaScript payload is
+        // still followed, in the npx.cmd/node.cmd shape too.
+        let shim = concat!(
+            "SET \"NODE_EXE=%~dp0\\node.exe\"\r\n",
+            "SET \"NPX_CLI_JS=%~dp0\\node_modules\\npm\\bin\\npx-cli.js\"\r\n",
+            "\"%NODE_EXE%\" \"%NPX_CLI_JS%\" %*\r\n",
+        );
+        let expected =
+            ["node_modules", "npm", "bin", "npx-cli.js"].join(std::path::MAIN_SEPARATOR_STR);
+        assert_eq!(parse_cmd_shim(shim), Some(expected));
+        // Every JavaScript extension the Node host can load is followed.
+        for script in ["lib\\cli.cjs", "lib\\cli.mjs", "lib\\CLI.JS"] {
+            let shim = format!(
+                "SET \"NODE_EXE=%~dp0\\node.exe\"\r\nSET \"CLI=%~dp0\\{script}\"\r\n\"%NODE_EXE%\" \"%CLI%\" %*\r\n"
+            );
+            let expected = script.replace('\\', std::path::MAIN_SEPARATOR_STR);
+            assert_eq!(parse_cmd_shim(&shim), Some(expected), "{script}");
+        }
     }
 
     /// A leading `@` only suppresses echo; the command it prefixes is still the
