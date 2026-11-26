@@ -154,6 +154,54 @@ describe("limits store", () => {
     expect(await readLimits("codex", load)).toEqual({ n: 2 });
   });
 
+  it("does not let a cancelled joiner take the retry away from a live caller", async () => {
+    let cancelOwner!: (error: unknown) => void;
+    const ownerLoad = vi.fn().mockReturnValue(new Promise((_done, fail) => (cancelOwner = fail)));
+    const closed = new AbortController();
+    const closedLoad = vi.fn().mockImplementation(() => Promise.reject(closed.signal.reason));
+    const liveLoad = vi.fn().mockResolvedValue({ n: "live" });
+    const owner = readLimits("codex", ownerLoad);
+    const joinedClosed = readLimits("codex", closedLoad, { signal: closed.signal });
+    const joinedLive = readLimits("codex", liveLoad);
+    // This joining screen unmounts before the owner is cancelled; only the live screen may retry.
+    closed.abort();
+    const ownerResult = owner.catch((error: unknown) => error);
+    const closedResult = joinedClosed.catch((error: unknown) => error);
+    const liveResult = joinedLive.catch((error: unknown) => error);
+    cancelOwner(new DOMException("The request was aborted.", "AbortError"));
+    expect(await ownerResult).toMatchObject({ name: "AbortError" });
+    expect(await closedResult).toMatchObject({ name: "AbortError" });
+    expect(await liveResult).toEqual({ n: "live" });
+    expect(closedLoad).not.toHaveBeenCalled();
+    expect(liveLoad).toHaveBeenCalledTimes(1);
+    expect(limitsAge("codex")).toBe(0);
+  });
+
+  it("keeps a newer automatic answer when an old forced joiner has unmounted", async () => {
+    let cancelOwner!: (error: unknown) => void;
+    const owner = readLimits("codex", () => new Promise((_done, fail) => (cancelOwner = fail)), { force: true });
+    const closed = new AbortController();
+    const closedLoad = vi.fn().mockImplementation(() => Promise.reject(closed.signal.reason));
+    const joinedClosed = readLimits("codex", closedLoad, { force: true, signal: closed.signal });
+    // A limits event invalidates the old entry; a still-mounted screen starts a fresh read.
+    resetLimitsStore();
+    let answerLive!: (value: { n: string }) => void;
+    const live = readLimits("codex", () => new Promise<{ n: string }>((done) => (answerLive = done)));
+    closed.abort();
+    const ownerResult = owner.catch((error: unknown) => error);
+    const closedResult = joinedClosed.catch((error: unknown) => error);
+    cancelOwner(new DOMException("The request was aborted.", "AbortError"));
+    expect(await ownerResult).toMatchObject({ name: "AbortError" });
+    expect(await closedResult).toMatchObject({ name: "AbortError" });
+    expect(closedLoad).not.toHaveBeenCalled();
+    answerLive({ n: "live" });
+    expect(await live).toEqual({ n: "live" });
+    expect(limitsAge("codex")).toBe(0);
+    const unnecessary = vi.fn().mockResolvedValue({ n: "extra" });
+    expect(await readLimits("codex", unnecessary)).toEqual({ n: "live" });
+    expect(unnecessary).not.toHaveBeenCalled();
+  });
+
   it("owns no timers, so nothing is left running after a screen unmounts", async () => {
     const load = vi.fn().mockResolvedValue({});
     await readLimits("codex", load);

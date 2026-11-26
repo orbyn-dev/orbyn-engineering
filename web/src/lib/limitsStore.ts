@@ -11,6 +11,12 @@ export const LIMITS_STALE_MS = 5 * 60_000;
 /** After a failed check, automatic reads wait this long before asking again. */
 export const LIMITS_BACKOFF_MS = 30_000;
 
+interface ReadOptions {
+  force?: boolean;
+  /** The screen that may own a new request must still be mounted. */
+  signal?: AbortSignal;
+}
+
 interface Entry {
   data?: unknown;
   /** When the last good answer arrived. */
@@ -86,7 +92,7 @@ const isCancellation = (error: unknown) => error instanceof DOMException && erro
  * it. Cancellation is not a failure, so it records nothing; a check that joined the cancelled request reads on
  * its own instead of being left waiting on an answer nobody will send.
  */
-export function readLimits<T>(key: string, load: (force: boolean) => Promise<T>, options: { force?: boolean } = {}): Promise<T> {
+export function readLimits<T>(key: string, load: (force: boolean) => Promise<T>, options: ReadOptions = {}): Promise<T> {
   return readLimitsOnce(key, load, options, true);
 }
 
@@ -95,7 +101,9 @@ export function readLimits<T>(key: string, load: (force: boolean) => Promise<T>,
  * if that request is cancelled under it, it tries once more as itself. The caller that started the request never
  * retries, because the cancellation is its own.
  */
-function readLimitsOnce<T>(key: string, load: (force: boolean) => Promise<T>, options: { force?: boolean }, retryOnCancel: boolean): Promise<T> {
+function readLimitsOnce<T>(key: string, load: (force: boolean) => Promise<T>, options: ReadOptions, retryOnCancel: boolean): Promise<T> {
+  // A cancelled joiner must not claim the shared retry or replace a newer live request.
+  if (options.signal?.aborted) return Promise.reject(options.signal.reason);
   const entry = entryOf(key);
   const force = options.force === true;
   const now = Date.now();
@@ -150,7 +158,7 @@ function readLimitsOnce<T>(key: string, load: (force: boolean) => Promise<T>, op
  * it reads once more through the store: that joins whatever request replaced the old one, or starts its own. The
  * retry is bounded: a request cancelled twice is not chased further.
  */
-function joined<T>(key: string, request: Promise<T>, load: (force: boolean) => Promise<T>, options: { force?: boolean }, retryOnCancel: boolean): Promise<T> {
+function joined<T>(key: string, request: Promise<T>, load: (force: boolean) => Promise<T>, options: ReadOptions, retryOnCancel: boolean): Promise<T> {
   if (!retryOnCancel) return request;
   return request.catch((error: unknown) => {
     if (!isCancellation(error)) throw error;
