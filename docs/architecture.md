@@ -761,7 +761,8 @@ for again for 2 minutes, `fresh` included. `ForgeStatus.viewer` is the login the
 signed in as, read on each `GET /api/forges` rescan. Pull request reads (the lists, a pull
 request's detail, checks, comments, timeline, files, revisions and stack, and the reviewer and
 label candidates) answer from the last known value and take `?refresh=1`; any write to a pull
-request drops what was kept for it ([Instant reads](#instant-reads)).
+request drops what was kept for it ([Instant reads](#instant-reads)), except a viewed mark: the
+files read already kept takes GitHub's new state, so no second forge read is needed to show it.
 
 The detail page keys its extras read by the selected project, number and loaded pull
 revision. Local mutations and manual retries force a fresh extras read; an older
@@ -809,7 +810,16 @@ check fails, all checks pass, the branch starts to conflict, or someone else com
 or reviews; the viewer's own comments are not news. It ends at a merge or close, after
 10 wakes in a row that bring only comments, after 8 failed reads in a row, on an
 unlink, or when the thread settles or archives. A subagent thread cannot watch.
-Viewed-file marks are this service's own, per project, and never reach the forge.
+Viewed-file marks are GitHub's own on a GitHub pull request. The files read asks GitHub's
+GraphQL `files` connection for every changed file's `viewerViewedState`, so GitHub's state is
+what it shows; a mark or unmark made here runs GitHub's `markFileAsViewed` or
+`unmarkFileAsViewed` mutation through `gh`, audited as `git.pull_viewed` before it happens,
+and the files read it already kept carries the new state, so the box does not wait for another
+forge read. A mark GitHub refuses is kept by this service and the route answers
+`502 viewed_unsynced` saying GitHub did not save it; the files read keeps showing that mark,
+with `viewed_synced` false, so it is never lost and never mistaken for GitHub's. When GitHub's
+state cannot be read, the service's kept marks stand in as before, and a forge with no viewed
+files of its own keeps them, with `viewed_synced` false.
 
 A review guide is an agent's stop-by-stop reading order for one pull request, also
 this service's own. Orbyn does not generate it itself: writing a guide starts an
@@ -3238,8 +3248,8 @@ says so.
 
 `orbyn_pull_guide_write` stores a review guide the calling agent wrote, one per project
 and pull request number, replacing the earlier one; `orbyn_pull_guide_read` returns it
-or `null`. Like viewed-file marks, a guide is this service's own and never reaches the
-forge. The write carries an effect, so the gate asks, and it fails while the project's
+or `null`. A guide is this service's own and never reaches the forge. The write carries an
+effect, so the gate asks, and it fails while the project's
 `review_guides_enabled` preference is off. Its stops are rebuilt with only their known
 fields (title, summary, files with a path and note, questions) and are bounded: 30
 stops, a stored size of 128 KiB. Neither tool checks that the number names a real pull
@@ -4016,12 +4026,12 @@ every method, path and which routes need a credential.
 | `GET /api/projects/:id/pulls/reviewers`, `/labels` | `PullCandidate[]` |
 | `POST /api/projects/:id/workflows/:run/approve` | Let a fork's waiting workflow run; GitHub only |
 | `GET, PATCH /api/projects/:id/pulls/:number` | `PullRequestDetail`; `UpdatePull` for title, body, base, draft, maintainer edits |
-| `GET .../pulls/:number/checks`, `/timeline`, `/files` | `PullCheck[]`, `PullTimelineEvent[]`, `PullFile[]` with viewed marks |
+| `GET .../pulls/:number/checks`, `/timeline`, `/files` | `PullCheck[]`, `PullTimelineEvent[]`, `PullFile[]` with viewed marks: GitHub's own `viewerViewedState` on GitHub, this service's marks elsewhere, and `viewed_synced` saying which |
 | `GET .../pulls/:number/breakdown`, `/linked-threads` | `PullChangeBreakdown`: counts by change kind and lines over the same files rows; `Thread[]` linked to the pull request, from the service's own links |
 | `GET, POST .../pulls/:number/comments` | `PullConversation`; `AddPullComment` with optional `path`, `line`, `reply_to` |
 | `PATCH .../comments/:comment`, `POST .../comments/:comment/react` | `EditPullComment`; `ReactPullComment` |
 | `POST .../pulls/:number/threads/:thread/resolve` | `ResolvePullThread` |
-| `POST .../pulls/:number/viewed` | `SetFilesViewed` (`204`) |
+| `POST .../pulls/:number/viewed` (`Person`) | `SetFilesViewed` (`204`); on GitHub the mark runs its own mutation as the person, and a mark GitHub refuses is kept here with `502 viewed_unsynced` |
 | `POST .../pulls/:number/review` | `SubmitReview`, with line comments |
 | `POST .../pulls/:number/reviewers`, `/labels` | `SetPullPeople` |
 | `POST .../pulls/:number/merge` | `MergePull`: method, `auto`, `delete_branch`, `subject`, `body`, `strip_credits`, `expected_head`. A head that moved is `409 pull_head_changed`. Only GitHub and GitLab (not a rebase) are fully guarded, because the forge refuses the moved head itself. Azure, Forgejo, Bitbucket and a GitLab rebase read the head just before merging and refuse a mismatch, with a small race window between that read and the merge; a head that cannot be read refuses the merge |

@@ -296,7 +296,8 @@ pub async fn set_viewed(
 ) -> ApiResult<StatusCode> {
     state
         .core
-        .set_files_viewed(&id, number, &body.paths, body.viewed)?;
+        .set_files_viewed(&id, number, &body.paths, body.viewed, LOCAL_USER)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
