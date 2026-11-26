@@ -1,5 +1,6 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { LocalServer } from "../../../api/types";
 import { useUi } from "../../../product/state/ui";
@@ -174,4 +175,22 @@ it("gives the Limits row an age line and a refresh that forces a read and keeps 
     expect(screen.getByText("5h 62% left")).toBeVisible();
     expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   } finally { vi.useRealTimers(); }
+});
+
+it("draws the Limits row when the request a quick Details open started is cancelled and asked again", async () => {
+  let reads = 0;
+  // The first read is the one StrictMode's replay cancels by leaving: it is never answered. The replay's own read answers.
+  vi.spyOn(api.api, "threadLimits").mockImplementation(((_threadId: string, signal?: AbortSignal) => {
+    reads += 1;
+    if (reads > 1) return Promise.resolve(codexRead(38) as never);
+    return new Promise<never>((_done, fail) => {
+      const abandon = () => fail(new DOMException("The request was aborted.", "AbortError"));
+      if (signal?.aborted) abandon();
+      else signal?.addEventListener("abort", abandon, { once: true });
+    });
+  }) as never);
+  render(<StrictMode><LimitsRow threadId="replayed" engine="codex" /></StrictMode>);
+  // The cancel is not an answer: the row still draws from the read that follows it.
+  expect(await screen.findByText("5h 62% left")).toBeVisible();
+  expect(reads).toBe(2);
 });

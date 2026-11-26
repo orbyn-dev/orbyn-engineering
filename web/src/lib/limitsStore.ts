@@ -67,22 +67,45 @@ export function forgetLimits(key: string) {
   entries.delete(key);
 }
 
+/**
+ * A read the browser abandoned because whoever asked left (a screen unmounting, React replaying an effect):
+ * it never reached the service's answer. That is not a failed check, so it records no error and starts no
+ * backoff; whoever still wants the figure asks again.
+ */
+const isCancellation = (error: unknown) => error instanceof DOMException && error.name === "AbortError";
+
 /** Test seam: forget everything. */
 export function resetLimitsStore() {
   entries.clear();
 }
 
+interface ReadOptions {
+  force?: boolean;
+}
+
 /**
  * `load(force)` makes the real request. `force: true` is a person's refresh: it skips the window and the error
  * backoff, and replaces a slower request already on its way (the newest request wins).
+ *
+ * An abandoned read is not an answer: a screen leaving cancels the request it started, and React's replay of an
+ * effect asks on the same shared request the first mount sent. The cancellation records nothing, and a check that
+ * had joined the cancelled request asks once more as itself instead of being left without a figure.
  */
-export function readLimits<T>(key: string, load: (force: boolean) => Promise<T>, options: { force?: boolean } = {}): Promise<T> {
+export function readLimits<T>(key: string, load: (force: boolean) => Promise<T>, options: ReadOptions = {}): Promise<T> {
+  return readLimitsOnce(key, load, options, true);
+}
+
+/**
+ * One attempt. `chase` is set for a check that may ask again when the request it joined is cancelled out from under
+ * it; the retry itself does not chase, so a request cancelled twice is not chased further.
+ */
+function readLimitsOnce<T>(key: string, load: (force: boolean) => Promise<T>, options: ReadOptions, chase: boolean): Promise<T> {
   const entry = entryOf(key);
   const force = options.force === true;
   const now = Date.now();
   if (!force) {
     // One request in flight per instance: a second automatic check joins it.
-    if (entry.inflight) return entry.inflight as Promise<T>;
+    if (entry.inflight) return joined(entry.inflight as Promise<T>, () => readLimitsOnce(key, load, options, false), chase);
     if (entry.at !== undefined && now - entry.at < LIMITS_STALE_MS && (entry.failedAt === undefined || entry.failedAt < entry.at)) {
       return Promise.resolve(entry.data as T);
     }
@@ -92,7 +115,7 @@ export function readLimits<T>(key: string, load: (force: boolean) => Promise<T>,
     }
   } else if (entry.inflight && entry.forced) {
     // Two manual presses in a row share the one forced request.
-    return entry.inflight as Promise<T>;
+    return joined(entry.inflight as Promise<T>, () => readLimitsOnce(key, load, options, false), chase);
   }
   const id = ++entry.generation;
   entry.forced = force;
@@ -111,9 +134,11 @@ export function readLimits<T>(key: string, load: (force: boolean) => Promise<T>,
     },
     (error: unknown) => {
       if (id === entry.generation) {
+        entry.inflight = undefined;
+        // A cancelled check never happened: no failedAt, so the next automatic check is not held back.
+        if (isCancellation(error)) throw error;
         entry.failedAt = Date.now();
         entry.error = error;
-        entry.inflight = undefined;
         // The last good answer stays on screen through a failed automatic check; a manual one reports its error.
         if (entry.at !== undefined && !force) return entry.data as T;
       }
@@ -122,6 +147,19 @@ export function readLimits<T>(key: string, load: (force: boolean) => Promise<T>,
   );
   entry.inflight = request;
   return request;
+}
+
+/**
+ * A check waiting on a request another caller started. Only a cancellation leaves it without an answer (a failure is
+ * the answer for everyone who joined), so it asks once more through the store: that joins whatever request replaced
+ * the cancelled one, or starts its own.
+ */
+function joined<T>(request: Promise<T>, retry: () => Promise<T>, chase: boolean): Promise<T> {
+  if (!chase) return request;
+  return request.catch((error: unknown) => {
+    if (!isCancellation(error)) throw error;
+    return retry();
+  });
 }
 
 // The service sends `limits` when what a read would answer has changed (another account signed in, a window reset).

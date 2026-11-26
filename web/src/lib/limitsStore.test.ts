@@ -115,6 +115,64 @@ describe("limits store", () => {
     expect(await readLimits("codex", load, { force: true })).toEqual({ n: 2 });
   });
 
+  const cancelled = () => new DOMException("The request was aborted.", "AbortError");
+
+  it("counts a cancelled check as no answer at all: nothing failed, so the next automatic check goes out at once", async () => {
+    let cancel!: (error: unknown) => void;
+    const load = vi.fn().mockReturnValueOnce(new Promise<unknown>((_done, fail) => (cancel = fail))).mockResolvedValueOnce({ n: 2 });
+    const aborted = readLimits("codex", load);
+    cancel(cancelled());
+    await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+    // No failed check is recorded: the 30 s backoff never starts, so the next automatic check asks straight away.
+    expect(await readLimits("codex", load)).toEqual({ n: 2 });
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the earlier answer through a cancelled check and still asks again at once", async () => {
+    let cancel!: (error: unknown) => void;
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce({ n: 1 })
+      .mockReturnValueOnce(new Promise<unknown>((_done, fail) => (cancel = fail)))
+      .mockResolvedValueOnce({ n: 3 });
+    await readLimits("codex", load);
+    vi.advanceTimersByTime(LIMITS_STALE_MS);
+    const aborted = readLimits("codex", load);
+    cancel(cancelled());
+    await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+    // A cancellation is not a failure, so it does not hold the next check back for 30 s.
+    expect(await readLimits("codex", load)).toEqual({ n: 3 });
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+
+  it("reads once more when a check that joined a request is cancelled out from under it", async () => {
+    let cancel!: (error: unknown) => void;
+    const load = vi.fn().mockReturnValueOnce(new Promise<unknown>((_done, fail) => (cancel = fail))).mockResolvedValueOnce({ n: 2 });
+    // React StrictMode's replay joins the request the first mount started, and that mount's cleanup cancels it.
+    const owner = readLimits("codex", load);
+    const replay = readLimits("codex", load);
+    cancel(cancelled());
+    await expect(owner).rejects.toMatchObject({ name: "AbortError" });
+    // The replay still wants the figure, so it reads again instead of waiting on an answer nobody will send.
+    expect(await replay).toEqual({ n: 2 });
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(limitsAge("codex")).toBe(0);
+  });
+
+  it("still shares a genuine failure with a check that joined it, and still backs off", async () => {
+    const load = vi.fn().mockRejectedValueOnce(new Error("down")).mockResolvedValueOnce({ n: 2 });
+    const owner = readLimits("codex", load);
+    const joined = readLimits("codex", load);
+    await expect(owner).rejects.toThrow("down");
+    // A failure is an answer: the joining check is told it failed and does not read again.
+    await expect(joined).rejects.toThrow("down");
+    expect(load).toHaveBeenCalledTimes(1);
+    await expect(readLimits("codex", load)).rejects.toThrow("down");
+    expect(load).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(LIMITS_BACKOFF_MS);
+    expect(await readLimits("codex", load)).toEqual({ n: 2 });
+  });
+
   it("owns no timers, so nothing is left running after a screen unmounts", async () => {
     const load = vi.fn().mockResolvedValue({});
     await readLimits("codex", load);
