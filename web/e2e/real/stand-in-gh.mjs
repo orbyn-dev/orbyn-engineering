@@ -105,6 +105,44 @@ function apiCall() {
   }
   if (path === "graphql") {
     const query = field("query") ?? "";
+    // GitHub's own viewed state: the files connection reads each changed file's
+    // `viewerViewedState`, and the mark mutations set or clear one path. The fixture holds it as
+    // `viewed: string[]`, the paths the viewer marked viewed.
+    if (query.includes("ViewedFiles")) {
+      if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
+      const entry = pull(field("number"));
+      return out({
+        data: {
+          repository: {
+            pullRequest: {
+              id: `PR_${entry.number}`,
+              files: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: (entry.files ?? []).map((file) => ({
+                  path: file.filename,
+                  viewerViewedState: (entry.viewed ?? []).includes(file.filename) ? "VIEWED" : "UNVIEWED",
+                })),
+              },
+            },
+          },
+        },
+      });
+    }
+    if (query.includes("ViewedId")) {
+      if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
+      const entry = pull(field("number"));
+      return out({ data: { repository: { pullRequest: { id: `PR_${entry.number}` } } } });
+    }
+    if (query.includes("MarkFileAsViewed") || query.includes("UnmarkFileAsViewed")) {
+      if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
+      const entry = pull(String(field("id")).replace("PR_", ""));
+      const path = field("path");
+      const viewed = (entry.viewed ?? []).filter((name) => name !== path);
+      if (query.includes("MarkFileAsViewed")) viewed.push(path);
+      entry.viewed = viewed;
+      save();
+      return out({ data: { [query.includes("MarkFileAsViewed") ? "markFileAsViewed" : "unmarkFileAsViewed"]: { pullRequest: { id: `PR_${entry.number}` } } } });
+    }
     if (query.includes("reviewRequests")) {
       // The batched details query: one alias `p<number>` per pull request.
       if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
@@ -268,6 +306,10 @@ switch (route) {
     break;
   }
   case "pr list":
+    // A project whose repository cannot be read fails the call the way real gh does: its own message on stderr and a
+    // non-zero exit. The service reports that in the list's per-project `failed` rows instead of failing the whole
+    // read. Off by default; set and cleared through the service's `ghEdit(0, …)` helper, like `delayMs`.
+    if (state.pullListError) fail(state.pullListError);
     out(state.pulls.filter((entry) => (flag("--state") === "all" ? true : entry.state.toLowerCase() === flag("--state"))));
     break;
   case "pr view":

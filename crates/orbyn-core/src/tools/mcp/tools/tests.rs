@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use base64::Engine as _;
 use orbyn_contracts::{
-    ActionKind, AuditEvent, ConnectTracker, CreatePolicyRule, IssueActor, IssueComment,
-    IssueDetail, IssueState, IssueStateCategory, IssueSummary, PermissionMode, PolicyEffect,
-    PullCheck, PullChecks, PullRequest, PullRequestDetail, TrackerKind,
+    ActionKind, AuditEvent, ConnectTracker, CreatePolicyRule, IssueActor, IssueCloseReason,
+    IssueComment, IssueDetail, IssueState, IssueStateCategory, IssueSummary, PermissionMode,
+    PolicyEffect, PullCheck, PullChecks, PullRequest, PullRequestDetail, TrackerKind,
 };
 use serde_json::{Value, json};
 
@@ -510,6 +510,11 @@ struct FakeIssues {
     issues: Vec<IssueSummary>,
     bodies: HashMap<String, String>,
     lists: AtomicUsize,
+    /// Every detail read the tool asked for, so a refusal can prove nothing was read either.
+    reads: AtomicUsize,
+    /// Whether this tracker's edit is built. When it is, its issues offer the three state names
+    /// GitHub offers, so a state move travels the same path a GitHub one does.
+    editable: bool,
     scopes: Mutex<Vec<String>>,
     query: Mutex<Option<IssueQuery>>,
     /// Every write the tool sent, exactly as the tracker received it.
@@ -518,6 +523,38 @@ struct FakeIssues {
 
 impl FakeIssues {
     fn new() -> Arc<Self> {
+        Self::build(false)
+    }
+
+    /// The same reader with its edit built, for the tools that write an issue.
+    fn editing() -> Arc<Self> {
+        Self::build(true)
+    }
+
+    /// The states a reader whose edit is built offers; the same names and reasons GitHub offers.
+    fn states(&self) -> Option<Vec<IssueState>> {
+        self.editable.then(|| {
+            vec![
+                IssueState {
+                    category: IssueStateCategory::Open,
+                    name: "Open".into(),
+                    close_reason: None,
+                },
+                IssueState {
+                    category: IssueStateCategory::Closed,
+                    name: "Closed".into(),
+                    close_reason: Some(IssueCloseReason::Completed),
+                },
+                IssueState {
+                    category: IssueStateCategory::Closed,
+                    name: "Closed as not planned".into(),
+                    close_reason: Some(IssueCloseReason::NotPlanned),
+                },
+            ]
+        })
+    }
+
+    fn build(editable: bool) -> Arc<Self> {
         let issue = |key: &str, title: &str, labels: &[&str]| IssueSummary {
             tracker: TrackerKind::Gitlab,
             scope: "team/app".into(),
@@ -556,6 +593,8 @@ impl FakeIssues {
             ],
             bodies,
             lists: AtomicUsize::new(0),
+            reads: AtomicUsize::new(0),
+            editable,
             scopes: Mutex::new(Vec::new()),
             query: Mutex::new(None),
             writes: Mutex::new(Vec::new()),
@@ -590,6 +629,7 @@ impl IssueSource for FakeIssues {
     }
 
     async fn get(&self, scope: &str, key: &str) -> crate::error::Result<IssueDetail> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         let mut summary = self
             .issues
             .iter()
@@ -605,8 +645,40 @@ impl IssueSource for FakeIssues {
             linked_threads: vec![],
             activity: vec![],
             reactions: None,
-            states: None,
+            states: self.states(),
         })
+    }
+
+    fn can_edit(&self) -> bool {
+        self.editable
+    }
+
+    /// Moves the named issue the way a tracker with its edit built does, and answers the issue as
+    /// the tracker stored it, so the tool's answer keeps the detail read's shape.
+    async fn set_state(
+        &self,
+        scope: &str,
+        key: &str,
+        state: &str,
+        close_reason: Option<IssueCloseReason>,
+    ) -> crate::error::Result<IssueDetail> {
+        self.writes.lock().unwrap().push(json!({
+            "kind": "set_state",
+            "scope": scope,
+            "key": key,
+            "state": state,
+            "close_reason": close_reason,
+        }));
+        let mut detail = self.get(scope, key).await?;
+        detail.summary.state = detail
+            .states
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .find(|offered| offered.name == state)
+            .cloned()
+            .ok_or_else(|| CoreError::Invalid("That state is not one this issue offers.".into()))?;
+        Ok(detail)
     }
 
     async fn create(&self, scope: &str, new: &NewIssue<'_>) -> crate::error::Result<IssueDetail> {
@@ -671,11 +743,28 @@ struct IssueWorld {
     _dir: TempDir,
     core: Arc<Core>,
     token: String,
+    thread: String,
     reader: Arc<FakeIssues>,
 }
 
 async fn issue_world(connected: bool) -> IssueWorld {
-    issue_world_at(connected, "https://gitlab.example.test/team/app.git").await
+    issue_world_reader(
+        connected,
+        "https://gitlab.example.test/team/app.git",
+        FakeIssues::new(),
+    )
+    .await
+}
+
+/// The same world whose tracker also edits: its issues offer the three states GitHub names, so a
+/// state move travels the path a GitHub one does.
+async fn editable_issue_world() -> IssueWorld {
+    issue_world_reader(
+        true,
+        "https://gitlab.example.test/team/app.git",
+        FakeIssues::editing(),
+    )
+    .await
 }
 
 /// The same world over a GitHub origin, for the CI tools that read `gh` runs.
@@ -684,6 +773,10 @@ async fn github_pull_world() -> IssueWorld {
 }
 
 async fn issue_world_at(connected: bool, origin: &str) -> IssueWorld {
+    issue_world_reader(connected, origin, FakeIssues::new()).await
+}
+
+async fn issue_world_reader(connected: bool, origin: &str, reader: Arc<FakeIssues>) -> IssueWorld {
     let dir = TempDir::new();
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
@@ -700,7 +793,6 @@ async fn issue_world_at(connected: bool, origin: &str) -> IssueWorld {
     core.mcp.bind_host(&core);
     core.issues
         .set_credentials(Credentials::new(Arc::new(MemoryBackend::default()), "test"));
-    let reader = FakeIssues::new();
     core.issues.set_source(TrackerKind::Gitlab, reader.clone());
     if connected {
         core.connect_issue_tracker(
@@ -747,7 +839,7 @@ async fn issue_world_at(connected: bool, origin: &str) -> IssueWorld {
         .register(McpBinding {
             scope: RunScope {
                 run_id: "run-issues".into(),
-                thread_id: thread.id,
+                thread_id: thread.id.clone(),
                 engine: "alpha".into(),
                 family: "alpha".into(),
                 write_scope: None,
@@ -762,6 +854,7 @@ async fn issue_world_at(connected: bool, origin: &str) -> IssueWorld {
         _dir: dir,
         core,
         token,
+        thread: thread.id,
         reader,
     }
 }
@@ -908,6 +1001,10 @@ async fn every_issue_tool_but_the_thread_list_refuses_a_project_with_no_reader()
             "orbyn_issue_comment",
             json!({ "key": "1", "body": "Looks good" }),
         ),
+        (
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Open" }),
+        ),
         ("orbyn_issue_link", json!({ "key": "1" })),
         ("orbyn_issue_unlink", json!({ "key": "1" })),
     ] {
@@ -1044,18 +1141,222 @@ async fn an_issue_comment_refuses_a_blank_body_and_an_unknown_key() {
 }
 
 #[tokio::test]
-async fn the_state_tool_is_not_offered_because_the_service_has_no_state_route() {
-    let w = issue_world(true).await;
-    assert!(
-        !is_tool("orbyn_issue_set_state"),
-        "set_state needs the service's update/state route, which is a separate row"
+async fn an_issue_state_move_answers_the_issue_and_sends_the_contract_fields() {
+    let w = editable_issue_world().await;
+    let (answer, error) = w
+        .call_json(
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Closed as not planned", "close_reason": "not_planned" }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["key"], "1");
+    assert_eq!(answer["state"]["name"], "Closed as not planned");
+    assert_eq!(answer["state"]["category"], "closed");
+    assert_eq!(answer["state"]["close_reason"], "not_planned");
+    assert_eq!(answer["note"], ISSUE_NOTE);
+    let body = answer["body"].as_str().unwrap();
+    assert!(body.contains("Keep"), "{body}");
+    assert!(!body.contains("ISSUE TEXT"), "{body}");
+    assert_eq!(
+        w.reader.writes.lock().unwrap().clone(),
+        vec![json!({
+            "kind": "set_state",
+            "scope": "team/app",
+            "key": "1",
+            "state": "Closed as not planned",
+            "close_reason": "not_planned",
+        })],
+        "the tool sends the contract's fields in the project's own scope"
     );
-    let names = w.tool_names().await;
-    assert!(!names.iter().any(|name| name == "orbyn_issue_set_state"));
 }
 
 #[tokio::test]
-async fn tools_list_names_all_seven_issue_tools_with_their_effects() {
+async fn an_issue_state_move_defaults_the_reason_and_reopens_without_one() {
+    let w = editable_issue_world().await;
+    // A closed state with no reason is completed: the Core's contract default, not the tool's guess.
+    let (answer, error) = w
+        .call_json(
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Closed" }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["state"]["name"], "Closed");
+    assert_eq!(answer["state"]["close_reason"], "completed");
+    let (answer, error) = w
+        .call_json(
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Open" }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["state"]["name"], "Open");
+    assert_eq!(
+        w.reader.writes.lock().unwrap().clone(),
+        vec![
+            json!({
+                "kind": "set_state",
+                "scope": "team/app",
+                "key": "1",
+                "state": "Closed",
+                "close_reason": "completed",
+            }),
+            json!({
+                "kind": "set_state",
+                "scope": "team/app",
+                "key": "1",
+                "state": "Open",
+                "close_reason": null,
+            }),
+        ],
+        "the reason the contract defaults to is the one the tracker receives"
+    );
+}
+
+#[tokio::test]
+async fn an_issue_state_move_refuses_arguments_the_tool_cannot_take() {
+    let w = editable_issue_world().await;
+    for (args, wanted) in [
+        (json!({}), "key is required."),
+        (json!({ "key": 1, "state": "Open" }), "key is required."),
+        (json!({ "key": "1" }), "state is required."),
+        (json!({ "key": "1", "state": " " }), "state is required."),
+        (
+            json!({ "key": "1", "state": "Open", "close_reason": 7 }),
+            "close_reason must be a string.",
+        ),
+        (
+            json!({ "key": "1", "state": "Open", "close_reason": "done" }),
+            "close_reason must be completed or not_planned.",
+        ),
+        (
+            // The route's serde enum reads the reason exactly, so a padded value is refused there
+            // and here alike.
+            json!({ "key": "1", "state": "Closed", "close_reason": " not_planned " }),
+            "close_reason must be completed or not_planned.",
+        ),
+        (
+            json!({ "key": "1", "state": "Done" }),
+            "That state is not one this issue offers.",
+        ),
+        (
+            json!({ "key": "1", "state": "Open", "close_reason": "completed" }),
+            "A close reason is only for a closed state.",
+        ),
+    ] {
+        let (text, error) = w.call_text("orbyn_issue_set_state", args.clone()).await;
+        assert!(error, "{args} was not refused: {text}");
+        assert!(text.contains(wanted), "{args}: {text}");
+    }
+    assert!(
+        w.reader.writes.lock().unwrap().is_empty(),
+        "a refused move sends no write"
+    );
+}
+
+#[tokio::test]
+async fn an_issue_state_move_passes_an_unsupported_edit_through_as_a_failure() {
+    // The fake GitLab reader keeps its edit unbuilt, as GitLab, Forgejo, Azure DevOps and Linear do:
+    // the route's 422 unsupported reaches the tool as a plain failure, and nothing is read or sent.
+    let w = issue_world(true).await;
+    let (text, error) = w
+        .call_text(
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Open" }),
+        )
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(text, "GitLab issue edits arrive in a later update.");
+    assert!(w.reader.writes.lock().unwrap().is_empty());
+    assert_eq!(
+        w.reader.reads.load(Ordering::SeqCst),
+        0,
+        "nothing was read either"
+    );
+}
+
+#[tokio::test]
+async fn a_denied_state_move_answers_the_denial_and_runs_nothing() {
+    let w = editable_issue_world().await;
+    w.core
+        .store
+        .add_rule(
+            &CreatePolicyRule {
+                effect: PolicyEffect::Deny,
+                kind: ActionKind::Tool,
+                pattern: "=orbyn_issue_set_state".into(),
+                engine: None,
+                note: None,
+            },
+            "test",
+        )
+        .unwrap();
+    let (text, error) = w
+        .call_text(
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Closed" }),
+        )
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(
+        text,
+        "Blocked by policy: Matched rule =orbyn_issue_set_state"
+    );
+    assert!(
+        w.reader.writes.lock().unwrap().is_empty(),
+        "the tracker was written"
+    );
+    assert_eq!(w.reader.reads.load(Ordering::SeqCst), 0, "nothing was read");
+    let audit = w.core.store.list_audit(None, 100).unwrap();
+    assert!(
+        audit
+            .iter()
+            .any(|row| row.action == "action.deny" && row.target == "orbyn_issue_set_state"),
+        "a denied call is audited, and only as a denial"
+    );
+}
+
+#[tokio::test]
+async fn a_crew_worker_cannot_use_the_issue_state_tool() {
+    let w = editable_issue_world().await;
+    make_crew_worker(&w.core, &w.thread);
+    let (text, error) = w
+        .call_text(
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Closed" }),
+        )
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(text, "A crew worker cannot use orbyn_issue_set_state.");
+    assert!(w.reader.writes.lock().unwrap().is_empty());
+    assert_eq!(
+        w.reader.reads.load(Ordering::SeqCst),
+        0,
+        "the refusal runs nothing"
+    );
+}
+
+#[tokio::test]
+async fn the_state_tool_is_offered_and_gated_like_the_other_issue_writes() {
+    let w = issue_world(true).await;
+    assert!(
+        is_tool("orbyn_issue_set_state"),
+        "the service's state route exists, so the tool is offered"
+    );
+    assert!(
+        has_effect("orbyn_issue_set_state"),
+        "a state move writes to the tracker"
+    );
+    let names = w.tool_names().await;
+    assert!(
+        names.iter().any(|name| name == "orbyn_issue_set_state"),
+        "the tool list names it: {names:?}"
+    );
+}
+
+#[tokio::test]
+async fn tools_list_names_all_eight_issue_tools_with_their_effects() {
     let w = issue_world(false).await;
     let names = w.tool_names().await;
     for (name, effect) in [
@@ -1063,6 +1364,7 @@ async fn tools_list_names_all_seven_issue_tools_with_their_effects() {
         ("orbyn_issue_read", false),
         ("orbyn_issue_create", true),
         ("orbyn_issue_comment", true),
+        ("orbyn_issue_set_state", true),
         ("orbyn_issue_link", true),
         ("orbyn_issue_unlink", true),
         ("orbyn_issue_thread_list", false),
@@ -1089,6 +1391,19 @@ async fn tools_list_names_all_seven_issue_tools_with_their_effects() {
         list.args,
         &[("label", "string"), ("state", "string"), ("text", "string")]
     );
+    let state = TOOLS
+        .iter()
+        .find(|tool| tool.name == "orbyn_issue_set_state")
+        .unwrap();
+    assert_eq!(
+        state.args,
+        &[
+            ("key", "string"),
+            ("state", "string"),
+            ("close_reason", "string")
+        ]
+    );
+    assert_eq!(state.required, &["key", "state"]);
     assert!(list.required.is_empty());
     let thread_list = TOOLS
         .iter()
@@ -1494,6 +1809,38 @@ async fn tools_list_names_the_two_pull_write_tools_with_effect() {
 }
 
 #[tokio::test]
+async fn tools_list_names_the_pull_respond_tool_with_effect() {
+    let w = pull_world().await;
+    let names = w.tool_names().await;
+    let name = "orbyn_pull_request_respond";
+    assert!(
+        names.iter().any(|listed| listed.as_str() == name),
+        "{name} is not listed"
+    );
+    assert!(has_effect(name));
+    let tool = TOOLS.iter().find(|tool| tool.name == name).unwrap();
+    assert!(tool.effect);
+    assert!(
+        tool.description.contains("data from the forge"),
+        "the respond tool does not say its text is data"
+    );
+    assert!(
+        tool.description.contains("review thread"),
+        "the respond tool does not name the thread it acts on"
+    );
+    assert_eq!(
+        tool.args,
+        &[
+            ("number", "number"),
+            ("thread", "string"),
+            ("body", "string"),
+            ("resolved", "boolean"),
+        ]
+    );
+    assert_eq!(tool.required, &["number", "thread"]);
+}
+
+#[tokio::test]
 async fn tools_list_names_the_two_pull_review_merge_tools_with_effect() {
     let w = pull_world().await;
     let names = w.tool_names().await;
@@ -1725,6 +2072,372 @@ async fn pull_review_and_merge_refuse_bad_arguments_before_the_forge() {
         assert!(error, "{name} answered {text}");
         assert!(text.contains(wanted), "{name}: {text}");
     }
+}
+
+#[test]
+fn pull_respond_refuses_bad_arguments_before_the_forge() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let too_long_body = "x".repeat(MAX_PULL_COMMENT_BYTES + 1);
+    let long_thread = "t".repeat(MAX_REPLY_TO_CHARS + 1);
+    for (args, wanted) in [
+        (
+            json!({ "number": 7, "resolved": true }),
+            "thread is required",
+        ),
+        (
+            json!({ "number": 7, "thread": "  ", "resolved": true }),
+            "thread is required",
+        ),
+        (
+            json!({ "number": 7, "thread": "not/a/thread", "resolved": true }),
+            "thread must be a review thread id",
+        ),
+        (
+            json!({ "number": 7, "thread": long_thread, "resolved": true }),
+            "thread must be a review thread id",
+        ),
+        (
+            json!({ "number": 7, "thread": "T:1", "resolved": true }),
+            "thread must be a review thread id",
+        ),
+        (
+            json!({ "number": 7, "thread": 123, "resolved": true }),
+            "thread must be a string",
+        ),
+        (
+            json!({ "number": 7, "thread": "T1" }),
+            "Name a reply, a resolved value, or both.",
+        ),
+        (
+            json!({ "number": 7, "thread": "T1", "body": "   " }),
+            "body must not be blank",
+        ),
+        (
+            json!({ "number": 7, "thread": "T1", "body": too_long_body }),
+            "body is at most 64 KiB",
+        ),
+        (
+            json!({ "number": 7, "thread": "T1", "body": "ok", "resolved": "yes" }),
+            "resolved must be true or false",
+        ),
+        (
+            json!({ "thread": "T1", "resolved": true }),
+            "number is required",
+        ),
+    ] {
+        let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+        let fixture = recording_forge(calls.clone(), json!(null));
+        let (text, error) = run_with_fixture(&runtime, fixture, async {
+            w.call_text("orbyn_pull_request_respond", args).await
+        });
+        assert!(error, "answered {text}");
+        assert!(text.contains(wanted), "{text}");
+        let calls = calls.lock().unwrap();
+        assert!(calls.is_empty(), "reached the forge: {calls:?}");
+    }
+}
+
+#[test]
+fn pull_respond_replies_to_and_resolves_a_github_review_thread() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (answer, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_json(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "T1", "body": "Looks good", "resolved": true }),
+        )
+        .await
+    });
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer,
+        json!({ "number": 7, "thread": "T1", "replied": true, "resolved": true })
+    );
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(&calls[0][..3], strings(&["api", "graphql", "-f"]));
+    assert!(
+        calls[0]
+            .iter()
+            .any(|argument| argument.contains("addPullRequestReviewThreadReply")),
+        "{calls:?}"
+    );
+    assert!(
+        calls[0]
+            .iter()
+            .any(|argument| argument == "pullRequestReviewThreadId=T1"),
+        "{calls:?}"
+    );
+    assert!(
+        calls[0]
+            .iter()
+            .any(|argument| argument == "body=Looks good"),
+        "{calls:?}"
+    );
+    assert_eq!(&calls[1][..3], strings(&["api", "graphql", "-f"]));
+    assert!(
+        calls[1]
+            .iter()
+            .any(|argument| argument.contains("resolveReviewThread")),
+        "{calls:?}"
+    );
+    assert!(
+        calls[1].iter().any(|argument| argument == "id=T1"),
+        "{calls:?}"
+    );
+    drop(calls);
+    the_respond_was_gated_and_audited_once(&w, "T1");
+}
+
+#[test]
+fn pull_respond_replies_through_a_gitlab_discussion() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (answer, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_json(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "d1", "body": "Thanks", "resolved": true }),
+        )
+        .await
+    });
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer,
+        json!({ "number": 7, "thread": "d1", "replied": true, "resolved": true })
+    );
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(
+        calls[0],
+        strings(&[
+            "api",
+            "-X",
+            "POST",
+            "projects/:id/merge_requests/7/discussions/d1/notes",
+            "-f",
+            "body=Thanks",
+        ])
+    );
+    assert_eq!(
+        calls[1],
+        strings(&[
+            "api",
+            "-X",
+            "PUT",
+            "projects/:id/merge_requests/7/discussions/d1",
+            "-F",
+            "resolved=true",
+        ])
+    );
+    drop(calls);
+    the_respond_was_gated_and_audited_once(&w, "d1");
+}
+
+#[test]
+fn pull_respond_resolves_and_unresolves_without_a_reply() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (answer, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_json(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "T1", "resolved": false }),
+        )
+        .await
+    });
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer,
+        json!({ "number": 7, "thread": "T1", "replied": false, "resolved": false })
+    );
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(
+        calls[0]
+            .iter()
+            .any(|argument| argument.contains("unresolveReviewThread")),
+        "{calls:?}"
+    );
+    drop(calls);
+    the_respond_was_gated_and_audited_once(&w, "T1");
+}
+
+#[test]
+fn a_denied_pull_respond_answers_the_denial_and_runs_nothing() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    w.core
+        .store
+        .add_rule(
+            &CreatePolicyRule {
+                effect: PolicyEffect::Deny,
+                kind: ActionKind::Tool,
+                pattern: "=orbyn_pull_request_respond".into(),
+                engine: None,
+                note: None,
+            },
+            "test",
+        )
+        .unwrap();
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (text, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_text(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "T1", "resolved": true }),
+        )
+        .await
+    });
+    assert!(error, "{text}");
+    assert_eq!(
+        text,
+        "Blocked by policy: Matched rule =orbyn_pull_request_respond"
+    );
+    assert!(calls.lock().unwrap().is_empty(), "the forge was reached");
+    let audit = w.core.store.list_audit(None, 100).unwrap();
+    assert!(
+        audit.iter().any(|row| {
+            row.action == "action.deny" && row.target == "orbyn_pull_request_respond"
+        })
+    );
+    assert!(
+        audit
+            .iter()
+            .all(|row| row.action != "git.pull_thread_respond"),
+        "a denied call is not audited as done"
+    );
+}
+
+#[test]
+fn a_resolution_that_fails_after_a_reply_says_the_reply_was_posted() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture: ForgeFixture = {
+        let calls = calls.clone();
+        Arc::new(move |_, _, args| {
+            calls
+                .lock()
+                .unwrap()
+                .push(args.iter().map(|arg| (*arg).to_owned()).collect());
+            if args
+                .iter()
+                .any(|argument| argument.contains("resolveReviewThread"))
+            {
+                Err(CoreError::Git(
+                    "HTTP 403: Resource not accessible by integration".into(),
+                ))
+            } else {
+                Ok(String::new())
+            }
+        })
+    };
+    let (text, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_text(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "T1", "body": "Thanks", "resolved": true }),
+        )
+        .await
+    });
+    assert!(error, "{text}");
+    assert!(text.contains("The reply was posted"), "{text}");
+    assert!(text.contains("HTTP 403"), "{text}");
+    assert!(text.contains("Retry without body"), "{text}");
+    assert_eq!(calls.lock().unwrap().len(), 2, "the reply was not retried");
+}
+
+#[test]
+fn pull_respond_replies_without_touching_the_thread_state() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (answer, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_json(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "T1", "body": "Looks good" }),
+        )
+        .await
+    });
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer,
+        json!({ "number": 7, "thread": "T1", "replied": true, "resolved": null })
+    );
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        1,
+        "a reply alone sends one mutation: {calls:?}"
+    );
+    assert!(
+        calls[0]
+            .iter()
+            .any(|argument| argument.contains("addPullRequestReviewThreadReply")),
+        "{calls:?}"
+    );
+    drop(calls);
+    the_respond_was_gated_and_audited_once(&w, "T1");
+}
+
+#[test]
+fn a_forge_without_review_threads_says_it_cannot_reply() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(issue_world_at(
+        false,
+        "https://dev.azure.com/org/project/_git/app",
+    ));
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (text, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_text(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "T1", "body": "Thanks" }),
+        )
+        .await
+    });
+    assert!(error, "{text}");
+    assert_eq!(
+        text,
+        "Azure DevOps cannot reply to a review thread from Orbyn."
+    );
+    assert!(calls.lock().unwrap().is_empty(), "the forge was reached");
+}
+
+/// The respond tool was allowed once by the gate, and its write has exactly one audit row after
+/// that allow.
+fn the_respond_was_gated_and_audited_once(w: &IssueWorld, thread: &str) {
+    let audit = w.core.store.list_audit(None, 100).unwrap();
+    let allows: Vec<usize> = audit
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| {
+            row.action == "action.allow" && row.target == "orbyn_pull_request_respond"
+        })
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(allows.len(), 1, "the gate allowed the tool once");
+    let writes: Vec<&AuditEvent> = audit
+        .iter()
+        .filter(|row| row.action == "git.pull_thread_respond")
+        .collect();
+    assert_eq!(writes.len(), 1, "one write, one audit row");
+    assert_eq!(writes[0].actor, "engine:alpha");
+    assert_eq!(writes[0].target, thread);
+    let allow = allows[0];
+    let write = audit
+        .iter()
+        .position(|row| row.action == "git.pull_thread_respond")
+        .unwrap();
+    // The store lists audit rows newest first, so the later row has the smaller index.
+    assert!(write < allow, "the write row comes after the gate's allow");
 }
 
 #[tokio::test]
@@ -2257,6 +2970,7 @@ fn pull_ci_tools_refuse_bad_arguments_before_the_forge() {
 fn a_crew_worker_cannot_use_the_pull_write_or_ci_tools() {
     for name in [
         "orbyn_pull_request_comment",
+        "orbyn_pull_request_respond",
         "orbyn_pull_request_update",
         "orbyn_pull_request_review",
         "orbyn_pull_request_merge",
