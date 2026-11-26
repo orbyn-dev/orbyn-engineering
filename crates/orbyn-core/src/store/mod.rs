@@ -55,6 +55,9 @@ mod crew_flow;
 #[cfg(test)]
 mod crew_formats_tests;
 mod crew_guard;
+#[cfg(test)]
+mod crew_lease_tests;
+mod crew_leases;
 mod crew_lessons;
 #[cfg(test)]
 mod crew_lessons_tests;
