@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
-use super::CodexState;
-use crate::shared::{has, mcp_call, record_launch, send, sibling_exists};
+use super::{CodexState, SPENT_PRIMARY_RESET, SPENT_SECONDARY_RESET, USAGE_LIMIT_MESSAGE};
+use crate::shared::{has, mcp_call, record_launch, send, sibling_exists, write_sibling};
 
 fn codex_note(state: &CodexState, method: &str, mut params: Value) {
     params["threadId"] = json!(state.thread);
@@ -12,7 +12,12 @@ fn codex_note(state: &CodexState, method: &str, mut params: Value) {
 }
 
 pub(super) fn codex_finish(state: &CodexState, status: &str) {
-    let error = (status == "failed").then(|| json!({ "message": "fake failure" }));
+    codex_finish_saying(state, status, "fake failure");
+}
+
+/// Ends the turn with the engine's own sentence, as a real failure frame does.
+pub(super) fn codex_finish_saying(state: &CodexState, status: &str, message: &str) {
+    let error = (status == "failed").then(|| json!({ "message": message }));
 
     send(&json!({ "method": "turn/completed", "params": {
 
@@ -249,6 +254,39 @@ pub(super) fn codex_turn(state: &CodexState, lines: &mut impl Iterator<Item = Va
         "turn": { "id": "turn-x", "items": [], "status": "completed" },
 
     }}));
+
+    if has(prompt, "usage-limited") {
+        // Both windows at their limit, with the later reset on the secondary: the
+        // driver keeps the latest spent window, so a person waits for the longest one.
+        send(
+            &json!({ "method": "account/rateLimits/updated", "params": { "rateLimits": {
+
+                "primary": { "usedPercent": 100, "windowDurationMins": 300, "resetsAt": SPENT_PRIMARY_RESET },
+
+                "secondary": { "usedPercent": 100, "windowDurationMins": 10080, "resetsAt": SPENT_SECONDARY_RESET },
+
+            }}}),
+        );
+
+        // A fresh app-server session (the limits read) reports the same spent account.
+        write_sibling("rate-limits-spent", "1");
+
+        codex_note(
+            state,
+            "error",
+            json!({
+
+                "error": { "message": USAGE_LIMIT_MESSAGE, "codexErrorInfo": "usageLimitExceeded" },
+
+                "willRetry": false,
+
+            }),
+        );
+
+        codex_finish_saying(state, "failed", USAGE_LIMIT_MESSAGE);
+
+        return;
+    }
 
     // A previous or engine-started turn on this thread finishing must not end
     // the run for the person's prompt either.
