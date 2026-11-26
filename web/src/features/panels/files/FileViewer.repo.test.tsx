@@ -27,8 +27,13 @@ interface ServedFile {
 function serve(file: ServedFile = {}, raw?: Uint8Array<ArrayBuffer>) {
   const asked: string[] = [];
   const puts: Record<string, unknown>[] = [];
+  const previews: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const url = String(input);
+    if (url.includes("/previews/file")) {
+      previews.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({}));
+    }
     if (init?.method === "PUT") {
       const body = JSON.parse(String(init.body));
       puts.push(body);
@@ -50,7 +55,7 @@ function serve(file: ServedFile = {}, raw?: Uint8Array<ArrayBuffer>) {
       truncated: file.truncated ?? false,
     }));
   }));
-  return { asked, puts };
+  return { asked, puts, previews };
 }
 
 const query = (url: string) => new URL(url, "http://127.0.0.1").searchParams;
@@ -236,6 +241,28 @@ it("opens the primary repository's tab as the thread's own file, named with the 
   expect(contentAsk(asked).has("repo_id")).toBe(false);
   await userEvent.click(screen.getByRole("button", { name: "Add file to message" }));
   expect(useComposerChips.getState().chips.t![0]).toMatchObject({ kind: "file", path: "README.md", repoName: APP });
+});
+
+it("opens a primary tab's HTML in its repository, while reading the primary without an id", async () => {
+  const { asked, previews } = serve({ content: "<p>app</p>" });
+  window.location.hash = "#/threads/t";
+  vi.spyOn(api, "resolveThreadPath").mockResolvedValue({ cwd: "/repo", checkout_path: "index.html", repository_path: "index.html" });
+  const id = fileTabId({ kind: "thread", path: "index.html", repoId: PRIMARY, primary: true });
+  render(<FileTab id={id} threadId="t" repoName={APP} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Open in browser" }));
+  await waitFor(() => expect(previews).toEqual([{ path: "index.html", repo_id: PRIMARY }]));
+  expect(contentAsk(asked).has("repo_id")).toBe(false);
+});
+
+it("keeps browser previews scoped for a foreign file and unchanged for an ordinary thread", async () => {
+  const { previews } = serve({ content: "<p>file</p>" });
+  const first = render(<Viewer threadId="t" tabId="foreign" path="index.html" repoId={REPO} line={null} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Open in browser" }));
+  await waitFor(() => expect(previews).toEqual([{ path: "index.html", repo_id: REPO }]));
+  first.unmount();
+  render(<Viewer threadId="t" tabId="own" path="index.html" line={null} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Open in browser" }));
+  await waitFor(() => expect(previews).toEqual([{ path: "index.html", repo_id: REPO }, { path: "index.html" }]));
 });
 
 it("draws another repository's plain text file as the editor, read with its repo_id", async () => {
