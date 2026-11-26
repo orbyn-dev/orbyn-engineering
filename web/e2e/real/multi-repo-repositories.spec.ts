@@ -59,13 +59,16 @@ let remoteBare = "";
  * The ssh program the service's Git runs for the clone tests. The service refuses `file://` and local paths by design
  * (docs/multi-repo.md, "Clone and path input") and runs clones with `GIT_ALLOW_PROTOCOL=https:ssh`, so a real local
  * remote is reached over an ssh source whose ssh program is this stand-in, as the repo's forge specs stand in for `gh`:
- * it execs `git-upload-pack` on the path the source names, and never answers for the host `stalled.test`, so that clone
- * stays running long enough to be cancelled.
+ * it execs `git-upload-pack` on the folder the source names, and never answers for the host `stalled.test`, so that
+ * clone stays running long enough to be cancelled. The source names a folder, never the fixture's path: a clone source
+ * cannot hold whitespace, and the host temporary directory can name one on Windows.
  */
-const FAKE_SSH = `#!/usr/bin/env node
+const remoteFolder = "clone-remote.git";
+const fakeSsh = (remote: string) => `#!/usr/bin/env node
 const { execFileSync } = require("node:child_process");
 const args = process.argv.slice(2);
 const host = (args.find((arg) => arg.includes("@")) || "").split("@").pop();
+const remote = ${JSON.stringify(remote)};
 if (host === "stalled.test") {
   // A clone that never answers: the spec cancels it while it runs.
   setTimeout(() => process.exit(0), 120000);
@@ -73,7 +76,7 @@ if (host === "stalled.test") {
   const last = args[args.length - 1] || "";
   const match = last.match(/git-upload-pack '?([^']+)'?/);
   if (!match) { console.error("fake-ssh: unexpected remote command: " + last); process.exit(1); }
-  execFileSync("git-upload-pack", [match[1]], { stdio: "inherit" });
+  execFileSync("git-upload-pack", [match[1] === ${JSON.stringify(remoteFolder)} ? remote : match[1]], { stdio: "inherit" });
 }
 `;
 
@@ -90,11 +93,8 @@ function makeRepo(parent: string, name: string): string {
 
 const branchOf = (cwd: string) => execFileSync("git", ["symbolic-ref", "--short", "HEAD"], { cwd }).toString().trim();
 
-/**
- * The local bare remote as an ssh source. The service refuses a backslash in a source (a Windows path would read as a
- * local path), so the folder is written with forward slashes, which name the same place on both platforms.
- */
-const sshSource = (host: string) => `git@${host}:${remoteBare.replace(/\\/g, "/")}`;
+/** The local bare remote as an ssh source, named by a folder the stand-in ssh program maps to the real one. */
+const sshSource = (host: string) => `git@${host}:${remoteFolder}`;
 
 /** Registers and trusts one folder of the project through the real routes. */
 async function registerFolder(path: string): Promise<RepoRow> {
@@ -134,13 +134,15 @@ test.beforeAll(async () => {
   // A real local Git remote for the clone tests: the fixture repository, cloned bare. The service's Git runs the ssh
   // program written below from its own HOME, so a clone source is an ssh address that Git takes, and the remote is real.
   const cloneSource = makeRepo(parent, "clone-source");
-  remoteBare = join(parent, "clone-remote.git");
+  remoteBare = join(parent, remoteFolder);
   execFileSync("git", ["clone", "-q", "--bare", cloneSource, remoteBare], { stdio: "ignore" });
   const home = dirname(service.dataDir);
-  writeFileSync(join(home, "fake-ssh"), FAKE_SSH, { mode: 0o755 });
-  // Git reads a backslash in a config value as the start of an escape, which makes a Windows path a syntax error;
-  // forward slashes name the same file on both platforms.
-  writeFileSync(join(home, ".gitconfig"), `[core]\n\tsshCommand = ${join(home, "fake-ssh").replace(/\\/g, "/")}\n`);
+  writeFileSync(join(home, "fake-ssh"), fakeSsh(remoteBare), { mode: 0o755 });
+  // Git runs core.sshCommand through the shell, which splits an unquoted path at a space in the host temporary
+  // directory; escaped quotes keep it one argument. A backslash in a config value starts an escape, which makes a
+  // Windows path a syntax error, so forward slashes name the same file on both platforms.
+  const sshProgram = join(home, "fake-ssh").replace(/\\/g, "/");
+  writeFileSync(join(home, ".gitconfig"), `[core]\n\tsshCommand = \\"${sshProgram}\\"\n`);
 });
 
 test.afterAll(() => service.stop());
