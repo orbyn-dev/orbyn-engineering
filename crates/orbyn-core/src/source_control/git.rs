@@ -1705,6 +1705,12 @@ mod tests {
             std::fs::write(repo.join(path), content).unwrap();
         }
         let files = diff(&repo, None).await.unwrap();
+        // A developer's global Git config changes the reference patch without changing the
+        // file: diff.noprefix drops the a//b/ prefixes that synthesis always writes, and
+        // color.ui=always adds escape bytes. Set both on this repository so the reference
+        // command below has to pin the compared shape itself.
+        crate::testing::run_git(&repo, &["config", "diff.noprefix", "true"]);
+        crate::testing::run_git(&repo, &["config", "color.ui", "always"]);
         for (path, content) in [
             ("plain.txt", b"one\ntwo\n".to_vec()),
             ("single.txt", b"only\n".to_vec()),
@@ -1723,6 +1729,9 @@ mod tests {
                     "diff",
                     "--no-ext-diff",
                     "--no-textconv",
+                    "--no-color",
+                    "--src-prefix=a/",
+                    "--dst-prefix=b/",
                     "--no-index",
                     "--",
                     null_device(),
