@@ -91,9 +91,9 @@ export function PullDetail({
   const mergeSetting = useMergeMethodSetting(projectId);
   const [mergeMethod, setMergeMethod] = useState<string | null>(null);
   const method = mergeMethod ?? startMergeMethod(mergeSetting.data);
-  // Opens on a finished read of the detail and of the project's method: the page's dialog hides its method select.
+  // Opens on a fresh read of the detail and of the project's method while nobody chose one: the page hides its method select.
   const openMerge = async () => {
-    if (mergeMethod === null && mergeSetting.status === "loading") await mergeSetting.reload();
+    if (mergeMethod === null) await mergeSetting.reload();
     if (detail.refreshing) await detail.reload();
     setMerging(true);
   };
