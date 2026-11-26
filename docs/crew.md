@@ -768,7 +768,7 @@ sandbox and the store read.
 Reads: `GET /api/crew/preview`, `/autopilot` (modes, `confirmed`), `/autopilot/guards`, `/autopilot/risk/{task}`, `/autopilot/review` (with KC3's
 `waiting_elsewhere`: the one needs-you field's items this queue does not answer, by kind, never a second rule),
 `/autopilot/review/{task}/revert-check` (later merges), `/autopilot/merge-queue` (with what goes next), `/autopilot/watch`,
-`/autopilot/digest?hours=`, `/autopilot/digest/schedule` (from issue #806: the stored send time), `/approvals` (the ledger, newest first), `/stops` (trip wires), `/trust` (revert rates by area and engine; `?project=` limits it to one repository) and, from slice 4j, `/autopilot/areas`, `/autopilot/areas/history` and `/autopilot/thresholds`.
+`/autopilot/digest?hours=`, `/autopilot/digest/schedule` (from issue #806: the stored send time), `/approvals` (the ledger, newest first), `/stops` (trip wires), `/trust` (revert rates by area, by engine and, from slice 4g, by reviewer; `?project=` limits it to one repository) and, from slice 4j, `/autopilot/areas`, `/autopilot/areas/history` and `/autopilot/thresholds`.
 Lists take `limit` (1 to 200) and `offset`. Changes, each through the core function that holds the rule and local only:
 `PUT /autopilot/mode`, `POST /autopilot/confirm`, `POST /autopilot/review/{task}/{looks-good,comment,revert}`, and, from issue #806, `POST /autopilot/digest/schedule/set`.
 
@@ -918,8 +918,8 @@ asking run's engine and model; an injected text is kept as its class only. A row
 asker, and an asking thread with no model recorded carries none either. The risk, review and queue views read the whole table and then
 page, which is fine for one person's repositories. A comment is kept and is not yet a fix brief.
 
-Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g), and
-background crews' triggers and runs (4h; their stored state is below).
+Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built and enforced, see below), the crew-versus-solo baseline
+and the rest of 4g (see the reviewer numbers below), and background crews' triggers and runs (4h; their stored state is below).
 
 **As built (issue [#806](https://github.com/orbyn-dev/orbyn-engineering/issues/806), the digest's send time):** the daily digest is stored as
 `{time: "HH:MM", utc_offset_minutes}` in the `crew_digest` setting, the scheduled-tasks shape, so it needs no table and no migration.
@@ -1079,7 +1079,11 @@ writes, `retry` a failed breaker), `store/crew_autonomy_person.rs`, `orbynd/src/
 
 **Thresholds are PROPOSED** (window 14 days, 5 merges, 2 reverts, 14 days and 5 merges back; served with `proposed: true`) and may change.
 
-**Not built (4j).** Earning a higher mode for an area (`autonomy-promoted`, `review-promoted`) is PLANNED, not built. Escapes (a defect that no revert shows)
+**Not built (4j).** Earning a higher mode for an area (`autonomy-promoted`, `review-promoted`) is PLANNED, not built, and it needs two decisions nobody has made
+yet: what "earned" means, in a window and a sample size, and whether an area may be raised **above** the person's ceiling at all (the enforcement rule above never
+lets even a person's own choice do that). The sample frame `review-promoted` shows "22 merges in 30 days with no revert" and a high-risk change that then "merges
+by itself"; a frame's sample is illustrative and is not a rule, so **no promotion threshold is encoded anywhere in the service**: the constants in `areas/mod.rs` are
+the demotion's alone. Escapes (a defect that no revert shows)
 are **not measured**: nothing counts them. The chain and the tier do not read an area.
 
 **Known limits (4j, enforcement).** Reverts and merges made outside the crew (by hand, on a forge) are not seen. Any local process that holds the service token can post an override, the limit `set_mode` and the other Crew writes have, and the audit row
@@ -1097,6 +1101,19 @@ Override… is on the tripped, recovering, criteria-met, ceiling-wins and restor
 written from the served fields. No date is drawn that the service does not serve (recovery clock, who reverted, when a ceiling was lowered).
 **Empty:** with no area in the window the page keeps its header, chips, as-of line and, above 560 px, the table's head row; it draws no row. At 560 px and below the head row is the whole table, so the empty table is not drawn. The design's sentence in the table is Planned and is not drawn. **Several repos:** the page is about one repo at a time (`?repo=`, else the first visible project); with more than one the Repo chip is drawn as the design's selector (bordered, with the Planned label) from the workspace's project list, and its menu is not built. **Entry:** the Settings › Crew › Autopilot section has a row under it that opens Autopilot by area, and Thresholds has the back link that returns to it with the repository kept; both are drawn without the design's Planned chip because they now work.
 Not built: the repo selector's menu, `autonomy-promoted`, `autonomy-by-area`.
+
+**As built (slice 4g, reviewer numbers):** `GET /api/crew/trust` also answers `reviewers`: for each engine whose **review lanes** read a merge in the same window,
+the merges it read and how many of them were reverted, with the same `revert_permille` and `counts` (a rate is read from 10 merges, and its sample is `merges`).
+Rows are most-reviewed first, then by name, at most 100, names redacted, and `truncated` says a list was cut. Code:
+`crates/orbyn-core/src/crew/autopilot/merge/api.rs` (`autopilot_trust`). The reviewer is the merge row's own `proof.reviewers`, written by `record_merge` from each
+review run and its route decision, so no new table and no migration: a lane recorded as `finding_check` is not review work and makes nobody a reviewer, and an
+engine on two lanes of one merge counts that merge once. A repository with `?project=` counts only its merges; without it the device's. Only the person reads it:
+the route is a read, unchanged, and in `crew::changes::READS` as before.
+
+**Not built (4g).** A reviewer's **precision** (the findings it filed against those later confirmed) needs a finding-and-gate read per merge over the window, which
+this read does not make; review memory, measured reviewer pairing and the premise check are not built. The crew-versus-solo baseline has **no source at all**:
+nothing records a person's own solo work (the merge table holds crew merges, and `crew_person_commits` holds only commits the app made on a person's action), so no
+number here is invented for it.
 
 **As built (slice 4h, state):** background crews and their runs, stored on this device in the service's data folder (tables
 `crew_background` and `crew_background_runs`, schema 41, 42), behind the Preview flag. **Decision: the state is not a file in the repository.**

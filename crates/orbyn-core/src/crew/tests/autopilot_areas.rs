@@ -157,6 +157,36 @@ impl Rig {
         task
     }
 
+    /// A merge of the project's lead whose proof names the review lanes that read it, as `record_merge` writes them:
+    /// `(lane, engine, role)`.
+    pub(super) async fn merge_with_proof(
+        &mut self,
+        areas: &[&str],
+        at: i64,
+        reviewers: &[(&str, &str, &str)],
+    ) -> String {
+        self.next += 1;
+        let n = self.next;
+        let (answer, error) = self
+            .w
+            .start(
+                brief(json!({ "files": [{ "path": format!("src/p{n}/**"), "mode": "write" }], "outcome": format!("Task {n}.") })),
+                key(),
+            )
+            .await;
+        assert!(!error, "{answer}");
+        let task = answer["task"].as_str().unwrap().to_owned();
+        let mut record = record_of(&self.w, &task, areas, at, n);
+        record.proof = json!({
+            "reviewers": reviewers
+                .iter()
+                .map(|(lane, engine, role)| json!({ "lane": lane, "round": 1, "engine": engine, "state": "passed", "role": role }))
+                .collect::<Vec<_>>(),
+        });
+        self.w.core.store.add_crew_merge(&record).unwrap();
+        task
+    }
+
     /// The merge is reverted at `at`, as `revert_merge` records it: the row first, then the breaker. Returns the revert commit.
     pub(super) fn revert(&self, task: &str, at: i64) -> String {
         let commit = format!(
@@ -569,6 +599,61 @@ async fn areas_are_counted_per_project_and_by_repository() {
             .unwrap()
             .is_none(),
         "one revert there"
+    );
+}
+
+#[tokio::test]
+async fn the_trust_record_gives_revert_numbers_for_each_reviewer() {
+    let mut r = rig().await;
+    // Two lanes read one merge: alpha and beta each reviewed it once.
+    let both = r
+        .merge_with_proof(
+            &["src/r"],
+            NOW - 3 * DAY,
+            &[("logic", "alpha", "review"), ("security", "beta", "review")],
+        )
+        .await;
+    // One engine on two lanes of the same merge is one reviewer, counted once for it.
+    r.merge_with_proof(
+        &["src/q"],
+        NOW - 2 * DAY,
+        &[("logic", "alpha", "review"), ("checks", "alpha", "review")],
+    )
+    .await;
+    // A lane that checks one finding is not review work, so it makes nobody a reviewer.
+    r.merge_with_proof(
+        &["src/s"],
+        NOW - DAY,
+        &[("check", "gamma", "finding_check")],
+    )
+    .await;
+    // A merge with no proof names no reviewer.
+    r.merge(&["src/t"], NOW).await;
+    // One of the two merges alpha read was reverted.
+    r.w.core
+        .store
+        .set_merge_reverted(&both, &format!("{:040x}", 0xfeed_u64))
+        .unwrap();
+    let named = |trust: &wire::AutopilotTrust| {
+        trust
+            .reviewers
+            .iter()
+            .map(|row| (row.name.clone(), row.rate.merges, row.rate.reverts))
+            .collect::<Vec<_>>()
+    };
+    let trust = r.w.core.autopilot_trust(NOW, Some(&r.project)).unwrap();
+    assert_eq!(
+        named(&trust),
+        vec![("alpha".to_owned(), 2, 1), ("beta".to_owned(), 1, 1),],
+        "most reviewed first, and only a review lane makes a reviewer"
+    );
+    // The numbers carry their sample: two merges is below the minimum the risk score reads from.
+    assert!(!trust.reviewers[0].rate.counts);
+    assert_eq!(trust.reviewers[0].rate.revert_permille, 500);
+    // The whole device counts the same merges when no repository is named.
+    assert_eq!(
+        named(&r.w.core.autopilot_trust(NOW, None).unwrap()),
+        named(&trust)
     );
 }
 
