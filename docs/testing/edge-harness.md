@@ -363,7 +363,7 @@ The three assertion tightenings the review of PR #1832 asked for (issue #1835) r
 | Command | Result |
 | --- | --- |
 | `cargo test -p orbynd --test old_database` | 3 passed, 0 failed (the recording is compared with `support::migration_versions()`) |
-| `cargo test -p orbynd --test service` | 40 passed, 0 failed (the H3 crash case starts through `support::setup_adopted`) |
+| `cargo test -p orbynd --test service` | 40 passed, 0 failed (Windows, which compiles the two cfg'd cases out; the H3 crash case starts through `support::setup_adopted`) |
 | `cargo test -p orbynd --test project_icon_metadata` | 9 passed, 0 failed |
 | `cargo fmt --all --check` and `cargo clippy -p orbyn-core --all-targets` / `-p orbynd --all-targets` `-- -D warnings` | both exit 0 |
 
