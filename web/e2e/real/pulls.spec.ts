@@ -40,6 +40,8 @@ const fixtures: PullFixture[] = [
       { filename: "src/a.ts", status: "modified", additions: 2, deletions: 1, patch: PATCH },
       { filename: "src/b.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+b" },
     ],
+    // GitHub's own state: the viewer marked the first file viewed on GitHub itself.
+    viewed: ["src/a.ts"],
     commits: [
       {
         sha: "a1b2c3d4e5f6",
@@ -60,6 +62,17 @@ const fixtures: PullFixture[] = [
   { number: 3, title: "Unrelated fix", headRefName: "fix-three", author: { login: "ada" }, reviewers: ["me"] },
   { number: 4, title: "Old idea", headRefName: "old-four", state: "CLOSED", author: { login: "ada" } },
   { number: 5, title: "Shipped work", headRefName: "shipped-five", state: "MERGED", author: { login: "ada" } },
+  {
+    number: 6,
+    title: "Marked later",
+    headRefName: "feat-six",
+    state: "MERGED",
+    author: { login: "ada" },
+    files: [
+      { filename: "src/g.ts", status: "modified", additions: 2, deletions: 1, patch: PATCH },
+      { filename: "src/h.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+h" },
+    ],
+  },
 ];
 
 let service: Service;
@@ -288,16 +301,20 @@ test("the timeline filters by kind", async ({ page }) => {
 test("the code tab marks files viewed and submits line comments as one review", async ({ page }) => {
   const article = await openPull(page, "First layer");
   await article.getByRole("tab", { name: /^Files changed/ }).click();
-  await expect(article.getByRole("status")).toHaveText("Viewed 0 of 2");
-  await article.getByRole("checkbox", { name: "Viewed src/b.ts" }).click();
+  // src/a.ts was marked viewed on GitHub itself, so its mark is read from there.
   await expect(article.getByRole("status")).toHaveText("Viewed 1 of 2");
+  await article.getByRole("checkbox", { name: "Viewed src/b.ts" }).click();
+  await expect(article.getByRole("status")).toHaveText("Viewed 2 of 2");
+  await expect.poll(() => service.ghPull(1).viewed).toEqual(["src/a.ts", "src/b.ts"]);
   // The pull request is in the address, so a reload stays on it, back on its Summary tab.
   await page.reload();
   await expect(page).toHaveURL(/#\/pulls\/[^/]+\/1$/);
   await page.getByRole("article", { name: "First layer" }).getByRole("tab", { name: /^Files changed/ }).click();
   const again = page.getByRole("article", { name: "First layer" });
-  await expect(again.getByRole("status")).toHaveText("Viewed 1 of 2");
+  await expect(again.getByRole("status")).toHaveText("Viewed 2 of 2");
 
+  // Both rows are marked viewed, so both diffs start folded; open the one to comment on.
+  await again.getByText("src/a.ts", { exact: true }).click();
   await again.getByRole("button", { name: "Comment on line 2 of src/a.ts" }).focus();
   await again.getByRole("button", { name: "Comment on line 2 of src/a.ts" }).click();
   await again.getByLabel("Comment for line 2").fill("Not this name.");
@@ -310,6 +327,38 @@ test("the code tab marks files viewed and submits line comments as one review", 
     body: "One thing.",
     comments: [{ path: "src/a.ts", line: 2, body: "Not this name.", side: "RIGHT" }],
   });
+});
+
+test("a viewed mark removed here is removed on GitHub too", async ({ page }) => {
+  // GitHub holds both marks before this test reads the files, whatever an earlier test left.
+  service.ghEdit(1, { viewed: ["src/a.ts", "src/b.ts"] });
+  const article = await openPull(page, "First layer");
+  await article.getByRole("tab", { name: /^Files changed/ }).click();
+  await expect(article.getByRole("status")).toHaveText("Viewed 2 of 2");
+  await article.getByRole("checkbox", { name: "Viewed src/a.ts" }).click();
+  await expect(article.getByRole("status")).toHaveText("Viewed 1 of 2");
+  await expect.poll(() => service.ghPull(1).viewed).toEqual(["src/b.ts"]);
+});
+
+test("a viewed mark GitHub does not save is kept here and the toast says so", async ({ page }) => {
+  await page.goto(`${service.page}#/pulls`);
+  await page.getByRole("button", { name: "Merged", exact: true }).click();
+  await page.getByRole("button", { name: /Marked later/ }).click();
+  const article = detail(page, "Marked later");
+  await expect(article).toBeVisible();
+  await article.getByRole("tab", { name: /^Files changed/ }).click();
+  await expect(article.getByRole("status")).toHaveText("Viewed 0 of 2");
+  // GitHub's GraphQL limit is spent, as it is for a busy account, so the mark mutation cannot
+  // run. The person's mark is kept by this service, and the toast says GitHub did not save it.
+  service.ghEdit(0, { rateLimited: true });
+  try {
+    await article.getByRole("checkbox", { name: "Viewed src/g.ts" }).click();
+    await expect(page.getByText(/It is kept in Orbyn/)).toBeVisible();
+    await expect(article.getByRole("status")).toHaveText("Viewed 1 of 2");
+    await expect(article.getByRole("checkbox", { name: "Viewed src/g.ts" })).toBeChecked();
+  } finally {
+    service.ghEdit(0, { rateLimited: false });
+  }
 });
 
 test("Request changes opens a review card, sends the note as a review and becomes a timeline entry", async ({ page }) => {
