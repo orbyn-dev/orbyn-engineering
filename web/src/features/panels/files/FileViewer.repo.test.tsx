@@ -124,18 +124,18 @@ it("renders another repository's Markdown from the same read, named with its rep
   expect(rawAsks(asked)).toEqual([]);
 });
 
-it("adds another repository's file to the message under its repository's name", async () => {
+it.each(["orbyn-planner", `repo-${"x".repeat(59)}`])("adds another repository's file to the message under its full repository name %s", async (repoName) => {
   serve({ content: "# planner\n" });
-  render(<Viewer threadId="t" tabId="tab" path="README.md" repoId={REPO} repoName="orbyn-planner" line={null} />);
+  render(<Viewer threadId="t" tabId="tab" path="README.md" repoId={REPO} repoName={repoName} line={null} />);
 
   await screen.findByRole("heading", { name: "planner" });
   await userEvent.click(screen.getByRole("button", { name: "Add file to message" }));
 
   const chip = useComposerChips.getState().chips.t![0]!;
   // The chip names the tab's repository, client-only, so the next message points at the right README.md.
-  expect(chip).toMatchObject({ kind: "file", path: "README.md", line: null, repoId: REPO, repoName: "orbyn-planner" });
-  expect(chipLabel(chip)).toBe("orbyn-planner/README.md");
-  expect(chipPrompt(chip)).toContain("File `orbyn-planner/README.md`");
+  expect(chip).toMatchObject({ kind: "file", path: "README.md", line: null, repoId: REPO, repoName });
+  expect(chipLabel(chip)).toBe(`${repoName}/README.md`);
+  expect(chipPrompt(chip)).toContain(`File \`${repoName}/README.md\``);
 });
 
 it("keeps Add file to message off on another repository's tab until the panel names the repository", async () => {
