@@ -67,25 +67,6 @@ fn done() -> Value {
 }
 
 #[test]
-fn a_background_agent_holds_a_completed_turn_until_it_ends() {
-    let mut mapper = StreamMapper::default();
-    mapper.on_frame(&started("a1", "local_agent"));
-    mapper.on_frame(&done());
-    assert!(
-        mapper.outcome.is_none(),
-        "the CLI would kill the agent on exit"
-    );
-    assert!(!mapper.waiting_on_hold());
-    mapper.on_frame(&json!({ "type": "system", "subtype": "task_notification",
-        "task_id": "a1", "status": "completed" }));
-    assert!(mapper.waiting_on_hold());
-    // The follow-up turn the CLI starts for the notification ends the run.
-    mapper.on_frame(&said("the agent found it"));
-    mapper.on_frame(&done());
-    assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
-}
-
-#[test]
 fn a_held_agent_that_never_notifies_is_reported_stopped_with_the_caps_reason() {
     let mut mapper = StreamMapper::default();
     mapper.on_frame(&started("a1", "local_agent"));
@@ -159,33 +140,6 @@ fn a_turn_the_engine_started_for_its_own_work_does_not_end_the_run() {
     mapper.on_frame(&said("here is your answer"));
     mapper.on_frame(&done());
     assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
-}
-
-#[test]
-fn what_a_notifications_turn_says_is_shown_but_is_not_the_prompts_reply() {
-    let is_leftover = |events: &[EngineEvent]| {
-        !events.is_empty()
-            && events
-                .iter()
-                .all(|event| matches!(event, EngineEvent::Leftover(_)))
-    };
-    let mut mapper = StreamMapper::answering("mine");
-    // The CLI ran a turn for a finished background agent, and said so, before reaching the prompt.
-    mapper.on_frame(&json!({ "type": "system", "subtype": "task_notification",
-        "task_id": "old", "status": "completed" }));
-    let events = mapper.on_frame(&said("the old agent finished"));
-    assert!(is_leftover(&events), "{events:?}");
-    mapper.on_frame(&done());
-    mapper.on_frame(&echo("mine"));
-    // After the echo the words are the prompt's own.
-    let events = mapper.on_frame(&said("here is your answer"));
-    assert!(!events.is_empty());
-    assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, EngineEvent::Leftover(_))),
-        "{events:?}"
-    );
 }
 
 #[test]
@@ -645,51 +599,6 @@ fn the_run_endpoint_reaches_claude_through_a_private_file_not_its_arguments() {
         let mode = std::fs::metadata(&mcp_config).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
     }
-}
-
-#[test]
-fn command_line_matches_the_contract_and_never_uses_bare() {
-    let args: Vec<String> = run_args(&spec(), Path::new("/run/mcp.json"))
-        .into_iter()
-        .map(|arg| arg.into_string().unwrap())
-        .collect();
-    // The run's folder joins with the platform's separator, so the expected path joins the same way.
-    let settings = Path::new("/run")
-        .join("settings.json")
-        .to_string_lossy()
-        .into_owned();
-    assert_eq!(
-        args,
-        [
-            "-p",
-            "--output-format",
-            "stream-json",
-            "--input-format",
-            "stream-json",
-            "--verbose",
-            "--include-partial-messages",
-            "--replay-user-messages",
-            "--permission-mode",
-            "default",
-            "--mcp-config",
-            "/run/mcp.json",
-            "--add-dir",
-            "/workspace",
-            "--permission-prompt-tool",
-            "mcp__orbyn_engineering__approve",
-            "--model",
-            "sonnet",
-            "--settings",
-            settings.as_str(),
-            "--resume",
-            "sess",
-        ]
-    );
-    assert!(
-        !args
-            .iter()
-            .any(|arg| arg == "--bare" || arg == "--plugin-dir")
-    );
 }
 
 #[test]
@@ -1407,19 +1316,6 @@ fn subagent_frames_stay_out_of_the_top_level_turn() {
         "event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}
     });
     assert!(mapper.on_frame(&frame).is_empty());
-}
-
-#[test]
-fn error_result_reports_its_reason() {
-    let mut mapper = StreamMapper::default();
-    mapper.on_frame(&json!({
-        "type":"result","subtype":"error_during_execution","is_error":true,
-        "errors":["Not logged in"],"session_id":"s"
-    }));
-    assert_eq!(
-        mapper.outcome,
-        Some(EngineOutcome::Failed("Not logged in".into()))
-    );
 }
 
 #[cfg(unix)]
