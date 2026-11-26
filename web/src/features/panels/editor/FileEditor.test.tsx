@@ -429,6 +429,24 @@ it("offers the tab menu's file actions in the design's order and no Reveal in th
   expect(menu.some((label) => /reveal/i.test(label ?? ""))).toBe(false);
 });
 
+it("copies the thread's own file path and adds it with no repository, as before", async () => {
+  serve();
+  const written: string[] = [];
+  Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text: string) => { written.push(text); } }, configurable: true });
+  render(<><Viewer threadId="t" tabId={TAB} path="auth/redirect.ts" line={null} /><Menu /></>);
+  await editor();
+  await userEvent.click(screen.getByRole("button", { name: "Copy path" }));
+  expect(written).toContain("/repo/auth/redirect.ts");
+  await userEvent.click(screen.getByRole("button", { name: "Copy relative path" }));
+  expect(written).toContain("auth/redirect.ts");
+  await userEvent.click(screen.getByRole("button", { name: "Add file to message" }));
+  const chip = useComposerChips.getState().chips["t"]![0]!;
+  expect(chip).toMatchObject({ kind: "file", path: "auth/redirect.ts", line: null, language: "typescript" });
+  expect(chip).not.toHaveProperty("repoId");
+  expect(chip).not.toHaveProperty("repoName");
+  Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+});
+
 it("never shows or saves one thread's unsaved text in another thread's file", async () => {
   const puts: string[] = [];
   vi.stubGlobal(

@@ -176,6 +176,17 @@ describe("composer context", () => {
     expect(kept[0]).toMatchObject({ path: "src/main.rs", excerpt: null });
   });
 
+  it("hands a pasted foreign chip's repository to the read that fills it", async () => {
+    const pasted = asChip({ kind: "file", path: "notes.txt", line: null, excerpt: null, repoId: "planner", repoName: "orbyn-planner" }, "f")!;
+    let asked: string | undefined;
+    const filled = await refillExcerpts([pasted], async (wanted) => {
+      asked = wanted.repoId;
+      return { text: "planner notes" };
+    });
+    expect(asked).toBe("planner");
+    expect(filled[0]).toMatchObject({ excerpt: "planner notes", repoId: "planner", repoName: "orbyn-planner" });
+  });
+
   it("reads the language from a path and the lines around a marked one", () => {
     expect(languageForPath("src/lib.rs")).toBe("rust");
     expect(languageForPath("README.unknown")).toBeNull();
