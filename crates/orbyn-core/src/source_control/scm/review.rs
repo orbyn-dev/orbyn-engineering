@@ -286,7 +286,7 @@ impl Core {
             )
         } else {
             format!(
-                "GitHub did not clear the viewed mark for {}. Nothing changed on GitHub. {reason}",
+                "GitHub did not clear the viewed mark for {}. Orbyn keeps showing the mark it had. {reason}",
                 names.join(", ")
             )
         };

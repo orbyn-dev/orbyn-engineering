@@ -4027,7 +4027,7 @@ every method, path and which routes need a credential.
 | `GET, POST .../pulls/:number/comments` | `PullConversation`; `AddPullComment` with optional `path`, `line`, `reply_to` |
 | `PATCH .../comments/:comment`, `POST .../comments/:comment/react` | `EditPullComment`; `ReactPullComment` |
 | `POST .../pulls/:number/threads/:thread/resolve` | `ResolvePullThread` |
-| `POST .../pulls/:number/viewed` | `SetFilesViewed` (`204`); on GitHub the mark runs its own mutation, and a mark GitHub refuses is kept here with `502 viewed_unsynced` |
+| `POST .../pulls/:number/viewed` (`Person`) | `SetFilesViewed` (`204`); on GitHub the mark runs its own mutation as the person, and a mark GitHub refuses is kept here with `502 viewed_unsynced` |
 | `POST .../pulls/:number/review` | `SubmitReview`, with line comments |
 | `POST .../pulls/:number/reviewers`, `/labels` | `SetPullPeople` |
 | `POST .../pulls/:number/merge` | `MergePull`: method, `auto`, `delete_branch`, `subject`, `body`, `strip_credits`, `expected_head`. A head that moved is `409 pull_head_changed`. Only GitHub and GitLab (not a rebase) are fully guarded, because the forge refuses the moved head itself. Azure, Forgejo, Bitbucket and a GitLab rebase read the head just before merging and refuse a mismatch, with a small race window between that read and the merge; a head that cannot be read refuses the merge |

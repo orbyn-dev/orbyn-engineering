@@ -171,3 +171,64 @@ async fn an_untrusted_project_is_refused_even_when_its_pull_request_is_kept() {
     core.store.trust_project(&project.id, "t").unwrap();
     assert!(core.project_pull(&project.id, 12, false).await.is_ok());
 }
+
+#[tokio::test]
+async fn another_forges_kept_marks_are_this_services_own() {
+    let dir = crate::testing::TempDir::new();
+    let folder = dir.path().join("repo");
+    std::fs::create_dir_all(&folder).unwrap();
+    crate::testing::run_git(&folder, &["init", "-q", "-b", "main"]);
+    crate::testing::run_git(
+        &folder,
+        &["remote", "add", "origin", "https://gitlab.com/o/r.git"],
+    );
+    let mut config =
+        crate::app::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+    config.engines.lookup_latest = false;
+    let core = Core::open(config).unwrap();
+    let project = core
+        .store
+        .add_project(crate::store::NewProject {
+            path: folder.to_str().unwrap(),
+            name: "repo",
+            is_git: true,
+            managed: false,
+            scratch: false,
+        })
+        .unwrap();
+    core.store.trust_project(&project.id, "t").unwrap();
+    // A GitLab changed-files answer kept as the files read would keep it; no CLI is asked.
+    let file = PullFile {
+        path: "a.rs".into(),
+        previous_path: None,
+        status: "modified".into(),
+        additions: 1,
+        deletions: 1,
+        patch: Some("@@ -1 +1 @@\n-x\n+y".into()),
+        viewed: false,
+        viewed_synced: false,
+    };
+    let kept = super::read_cache::PullFilesRead {
+        files: vec![file],
+        viewed: super::read_cache::ForgeViewed::NotApplicable,
+    };
+    let key = crate::util::swr::key(&[&project.id, "12", &project.path]);
+    core.scm_reads.files.put(&key, kept);
+    // A mark on a forge with no viewed state of its own stays this service's and reaches no forge:
+    // marking it asks for the folder's forge only, which is a git read, and writes the store.
+    core.set_files_viewed(&project.id, 12, &["a.rs".to_owned()], true, "t")
+        .await
+        .unwrap();
+    let marked = core.pull_files(&project.id, 12, false).await.unwrap();
+    assert!(marked[0].viewed, "the mark the person made here is shown");
+    assert!(
+        !marked[0].viewed_synced,
+        "another forge has no viewed state to sync"
+    );
+    // Unmarking removes the service's mark again.
+    core.set_files_viewed(&project.id, 12, &["a.rs".to_owned()], false, "t")
+        .await
+        .unwrap();
+    let unmarked = core.pull_files(&project.id, 12, false).await.unwrap();
+    assert!(!unmarked[0].viewed);
+}
