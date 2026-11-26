@@ -7,6 +7,12 @@ mod turn;
 use turn::{codex_finish, codex_turn};
 // Codex app-server: JSONL without a `jsonrpc` header.
 
+/// The spent subscription windows a `[usage-limited]` turn leaves on the account, and
+/// the sentence its failure carries. The resets are fixed so tests can name them.
+pub(super) const SPENT_PRIMARY_RESET: i64 = 1_800_000_000;
+pub(super) const SPENT_SECONDARY_RESET: i64 = 1_800_003_600;
+pub(super) const USAGE_LIMIT_MESSAGE: &str = "You have hit your usage limit.";
+
 struct CodexState {
     prompt: String,
 
@@ -290,19 +296,27 @@ pub(crate) fn codex() {
             }
 
             "account/rateLimits/read" => {
+                // After a `[usage-limited]` turn the account's allowance is spent, and a
+                // later app-server session (the limits read) reports the same windows.
+                let spent = sibling_exists("rate-limits-spent");
+                let (primary, secondary) = if spent {
+                    (
+                        json!({ "usedPercent": 100, "windowDurationMins": 300, "resetsAt": SPENT_PRIMARY_RESET }),
+                        json!({ "usedPercent": 100, "windowDurationMins": 10080, "resetsAt": SPENT_SECONDARY_RESET }),
+                    )
+                } else {
+                    (
+                        json!({ "usedPercent": 12, "windowDurationMins": 300, "resetsAt": 1800000000 }),
+                        json!({ "usedPercent": 40, "windowDurationMins": 10080 }),
+                    )
+                };
                 send(&json!({ "id": id, "result": {
 
                     "accountId": "acct-SECRET-MARKER",
 
                     "rateLimitUpsell": { "text": "SECRET-MARKER upsell" },
 
-                    "rateLimits": {
-
-                        "primary": { "usedPercent": 12, "windowDurationMins": 300, "resetsAt": 1800000000 },
-
-                        "secondary": { "usedPercent": 40, "windowDurationMins": 10080 },
-
-                    },
+                    "rateLimits": { "primary": primary, "secondary": secondary },
 
                 }}));
             }
