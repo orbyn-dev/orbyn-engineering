@@ -52,7 +52,9 @@ export function IssueStateButton({ issue, write, writing }: { issue: IssueDetail
     sending.current = true;
     claimed.current = next;
     try {
-      await write(() => issuesApi().setState(issue, next));
+      const answered = await write(() => issuesApi().setState(issue, next));
+      // A writer refusal (null) changes nothing and throws nothing: release the claim so the choice can be retried.
+      if (answered === null) claimed.current = null;
     } catch (failure) {
       claimed.current = null;
       if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code)) {
