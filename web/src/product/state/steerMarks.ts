@@ -91,11 +91,16 @@ export function withSteerMarks(items: readonly ThreadItem[], marks: readonly Ste
 /** Sends a message into the running turn under a fresh id and keeps its mark current. */
 export async function steerWithMark(threadId: string, prompt: string): Promise<SteerResult> {
   const id = crypto.randomUUID();
-  const store = useSteerMarks.getState();
-  store.add(threadId, id, prompt);
+  useSteerMarks.getState().add(threadId, id, prompt);
   try {
     const result = await api.steer(threadId, prompt, id);
-    store.settle(threadId, id, result.state);
+    // The answer is where the steer stood when the service took it, and its log can carry the
+    // message further before this reply lands: a refused steer is marked failed while the
+    // request is still in flight. So the answer settles a mark still waiting on it, and never
+    // pulls one the log has already settled back to delivered.
+    if (steerMarksOf(threadId).some((mark) => mark.id === id && mark.state === "pending")) {
+      useSteerMarks.getState().settle(threadId, id, result.state);
+    }
     return result;
   } catch (failure) {
     // The service never took it, so no mark is left behind; the caller keeps the text.
