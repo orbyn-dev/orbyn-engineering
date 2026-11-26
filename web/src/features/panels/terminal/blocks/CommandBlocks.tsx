@@ -17,6 +17,8 @@ export interface CommandBlocksProps {
   write?: ((text: string) => void) | undefined;
   /** Sends Ctrl-C to the terminal. */
   interrupt?: (() => void) | undefined;
+  /** Bumped after the drawer cleared this terminal's blocks: the list is read again from the start, so what was dropped is gone. */
+  cleared?: number;
 }
 
 /**
@@ -29,7 +31,7 @@ export function CommandBlocks(props: CommandBlocksProps) {
 
 type Load = { status: "loading" } | { status: "error" } | { status: "ready" };
 
-function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProps & { api: CommandBlocksApi }) {
+function Live({ api, threadId, terminalId, write, interrupt, cleared }: CommandBlocksProps & { api: CommandBlocksApi }) {
   const terminal: BlockTerminal = useRefStable(threadId, terminalId);
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [newest, setNewest] = useState<CommandBlock[]>([]);
@@ -42,6 +44,18 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const paging = useRef(false);
 
+  // The drawer cleared this terminal's blocks: read the list again from the start, so the dropped blocks go, a running block stays,
+  // and an earlier page the old list offered is forgotten.
+  const [topRead, setTopRead] = useState(0);
+  const lastCleared = useRef(cleared);
+  useEffect(() => {
+    if (lastCleared.current === cleared) return;
+    lastCleared.current = cleared;
+    setEarlier([]);
+    setBefore(null);
+    setTopRead((value) => value + 1);
+  }, [cleared]);
+
   const blocks = [...earlier, ...newest.filter((one) => !earlier.some((old) => old.id === one.id))];
   const running = newest.some(isRunning);
   const now = useNow(running);
@@ -49,12 +63,14 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
   // The newest page: at the start, on Try again, and every two seconds while something runs.
   useEffect(() => {
     const controller = new AbortController();
+    const fromTop = attempt === 0 && tick === 0 && topRead === 0;
     api.list(terminal, {}, controller.signal).then(
       (answer) => {
         if (controller.signal.aborted) return;
         setNewest(answer.blocks);
-        // The cursor for earlier pages belongs to the first read; a later read of the newest page leaves it alone.
-        setBefore((old) => (attempt === 0 && tick === 0 ? answer.next_before : old));
+        // The cursor for earlier pages belongs to the first read; a later read of the newest page leaves it alone. After a clear the
+        // reset above has already put it back, and a cleared list is short enough to need no cursor.
+        if (fromTop) setBefore(answer.next_before);
         setLoad({ status: "ready" });
       },
       () => {
@@ -62,7 +78,7 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
       },
     );
     return () => controller.abort();
-  }, [api, terminal, attempt, tick]);
+  }, [api, terminal, attempt, tick, topRead]);
 
   // The newest page again every 2 s while a block runs and every 5 s otherwise (a terminal whose shell emits marks later, or a next
   // command). Only the production client reads while idle: the preview mock stays still, and a hidden page reads nothing.
