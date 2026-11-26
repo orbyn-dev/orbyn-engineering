@@ -100,6 +100,23 @@
   margin: 0;
   padding: 2px 4px;
 }
+/* The silence strip under the terminal drawer's tab row (attention-badge): the engine console on screen waits quietly. */
+.term-wait {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-warnSoft);
+  color: var(--color-text);
+  font-size: var(--text-meta);
+  flex-wrap: wrap;
+}
+.term-wait-label {
+  color: var(--color-warnText);
+  font-weight: 500;
+}
 /* Narrow: the box keeps the question line only, and the buttons stay on one row. */
 @container ta (max-width: 420px) {
   .ta-engine,
