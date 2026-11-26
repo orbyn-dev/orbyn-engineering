@@ -1,15 +1,17 @@
 # Edge harness proposal: store, devices, Claude and Codex suites
 
-Status: **proposal; step 1 of the order is delivered.** Base: `origin/main` `df6cff22e`
-(2026-11-25), plus the delivered step-1 test on this branch. The shared build box was unreachable
+Status: **proposal; harnesses H1 and H2 are built, and order steps 1, 3 and 4 are delivered.**
+Base: `origin/main` `df6cff22e` (2026-11-25); H1/H2 landed on top of `origin/main`
+`5aeb2a01f` (2026-11-27), with step 1's test already merged. The shared build box was unreachable
 while this was written, so it comes from the source and the 24 Nov test ledgers; step 1's test has
 since been run on the box (`cargo test -p orbynd --test drivers --
 a_claude_run_launches_with_the_documented_flags_and_never_bare`: 1 passed, 48 filtered out).
 Everything else below is unrun, and every break-check named is a plan, not a result, except
-step 1's: it was run with wave 4 on 27 Nov 2026 and its unit test was pruned (see Order and
-Verification). Counts are measured from the named files (see [Counts](#counts)); no timing is given
-because none was measured. This revision corrects a review round: the claims below were re-checked
-against the files they name.
+step 1's and steps 3 and 4's: they ran on the box on 27 Nov 2026 (P3.3 H1/H2, see Order and
+[Verification](#verification-what-needs-the-box)), and step 1's unit test was pruned by P3.6.
+Counts are measured from the named files (see [Counts](#counts)); no timing is given because none
+was measured. This revision corrects a review round: the claims below were re-checked against the
+files they name.
 
 Source: `assignments-2026-11-24.md` row 3.3, "Edge harness for store, devices, Claude and Codex
 driver suites, so wave 4 can prune with proof" (lanes A, C). Row 3.6 is the consumer: prune a
@@ -34,7 +36,7 @@ HTTP and real subprocess pipes, with engines replaced only at the executable bou
 | --- | --- | --- |
 | Service | [support/mod.rs](../../crates/orbynd/tests/support/mod.rs) | `Service::start` runs `orbynd serve --data-dir`, sets `ORBYN_CLAUDE_BIN`/`ORBYN_CODEX_BIN` to the fake engine and `ORBYN_OFFLINE=1`; HTTP and SSE helpers; `kill()`; a fresh `Service::start` on the same data folder; `setup()` makes a trusted project and a thread |
 | Protocol double | [orbyn_fake_engine/](../../crates/orbynd/src/bin/orbyn_fake_engine/) | one `orbyn-fake-engine` binary speaking Codex app-server ([codex/](../../crates/orbynd/src/bin/orbyn_fake_engine/codex)), Claude stream-json ([claude.rs](../../crates/orbynd/src/bin/orbyn_fake_engine/claude.rs)), ACP, AG-UI, one-shot, PTY and command blocks; frames are written by hand from the real schemas; a prompt tag picks the scenario and `ORBYN_FAKE_*` env knobs pick variants; it asserts some launch flags itself |
-| Fake device tools | [devices.rs](../../crates/orbynd/tests/devices.rs) (edge) and [test_support.rs](../../crates/orbyn-core/src/devices/test_support.rs) (unit) | Node stand-ins for `adb`, `emulator` and `xcrun` on the service's `PATH`, answering from files in `ORBYN_DEVICES_FAKE_DIR`; the unit one is richer |
+| Fake device tools | [devices.rs](../../crates/orbynd/tests/devices.rs) (edge) and [test_support.rs](../../crates/orbyn-core/src/devices/test_support.rs) (unit), both running [devices-fake-tool.js](../../crates/orbynd/tests/fixtures/devices-fake-tool.js) | one Node program for `adb`, `emulator` and `xcrun`, answering from files in its fake dir; the edge puts shims that pass `ORBYN_DEVICES_FAKE_DIR` on the service's `PATH` |
 | Crash and restart | [support/mod.rs](../../crates/orbynd/tests/support/mod.rs) + `Service::kill()` | used today by [service.rs](../../crates/orbynd/tests/service.rs) `crash_recovery_interrupts_runs_and_expires_approvals`, [composer.rs](../../crates/orbynd/tests/composer.rs) `a_crash_holds_the_queue_across_restart` and `an_interrupted_thread_continues_after_a_restart`, [code_mode_runs.rs](../../crates/orbynd/tests/code_mode_runs.rs) `a_restart_marks_a_run_held_on_an_approval_as_lost` |
 | Old-database fixture | [old_database.rs](../../crates/orbynd/tests/old_database.rs) + [database_v1.sql](../../crates/orbynd/tests/fixtures/database_v1.sql) | a schema-1 database opened by the real binary: data survives, one upgrade is announced, a second start applies nothing (landed `f3bb2c74a`, 2026-11-24) |
 | Recorded frames | [driver/fixtures/](../../crates/orbyn-core/src/agents/driver/fixtures/) | `claude-2.1.150-initialize.json`, `codex-0.166.0-model-list.json` and `codex-0.166.0-mcp-server-status.json`, used only by unit tests today |
@@ -42,16 +44,16 @@ HTTP and real subprocess pipes, with engines replaced only at the executable bou
 
 ## Counts
 
-Measured on this branch (base `df6cff22e` plus the delivered step-1 test) with
-`grep -c '#\[test\]\|#\[tokio::test' <file>`; these are attributes, read as tests. The ledgers were
-written on 24 Nov against an earlier main, so their numbers differ.
+Measured on `origin/main` `5aeb2a01f` (which includes P3.6's unit-test prune) plus this branch's
+H1/H2 tests, with `grep -c '#\[test\]\|#\[tokio::test' <file>`; these are attributes, read as tests.
+The ledgers were written on 24 Nov against an earlier main, so their numbers differ.
 
 | Suite | Unit file | Tests now | Ledger (24 Nov) | Edge tests today |
 | --- | --- | --- | --- | --- |
 | Store | [store/tests.rs](../../crates/orbyn-core/src/store/tests.rs) | 56 | 55 | [service.rs](../../crates/orbynd/tests/service.rs) 41, [composer.rs](../../crates/orbynd/tests/composer.rs) 18, [old_database.rs](../../crates/orbynd/tests/old_database.rs) 1 |
-| Devices | [devices/tests.rs](../../crates/orbyn-core/src/devices/tests.rs) | 68 | 67 | [devices.rs](../../crates/orbynd/tests/devices.rs) 4 |
-| Claude driver | [claude/tests.rs](../../crates/orbyn-core/src/agents/driver/claude/tests.rs) | 62 | 59 | [drivers.rs](../../crates/orbynd/tests/drivers.rs) 49 (all engines), [workflows.rs](../../crates/orbynd/tests/workflows.rs) 6, [no_reply.rs](../../crates/orbynd/tests/no_reply.rs) 3 |
-| Codex driver | [codex/tests.rs](../../crates/orbyn-core/src/agents/driver/codex/tests.rs) | 56 | 52 | [drivers.rs](../../crates/orbynd/tests/drivers.rs) 49 (all engines), [interactions.rs](../../crates/orbynd/tests/interactions.rs) 36 |
+| Devices | [devices/tests.rs](../../crates/orbyn-core/src/devices/tests.rs) | 67 | 67 | [devices.rs](../../crates/orbynd/tests/devices.rs) 5 |
+| Claude driver | [claude/tests.rs](../../crates/orbyn-core/src/agents/driver/claude/tests.rs) | 61 | 59 | [drivers.rs](../../crates/orbynd/tests/drivers.rs) 51 (all engines), [workflows.rs](../../crates/orbynd/tests/workflows.rs) 6, [no_reply.rs](../../crates/orbynd/tests/no_reply.rs) 3 |
+| Codex driver | [codex/tests.rs](../../crates/orbyn-core/src/agents/driver/codex/tests.rs) | 55 | 52 | [drivers.rs](../../crates/orbynd/tests/drivers.rs) 51 (all engines), [interactions.rs](../../crates/orbynd/tests/interactions.rs) 36 |
 
 ## Where the ledgers are stale
 
@@ -116,20 +118,24 @@ These are the units that still have no edge sibling:
 
 ### Devices
 
-The unit file is 68 tests over a fake tool program with delays, failures, sizes and foldable modes
-([test_support.rs](../../crates/orbyn-core/src/devices/test_support.rs)). The edge fake in
-[devices.rs](../../crates/orbynd/tests/devices.rs) is a trimmed copy of the same idea: it answers
-list/detail/screenshot and can fail an action (the fake's `action_exit` makes a tool exit 2, and
-`device_errors_have_the_fixed_copy` asserts the `tool_failed` copy through it). It cannot delay or
-time out, oversize its output, list under a missing tool, or pretend to be foldable.
+The unit file is 67 tests over a fake tool program with delays, failures, sizes and foldable modes.
+Since H2 that program is one file,
+[devices-fake-tool.js](../../crates/orbynd/tests/fixtures/devices-fake-tool.js):
+[test_support.rs](../../crates/orbyn-core/src/devices/test_support.rs) includes it with
+`include_str!` and runs it with the tool name and fake dir as argv, and
+[devices.rs](../../crates/orbynd/tests/devices.rs) includes the same file and puts shims for `adb`,
+`emulator` and `xcrun` on the service's `PATH`; the shims pass the same two arguments, and
+`ORBYN_DEVICES_FAKE_DIR` names the directory the program answers from. Every knob the unit tests
+have is therefore reachable at the edge: the delivered busy case uses `action_delay_ms`. The
+trimmed edge copy is gone.
 
 | Unit test (real name) | Edge today | Harness needed | Invariant to pin | Cost |
 | --- | --- | --- | --- | --- |
 | `a_missing_android_tool_leaves_ios_working`, `a_missing_xcrun_leaves_android_working` | none | no shared fake: start the service with a `PATH` whose helper writes only two of the three shims | one platform's tool missing leaves the other platform's devices listed, and the platform row says unavailable, not failed | S |
-| `a_list_timeout_does_not_fail_the_other_platform`, `a_list_timeout_kills_the_tool` | none | H2: `android_mode=timeout` knob | the timed-out platform answers its fixed copy, the other platform still lists, and the tool process is dead after the response | M |
-| `foldable_detection_is_true_from_the_device_state_rows`, `detail_adds_the_fold_actions_only_for_a_foldable`, `fold_runs_the_emulator_command_and_reads_the_posture_back`, `a_foldable_name_in_the_avd_config_alone_is_not_foldable` | none | H2: `android_mode=foldable` and the `fold` state file | a foldable lists fold actions and a fold changes posture; a name alone does not | M |
-| `a_second_action_on_one_device_is_device_busy` | none | H2: hold the fake action open (`action_delay_ms`) | a second action while the first runs answers `device_busy` with its fixed copy, and both are logged as attempts | M |
-| `an_output_over_one_mib_is_tool_output_too_large`, `a_screenshot_over_sixteen_mib_is_tool_output_too_large`, `a_timed_out_action_is_tool_timeout` | none | H2: `action_stdout_bytes`, `screenshot_bytes`, `action_timeout` knobs | the route refuses with the fixed copy instead of buffering or hanging, and no image leaves for an oversized screenshot | S |
+| `a_list_timeout_does_not_fail_the_other_platform`, `a_list_timeout_kills_the_tool` | none | H2 built: `android_mode=timeout` knob | the timed-out platform answers its fixed copy, the other platform still lists, and the tool process is dead after the response | M |
+| `foldable_detection_is_true_from_the_device_state_rows`, `detail_adds_the_fold_actions_only_for_a_foldable`, `fold_runs_the_emulator_command_and_reads_the_posture_back`, `a_foldable_name_in_the_avd_config_alone_is_not_foldable` | none | H2 built: `android_mode=foldable` and the `fold` state file | a foldable lists fold actions and a fold changes posture; a name alone does not | M |
+| `a_second_action_on_one_device_is_device_busy` | **delivered** (`devices.rs::a_second_action_while_one_runs_is_device_busy_and_starts_no_tool`) | H2 built: hold the fake action open (`action_delay_ms`) | a second action while the first runs answers `device_busy` with its fixed copy, and both are logged as attempts | delivered; break-check applied 27 Nov 2026 |
+| `an_output_over_one_mib_is_tool_output_too_large`, `a_screenshot_over_sixteen_mib_is_tool_output_too_large`, `a_timed_out_action_is_tool_timeout` | none | H2 built: `action_stdout_bytes`, `screenshot_bytes`, `action_timeout` knobs | the route refuses with the fixed copy instead of buffering or hanging, and no image leaves for an oversized screenshot | S |
 | `injection_shaped_ids_are_refused_before_any_process_starts` | only the invalid-body half (`device_errors_have_the_fixed_copy`) | none: the edge route resolves an id against the fake list first, so send an option- or path-shaped id through the action path | an id shaped like an option or a path never becomes argv, and the tool call log (`calls.ndjson`) shows no call | S |
 
 ### Claude driver
@@ -153,12 +159,14 @@ paths need:
 The edge covers turn matching, holds, subagents, approvals, denial, forced stop, crashes, feedback
 and the `/api/engines/codex/limits` read (`usage.rs::limits_come_from_the_engine_and_only_where_it_reports_them`).
 The fake emits a hand-written `model/list` page (`codex/mod.rs:366`) that the models read already
-parses, and the checked-in recorded page is not replayed; it does not emit the usage-limit or
-retryable-error notifications. The rows below name those gaps:
+parses, and the checked-in recorded page is not replayed. Since H1 the fake also emits the
+usage-limit notification and its failure under the `[usage-limited]` tag, and a later app-server
+session (the limits read) reports the same spent windows. It still does not emit a retryable error
+or the permission schemas. The rows below name the remaining gaps:
 
 | Unit test (real name) | Edge today | Harness needed | Invariant to pin | Cost |
 | --- | --- | --- | --- | --- |
-| `codex::tests::a_usage_limit_stop_carries_its_reset` | limits read only; no turn stop | fake tag `[usage-limited]` sending `account/rateLimits/updated` then an `error` with `codexErrorInfo: usageLimitExceeded` | the run ends as limited with the reset from the latest window, not as a generic failure, and `/api/engines/codex/limits` shows the spent window | M |
+| `codex::tests::a_usage_limit_stop_carries_its_reset` | **delivered**: `drivers.rs::a_codex_usage_limit_stop_keeps_the_latest_spent_window_and_its_sentence` and `a_codex_usage_limit_stop_leaves_the_spent_window_for_the_limits_read` | H1 built: tag `[usage-limited]` sends `account/rateLimits/updated` then an `error` with `codexErrorInfo: usageLimitExceeded`; the tag leaves `rate-limits-spent` beside the launch file so a later limits read reports the spent windows | the run ends as limited with the reset from the latest window, not as a generic failure, and `/api/engines/codex/limits` shows the spent window | delivered; both break-checks applied 27 Nov 2026 |
 | `an_error_the_engine_will_retry_is_shown_and_does_not_fail_the_turn_that_then_completes` | the fake only sends `willRetry: false` | fake tag `[retry-then-complete]` | a retryable error is shown, the run is still running, the following completed turn ends it successfully | S |
 | `approval_replies_match_each_schema`, `a_permissions_request_for_write_roots_is_checked_as_a_file_change`, `an_allowed_permissions_request_never_carries_network_along_with_write_roots` | only command and file-change approvals are emitted; no `item/permissions/requestApproval`, `execCommandApproval` or `applyPatchApproval` | fake tags per method | each request gets its documented answer shape; a write-root request is checked like a file change; allowing it never carries network | M |
 | `a_recorded_list_parses_as_the_live_one_will` | the fake's own hand-written `model/list` page; the checked-in recorded page is unit-only | recorded-frame replay: fake reads a page from an env file; the test points it at `crates/orbyn-core/src/agents/driver/fixtures/codex-0.166.0-model-list.json` | the real recorded page parses into the same `/api/engines/codex/models` read as the hand-written one (source `engine`, hidden dropped, efforts from the page) | M |
@@ -166,20 +174,26 @@ retryable-error notifications. The rows below name those gaps:
 
 ## The harnesses to build
 
-**H1, extend `orbyn-fake-engine`, do not add a binary.** Most gaps above are one prompt tag plus
-the frames it sends, in [claude.rs](../../crates/orbynd/src/bin/orbyn_fake_engine/claude.rs) or
-[codex/](../../crates/orbynd/src/bin/orbyn_fake_engine/codex); the recorded-page and control-id
-cases use an env knob instead. This keeps one fake, one launch path and one set of env knobs: a
-test that needs the recorded frames gets them replayed through an env file
-(`ORBYN_FAKE_CODEX_PAGE`, `ORBYN_FAKE_CLAUDE_INIT`) rather than copied into the fake.
+**H1, extend `orbyn-fake-engine`, do not add a binary. Built.** The first tag,
+`[usage-limited]` in [codex/turn.rs](../../crates/orbynd/src/bin/orbyn_fake_engine/codex/turn.rs),
+sends the two spent `account/rateLimits/updated` windows and the `usageLimitExceeded` failure;
+it also leaves `rate-limits-spent` beside the launch file, and
+[codex/mod.rs](../../crates/orbynd/src/bin/orbyn_fake_engine/codex/mod.rs) answers a later
+`account/rateLimits/read` (the limits route's own short session) with the same spent account. The
+rest of the gaps above are one prompt tag or env knob each, added the same way: this keeps one
+fake, one launch path and one set of env knobs; a test that needs recorded frames gets them
+replayed through an env file (`ORBYN_FAKE_CODEX_PAGE`, `ORBYN_FAKE_CLAUDE_INIT`) rather than
+copied into the fake.
 
-**H2, one device fake tool program, two callers.** The unit fake
-([test_support.rs](../../crates/orbyn-core/src/devices/test_support.rs)) has most of the knobs the
-remaining rows need. Move the program to `crates/orbynd/tests/fixtures/devices-fake-tool.js`, include it from
-the unit support with `include_str!` and from the edge test the same way, so the two suites
-exercise one file. The edge keeps `ORBYN_DEVICES_FAKE_DIR`; the unit tests keep their existing fake
-directory. If the cross-crate `include_str!` is judged fragile, keep the copy and accept the drift,
-but say which file is the source.
+**H2, one device fake tool program, two callers. Built.** The program moved to
+[devices-fake-tool.js](../../crates/orbynd/tests/fixtures/devices-fake-tool.js);
+[test_support.rs](../../crates/orbyn-core/src/devices/test_support.rs) includes it with
+`include_str!` and [devices.rs](../../crates/orbynd/tests/devices.rs) does the same, so the two
+suites exercise one file and it is the source of truth. The edge keeps `ORBYN_DEVICES_FAKE_DIR`:
+its shims pass the tool name and that directory to the same program the unit support invokes with
+argv, so a knob added for either suite is reachable from both. The cross-crate `include_str!` path
+is judged acceptable: both crates live in this workspace and the file is source, not a build
+artifact.
 
 **H3, a signal to wait for before the kill.** The restart is not new: six tests already call
 `Service::kill()` and then a fresh `Service::start` on the same data folder. What a crash case
@@ -217,18 +231,25 @@ visibility change. The missing-tool case needs no harness: a `PATH` without one 
 2. **Devices missing tool** (Devices table, S): a `PATH` whose helper writes only two of the three
    shims; no H2 needed. Break-check: make the missing-tool check report the platform available, so
    the unavailable row cannot appear and the test fails.
-3. **Codex usage limit stop** (Codex table, M): one fake tag in
-   `crates/orbynd/src/bin/orbyn_fake_engine/codex/`, one test. Break-check: stop sending
-   `account/rateLimits/updated`; the limited run loses its reset and the test fails.
-4. **Devices busy** (Devices table, M): the delay knob H2 brings, then the test. Break-check:
-   remove the `device_busy` guard; the second-action test fails.
+3. **Codex usage limit stop** (Codex table, delivered with H1): one fake tag in
+   `crates/orbynd/src/bin/orbyn_fake_engine/codex/`, two tests:
+   `drivers.rs::a_codex_usage_limit_stop_keeps_the_latest_spent_window_and_its_sentence` and
+   `a_codex_usage_limit_stop_leaves_the_spent_window_for_the_limits_read`. Break-checks run
+   27 Nov 2026: taking the earliest spent window (`min` for `max` in
+   `codex/limits.rs::spent_window_reset`) fails the reset assertion; reporting the old 12% window
+   to the limits read fails the second test with `left: Number(12.0)`.
+4. **Devices busy** (Devices table, delivered with H2): the delay knob H2 brings, then the test
+   `devices.rs::a_second_action_while_one_runs_is_device_busy_and_starts_no_tool`. Break-check run
+   27 Nov 2026: removing the one-writer guard in `devices/mod.rs::try_busy` answers the second
+   action `200` and the test fails on the status assertion.
 5. **Codex retry, unknown outcome, recorded page** (Codex table, S/M): three tests on the same fake.
 6. **Claude stop refused, quota rejected, control ids** (Claude table, M): three tags; these are the
    first real prune enablers for the Claude frame table.
 7. **Claude shape tables and ride-along settings** (Claude table, M each): four tags, then the
    settings test.
 8. **Codex permission and legacy approval schemas** (Codex table, M): one tag per method.
-9. **Devices timeout, foldable, sizes** (Devices table, M): finish H2's knobs.
+9. **Devices timeout, foldable, sizes** (Devices table, M): H2's shared program already holds the
+   knobs; the cases are still unwritten.
 10. **Store signal wait and two cases** (Store table, S/M): H3.
 11. **Old-database builder and versions** (Store table, L): H4, one version per prune, not all 89.
 
@@ -272,12 +293,20 @@ visibility change. The missing-tool case needs no harness: a `PATH` without one 
 
 ## Verification: what needs the box
 
-Step 1's test was run green on the box (1 passed, 48 filtered out). Everything else in this document
-is unverified. On the box, for each added test: run it green, then apply the named break-check and
-confirm it fails for the stated reason, then restore. Step 1's break-check and the unit-test prune it
-enabled were run on 27 Nov 2026 with wave 4 (P3.6; box results are in the wave-4 line of the test
-ledgers), and the tip's `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D
-warnings` pass was run with that prune, plus the three unit files it touched (the claude, codex
-and devices lib filters) and the touched edge test files (`cargo test -p orbynd --test drivers`,
-and so on). Windows
-behaviour of the device fake and the `.cmd` shims is unobserved here; the CI matrix owns it.
+Step 1's test was run green on the box (1 passed, 48 filtered out), and its break-check and the
+unit-test prune it enabled were run on 27 Nov 2026 with wave 4 (P3.6; box results are in the
+wave-4 line of the test ledgers). Steps 3 and 4's tests and break-checks ran on the box on
+27 Nov 2026 (P3.3 H1/H2, branch `test/edge-h1-h2` from `origin/main` `5aeb2a01f`):
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p orbynd --test drivers -- a_codex_usage_limit_stop` | 2 passed, 0 failed (49 filtered) |
+| `cargo test -p orbynd --test devices` | 5 passed, 0 failed |
+| `cargo test -p orbyn-core --lib devices:: -- --test-threads=8` | 67 passed, 0 failed |
+| `cargo test -p orbyn-core --lib tools::mcp::tools -- --test-threads=8` | 85 passed, 0 failed (the other caller of the shared device fake) |
+| `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` | both exit 0 |
+
+The break-checks were applied one at a time, each failed the delivered test for the stated reason,
+and the files were restored. No product behaviour changed: the new frames and the shared JS program
+are test doubles, and the only `src/` edits are inside the fake engine's own binary.
+Windows behaviour of the device fake and the `.cmd` shims is unobserved here; the CI matrix owns it.
