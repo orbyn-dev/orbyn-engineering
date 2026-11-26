@@ -17,7 +17,23 @@ use crate::crew::lifecycle::is_final;
 use crate::crew::verify::budget_left;
 use crate::store::{CrewRun, CrewTask};
 
+/// How long an engine approver's turn may take before the request is denied. This is the
+/// engine-facing window in production: the provider has a real model on the other side.
+#[cfg(not(test))]
 const APPROVAL_TIME: Duration = Duration::from_secs(30);
+/// The same window in a test build. A test has no provider on the other side and calls the core
+/// directly on a machine shared with other work, so a loaded box must not turn a valid approval
+/// into "could not give a valid approval in time" and decide the test (#1351's test clock, tdd 3.7).
+/// Production keeps 30 seconds; the test build gets its own.
+#[cfg(test)]
+const APPROVAL_TIME: Duration = Duration::from_secs(10 * 60);
+/// The production approval window is part of the contract and a test build cannot see it, so this
+/// pins it at compile time: a change to 30 seconds fails the build instead of slipping through a
+/// filtered test run.
+#[cfg(not(test))]
+const _: () = {
+    assert!(APPROVAL_TIME.as_secs() == 30);
+};
 const APPROVAL_TOKENS: u64 = 16_384;
 const APPROVAL_COST_USD: f64 = 0.05;
 
@@ -310,6 +326,18 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The test build's approval window is its own: a test calls the core directly and shares the
+    /// machine with other work, so the engine-facing 30 seconds must never be what ends a valid
+    /// approval. Production keeps 30 seconds; the const pin above fails the build if it changes.
+    #[test]
+    fn the_test_build_gives_the_approval_its_own_clock() {
+        assert!(
+            APPROVAL_TIME >= Duration::from_secs(10 * 60),
+            "{APPROVAL_TIME:?}"
+        );
+    }
+
     #[test]
     fn only_a_strict_reasoned_answer_is_accepted() {
         assert!(parse(r#"{"approve":true,"reason":"Fits the brief."}"#).approve);
