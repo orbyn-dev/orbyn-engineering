@@ -3,11 +3,13 @@ import { startProject, type Service } from "./service";
 
 /**
  * A37: the command palette's search over a real `orbynd`. The pull-request group is read first while the forge is slow,
- * so the palette's reading note is observed on the real route; the unreadable-forge note and its Retry stay
- * component-tested because `GET /api/pulls` answers 200 with a per-project `failed` list instead of failing the whole
- * read. The same spec then searches a thread by title, project and worktree branch, an open pull request by title, head
- * branch and project from the service's own pull list through the stand-in `gh`, and picks a thread to see frecency
- * rank it first (browser storage keeps row ids and times only).
+ * so the palette's reading note is observed on the real route; a project whose repository the stand-in `gh` cannot read
+ * makes `GET /api/pulls` answer 200 with that project in the answer's own `failed` list, so the palette's
+ * unreadable-forge note and its Retry are observed too. The note itself stays the frame's one line; the service's read
+ * is what names the project it could not read, and Retry is the person's own re-read, so it finds the rows once the
+ * forge answers again. The same spec then searches a thread by title, project and worktree branch, an open pull request
+ * by title, head branch and project from the service's own pull list through the stand-in `gh`, and picks a thread to
+ * see frecency rank it first (browser storage keeps row ids and times only).
  */
 
 const WINDOW = { width: 1500, height: 900 };
@@ -126,4 +128,54 @@ test("open pull requests are found by title, head branch and project", async ({ 
   await expect(dialog.getByRole("button", { name: /Tidy the docs/ })).toHaveCount(0);
   await query(dialog).fill("my-repo");
   await expect(dialog.getByRole("button", { name: /Fix the login/ })).toBeVisible();
+});
+
+test("an unreadable forge is named by the service, and Retry reads the list again", async ({ page }) => {
+  // A repository the stand-in's gh cannot read fails its pull list the way real gh does: the CLI's own message on
+  // stderr and a non-zero exit. The service reports that in the answer's per-project failed rows, not as a failed read.
+  const refusal = "GraphQL: Could not resolve to a Repository with the name 'o/r'. (repository)";
+  service.ghEdit(0, { pullListError: refusal });
+  try {
+    // The service keeps a project's pull list for a while and the earlier cases already read one, so ask it to read
+    // now, the way the Pull requests page's own Refresh does. It names the project it could not read, with the forge's
+    // own words, and answers 200; that is the answer the palette's own read then receives.
+    const failing = await service.api<{ pulls: unknown[]; failed: { project_id: string; message: string }[] }>(
+      "GET", "/api/pulls?state=open&q=&refresh=1",
+    );
+    expect(failing.pulls).toEqual([]);
+    expect(failing.failed).toEqual([{ project_id: projectId, message: refusal }]);
+
+    await openThread(page);
+    const dialog = await search(page, "Fix the login");
+    // The frame's one line under the Pull requests heading, with Retry, and no rows for the project it could not read.
+    const note = dialog.getByRole("status").filter({ hasText: "Couldn’t read pull requests. Threads and commands still work." });
+    await expect(note).toBeVisible({ timeout: 20_000 });
+    await expect(dialog.getByText("Pull requests", { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: /Fix the login/ })).toHaveCount(0);
+
+    // Recover the forge; Retry is the person's own re-read, so the note gives way to the rows it finds.
+    service.ghEdit(0, { pullListError: undefined });
+    const lists = () => service.ghCalls().filter((call) => call[0] === "pr" && call[1] === "list").length;
+    const asked = lists();
+    const reread = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === "/api/pulls" && url.searchParams.get("refresh") === "1" && response.status() === 200;
+    });
+    await dialog.getByRole("button", { name: "Retry", exact: true }).click();
+    expect((await reread).status()).toBe(200);
+    await expect(note).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: /Fix the login/ })).toBeVisible({ timeout: 20_000 });
+    // The stand-in was asked again, so the rows come from a real read and not from anything the page kept.
+    expect(lists()).toBeGreaterThan(asked);
+
+    const recovered = await service.api<{ pulls: { project_id: string; pull: { number: number } }[]; failed: unknown[] }>(
+      "GET", "/api/pulls?state=open&q=&refresh=1",
+    );
+    expect(recovered.failed).toEqual([]);
+    expect(recovered.pulls.map((entry) => entry.pull.number).sort((a, b) => a - b)).toEqual([42, 77]);
+    expect(recovered.pulls.every((entry) => entry.project_id === projectId)).toBe(true);
+  } finally {
+    service.ghEdit(0, { pullListError: undefined });
+  }
 });
