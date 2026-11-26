@@ -4,7 +4,7 @@ import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
 import { Button } from "../../../../ui/controls";
 import { Ic, type FlowIconName } from "../icons";
 import { decidedBy, gateBlocks, gateDecisionWord, gateStageWord, taskFinal, when } from "./model";
-import { useFlowTask } from "./useFlow";
+import { useFlowTask, useRefresh } from "./useFlow";
 // The gates frame's own card rules: the shared design's card classes and the Flow frame CSS the sample draws them with.
 import "../../shared/design.css";
 import "../flow.css";
@@ -22,6 +22,7 @@ const DECIDER_ICON: Record<string, FlowIconName> = { code: "cpu", confirmed_find
  */
 export function TaskGates({ id, name, onBack }: { id: string; name?: string; onBack(): void }) {
   const read = useFlowTask(id);
+  useRefresh(read.refreshQuietly, read.status !== "ready");
   const missing = read.error?.status === 404;
   return (
     <section className="fv-body fv-zoom" aria-label="Gates">
