@@ -73,6 +73,7 @@ impl Core {
         options.naming = Naming {
             mode: NamingMode::Custom,
             prefix: String::new(),
+            custom: None,
         };
         options.seed = None;
         // A branch an earlier attempt left with no worktree of its own — a start that failed and
