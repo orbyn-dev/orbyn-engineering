@@ -209,8 +209,8 @@ artifact.
 capability — and `Service::wait_for_launch(mode)`, which waits until the fake engine itself recorded
 that launch in `ORBYN_FAKE_LAUNCH_FILE` (`shared.rs::record_launch`) and returns the record. The
 fake records pids (`ORBYN_FAKE_PID_FILE`, `shared.rs::record_pid`), launches and Claude control
-frames (`ORBYN_FAKE_CLAUDE_CONTROL_FILE`), **not approvals**; the launch record is the signal the
-delivered case uses. Tests wait on the signal, kill at that recorded point, restart, then read runs,
+frames (`ORBYN_FAKE_CLAUDE_CONTROL_FILE`), **not approvals**; the launch record is the harness's wait
+signal, while the delivered case's kill point is the pending approval (see step 10). Tests wait on the signal, kill at that recorded point, restart, then read runs,
 approvals and events through the routes. This is the harness row 3.4 consumes for "crash between
 resume commit and prompt send"; 3.3 built it and one case, 3.4 writes the rest.
 
@@ -264,9 +264,12 @@ delivered work needed are `#[cfg]`-gated test support: the fake engine's own bin
    knobs; the cases are still unwritten.
 10. **Store signal wait and two cases** (Store table, S/M): H3 built, one case delivered
     (`service.rs::a_crash_while_an_approval_is_open_closes_the_tool_call_and_interrupts_the_run`).
-    It waits for the fake engine's `codex-turn` record, then for the pending approval, kills,
-    restarts, and asserts the open tool call closed with "Interrupted before a result.", the run is
-    `interrupted`, the approval expired, and no engine turn started. Break-check run 27 Nov 2026:
+    It waits for the pending approval - the deterministic kill point (`wait_for_launch` polls its
+    record with a 10 s cap and is redundant for this synchronous handshake) - then kills, restarts,
+    and asserts the open tool call closed with "Interrupted before a result.", the run is
+    `interrupted`, the approval expired, and no engine turn started (the service turns
+    `continue_threads_after_update` off, service.rs:635-644; the product default would start a
+    continuation run). Break-check run 27 Nov 2026:
     removing `close_open_tools` from `Store::recover` fails it on the missing close. The other case,
     the stop saved before the crash
     (`a_stop_saved_before_a_crash_ends_cancelled_rather_than_interrupted`), is still unwritten: the
@@ -338,7 +341,7 @@ from `origin/main` `bf804077d`):
 | Command | Result |
 | --- | --- |
 | `cargo test -p orbynd --test old_database` | 3 passed, 0 failed (schema 1, the new 34→latest case, and the newer-than-build refusal) |
-| `cargo test -p orbynd --test service` | 41 passed, 0 failed (Linux; the Windows-only sidecar case is compiled out) |
+| `cargo test -p orbynd --test service` | 41 passed, 0 failed (Linux; `folder_browser_skips_windows_hidden_system_and_junction_folders` is compiled out, while the `#[cfg(unix)]` sidecar case ran) |
 | `cargo test -p orbynd --test project_icon_metadata` | 9 passed, 0 failed (its custom-spawn service now goes through `Service::adopt`) |
 | `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` | both exit 0 |
 
@@ -350,6 +353,6 @@ applied alone, failed for that reason, and the file was restored.
 
 The break-checks were applied one at a time, each failed the delivered test for the stated reason,
 and the files were restored. No product behaviour changed: the new frames and the shared JS program
-are test doubles, and the only `src/` edits are `#[cfg]`-gated (the fake engine's own binary, and
-H4's `#[cfg(feature = "test-support")]` re-export of `MIGRATIONS`, which a normal build never sees).
+are test doubles, and the only `src/` edit is `#[cfg]`-gated (H4's `#[cfg(feature = "test-support")]`
+re-export of `MIGRATIONS`, which a normal build never sees; the fake engine is untouched on this branch).
 Windows behaviour of the device fake and the `.cmd` shims is unobserved here; the CI matrix owns it.
