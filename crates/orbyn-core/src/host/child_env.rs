@@ -210,9 +210,15 @@ const MODULE_ANALYSIS_CACHE: &str = "PSModuleAnalysisCachePath";
 /// user's profile data folder, then the system temp folder, keeps the path absolute.
 #[cfg(windows)]
 fn terminal_module_cache(vars: &[(OsString, OsString)]) -> Option<PathBuf> {
+    // Windows environment names ignore case yet keep the spelling they were set with, so a
+    // `psmoduleanalysiscachepath` inherited from a parent is the same setting as the name
+    // below; an exact comparison would miss the person's absolute path and replace it.
     let value = |name: &str| {
         vars.iter()
-            .find(|(key, _)| key == name)
+            .find(|(key, _)| {
+                key.to_str()
+                    .is_some_and(|key| key.eq_ignore_ascii_case(name))
+            })
             .map(|(_, value)| PathBuf::from(value))
     };
     if value(MODULE_ANALYSIS_CACHE).is_some_and(|path| path.is_absolute()) {
@@ -961,6 +967,51 @@ mod tests {
             cache.ends_with(r"powershell\ModuleAnalysisCache"),
             "{}",
             cache.display()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_terminal_reads_the_module_cache_names_without_regard_to_case() {
+        // Windows keeps the spelling a variable was set with, so the person's setting can
+        // arrive lower-cased and must still keep its precedence.
+        let mine = vars(&[("psmoduleanalysiscachepath", r"C:\mine\ModuleAnalysisCache")]);
+        assert!(
+            terminal_plan(&mine, false, false)
+                .set
+                .iter()
+                .all(|(name, _)| name != MODULE_ANALYSIS_CACHE),
+            "a lower-cased absolute setting is kept"
+        );
+        let relative = vars(&[("psmoduleanalysiscachepath", r"Microsoft\Windows\PowerShell")]);
+        let replaced = terminal_plan(&relative, false, false)
+            .set
+            .into_iter()
+            .find(|(name, _)| name == MODULE_ANALYSIS_CACHE)
+            .map(|(_, value)| PathBuf::from(value))
+            .expect("a lower-cased relative setting is replaced");
+        assert!(replaced.is_absolute(), "{}", replaced.display());
+        // The fallback bases are read the same way, so another spelling still bases the
+        // default path where it says, and ORBYN_DATA_DIR keeps its precedence.
+        let bases = vars(&[
+            ("localappdata", r"C:\Users\team\AppData\Local"),
+            ("USERPROFILE", r"C:\Users\team"),
+        ]);
+        assert_eq!(
+            terminal_module_cache(&bases),
+            Some(PathBuf::from(
+                r"C:\Users\team\AppData\Local\Orbyn\powershell\ModuleAnalysisCache"
+            ))
+        );
+        let with_data = vars(&[
+            ("orbyn_data_dir", r"D:\Orbyn\data"),
+            ("LocalAppData", r"C:\Users\team\AppData\Local"),
+        ]);
+        assert_eq!(
+            terminal_module_cache(&with_data),
+            Some(PathBuf::from(
+                r"D:\Orbyn\data\powershell\ModuleAnalysisCache"
+            ))
         );
     }
 
