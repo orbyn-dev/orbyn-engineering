@@ -747,6 +747,7 @@ async fn a_crew_budget_measures_each_crew_on_its_own() {
             base_branch: None,
             effort: None,
             options: Default::default(),
+            branch_name_seed: None,
         })
         .await
         .unwrap();
