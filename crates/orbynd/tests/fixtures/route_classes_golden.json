@@ -417,7 +417,7 @@
     ["POST","/api/projects/{id}/pulls/{number}/reviewers","person"],
     ["POST","/api/projects/{id}/pulls/{number}/stack","person"],
     ["POST","/api/projects/{id}/pulls/{number}/threads/{thread}/resolve","person"],
-    ["POST","/api/projects/{id}/pulls/{number}/viewed","local"],
+    ["POST","/api/projects/{id}/pulls/{number}/viewed","person"],
     ["POST","/api/projects/{id}/pulls/{number}/work","local"],
     ["POST","/api/projects/{id}/repo-threads","person"],
     ["POST","/api/projects/{id}/repos/add-folder","person"],
