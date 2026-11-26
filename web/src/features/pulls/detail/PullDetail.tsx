@@ -28,6 +28,7 @@ import { PullsBanner } from "../list/PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog } from "./MergeDialog";
 import { rememberDeleteBranch, useMergeOptions } from "../model/mergeOptions";
+import { startMergeMethod, useMergeMethodSetting } from "../model/mergeMethod";
 import { ChangeBreakdownCard, LinkedThreadsCard } from "./PullLinkedCards";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullStateBanner, Row } from "./PullDetailBlocks";
 import { approvalWords, baseChangeAllowed, bodyOpensWith, changesNeedYou, conflictWords, mergeGate, ownPull, pageState, requestedByMeHint, reviewAskedOf, reviewWords } from "../model/pullModel";
@@ -92,7 +93,10 @@ export function PullDetail({
     if (!detail.refreshing) setMerging(true);
     else void detail.reload().then(() => setMerging(true));
   };
-  const [mergeMethod, setMergeMethod] = useState("squash");
+  // The project's merge method is the default; a choice in the merge menu wins over it for this visit.
+  const mergeSetting = useMergeMethodSetting(projectId);
+  const [mergeMethod, setMergeMethod] = useState<string | null>(null);
+  const method = mergeMethod ?? startMergeMethod(mergeSetting.data);
   const [editing, setEditing] = useState<string | null>(null);
   const [changingBase, setChangingBase] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -272,7 +276,7 @@ export function PullDetail({
       {merging ? (
         <MergeDialog
           projectId={projectId}
-          initialMethod={mergeMethod}
+          initialMethod={method}
           onStale={() => {
             void detail.reload();
             void extras.reloadNow();
@@ -546,7 +550,7 @@ export function PullDetail({
         <LinkedThreadsCard projectId={projectId} number={number} />
         <ChecksCard pull={pull} checks={checkList.data} collapsed={reviewing} />
         <MergeRow
-          method={mergeMethod}
+          method={method}
           onMethod={setMergeMethod}
           auto={auto}
           onAuto={setAuto}

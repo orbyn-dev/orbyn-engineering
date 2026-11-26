@@ -13,6 +13,7 @@ beforeEach(() => {
   localStorage.clear();
   resetMergeOptions();
   vi.spyOn(pullsApi, "creditsSetting").mockResolvedValue(false);
+  vi.spyOn(pullsApi, "mergeMethodSetting").mockResolvedValue(null);
   vi.spyOn(pullsApi, "detail").mockResolvedValue(detail);
   vi.spyOn(pullsApi, "merge").mockResolvedValue(undefined);
 });
@@ -109,6 +110,40 @@ describe("the merge dialog from a row", () => {
     fireEvent.click(screen.getByRole("button", { name: "Merge" }));
     await flush();
     expect(screen.getByRole("button", { name: "Reload" })).toHaveFocus();
+  });
+});
+
+describe("the method the dialog starts on", () => {
+  const select = () => screen.getByRole("combobox", { name: "Merge method" }) as HTMLSelectElement;
+
+  it("keeps Squash and merge, with every method offered, when the project has no setting", async () => {
+    await open();
+    expect(select().value).toBe("squash");
+    expect([...select().options].map((option) => [option.value, option.textContent])).toEqual([
+      ["squash", "Squash and merge"],
+      ["merge", "Create a merge commit"],
+      ["rebase", "Rebase and merge"],
+    ]);
+    expect(screen.getByText("Squash and merge #7 into main.")).toBeInTheDocument();
+    expect(pullsApi.mergeMethodSetting).toHaveBeenCalledWith("p", expect.anything());
+  });
+
+  it("starts on the global merge method from Settings", async () => {
+    vi.mocked(pullsApi.mergeMethodSetting).mockResolvedValue("merge");
+    await open();
+    expect(select().value).toBe("merge");
+    expect(screen.getByText("Create a merge commit #7 into main.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    await flush();
+    expect(vi.mocked(pullsApi.merge).mock.calls[0]?.[2]).toMatchObject({ method: "merge" });
+  });
+
+  it("starts on the repository's own override, which the project-scoped read resolves over the global", async () => {
+    vi.mocked(pullsApi.mergeMethodSetting).mockImplementation((projectId) => Promise.resolve(projectId === "repo-b" ? "rebase" : "merge"));
+    await open({ projectId: "repo-b" });
+    expect(pullsApi.mergeMethodSetting).toHaveBeenCalledWith("repo-b", expect.anything());
+    expect(select().value).toBe("rebase");
+    expect(screen.getByText("Rebase and merge #7 into main.")).toBeInTheDocument();
   });
 });
 
