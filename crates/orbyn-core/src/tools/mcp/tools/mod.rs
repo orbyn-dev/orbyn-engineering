@@ -18,8 +18,8 @@ use crate::issues::IssueQuery;
 use crate::source_control::forge::PullFilter;
 use definitions::TOOLS;
 use orbyn_contracts::{
-    DeviceButton, DeviceOrientation, HingePreset, IssueLabel, IssueRef, IssueSummary, PullCheck,
-    PullRequest, PullRequestDetail, SubmitReview, TrackerKind, UpdatePull,
+    DeviceButton, DeviceOrientation, HingePreset, IssueCloseReason, IssueLabel, IssueRef,
+    IssueSummary, PullCheck, PullRequest, PullRequestDetail, SubmitReview, TrackerKind, UpdatePull,
 };
 
 /// Under the 45 seconds a tool has to answer, so the caller hears `ended: false`.
@@ -518,6 +518,22 @@ fn issue_query(args: &Value, tracker: TrackerKind) -> Result<IssueQuery> {
     query.tracker = Some(tracker);
     query.limit = 30;
     Ok(query)
+}
+
+/// A state move's close reason: absent is none, and the contract's own two words are the only
+/// values, matched exactly as the wire enum reads them, so a padded or unknown value is refused
+/// here as the route refuses it and a caller cannot name a reason the wire type does not carry.
+fn issue_close_reason(args: &Value) -> Result<Option<IssueCloseReason>> {
+    match optional_text(args, "close_reason")? {
+        None => Ok(None),
+        Some(reason) => match reason.as_str() {
+            "completed" => Ok(Some(IssueCloseReason::Completed)),
+            "not_planned" => Ok(Some(IssueCloseReason::NotPlanned)),
+            _ => Err(CoreError::Invalid(
+                "close_reason must be completed or not_planned.".into(),
+            )),
+        },
+    }
 }
 
 fn issue_labels(labels: &[IssueLabel]) -> Vec<&str> {
