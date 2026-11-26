@@ -246,6 +246,7 @@ async fn two_projects_in_one_core_keep_their_own_post_limits_and_host_ceiling() 
                 base_branch: None,
                 effort: None,
                 options: Default::default(),
+                branch_name_seed: None,
             })
             .await
             .unwrap();
