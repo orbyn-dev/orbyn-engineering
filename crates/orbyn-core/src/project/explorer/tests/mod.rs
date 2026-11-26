@@ -74,6 +74,7 @@ pub(super) async fn thread_in(
         base_branch: None,
         effort: None,
         options: Default::default(),
+        branch_name_seed: None,
     })
     .await
     .unwrap()
