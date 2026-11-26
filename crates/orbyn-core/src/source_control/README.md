@@ -6,7 +6,7 @@ Source control on a thread's checkout, always through the person's own installed
 | --- | --- |
 | `scm` | Source control actions on a thread's checkout: git actions and branches (`mod.rs`), pull request reads and linking (`pulls`), comments, reviews and merges (`review`), stacks and checkouts (`stack`), pull request watching (`watch`), forge status and publishing (`forges`), the kept answers pull request and forge reads come from (`read_cache`) |
 | `scm::writing` | Diff-derived text for a confirmed Git action: the writing request (`mod.rs`), the bounded checkout reads (`candidate`) and the writing style (`style`) |
-| `branch_names` | The deterministic branch name a new worktree starts on: static, semantic or custom naming, bounded to a valid ref and unique against the project's branches |
+| `branch_names` | The branch name a new worktree starts on: static and semantic naming are deterministic and bounded to a valid ref unique against the project's branches; custom naming reads the name an engine writes from the stored instructions, else the purpose |
 | `git` | Git through the installed CLI, worktrees in the sibling `<repo>-wt` root |
 | `jj` | Non-colocated Jujutsu checkouts, read through the installed `jj` |
 | `forge` | GitHub and GitLab through their own CLIs: `Forge` and the public functions (`mod.rs`), one CLI call (`process`), answer parsing (`parse`, `github`, `gitlab`), list details (`details`), reads (`pulls`), comments and reviews (`review`), edits and merges (`merge`), creating and publishing (`create`), sign-in status and the starred-repository read (`status`) |
