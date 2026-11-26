@@ -115,6 +115,45 @@ describe("limits store", () => {
     expect(await readLimits("codex", load, { force: true })).toEqual({ n: 2 });
   });
 
+  it("treats a cancelled check as no answer: nothing failed, so the next automatic check asks at once", async () => {
+    let cancel!: (error: unknown) => void;
+    const load = vi.fn().mockReturnValueOnce(new Promise((_done, fail) => (cancel = fail))).mockResolvedValueOnce({ n: 2 });
+    const cancelled = readLimits("codex", load);
+    cancel(new DOMException("The request was aborted.", "AbortError"));
+    await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+    // No failed check was recorded, so the 30 s backoff never starts: the next check goes out at once.
+    expect(await readLimits("codex", load)).toEqual({ n: 2 });
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets a check that joined a cancelled request ask on its own, as StrictMode's replay does", async () => {
+    let cancel!: (error: unknown) => void;
+    const load = vi.fn().mockReturnValueOnce(new Promise((_done, fail) => (cancel = fail))).mockResolvedValueOnce({ n: 2 });
+    // The first mount starts the shared check; StrictMode's replay joins it, then the first mount's cleanup cancels it.
+    const owner = readLimits("codex", load);
+    const replay = readLimits("codex", load);
+    cancel(new DOMException("The request was aborted.", "AbortError"));
+    await expect(owner).rejects.toMatchObject({ name: "AbortError" });
+    // The replay still wants the figure, so it reads once more instead of waiting on the cancelled request.
+    expect(await replay).toEqual({ n: 2 });
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(limitsAge("codex")).toBe(0);
+  });
+
+  it("shares a genuine failure with a check that joined it, and still backs off", async () => {
+    const load = vi.fn().mockRejectedValueOnce(new Error("down")).mockResolvedValueOnce({ n: 2 });
+    const owner = readLimits("codex", load);
+    const joined = readLimits("codex", load);
+    await expect(owner).rejects.toThrow("down");
+    // A real failure is the answer for both, never a reason for the joining check to read again.
+    await expect(joined).rejects.toThrow("down");
+    expect(load).toHaveBeenCalledTimes(1);
+    await expect(readLimits("codex", load)).rejects.toThrow("down");
+    expect(load).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(LIMITS_BACKOFF_MS);
+    expect(await readLimits("codex", load)).toEqual({ n: 2 });
+  });
+
   it("owns no timers, so nothing is left running after a screen unmounts", async () => {
     const load = vi.fn().mockResolvedValue({});
     await readLimits("codex", load);
