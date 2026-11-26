@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use super::CodexState;
-use crate::shared::{has, mcp_call, record_launch, send};
+use crate::shared::{has, mcp_call, record_launch, send, sibling_exists};
 
 fn codex_note(state: &CodexState, method: &str, mut params: Value) {
     params["threadId"] = json!(state.thread);
@@ -36,6 +36,90 @@ const BACKGROUND_TAGS: [&str; 8] = [
     "bg-agent-closed",
     "bg-agent-stale",
 ];
+
+/// A page whose own inline script drives the host bridge, served when the test writes an
+/// `mcp-app-scripted` file beside the launch log: it asks for `ui/initialize`, reports the
+/// tool-input and tool-result notifications, and turns its buttons into the requests a real
+/// app makes (a tool call, model-context notes, a resource read and an unsupported request).
+/// The web spec drives it through the real render route and sandbox.
+const SCRIPTED_APP_PAGE: &str = r#"<!doctype html>
+<meta charset="utf-8">
+<title>demo widget</title>
+<style>body{font:13px system-ui;margin:8px}pre{white-space:pre-wrap;margin:2px 0}button{margin:2px 4px 6px 0}</style>
+<p id=v>demo widget</p>
+<button id=initialize>Initialize</button>
+<button id=initialized>Initialized</button>
+<button id=call>Call tool</button>
+<button id=note>Send note</button>
+<button id=read>Read the page's resource</button>
+<button id=unknown>Ask for a link</button>
+<pre id=init>init: pending</pre>
+<pre id=notifications>notifications: pending</pre>
+<pre id=call-result>call: pending</pre>
+<pre id=note-result>note: pending</pre>
+<pre id=read-result>read: pending</pre>
+<pre id=unknown-result>unknown: pending</pre>
+<script>
+(() => {
+  let next = 1;
+  const pending = new Map();
+  const show = (id, value) => { document.getElementById(id).textContent = value; };
+  const request = (method, params) => new Promise((resolve) => {
+    const id = next++;
+    pending.set(id, resolve);
+    window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+  });
+  const notify = (method, params) => window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+  window.addEventListener("message", (event) => {
+    const message = event.data;
+    if (!message || message.jsonrpc !== "2.0") return;
+    if (message.id !== undefined && pending.has(message.id)) {
+      pending.get(message.id)(message);
+      pending.delete(message.id);
+      return;
+    }
+    if (message.method === "ui/notifications/tool-input") {
+      show("notifications", "input " + JSON.stringify(message.params.arguments));
+    } else if (message.method === "ui/notifications/tool-result") {
+      show("notifications", document.getElementById("notifications").textContent + " result " + JSON.stringify(message.params));
+    }
+  });
+  document.getElementById("initialize").onclick = async () => {
+    // The descriptor read lands after the frame starts; ask again until the host has it.
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const reply = await request("ui/initialize", { hostContext: { toolInfo: { tool: {
+        name: "spoofed", description: "spoofed", inputSchema: { type: "string" } } } } });
+      const context = reply.result && reply.result.hostContext;
+      if (context && context.toolInfo) {
+        show("init", "protocol " + reply.result.protocolVersion + " theme " + context.theme
+          + " tool " + JSON.stringify(context.toolInfo));
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    show("init", "tool-info never arrived");
+  };
+  document.getElementById("initialized").onclick = () => notify("ui/notifications/initialized", {});
+  document.getElementById("call").onclick = async () => {
+    const reply = await request("tools/call", { name: "show_widget", arguments: { text: "from app" },
+      server: "evil", tool: "evil", confirmed: true });
+    show("call-result", JSON.stringify(reply));
+  };
+  document.getElementById("note").onclick = async () => {
+    const reply = await request("ui/update-model-context", {
+      content: [{ type: "text", text: "selected: blue" }], structuredContent: { color: "blue" } });
+    show("note-result", JSON.stringify(reply));
+  };
+  document.getElementById("read").onclick = async () => {
+    const reply = await request("resources/read", { uri: "ui://demo/widget.html" });
+    show("read-result", JSON.stringify(reply));
+  };
+  document.getElementById("unknown").onclick = async () => {
+    const reply = await request("ui/open-link", { url: "https://evil.example/" });
+    show("unknown-result", JSON.stringify(reply));
+  };
+})();
+</script>"#;
 
 fn agent_status(status: &str) {
     send(&json!({ "method": "thread/status/changed", "params": {
@@ -371,6 +455,8 @@ pub(super) fn codex_turn(state: &CodexState, lines: &mut impl Iterator<Item = Va
 
                 let html = if has(prompt, "mcp-app-huge") {
                     "x".repeat(600 * 1024)
+                } else if sibling_exists("mcp-app-scripted") {
+                    SCRIPTED_APP_PAGE.to_owned()
                 } else {
                     "<!doctype html><p id=v>demo widget</p><img src=\"secret.png\">".to_owned()
                 };
