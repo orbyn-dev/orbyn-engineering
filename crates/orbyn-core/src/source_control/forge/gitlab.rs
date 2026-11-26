@@ -84,6 +84,7 @@ pub(super) fn parse_gitlab_file(file: &Value) -> PullFile {
         deletions,
         patch,
         viewed: false,
+        viewed_synced: false,
     }
 }
 
