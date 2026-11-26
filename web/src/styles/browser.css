@@ -817,7 +817,8 @@ div.browser-bridge-row {
   gap: 6px;
   flex-wrap: wrap;
 }
-.browser-size-field {
+/* The two fields are 64 px, not the 100% the global input rule gives a field (pb-h36-fields). */
+.browser-devices .browser-size-field {
   width: 64px;
   font-variant-numeric: tabular-nums;
   text-align: center;
@@ -830,9 +831,12 @@ div.browser-bridge-row {
   margin: 0;
   padding: 0 8px 4px;
 }
-/* In a narrow panel the device choice takes its own row, and the fields, the lock and Rotate share the row under it. */
+/*
+ * In a narrow panel the device choice takes its own row, and the fields, the lock and Rotate share the row under it
+ * (pb-h36-narrow). At the 380 px panel the choice and the sizes share one row (pb-h36-fields).
+ */
 .browser-devices > select {
-  flex: 1 1 180px;
+  flex: 1 1 110px;
   min-width: 0;
 }
 
