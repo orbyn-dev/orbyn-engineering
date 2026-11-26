@@ -150,6 +150,7 @@
     ["GET","/api/profiles","local"],
     ["GET","/api/profiles/{id}","local"],
     ["GET","/api/projects","local"],
+    ["GET","/api/projects/{id}/branches/detail","local"],
     ["GET","/api/projects/{id}/commits/{sha}/files","local"],
     ["GET","/api/projects/{id}/icon","local"],
     ["GET","/api/projects/{id}/icon/raw","local"],
