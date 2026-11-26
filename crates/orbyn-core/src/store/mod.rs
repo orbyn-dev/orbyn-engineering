@@ -104,6 +104,10 @@ pub(crate) mod thread_repos;
 pub use issues::TrackerConnection;
 pub(crate) use issues::{tracker_of, tracker_text as tracker_name};
 mod migrations;
+/// The ordered schema list, so an edge test can build a database at a chosen older version from
+/// the same list a start applies. Test support only: nothing in a normal build reads it.
+#[cfg(feature = "test-support")]
+pub use migrations::MIGRATIONS;
 mod native_sessions;
 #[cfg(test)]
 mod plan_mode_reset_tests;
