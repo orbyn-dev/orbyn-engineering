@@ -3262,7 +3262,7 @@ no raw comment or check blobs and dropping the forge's check `description`, so f
 is only ever a JSON string value. `orbyn_pull_request_ci_logs` reads one named check's
 failed-jobs log without an effect, redacted with Crew's fixed set and only then cut to the
 last 32 KiB, because a failure ends a log; GitHub only. `orbyn_pull_request_comment`,
-`orbyn_pull_request_update`, `orbyn_pull_request_review`,
+`orbyn_pull_request_respond`, `orbyn_pull_request_update`, `orbyn_pull_request_review`,
 `orbyn_pull_request_merge` and `orbyn_pull_request_ci_rerun` are the write tools: each
 carries an effect, so the gate asks as for every effect tool, and every approval prompt
 names the action and the pull request number. The update tool takes only title, body and
@@ -3273,8 +3273,19 @@ read with `orbyn_pull_request_read`, never auto-merges, and re-reads the pull re
 first: it refuses a closed, draft, conflicting, failing, pending or changes-requested
 pull request, or one whose head moved. The re-run tool re-runs only the failed jobs of
 the named check, and it too is GitHub only; on every other forge both CI tools answer that
-the forge cannot do it. A crew worker cannot call any of them. Creating a pull request
-and resolving review threads are still missing.
+the forge cannot do it. The respond tool is the toolkit's review-thread write: `thread`
+is the review thread id, `body` the reply and `resolved` the thread's state, and at least
+one of the reply or the state is required. GitHub names a thread only by its GraphQL node
+id, so there the reply is `addPullRequestReviewThreadReply` and the state is
+`resolveReviewThread` or `unresolveReviewThread`; GitLab replies with its discussion
+notes endpoint and sets the discussion's resolved flag. A resolution that fails after the
+reply was posted says so, so a caller that retries without the body does not post it
+twice. It writes one audit row, `git.pull_thread_respond`, before either call, and it
+answers what it did: whether it replied and the thread state it was asked to set, or
+`null` when it was not asked. A crew worker cannot call any of these write tools. Creating
+a pull request is still missing, deliberately: `git_action` requires an idle thread, so a
+tool called from inside a run could never succeed, and the shell route and the app's
+Create PR already exist.
 
 ## Computer gateway
 
