@@ -19,9 +19,10 @@ pub(super) const THREADS_QUERY: &str = "query($owner:String!,$repo:String!,$numb
 repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{\
 id isResolved path line comments(first:100){nodes{databaseId body createdAt author{login}}}}}}}}";
 
-/// A reply inside one review thread, named by its GraphQL node id.
-pub(super) const ADD_THREAD_REPLY_MUTATION: &str = "mutation($thread:ID!,$body:String!){\
-addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$thread,body:$body}){comment{id}}}";
+/// A reply inside one review thread, named by its GraphQL node id. Its variable names are the
+/// `-f` fields `gh api graphql` binds them from, so the declared names and the call must agree.
+pub(super) const ADD_THREAD_REPLY_MUTATION: &str = "mutation($pullRequestReviewThreadId:ID!,$body:String!){\
+addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$pullRequestReviewThreadId,body:$body}){comment{id}}}";
 
 pub(super) const RESOLVE_MUTATION: &str =
     "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}";

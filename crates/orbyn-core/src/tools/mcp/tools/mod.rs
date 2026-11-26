@@ -183,13 +183,14 @@ fn pull_comment_body(args: &Value) -> Result<&str> {
     Ok(body)
 }
 
-/// A forge id that goes into an API path: non-empty, at most 200 characters, and only plain
-/// ones. Anything else is refused with the argument's own sentence.
+/// A forge id that goes into an API path: non-empty, at most 200 characters, and only the
+/// plain characters the Core id check accepts (letters, digits, underscore, hyphen and equals),
+/// so a bad id fails here with this sentence instead of later in the Core.
 fn forge_id<'a>(id: &'a str, refusal: &str) -> Result<&'a str> {
     if id.is_empty()
         || id.chars().count() > MAX_REPLY_TO_CHARS
         || !id.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '=' | ':')
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '=')
         })
     {
         return Err(CoreError::Invalid(refusal.into()));
@@ -212,10 +213,24 @@ fn pull_reply_to(args: &Value) -> Result<Option<&str>> {
     .map(Some)
 }
 
-/// The review thread a respond tool names: a plain id of at most 200 characters.
+/// The review thread a respond tool names: required, a string, and a plain id of at most 200
+/// characters.
 fn pull_thread_id(args: &Value) -> Result<&str> {
+    let Some(value) = args.get("thread").filter(|value| !value.is_null()) else {
+        return Err(CoreError::Invalid("thread is required.".into()));
+    };
+    let id = value
+        .as_str()
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| {
+            if value.is_string() {
+                CoreError::Invalid("thread is required.".into())
+            } else {
+                CoreError::Invalid("thread must be a string.".into())
+            }
+        })?;
     forge_id(
-        text(args, "thread")?,
+        id,
         "thread must be a review thread id of at most 200 plain characters.",
     )
 }

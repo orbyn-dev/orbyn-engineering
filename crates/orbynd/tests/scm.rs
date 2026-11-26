@@ -29,6 +29,39 @@ pull() {
 viewed() { grep -qx "$1" "$GH_VIEWED" 2>/dev/null && echo VIEWED || echo UNVIEWED; }
 arg_path() { for arg in "$@"; do case "$arg" in path=*) echo "${arg#path=}";; esac; done; }
 refuse_write() { [ -f "$GH_FAIL" ] && { echo "HTTP 403: Resource not accessible by integration (https://api.github.com/graphql)" >&2; exit 1; }; }
+# gh api graphql binds each -f/-F field other than query and operationName as a GraphQL variable,
+# and real GitHub rejects a non-null declared variable that is not provided. Match that here, so a
+# mutation whose arguments do not bind cannot pass this stand-in.
+graphql_variables() {
+  gql_query=""
+  gql_provided=""
+  for gql_arg in "$@"; do
+    case "$gql_arg" in
+      query=*) gql_query=${gql_arg#query=} ;;
+      operationName=*) ;;
+      *=*) gql_provided="$gql_provided ${gql_arg%%=*}" ;;
+    esac
+  done
+  case "$gql_query" in
+    *'('*) gql_declarations=$(printf '%s' "$gql_query" | sed 's/^[^(]*(//; s/).*$//') ;;
+    *) gql_declarations="" ;;
+  esac
+  gql_old_ifs=$IFS
+  IFS=','
+  for gql_declaration in $gql_declarations; do
+    gql_variable=$(printf '%s' "$gql_declaration" | sed 's/^[[:space:]]*\$//; s/:.*//; s/[[:space:]]//g')
+    [ -n "$gql_variable" ] || continue
+    case "$gql_declaration" in
+      *'!'*) gql_required=1 ;;
+      *) gql_required=0 ;;
+    esac
+    if [ "$gql_required" = 1 ] && ! printf ' %s ' "$gql_provided" | grep -q " $gql_variable "; then
+      echo "GraphQL: Variable \$$gql_variable was not provided" >&2
+      exit 1
+    fi
+  done
+  IFS=$gql_old_ifs
+}
 case "$1 $2" in
   "pr create") [ -f "$GH_FAIL" ] && { echo "no permission" >&2; exit 1; }
     echo "https://github.com/o/r/pull/12" ;;
@@ -43,7 +76,7 @@ case "$1 $2" in
   "pr close") [ "$3" = 66 ] && { echo "refused" >&2; exit 1; } ;;
   "label list") echo '[{"name":"bug","description":"Broken"}]' ;;
   "api user") echo '{"login":"me"}' ;;
-  "api graphql") case "$*" in
+  "api graphql") graphql_variables "$@"; case "$*" in
       *UnmarkFileAsViewed*) refuse_write
         file=$(arg_path "$@")
         { grep -vx "$file" "$GH_VIEWED" 2>/dev/null || true; } > "$GH_VIEWED.tmp"
@@ -943,6 +976,32 @@ async fn the_pull_respond_tool_replies_and_resolves_through_the_stand_in_gh() {
             .iter()
             .any(|row| row["action"] == "git.pull_thread_respond"),
         "{audit}"
+    );
+}
+
+#[test]
+fn the_stand_in_gh_refuses_a_mutation_whose_variable_is_not_bound() {
+    let dir = TempDir::new();
+    let gh = dir.path().join("gh");
+    std::fs::write(&gh, GH).unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let output = std::process::Command::new(&gh)
+        .args([
+            "api",
+            "graphql",
+            "-f",
+            "query=mutation($thread:ID!){resolveReviewThread(input:{threadId:$thread}){thread{id}}}",
+            "-f",
+            "pullRequestReviewThreadId=T1",
+        ])
+        .env("GH_LOG", dir.path().join("gh-log"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "the unbound mutation passed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Variable $thread was not provided"),
+        "{stderr}"
     );
 }
 

@@ -1781,6 +1781,14 @@ fn pull_respond_refuses_bad_arguments_before_the_forge() {
             "thread must be a review thread id",
         ),
         (
+            json!({ "number": 7, "thread": "T:1", "resolved": true }),
+            "thread must be a review thread id",
+        ),
+        (
+            json!({ "number": 7, "thread": 123, "resolved": true }),
+            "thread must be a string",
+        ),
+        (
             json!({ "number": 7, "thread": "T1" }),
             "Name a reply, a resolved value, or both.",
         ),
@@ -1864,20 +1872,8 @@ fn pull_respond_replies_to_and_resolves_a_github_review_thread() {
         calls[1].iter().any(|argument| argument == "id=T1"),
         "{calls:?}"
     );
-
-    let audit = w.core.store.list_audit(None, 100).unwrap();
-    let row = audit
-        .iter()
-        .find(|row| row.action == "git.pull_thread_respond")
-        .expect("the write is audited");
-    assert_eq!(row.actor, "engine:alpha");
-    assert_eq!(row.target, "T1");
-    assert!(
-        audit
-            .iter()
-            .any(|row| row.action == "action.allow" && row.target == "orbyn_pull_request_respond"),
-        "the gate allowed the tool"
-    );
+    drop(calls);
+    the_respond_was_gated_and_audited_once(&w, "T1");
 }
 
 #[test]
@@ -1922,6 +1918,8 @@ fn pull_respond_replies_through_a_gitlab_discussion() {
             "resolved=true",
         ])
     );
+    drop(calls);
+    the_respond_was_gated_and_audited_once(&w, "d1");
 }
 
 #[test]
@@ -1950,6 +1948,8 @@ fn pull_respond_resolves_and_unresolves_without_a_reply() {
             .any(|argument| argument.contains("unresolveReviewThread")),
         "{calls:?}"
     );
+    drop(calls);
+    the_respond_was_gated_and_audited_once(&w, "T1");
 }
 
 #[test]
@@ -2034,6 +2034,93 @@ fn a_resolution_that_fails_after_a_reply_says_the_reply_was_posted() {
     assert!(text.contains("HTTP 403"), "{text}");
     assert!(text.contains("Retry without body"), "{text}");
     assert_eq!(calls.lock().unwrap().len(), 2, "the reply was not retried");
+}
+
+#[test]
+fn pull_respond_replies_without_touching_the_thread_state() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (answer, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_json(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "T1", "body": "Looks good" }),
+        )
+        .await
+    });
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer,
+        json!({ "number": 7, "thread": "T1", "replied": true, "resolved": null })
+    );
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        1,
+        "a reply alone sends one mutation: {calls:?}"
+    );
+    assert!(
+        calls[0]
+            .iter()
+            .any(|argument| argument.contains("addPullRequestReviewThreadReply")),
+        "{calls:?}"
+    );
+    drop(calls);
+    the_respond_was_gated_and_audited_once(&w, "T1");
+}
+
+#[test]
+fn a_forge_without_review_threads_says_it_cannot_reply() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(issue_world_at(
+        false,
+        "https://dev.azure.com/org/project/_git/app",
+    ));
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (text, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_text(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "T1", "body": "Thanks" }),
+        )
+        .await
+    });
+    assert!(error, "{text}");
+    assert_eq!(
+        text,
+        "Azure DevOps cannot reply to a review thread from Orbyn."
+    );
+    assert!(calls.lock().unwrap().is_empty(), "the forge was reached");
+}
+
+/// The respond tool was allowed once by the gate, and its write has exactly one audit row after
+/// that allow.
+fn the_respond_was_gated_and_audited_once(w: &IssueWorld, thread: &str) {
+    let audit = w.core.store.list_audit(None, 100).unwrap();
+    let allows: Vec<usize> = audit
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| {
+            row.action == "action.allow" && row.target == "orbyn_pull_request_respond"
+        })
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(allows.len(), 1, "the gate allowed the tool once");
+    let writes: Vec<&AuditEvent> = audit
+        .iter()
+        .filter(|row| row.action == "git.pull_thread_respond")
+        .collect();
+    assert_eq!(writes.len(), 1, "one write, one audit row");
+    assert_eq!(writes[0].actor, "engine:alpha");
+    assert_eq!(writes[0].target, thread);
+    let allow = allows[0];
+    let write = audit
+        .iter()
+        .position(|row| row.action == "git.pull_thread_respond")
+        .unwrap();
+    // The store lists audit rows newest first, so the later row has the smaller index.
+    assert!(write < allow, "the write row comes after the gate's allow");
 }
 
 #[tokio::test]
