@@ -63,7 +63,7 @@ const detailsQuery = (numbers: number[]) =>
 /** One connection's next page, as the service asks when a first page names one. */
 const nextPage = (connection: "reviewRequests" | "latestReviews", number: number, after: string, nodes: string) =>
   "query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){" +
-  `p${number}:pullRequest(number:${number}){${connection}(first:50,after:"${after}"){pageInfo{hasNextPage endCursor} nodes{${nodes}}}}}`;
+  `p${number}:pullRequest(number:${number}){${connection}(first:50,after:"${after}"){pageInfo{hasNextPage endCursor} nodes{${nodes}}}}}}`;
 
 it("pages the opinionated reviews at the asked limit and keeps a shorter connection whole", () => {
   const reviews = Array.from({ length: 101 }, (_, at) => ({ author: { login: `reviewer${at}` }, state: "APPROVED" }));
