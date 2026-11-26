@@ -172,9 +172,10 @@ test("the composer picks model and effort and sets access", async ({ page }) => 
   await expect(trigger).toBeVisible();
   await trigger.click();
   const picker = page.getByRole("dialog", { name: "Choose a model" });
-  await expect(picker.getByRole("option").first()).toBeVisible({ timeout: 15_000 });
-  const choice = picker.getByRole("option").nth(1);
-  const label = (await choice.locator(".model-row-text b").first().innerText()).trim();
+  // Read the label from the Claude (SDK) group's own first option: a global index can land in another engine's group.
+  const claudeSdkFirst = picker.getByRole("group", { name: "Claude (SDK)" }).getByRole("option").first();
+  await expect(claudeSdkFirst).toBeVisible({ timeout: 15_000 });
+  const label = (await claudeSdkFirst.locator(".model-row-text b").first().innerText()).trim();
   // The thread.jump shortcuts are listed in Keybindings and belong to the page: the open picker keeps them off it.
   await picker.getByRole("combobox", { name: "Search models" }).press("ControlOrMeta+2");
   await expect(picker).toBeVisible();
