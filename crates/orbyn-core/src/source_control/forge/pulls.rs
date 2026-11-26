@@ -2,8 +2,9 @@
 
 use super::Forge;
 use super::github::{
-    GH_LIST_FIELDS, GH_VIEW_FIELDS, THREADS_QUERY, github_comment, github_threads,
-    parse_github_event, parse_github_file, parse_github_revision, raw_github_checks,
+    GH_LIST_FIELDS, GH_VIEW_FIELDS, MARK_VIEWED_MUTATION, PULL_ID_QUERY, THREADS_QUERY,
+    UNMARK_VIEWED_MUTATION, VIEWED_FILES_QUERY, github_comment, github_threads, parse_github_event,
+    parse_github_file, parse_github_revision, parse_github_viewed_page, raw_github_checks,
 };
 use super::gitlab::{gitlab_conversation, parse_gitlab_file, parse_gitlab_revision};
 use super::parse::{check_state, id_of, parse_pull, person};
@@ -438,6 +439,118 @@ pub async fn pull_files(forge: Forge, cwd: &Path, number: u64) -> Result<Vec<Pul
         }
         _ => Err(forge.unsupported("list changed files")),
     }
+}
+
+/// Pages read for one pull request's viewed state. A pull request over the cap is an error, never
+/// a short answer, so no file is reported unviewed because GitHub was not read that far.
+const VIEWED_PAGE_LIMIT: usize = 20;
+
+/// GitHub's own viewed state for each changed file path, and the pull request's node id for the
+/// mark mutations. Only GitHub keeps a viewed state to read.
+pub async fn pull_viewed(
+    forge: Forge,
+    cwd: &Path,
+    number: u64,
+) -> Result<(String, std::collections::HashMap<String, bool>)> {
+    if forge != Forge::GitHub {
+        return Err(forge.unsupported("read viewed files"));
+    }
+    let number_field = format!("number={number}");
+    let mut states = std::collections::HashMap::new();
+    let mut after: Option<String> = None;
+    for _ in 0..VIEWED_PAGE_LIMIT {
+        let query = format!("query={VIEWED_FILES_QUERY}");
+        let after_field = after.as_ref().map(|cursor| format!("after={cursor}"));
+        let mut args = vec![
+            "api",
+            "graphql",
+            "-F",
+            "owner={owner}",
+            "-F",
+            "repo={repo}",
+            "-F",
+            number_field.as_str(),
+            "-f",
+            query.as_str(),
+        ];
+        if let Some(field) = after_field.as_deref() {
+            args.push("-f");
+            args.push(field);
+        }
+        let reply = call_json(forge, cwd, &args).await?;
+        let page = parse_github_viewed_page(&reply).ok_or_else(|| {
+            CoreError::Git("GitHub did not answer the viewed state of the files.".into())
+        })?;
+        states.extend(page.states);
+        match page.next {
+            Some(cursor) => after = Some(cursor),
+            // Every page names the same pull request; the last page's id is the read's own.
+            None => return Ok((page.pull_id, states)),
+        }
+    }
+    Err(CoreError::Git(format!(
+        "GitHub's viewed state has more than {VIEWED_PAGE_LIMIT} pages of files."
+    )))
+}
+
+/// The pull request's node id, read on its own when the page has no files read to take it from.
+pub async fn pull_node_id(forge: Forge, cwd: &Path, number: u64) -> Result<String> {
+    if forge != Forge::GitHub {
+        return Err(forge.unsupported("read a pull request's id"));
+    }
+    let number_field = format!("number={number}");
+    let query = format!("query={PULL_ID_QUERY}");
+    let reply = call_json(
+        forge,
+        cwd,
+        &[
+            "api",
+            "graphql",
+            "-F",
+            "owner={owner}",
+            "-F",
+            "repo={repo}",
+            "-F",
+            &number_field,
+            "-f",
+            &query,
+        ],
+    )
+    .await?;
+    reply
+        .pointer("/data/repository/pullRequest/id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| CoreError::Git("GitHub did not name the pull request.".into()))
+}
+
+/// Marks one file viewed or unviewed in the viewer's own GitHub state, through the mutation the
+/// forge CLI runs. Only GitHub keeps a viewed state to write.
+pub async fn set_file_viewed(
+    forge: Forge,
+    cwd: &Path,
+    pull_id: &str,
+    path: &str,
+    viewed: bool,
+) -> Result<()> {
+    if forge != Forge::GitHub {
+        return Err(forge.unsupported("mark files viewed"));
+    }
+    let mutation = if viewed {
+        MARK_VIEWED_MUTATION
+    } else {
+        UNMARK_VIEWED_MUTATION
+    };
+    let query = format!("query={mutation}");
+    let id = format!("id={pull_id}");
+    let path = format!("path={path}");
+    call(
+        forge,
+        cwd,
+        &["api", "graphql", "-f", &query, "-f", &id, "-f", &path],
+    )
+    .await
+    .map(|_| ())
 }
 
 /// The commits of a pull request, oldest first.
