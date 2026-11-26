@@ -150,7 +150,8 @@ impl Core {
         });
         // KC3: what waits elsewhere is read from the one needs-you field, never assembled here. The review waits this
         // queue answers (`MergeWaiting` and `BackgroundReview`) are left out: they are its own lists above. A held command
-        // and a merge-gate wait are left out too: the Approvals and Merge queue tabs answer them, so they are not elsewhere.
+        // and a merge-gate wait are left out too: Approvals answers holds; merge-gate release uses the Person API.
+        // Its notice opens Flow; the answering Merge queue tab is planned.
         let mut elsewhere: BTreeMap<String, (wire::NeedsYouKind, u32)> = BTreeMap::new();
         for item in self.needs_you_all(Scope::Device)? {
             match item.kind {
