@@ -28,8 +28,9 @@ use crate::{CoreConfig, store::CrewTask};
 
 /// How long [`World::until`] waits before it panics. It is not one of the production budgets: a test's wait must
 /// survive a shared machine, which the archived full-suite log showed tens of times slower than idle. Three
-/// minutes is far past any loaded start and short enough that a deadlocked test still fails in the run.
-const WAIT_LIMIT: Duration = Duration::from_secs(3 * 60);
+/// minutes is far past any loaded start and short enough that a deadlocked test still fails in the run. A test
+/// that polls the store in its own loop borrows it, so no wait in this module is decided by the run's length.
+pub(crate) const WAIT_LIMIT: Duration = Duration::from_secs(3 * 60);
 
 /// A run and the restriction it was started under: `(thread, rules)`.
 pub type Confined = (String, Option<crate::host::confine::Confinement>);
@@ -807,8 +808,10 @@ impl World {
         // A process that dies takes its live scripts with it.
         core.code_runs.forget_all();
         core.shutdown().await;
-        // An aborted script drops its hold on the core when the runtime next polls it.
-        let until = std::time::Instant::now() + Duration::from_secs(5);
+        // An aborted script drops its hold on the core when the runtime next polls it. That is a
+        // scheduling moment, not a product budget: wait on the harness clock, so a loaded runtime
+        // polling a moment later cannot fail the restart (#1063, tdd 3.7).
+        let until = std::time::Instant::now() + WAIT_LIMIT;
         while Arc::strong_count(&core) > 1 && std::time::Instant::now() < until {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
