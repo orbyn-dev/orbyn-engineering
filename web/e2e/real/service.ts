@@ -35,8 +35,13 @@ function previewBrowser(dir: string): string {
   const wrapper = join(dir, "preview-browser");
   // Linux runners restrict user namespaces, which the shell's sandbox needs; Playwright drops it the same way.
   const flags = process.platform === "linux" ? "--in-process-gpu --no-sandbox" : "--in-process-gpu";
+  // The service gets a scrubbed environment, and the build box keeps the shell's libnss3 and libnspr4 outside
+  // the loader's paths, so the wrapper hands the shell the library path the test process was given.
+  const libs = process.env.LD_LIBRARY_PATH
+    ? `export LD_LIBRARY_PATH='${process.env.LD_LIBRARY_PATH.replace(/'/g, "'\\''")}'\n`
+    : "";
   // Kept only in a startup-failure diagnostic, so CI can verify the wrapper's actual flags.
-  writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' 'E2E preview flags: ${flags}' >&2\nexec "${shell}" ${flags} "$@"\n`, { mode: 0o755 });
+  writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' 'E2E preview flags: ${flags}' >&2\n${libs}exec "${shell}" ${flags} "$@"\n`, { mode: 0o755 });
   return wrapper;
 }
 
