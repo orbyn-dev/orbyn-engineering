@@ -1,5 +1,6 @@
 //! Assembles the core from its parts and owns process-wide startup rules.
 
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -36,27 +37,42 @@ pub const DEFAULT_APPROVAL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// Where the service keeps its data unless told otherwise, so the CLI finds it too.
 pub fn default_data_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("ORBYN_DATA_DIR") {
-        return Some(PathBuf::from(dir));
-    }
-    let home = || {
-        std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(PathBuf::from)
+    data_dir_from(&std::env::vars_os().collect::<Vec<_>>())
+}
+
+/// The data folder a set of variables names, by the rule above, so a test or a child's
+/// plan can ask what another environment would choose.
+pub fn data_dir_from(vars: &[(OsString, OsString)]) -> Option<PathBuf> {
+    let var = |name: &str| {
+        vars.iter()
+            .find(|(key, _)| is_named(key, name))
+            .map(|(_, value)| PathBuf::from(value))
     };
+    if let Some(dir) = var("ORBYN_DATA_DIR") {
+        return Some(dir);
+    }
+    let home = || var("HOME").or_else(|| var("USERPROFILE"));
     #[cfg(target_os = "macos")]
     let dir = home().map(|home| home.join("Library/Application Support/Orbyn"));
     #[cfg(windows)]
-    let dir = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
+    let dir = var("LOCALAPPDATA")
         .or_else(home)
         .map(|base| base.join("Orbyn"));
     #[cfg(not(any(target_os = "macos", windows)))]
-    let dir = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
+    let dir = var("XDG_DATA_HOME")
         .or_else(|| home().map(|home| home.join(".local/share")))
         .map(|base| base.join("orbyn"));
     dir
+}
+
+/// Whether a variable's name is this one. `std::env::var_os` ignores case on Windows, and a
+/// set of variables read from another process keeps whatever spelling it was given.
+pub(crate) fn is_named(key: &OsStr, name: &str) -> bool {
+    if cfg!(windows) {
+        key.eq_ignore_ascii_case(OsStr::new(name))
+    } else {
+        key == OsStr::new(name)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -797,6 +813,51 @@ fn clean_stale_run_dirs(runs_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_data_folder_rule_reads_the_variables_it_is_given() {
+        let named = |list: &[(&str, &str)]| -> Vec<(OsString, OsString)> {
+            list.iter()
+                .map(|(name, value)| ((*name).into(), (*value).into()))
+                .collect()
+        };
+        // An explicit folder wins on every platform, and is taken as it is.
+        assert_eq!(
+            data_dir_from(&named(&[("ORBYN_DATA_DIR", "/data")])),
+            Some(PathBuf::from("/data"))
+        );
+        // Otherwise the platform's own folder under the person's home.
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            data_dir_from(&named(&[("HOME", "/Users/me")])),
+            Some(PathBuf::from("/Users/me/Library/Application Support/Orbyn"))
+        );
+        #[cfg(not(any(target_os = "macos", windows)))]
+        assert_eq!(
+            data_dir_from(&named(&[("HOME", "/home/me")])),
+            Some(PathBuf::from("/home/me/.local/share/orbyn"))
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            data_dir_from(&named(&[
+                ("LOCALAPPDATA", "C:\\Users\\me\\AppData\\Local"),
+                ("USERPROFILE", "C:\\Users\\me"),
+            ])),
+            Some(PathBuf::from("C:\\Users\\me\\AppData\\Local\\Orbyn"))
+        );
+        // With nothing named there is no folder to return.
+        assert_eq!(data_dir_from(&named(&[])), None);
+    }
+
+    #[test]
+    fn a_variable_name_is_matched_the_way_the_process_environment_matches_it() {
+        #[cfg(windows)]
+        assert!(is_named(OsStr::new("localappdata"), "LOCALAPPDATA"));
+        #[cfg(not(windows))]
+        assert!(!is_named(OsStr::new("localappdata"), "LOCALAPPDATA"));
+        assert!(is_named(OsStr::new("ORBYN_DATA_DIR"), "ORBYN_DATA_DIR"));
+        assert!(!is_named(OsStr::new("ORBYN_DATA"), "ORBYN_DATA_DIR"));
+    }
 
     #[cfg(unix)]
     #[test]

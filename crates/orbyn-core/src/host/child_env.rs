@@ -217,7 +217,67 @@ fn terminal_plan(vars: &[(OsString, OsString)], engine: bool, prefer_saved: bool
         .find(|(name, _)| name == "PATH")
         .map(|(_, value)| value.clone());
     changes.set.push(("PATH".into(), widened(base.as_deref())));
+    // A Windows shell writes PowerShell's module analysis cache on startup, and that file must
+    // not land in the checkout the shell opens in (issue 1788).
+    #[cfg(windows)]
+    powershell_cache(vars, &mut changes);
     changes
+}
+
+/// PowerShell's module analysis cache file. Left alone, PowerShell builds it from the
+/// profile's local app-data folder, and a folder that comes back empty makes the path it
+/// builds relative: resolved from the shell's working directory, so the cache lands in the
+/// person's checkout and `git status` reports `?? Microsoft/`.
+#[cfg(windows)]
+const POWERSHELL_CACHE: &str = "PSModuleAnalysisCachePath";
+
+/// Points the cache at Orbyn's data folder; a person's own absolute path is left alone.
+/// The value is always absolute, so no shell can resolve it under its working directory,
+/// and PowerShell creates the folder itself. Paths beside it (the file name) stay its own.
+#[cfg(windows)]
+fn powershell_cache(vars: &[(OsString, OsString)], changes: &mut EnvPlan) {
+    let inherited = vars
+        .iter()
+        .find(|(name, _)| crate::app::is_named(name, POWERSHELL_CACHE));
+    // A relative path is exactly what the shell resolves from its working directory.
+    if inherited.is_some_and(|(_, value)| Path::new(value).is_absolute()) {
+        return;
+    }
+    let Some(folder) = cache_folder(vars) else {
+        return;
+    };
+    // The inherited spelling goes, so the child never holds two names for one setting.
+    if let Some((name, _)) = inherited {
+        changes.remove.push(name.clone());
+    }
+    changes.set.push((
+        POWERSHELL_CACHE.into(),
+        folder
+            .join("powershell")
+            .join("ModuleAnalysisCache")
+            .into_os_string(),
+    ));
+}
+
+/// Orbyn's data folder when the variables name an absolute one, then a temp folder: never a
+/// relative one, which the shell would resolve from its working directory like any other.
+#[cfg(windows)]
+fn cache_folder(vars: &[(OsString, OsString)]) -> Option<PathBuf> {
+    let absolute = |folder: PathBuf| folder.is_absolute().then_some(folder);
+    let named = |name: &str| {
+        vars.iter()
+            .find(|(key, _)| crate::app::is_named(key, name))
+            .map(|(_, value)| PathBuf::from(value))
+    };
+    crate::app::data_dir_from(vars)
+        .and_then(absolute)
+        .or_else(|| {
+            ["TEMP", "TMP"]
+                .into_iter()
+                .find_map(named)
+                .and_then(absolute)
+        })
+        .or_else(|| absolute(std::env::temp_dir()))
 }
 
 /// Which credential variables an engine would inherit, by name, and the origin of
@@ -1206,5 +1266,145 @@ mod tests {
             None => unsafe { std::env::remove_var("ORBYN_SECRET") },
         }
         assert_eq!(path, Some(vec![PathBuf::from("/usr/bin")]), "{path:?}");
+    }
+
+    // ---- a Windows terminal never hands PowerShell a cache path the shell can resolve in the
+    // checkout (issue 1788). PowerShell writes its module analysis cache to the path in
+    // `PSModuleAnalysisCachePath`, and a value that is missing or relative is resolved from the
+    // shell's working directory: the project, which `git status` then reports as `?? Microsoft/`.
+
+    #[cfg(windows)]
+    const POWERSHELL_CACHE_NAME: &str = "PSModuleAnalysisCachePath";
+
+    /// Where the plan puts the cache file, when it sets one at all.
+    #[cfg(windows)]
+    fn cache_setting(changes: &EnvPlan) -> Option<PathBuf> {
+        changes
+            .set
+            .iter()
+            .find(|(name, _)| name_of(name) == POWERSHELL_CACHE_NAME)
+            .map(|(_, value)| PathBuf::from(value))
+    }
+
+    /// The variables a Windows terminal starts from, with a profile folder of its own.
+    #[cfg(windows)]
+    fn windows_vars(
+        dir: &crate::testing::TempDir,
+        extra: &[(&str, OsString)],
+    ) -> Vec<(OsString, OsString)> {
+        let mut inherited: Vec<(OsString, OsString)> = vec![
+            (
+                "LOCALAPPDATA".into(),
+                dir.path().join("appdata").into_os_string(),
+            ),
+            ("TEMP".into(), dir.path().join("temp").into_os_string()),
+            ("PATH".into(), "C:\\Windows\\System32".into()),
+        ];
+        inherited.extend(
+            extra
+                .iter()
+                .map(|(name, value)| ((*name).into(), value.clone())),
+        );
+        inherited
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_terminal_sends_powershells_module_cache_to_orbyns_data_folder() {
+        let dir = crate::testing::TempDir::new();
+        let changes = terminal_plan(&windows_vars(&dir, &[]), false, false);
+        let cache = cache_setting(&changes).expect("a terminal sets the cache path");
+        // Absolute, so no shell can resolve it from its own working directory, and not taken
+        // back off the child by any other rule.
+        assert!(cache.is_absolute(), "{cache:?}");
+        assert_eq!(
+            cache,
+            dir.path()
+                .join("appdata")
+                .join("Orbyn")
+                .join("powershell")
+                .join("ModuleAnalysisCache")
+        );
+        assert!(!removed(&changes).contains(&POWERSHELL_CACHE_NAME.to_owned()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_relative_cache_path_is_replaced_before_the_shell_resolves_it_in_the_checkout() {
+        let dir = crate::testing::TempDir::new();
+        // What PowerShell builds from a profile folder that comes back empty: the path the gate saw.
+        let inherited = windows_vars(
+            &dir,
+            &[(
+                POWERSHELL_CACHE_NAME,
+                "Microsoft\\Windows\\PowerShell\\ModuleAnalysisCache".into(),
+            )],
+        );
+        let cache = cache_setting(&terminal_plan(&inherited, false, false))
+            .expect("a relative cache path is replaced");
+        assert!(cache.is_absolute(), "{cache:?}");
+        // The checkout is the shell's working directory; an absolute cache path cannot land in it.
+        let checkout = dir.path().join("my-repo");
+        assert_eq!(
+            checkout.join(&cache),
+            cache,
+            "{cache:?} resolves inside {checkout:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_persons_own_absolute_cache_path_is_left_alone() {
+        let dir = crate::testing::TempDir::new();
+        let own = dir.path().join("mine").join("ModuleAnalysisCache");
+        let inherited = windows_vars(&dir, &[(POWERSHELL_CACHE_NAME, own.into_os_string())]);
+        let changes = terminal_plan(&inherited, false, false);
+        assert_eq!(cache_setting(&changes), None);
+        assert!(!removed(&changes).contains(&POWERSHELL_CACHE_NAME.to_owned()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_profile_folder_that_is_missing_or_relative_falls_back_to_a_temp_folder() {
+        let dir = crate::testing::TempDir::new();
+        let temp = dir.path().join("temp");
+        for app_data in ["", "appdata"] {
+            let mut inherited = windows_vars(&dir, &[]);
+            for (name, value) in &mut inherited {
+                if name.as_os_str() == "LOCALAPPDATA" {
+                    *value = app_data.into();
+                }
+            }
+            let cache = cache_setting(&terminal_plan(&inherited, false, false))
+                .unwrap_or_else(|| panic!("{app_data:?}: no cache path"));
+            assert!(cache.is_absolute(), "{app_data:?}: {cache:?}");
+            assert!(cache.starts_with(&temp), "{app_data:?}: {cache:?}");
+        }
+        // A relative data folder is no better than no folder: the shell would resolve it too.
+        let inherited = windows_vars(&dir, &[("ORBYN_DATA_DIR", "relative-data".into())]);
+        let cache = cache_setting(&terminal_plan(&inherited, false, false)).expect("still set");
+        assert!(cache.is_absolute(), "relative data folder: {cache:?}");
+        // And with no folder named at all, the system temp folder still keeps it absolute.
+        let bare: Vec<(OsString, OsString)> = vec![("PATH".into(), "C:\\Windows".into())];
+        let cache = cache_setting(&terminal_plan(&bare, false, false)).expect("still set");
+        assert!(cache.is_absolute(), "no folder: {cache:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_tool_and_an_engine_keep_their_own_cache_setting() {
+        let dir = crate::testing::TempDir::new();
+        let inherited = windows_vars(&dir, &[]);
+        for engine in [false, true] {
+            assert_eq!(cache_setting(&plan(&inherited, engine, false)), None);
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn a_terminal_on_another_platform_gets_only_the_widened_path() {
+        let changes = terminal_plan(&vars(&[("PATH", "/bin")]), false, false);
+        let set: Vec<String> = changes.set.iter().map(|(name, _)| name_of(name)).collect();
+        assert_eq!(set, ["PATH"]);
     }
 }

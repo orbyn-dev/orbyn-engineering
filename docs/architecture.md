@@ -857,7 +857,12 @@ here. Terminals sharing a `group` are a split. The `main` terminal is what a pla
 socket opens and a terminal-tier run uses, and a plain one nobody returns to closes
 after a minute. Named terminals stay until closed. Settling or archiving closes them
 all. `?observe=true` attaches read-only: input and resizes are dropped. Fish starts
-with `no-query-term` so it does not wait on terminal replies.
+with `no-query-term` so it does not wait on terminal replies. On Windows the shell also
+gets `PSModuleAnalysisCachePath`, an absolute file under Orbyn's data folder
+(`powershell/ModuleAnalysisCache`): PowerShell resolves a missing or relative cache path
+from its own working directory, which is the checkout, so the cache would otherwise
+land in the project and dirty `git status`. A person's own absolute value is kept, and
+PowerShell creates the folder.
 
 Tools and connectors are read-only. `GET /api/threads/:id/tools` and `GET /api/engines/:id/tools`
 (`?refresh=1` asks the engine again) return `EngineTools`: groups
