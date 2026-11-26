@@ -51,11 +51,16 @@ export interface PatchActions {
  * on for as long as the chip exists. Removing either removes both. `origin` ties it to this diff view,
  * as a file comment is tied to the source it was made on.
  */
-export function Patch({ lines, path, threadId, origin, needle, current, full, split, onShowAll, actions, narrow }: {
+export function Patch({ lines, path, threadId, origin, needle, current, full, split, onShowAll, actions, narrow, repoId, repoName }: {
   lines: readonly DiffLine[];
   path: string;
   threadId: string;
   origin: string;
+  /** The repository the file is in, so a comment made here names it and belongs to that repository's file alone. Set for
+   *  every file of a multi-repository thread, the thread's primary repository included; an ordinary thread names none. */
+  repoId?: string;
+  /** That repository's name, said in the comment and in what the engine receives; set only with `repoId`. */
+  repoName?: string;
   /** The lower-cased find text, or "" when nothing is searched. */
   needle: string;
   /** The row and start of the match the find bar is on in this file. */
@@ -118,8 +123,9 @@ export function Patch({ lines, path, threadId, origin, needle, current, full, sp
   }, []);
 
   const sentChips = useComposerChips((state) => state.sent[threadId]);
+  // Two repositories can each have changed a file of the same path: the repository is part of what tells a comment's file apart.
   const here = (chip: ComposerChip): chip is ReviewChip => chip.kind === "review" && chip.path === path
-    && chip.sourceRevision === origin && (chip.sourceCwd ?? "") === (cwd ?? "");
+    && chip.repoId === repoId && chip.sourceRevision === origin && (chip.sourceCwd ?? "") === (cwd ?? "");
   const pending = (chips ?? []).filter(here);
   const sent = (sentChips ?? []).filter(here);
   const comments = [...sent, ...pending];
@@ -173,6 +179,8 @@ export function Patch({ lines, path, threadId, origin, needle, current, full, sp
     const chip: ReviewChip = {
       id: chipId(), kind: "review", path, ...range, comment: text.trim(), sourceRevision: origin,
       ...(cwd ? { sourceCwd: cwd } : {}),
+      ...(repoId === undefined ? {} : { repoId }),
+      ...(repoName === undefined ? {} : { repoName }),
     };
     if (chip.endLine === chip.line) delete chip.endLine;
     const now = useComposerChips.getState().chips[threadId] ?? [];

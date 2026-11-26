@@ -349,6 +349,7 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       full={shownFully.has(fileKey(selected))}
       repoName={repoNameOf(selected)}
       repoId={selected.repo_id !== undefined && selected.repo_id !== projectId ? selected.repo_id : undefined}
+      fileRepoId={selected.repo_id}
       split={wide}
       onShowAll={() => setShownFully(new Set(shownFully).add(fileKey(selected)))}
       canRender={source === "worktree" || source === "thread"}

@@ -5,6 +5,8 @@ import { createReposMock } from "../../../../mock/repos";
 import { api, ApiFailure } from "../../../api/client";
 import { pullsApi } from "../../../api/pulls";
 import type { FileDiff } from "../../../api/types";
+import { chipLabel, chipPrompt } from "../../../product/composer/composerContext";
+import { useComposerChips } from "../../../product/state/composerChipStore";
 import { fileTabId, useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { chooseRepo, setReposApi, type RepoRow, type ThreadRepo } from "../../repos";
@@ -223,6 +225,68 @@ it("a repository whose turn read fails is not counted as zero changes", async ()
   await user.click(await screen.findByRole("menuitem", { name: "Turn" }));
   const picker = await screen.findByRole("menu", { name: "Turn" });
   await waitFor(() => expect(within(picker).getByRole("menuitem")).toHaveTextContent("14:12 · +1 −0 · 1 file · 1 repo not counted"));
+});
+
+// #1055: a line comment made in Changes names the repository of its file, so the same path changed in two repositories
+// keeps its own comments and the agent is told which repository the comment is about.
+const commentOn = async (user: ReturnType<typeof userEvent.setup>, patch: HTMLElement, text: string) => {
+  await user.click(within(patch).getByRole("button", { name: "Comment on line 15" }));
+  await user.type(screen.getByRole("textbox", { name: /^Review comment on/ }), text);
+  await user.keyboard("{Control>}{Enter}{/Control}");
+};
+
+const pickFile = async (user: ReturnType<typeof userEvent.setup>, group: string) => {
+  await user.click(within(await screen.findByRole("group", { name: `${group} changes` })).getByRole("button", { name: /^Modified/ }));
+};
+
+it("a line comment on another repository's file carries that repository, and shows only on its own file", async () => {
+  const user = userEvent.setup();
+  useComposerChips.setState({ chips: {}, sent: {} });
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  setup();
+  render(<DiffPanel threadId="t" />);
+  await pickFile(user, "orbyn-planner");
+  await commentOn(user, await screen.findByRole("group", { name: "Patch" }), "Is this path checked?");
+  const chip = useComposerChips.getState().chips.t?.[0];
+  expect(chip).toMatchObject({ kind: "review", path: "auth/redirect.ts", line: 15, repoId: "planner", repoName: "orbyn-planner" });
+  // The comment says where the file is: the repository's name is part of the label and of what the engine receives.
+  expect(chipLabel(chip!)).toBe("orbyn-planner/auth/redirect.ts:15");
+  expect(chipPrompt(chip!)).toContain("orbyn-planner/auth/redirect.ts:15");
+  expect(screen.getByRole("note", { name: "Review comment orbyn-planner/auth/redirect.ts:15" })).toBeInTheDocument();
+
+  // The primary repository changed a file of the same path: the other repository's comment is not under it.
+  await pickFile(user, "app");
+  expect(screen.queryByRole("note", { name: /^Review comment/ })).toBeNull();
+  await pickFile(user, "orbyn-planner");
+  expect(await screen.findByRole("note", { name: "Review comment orbyn-planner/auth/redirect.ts:15" })).toBeInTheDocument();
+});
+
+it("a line comment on the primary repository's file names it too, and is not shown on another repository's same path", async () => {
+  const user = userEvent.setup();
+  useComposerChips.setState({ chips: {}, sent: {} });
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  setup();
+  render(<DiffPanel threadId="t" />);
+  await pickFile(user, "app");
+  await commentOn(user, await screen.findByRole("group", { name: "Patch" }), "Primary only");
+  expect(useComposerChips.getState().chips.t?.[0]).toMatchObject({ repoId: "p", repoName: "app" });
+  expect(screen.getByRole("note", { name: "Review comment app/auth/redirect.ts:15" })).toBeInTheDocument();
+  await pickFile(user, "orbyn-planner");
+  expect(screen.queryByRole("note", { name: /^Review comment/ })).toBeNull();
+});
+
+it("an ordinary thread's line comment names no repository, as before", async () => {
+  const user = userEvent.setup();
+  useComposerChips.setState({ chips: {}, sent: {} });
+  setReposApi(createReposMock({ threads: {} }));
+  setup();
+  render(<DiffPanel threadId="t" />);
+  await commentOn(user, await screen.findByRole("group", { name: "Patch" }), "No repository here");
+  const chip = useComposerChips.getState().chips.t?.[0];
+  expect(chip).toMatchObject({ kind: "review", path: "auth/redirect.ts", line: 15 });
+  expect("repoId" in chip!).toBe(false);
+  expect("repoName" in chip!).toBe(false);
+  expect(chipLabel(chip!)).toBe("auth/redirect.ts:15");
 });
 
 it("an ordinary thread's turn totals read once, with the three arguments they always had", async () => {
