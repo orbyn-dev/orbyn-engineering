@@ -9,11 +9,11 @@ import { settled, startProject, threadIdOf, type Service } from "./service";
  * and the absence of a Load more row; the detail page with body, comments, facts and its linked pull requests card absent
  * (the fixture reports none); the comment box's one write; the description pencil's one update; the label picker's candidates
  * read and one update of the whole set, and a current assignee the candidates do not carry written by its login; the State
- * menu closing and reopening the issue; the Sort menu's two orders; and Start a thread, the service's framed draft read and
- * one write that creates, links and queues. The issue-edit routes are served for GitHub (#1593), so the candidates probe
- * answers 400 invalid (a live route) and the edit and Sort controls are live; the stand-in `gh` answers the PATCH, comment
- * POST and assignees read those edits make, so they arrive at a tracker (Start a thread, the connect route and the project
- * preferences PUT stay inside the service).
+ * menu closing as completed, closing as not planned and reopening the issue; the Sort menu's two orders; and Start a
+ * thread, the service's framed draft read and one write that creates, links and queues. The issue-edit routes are served
+ * for GitHub (#1593), so the candidates probe answers 400 invalid (a live route) and the edit and Sort controls are live;
+ * the stand-in `gh` answers the PATCH, comment POST and assignees read those edits make, so they arrive at a tracker
+ * (Start a thread, the connect route and the project preferences PUT stay inside the service).
  *
  * The listing is cached per connection scope and full query for 30 s, and a write does not clear it (crates/orbyn-core/src/
  * issues, `CACHE_FOR` and `scope_list`), so a query key an earlier test already read can answer with the pre-write order. The
@@ -343,4 +343,23 @@ test("the Sort menu asks the service for each order and each list comes back in 
   await page.getByRole("menu", { name: "Sort issues" }).getByRole("menuitem", { name: "Updated", exact: true }).click();
   expect((await back).status()).toBe(200);
   await expect(rows(page).first()).toContainText("Tidy the docs");
+});
+
+test("the State menu closes as not planned and the stored issue keeps that close reason", async ({ page }) => {
+  // This case runs last because it leaves #7 closed, where the list and Sort cases above expect it open.
+  await page.goto(`${service.page}#/issues/github/o%2Fr/7`);
+  await expect(page.getByRole("heading", { name: "Retry the queue", exact: true })).toBeVisible({ timeout: 30_000 });
+  // GitHub has two closed names, and each menu entry carries its own close_reason, so both go in the write body.
+  await page.getByRole("button", { name: "State: Open" }).click();
+  const menu = page.getByRole("menu", { name: "Change the state" });
+  await expect(menu.getByRole("menuitem")).toHaveText(["Open", "Closed", "Closed as not planned"]);
+  const closing = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/issues/item/state");
+  await menu.getByRole("menuitem", { name: "Closed as not planned", exact: true }).click();
+  const closed = await closing;
+  expect(closed.status()).toBe(200);
+  expect(closed.request().postDataJSON()).toEqual({ tracker: "github", scope: "o/r", key: "7", state: "Closed as not planned", close_reason: "not_planned" });
+  await expect(page.getByRole("button", { name: "State: Closed as not planned" })).toBeVisible();
+  // The issue the service stored reads back with that name and reason, not just its closed category.
+  const stored = await service.api<{ state: { category: string; name: string; close_reason?: string | null } }>("GET", "/api/issues/item?tracker=github&scope=o%2Fr&key=7");
+  expect(stored.state).toMatchObject({ category: "closed", name: "Closed as not planned", close_reason: "not_planned" });
 });
