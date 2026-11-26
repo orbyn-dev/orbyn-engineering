@@ -494,7 +494,21 @@ test("the side panel starts with no tab, offers three choices, and the + opens a
   await expect(page.getByText("Nothing open")).toBeVisible();
   await expect(page.getByRole("button", { name: "Tab menu" })).toHaveCount(0);
   await page.getByRole("button", { name: "Open a tab" }).click();
-  await expect(page.getByRole("menuitem")).toHaveText([/^Changes/, /^Browser/, "Activity", "Side chat", "Tools"]);
+  // The launcher's shipped entries, in order: the panel's tabs (strip/tabs.ts), then Devices,
+  // Crew views (Planned) and Open file… (PanelHost.tsx, strip/launcher.tsx). Shortcuts, hints and
+  // pills follow each name, so match the name at the start of the row rather than its full text.
+  await expect(page.getByRole("menuitem")).toHaveText([
+    /^Changes/,
+    /^Browser/,
+    /^Activity/,
+    /^Side chat/,
+    /^Tools/,
+    /^Linked threads/,
+    /^Review and comments/,
+    /^Devices/,
+    /^Crew views/,
+    /^Open file/,
+  ]);
   await page.getByRole("menuitem", { name: "Browser" }).click();
   await expect(page.getByRole("tab", { name: "Browser" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator(".ctx-title b")).toHaveText("Browser");
