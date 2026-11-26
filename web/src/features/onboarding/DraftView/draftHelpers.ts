@@ -19,3 +19,14 @@ export const useThreadList = () => {
 
 /** A worktree purpose nothing else has, so each background send gets its own checkout. */
 export const uniquePurpose = (base: string) => [slugify(base) || "thread", crypto.randomUUID().slice(0, 6)].join("-");
+
+/**
+ * The title a draft hands the service for the thread it is about to make: the typed goal
+ * with its whitespace normalized, cut at 50 characters. The service names a new worktree
+ * from this title in semantic mode before the first message's generated title arrives.
+ */
+export const draftTitle = (text: string): string => {
+  const normalized = text.trim().replace(/\s+/gu, " ");
+  const characters = Array.from(normalized);
+  return characters.length <= 50 ? normalized : `${characters.slice(0, 50).join("")}...`;
+};

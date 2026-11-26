@@ -385,6 +385,15 @@ pub(crate) async fn linked_worktrees(repo: &Path) -> Result<Vec<RegisteredWorktr
         .collect())
 }
 
+/// Whether `purpose` already names a registered worktree beside `repo`. Creation finds
+/// and reuses it, so a naming option that spends an engine call must not run for it.
+pub(crate) async fn reuses_worktree(repo: &Path, purpose: &str) -> Result<bool> {
+    Ok(linked_worktrees(repo).await?.iter().any(|registered| {
+        registered.path.exists()
+            && registered.path.file_name() == Some(std::ffi::OsStr::new(purpose))
+    }))
+}
+
 /// How a new worktree starts, from the settings and the project file.
 #[derive(Clone, Debug)]
 pub struct WorktreeOptions {

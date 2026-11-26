@@ -1667,9 +1667,10 @@ in it.
 
 ## Text generators
 
-Two one-shot calls spend engine usage for text a person did not ask a model for: a
-thread's first-message title and a confirmed Git action's commit or pull request text.
-Both go through one resolver: the model `text_generation_models` names for the thread's
+Three one-shot calls spend engine usage for text a person did not ask a model for: a
+thread's first-message title, a confirmed Git action's commit or pull request text, and a
+new worktree's custom branch name, which spends only once the custom naming mode has
+instructions to follow. All three go through one resolver: the model `text_generation_models` names for the thread's
 engine when that engine lists it, then the legacy `text_generation_model` when that
 engine lists it, then the engine's small model (a `haiku`, `luna`, `mini`, `flash` or
 `small` family name), then the thread's model. The reason travels with the choice
@@ -1698,15 +1699,18 @@ at either scope; at project scope the engine then inherits the global choice. A 
 (`PUT /api/preferences`, `PUT /api/projects/{id}/preferences` or the scoped settings
 route); there is no text-generator write route.
 
-A new worktree's branch name is chosen deterministically, without the resolver or an
-engine call: static mode keeps `<branch_name_prefix>/<purpose>`; semantic mode makes a
-lowercase slug from the thread's real title, or the purpose when it has none, capped at
-64 characters and suffixed `-2`, `-3` and so on until it is not one of the project's
-branches; custom mode uses the purpose as the complete branch name. An unusable seed
-falls back to the static name, and a name Git refuses is `invalid_input`, never
-replaced. The stored `branch_name_instructions` is not sent anywhere, so the
-model-written custom name its setting describes is not built, and cleanup has no
-generator either, so neither a branch nor a cleanup call reaches the resolver.
+A new worktree's branch name is chosen before `git worktree add -b` runs. Static mode
+keeps `<branch_name_prefix>/<purpose>`; semantic mode makes a lowercase slug from the
+thread's real title, or the purpose when it has none, capped at 64 characters and
+suffixed `-2`, `-3` and so on until it is not one of the project's branches, and an
+unusable seed falls back to the static name. Custom mode asks the thread's engine,
+through the [Text generators](#text-generators) resolver, to write the complete branch
+name from the stored `branch_name_instructions` and the thread's real title or the
+worktree's purpose; the reply's first line must be one valid branch name, and when no
+instruction is stored, the engine refuses or fails, the reply is not a ref, or the
+20-second wait runs out, the purpose is the complete name as before. Every mode's name
+goes to Git unchanged: a name Git refuses is `invalid_input`, never replaced. Cleanup
+has no generator, so no cleanup call reaches the resolver.
 
 ## Automatic requests
 

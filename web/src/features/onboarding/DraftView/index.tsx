@@ -28,7 +28,7 @@ import { DRAFT_KEY, SCRATCH, useDraftStore, worktreePurpose } from "../../../pro
 import { DraftModelControls } from "./DraftModelControls";
 import { SnapshotCapturingChip, SnapshotDraftChip, isSnapShotSource, sourceBodyToSend, useSnapshot, useSnapshotDraftFlow, withoutAccessibleText, type SnapShotSource } from "../../snapshot";
 import { RepoStart } from "./RepoStart";
-import { MAX_PREVIOUS_WORKTREES, uniquePurpose, useThreadList, type ModelChoice, type OpenMenu } from "./draftHelpers";
+import { MAX_PREVIOUS_WORKTREES, draftTitle, uniquePurpose, useThreadList, type ModelChoice, type OpenMenu } from "./draftHelpers";
 import { SUGGESTIONS } from "./suggestions";
 
 export { SCRATCH } from "../../../product/state/draftStore";
@@ -163,7 +163,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
       ...(project ? { project_id: project.id } : {}),
       engine: choice.engine,
       model: choice.model,
-      title: null,
+      title: draftTitle(text),
       worktree: purpose,
       ...(purpose !== null && purpose !== reused && baseBranch.trim() ? { base_branch: baseBranch.trim() } : {}),
       skill_profile: null,
