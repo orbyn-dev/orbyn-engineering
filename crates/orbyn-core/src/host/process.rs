@@ -269,8 +269,27 @@ pub struct ManagedChild {
     tree: ProcessTree,
 }
 
+// Counts the children this thread spawned, so a test can prove a read no longer starts one
+// process per file.
+#[cfg(test)]
+thread_local! {
+    static SPAWNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn spawned_on_this_thread() -> usize {
+    SPAWNED.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_spawned_on_this_thread() {
+    SPAWNED.with(|count| count.set(0));
+}
+
 impl ManagedChild {
     pub fn spawn(mut command: Command) -> Result<Self> {
+        #[cfg(test)]
+        SPAWNED.with(|count| count.set(count.get() + 1));
         isolate(&mut command);
         let child = command.spawn()?;
         let pid = child
