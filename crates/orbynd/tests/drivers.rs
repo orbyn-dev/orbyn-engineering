@@ -332,6 +332,55 @@ async fn codex_failed_turn_reports_its_error_and_late_frames_are_dropped() {
     assert!(!text_of(&events).contains("too late"));
 }
 
+#[tokio::test]
+async fn a_codex_usage_limit_stop_keeps_the_latest_spent_window_and_its_sentence() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "[usage-limited]").await;
+    assert_eq!(service.finished(&thread).await, "failed");
+    let body = service.json(&format!("/api/threads/{thread}")).await;
+    assert_eq!(body["last_run_state"], "failed", "{body}");
+    // The limit is recorded on the thread with the later of the two spent windows, and
+    // with the engine's own sentence: a generic failure records no limit at all.
+    let limit = &body["lifecycle"]["limit"];
+    assert_eq!(limit["resets_at"], "2027-01-15T09:00:00Z", "{body}");
+    assert!(
+        limit["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("usage limit")),
+        "the engine's own sentence is kept: {body}"
+    );
+}
+
+#[tokio::test]
+async fn a_codex_usage_limit_stop_leaves_the_spent_window_for_the_limits_read() {
+    let dir = TempDir::new();
+    let launches = dir.path().join("launches");
+    let options = Options {
+        env: vec![(
+            "ORBYN_FAKE_LAUNCH_FILE".into(),
+            launches.to_string_lossy().into_owned(),
+        )],
+        ..Options::default()
+    };
+    let (service, thread) = setup(&dir, options, "codex").await;
+    service.admit(&thread, "[usage-limited]").await;
+    assert_eq!(service.finished(&thread).await, "failed");
+    // A later app-server session reports the spent windows, so the limits route shows
+    // what stopped the run instead of the account's earlier 12%/40% report.
+    let limits = service.json("/api/engines/codex/limits").await;
+    assert_eq!(limits["windows"][0]["used_percent"], 100.0, "{limits}");
+    assert_eq!(limits["windows"][1]["used_percent"], 100.0, "{limits}");
+    assert_eq!(
+        limits["windows"][0]["resets_at"], "2027-01-15T08:00:00Z",
+        "{limits}"
+    );
+    assert_eq!(
+        limits["windows"][1]["resets_at"], "2027-01-15T09:00:00Z",
+        "{limits}"
+    );
+}
+
 /// The `background.stopped` events a run reported, with their reasons.
 fn stopped_reasons(events: &[Value]) -> Vec<String> {
     events
