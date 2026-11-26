@@ -196,6 +196,43 @@ test("a thread in two repositories gets one task folder and one branch in each, 
   expect(existsSync(thirdWorktree)).toBe(true);
   expect(execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: thirdWorktree }).toString().trim()).toBe(folder.branch);
 
+  // Removing a repository from the thread: its clean worktree goes from the task folder, the thread's list and task folder
+  // shrink, and the repository and its branch stay in the project. One click behind a confirm dialog is one DELETE write.
+  const joined = await service.api<{ repo_id: string; name: string }[]>("GET", `/api/threads/${threadId}/repos`);
+  const third = joined.find((repo) => repo.name === "third-repo");
+  if (!third) throw new Error("The third repository did not join the thread.");
+  const deletes: string[] = [];
+  page.on("request", (request) => { if (request.method() === "DELETE") deletes.push(new URL(request.url()).pathname); });
+  await again.locator(".repos-pop-row").filter({ hasText: "third-repo" }).getByRole("button", { name: "Remove third-repo from this thread" }).click();
+  const confirm = page.getByRole("dialog", { name: "Remove third-repo from this thread?" });
+  await expect(confirm).toBeVisible();
+  await expect(confirm).toContainText("The thread stops working in third-repo. The repository stays in the project.");
+  const deleting = page.waitForResponse((response) => response.request().method() === "DELETE" && new URL(response.url()).pathname === `/api/threads/${threadId}/repos/${encodeURIComponent(third.repo_id)}`);
+  await confirm.getByRole("button", { name: "Remove", exact: true }).click();
+  expect((await deleting).status()).toBe(204);
+  expect(deletes).toEqual([`/api/threads/${threadId}/repos/${encodeURIComponent(third.repo_id)}`]);
+
+  // The popover and the chip follow the service: two repositories left, and the task folder says two of eight.
+  await expect(again.locator(".repos-pop-row")).toHaveCount(2);
+  await expect(again.locator(".repos-pop-row").filter({ hasText: "third-repo" })).toHaveCount(0);
+  await expect(again.locator(".repos-task")).toContainText("2 of 8 repositories");
+  await expect(page.getByRole("button", { name: "Repos 2", exact: true })).toBeVisible();
+
+  // The service's own state: the thread no longer lists the repository, the task folder no longer has its worktree while the
+  // other two stay, its branch stays in the repository, and the repository stays in the project.
+  const left = await service.api<{ repo_id: string; name: string }[]>("GET", `/api/threads/${threadId}/repos`);
+  expect(left.map((repo) => repo.name)).toEqual(["my-repo", "second-repo"]);
+  expect(left.some((repo) => repo.repo_id === third.repo_id)).toBe(false);
+  const shrunk = await service.api<TaskFolder>("GET", `/api/threads/${threadId}/task-folder`);
+  expect(shrunk.root).toBe(folder.root);
+  expect(shrunk.repos.map((repo) => repo.name)).toEqual(["my-repo", "second-repo"]);
+  expect(existsSync(join(shrunk.root, "third-repo"))).toBe(false);
+  expect(existsSync(join(shrunk.root, "my-repo"))).toBe(true);
+  expect(existsSync(join(shrunk.root, "second-repo"))).toBe(true);
+  expect(execFileSync("git", ["branch", "--list", folder.branch], { cwd: thirdRepo }).toString()).toContain(folder.branch);
+  const projectRepos = await service.api<{ repositories: RepoRow[] }>("GET", `/api/projects/${projectId}/repos`);
+  expect(projectRepos.repositories.map((repo) => repo.name)).toEqual(["my-repo", "second-repo", "third-repo"]);
+
   // The repositories list carries each repository's own branch, the thread's one.
   await page.goto(await projectSettingsUrl(service, projectId));
   const section = repositories(page);
