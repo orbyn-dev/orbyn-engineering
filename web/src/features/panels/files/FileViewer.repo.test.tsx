@@ -27,8 +27,13 @@ interface ServedFile {
 function serve(file: ServedFile = {}, raw?: Uint8Array<ArrayBuffer>) {
   const asked: string[] = [];
   const puts: Record<string, unknown>[] = [];
+  const previews: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const url = String(input);
+    if (url.includes("/previews/file")) {
+      previews.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({}));
+    }
     if (init?.method === "PUT") {
       const body = JSON.parse(String(init.body));
       puts.push(body);
@@ -50,7 +55,7 @@ function serve(file: ServedFile = {}, raw?: Uint8Array<ArrayBuffer>) {
       truncated: file.truncated ?? false,
     }));
   }));
-  return { asked, puts };
+  return { asked, puts, previews };
 }
 
 const query = (url: string) => new URL(url, "http://127.0.0.1").searchParams;
@@ -124,18 +129,18 @@ it("renders another repository's Markdown from the same read, named with its rep
   expect(rawAsks(asked)).toEqual([]);
 });
 
-it("adds another repository's file to the message under its repository's name", async () => {
+it.each(["orbyn-planner", `repo-${"x".repeat(59)}`])("adds another repository's file to the message under its full repository name %s", async (repoName) => {
   serve({ content: "# planner\n" });
-  render(<Viewer threadId="t" tabId="tab" path="README.md" repoId={REPO} repoName="orbyn-planner" line={null} />);
+  render(<Viewer threadId="t" tabId="tab" path="README.md" repoId={REPO} repoName={repoName} line={null} />);
 
   await screen.findByRole("heading", { name: "planner" });
   await userEvent.click(screen.getByRole("button", { name: "Add file to message" }));
 
   const chip = useComposerChips.getState().chips.t![0]!;
   // The chip names the tab's repository, client-only, so the next message points at the right README.md.
-  expect(chip).toMatchObject({ kind: "file", path: "README.md", line: null, repoId: REPO, repoName: "orbyn-planner" });
-  expect(chipLabel(chip)).toBe("orbyn-planner/README.md");
-  expect(chipPrompt(chip)).toContain("File `orbyn-planner/README.md`");
+  expect(chip).toMatchObject({ kind: "file", path: "README.md", line: null, repoId: REPO, repoName });
+  expect(chipLabel(chip)).toBe(`${repoName}/README.md`);
+  expect(chipPrompt(chip)).toContain(`File \`${repoName}/README.md\``);
 });
 
 it("keeps Add file to message off on another repository's tab until the panel names the repository", async () => {
@@ -236,6 +241,28 @@ it("opens the primary repository's tab as the thread's own file, named with the 
   expect(contentAsk(asked).has("repo_id")).toBe(false);
   await userEvent.click(screen.getByRole("button", { name: "Add file to message" }));
   expect(useComposerChips.getState().chips.t![0]).toMatchObject({ kind: "file", path: "README.md", repoName: APP });
+});
+
+it("opens a primary tab's HTML in its repository, while reading the primary without an id", async () => {
+  const { asked, previews } = serve({ content: "<p>app</p>" });
+  window.location.hash = "#/threads/t";
+  vi.spyOn(api, "resolveThreadPath").mockResolvedValue({ cwd: "/repo", checkout_path: "index.html", repository_path: "index.html" });
+  const id = fileTabId({ kind: "thread", path: "index.html", repoId: PRIMARY, primary: true });
+  render(<FileTab id={id} threadId="t" repoName={APP} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Open in browser" }));
+  await waitFor(() => expect(previews).toEqual([{ path: "index.html", repo_id: PRIMARY }]));
+  expect(contentAsk(asked).has("repo_id")).toBe(false);
+});
+
+it("keeps browser previews scoped for a foreign file and unchanged for an ordinary thread", async () => {
+  const { previews } = serve({ content: "<p>file</p>" });
+  const first = render(<Viewer threadId="t" tabId="foreign" path="index.html" repoId={REPO} line={null} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Open in browser" }));
+  await waitFor(() => expect(previews).toEqual([{ path: "index.html", repo_id: REPO }]));
+  first.unmount();
+  render(<Viewer threadId="t" tabId="own" path="index.html" line={null} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Open in browser" }));
+  await waitFor(() => expect(previews).toEqual([{ path: "index.html", repo_id: REPO }, { path: "index.html" }]));
 });
 
 it("draws another repository's plain text file as the editor, read with its repo_id", async () => {
