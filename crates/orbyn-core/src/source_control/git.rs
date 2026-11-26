@@ -69,7 +69,21 @@ pub(crate) async fn git(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
 }
 
 pub(crate) async fn git_raw(cwd: &Path, args: &[&str]) -> Result<std::process::Output> {
+    git_raw_env(cwd, &[], args).await
+}
+
+/// `git_raw` with extra environment, which the batched untracked read needs for its
+/// throwaway index: `GIT_INDEX_FILE` moves the index a read compares against without
+/// touching the checkout's own.
+async fn git_raw_env(
+    cwd: &Path,
+    env: &[(&str, &Path)],
+    args: &[&str],
+) -> Result<std::process::Output> {
     let mut command = command(cwd);
+    for (name, value) in env {
+        command.env(name, value);
+    }
     command.args(SAFE_CONFIG).args(args);
     let output = async {
         crate::host::process::ManagedChild::spawn(command)?
@@ -239,6 +253,8 @@ pub(crate) fn text(bytes: &[u8]) -> String {
 /// Builds a Git process for `cwd`. Every Git Orbyn runs starts here, so its
 /// environment, streams and drop behaviour are set once.
 pub(crate) fn command(cwd: &Path) -> Command {
+    #[cfg(test)]
+    git_spawns::record(cwd);
     let mut command = Command::new("git");
     command
         .current_dir(cwd)
@@ -720,9 +736,12 @@ pub(crate) async fn diff(cwd: &Path, base: Option<&str>) -> Result<Vec<FileDiff>
     let base = base.unwrap_or("HEAD");
     let mut files = tracked_diff(cwd, &[base]).await?;
     let listing = git(cwd, &["ls-files", "--others", "--exclude-standard", "-z"]).await?;
-    for path in listing.split(|byte| *byte == 0).filter(|p| !p.is_empty()) {
-        files.push(untracked_diff(cwd, &String::from_utf8_lossy(path)).await?);
-    }
+    let untracked: Vec<String> = listing
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8_lossy(path).into_owned())
+        .collect();
+    files.extend(untracked_diffs(cwd, &untracked).await?);
     files.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(files)
 }
@@ -763,6 +782,181 @@ async fn tracked_diff(cwd: &Path, range: &[&str]) -> Result<Vec<FileDiff>> {
     Ok(files)
 }
 
+/// The rows for a worktree's untracked files. The read this replaced started one `git
+/// diff` per file; a throwaway index now carries every path as intent-to-add and one
+/// `git diff` writes all of their new-file patches. Git still writes them, so the bytes,
+/// binary detection, filters, line endings and quoting stay the ones it always produced.
+/// A listing git will not take falls back to the per-file read, which is also the only
+/// one that can report its error.
+async fn untracked_diffs(cwd: &Path, paths: &[String]) -> Result<Vec<FileDiff>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    if let Some(files) = batched_untracked_diffs(cwd, paths).await {
+        return Ok(files);
+    }
+    let mut files = Vec::with_capacity(paths.len());
+    for path in paths {
+        files.push(untracked_diff(cwd, path).await?);
+    }
+    Ok(files)
+}
+
+/// Every untracked path's patch from one `git diff`, or `None` when the throwaway index
+/// was refused or git answered in a shape this read does not recognise, so the caller can
+/// read the files one at a time instead.
+async fn batched_untracked_diffs(cwd: &Path, paths: &[String]) -> Option<Vec<FileDiff>> {
+    let scratch = Scratch::new(paths).ok()?;
+    let indexed = [("GIT_INDEX_FILE", scratch.index.as_path())];
+    let listing = format!("--pathspec-from-file={}", scratch.pathspec.display());
+    let added = git_raw_env(
+        cwd,
+        &indexed,
+        &["add", "--intent-to-add", &listing, "--pathspec-file-nul"],
+    )
+    .await
+    .ok()?;
+    if !added.status.success() {
+        return None;
+    }
+    let output = git_raw_env(cwd, &indexed, &["diff", "--no-ext-diff", "--no-textconv"])
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    // The throwaway index holds nothing but these entries, so git writes their patches in
+    // its index order, which is the byte order of their paths.
+    let mut expected = paths.to_vec();
+    expected.sort_unstable();
+    let patch = String::from_utf8_lossy(&output.stdout);
+    let blocks = patches_at_headers(&patch);
+    if blocks.len() != expected.len() {
+        return None;
+    }
+    let mut files = Vec::with_capacity(blocks.len());
+    for (block, path) in blocks.iter().zip(&expected) {
+        if !header_names(block, path) {
+            return None;
+        }
+        files.push(FileDiff {
+            path: path.clone(),
+            status: "added".into(),
+            additions: added_lines(block),
+            deletions: 0,
+            patch: (*block).to_owned(),
+            repo_id: None,
+        });
+    }
+    Some(files)
+}
+
+/// A throwaway index and the pathspec list that fills it, both under the system temp
+/// folder so nothing this read writes lands in the checkout, and both removed when the
+/// read ends. The index file is git's to create; this only names where.
+struct Scratch {
+    folder: PathBuf,
+    index: PathBuf,
+    pathspec: PathBuf,
+}
+
+impl Scratch {
+    fn new(paths: &[String]) -> std::io::Result<Self> {
+        let folder = std::env::temp_dir().join(format!("orbyn-diff-{}", crate::util::new_id()));
+        std::fs::create_dir_all(&folder)?;
+        let scratch = Self {
+            index: folder.join("index"),
+            pathspec: folder.join("pathspec"),
+            folder,
+        };
+        let mut listing = Vec::with_capacity(paths.iter().map(|path| path.len() + 16).sum());
+        for path in paths {
+            // A path can spell pathspec magic, and this list must name each file as it is.
+            listing.extend_from_slice(format!(":(top,literal){path}").as_bytes());
+            listing.push(0);
+        }
+        std::fs::write(&scratch.pathspec, listing)?;
+        Ok(scratch)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.folder);
+    }
+}
+
+/// A combined patch split at the `diff --git` header that starts each block. No content
+/// line can start one: git writes every content line behind a space, `+` or `-`.
+fn patches_at_headers(patch: &str) -> Vec<&str> {
+    let mut blocks = Vec::new();
+    let mut start = 0;
+    let mut offset = 0;
+    for line in patch.split_inclusive('\n') {
+        if line.starts_with("diff --git ") {
+            if offset > start {
+                blocks.push(&patch[start..offset]);
+            }
+            start = offset;
+        }
+        offset += line.len();
+    }
+    if start < patch.len() {
+        blocks.push(&patch[start..]);
+    }
+    blocks
+}
+
+/// Whether a block's header names `path`. Git quotes the path when it holds a control
+/// byte, a quote or a backslash, and also, unless `core.quotePath` is off, a byte over
+/// ASCII, so the plain spelling and both quoted ones count.
+fn header_names(block: &str, path: &str) -> bool {
+    let Some(header) = block.lines().next() else {
+        return false;
+    };
+    if header == format!("diff --git a/{path} b/{path}") {
+        return true;
+    }
+    [true, false].into_iter().any(|escape_high| {
+        let quoted = quoted_path(path, escape_high);
+        header == format!("diff --git a/{quoted} b/{quoted}")
+    })
+}
+
+/// Git's C-style quoting of one path as a header writes it. `escape_high` is the default
+/// `core.quotePath` reading, which also escapes every byte over ASCII.
+fn quoted_path(path: &str, escape_high: bool) -> String {
+    let mut quoted = Vec::with_capacity(path.len() + 2);
+    quoted.push(b'"');
+    for &byte in path.as_bytes() {
+        match byte {
+            b'\n' => quoted.extend_from_slice(b"\\n"),
+            b'\t' => quoted.extend_from_slice(b"\\t"),
+            b'\r' => quoted.extend_from_slice(b"\\r"),
+            b'\\' => quoted.extend_from_slice(b"\\\\"),
+            b'"' => quoted.extend_from_slice(b"\\\""),
+            0x20..=0x7e => quoted.push(byte),
+            byte if byte < 0x20 || byte == 0x7f || escape_high => {
+                quoted.extend_from_slice(format!("\\{byte:03o}").as_bytes());
+            }
+            byte => quoted.push(byte),
+        }
+    }
+    quoted.push(b'"');
+    String::from_utf8_lossy(&quoted).into_owned()
+}
+
+/// The added lines of one new-file patch, its `+++` header aside.
+fn added_lines(patch: &str) -> u32 {
+    patch
+        .lines()
+        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+        .count() as u32
+}
+
+/// One untracked file's new-file patch from the `--no-index` call against the null
+/// device. The batched read replaces this one; it stays as that read's fallback and as
+/// the reference the equivalence test measures against.
 async fn untracked_diff(cwd: &Path, path: &str) -> Result<FileDiff> {
     let null_device = if cfg!(windows) { "NUL" } else { "/dev/null" };
     // `--no-index` exits 1 when files differ, which is the expected case.
@@ -783,10 +977,7 @@ async fn untracked_diff(cwd: &Path, path: &str) -> Result<FileDiff> {
         return Err(CoreError::Git(text(&output.stderr)));
     }
     let patch = String::from_utf8_lossy(&output.stdout).into_owned();
-    let additions = patch
-        .lines()
-        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
-        .count() as u32;
+    let additions = added_lines(&patch);
     Ok(FileDiff {
         path: path.to_owned(),
         status: "added".into(),
@@ -852,8 +1043,40 @@ fn parse_numstat(bytes: &[u8]) -> std::collections::HashMap<String, (u32, u32)> 
     counts
 }
 
+/// Counts the Git processes a read starts, so a test shows how many rather than
+/// trusting a number, and prints it beside the time the read took. Recording the
+/// checkout each one ran in keeps a parallel test's processes out of another test's
+/// count; the checkout is resolved first because Git's answer carries the resolved
+/// path while a test may hold a path that only names it.
+#[cfg(test)]
+pub(crate) mod git_spawns {
+    use std::path::Path;
+    use std::sync::{Mutex, PoisonError};
+
+    static SPAWNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    fn key(folder: &Path) -> String {
+        crate::util::canonicalize(folder)
+            .map(|resolved| resolved.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| folder.to_string_lossy().into_owned())
+    }
+
+    pub(crate) fn record(folder: &Path) {
+        let mut spawned = SPAWNED.lock().unwrap_or_else(PoisonError::into_inner);
+        spawned.push(key(folder));
+    }
+
+    /// The Git processes started in `folder` so far.
+    pub(crate) fn count(folder: &Path) -> usize {
+        let folder = key(folder);
+        let spawned = SPAWNED.lock().unwrap_or_else(PoisonError::into_inner);
+        spawned.iter().filter(|spawned| **spawned == folder).count()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::git_spawns;
     use super::*;
     use crate::testing::TempDir;
 
@@ -1238,5 +1461,144 @@ mod tests {
                 ("added".to_owned(), "c.txt".to_owned()),
             ]
         );
+    }
+
+    #[test]
+    fn a_combined_patch_splits_at_its_headers_and_nowhere_else() {
+        let patch = concat!(
+            "diff --git a/one.txt b/one.txt\n",
+            "--- /dev/null\n",
+            "+++ b/one.txt\n",
+            "@@ -0,0 +1,2 @@\n",
+            "+diff --git a/two.txt b/two.txt\n",
+            "+-not a header\n",
+            "diff --git a/two.txt b/two.txt\n",
+            "--- /dev/null\n",
+            "+++ b/two.txt\n",
+            "@@ -0,0 +1 @@\n",
+            "+two\n",
+        );
+        let blocks = patches_at_headers(patch);
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks[0].starts_with("diff --git a/one.txt"));
+        assert!(blocks[0].contains("+-not a header"));
+        assert!(blocks[1].starts_with("diff --git a/two.txt"));
+    }
+
+    #[test]
+    fn a_block_header_accepts_the_spellings_git_quotes_a_path_with() {
+        let plain = "diff --git a/spaced name.txt b/spaced name.txt\n--- /dev/null\n";
+        assert!(header_names(plain, "spaced name.txt"));
+        assert!(!header_names(plain, "other.txt"));
+        // A high byte is an octal escape unless `core.quotePath` is off, and a control
+        // byte is always escaped.
+        assert_eq!(
+            quoted_path("\u{fc}\u{f1}\u{ef}.txt", true),
+            "\"\\303\\274\\303\\261\\303\\257.txt\""
+        );
+        assert_eq!(
+            quoted_path("\u{fc}\u{f1}\u{ef}.txt", false),
+            "\"\u{fc}\u{f1}\u{ef}.txt\""
+        );
+        let escaped = quoted_path("\u{fc}\u{f1}\u{ef}.txt", true);
+        assert!(header_names(
+            &format!("diff --git a/{escaped} b/{escaped}\n"),
+            "\u{fc}\u{f1}\u{ef}.txt"
+        ));
+        assert!(header_names(
+            "diff --git a/\u{fc}\u{f1}\u{ef}.txt b/\u{fc}\u{f1}\u{ef}.txt\n",
+            "\u{fc}\u{f1}\u{ef}.txt"
+        ));
+        let control = quoted_path("a\tb.txt", false);
+        assert!(header_names(
+            &format!("diff --git a/{control} b/{control}\n"),
+            "a\tb.txt"
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_diff_read_starts_one_git_process_per_untracked_batch_not_per_file() {
+        let dir = TempDir::new();
+        let repo = repo(dir.path()).await;
+        std::fs::write(repo.join("new.txt"), "one\n").unwrap();
+        let before = git_spawns::count(&repo);
+        let started = std::time::Instant::now();
+        let one = diff(&repo, None).await.unwrap();
+        let one_took = started.elapsed();
+        let one_file = git_spawns::count(&repo) - before;
+        assert_eq!(one.len(), 1, "one untracked file is one row");
+
+        for index in 0..129 {
+            let name = format!("new-{index:03}.txt");
+            std::fs::write(repo.join(&name), format!("line {index}\n")).unwrap();
+        }
+        let before = git_spawns::count(&repo);
+        let started = std::time::Instant::now();
+        let many = diff(&repo, None).await.unwrap();
+        let many_took = started.elapsed();
+        let many_files = git_spawns::count(&repo) - before;
+        assert_eq!(many.len(), 130, "130 untracked files are 130 rows");
+        println!(
+            "1 untracked file: {one_file} git processes in {one_took:?}; \
+             130 untracked files: {many_files} git processes in {many_took:?}"
+        );
+        assert_eq!(
+            many_files, one_file,
+            "the untracked side must not start a Git process per file"
+        );
+        assert!(
+            many_files <= 8,
+            "a diff read started {many_files} Git processes"
+        );
+    }
+
+    /// The rows a worktree's untracked files produce must not move, so the batched read
+    /// is compared with the one-call-per-file read it replaced. The cases are the ones
+    /// that decide a patch's shape: empty, no trailing newline, binary, CRLF and
+    /// attributes, quoting, and a path that is not quiet in a header.
+    #[tokio::test]
+    async fn untracked_patches_match_the_per_file_read_byte_for_byte() {
+        let dir = TempDir::new();
+        let repo = repo(dir.path()).await;
+        for args in [
+            vec!["config", "core.autocrlf", "true"],
+            vec!["config", "core.safecrlf", "false"],
+        ] {
+            git(&repo, &args).await.unwrap();
+        }
+        for folder in ["nested", "attrs"] {
+            std::fs::create_dir_all(repo.join(folder)).unwrap();
+        }
+        std::fs::write(repo.join("attrs/.gitattributes"), "*.bin binary\n").unwrap();
+        let cases: [(&str, &[u8]); 10] = [
+            ("plain.txt", b"one\ntwo\n"),
+            ("crlf.txt", b"one\r\ntwo\r\n"),
+            ("no-newline.txt", b"a line with no terminator"),
+            ("empty.txt", b""),
+            ("binary.dat", b"\x00\x01\x02binary\n"),
+            ("spaced name.txt", b"spaces\n"),
+            ("dash -name.txt", b"dash\n"),
+            ("quoted \u{fc}n\u{ef}code.txt", b"unicode\n"),
+            ("nested/deep.txt", b"deep\n"),
+            ("attrs/x.bin", b"plain bytes that attributes call binary\n"),
+        ];
+        for (path, bytes) in cases {
+            std::fs::write(repo.join(path), bytes).unwrap();
+        }
+        let files = diff(&repo, None).await.unwrap();
+        let rows: std::collections::HashMap<&str, &FileDiff> = files
+            .iter()
+            .map(|file| (file.path.as_str(), file))
+            .collect();
+        for (path, _) in cases {
+            let expected = untracked_diff(&repo, path).await.unwrap();
+            let actual = rows
+                .get(path)
+                .unwrap_or_else(|| panic!("missing {path}: {files:?}"));
+            assert_eq!(actual.patch, expected.patch, "{path} patch");
+            assert_eq!(actual.additions, expected.additions, "{path} additions");
+            assert_eq!(actual.status, expected.status, "{path} status");
+            assert_eq!(actual.deletions, expected.deletions, "{path} deletions");
+        }
     }
 }
