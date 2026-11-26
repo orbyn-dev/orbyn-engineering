@@ -188,27 +188,98 @@ fn is_shell_host(file: &str) -> bool {
     .contains(&stem)
 }
 
-/// Finds the wrapped script in an npm-style `.cmd` shim: the first quoted
-/// `%dp0%\...` or `%~dp0\...` path. The result is relative to the shim's folder.
-/// npm and pnpm both write this shape; pnpm's path climbs into its store.
+/// Whether a shim path is a payload this resolver may start itself: a script or
+/// program, never `node.exe` (the host it runs) or a shell that would parse the
+/// arguments again.
+fn is_launchable(file: &str) -> bool {
+    let lower = file.to_ascii_lowercase();
+    [".js", ".cjs", ".mjs", ".exe"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+        && !lower.ends_with("node.exe")
+        && !is_shell_host(&lower)
+}
+
+/// Finds the wrapped script in an npm-style `.cmd` shim. npm writes the path two
+/// ways: quoted after `%dp0%\` or `%~dp0\` (pnpm's shape too, climbing into its
+/// store), or into a variable first as `SET "<NAME>=%~dp0<path>"` and launched
+/// as `"%NAME%"`. The result is relative to the shim's folder.
 pub fn parse_cmd_shim(text: &str) -> Option<String> {
     for marker in ["\"%dp0%\\", "\"%~dp0\\", "\"%dp0%/", "\"%~dp0/"] {
         for (start, _) in text.match_indices(marker) {
             let rest = &text[start + marker.len()..];
             let end = rest.find('"')?;
             let candidate = &rest[..end];
-            let lower = candidate.to_ascii_lowercase();
-            if [".js", ".cjs", ".mjs", ".exe"]
-                .iter()
-                .any(|ext| lower.ends_with(ext))
-                && !lower.ends_with("node.exe")
-                && !is_shell_host(&lower)
-            {
+            if is_launchable(candidate) {
                 return Some(candidate.replace('\\', std::path::MAIN_SEPARATOR_STR));
             }
         }
     }
-    None
+    assigned_script(text)
+}
+
+/// The script a shim sets in a variable before launching it. npm's own npx.cmd
+/// and npm.cmd write `SET "NODE_EXE=%~dp0\node.exe"` and a prefix helper before the
+/// CLI, and launch only the CLI in the file's last `"%NAME%"`, so the last
+/// launchable assignment the file expands wins.
+fn assigned_script(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let mut assigned: Vec<(String, String)> = Vec::new();
+    for line in text.lines() {
+        if let Some((name, value)) = set_assignment(line)
+            && let Some(script) = dp0_script(value)
+        {
+            assigned.push((name.to_ascii_lowercase(), script));
+        }
+    }
+    let launched = assigned
+        .iter()
+        .rev()
+        .find(|(name, _)| lower.contains(&format!("\"%{name}%\"")));
+    launched
+        .or_else(|| assigned.last())
+        .map(|(_, script)| script.clone())
+}
+
+/// The name and value of a `SET` line, written `SET "NAME=value"` or
+/// `SET NAME=value`. Every other `SET` form (`/A`, `/P`) names no variable.
+fn set_assignment(line: &str) -> Option<(&str, &str)> {
+    let line = line.trim_start();
+    if !line.get(..3)?.eq_ignore_ascii_case("set") {
+        return None;
+    }
+    let rest = line[3..].trim_start();
+    let assignment = match rest.strip_prefix('"') {
+        Some(quoted) => &quoted[..quoted.rfind('"')?],
+        None => rest.trim_end(),
+    };
+    let (name, value) = assignment.split_once('=')?;
+    let plain = !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+    (plain && !value.contains('"')).then_some((name, value))
+}
+
+/// The path a `SET` value names inside the shim's folder, from `%~dp0` (or
+/// `%dp0%`) and a relative path to a launchable file. A drive or UNC path here
+/// would leave the folder, so it is refused rather than followed by accident.
+fn dp0_script(value: &str) -> Option<String> {
+    let rest = value
+        .strip_prefix("%~dp0")
+        .or_else(|| value.strip_prefix("%dp0%"))?;
+    let relative = rest
+        .strip_prefix('\\')
+        .or_else(|| rest.strip_prefix('/'))
+        .unwrap_or(rest);
+    let drive = relative
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphabetic)
+        && relative.as_bytes().get(1) == Some(&b':');
+    let rooted = matches!(relative.chars().next(), Some('\\' | '/')) || drive;
+    let relative = relative.replace('\\', std::path::MAIN_SEPARATOR_STR);
+    (!rooted && is_launchable(&relative)).then_some(relative)
 }
 
 /// Builds a piped command in its own process tree.
@@ -638,6 +709,53 @@ mod tests {
         let expected = ["node_modules", "@openai", "codex", "bin", "codex.js"]
             .join(std::path::MAIN_SEPARATOR_STR);
         assert_eq!(parse_cmd_shim(shim), Some(expected));
+    }
+
+    /// npm 10's own npx.cmd: the node host and a prefix helper are set first,
+    /// the CLI last, and only the CLI is launched at the end.
+    #[test]
+    fn follows_npm_set_shim_to_its_cli_script() {
+        let shim = concat!(
+            "@ECHO OFF\r\n\r\nSETLOCAL\r\n\r\n",
+            "SET \"NODE_EXE=%~dp0\\node.exe\"\r\n",
+            "IF NOT EXIST \"%NODE_EXE%\" (\r\n  SET \"NODE_EXE=node\"\r\n)\r\n\r\n",
+            "SET \"NPM_PREFIX_JS=%~dp0\\node_modules\\npm\\bin\\npm-prefix.js\"\r\n",
+            "SET \"NPX_CLI_JS=%~dp0\\node_modules\\npm\\bin\\npx-cli.js\"\r\n",
+            "FOR /F \"delims=\" %%F IN ('CALL \"%NODE_EXE%\" \"%NPM_PREFIX_JS%\"') DO (\r\n",
+            "  SET \"NPM_PREFIX_NPX_CLI_JS=%%F\\node_modules\\npm\\bin\\npx-cli.js\"\r\n)\r\n",
+            "IF EXIST \"%NPM_PREFIX_NPX_CLI_JS%\" (\r\n  SET \"NPX_CLI_JS=%NPM_PREFIX_NPX_CLI_JS%\"\r\n)\r\n\r\n",
+            "\"%NODE_EXE%\" \"%NPX_CLI_JS%\" %*\r\n",
+        );
+        let expected =
+            ["node_modules", "npm", "bin", "npx-cli.js"].join(std::path::MAIN_SEPARATOR_STR);
+        assert_eq!(parse_cmd_shim(shim), Some(expected));
+    }
+
+    #[test]
+    fn follows_a_generic_set_shim_to_its_script() {
+        let shim = "SET \"TOOL_JS=%~dp0\\lib\\tool.js\"\r\n\"%NODE_EXE%\" \"%TOOL_JS%\" %*\r\n";
+        let expected = ["lib", "tool.js"].join(std::path::MAIN_SEPARATOR_STR);
+        assert_eq!(parse_cmd_shim(shim), Some(expected));
+        // A value the file does not expand by name is still the script it sets.
+        let shim = "set TOOL=%~dp0\\bin\\tool.mjs\r\nnode %TOOL% %*\r\n";
+        let expected = ["bin", "tool.mjs"].join(std::path::MAIN_SEPARATOR_STR);
+        assert_eq!(parse_cmd_shim(shim), Some(expected));
+    }
+
+    #[test]
+    fn a_set_shim_with_no_launchable_script_is_refused() {
+        for shim in [
+            "SET \"NODE_EXE=%~dp0\\node.exe\"\r\n\"%NODE_EXE%\" %*",
+            "SET \"TOOL=%~dp0\\cmd.exe\"\r\n\"%TOOL%\" /c evil %*",
+            "SET \"TOOL=%~dp0\\sub\\PWSH.EXE\"\r\n\"%TOOL%\" %*",
+            "SET \"TOOL=%~dp0\\..\\..\\cmd.exe\"\r\n\"%TOOL%\" /c evil",
+            "SET \"TOOL=C:\\Windows\\notepad.exe\"\r\n\"%TOOL%\"",
+            "SET \"TOOL=%~dp0D:\\evil.exe\"\r\n\"%TOOL%\"",
+            "SET \"TOOL=%~dp0\\\\server\\share\\evil.exe\"\r\n\"%TOOL%\"",
+            "SET \"TOOL=%~dp0\\evil.dll\"\r\n\"%TOOL%\"",
+        ] {
+            assert_eq!(parse_cmd_shim(shim), None, "{shim}");
+        }
     }
 
     #[test]

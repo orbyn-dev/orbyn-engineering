@@ -35,6 +35,23 @@ fn resolver_fixture() {
     assert!(command.program.is_absolute());
     assert!(Path::new(&command.prefix[0]).is_absolute());
 
+    // npm's own shims name the payload through a variable, not a quoted literal.
+    let set_command = resolve("demo-set.cmd").unwrap();
+    let output = std::process::Command::new(&set_command.program)
+        .args(&set_command.prefix)
+        .args(args)
+        .current_dir(root.join("other cwd"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let actual: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(actual, args);
+    assert!(Path::new(&set_command.prefix[0]).is_absolute());
+
     let node_file = if mode == "fallback" {
         "node host/node.exe"
     } else {
@@ -102,6 +119,11 @@ fn run_fixture(mode: &str) {
     std::fs::write(
         bin.join("node_modules/demo/cli.js"),
         "process.stdout.write(JSON.stringify(process.argv.slice(2)))",
+    )
+    .unwrap();
+    std::fs::write(
+        bin.join("demo-set.cmd"),
+        "SET \"NODE_EXE=%~dp0\\node.exe\"\r\nSET \"DEMO_JS=%~dp0\\node_modules\\demo\\cli.js\"\r\n\"%NODE_EXE%\" \"%DEMO_JS%\" %*\r\n",
     )
     .unwrap();
     std::fs::write(bin.join("check.ps1"), "Write-Output fixture").unwrap();
