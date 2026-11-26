@@ -9,7 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
-use support::{Options, Service, TempDir, run_git, setup};
+use support::{Options, Service, TempDir, run_git, setup, text_of};
 
 struct Fixture {
     _dir: TempDir,
@@ -69,6 +69,12 @@ case "$1 $2" in
       *reviewRequests*) [ -f "$GH_FAIL" ] && { echo "Something went wrong" >&2; exit 1; }
         [ -f "$GH_RATE" ] && { echo "GraphQL: API rate limit already exceeded" >&2; exit 1; }
         echo '{"data":{"viewer":{"login":"me"},"repository":{"p3":{"createdAt":"2026-01-02T03:04:05Z","reviewRequests":{"pageInfo":{"hasNextPage":false},"nodes":[{"requestedReviewer":{"__typename":"User","login":"sam"}},{"requestedReviewer":{"__typename":"Team","slug":"core"}}]},"latestReviews":{"pageInfo":{"hasNextPage":false},"nodes":[{"author":null,"state":"APPROVED"},{"author":{"login":"me"},"state":"CHANGES_REQUESTED"}]},"comments":{"totalCount":2},"reviews":{"totalCount":2,"pageInfo":{"hasNextPage":false},"nodes":[{"comments":{"totalCount":3}},{"comments":{"totalCount":0}}]}},"p4":{"createdAt":"2026-02-02T00:00:00Z","reviewRequests":{"pageInfo":{"hasNextPage":false},"nodes":[]},"latestReviews":{"pageInfo":{"hasNextPage":false},"nodes":[]},"comments":{"totalCount":1},"reviews":{"totalCount":0,"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}' ;;
+      *addPullRequestReviewThreadReply*) refuse_write
+        echo '{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"C_1"}}}}' ;;
+      *unresolveReviewThread*) refuse_write
+        echo '{"data":{"unresolveReviewThread":{"thread":{"id":"T1","isResolved":false}}}}' ;;
+      *resolveReviewThread*) refuse_write
+        echo '{"data":{"resolveReviewThread":{"thread":{"id":"T1","isResolved":true}}}}' ;;
       *) echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"T1","isResolved":false,"path":"a.rs","line":2,"comments":{"nodes":[{"databaseId":11,"body":"line","author":{"login":"them"}}]}}]}}}}}' ;;
     esac ;;
   "auth status") echo "  Logged in to github.com account octo (keyring)" >&2 ;;
@@ -839,6 +845,104 @@ async fn writes_reach_the_forge_with_their_arguments_and_are_audited() {
             .unwrap()
             .iter()
             .any(|row| row["action"] == "git.merge")
+    );
+}
+
+#[tokio::test]
+async fn the_pull_respond_tool_replies_and_resolves_through_the_stand_in_gh() {
+    let f = fixture().await;
+    f.hosted();
+    let (code, body) = f
+        .service
+        .patch(&f.thread, json!({ "permission_mode": "full_access" }))
+        .await;
+    assert_eq!(code, 200, "{body}");
+    let call = |args: Value| format!("[mcp-call:orbyn_pull_request_respond]{args}[/mcp-call]");
+
+    // One call replies inside the thread and resolves it: both GraphQL mutations run in order.
+    let run = f
+        .service
+        .admit(
+            &f.thread,
+            &call(json!({ "number": 12, "thread": "T1", "body": "Thanks", "resolved": true })),
+        )
+        .await;
+    let events = f
+        .service
+        .events_until(&f.thread, None, |event| {
+            event["event"]["type"] == "RUN_FINISHED" && event["event"]["runId"] == run
+        })
+        .await;
+    let seen = events.last().unwrap()["seq"].as_i64();
+    let text = text_of(&events);
+    assert_eq!(f.service.finished(&f.thread).await, "completed");
+    assert!(text.contains("tool error=false"), "{text}");
+    assert!(text.contains("\"replied\":true"), "{text}");
+    assert!(text.contains("\"resolved\":true"), "{text}");
+    let log = f.log();
+    assert!(log.contains("addPullRequestReviewThreadReply"), "{log}");
+    assert!(log.contains("pullRequestReviewThreadId=T1"), "{log}");
+    assert!(log.contains("body=Thanks"), "{log}");
+    assert!(log.contains("resolveReviewThread"), "{log}");
+    assert!(log.contains("id=T1"), "{log}");
+    let audit = f.service.json("/api/audit?limit=100").await;
+    assert!(
+        audit
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| { row["action"] == "git.pull_thread_respond" && row["target"] == "T1" }),
+        "{audit}"
+    );
+
+    // A thread can be reopened without a reply.
+    let before = f.log().len();
+    let run = f
+        .service
+        .admit(
+            &f.thread,
+            &call(json!({ "number": 12, "thread": "T1", "resolved": false })),
+        )
+        .await;
+    let events = f
+        .service
+        .events_until(&f.thread, seen, |event| {
+            event["event"]["type"] == "RUN_FINISHED" && event["event"]["runId"] == run
+        })
+        .await;
+    let text = text_of(&events);
+    assert_eq!(f.service.finished(&f.thread).await, "completed");
+    assert!(text.contains("tool error=false"), "{text}");
+    assert!(text.contains("\"replied\":false"), "{text}");
+    assert!(f.log()[before..].contains("unresolveReviewThread"));
+
+    // GitHub refusing the mutation reaches the tool as its own answer, and the write is still
+    // audited first.
+    std::fs::write(f._dir.path().join("gh-fail"), "").unwrap();
+    let run = f
+        .service
+        .admit(
+            &f.thread,
+            &call(json!({ "number": 12, "thread": "T1", "resolved": true })),
+        )
+        .await;
+    let events = f
+        .service
+        .events_until(&f.thread, None, |event| {
+            event["event"]["type"] == "RUN_FINISHED" && event["event"]["runId"] == run
+        })
+        .await;
+    let text = text_of(&events);
+    assert!(text.contains("tool error=true"), "{text}");
+    assert!(text.contains("HTTP 403"), "{text}");
+    let audit = f.service.json("/api/audit?limit=100").await;
+    assert!(
+        audit
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["action"] == "git.pull_thread_respond"),
+        "{audit}"
     );
 }
 

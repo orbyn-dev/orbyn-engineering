@@ -183,6 +183,20 @@ fn pull_comment_body(args: &Value) -> Result<&str> {
     Ok(body)
 }
 
+/// A forge id that goes into an API path: non-empty, at most 200 characters, and only plain
+/// ones. Anything else is refused with the argument's own sentence.
+fn forge_id<'a>(id: &'a str, refusal: &str) -> Result<&'a str> {
+    if id.is_empty()
+        || id.chars().count() > MAX_REPLY_TO_CHARS
+        || !id.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '=' | ':')
+        })
+    {
+        return Err(CoreError::Invalid(refusal.into()));
+    }
+    Ok(id)
+}
+
 /// The comment or thread a comment replies to: a plain id of at most 200 characters.
 fn pull_reply_to(args: &Value) -> Result<Option<&str>> {
     let Some(value) = args.get("reply_to").filter(|value| !value.is_null()) else {
@@ -191,17 +205,57 @@ fn pull_reply_to(args: &Value) -> Result<Option<&str>> {
     let id = value
         .as_str()
         .ok_or_else(|| CoreError::Invalid("reply_to must be a comment or thread id.".into()))?;
-    if id.is_empty()
-        || id.chars().count() > MAX_REPLY_TO_CHARS
-        || !id.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '=' | ':')
-        })
-    {
+    forge_id(
+        id,
+        "reply_to must be a comment or thread id of at most 200 plain characters.",
+    )
+    .map(Some)
+}
+
+/// The review thread a respond tool names: a plain id of at most 200 characters.
+fn pull_thread_id(args: &Value) -> Result<&str> {
+    forge_id(
+        text(args, "thread")?,
+        "thread must be a review thread id of at most 200 plain characters.",
+    )
+}
+
+/// A respond's reply: absent is none, and a present one is non-blank and at most 64 KiB.
+fn pull_respond_body(args: &Value) -> Result<Option<String>> {
+    let Some(body) = optional_text(args, "body")? else {
+        return Ok(None);
+    };
+    if body.trim().is_empty() {
+        return Err(CoreError::Invalid("body must not be blank.".into()));
+    }
+    if body.len() > MAX_PULL_COMMENT_BYTES {
+        return Err(CoreError::Invalid("body is at most 64 KiB.".into()));
+    }
+    Ok(Some(body))
+}
+
+/// A respond's resolved flag: absent is none, and anything but a boolean is refused.
+fn pull_respond_resolved(args: &Value) -> Result<Option<bool>> {
+    match args.get("resolved").filter(|value| !value.is_null()) {
+        None => Ok(None),
+        Some(value) => value
+            .as_bool()
+            .map(Some)
+            .ok_or_else(|| CoreError::Invalid("resolved must be true or false.".into())),
+    }
+}
+
+/// The respond tool's thread, reply and resolution; at least one of a reply or a resolution.
+fn pull_respond_args(args: &Value) -> Result<(&str, Option<String>, Option<bool>)> {
+    let thread = pull_thread_id(args)?;
+    let body = pull_respond_body(args)?;
+    let resolved = pull_respond_resolved(args)?;
+    if body.is_none() && resolved.is_none() {
         return Err(CoreError::Invalid(
-            "reply_to must be a comment or thread id of at most 200 plain characters.".into(),
+            "Name a reply, a resolved value, or both.".into(),
         ));
     }
-    Ok(Some(id))
+    Ok((thread, body, resolved))
 }
 
 /// The name of one check: required, non-blank, one line of at most 256 characters.

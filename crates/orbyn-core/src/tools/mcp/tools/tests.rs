@@ -1492,6 +1492,38 @@ async fn tools_list_names_the_two_pull_write_tools_with_effect() {
 }
 
 #[tokio::test]
+async fn tools_list_names_the_pull_respond_tool_with_effect() {
+    let w = pull_world().await;
+    let names = w.tool_names().await;
+    let name = "orbyn_pull_request_respond";
+    assert!(
+        names.iter().any(|listed| listed.as_str() == name),
+        "{name} is not listed"
+    );
+    assert!(has_effect(name));
+    let tool = TOOLS.iter().find(|tool| tool.name == name).unwrap();
+    assert!(tool.effect);
+    assert!(
+        tool.description.contains("data from the forge"),
+        "the respond tool does not say its text is data"
+    );
+    assert!(
+        tool.description.contains("review thread"),
+        "the respond tool does not name the thread it acts on"
+    );
+    assert_eq!(
+        tool.args,
+        &[
+            ("number", "number"),
+            ("thread", "string"),
+            ("body", "string"),
+            ("resolved", "boolean"),
+        ]
+    );
+    assert_eq!(tool.required, &["number", "thread"]);
+}
+
+#[tokio::test]
 async fn tools_list_names_the_two_pull_review_merge_tools_with_effect() {
     let w = pull_world().await;
     let names = w.tool_names().await;
@@ -1723,6 +1755,285 @@ async fn pull_review_and_merge_refuse_bad_arguments_before_the_forge() {
         assert!(error, "{name} answered {text}");
         assert!(text.contains(wanted), "{name}: {text}");
     }
+}
+
+#[test]
+fn pull_respond_refuses_bad_arguments_before_the_forge() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let too_long_body = "x".repeat(MAX_PULL_COMMENT_BYTES + 1);
+    let long_thread = "t".repeat(MAX_REPLY_TO_CHARS + 1);
+    for (args, wanted) in [
+        (
+            json!({ "number": 7, "resolved": true }),
+            "thread is required",
+        ),
+        (
+            json!({ "number": 7, "thread": "  ", "resolved": true }),
+            "thread is required",
+        ),
+        (
+            json!({ "number": 7, "thread": "not/a/thread", "resolved": true }),
+            "thread must be a review thread id",
+        ),
+        (
+            json!({ "number": 7, "thread": long_thread, "resolved": true }),
+            "thread must be a review thread id",
+        ),
+        (
+            json!({ "number": 7, "thread": "T1" }),
+            "Name a reply, a resolved value, or both.",
+        ),
+        (
+            json!({ "number": 7, "thread": "T1", "body": "   " }),
+            "body must not be blank",
+        ),
+        (
+            json!({ "number": 7, "thread": "T1", "body": too_long_body }),
+            "body is at most 64 KiB",
+        ),
+        (
+            json!({ "number": 7, "thread": "T1", "body": "ok", "resolved": "yes" }),
+            "resolved must be true or false",
+        ),
+        (
+            json!({ "thread": "T1", "resolved": true }),
+            "number is required",
+        ),
+    ] {
+        let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+        let fixture = recording_forge(calls.clone(), json!(null));
+        let (text, error) = run_with_fixture(&runtime, fixture, async {
+            w.call_text("orbyn_pull_request_respond", args).await
+        });
+        assert!(error, "answered {text}");
+        assert!(text.contains(wanted), "{text}");
+        let calls = calls.lock().unwrap();
+        assert!(calls.is_empty(), "reached the forge: {calls:?}");
+    }
+}
+
+#[test]
+fn pull_respond_replies_to_and_resolves_a_github_review_thread() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (answer, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_json(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "T1", "body": "Looks good", "resolved": true }),
+        )
+        .await
+    });
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer,
+        json!({ "number": 7, "thread": "T1", "replied": true, "resolved": true })
+    );
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(&calls[0][..3], strings(&["api", "graphql", "-f"]));
+    assert!(
+        calls[0]
+            .iter()
+            .any(|argument| argument.contains("addPullRequestReviewThreadReply")),
+        "{calls:?}"
+    );
+    assert!(
+        calls[0]
+            .iter()
+            .any(|argument| argument == "pullRequestReviewThreadId=T1"),
+        "{calls:?}"
+    );
+    assert!(
+        calls[0]
+            .iter()
+            .any(|argument| argument == "body=Looks good"),
+        "{calls:?}"
+    );
+    assert_eq!(&calls[1][..3], strings(&["api", "graphql", "-f"]));
+    assert!(
+        calls[1]
+            .iter()
+            .any(|argument| argument.contains("resolveReviewThread")),
+        "{calls:?}"
+    );
+    assert!(
+        calls[1].iter().any(|argument| argument == "id=T1"),
+        "{calls:?}"
+    );
+
+    let audit = w.core.store.list_audit(None, 100).unwrap();
+    let row = audit
+        .iter()
+        .find(|row| row.action == "git.pull_thread_respond")
+        .expect("the write is audited");
+    assert_eq!(row.actor, "engine:alpha");
+    assert_eq!(row.target, "T1");
+    assert!(
+        audit
+            .iter()
+            .any(|row| row.action == "action.allow" && row.target == "orbyn_pull_request_respond"),
+        "the gate allowed the tool"
+    );
+}
+
+#[test]
+fn pull_respond_replies_through_a_gitlab_discussion() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (answer, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_json(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "d1", "body": "Thanks", "resolved": true }),
+        )
+        .await
+    });
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer,
+        json!({ "number": 7, "thread": "d1", "replied": true, "resolved": true })
+    );
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(
+        calls[0],
+        strings(&[
+            "api",
+            "-X",
+            "POST",
+            "projects/:id/merge_requests/7/discussions/d1/notes",
+            "-f",
+            "body=Thanks",
+        ])
+    );
+    assert_eq!(
+        calls[1],
+        strings(&[
+            "api",
+            "-X",
+            "PUT",
+            "projects/:id/merge_requests/7/discussions/d1",
+            "-F",
+            "resolved=true",
+        ])
+    );
+}
+
+#[test]
+fn pull_respond_resolves_and_unresolves_without_a_reply() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (answer, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_json(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "T1", "resolved": false }),
+        )
+        .await
+    });
+    assert!(!error, "{answer}");
+    assert_eq!(
+        answer,
+        json!({ "number": 7, "thread": "T1", "replied": false, "resolved": false })
+    );
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(
+        calls[0]
+            .iter()
+            .any(|argument| argument.contains("unresolveReviewThread")),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn a_denied_pull_respond_answers_the_denial_and_runs_nothing() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    w.core
+        .store
+        .add_rule(
+            &CreatePolicyRule {
+                effect: PolicyEffect::Deny,
+                kind: ActionKind::Tool,
+                pattern: "=orbyn_pull_request_respond".into(),
+                engine: None,
+                note: None,
+            },
+            "test",
+        )
+        .unwrap();
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture = recording_forge(calls.clone(), json!(null));
+    let (text, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_text(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "T1", "resolved": true }),
+        )
+        .await
+    });
+    assert!(error, "{text}");
+    assert_eq!(
+        text,
+        "Blocked by policy: Matched rule =orbyn_pull_request_respond"
+    );
+    assert!(calls.lock().unwrap().is_empty(), "the forge was reached");
+    let audit = w.core.store.list_audit(None, 100).unwrap();
+    assert!(
+        audit.iter().any(|row| {
+            row.action == "action.deny" && row.target == "orbyn_pull_request_respond"
+        })
+    );
+    assert!(
+        audit
+            .iter()
+            .all(|row| row.action != "git.pull_thread_respond"),
+        "a denied call is not audited as done"
+    );
+}
+
+#[test]
+fn a_resolution_that_fails_after_a_reply_says_the_reply_was_posted() {
+    let runtime = forge_runtime();
+    let w = runtime.block_on(github_pull_world());
+    let calls: RecordedForgeCalls = Arc::new(Mutex::new(Vec::new()));
+    let fixture: ForgeFixture = {
+        let calls = calls.clone();
+        Arc::new(move |_, _, args| {
+            calls
+                .lock()
+                .unwrap()
+                .push(args.iter().map(|arg| (*arg).to_owned()).collect());
+            if args
+                .iter()
+                .any(|argument| argument.contains("resolveReviewThread"))
+            {
+                Err(CoreError::Git(
+                    "HTTP 403: Resource not accessible by integration".into(),
+                ))
+            } else {
+                Ok(String::new())
+            }
+        })
+    };
+    let (text, error) = run_with_fixture(&runtime, fixture, async {
+        w.call_text(
+            "orbyn_pull_request_respond",
+            json!({ "number": 7, "thread": "T1", "body": "Thanks", "resolved": true }),
+        )
+        .await
+    });
+    assert!(error, "{text}");
+    assert!(text.contains("The reply was posted"), "{text}");
+    assert!(text.contains("HTTP 403"), "{text}");
+    assert!(text.contains("Retry without body"), "{text}");
+    assert_eq!(calls.lock().unwrap().len(), 2, "the reply was not retried");
 }
 
 #[tokio::test]
@@ -2255,6 +2566,7 @@ fn pull_ci_tools_refuse_bad_arguments_before_the_forge() {
 fn a_crew_worker_cannot_use_the_pull_write_or_ci_tools() {
     for name in [
         "orbyn_pull_request_comment",
+        "orbyn_pull_request_respond",
         "orbyn_pull_request_update",
         "orbyn_pull_request_review",
         "orbyn_pull_request_merge",
