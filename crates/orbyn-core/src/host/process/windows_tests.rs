@@ -85,6 +85,8 @@ fn a_native_executable_is_never_a_node_payload() {
     let dir = crate::testing::TempDir::new();
     let direct = dir.path().join("tool.cmd");
     std::fs::write(&direct, "SET \"TOOL=%~dp0\\tool.exe\"\r\n\"%TOOL%\" %*\r\n").unwrap();
+    // Resolution only accepts a target that is on disk, as an installer leaves it.
+    std::fs::write(dir.path().join("tool.exe"), b"").unwrap();
     let resolved = shim_target(&direct).unwrap();
     assert_eq!(resolved.program, dir.path().join("tool.exe"));
     assert!(resolved.prefix.is_empty());
@@ -100,6 +102,24 @@ fn a_native_executable_is_never_a_node_payload() {
     )
     .unwrap();
     assert!(shim_target(&node_payload).is_none());
+}
+
+/// A shim whose named target is not on disk cannot launch: resolution reports it
+/// unavailable instead of offering an install that only fails at spawn.
+#[test]
+fn a_shim_naming_a_missing_target_is_refused() {
+    let dir = crate::testing::TempDir::new();
+    // A native payload that is gone: the shim would fail at spawn.
+    let native = dir.path().join("tool.cmd");
+    std::fs::write(&native, "SET \"TOOL=%~dp0\\tool.exe\"\r\n\"%TOOL%\" %*\r\n").unwrap();
+    assert!(shim_target(&native).is_none());
+
+    // The same for a JavaScript payload the Node host would load, even with the
+    // host still beside the shim.
+    std::fs::write(dir.path().join("node.exe"), b"").unwrap();
+    let node = dir.path().join("demo.cmd");
+    std::fs::write(&node, "\"%~dp0\\node_modules\\demo\\cli.js\" %*\r\n").unwrap();
+    assert!(shim_target(&node).is_none());
 }
 
 #[test]

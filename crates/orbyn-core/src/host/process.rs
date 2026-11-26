@@ -111,6 +111,12 @@ fn shim_target(path: &Path) -> Option<ResolvedCommand> {
                 Some(script) => path.parent()?.join(script),
                 None => sibling_script(path)?,
             };
+            // A payload that is not on disk cannot launch: refuse the shim, so a
+            // probe reports the install unavailable instead of offering one that
+            // only fails at spawn.
+            if !script.is_file() {
+                return None;
+            }
             if script
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
@@ -203,12 +209,20 @@ fn is_launchable(file: &str) -> bool {
 /// Finds the wrapped script in an npm-style `.cmd` shim. npm writes the path two
 /// ways: quoted after `%dp0%\` or `%~dp0\` (pnpm's shape too, climbing into its
 /// store), or into a variable first as `SET "<NAME>=%~dp0<path>"` and launched
-/// as `"%NAME%"`. The result is relative to the shim's folder.
+/// as `"%NAME%"`. The placeholder is a cmd.exe variable, so it is matched in any
+/// case. The result is relative to the shim's folder.
 pub fn parse_cmd_shim(text: &str) -> Option<String> {
+    // ASCII lowercasing keeps every byte offset, so a match on the lowercased
+    // copy points at the same candidate in the original text.
+    let lower = text.to_ascii_lowercase();
     for marker in ["\"%dp0%\\", "\"%~dp0\\", "\"%dp0%/", "\"%~dp0/"] {
-        for (start, _) in text.match_indices(marker) {
+        for (start, _) in lower.match_indices(marker) {
             let rest = &text[start + marker.len()..];
-            let end = rest.find('"')?;
+            // An occurrence no quote ever closes must not swallow the later
+            // ones: the shim may still launch a script it assigns.
+            let Some(end) = rest.find('"') else {
+                continue;
+            };
             let candidate = &rest[..end];
             if is_launchable(candidate) {
                 return Some(candidate.replace('\\', std::path::MAIN_SEPARATOR_STR));
@@ -525,12 +539,11 @@ fn set_assignment(line: &str) -> Option<(&str, &str)> {
 }
 
 /// The path a `SET` value names inside the shim's folder, from `%~dp0` (or
-/// `%dp0%`) and a relative path to a launchable file. A drive or UNC path here
+/// `%dp0%`) and a relative path to a launchable file. The placeholder is a
+/// cmd.exe variable, so it is matched in any case. A drive or UNC path here
 /// would leave the folder, so it is refused rather than followed by accident.
 fn dp0_script(value: &str) -> Option<String> {
-    let rest = value
-        .strip_prefix("%~dp0")
-        .or_else(|| value.strip_prefix("%dp0%"))?;
+    let rest = dp0_placeholder(value)?;
     let relative = rest
         .strip_prefix('\\')
         .or_else(|| rest.strip_prefix('/'))
@@ -543,6 +556,19 @@ fn dp0_script(value: &str) -> Option<String> {
     let rooted = matches!(relative.chars().next(), Some('\\' | '/')) || drive;
     let relative = relative.replace('\\', std::path::MAIN_SEPARATOR_STR);
     (!rooted && is_launchable(&relative)).then_some(relative)
+}
+
+/// The part of a `SET` value after its leading `%~dp0` or `%dp0%`. cmd.exe
+/// expands variable names in any case, so the placeholder is matched that way.
+fn dp0_placeholder(value: &str) -> Option<&str> {
+    for placeholder in ["%~dp0", "%dp0%"] {
+        if let Some(head) = value.get(..placeholder.len())
+            && head.eq_ignore_ascii_case(placeholder)
+        {
+            return Some(&value[placeholder.len()..]);
+        }
+    }
+    None
 }
 
 /// Builds a piped command in its own process tree.
@@ -955,6 +981,32 @@ mod tests {
         assert!(script.ends_with("cli.mjs"), "{script}");
     }
 
+    /// cmd.exe expands variable names in any case, and installers write the
+    /// placeholder in uppercase: a quoted literal is still followed.
+    #[test]
+    fn an_uppercase_quoted_dp0_placeholder_is_followed() {
+        for shim in [
+            "@SETLOCAL\r\n\"%~DP0\\node.exe\" \"%~DP0\\..\\.pnpm\\tool@1\\node_modules\\tool\\cli.mjs\" %*\r\n",
+            "@SETLOCAL\r\n\"%DP0%\\node.exe\" \"%DP0%\\node_modules\\tool\\cli.mjs\" %*\r\n",
+        ] {
+            let script = parse_cmd_shim(shim).unwrap();
+            assert!(script.ends_with("cli.mjs"), "{script}");
+        }
+    }
+
+    /// The same case-insensitivity applies to a placeholder in a SET value the
+    /// shim launches.
+    #[test]
+    fn an_uppercase_set_dp0_placeholder_is_followed() {
+        let shim = concat!(
+            "SET \"NODE_EXE=%~DP0\\node.exe\"\r\n",
+            "SET \"CLI_JS=%DP0%\\lib\\cli.js\"\r\n",
+            "\"%NODE_EXE%\" \"%CLI_JS%\" %*\r\n",
+        );
+        let expected = ["lib", "cli.js"].join(std::path::MAIN_SEPARATOR_STR);
+        assert_eq!(parse_cmd_shim(shim), Some(expected));
+    }
+
     #[test]
     fn a_shim_that_hands_off_to_a_shell_is_refused() {
         for shim in [
@@ -991,6 +1043,19 @@ mod tests {
         );
         let expected =
             ["node_modules", "npm", "bin", "npx-cli.js"].join(std::path::MAIN_SEPARATOR_STR);
+        assert_eq!(parse_cmd_shim(shim), Some(expected));
+    }
+
+    /// An occurrence that never closes its quote used to abort the whole shim
+    /// before the assignments were read; the scan keeps going instead.
+    #[test]
+    fn an_unterminated_quoted_occurrence_does_not_hide_a_set_launch() {
+        let shim = concat!(
+            "REM echoed a path without its closing quote: \"%~dp0\\bin\r\n",
+            "set TOOL=%~dp0\\bin\\tool.mjs\r\n",
+            "node %TOOL% %*\r\n",
+        );
+        let expected = ["bin", "tool.mjs"].join(std::path::MAIN_SEPARATOR_STR);
         assert_eq!(parse_cmd_shim(shim), Some(expected));
     }
 
