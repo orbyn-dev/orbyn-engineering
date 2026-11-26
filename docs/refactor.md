@@ -369,10 +369,16 @@ under W7a.
   fine for a named infrastructure failure only (the NSIS download 504 in the Windows desktop build, `gh`
   network timeouts), after the run finishes and with the cause written in the PR. Caching the NSIS tool in
   the desktop build workflow would remove the most frequent one.
-- One core crew test remains load-sensitive: `crew::tests::flow_board::the_board_names_every_wait_of_its_crew_past_the_inboxs_two_hundred`
-  (about 80 s alone, starved to a timeout when run with other modules); run it by name on a busy machine instead of
-  re-running a whole module. The `autopilot_engines` approval flake is fixed: the test build uses a 10 min approval
-  clock pinned against production's 30 s (tdd 3.7). The deferred per-World Fake turn counter is #1750.
+- The core suite, not one test, is the load risk: on the shared box `cargo test -p orbyn-core --lib --
+  --test-threads=32` had 1,364 of 4,258 tests done when it was killed at 600 s, with dozens of over-60 s slow
+  warnings across account, conversation and crew::autopilot/backtest, and `crew::tests::autopilot_enforce`
+  took 57 s at 16 threads but 70 s serially although each of its 14 tests is 2-7 s, so parallel load rather
+  than one test sets that module's time.
+  `crew::tests::flow_board::the_board_names_every_wait_of_its_crew_past_the_inboxs_two_hundred` stays the
+  named straggler (about 80 s alone, starved to a timeout when run with other modules); run it by name on a
+  busy machine instead of re-running a whole module. The `autopilot_engines` approval flake is fixed: the test
+  build uses a 10 min approval clock pinned against production's 30 s (tdd 3.7). The deferred per-World Fake
+  turn counter is #1750.
 - Disk: each Rust worktree builds its own `target/` (several GB each) and the cleanup tool only moves
   retired worktrees to the Trash, so the space comes back when the Trash is emptied. Run
   `worktree_retire.py report` before creating a worktree.
