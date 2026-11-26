@@ -122,10 +122,12 @@ async fn with_the_preview_flag_off_the_start_check_does_nothing() {
         .unwrap();
 }
 
-/// Waits for the background provenance write, at most about five seconds.
+/// Waits for the background provenance write on the harness clock: a test's wait is not a product
+/// budget, and a loaded machine must not turn a slow write into a missing one (#1063, tdd 3.7).
 async fn hunks_of(w: &World, task: &str) -> Vec<StoredHunk> {
     let id = w.core.store.crew_merge(task).unwrap().unwrap().id;
-    for _ in 0..100 {
+    let give_up = std::time::Instant::now() + super::harness::WAIT_LIMIT;
+    while std::time::Instant::now() < give_up {
         let hunks = w.core.store.crew_hunks_of_merge(id).unwrap();
         if !hunks.is_empty() {
             return hunks;
@@ -135,9 +137,10 @@ async fn hunks_of(w: &World, task: &str) -> Vec<StoredHunk> {
     Vec::new()
 }
 
-/// Waits for a `provenance_failed` row on the task, at most about five seconds.
+/// Waits for a `provenance_failed` row on the task on the same test clock.
 async fn failures_of(w: &World, task: &str) -> Vec<AutopilotEvent> {
-    for _ in 0..100 {
+    let give_up = std::time::Instant::now() + super::harness::WAIT_LIMIT;
+    while std::time::Instant::now() < give_up {
         let rows: Vec<_> = w
             .core
             .store
