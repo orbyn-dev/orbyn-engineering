@@ -311,6 +311,7 @@ mod tests {
                 base_branch: None,
                 effort: None,
                 options: BTreeMap::new(),
+                branch_name_seed: None,
             })
             .await
             .unwrap();
