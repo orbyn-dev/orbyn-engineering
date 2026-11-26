@@ -3,10 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createIssuesMock, draftOf, issueFixtures } from "../../../mock/issues";
 import type { Project, Thread } from "../../api/types";
+import * as personKey from "../../api/personKey";
 import type { IssueRef, LinkedPullRequest } from "./contract";
 import { MOTION } from "../../lib/motion";
 import { useWorkspace } from "../../product/state/workspace";
 import { IssuesPage } from "./IssuesPage";
+import { IssueDetail } from "./IssueDetail";
 import { setIssuesApi } from "./api";
 import { resetIssueLinks } from "./links";
 
@@ -120,6 +122,142 @@ it("links a thread from the card: choosing writes nothing, one Link is one write
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Link a thread" })).toBeNull());
   expect(await screen.findByRole("button", { name: "Linked threads" })).toHaveTextContent("Linked from 2 threads");
   expect(await within(card).findByRole("link", { name: /Try cookie-based redirect/ })).toBeVisible();
+});
+
+it("shows the first confirmed link in the header when the detail refresh fails", async () => {
+  const mock = createIssuesMock({ links: {} });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  at("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
+  const card = await screen.findByRole("group", { name: "Linked threads" });
+  expect(await within(card).findByText("No thread is linked to this issue yet.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Linked threads" })).toBeNull();
+  await user.click(within(card).getByRole("button", { name: "Link to a thread…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Link a thread" });
+  await user.click(within(dialog).getByRole("option", { name: /Fix login redirect/ }));
+  mock.failNext("get");
+  await user.click(within(dialog).getByRole("button", { name: "Link" }));
+  expect(await within(card).findByRole("link", { name: /Fix login redirect/ })).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Linked threads" })).toHaveTextContent("Linked from 1 thread");
+  expect(mock.writes).toEqual(["link:thread-1:412"]);
+});
+
+it("increments the confirmed header count when the detail refresh fails", async () => {
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  useWorkspace.setState({ threads: { "thread-1": thread("thread-1", "Fix login redirect"), "thread-2": thread("thread-2", "Try cookie-based redirect") } });
+  const user = userEvent.setup();
+  at("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
+  const card = await screen.findByRole("group", { name: "Linked threads" });
+  expect(await screen.findByRole("button", { name: "Linked threads" })).toHaveTextContent("Linked from 1 thread");
+  await user.click(within(card).getByRole("button", { name: "Link to a thread…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Link a thread" });
+  await user.click(within(dialog).getByRole("option", { name: /Try cookie-based redirect/ }));
+  mock.failNext("get");
+  await user.click(within(dialog).getByRole("button", { name: "Link" }));
+  expect(await within(card).findByRole("link", { name: /Try cookie-based redirect/ })).toBeVisible();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Linked threads" })).toHaveTextContent("Linked from 2 threads"));
+  expect(mock.writes).toEqual(["link:thread-2:412"]);
+});
+
+it("does not put a completed link on a different issue after navigation", async () => {
+  const mock = createIssuesMock({ links: {} });
+  const realLink = mock.link;
+  let finish: () => Promise<void> = async () => {};
+  mock.link = (id, ref) => new Promise((resolve, reject) => { finish = async () => { try { await realLink(id, ref); resolve(); } catch (error) { reject(error); } }; });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  const scope = "orbyn-dev/orbyn-engineering";
+  const page = render(<IssueDetail tracker="github" scope={scope} issueKey="412" />);
+  const card = await screen.findByRole("group", { name: "Linked threads" });
+  await within(card).findByText("No thread is linked to this issue yet.");
+  await user.click(within(card).getByRole("button", { name: "Link to a thread…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Link a thread" });
+  await user.click(within(dialog).getByRole("option", { name: /Fix login redirect/ }));
+  await user.click(within(dialog).getByRole("button", { name: "Link" }));
+  page.rerender(<IssueDetail tracker="github" scope={scope} issueKey="377" />);
+  const next = issueFixtures().find((issue) => issue.key === "377")!;
+  expect(await screen.findByRole("heading", { name: next.title })).toBeVisible();
+  await act(async () => { await finish(); });
+  expect(screen.getByRole("heading", { name: next.title })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Linked threads" })).toBeNull();
+  expect(mock.writes).toEqual(["link:thread-1:412"]);
+});
+
+it("keeps written reactions and state choices when a successful link refresh omits them", async () => {
+  const mock = createIssuesMock({ links: {} });
+  const get = mock.get;
+  let omitMetadata = false;
+  let replaceMetadata = false;
+  const getSpy = vi.spyOn(mock, "get").mockImplementation(async (...args) => {
+    const detail = await get(...args);
+    return replaceMetadata ? { ...detail, reactions: [], states: [] } : omitMetadata ? { ...detail, reactions: undefined, states: undefined } : detail;
+  });
+  vi.spyOn(personKey, "canSendPersonKey").mockReturnValue(true);
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  at("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
+  const reactions = await screen.findByRole("group", { name: "Reactions" });
+  await user.click(within(reactions).getByRole("button", { name: "Add reaction" }));
+  await user.click(within(await screen.findByRole("menu", { name: "Add reaction" })).getByRole("menuitem", { name: "Rocket" }));
+  await waitFor(() => expect(within(reactions).getByText("Rocket")).toBeVisible());
+  const card = screen.getByRole("group", { name: "Linked threads" });
+  await within(card).findByText("No thread is linked to this issue yet.");
+  await user.click(within(card).getByRole("button", { name: "Link to a thread…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Link a thread" });
+  await user.click(within(dialog).getByRole("option", { name: /Fix login redirect/ }));
+  omitMetadata = true;
+  const before = getSpy.mock.calls.length;
+  await user.click(within(dialog).getByRole("button", { name: "Link" }));
+  await waitFor(() => expect(getSpy.mock.calls.length).toBeGreaterThan(before));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Link a thread" })).toBeNull());
+  expect(within(reactions).getByText("Rocket")).toBeVisible();
+  expect(screen.getByRole("button", { name: "State: Open" })).toBeEnabled();
+  expect(mock.writes).toEqual(["react:412:rocket:on", "link:thread-1:412"]);
+
+  // Explicit empty metadata in a later answer replaces, rather than revives, the earlier values.
+  useWorkspace.setState({ threads: { "thread-1": thread("thread-1", "Fix login redirect"), "thread-2": thread("thread-2", "Try cookie-based redirect") } });
+  replaceMetadata = true;
+  await user.click(within(card).getByRole("button", { name: "Link to a thread…" }));
+  const second = await screen.findByRole("dialog", { name: "Link a thread" });
+  await user.click(within(second).getByRole("option", { name: /Try cookie-based redirect/ }));
+  await user.click(within(second).getByRole("button", { name: "Link" }));
+  await waitFor(() => expect(within(reactions).queryByText("Rocket")).toBeNull());
+  expect(screen.queryByRole("button", { name: "State: Open" })).toBeNull();
+});
+
+it("does not carry reaction metadata to a different issue on the same connection", async () => {
+  const mock = createIssuesMock({ links: {} });
+  vi.spyOn(personKey, "canSendPersonKey").mockReturnValue(true);
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  const scope = "orbyn-dev/orbyn-engineering";
+  const page = render(<IssueDetail tracker="github" scope={scope} issueKey="412" />);
+  const reactions = await screen.findByRole("group", { name: "Reactions" });
+  await user.click(within(reactions).getByRole("button", { name: "Add reaction" }));
+  await user.click(within(await screen.findByRole("menu", { name: "Add reaction" })).getByRole("menuitem", { name: "Rocket" }));
+  await waitFor(() => expect(within(reactions).getByText("Rocket")).toBeVisible());
+  page.rerender(<IssueDetail tracker="github" scope={scope} issueKey="377" />);
+  const next = issueFixtures().find((issue) => issue.key === "377")!;
+  expect(await screen.findByRole("heading", { name: next.title })).toBeVisible();
+  expect(within(screen.getByRole("group", { name: "Reactions" })).queryByText("Rocket")).toBeNull();
+});
+
+it("does not carry reaction metadata to a replacement connection for the same issue", async () => {
+  const first = createIssuesMock({ links: {} });
+  vi.spyOn(personKey, "canSendPersonKey").mockReturnValue(true);
+  setIssuesApi(first);
+  const user = userEvent.setup();
+  at("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
+  const reactions = await screen.findByRole("group", { name: "Reactions" });
+  await user.click(within(reactions).getByRole("button", { name: "Add reaction" }));
+  await user.click(within(await screen.findByRole("menu", { name: "Add reaction" })).getByRole("menuitem", { name: "Rocket" }));
+  await waitFor(() => expect(within(reactions).getByText("Rocket")).toBeVisible());
+  const second = createIssuesMock({ links: {} });
+  const read = vi.spyOn(second, "get");
+  act(() => setIssuesApi(second));
+  await waitFor(() => expect(read).toHaveBeenCalled());
+  await waitFor(() => expect(within(screen.getByRole("group", { name: "Reactions" })).queryByText("Rocket")).toBeNull());
 });
 
 it("keeps the link dialog open and says why when the link write fails", async () => {
@@ -318,7 +456,14 @@ it("renders the body as escaped Markdown: no HTML, no remote image, no link open
 const DRAFT_HEAD = 'Work on #412 "Login sends people back to /home" (github orbyn-dev/orbyn-engineering, https://github.com/orbyn-dev/orbyn-engineering/issues/412).';
 
 it("shows the framed draft to edit, reads it without a write, then starts the thread with one click and one write", async () => {
-  const mock = createIssuesMock({ delayMs: 30, links: {} });
+  const mock = createIssuesMock({ links: {} });
+  const draft = mock.draft.bind(mock);
+  let releaseDraft!: () => void;
+  const pendingDraft = new Promise<void>((resolve) => { releaseDraft = resolve; });
+  mock.draft = async (...args) => {
+    await pendingDraft;
+    return draft(...args);
+  };
   setIssuesApi(mock);
   const user = userEvent.setup();
   at("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
@@ -329,6 +474,7 @@ it("shows the framed draft to edit, reads it without a write, then starts the th
   // While the draft is read the box cannot be edited and Start is off.
   expect(box).toHaveAttribute("readonly");
   expect(within(dialog).getByRole("button", { name: "Start thread" })).toBeDisabled();
+  await act(async () => { releaseDraft(); });
   await waitFor(() => expect((box as HTMLTextAreaElement).value).toContain(DRAFT_HEAD));
   expect(box).not.toHaveAttribute("readonly");
   expect((box as HTMLTextAreaElement).value).toContain("<<<ISSUE TEXT\nAfter sign-in the app opens");
