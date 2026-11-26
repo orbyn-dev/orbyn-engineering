@@ -1,7 +1,7 @@
 //! Reviewing a pull request: comments, reactions, review submissions, reviewers and labels.
 
 use super::Forge;
-use super::github::{RESOLVE_MUTATION, UNRESOLVE_MUTATION};
+use super::github::{ADD_THREAD_REPLY_MUTATION, RESOLVE_MUTATION, UNRESOLVE_MUTATION};
 use super::gitlab::gitlab_emoji;
 use super::process::{call, call_input, call_json, call_pages};
 use super::pulls::pull_detail;
@@ -115,6 +115,42 @@ pub async fn add_comment(
         }
     }
     Ok(())
+}
+
+/// Replies inside a review thread. GitHub names a thread only by its GraphQL node id, so its
+/// reply is the GraphQL mutation; GitLab's discussion id is what its notes route takes. Other
+/// forges have no review thread to reply in.
+pub async fn reply_to_thread(
+    forge: Forge,
+    cwd: &Path,
+    number: u64,
+    thread: &str,
+    body: &str,
+) -> Result<()> {
+    match forge {
+        Forge::GitHub => {
+            let query = format!("query={ADD_THREAD_REPLY_MUTATION}");
+            let thread_id = format!("pullRequestReviewThreadId={thread}");
+            let body = format!("body={body}");
+            call(
+                forge,
+                cwd,
+                &[
+                    "api", "graphql", "-f", &query, "-f", &thread_id, "-f", &body,
+                ],
+            )
+            .await
+            .map(|_| ())
+        }
+        Forge::GitLab => {
+            let path = format!("projects/:id/merge_requests/{number}/discussions/{thread}/notes");
+            let body = format!("body={body}");
+            call(forge, cwd, &["api", "-X", "POST", &path, "-f", &body])
+                .await
+                .map(|_| ())
+        }
+        _ => Err(forge.unsupported("reply to a review thread")),
+    }
 }
 
 pub async fn edit_comment(
