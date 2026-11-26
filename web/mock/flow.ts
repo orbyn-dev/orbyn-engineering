@@ -1,10 +1,12 @@
 /**
  * The mock's Flow reads (`/api/crew/flow/*`): the crews that have work, a crew's tasks with the ten cells of each, one task
- * zoomed, one task's Run page read and one task's checks, artifacts and diff. They answer in the Crew scenarios (`crew`,
- * `crew-<state>`) and nowhere else, so the default scenario keeps every Crew route at 404 as the service does with Crew
- * Preview off. A sample with a `run` answers the Run page route; one without it keeps the older service's 404, so the page
- * falls back to its Flow-based Planned marks. A sample with an `artifacts` answers the artifacts route; one without it keeps
- * the older service's 404 too. The sample tasks exercise every state the real data can have: running, needs
+ * zoomed, one task's Run page read, the task that made one pull request and one task's checks, artifacts and diff. They
+ * answer in the Crew scenarios (`crew`, `crew-<state>`) and nowhere else, so the default scenario keeps every Crew route at
+ * 404 as the service does with Crew Preview off. A sample with a `run` answers the Run page route; one without it keeps the
+ * older service's 404, so the page falls back to its Flow-based Planned marks. The run link answers the sample task whose
+ * run published the first project's #142, so the pull request page's Run tab is drawn in the mock and no other pull request
+ * links. A sample with an `artifacts` answers the artifacts route; one without it keeps the older service's 404 too. The
+ * sample tasks exercise every state the real data can have: running, needs
  * you, failed after loops, merged and waiting for review, skipped stages, queued and stopped. Reads only.
  *
  * The person's two writes (`POST /api/crew/tasks/{id}/cancel` and `/rerun-checks`) are answered by `board.ts`, for the zoom as well.
@@ -18,6 +20,7 @@ import type { FlowCellState } from "../src/generated/FlowCellState.ts";
 import type { FlowCrewList } from "../src/generated/FlowCrewList.ts";
 import type { FlowCounts } from "../src/generated/FlowCounts.ts";
 import type { FlowFilter } from "../src/generated/FlowFilter.ts";
+import type { FlowRunLink } from "../src/generated/FlowRunLink.ts";
 import type { FlowRunPage } from "../src/generated/FlowRunPage.ts";
 import type { FlowStage } from "../src/generated/FlowStage.ts";
 import type { FlowTaskArtifacts } from "../src/generated/FlowTaskArtifacts.ts";
@@ -29,6 +32,8 @@ import { HOSTILE } from "./hostile.ts";
 
 export const MOCK_CREW = "crew-redirect-0001";
 export const MOCK_CREW_TWO = "crew-docs-0002";
+/** The project whose pull request the one sample with a run link published. */
+export const MOCK_LINK_PROJECT = "p-app";
 
 const STAGES: FlowStage[] = ["brief", "route", "build", "checks", "code", "security", "finding", "merge", "main", "you"];
 
@@ -306,6 +311,16 @@ export function flowMock(scenario: string, method: string, path: string, query: 
     const end = Math.min(offset + limit, matched.length);
     const body: FlowTaskList = { crew, counts, tasks: matched.slice(offset, end), total: matched.length, next_offset: end < matched.length ? end : null, truncated };
     return { status: 200, body };
+  }
+  if (path === "/api/crew/flow/run-link") {
+    const project = query.get("project");
+    if (!project) return invalid("project is required");
+    const raw = query.get("number");
+    if (raw === null || !/^\d+$/.test(raw)) return invalid("number is required");
+    const number = Number(raw);
+    // One sample task published the first project's #142; every other pull request has no Crew task behind it.
+    const linked = project === MOCK_LINK_PROJECT ? all.find((one) => one.run?.pull?.number === number) : undefined;
+    return linked ? { status: 200, body: { task: linked.row.id } satisfies FlowRunLink } : missing("run link");
   }
   const artifactsId = /^\/api\/crew\/flow\/tasks\/([^/]+)\/artifacts$/.exec(path)?.[1];
   if (artifactsId) {
