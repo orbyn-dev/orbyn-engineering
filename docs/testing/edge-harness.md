@@ -140,7 +140,7 @@ paths need:
 
 | Unit test (real name) | Edge today | Harness needed | Invariant to pin | Cost |
 | --- | --- | --- | --- | --- |
-| `claude::tests::command_line_matches_the_contract_and_never_uses_bare` | **delivered** (`drivers.rs::a_claude_run_launches_with_the_documented_flags_and_never_bare`) | none: reads the recorded `claude` launch (`ORBYN_FAKE_LAUNCH_FILE`) | every run carries the documented flags in order and never `--bare` or `--plugin-dir`; `--resume`/`--session-id` are not pinned | delivered |
+| `claude::tests::command_line_matches_the_contract_and_never_uses_bare` | **delivered** (`drivers.rs::a_claude_run_launches_with_the_documented_flags_and_never_bare`) | none: reads the recorded `claude` launch (`ORBYN_FAKE_LAUNCH_FILE`) | every run carries the documented flags in order and never `--bare` or `--plugin-dir`; `--resume`/`--session-id` are not pinned | delivered; unit pruned (P3.6) |
 | `a_refused_stop_is_shown_and_other_replies_are_not` | none; the fake answers every `stop_task` with a success `control_response` and records `claude-stop-task`, so the refusal branch (`workflows.rs::control_response`, request id `orbyn-stop-<tool call>`) has no edge case | fake tag `[stop-refused]` answering the `stop_task` with an error `control_response` | a refused workflow stop shows `workflow.stop_failed`, the run stays open, and a control reply for another id stays out | M |
 | `quota_events_only_reject_the_turn_when_the_cli_says_rejected` | none; no stream frame carries `rate_limit_info` (the `get_usage` control reply carries `rate_limits` for the usage read only) | fake tag `[quota-rejected]` | only a `rejected` limit ends the turn as limited, with `resetsAt` from the frame; `allowed` does not | S |
 | `control_replies_match_ids_and_bound_untrusted_frames` | none | fake env knob that writes a foreign `request_id` and an oversized line around initialize | only the matching id is accepted, an oversized line is refused, and a marker in the error text never reaches a record | M |
@@ -211,8 +211,8 @@ visibility change. The missing-tool case needs no harness: a `PATH` without one 
 
 1. **Claude command line at the edge** (Claude table, delivered):
    `drivers.rs::a_claude_run_launches_with_the_documented_flags_and_never_bare` reads the recorded
-   launch and was run green on the box. Break-check still planned: delete `--replay-user-messages`
-   from `run_args` and rerun.
+   launch and was run green on the box. Break-check run on 27 Nov 2026 (P3.6): deleting
+   `--replay-user-messages` from `run_args` fails it, and the covered unit test was pruned.
 2. **Devices missing tool** (Devices table, S): a `PATH` whose helper writes only two of the three
    shims; no H2 needed. Break-check: make the missing-tool check report the platform available, so
    the unavailable row cannot appear and the test fails.
@@ -273,8 +273,9 @@ visibility change. The missing-tool case needs no harness: a `PATH` without one 
 
 Step 1's test was run green on the box (1 passed, 48 filtered out). Everything else in this document
 is unverified. On the box, for each added test: run it green, then apply the named break-check and
-confirm it fails for the stated reason, then restore. Step 1's break-check is still a plan, and the
-tip's `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass was
-not run when the box went away; run both with the next box round, plus the four unit files after any
-prune and the touched edge test files (`cargo test -p orbynd --test drivers`, and so on). Windows
+confirm it fails for the stated reason, then restore. Step 1's break-check and the unit-test prune it
+enabled were run on 27 Nov 2026 with wave 4 (P3.6; box results are in the wave-4 line of the test
+ledgers), and the tip's `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D
+warnings` pass was run with that prune, plus the four unit files and the touched edge test files
+(`cargo test -p orbynd --test drivers`, and so on). Windows
 behaviour of the device fake and the `.cmd` shims is unobserved here; the CI matrix owns it.
