@@ -738,8 +738,9 @@ The tracker field is required: a body without it is `400 invalid_input`, never r
   `204` again when there was nothing bound: "no binding" is the desired end state, so the call is idempotent rather
   than a `404`.
 - **Read side**: the contract specifies no read route for the binding, so none is added and nothing defaults to it
-  yet: the page does not draw a bound tracker and the engine tools (N24) still take an explicit tracker and scope.
-  A later read (and the page/engine defaulting) can read the stored row; the storage is the minimal write-only slice.
+  yet: the page does not draw a bound tracker, and the engine tools (N24) keep reading the project's own tracker and
+  scope from its git remote. A later read (and the page/engine defaulting) can read the stored row; the storage is the
+  minimal write-only slice.
 - **Not verified.** No real tracker was contacted: the binding stores names the connection already reports, and the
   route is tested through the real service with a stand-in `gh` and a local fake tracker connection. No real
   `orbynd` service run with a real connected tracker exercises it.
@@ -768,8 +769,8 @@ this row they were list, read, link, unlink and thread list; now `orbyn_issue_cr
   policy (`ActionKind::Tool`) exactly as the project and pull acting tools do, and no tool uses the person key. A Crew
   worker's allow list names no issue tool, so a worker is refused by default; the allow list was not widened.
 - **Not built.** React is not in this row. No real tracker was contacted: the tool tests use a local fake issue reader
-  over a fake project remote, and a real-service run keeps a stand-in `gh` and observes the GitHub state write's
-  `PATCH` arguments.
+  over a fake project remote, and a Unix-only real-service run keeps a stand-in `gh` and observes the GitHub state
+  write's `PATCH` arguments.
 
 ## Not done
 

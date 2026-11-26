@@ -3,7 +3,7 @@
 mod support;
 
 use serde_json::{Value, json};
-use support::{FAKE, Options, Service, TempDir, run_git, setup, text_of};
+use support::{FAKE, Options, Service, TempDir, setup, text_of};
 
 fn engines() -> Options {
     Options {
@@ -1315,10 +1315,21 @@ async fn a_review_guide_is_written_through_the_gate_and_read_inside_its_project(
     service.stop().await;
 }
 
-/// The stand-in `gh` of this case: one issue, whose read reports the state a `PATCH` stored. Every call
-/// is logged; a `PATCH`'s JSON body is appended to the same log, so the test sees the exact write.
+/// The set-state tool at the real HTTP edge: the service's own GitHub reader runs a stand-in `gh`
+/// that records the `PATCH` and its JSON body, so the whole path the route and the tool share is
+/// observed without a real repository. Unix only: the stand-in is a POSIX shell script, as the
+/// repo's other stand-in-`gh` runs are (`crates/orbynd/tests/scm.rs` is a `#![cfg(unix)]` suite).
+/// A `#[cfg(not(unix))]` stub would pass without observing anything, so the platform gap is stated
+/// here instead of stubbed.
 #[cfg(unix)]
-const GH_STATE: &str = r#"#!/bin/sh
+#[tokio::test]
+async fn the_issue_state_tool_writes_github_state_through_a_stand_in_gh() {
+    use std::os::unix::fs::PermissionsExt;
+    use support::run_git;
+
+    /// The stand-in `gh` of this case: one issue, whose read reports the state a `PATCH` stored. Every
+    /// call is logged; a `PATCH`'s JSON body is appended to the same log, so the test sees the exact write.
+    const GH_STATE: &str = r#"#!/bin/sh
 echo "$@" >> "$GH_LOG"
 if [ "$1 $2" = "issue view" ]; then
   if [ -f "$GH_CLOSED" ]; then
@@ -1337,14 +1348,6 @@ case "$*" in
   *) printf '%s\n' '{}' ;;
 esac
 "#;
-
-/// The set-state tool at the real HTTP edge: the service's own GitHub reader runs a stand-in `gh`
-/// that records the `PATCH` and its JSON body, so the whole path the route and the tool share is
-/// observed without a real repository.
-#[cfg(unix)]
-#[tokio::test]
-async fn the_issue_state_tool_writes_github_state_through_a_stand_in_gh() {
-    use std::os::unix::fs::PermissionsExt;
 
     let dir = TempDir::new();
     let bin = dir.path().join("bin");

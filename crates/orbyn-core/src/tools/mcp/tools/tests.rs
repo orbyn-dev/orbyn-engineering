@@ -1229,6 +1229,12 @@ async fn an_issue_state_move_refuses_arguments_the_tool_cannot_take() {
             "close_reason must be completed or not_planned.",
         ),
         (
+            // The route's serde enum reads the reason exactly, so a padded value is refused there
+            // and here alike.
+            json!({ "key": "1", "state": "Closed", "close_reason": " not_planned " }),
+            "close_reason must be completed or not_planned.",
+        ),
+        (
             json!({ "key": "1", "state": "Done" }),
             "That state is not one this issue offers.",
         ),

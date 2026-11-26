@@ -521,11 +521,12 @@ fn issue_query(args: &Value, tracker: TrackerKind) -> Result<IssueQuery> {
 }
 
 /// A state move's close reason: absent is none, and the contract's own two words are the only
-/// values, so a caller cannot name a reason the wire type does not carry.
+/// values, matched exactly as the wire enum reads them, so a padded or unknown value is refused
+/// here as the route refuses it and a caller cannot name a reason the wire type does not carry.
 fn issue_close_reason(args: &Value) -> Result<Option<IssueCloseReason>> {
     match optional_text(args, "close_reason")? {
         None => Ok(None),
-        Some(reason) => match reason.trim() {
+        Some(reason) => match reason.as_str() {
             "completed" => Ok(Some(IssueCloseReason::Completed)),
             "not_planned" => Ok(Some(IssueCloseReason::NotPlanned)),
             _ => Err(CoreError::Invalid(
