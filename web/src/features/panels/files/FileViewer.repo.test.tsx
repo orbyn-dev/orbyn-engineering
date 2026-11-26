@@ -123,6 +123,43 @@ it("renders another repository's Markdown from the same read, named with its rep
   expect(rawAsks(asked)).toEqual([]);
 });
 
+it("adds another repository's file to the message under its repository's name", async () => {
+  serve({ content: "# planner\n" });
+  render(<Viewer threadId="t" tabId="tab" path="README.md" repoId={REPO} repoName="orbyn-planner" line={null} />);
+
+  await screen.findByRole("heading", { name: "planner" });
+  await userEvent.click(screen.getByRole("button", { name: "Add file to message" }));
+
+  const chip = useComposerChips.getState().chips.t![0]!;
+  // The chip names the tab's repository, client-only, so the next message points at the right README.md.
+  expect(chip).toMatchObject({ kind: "file", path: "README.md", line: null, repoId: REPO, repoName: "orbyn-planner" });
+  expect(chipLabel(chip)).toBe("orbyn-planner/README.md");
+  expect(chipPrompt(chip)).toContain("File `orbyn-planner/README.md`");
+});
+
+it("keeps Add file to message off on another repository's tab until the panel names the repository", async () => {
+  serve({ content: "# planner\n" });
+  render(<Viewer threadId="t" tabId="tab" path="README.md" repoId={REPO} line={null} />);
+
+  await screen.findByRole("heading", { name: "planner" });
+  // A path alone would read as the thread's own file of the same name, so the chip waits for the repository's name.
+  expect(screen.getByRole("button", { name: "Add file to message" })).toBeDisabled();
+});
+
+it("adds the thread's own file to the message with no repository, as before", async () => {
+  serve({ content: "# mine\n" });
+  render(<Viewer threadId="t" tabId="tab" path="README.md" line={null} />);
+
+  await screen.findByRole("heading", { name: "mine" });
+  await userEvent.click(screen.getByRole("button", { name: "Add file to message" }));
+
+  const chip = useComposerChips.getState().chips.t![0]!;
+  expect(chip).toMatchObject({ kind: "file", path: "README.md", line: null });
+  expect(chip).not.toHaveProperty("repoId");
+  expect(chip).not.toHaveProperty("repoName");
+  expect(chipLabel(chip)).toBe("README.md");
+});
+
 it("draws another repository's plain text file as the editor, read with its repo_id", async () => {
   const { asked } = serve({ content: "notes\n" });
   render(<Viewer threadId="t" tabId="tab" path="notes.txt" repoId={REPO} line={null} />);

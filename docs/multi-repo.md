@@ -282,9 +282,14 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   dialog, keeps the text and repeats nothing; a path outside the repository (`400`) or a repository that is not the thread's (`404`) is
   said in words. A text file of that tab is drawn like the thread's own: Markdown and its siblings render, with Source and line
   comments beside Preview, and any other text is the editor; a line comment carries that repository's `repo_id` and name, so the
-  chip and the message the agent receives name its file. It still offers no "Add file to message" and no absolute path (those name
-  a checkout's path), and a file link inside its rendered Markdown resolves against the thread's folder (the Changes panel's rendered
-  Markdown has the same limit). Its image, PDF, video, audio, font, archive, document, binary and truncated files load from their own repository's
+  chip and the message the agent receives name its file. The bar and the tab menu add that file to the message too, once the
+  panel has read the repository's name: the file chip carries the same client-only `repo_id` and name, so the message names
+  `<name>/<path>`, and a copy and paste of the chip reads that repository's file through the existing `repo_id` (a chip field,
+  not a route one). Copy path
+  is the file's absolute path, `<thread folder>/<name>/<path>` — where the task folder puts a repository's worktree — built from
+  the thread's own `cwd` and the repository's name, both already served; a one-repository thread is unchanged. A file link inside
+  its rendered Markdown still resolves against the thread's folder (the Changes panel's rendered Markdown has the same limit). Its
+  image, PDF, video, audio, font, archive, document, binary and truncated files load from their own repository's
   worktree: the client sends `repo_id` on `GET .../files/raw`, whose bytes, `Range` answers, inline-or-attachment decision and
   `download` are that repository's file (see "As built: repo_id on Git and file calls"). The service's `previews/file` and
   `files/open` take one now too: the file-tab menu's outside editor, the binary view's Reveal/Open in editor and the viewer's Open in
@@ -337,9 +342,10 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   file watcher covers the thread's worktree, so the tree reads again when the project's data changes (a finished run, for one) or the
   person presses Refresh, and on re-entering the thread; the repository list is read again with the thread's Changes (a run that ended,
   a repository added or trusted), so one added to a running thread can be picked. A file the row lists opens its tab, which draws it
-  by what it holds; it is not dragged into the message, because the thread's composer chips name a checkout's path (its Open in editor,
-  Open in browser, Reveal and line comments carry the `repo_id`, and a comment on another repository's file is context for the next
-  message, never a service write; the Changes panel's comments do not name a repository yet). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
+  by what it holds; the row itself is not dragged into the message, because the explorer's drag and Add to this thread actions name
+  the thread's own checkout, and the tab it opens adds another repository's file from its own menu instead (its Open in editor,
+  Open in browser, Reveal, line comments and file chip carry the `repo_id`, and a comment on another repository's file is context
+  for the next message, never a service write; the Changes panel's comments do not name a repository yet). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
   chip and line comments name the file relative to the repository and not to the task folder (the Changes panel has the same shape);
   carrying the primary's `repo_id` on its tab would fix those and is left to a follow-up. `GET .../files/metadata` still has no web caller: no screen shows a file's metadata. No frame
   draws this row or the explorer's chip, so both reuse what exists: a worktree row (branch label, Git icon, current dot) and the

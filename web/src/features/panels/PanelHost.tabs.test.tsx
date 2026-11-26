@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
+import { createReposMock } from "../../../mock/repos";
+import { setReposApi } from "../repos";
 import { useWorkspace } from "../../product/state/workspace";
 import { useConnection } from "../../product/state/connection";
 import { fileTabId, useUi, type RightTab } from "../../product/state/ui";
@@ -715,6 +717,26 @@ describe("unsaved files and the tab menu", () => {
     await user.click(screen.getByRole("button", { name: "Tab menu" }));
     const items = screen.getAllByRole("menuitem").map((item) => item.textContent);
     expect(items).toEqual(expect.arrayContaining(["Copy path", "Copy relative path", "Close tabAlt+W", "Close other tabs", "Close all tabs", "Maximise panel"]));
+  });
+
+  it("copies the open tab's absolute path with the repository folder the thread names", async () => {
+    const user = userEvent.setup();
+    const written: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text: string) => { written.push(text); } }, configurable: true });
+    setReposApi(createReposMock({ threads: { "thread-1": [{ repo_id: "planner", name: "orbyn-planner", branch: "orbyn/1058", added: 0, deleted: 0, trusted: true }] } }));
+    useWorkspace.setState({ threads: { "thread-1": { id: "thread-1", cwd: "/w" } as never } });
+    const FOREIGN = fileTabId({ kind: "thread", path: "notes.txt", repoId: "planner" });
+    useUi.setState({ panelTab: FOREIGN, panelTabOrder: ["diff", "browser", "activity", "side", "tools", "linked", "review", "devices", "library", FOREIGN] });
+    panel();
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    const copy = await screen.findByRole("menuitem", { name: "Copy path" });
+    // The menu builds the path once the thread's repositories have been read and name this repository.
+    await waitFor(() => expect(copy).toBeEnabled());
+    await user.click(copy);
+    expect(written).toContain("/w/orbyn-planner/notes.txt");
+    setReposApi(null);
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    useWorkspace.setState({ threads: {} });
   });
 });
 

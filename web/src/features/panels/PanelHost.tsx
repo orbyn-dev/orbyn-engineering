@@ -390,8 +390,8 @@ export function PanelHost({
             : []),
           ...maximise.map((item, at) => (at === 0 && rowIds.length > 1 ? { ...item, separatorBefore: true } : item)),
         ];
-  // A file's own items come first and the tab's own menu stays whole after them: Close tab, Close other tabs, Close all tabs, Maximise.
-  const fileItems = useFileTabMenu(thread.id, tab, () => tab && closeWithFocus(tab), closeKey);
+  // A file's own items come first and the tab's own menu stays whole after them; the tab's repository name (its worktree's folder in the task folder) gives the file menu its absolute path.
+  const fileItems = useFileTabMenu(thread.id, tab, () => tab && closeWithFocus(tab), closeKey, target?.kind === "thread" && target.repoId !== undefined ? threadRepos?.find((repo) => repo.repo_id === target.repoId)?.name : undefined);
   const menuItems = withFileItems(fileItems, tabMenuItems);
   const asked = pending?.ids[0];
   const askedSession = asked ? sessionFor(asked) : undefined;
