@@ -418,7 +418,8 @@ impl Core {
         self.cached_timeline(project_id, number, refresh).await
     }
 
-    /// Changed files, with this service's viewed marks.
+    /// Changed files. On GitHub a mark is GitHub's own viewed state; elsewhere, and while GitHub
+    /// cannot be read, it is this service's mark.
     pub async fn pull_files(
         &self,
         project_id: &str,
