@@ -31,6 +31,7 @@ async fn idle_thread(w: &World, title: &str) -> String {
             base_branch: None,
             effort: None,
             options: Default::default(),
+            branch_name_seed: None,
         })
         .await
         .unwrap()
