@@ -139,6 +139,7 @@ async fn fixture_with(update: &'static str, online: bool) -> Fixture {
             base_branch: None,
             effort: None,
             options: std::collections::BTreeMap::new(),
+            branch_name_seed: None,
         })
         .await
         .unwrap()
