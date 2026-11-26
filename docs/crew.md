@@ -411,10 +411,19 @@ retries with the reason. The same failure twice means one change of approach, an
     person passes or denies it (`POST /api/crew/tasks/{id}/checks/{check}/decide`, a `Person` route). Their answer is
     recorded as their own `checks`-stage Gate and the task goes back to `verifying`, where the check passes or fails from
     that answer. A task never passes while one of its manual checks is still waiting. `name` and `note` are labels.
-  - **Check kinds this version does not run** (`preview`, `visual_compare`, `screenshot_only`, `accessibility_audit`,
-    `performance_budget`, `licence_scan`) report `skipped` and are listed as not verified. The page kinds need the app's
-    browser; `licence_scan` needs a licence policy and an offline source of dependency licences. A key with nothing it can
+  - **Check kinds this version does not run (#793): an accepted limit, with the decision it waits on.** Each reports
+    `skipped` and is listed as not verified, and the sentence below is that check's reason, its log (the Evidence excerpt)
+    and its line in the result's not-verified list, so a skip never reads as a check that was made. Nothing here invents a
+    value: the maintainer decides each one, and until then the sentence says what is needed. `licence_scan` is the clearest
+    case: `Cargo.lock` has no licence field and `cargo metadata` reads only the local registry cache, for Rust only, so the
+    allowed licences have to arrive as data and the licence source has to be offline. A key with nothing it can
     run goes to `needs_person`.
+    - `preview`: A preview needs the app's browser engine, which lives in app/transport, and a decision on who serves the page and what counts as a console error.
+    - `visual_compare`: A visual compare needs that browser engine and a decision on the baseline frame, its tolerance and where the image is kept.
+    - `screenshot_only`: A screenshot needs the browser engine and a decision on where the image is stored and who reads it.
+    - `accessibility_audit`: An accessibility audit needs a rendered page and a decision on which accessibility bar counts as passing.
+    - `performance_budget`: A performance budget needs a rendered page and a decision on the metric, how it is measured and its maximum.
+    - `licence_scan`: A licence scan needs a decision on allowed licences as data the owner signs off, and an offline dependency licence source.
 
 **Harness-to-harness communication** (the new part)
 
@@ -1983,7 +1992,7 @@ The person's "Re-run checks" for a Crew task (Preview). Backend only: the card t
   field that says "a person's re-run", which this PR does not change. So a re-run's record is its two audit rows, counts only; its
   logs are not kept. A later Flow route that shows a re-run needs its own table or a protocol field.
 - **What runs.** The key's checks only, in the task's own checkout: the command kinds, `file_scope`, `diff_size`,
-  `schema`, `secret_scan`, `repo_required` and `http_probe`; any other kind is `skipped`, as in a live verification. A `repo_required`
+  `schema`, `secret_scan`, `repo_required` and `http_probe`; any other kind is `skipped` with its recorded limit, as in a live verification. A `repo_required`
   check runs the repository's own checks (`.orbyn/crew.json`) unscreened, as the merge queue runs them; the re-run does not
   otherwise touch the merge queue. A key with protected paths is compared with the record taken when the task started, so a checkout whose protected
   files changed runs nothing, as a live verification does (N7, H9).

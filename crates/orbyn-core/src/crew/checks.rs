@@ -4,9 +4,10 @@
 //!
 //! This version runs the command kinds (`command`, `test`, `lint`, `typecheck`,
 //! `custom_script`), `file_scope`, `diff_size`, `schema`, `secret_scan`, `repo_required` and
-//! `http_probe`. Any other kind reports `skipped`, so the result lists it as not verified rather
-//! than passing or failing on a guess; `manual` is one of those until a person's Gate exists to
-//! wait for.
+//! `http_probe`; `manual` is a person's decision, taken in the verifier itself. Any other kind
+//! reports `skipped` with the accepted limit it records (#793): what it needs and the decision
+//! that has to come first, so the result lists it as not verified and says why rather than passing
+//! or failing on a guess.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -192,14 +193,91 @@ pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
     }
 }
 
-/// The result of a kind this version does not run: it says so, and it passes and fails nothing.
+/// The result of a kind this version does not run: it says so, says what it needs, and it passes
+/// and fails nothing. A skip is never silent: the limit travels as the reason, the log (the
+/// Evidence excerpt) and the result's not-verified line, which comes from `command`.
 fn skipped(check: &CrewCheck, started: Instant) -> Ran {
-    ran(
+    let why = skip_reason(&check.kind);
+    let mut result = ran(
         CheckOutcome::Skipped,
-        format!("{}: not run by this version", kind_name(check)),
-        String::new(),
+        format!("{}: not run by this version. {why}", kind_name(check)),
+        why.to_owned(),
         started,
-    )
+    );
+    result.reason = Some(why.to_owned());
+    result
+}
+
+/// The kinds this version does not run, each with the accepted limit it records (#793): what the
+/// kind needs and the decision that has to come before it can run. The sentence is also the
+/// result's not-verified line, which the run page cuts at 200 characters, so each one stays well
+/// under that. The same sentences are recorded in docs/crew.md, "Check kinds this version does not
+/// run", and a test compares the two.
+const ACCEPTED_LIMITS: [(CheckKind, &str); 6] = [
+    (
+        CheckKind::Preview,
+        "A preview needs the app's browser engine, which lives in app/transport, and a decision on who serves the page and what counts as a console error.",
+    ),
+    (
+        CheckKind::VisualCompare,
+        "A visual compare needs that browser engine and a decision on the baseline frame, its tolerance and where the image is kept.",
+    ),
+    (
+        CheckKind::ScreenshotOnly,
+        "A screenshot needs the browser engine and a decision on where the image is stored and who reads it.",
+    ),
+    (
+        CheckKind::AccessibilityAudit,
+        "An accessibility audit needs a rendered page and a decision on which accessibility bar counts as passing.",
+    ),
+    (
+        CheckKind::PerformanceBudget,
+        "A performance budget needs a rendered page and a decision on the metric, how it is measured and its maximum.",
+    ),
+    (
+        CheckKind::LicenceScan,
+        "A licence scan needs a decision on allowed licences as data the owner signs off, and an offline dependency licence source.",
+    ),
+];
+
+/// A kind whose limit is in [`ACCEPTED_LIMITS`] but whose sentence was not found there: the list is
+/// the record, so this is only reachable if the two disagree.
+const NO_LIMIT_RECORDED: &str =
+    "This kind has no runner in this version and no accepted limit recorded for it.";
+
+/// A kind that does have a runner reached `skipped`, which is a bug here rather than a limit.
+const HAS_A_RUNNER: &str =
+    "This kind has a runner in this version, so a skip is a bug and not a limit.";
+
+/// Why one kind this version does not run stays skipped, in one sentence: its accepted limit, or
+/// `manual`'s own answer (a person decides it in the verifier). Every kind is listed, so a kind
+/// added later has to be classified here rather than skipping without a word.
+fn skip_reason(kind: &CheckKind) -> &'static str {
+    match kind {
+        CheckKind::Preview
+        | CheckKind::VisualCompare
+        | CheckKind::ScreenshotOnly
+        | CheckKind::AccessibilityAudit
+        | CheckKind::PerformanceBudget
+        | CheckKind::LicenceScan => ACCEPTED_LIMITS
+            .iter()
+            .find(|(listed, _)| listed == kind)
+            .map_or(NO_LIMIT_RECORDED, |(_, why)| *why),
+        CheckKind::Manual => {
+            "A manual check is decided by a person in the verifier, so no runner runs it."
+        }
+        CheckKind::Command
+        | CheckKind::Test
+        | CheckKind::Lint
+        | CheckKind::Typecheck
+        | CheckKind::CustomScript
+        | CheckKind::FileScope
+        | CheckKind::DiffSize
+        | CheckKind::Schema
+        | CheckKind::HttpProbe
+        | CheckKind::RepoRequired
+        | CheckKind::SecretScan => HAS_A_RUNNER,
+    }
 }
 
 /// Runs one command line in `worktree`, as the answer key's command checks run: it passes on exit 0.
