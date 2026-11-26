@@ -51,7 +51,7 @@ function RenderToggle({ rendered }: { rendered: boolean }) {
 }
 
 /** One file of the change: its header, then its lines, or the one line that says why there are none. */
-export function FileView({ file, lines, threadId, origin, needle, current, full, split, onShowAll, canRender, bar, edits, narrow, repoName, repoId }: {
+export function FileView({ file, lines, threadId, origin, needle, current, full, split, onShowAll, canRender, bar, edits, narrow, repoName, repoId, primaryRepoId }: {
   file: FileDiff;
   /** The repository the file is in, named before its path in a multi-repository thread. */
   repoName?: string;
@@ -71,6 +71,8 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
   edits?: { revert(path: string, hunk: Hunk, repoId?: string): Promise<void>; saveLine(path: string, number: number, was: string, next: string, repoId?: string): Promise<boolean> };
   /** The file's repository when it is not the thread's primary one: sent as `repo_id` on the read and the write of an edit. Absent for the primary. */
   repoId?: string;
+  /** The file's repository when it is the thread's primary one: its tab names it and still reads and writes as the thread's own. */
+  primaryRepoId?: string;
   narrow?: boolean;
 }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
@@ -81,9 +83,11 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
   const conflict = file.status === "conflicted";
   // A file of another repository opens as a tab of that repository through the same resolve path as the
   // primary's: the request names its `repo_id`, so the service resolves the path in that repository's
-  // worktree rather than in the primary checkout. It has no outside editor route of its own.
+  // worktree rather than in the primary checkout. It has no outside editor route of its own. The primary
+  // repository's file opens as its own tab when a tab is what is wanted (a binary file's Open), which names
+  // it and reads as the thread's own; its Open in editor still opens the outside editor, as it always has.
   const open = async (as: "editor" | "tab") => {
-    await openChanged(threadId, cwd, file.path, as, repoId);
+    await openChanged(threadId, cwd, file.path, as, repoId, as === "tab" ? primaryRepoId : undefined);
   };
   // A deleted or conflicted file has no lines to write back to.
   const actions: PatchActions | undefined = edits && file.status !== "deleted" && !conflict

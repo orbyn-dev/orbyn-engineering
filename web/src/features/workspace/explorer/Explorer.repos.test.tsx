@@ -15,8 +15,9 @@ import { useExplorer } from "./store";
 
 // F70 (#1058): the left explorer browses the open multi-repository thread's chosen repository through the thread's own
 // file tree route (`?repo_id=`); a thread in one repository keeps exactly the explorer it had, with no chooser and no
-// such read. The repository also governs the file tab: a file of the primary repository opens as the thread's own tab,
-// a file of another repository as that repository's tab, so its read and write name that repository.
+// such read. The repository also governs the file tab: a file opens as its repository's tab, which names it. The primary
+// repository's tab is still the thread's own for reads, writes and failures and only names the repository; another
+// repository's tab reads and writes with its `repo_id`.
 const THREAD = "t-done";
 const PRIMARY = "p-app";
 const OTHER = "orbyn-planner";
@@ -148,13 +149,13 @@ it("switching loads the other repository's tree with repo_id, and each file open
   await user.click(await findRow(/^plan\.md/));
   expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "plans/plan.md", repoId: OTHER }));
 
-  // The primary repository's own file opens as the thread's own tab, without a repository on it, as the rest of the app
-  // opens its files: preview, line comments and the composer's actions are the normal file tab's.
+  // The primary repository's own file opens as the thread's own tab, which names the repository: its read, write and
+  // failure paths stay the thread's own, and its chip and Copy path say `<name>/<path>` rather than the task folder's.
   await waitFor(() => expect(chooser()).toHaveAccessibleName("Repository: orbyn-planner"));
   await user.click(chooser());
   await user.click(await screen.findByRole("menuitem", { name: "orbyn-engineering" }));
   await user.click(await findRow(/^main\.ts/));
-  expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "main.ts" }));
+  expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "main.ts", repoId: PRIMARY, primary: true }));
 });
 
 it("carries another repository's identity when its file is dragged or added, and leaves the primary's file alone", async () => {

@@ -251,32 +251,41 @@ describe("panel tab row", () => {
     expect(parseFileTab(old)).toEqual({ kind: "explorer", projectId: "p", worktreeId: "w", path: "a.ts" });
   });
 
-  it("names a file of another repository by its repository too, and leaves every other tab's id as it was", async () => {
-    // The id of a primary-repository or ordinary-thread tab is byte for byte what older sessions saved.
-    const primary = fileTabId({ kind: "thread", path: "README.md" });
-    expect(primary).toBe(`file:${encodeURIComponent(JSON.stringify(["t", "README.md"]))}`);
+  it("names a repository on its file tabs, and leaves an ordinary thread's tab id byte for byte as it was", async () => {
+    // The id of an ordinary-thread tab is byte for byte what older sessions saved.
+    const own = fileTabId({ kind: "thread", path: "README.md" });
+    expect(own).toBe(`file:${encodeURIComponent(JSON.stringify(["t", "README.md"]))}`);
     const planner = fileTabId({ kind: "thread", path: "README.md", repoId: "planner" });
     const other = fileTabId({ kind: "thread", path: "README.md", repoId: "docs" });
-    expect(new Set([primary, planner, other]).size).toBe(3);
+    // The primary repository's tab carries its repository too, marked apart from another repository's tab, and its reads
+    // and writes leave repo_id out because absent is the primary.
+    const primary = fileTabId({ kind: "thread", path: "README.md", repoId: "p", primary: true });
+    expect(primary).toBe(`file:${encodeURIComponent(JSON.stringify(["t", "README.md", "p", "primary"]))}`);
+    expect(new Set([own, primary, planner, other]).size).toBe(4);
     expect(parseFileTab(planner)).toEqual({ kind: "thread", path: "README.md", repoId: "planner" });
-    expect(parseFileTab(primary)).toEqual({ kind: "thread", path: "README.md" });
-    expect("repoId" in parseFileTab(primary)!).toBe(false);
+    expect(parseFileTab(primary)).toEqual({ kind: "thread", path: "README.md", repoId: "p", primary: true });
+    expect(parseFileTab(own)).toEqual({ kind: "thread", path: "README.md" });
+    expect("repoId" in parseFileTab(own)!).toBe(false);
     // Saved before repositories had tabs: opens as it did.
     const saved = `file:${encodeURIComponent(JSON.stringify(["t", "a.ts"]))}`;
-    localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ panelTab: saved, panelTabOrder: ["diff", saved, planner], panelTabsClosed: [], layouts: { a: { panelTab: planner, panelTabOrder: [planner, saved], panelTabsClosed: [] } } }));
+    localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ panelTab: saved, panelTabOrder: ["diff", saved, planner, primary], panelTabsClosed: [], layouts: { a: { panelTab: primary, panelTabOrder: [primary, planner, saved], panelTabsClosed: [] } } }));
     vi.resetModules();
     const fresh = (await import("./ui")).useUi.getState();
     expect(fresh.panelTab).toBe(saved);
-    expect(fresh.panelTabOrder.slice(0, 3)).toEqual(["diff", saved, planner]);
-    expect(fresh.layouts["a"]?.panelTabOrder?.filter((id) => id.startsWith("file:"))).toEqual([planner, saved]);
-    // An id naming an empty repository is not a tab.
+    expect(fresh.panelTabOrder.slice(0, 4)).toEqual(["diff", saved, planner, primary]);
+    // A primary repository's tab is saved and restored as itself.
+    expect(fresh.layouts["a"]?.panelTab).toBe(primary);
+    expect(fresh.layouts["a"]?.panelTabOrder?.filter((id) => id.startsWith("file:"))).toEqual([primary, planner, saved]);
+    // An id naming an empty repository, or a primary mark without one, is not a tab.
     expect(parseFileTab(`file:${encodeURIComponent(JSON.stringify(["t", "a.ts", ""]))}`)).toBeNull();
-    // Opening one adds one tab per repository and path.
+    expect(parseFileTab(`file:${encodeURIComponent(JSON.stringify(["t", "a.ts", "", "primary"]))}`)).toBeNull();
+    // Opening one adds one tab per repository and path, the primary repository's included.
     ui().setLayoutKey("rt");
     ui().openFileTab({ kind: "thread", path: "README.md", repoId: "planner" });
     ui().openFileTab({ kind: "thread", path: "README.md", repoId: "planner" });
     ui().openFileTab({ kind: "thread", path: "README.md" });
-    expect(ui().panelTabOrder.filter((id) => id.startsWith("file:"))).toEqual([planner, primary]);
+    ui().openFileTab({ kind: "thread", path: "README.md", repoId: "p", primary: true });
+    expect(ui().panelTabOrder.filter((id) => id.startsWith("file:"))).toEqual([planner, own, primary]);
   });
 
   it("loads a saved file tab, and drops a saved id that names nothing we know", async () => {

@@ -23,9 +23,9 @@ export interface FileChip extends ChipBase {
   line: number | null;
   /** The last line of a selected range, when the chip names more than one line. */
   endLine?: number;
-  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout. */
+  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout and for its primary repository. */
   repoId?: string;
-  /** That repository's name, so the file says where it is; set only with `repoId`. */
+  /** That repository's name, so the file says where it is; set for a repository of a multi-repository thread, the primary's too. */
   repoName?: string;
   /** Selected in the Changes diff, so the chip can take the person back to it there. */
   fromDiff?: boolean;
@@ -53,9 +53,9 @@ export interface ReviewChip extends ChipBase {
   line: number | null;
   /** Optional for older one-line diff comments. */
   endLine?: number;
-  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout. */
+  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout and for its primary repository. */
   repoId?: string;
-  /** That repository's name, so the comment says where the file is; set only with `repoId`. */
+  /** That repository's name, so the comment says where the file is; set for a repository of a multi-repository thread, the primary's too. */
   repoName?: string;
   /** File annotations belong to the displayed source snapshot, not a later read. */
   sourceRevision?: string;
@@ -279,15 +279,16 @@ const repositoryField = (value: unknown): string | null => {
 };
 
 /**
- * The repository a file or review chip names: both halves, or neither. The path
- * is relative to that repository's worktree, so one half alone would name the
- * file as the thread's own and read the wrong copy of it; such a chip is refused.
+ * The repository a file or review chip names. Both halves name another repository of a multi-repository thread, whose
+ * worktree holds the path; a name alone names the thread's primary repository, whose path and reads stay the thread's
+ * own (the service's absent `repo_id` is the primary) and whose chip only says `<name>/<path>`. An id alone would read
+ * another repository's file while the chip shows the thread's own path, so such a chip is refused.
  */
 const repositoryOf = (chip: Record<string, unknown>): { repoId?: string; repoName?: string } | null => {
   const repoId = repositoryField(chip.repoId);
   const repoName = repositoryField(chip.repoName);
-  if (repoId === null && repoName === null) return {};
-  return repoId === null || repoName === null ? null : { repoId, repoName };
+  if (repoId === null) return repoName === null ? {} : { repoName };
+  return repoName === null ? null : { repoId, repoName };
 };
 
 /** One stored chip, or null when a field is missing or the wrong shape. */

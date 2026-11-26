@@ -37,6 +37,9 @@ export interface RepoChoice {
   multi: boolean;
   repos: ThreadRepo[];
   selected: ThreadRepo | null;
+  /** The thread's primary repository: the project's own (its id is the project's), else the service's first. Null without a choice. */
+  primary: ThreadRepo | null;
+  /** The `repo_id` every call for the selected repository sends: undefined for the primary repository, whose calls leave it out. */
   repoId: string | undefined;
   threadId: string;
   choose(repoId: string | null): void;
@@ -54,7 +57,7 @@ export function usePickedRepo(threadId: string, repos: ThreadRepo[] | null, relo
   const primary = multi ? list.find((repo) => repo.repo_id === projectId) ?? list[0]! : null;
   const selected = multi ? list.find((repo) => repo.repo_id === pickedId) ?? primary : null;
   const repoId = selected && primary && selected.repo_id !== primary.repo_id ? selected.repo_id : undefined;
-  return { multi, repos: list, selected, repoId, threadId, choose: (id) => pick(threadId, id), reload };
+  return { multi, repos: list, selected, primary, repoId, threadId, choose: (id) => pick(threadId, id), reload };
 }
 
 /** Reads the thread's repositories and the choice over them; an ordinary thread reads a `404` and gets no chooser and no `repo_id`. */

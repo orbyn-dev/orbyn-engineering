@@ -76,14 +76,22 @@ describe("composer context", () => {
     expect(chipLabel(asChip({ kind: "file", path: "notes.txt", line: null })!)).toBe("notes.txt");
   });
 
-  it("refuses a chip whose repository is only half known", () => {
-    // A foreign file's path is relative to its own repository's worktree, so one
-    // half alone would name it, or read it, as the thread's own copy of the path.
-    expect(asChip({ kind: "file", path: "notes.txt", line: 2, repoName: "orbyn-planner" })).toBeNull();
+  it("refuses a chip that names another repository without its name, and keeps the primary repository's name alone", () => {
+    // Another repository's file path is relative to its own repository's worktree, so an id alone would read that
+    // repository's file while the chip shows the thread's own path; such a chip is refused.
     expect(asChip({ kind: "file", path: "notes.txt", line: 2, repoId: "planner" })).toBeNull();
-    expect(asChip({ kind: "review", path: "notes.txt", line: 2, comment: "why?", repoName: "orbyn-planner" })).toBeNull();
     expect(asChip({ kind: "review", path: "notes.txt", line: 2, comment: "why?", repoId: "planner" })).toBeNull();
-    // A blank half is no half, and a chip with neither stays the thread's own.
+    // The thread's primary repository's chip carries its name and no id: its path and read stay the thread's own, and the
+    // name is what the tab and the paste say (`<name>/<path>`), so it survives the clipboard.
+    const primary = asChip({ kind: "file", path: "notes.txt", line: 2, repoName: "app" }, "p")!;
+    expect(primary).toMatchObject({ repoName: "app" });
+    expect(primary).not.toHaveProperty("repoId");
+    expect(chipLabel(primary)).toBe("app/notes.txt:2");
+    expect(chipsFromClipboard({ json: chipsClipboard([primary])!.json, html: "" })?.[0]).toMatchObject({ repoName: "app" });
+    const primaryReview = asChip({ kind: "review", path: "notes.txt", line: 2, comment: "why?", repoName: "app" }, "r")!;
+    expect(primaryReview).toMatchObject({ repoName: "app" });
+    expect(primaryReview).not.toHaveProperty("repoId");
+    // A blank name is no name, and a chip with neither stays the thread's own.
     expect(asChip({ kind: "file", path: "notes.txt", repoId: "planner", repoName: "" })).toBeNull();
     expect(asChip({ kind: "file", path: "notes.txt", line: 2 })).not.toHaveProperty("repoId");
     expect(asChip({ kind: "review", path: "notes.txt", line: 2, comment: "why?" })).not.toHaveProperty("repoName");

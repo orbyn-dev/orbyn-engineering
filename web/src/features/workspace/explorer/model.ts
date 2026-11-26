@@ -1,4 +1,5 @@
 import type { Project, Thread } from "../../../api/types";
+import type { FileTarget } from "../../../product/state/ui";
 import type { ExplorerChange } from "../../../generated/ExplorerChange";
 import type { ExplorerEntry } from "../../../generated/ExplorerEntry";
 import type { ExplorerReadOnlyReason } from "../../../generated/ExplorerReadOnlyReason";
@@ -15,15 +16,17 @@ type RowKind = "project" | "group" | "thread" | "worktree" | "repo" | "dir" | "f
 /**
  * The open multi-repository thread's chosen repository, drawn as its own checkout row. Its tree is read through the
  * thread's file list route with the repository's `repo_id`. A file of the thread's primary repository opens as the thread's
- * own file tab (no repository on it, as the rest of the app opens its files); one of another repository opens as that
- * repository's tab, so its read and write name it.
+ * own file tab that names the repository; one of another repository opens as that repository's tab, so its read and write
+ * name it.
  */
 export interface ThreadCheckout {
   threadId: string;
   /** The `repo_id` the tree reads send; absent is the thread's primary repository, the service's default. */
   readRepoId: string | undefined;
-  /** The repository's real id, carried by a file tab of a repository other than the primary; absent for the primary. */
-  tabRepoId: string | undefined;
+  /** The chosen repository's real id, which its file tab names: the primary repository's too, whose tab still reads as the thread's own. */
+  repoId: string;
+  /** The chosen repository is the thread's primary one. */
+  primary: boolean;
   /** The repository's name, as one line of plain text. */
   name: string;
   /** The repository's name as the service gives it, which is also its worktree's folder inside the thread's task folder; a message that names its file names this. */
@@ -31,6 +34,15 @@ export interface ThreadCheckout {
   /** The thread's own branch in it, the same name in every repository of the thread. */
   branch: string;
 }
+
+/**
+ * The tab a file of the checkout opens as: the primary repository's still reads and writes as the thread's own and only
+ * names the repository, while another repository's tab reads and writes with its `repo_id`.
+ */
+export const checkoutFileTarget = (checkout: ThreadCheckout, path: string): FileTarget =>
+  checkout.primary
+    ? { kind: "thread", path, repoId: checkout.repoId, primary: true }
+    : { kind: "thread", path, repoId: checkout.repoId };
 
 /** One line of the tree. Only what a row draws or acts on is here; data stays in the store. */
 export interface Row {
@@ -320,12 +332,13 @@ export interface FileMention {
 /**
  * A file row as the open thread's message names it, or null when the thread's own actions cannot reach the file. A file of
  * another repository of a multi-repository thread carries that repository's client-only id and name, since its path is
- * relative to that repository's worktree; the thread's own checkout is named by its path alone, exactly as before.
+ * relative to that repository's worktree; the thread's own checkout, the primary repository's included, is named by its
+ * path alone, exactly as before.
  */
 export function fileMention(row: Row, thread: Pick<Thread, "cwd"> | null | undefined): FileMention | null {
   if (!thread || row.kind !== "file" || row.path === undefined) return null;
   if (row.checkout) {
-    return row.checkout.tabRepoId === undefined ? null : { path: row.path, repoId: row.checkout.tabRepoId, repoName: row.checkout.repoName };
+    return row.checkout.primary ? null : { path: row.path, repoId: row.checkout.repoId, repoName: row.checkout.repoName };
   }
   if (!row.worktree) return null;
   const path = threadPathOf(row.worktree.path, thread.cwd, row.path);
