@@ -75,6 +75,7 @@ beforeEach(() => {
   vi.spyOn(pullsApi, "reviewerCandidates").mockResolvedValue([]);
   vi.spyOn(pullsApi, "labelCandidates").mockResolvedValue([]);
   vi.spyOn(pullsApi, "update").mockResolvedValue(undefined);
+  vi.spyOn(pullsApi, "mergeMethodSetting").mockResolvedValue(null);
   vi.spyOn(pullsApi, "timeline").mockResolvedValue([1, 2, 3].map((id) => ({ id: String(id), kind: "commented", actor: "sam", created_at: null, text: `Comment ${id}` })) as never);
 });
 afterEach(() => {
@@ -356,6 +357,32 @@ describe("one pull request as a page", () => {
     expect(within(menu).getAllByRole("menuitemcheckbox").map((item) => item.textContent)).toEqual(["Merge when checks pass", "Delete branch after merge"]);
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Rebase and merge" }));
     expect(screen.getByRole("button", { name: /Rebase and merge/ })).toBeInTheDocument();
+  });
+
+  it("starts the merge menu and its dialog on the project's merge method", async () => {
+    vi.mocked(pullsApi.mergeMethodSetting).mockResolvedValue("rebase");
+    await show(detail({ review_state: "approved" }));
+    expect(pullsApi.mergeMethodSetting).toHaveBeenCalledWith("p", expect.anything());
+    expect(screen.getByRole("button", { name: /Rebase and merge/ })).toBeInTheDocument();
+    fireEvent.click(merge());
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    // The page's menu chose the method, so the dialog only says which.
+    expect(screen.getByText("Rebase and merge #142 into main.")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Merge method" })).toBeNull();
+  });
+
+  it("waits for the project's merge method before the page dialog opens", async () => {
+    let release: (value: string | null) => void = () => undefined;
+    const setting = new Promise<string | null>((resolve) => { release = resolve; });
+    vi.mocked(pullsApi.mergeMethodSetting).mockReturnValue(setting);
+    await show(detail({ review_state: "approved" }));
+    // The setting is still loading, so Merge waits for it instead of opening on the fallback.
+    fireEvent.click(merge());
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(screen.queryByText("Merge pull request")).toBeNull();
+    await act(async () => { release("rebase"); await Promise.resolve(); });
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(screen.getByText("Rebase and merge #142 into main.")).toBeInTheDocument();
   });
 
   it("shares Merge when checks pass and Delete branch after merge between the menu and the dialog", async () => {
