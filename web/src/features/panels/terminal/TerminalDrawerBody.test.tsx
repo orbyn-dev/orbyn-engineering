@@ -77,6 +77,20 @@ describe("terminal drawer", () => {
     expect(document.querySelector(".ptab-attn")).toBeNull();
   });
 
+  it("puts the frame's silence strip under the tabs for the waiting console on screen, and takes it away when the event clears", async () => {
+    await show([terminal({ id: "t2", group: "g2" })]);
+    const at = (seq: number, value: unknown) => ({ seq, ts: "2026-11-22T14:12:03Z", thread_id: "th", event: { type: "CUSTOM", name: "orbyn.terminal_attention", value } });
+    const waiting = { v: 1, op: "waiting", id: "a1", terminal_id: "t2", terminal_title: "npm test", engine: "claude", kind: "yes_no", since: new Date(Date.now() - 38_000).toISOString(), excerpt: ["Overwrite auth/redirect.ts with the new version? (y/N)"] };
+    expect(document.querySelector(".term-wait")).toBeNull();
+    act(() => { useAttention.getState().receive(at(1, waiting)); });
+    const strip = document.querySelector(".term-wait");
+    expect(strip?.textContent).toBe("Waiting for you · Claude Code has been silent for 38 s");
+    expect(strip?.previousElementSibling?.classList.contains("terminal-tabs")).toBe(true);
+    for (const absent of ["Answer here", "Yes", "No"]) expect(strip?.textContent).not.toContain(absent);
+    act(() => { useAttention.getState().receive(at(2, { v: 1, op: "clear", id: "a1", reason: "input" })); });
+    expect(document.querySelector(".term-wait")).toBeNull();
+  });
+
   it("marks a tab by how its process is doing and closes it from its own button", async () => {
     const user = await show([terminal({}), terminal({ id: "t3", group: "g3", title: "build", alive: false, exit_code: 0 }), terminal({ id: "t4", group: "g4", title: "lint", alive: false, exit_code: 2 })]);
     expect(screen.getAllByLabelText("Working")).not.toHaveLength(0);
