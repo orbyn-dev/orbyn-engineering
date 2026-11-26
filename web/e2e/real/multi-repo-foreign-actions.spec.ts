@@ -7,9 +7,10 @@ import { openExplorer, send, settled, startProject, type Service } from "./servi
 /**
  * F70 / #1060: a multi-repository thread's file tab of ANOTHER repository, through a real `orbynd` and the real page.
  *
- * The tab renders that repository's own Markdown preview, its source and its plain-text editor; a line comment and the
- * file chip name `<repository>/<path>`; Copy path is the file's absolute path, `<thread folder>/<name>/<path>`, since a
- * repository's worktree is a folder of the thread's task folder. This runs a real service with ORBYN_MULTI_REPO=1 and a
+ * The tab renders that repository's own Markdown preview, its source, its plain-text editor and its own media: an image
+ * of the second repository is drawn from that repository's worktree. A line comment and the file chip name
+ * `<repository>/<path>`; Copy path is the file's absolute path, `<thread folder>/<name>/<path>`, since a repository's
+ * worktree is a folder of the thread's task folder. This runs a real service with ORBYN_MULTI_REPO=1 and a
  * thread in two repositories whose same-named files differ, opens the second repository's file from the left bar's Files
  * explorer and asserts what the real UI draws and sends. The foreign tab actions are stacked from PR #1695: before it, a
  * foreign tab offered no file chip and its Copy path was off.
@@ -23,6 +24,22 @@ const PRIMARY_README = "# Primary checkout\n\nOnly the primary repository says t
 const SECOND_README = "# Second checkout\n\nOnly the second repository says this.\n";
 const PRIMARY_NOTES = "primary notes\n\nOnly the primary repository's notes.\n";
 const SECOND_NOTES = "second notes\n\nOnly the second repository's notes.\n";
+
+// Two real PNGs whose decoded pixel sizes differ (2x3 in the second repository, 3x2 in the primary), so a tab that drew
+// the wrong repository's file, a stale copy of the other one or a broken element could not pass: the element reports the
+// pixels it actually decoded, and the bytes the service answers are compared with these exact files.
+const FOREIGN_IMAGE = "second-only.png";
+const PRIMARY_IMAGE = "primary-only.png";
+const FOREIGN_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAIAAAA2iEnWAAAAFElEQVR4nGO8IyfHwMDAxAAGUAoAFdoBHtT31FUAAAAASUVORK5CYII=",
+  "base64",
+);
+const PRIMARY_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAFElEQVR4nGOUs7nDAAZMEIqBgQEAFUoBOt09YecAAAAASUVORK5CYII=",
+  "base64",
+);
+const FOREIGN_SIZE = { width: 2, height: 3 };
+const PRIMARY_SIZE = { width: 3, height: 2 };
 
 interface RepoRow {
   id: string;
@@ -107,6 +124,10 @@ test.beforeAll(async () => {
   writeFileSync(join(secondWorktree, "README.md"), SECOND_README);
   writeFileSync(join(secondWorktree, "notes.txt"), SECOND_NOTES);
   writeFileSync(join(secondWorktree, "second-only.txt"), "second\n");
+  // One real image in each checkout, with different pixels: the foreign image exists only in the second repository, so
+  // the primary cannot answer for it, and its rendered size is the second file's size.
+  writeFileSync(join(secondWorktree, FOREIGN_IMAGE), FOREIGN_PNG);
+  writeFileSync(join(primaryWorktree, PRIMARY_IMAGE), PRIMARY_PNG);
 
   // Copy path is built from the thread's own cwd (the task folder) and the repository's name, both served by the service;
   // the spec reads the cwd back rather than guessing it, and pins it to the task folder the worktrees live in.
@@ -222,4 +243,53 @@ test("a foreign tab's line comment, file chip and Copy path name its repository"
   await expect(page.getByRole("tab", { name: "README.md", exact: true })).toBeVisible();
   await page.locator(".files-viewer").getByRole("button", { name: "Add file to message", exact: true }).click();
   await expect(chipShelf(page).locator("li[data-kind=file] span[title]")).toHaveAttribute("title", "README.md");
+});
+
+test("a foreign image tab renders the second repository's own PNG, and the primary is unaffected", async ({ page }) => {
+  await page.setViewportSize(WINDOW);
+  await page.goto(`${service.page}#/threads/${threadId}`);
+  await expect(page.getByRole("textbox", { name: /^Message/ })).toBeVisible();
+
+  // The second repository's explorer lists the image only it has, and opening it asks the raw route for that repository.
+  const secondTree = await pickRepository(page, secondName, "second-only.txt");
+  await expect(secondTree.getByRole("treeitem", { name: named(FOREIGN_IMAGE) })).toBeVisible();
+  const raw = page.waitForResponse((answer) => {
+    const url = new URL(answer.url());
+    return url.pathname === `/api/threads/${threadId}/files/raw` && url.searchParams.get("path") === FOREIGN_IMAGE;
+  });
+  await openFile(secondTree, FOREIGN_IMAGE);
+  await expect(page.getByRole("tab", { name: `${FOREIGN_IMAGE} (${secondName})`, exact: true })).toBeVisible();
+
+  // The tab's image element names the second repository, and the service answers that repository's exact file. The same
+  // path without a repository is a 404, so the rendered bytes cannot be the primary repository's.
+  const viewer = page.locator(".files-viewer");
+  const foreignImage = viewer.getByRole("img", { name: FOREIGN_IMAGE });
+  await expect(foreignImage).toBeVisible();
+  const src = new URL((await foreignImage.getAttribute("src")) ?? "", service.page);
+  expect(src.pathname).toBe(`/api/threads/${threadId}/files/raw`);
+  expect(src.searchParams.get("path")).toBe(FOREIGN_IMAGE);
+  expect(src.searchParams.get("repo_id")).toBe(secondRepoId);
+  const answer = await raw;
+  expect(answer.status()).toBe(200);
+  expect(Buffer.from(await answer.body()).equals(FOREIGN_PNG)).toBe(true);
+  const missingFromPrimary = await service
+    .api("GET", `/api/threads/${threadId}/files/raw?path=${FOREIGN_IMAGE}`)
+    .then(() => "the primary served the foreign image", (failure: unknown) => String(failure));
+  expect(missingFromPrimary).toContain("404");
+
+  // A broken element reports no pixels; this one decoded the second repository's 2x3 PNG.
+  await expect.poll(() => foreignImage.evaluate((element: HTMLImageElement) => ({ complete: element.complete, width: element.naturalWidth, height: element.naturalHeight }))).toEqual({ complete: true, ...FOREIGN_SIZE });
+
+  // The primary repository is unaffected: its tree has no foreign image, and its own PNG opens as the thread's ordinary
+  // tab from the thread's checkout, with no repository on the tab or on the raw request.
+  const primaryTree = await pickRepository(page, primaryName, "primary-only.txt");
+  await expect(primaryTree.getByRole("treeitem", { name: named(FOREIGN_IMAGE) })).toHaveCount(0);
+  await openFile(primaryTree, PRIMARY_IMAGE);
+  await expect(page.getByRole("tab", { name: PRIMARY_IMAGE, exact: true })).toBeVisible();
+  const ownImage = viewer.getByRole("img", { name: PRIMARY_IMAGE });
+  await expect(ownImage).toBeVisible();
+  const ownSrc = new URL((await ownImage.getAttribute("src")) ?? "", service.page);
+  expect(ownSrc.searchParams.get("path")).toBe(PRIMARY_IMAGE);
+  expect(ownSrc.searchParams.get("repo_id")).toBeNull();
+  await expect.poll(() => ownImage.evaluate((element: HTMLImageElement) => ({ complete: element.complete, width: element.naturalWidth, height: element.naturalHeight }))).toEqual({ complete: true, ...PRIMARY_SIZE });
 });
