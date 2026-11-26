@@ -12,7 +12,7 @@ import { Button } from "../../ui/controls";
 import { ApiFailure } from "../../api/client";
 import { Markdown } from "../content";
 import { issuesApi, useApiVersion, useEditOffered } from "./api";
-import { capText, closedWords, isIssueKey, isTracker, pullWord, stateWord, trackerName } from "./model";
+import { capText, closedWords, isIssueKey, isTracker, linkedChecksWord, pullWord, stateWord, trackerName } from "./model";
 import type { IssueDetail as Detail, LinkedPullRequest } from "./contract";
 import { CommentBox } from "./IssueComment";
 import { PickerEditor, useDescriptionEditor, type EditProps, type IssueWriter } from "./IssueEdit";
@@ -20,12 +20,15 @@ import { IssueGlyph } from "./IssueGlyph";
 import { Person } from "./IssuePerson";
 import { ReactionBar } from "./IssueReactions";
 import { IssueStateButton } from "./IssueStateMenu";
+import { LinkedThreadsChip } from "./LinkedThreadsChip";
+import { LinkThreadDialog } from "./LinkThreadDialog";
 import { reloadIssueLinks, useIssueThreads } from "./links";
 import { StartThreadDialog } from "./StartThreadDialog";
 
-function LinkedThreads({ issue, onStart }: { issue: Detail; onStart(): void }) {
+function LinkedThreads({ issue, onStart, link, onLinked }: { issue: Detail; onStart(): void; link(threadId: string): Promise<boolean>; onLinked(): void }) {
   const { threadIds, loaded, failed, retry } = useIssueThreads(issue);
   const threads = useWorkspace((state) => state.threads);
+  const [linking, setLinking] = useState(false);
   const known = threadIds.flatMap((id) => (threads[id] ? [threads[id]] : []));
   return (
     <section className="iss-card" role="group" aria-label="Linked threads">
@@ -49,17 +52,35 @@ function LinkedThreads({ issue, onStart }: { issue: Detail; onStart(): void }) {
           ))}
         </ul>
       )}
-      <Button icon={<Plus size={14} aria-hidden />} onClick={onStart}>Start a thread from this issue</Button>
+      {failed && known.length > 0 ? (
+        // The read after a link failed while the card still lists what it knew: the header counts the linked threads from
+        // the issue's own read and can already show the new one, so the card says it is behind and Retry reads it again
+        // (the link write itself already succeeded and is not repeated).
+        <div className="iss-start-fail" role="alert">
+          <span className="iss-quiet">Couldn’t refresh the linked threads. The list may be out of date.</span>
+          <Button onClick={() => void retry()}>Retry</Button>
+        </div>
+      ) : null}
+      <div className="iss-thread-acts">
+        <Button icon={<Plus size={14} aria-hidden />} onClick={onStart}>Start a thread from this issue</Button>
+        <Button onClick={() => setLinking(true)}>Link to a thread…</Button>
+      </div>
+      {linking ? <LinkThreadDialog issue={issue} link={link} onClose={() => setLinking(false)} onLinked={onLinked} /> : null}
     </section>
   );
 }
 
 const PULL_ICON = { merged: GitMerge, closed: GitPullRequestClosed, draft: GitPullRequestDraft, open: GitPullRequest } as const;
 
-/** One pull request the tracker reports against the issue. Its words are the tracker's text, capped; only a plain https address is opened. */
+/**
+ * One pull request the tracker reports against the issue. Its words are the tracker's text, capped; only a plain https address is
+ * opened. Its checks are the same counts the pull request list carries, in that list's words; absent checks are unknown and draw
+ * nothing, never "No checks".
+ */
 function PullRow({ pull }: { pull: LinkedPullRequest }) {
   const href = safeHref(pull.url);
   const word = pullWord(pull);
+  const checks = linkedChecksWord(pull.checks);
   const Icon = PULL_ICON[pull.state === "open" && pull.is_draft ? "draft" : pull.state];
   const body = (
     <>
@@ -72,13 +93,19 @@ function PullRow({ pull }: { pull: LinkedPullRequest }) {
         <span>#{pull.number}</span>
         <span>{capText(pull.repository, 80)}</span>
         {pull.closes_issue ? <span>Closes this issue</span> : null}
+        {checks ? (
+          <span className="iss-pr-checks" data-tone={checks.tone}>
+            <span className="sr-only">Checks </span>
+            {checks.label}
+          </span>
+        ) : null}
       </span>
     </>
   );
   return <li>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{body}</a> : <span className="iss-pr-plain">{body}</span>}</li>;
 }
 
-/** What the tracker reports of its own accord, in its order. No CI or checks status: the contract carries none. */
+/** What the tracker reports of its own accord, in its order. A link's checks are drawn when the tracker reported them; unknown draws nothing. */
 function LinkedPullRequests({ pulls }: { pulls: LinkedPullRequest[] }) {
   // Shown only when the tracker reports a pull request: an empty card on every issue says nothing.
   if (pulls.length === 0) return null;
@@ -182,13 +209,29 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
       setWriting(false);
     }
   };
+  // The card's link is a write on this page too: it takes the same guard, then reads the links again from a read that starts
+  // after the write, so the card lists the thread the tracker now holds rather than an answer read before it.
+  const linkThread = async (threadId: string): Promise<boolean> => {
+    const target = read.data;
+    if (!target || locked.current) return false;
+    locked.current = true;
+    setWriting(true);
+    try {
+      await issuesApi().link(threadId, target);
+      await reloadIssueLinks(version, { afterWrite: true });
+      return true;
+    } finally {
+      locked.current = false;
+      setWriting(false);
+    }
+  };
   const back = <a className="iss-back" href={routeHref({ name: "issues" })}><ArrowLeft size={14} aria-hidden />Back to Issues</a>;
   const issue = read.data;
   const href = issue ? safeHref(issue.url) : null;
   const display = issue?.display_key ?? (/^\d+$/.test(issueKey) ? `#${issueKey}` : issueKey);
   return (
     <>
-      <PageBar back={{ name: "issues" }}>
+      <PageBar back={{ name: "issues" }} actions={issue && issue.linked_threads.length > 0 ? <LinkedThreadsChip issue={issue} /> : undefined}>
         <h1 tabIndex={-1} data-page-title>{issue?.title ?? "Issue"}</h1>
         {issue ? <span className="page-sub"><span className="page-sub-item">{issue.display_key} · {trackerName(issue.tracker)} · {issue.scope}</span><span className="page-sub-item iss-state"><IssueGlyph state={issue.state} />{stateWord(issue.state)}</span></span> : null}
       </PageBar>
@@ -212,7 +255,7 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
             </div>
             <aside className="iss-right">
               <Facts issue={read.data} edit={{ issue: read.data, offered, write, writing }} host={host} />
-              <LinkedThreads issue={read.data} onStart={() => setStarting(true)} />
+              <LinkedThreads issue={read.data} onStart={() => setStarting(true)} link={linkThread} onLinked={() => { void read.refreshQuietly(); }} />
             </aside>
           </div>
         )}

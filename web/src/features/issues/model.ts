@@ -1,3 +1,4 @@
+import type { PullChecks } from "../../generated/PullChecks";
 import type { IssueQuery, IssueRef, IssueState, IssueSummary, LinkedPullRequest, TrackerKind, TrackerRow, TrackerStatus } from "./contract";
 import { TRACKER_KINDS, TRACKER_NAMES } from "./contract";
 import { relativeTime } from "../../lib/format";
@@ -210,6 +211,31 @@ export function pullWord(pull: Pick<LinkedPullRequest, "state" | "is_draft">): s
   if (pull.state === "merged") return "Merged";
   if (pull.state === "closed") return "Closed";
   return pull.is_draft ? "Draft" : null;
+}
+
+/** Where a linked pull request's checks stand, in the Pull requests list's own words: the same `PullChecks` counts. */
+export interface LinkedChecksWord {
+  tone: "fail" | "running" | "pass" | "neutral" | "none";
+  label: string;
+}
+
+/**
+ * The checks word for a linked pull request, from the counts the tracker reported. `null` when it reported none: absent is
+ * unknown, never "no checks" (docs/issues.md), so the row says nothing rather than claiming there are no checks.
+ */
+export function linkedChecksWord(checks: PullChecks | null | undefined): LinkedChecksWord | null {
+  if (!checks) return null;
+  if (checks.total === 0) return { tone: "none", label: "No checks" };
+  if (checks.failing > 0) {
+    const names = Array.isArray(checks.failing_names) ? checks.failing_names : [];
+    const first = names[0] ? capped(names[0], 60) : "";
+    const more = checks.failing - 1;
+    return { tone: "fail", label: `Failing${first ? ` · ${first}` : ""}${more > 0 && first ? ` +${more}` : ""}` };
+  }
+  if (checks.running > 0) return { tone: "running", label: `Running · ${checks.total - checks.running} of ${checks.total}` };
+  if (checks.passing === 0) return { tone: "neutral", label: "No checks ran" };
+  const skipped = checks.total - checks.passing;
+  return { tone: "pass", label: skipped > 0 ? `Passing · ${skipped} skipped` : "Passing" };
 }
 
 export const capText = capped;

@@ -88,7 +88,7 @@ export interface IssuesMock extends IssuesApi {
    */
   /** Every list read, in order: the query and the `cursors` it carried (`undefined` for the first page). */
   listed: { query: IssueQuery; cursors: Record<string, string> | undefined }[];
-  failNext(what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates" | "comment" | "create" | "templates" | "react" | "token" | "keychain" | "host" | "reject" | "unreachable" | null): void;
+  failNext(what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates" | "comment" | "create" | "templates" | "react" | "link" | "token" | "keychain" | "host" | "reject" | "unreachable" | null): void;
   /** Every candidates read, as `<tracker> <scope>`. */
   candidatesRead: string[];
 }
@@ -213,6 +213,7 @@ export function createIssuesMock(init: {
     link: async (threadId, ref) => {
       writes.push(`link:${threadId}:${ref.key}`);
       await wait();
+      take("link");
       const one = find(ref);
       if (!one) throw new ApiFailure("not_found", `No issue ${ref.key} in ${ref.scope}.`, 404);
       const held = links[threadId] ?? [];
