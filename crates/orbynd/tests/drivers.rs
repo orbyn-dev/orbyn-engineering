@@ -332,6 +332,55 @@ async fn codex_failed_turn_reports_its_error_and_late_frames_are_dropped() {
     assert!(!text_of(&events).contains("too late"));
 }
 
+#[tokio::test]
+async fn a_codex_usage_limit_stop_keeps_the_latest_spent_window_and_its_sentence() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "[usage-limited]").await;
+    assert_eq!(service.finished(&thread).await, "failed");
+    let body = service.json(&format!("/api/threads/{thread}")).await;
+    assert_eq!(body["last_run_state"], "failed", "{body}");
+    // The limit is recorded on the thread with the later of the two spent windows, and
+    // with the engine's own sentence: a generic failure records no limit at all.
+    let limit = &body["lifecycle"]["limit"];
+    assert_eq!(limit["resets_at"], "2027-01-15T09:00:00Z", "{body}");
+    assert!(
+        limit["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("usage limit")),
+        "the engine's own sentence is kept: {body}"
+    );
+}
+
+#[tokio::test]
+async fn a_codex_usage_limit_stop_leaves_the_spent_window_for_the_limits_read() {
+    let dir = TempDir::new();
+    let launches = dir.path().join("launches");
+    let options = Options {
+        env: vec![(
+            "ORBYN_FAKE_LAUNCH_FILE".into(),
+            launches.to_string_lossy().into_owned(),
+        )],
+        ..Options::default()
+    };
+    let (service, thread) = setup(&dir, options, "codex").await;
+    service.admit(&thread, "[usage-limited]").await;
+    assert_eq!(service.finished(&thread).await, "failed");
+    // A later app-server session reports the spent windows, so the limits route shows
+    // what stopped the run instead of the account's earlier 12%/40% report.
+    let limits = service.json("/api/engines/codex/limits").await;
+    assert_eq!(limits["windows"][0]["used_percent"], 100.0, "{limits}");
+    assert_eq!(limits["windows"][1]["used_percent"], 100.0, "{limits}");
+    assert_eq!(
+        limits["windows"][0]["resets_at"], "2027-01-15T08:00:00Z",
+        "{limits}"
+    );
+    assert_eq!(
+        limits["windows"][1]["resets_at"], "2027-01-15T09:00:00Z",
+        "{limits}"
+    );
+}
+
 /// The `background.stopped` events a run reported, with their reasons.
 fn stopped_reasons(events: &[Value]) -> Vec<String> {
     events
@@ -657,6 +706,110 @@ async fn claude_cancel_closes_the_process() {
     #[cfg(unix)]
     assert_all_dead(&pids).await;
     drop(pids);
+}
+
+/// The documented run command line, read from the fake's launch record: a run passes the flags
+/// a turn, an approval and a model choice rely on, in order, and never `--bare` or `--plugin-dir`.
+/// This is the only owner of that contract since wave 4 pruned the unit test that pinned it for one
+/// spec. Session flags (`--resume`, `--session-id`) are pinned by the session tests, not here.
+#[tokio::test]
+async fn a_claude_run_launches_with_the_documented_flags_and_never_bare() {
+    let dir = TempDir::new();
+    let file = dir.path().join("launches");
+    let options = Options {
+        env: vec![(
+            "ORBYN_FAKE_LAUNCH_FILE".into(),
+            file.to_string_lossy().into_owned(),
+        )],
+        ..Options::default()
+    };
+    let (service, thread) = setup(&dir, options, "claude").await;
+    // A chosen model must reach the CLI's own flag, not just the thread's stored preference.
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/runs"),
+            json!({ "prompt": "say hi", "model": "fable" }),
+        )
+        .await;
+    assert_eq!(code, 202, "{body}");
+    assert_eq!(service.finished(&thread).await, "completed");
+
+    let launches: Vec<Value> = std::fs::read_to_string(&file)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let run = launches
+        .iter()
+        .find(|entry| {
+            entry["mode"] == "claude"
+                && entry["args"]
+                    .as_array()
+                    .is_some_and(|args| args.iter().any(|arg| arg == "--permission-prompt-tool"))
+        })
+        .unwrap_or_else(|| panic!("the run's launch was not recorded: {launches:?}"));
+    let args: Vec<&str> = run["args"]
+        .as_array()
+        .expect("args are recorded as an array")
+        .iter()
+        .map(|arg| arg.as_str().expect("argv entries are strings"))
+        .collect();
+
+    // The flags a turn, an approval and a resumed session rely on, in the order they are passed.
+    let order = [
+        "-p",
+        "--output-format",
+        "--input-format",
+        "--verbose",
+        "--include-partial-messages",
+        "--replay-user-messages",
+        "--permission-mode",
+        "--mcp-config",
+        "--permission-prompt-tool",
+        "--model",
+        "--settings",
+    ];
+    let position = |flag: &str| {
+        args.iter()
+            .position(|arg| *arg == flag)
+            .unwrap_or_else(|| panic!("{flag} is missing from {args:?}"))
+    };
+    let mut last = 0;
+    for flag in order {
+        let at = position(flag);
+        assert!(at >= last, "{flag} is out of order in {args:?}");
+        last = at;
+    }
+    let value = |flag: &str| args[position(flag) + 1];
+    assert_eq!(value("--output-format"), "stream-json");
+    assert_eq!(value("--input-format"), "stream-json");
+    assert_eq!(value("--permission-mode"), "default");
+    assert_eq!(
+        value("--permission-prompt-tool"),
+        "mcp__orbyn_engineering__approve"
+    );
+    assert_eq!(value("--model"), "fable");
+    for (flag, filename) in [
+        ("--mcp-config", "mcp.json"),
+        ("--settings", "settings.json"),
+    ] {
+        let path = std::path::Path::new(value(flag));
+        assert!(
+            path.is_absolute(),
+            "{flag} is not an absolute path: {args:?}"
+        );
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some(filename),
+            "{flag} points elsewhere: {args:?}"
+        );
+    }
+    assert!(
+        !args
+            .iter()
+            .any(|arg| *arg == "--bare" || *arg == "--plugin-dir"),
+        "the run took a flag it must never take: {args:?}"
+    );
 }
 
 async fn custom_engine(service: &Service, tier: &str, target: &str, args: Value) {

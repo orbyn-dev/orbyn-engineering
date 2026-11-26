@@ -6,6 +6,7 @@ import { toFailure, useAsync } from "../../../lib/useAsync";
 import { Button, Field } from "../../../ui/controls";
 import { Dialog } from "../../../ui/Dialog";
 import { rememberDeleteBranch, useMergeOptions } from "../model/mergeOptions";
+import { startMergeMethod, useMergeMethodSetting } from "../model/mergeMethod";
 
 const METHOD_WORDS: Record<string, string> = { squash: "Squash and merge", merge: "Create a merge commit", rebase: "Rebase and merge" };
 
@@ -24,6 +25,7 @@ export function MergeDialog({
   onMerged(): void;
   /** The pull request moved on after it was read: the page reads it again. */
   onStale(): void;
+  /** The method the merge menu chose, or the project's configured one when it has not been chosen. */
   initialMethod: string;
   /** On the page the merge menu has chosen the method, so the dialog only says which. */
   fixedMethod?: boolean;
@@ -163,11 +165,13 @@ export function MergeDialog({
   );
 }
 
-/** The same dialog from a list row: it reads the pull request first, for its message. */
+/** The same dialog from a list row: it reads the pull request first, for its message, and the project's merge method. */
 export function RowMergeDialog({ projectId, number, onClose, onMerged, onStale }: { projectId: string; number: number; onClose(): void; onMerged(): void; onStale(): void }) {
   const detail = useAsync(`pull-merge:${projectId}:${number}`, (signal) => pullsApi.detail(projectId, number, signal));
-  if (detail.data) {
-    return <MergeDialog projectId={projectId} detail={detail.data} initialMethod="squash" onClose={onClose} onMerged={onMerged} onStale={onStale} />;
+  const mergeSetting = useMergeMethodSetting(projectId);
+  // The method is part of the form, so the dialog opens once it is known; a failed read leaves the fallback.
+  if (detail.data && mergeSetting.status !== "loading") {
+    return <MergeDialog projectId={projectId} detail={detail.data} initialMethod={startMergeMethod(mergeSetting.data)} onClose={onClose} onMerged={onMerged} onStale={onStale} />;
   }
   return (
     <Dialog

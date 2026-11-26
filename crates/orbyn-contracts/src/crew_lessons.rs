@@ -1,7 +1,8 @@
-//! Crew lessons over HTTP (Crew Preview, KC5 slice 3; docs/crew-lessons.md): the short sentences the crew keeps about one
-//! repository or all of them, with where each came from. A lesson is data in a brief, never a rule: no field here can touch
-//! the router, the verifier, an answer key, a lease, a budget or a check, and nothing here is synced or exported. Ids,
-//! enums, one short text and counts only; a lesson's fingerprint and deleted_at stay in the store and never reach a client.
+//! Crew lessons over HTTP (Crew Preview, KC5 slices 3 and 4; docs/crew-lessons.md): the short sentences the crew keeps
+//! about one repository or all of them, with where each came from, and the task's recorded EvalHistory sample. A lesson
+//! is data in a brief, never a rule: no field here can touch the router, the verifier, an answer key, a lease, a budget
+//! or a check, and nothing here is synced or exported. Ids, enums, one short text, counts and times only; a lesson's
+//! fingerprint and deleted_at stay in the store and never reach a client, and a sample never holds lesson or brief text.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -172,5 +173,45 @@ wire! {
 pub struct LessonSettingsView {
     pub repo: String,
     pub use_lessons: bool,
+}
+}
+
+wire! {
+/// One EvalHistory sample of a crew task (KC5 slice 4): what the task's brief carried and how it ended. Ids and enums
+/// only, never lesson or brief text; device only, never synced or exported.
+pub struct CrewEvalSample {
+    /// The task the sample belongs to.
+    pub task_id: String,
+    /// The task's project, once it is known through its run's lead thread; null before that.
+    pub project_id: Option<String>,
+    /// The brief's kind word, such as `implement`.
+    pub kind: String,
+    /// Whether the brief carried at least one lesson.
+    pub had_lessons: bool,
+    /// The lesson ids the brief carried.
+    pub lesson_ids: Vec<String>,
+    /// The lesson ids the brief's answer-key check left out of it.
+    pub left_out_ids: Vec<String>,
+    /// `passed`, `failed`, `stopped` or `cancelled`; null until the task reaches one of them.
+    pub outcome: Option<String>,
+    /// The reason of a `stopped` outcome; null for every other state.
+    pub stop_reason: Option<String>,
+    /// The task's latest route decision engine, when one exists.
+    pub engine: Option<String>,
+    /// When the sample was recorded.
+    pub created_at: String,
+    /// When the outcome was written, once; null until then.
+    pub finished_at: Option<String>,
+}
+}
+
+wire! {
+/// One task's EvalHistory samples, newest first. A task records exactly one, so the list holds one row; a task stored
+/// before samples existed answers none.
+pub struct CrewEvalSamples {
+    /// The task the read asked for.
+    pub task_id: String,
+    /// The task's samples, newest first.
+    pub samples: Vec<CrewEvalSample>,
 }
 }

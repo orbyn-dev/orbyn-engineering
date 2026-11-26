@@ -131,12 +131,15 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/devices/{id}/actions"),
     // Engines, updates, workspace and the shell.
     ("POST", "/api/acp/registry/{id}"),
+    ("DELETE", "/api/acp/registry/{id}"),
     ("POST", "/api/engine-host/{family}/restart"),
     ("POST", "/api/engine-host/{family}/stop"),
     ("POST", "/api/engines/custom"),
+    ("DELETE", "/api/engines/custom/{id}"),
     ("POST", "/api/engines/probe-binary"),
     ("POST", "/api/engines/update-all"),
     ("POST", "/api/engines/{id}/install-recommended"),
+    ("POST", "/api/engines/{id}/native-sessions/delete"),
     ("POST", "/api/engines/{id}/update"),
     (
         "POST",
@@ -196,6 +199,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ),
     ("POST", "/api/projects/{id}/pulls/{number}/merge"),
     ("POST", "/api/projects/{id}/pulls/{number}/review"),
+    ("POST", "/api/projects/{id}/pulls/{number}/viewed"),
     ("POST", "/api/projects/{id}/trust"),
     ("POST", "/api/projects/{id}/workflows/{run}/approve"),
     ("DELETE", "/api/projects/{id}/worktrees/{worktree}"),
@@ -465,6 +469,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/acp/registry/{id}",
         "installs an agent from the registry",
+    ),
+    (
+        "DELETE",
+        "/api/acp/registry/{id}",
+        "removes an agent the person installed from the registry",
     ),
     (
         "POST",
@@ -787,6 +796,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "registers a program to run as an engine",
     ),
     (
+        "DELETE",
+        "/api/engines/custom/{id}",
+        "removes an engine the person registered",
+    ),
+    (
         "POST",
         "/api/engines/probe-binary",
         "runs a program the caller names",
@@ -800,6 +814,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/engines/{id}/install-recommended",
         "installs engine software",
+    ),
+    (
+        "POST",
+        "/api/engines/{id}/native-sessions/delete",
+        "deletes a native session stored for the person's engine",
     ),
     (
         "POST",
@@ -910,6 +929,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/projects/{id}/pulls/{number}/review",
         "submits a review, which can approve, as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/viewed",
+        "marks a file viewed or unviewed on the forge as the person",
     ),
     (
         "POST",

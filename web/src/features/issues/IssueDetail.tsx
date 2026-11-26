@@ -14,15 +14,14 @@ import { Markdown } from "../content";
 import { issuesApi, useApiVersion, useEditOffered } from "./api";
 import { capText, closedWords, isIssueKey, isTracker, pullWord, stateWord, trackerName } from "./model";
 import type { IssueDetail as Detail, LinkedPullRequest } from "./contract";
+import { CommentBox } from "./IssueComment";
 import { PickerEditor, useDescriptionEditor, type EditProps, type IssueWriter } from "./IssueEdit";
 import { IssueGlyph } from "./IssueGlyph";
+import { Person } from "./IssuePerson";
+import { ReactionBar } from "./IssueReactions";
 import { IssueStateButton } from "./IssueStateMenu";
 import { reloadIssueLinks, useIssueThreads } from "./links";
 import { StartThreadDialog } from "./StartThreadDialog";
-
-export function Person({ login }: { login: string }) {
-  return <span className="iss-person"><span className="iss-avatar" aria-hidden>{login.slice(0, 2).toUpperCase()}</span>{login}</span>;
-}
 
 function LinkedThreads({ issue, onStart }: { issue: Detail; onStart(): void }) {
   const { threadIds, loaded, failed, retry } = useIssueThreads(issue);
@@ -101,13 +100,14 @@ function Entry({ issue }: { issue: Detail }) {
   );
 }
 
-/** The post with the description editor: the header's pencil, and the editor in place of the text while it is open. */
+/** The post with the description editor and the reaction bar: the header's pencil, and the editor in place of the text while it is open. */
 function EditableEntry({ issue, edit }: { issue: Detail; edit: EditProps }) {
   const { pencil, editor, editing } = useDescriptionEditor(edit);
   return (
     <article className="iss-entry">
       <header>{issue.author ? <Person login={issue.author.login} /> : <span className="iss-quiet">Unknown author</span>}<span className="iss-quiet">opened {relativeTime(issue.created_at).toLowerCase()}</span>{pencil}</header>
       {editing ? editor : <div className="iss-body"><Markdown text={issue.body} remoteImages="link" /></div>}
+      <ReactionBar issue={issue} write={edit.write} writing={edit.writing} />
     </article>
   );
 }
@@ -124,6 +124,8 @@ export function Body({ issue, page = false, edit }: { issue: Detail; page?: bool
           <div className="iss-body"><Markdown text={comment.body} remoteImages="link" /></div>
         </article>
       ))}
+      {/* The page adds the comment box; the panel tab stays read only. */}
+      {page && edit ? <CommentBox issue={issue} write={edit.write} writing={edit.writing} /> : null}
     </div>
   );
 }
@@ -159,7 +161,7 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
   });
   const waited = useWaited(read.status === "loading");
   // One write at a time on this page, whichever control makes it: a second click, or another control, while one is in flight is
-  // refused and calls nothing. The answer is the updated issue and replaces what is shown; the state a write leaves out is kept.
+  // refused and calls nothing. The answer is the updated issue and replaces what is shown; the fields a write leaves out are kept.
   const [writing, setWriting] = useState(false);
   const locked = useRef(false);
   const shown = useRef(read.data);
@@ -170,7 +172,9 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
     setWriting(true);
     try {
       const next = await call();
-      read.setData({ ...next, states: next.states ?? shown.current?.states });
+      // States and the reaction counts come from some answers only (a plain detail read carries no reactions), so a write must not
+      // empty what the page already showed: the bar would blink off after an unrelated edit.
+      read.setData({ ...next, states: next.states ?? shown.current?.states, reactions: next.reactions ?? shown.current?.reactions });
       void reloadIssueLinks(version);
       return next;
     } finally {
