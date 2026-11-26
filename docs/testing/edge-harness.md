@@ -5,10 +5,11 @@ Status: **proposal; step 1 of the order is delivered.** Base: `origin/main` `df6
 while this was written, so it comes from the source and the 24 Nov test ledgers; step 1's test has
 since been run on the box (`cargo test -p orbynd --test drivers --
 a_claude_run_launches_with_the_documented_flags_and_never_bare`: 1 passed, 48 filtered out).
-Everything else below is unrun, and every break-check named is a plan, not a result. Counts are
-measured from the named files (see [Counts](#counts)); no timing is given because none was
-measured. This revision corrects a review round: the claims below were re-checked against the
-files they name.
+Everything else below is unrun, and every break-check named is a plan, not a result, except
+step 1's: it was run with wave 4 on 27 Nov 2026 and its unit test was pruned (see Order and
+Verification). Counts are measured from the named files (see [Counts](#counts)); no timing is given
+because none was measured. This revision corrects a review round: the claims below were re-checked
+against the files they name.
 
 Source: `assignments-2026-11-24.md` row 3.3, "Edge harness for store, devices, Claude and Codex
 driver suites, so wave 4 can prune with proof" (lanes A, C). Row 3.6 is the consumer: prune a
@@ -276,6 +277,7 @@ is unverified. On the box, for each added test: run it green, then apply the nam
 confirm it fails for the stated reason, then restore. Step 1's break-check and the unit-test prune it
 enabled were run on 27 Nov 2026 with wave 4 (P3.6; box results are in the wave-4 line of the test
 ledgers), and the tip's `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D
-warnings` pass was run with that prune, plus the four unit files and the touched edge test files
-(`cargo test -p orbynd --test drivers`, and so on). Windows
+warnings` pass was run with that prune, plus the three unit files it touched (the claude, codex
+and devices lib filters) and the touched edge test files (`cargo test -p orbynd --test drivers`,
+and so on). Windows
 behaviour of the device fake and the `.cmd` shims is unobserved here; the CI matrix owns it.

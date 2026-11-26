@@ -660,9 +660,9 @@ async fn claude_cancel_closes_the_process() {
 }
 
 /// The documented run command line, read from the fake's launch record: a run passes the flags
-/// a turn and an approval rely on, in order, and never `--bare` or `--plugin-dir`. This is the
-/// only owner of that contract since wave 4 pruned the unit test that pinned it for one spec.
-/// Session flags (`--resume`, `--session-id`) are pinned by the session tests, not here.
+/// a turn, an approval and a model choice rely on, in order, and never `--bare` or `--plugin-dir`.
+/// This is the only owner of that contract since wave 4 pruned the unit test that pinned it for one
+/// spec. Session flags (`--resume`, `--session-id`) are pinned by the session tests, not here.
 #[tokio::test]
 async fn a_claude_run_launches_with_the_documented_flags_and_never_bare() {
     let dir = TempDir::new();
@@ -675,7 +675,14 @@ async fn a_claude_run_launches_with_the_documented_flags_and_never_bare() {
         ..Options::default()
     };
     let (service, thread) = setup(&dir, options, "claude").await;
-    service.admit(&thread, "say hi").await;
+    // A chosen model must reach the CLI's own flag, not just the thread's stored preference.
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/runs"),
+            json!({ "prompt": "say hi", "model": "fable" }),
+        )
+        .await;
+    assert_eq!(code, 202, "{body}");
     assert_eq!(service.finished(&thread).await, "completed");
 
     let launches: Vec<Value> = std::fs::read_to_string(&file)
@@ -710,6 +717,7 @@ async fn a_claude_run_launches_with_the_documented_flags_and_never_bare() {
         "--permission-mode",
         "--mcp-config",
         "--permission-prompt-tool",
+        "--model",
         "--settings",
     ];
     let position = |flag: &str| {
@@ -731,6 +739,7 @@ async fn a_claude_run_launches_with_the_documented_flags_and_never_bare() {
         value("--permission-prompt-tool"),
         "mcp__orbyn_engineering__approve"
     );
+    assert_eq!(value("--model"), "fable");
     for (flag, filename) in [
         ("--mcp-config", "mcp.json"),
         ("--settings", "settings.json"),
