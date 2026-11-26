@@ -14,10 +14,17 @@
 //! API-key login. The real Codex home (`CODEX_HOME` or `~/.codex`) is a closed folder, so a
 //! worker cannot read the person's own sessions or credentials there.
 //!
+//! Whatever the platform, the worker's environment is scrubbed of the data folder and of the
+//! `orbyn` command line ([`Confinement::scrub_env`]): no inherited name keeps the folder, and
+//! the search path keeps no folder that offers the command. That covers the route a shell takes
+//! by name; it does not stop a worker that already knows an absolute path to a binary, which is
+//! what the data folder's denial is for.
+//!
 //! What this does not cover is listed in `docs/crew.md`: the network and the loopback service,
 //! the OS keychain, the engine's own login folders, other engines' saved conversations, and
 //! other same-user files.
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -52,6 +59,10 @@ pub const UNSUPPORTED_PLATFORM: &str = "Crew runs on macOS in the beta; Windows 
 pub(crate) const CODEX_REFUSED: &str = "Crew workers on Codex are not available yet.";
 const TERMINAL_REFUSED: &str =
     "A terminal engine cannot take a crew task, because Orbyn cannot restrict it.";
+/// The service's own variable for its data folder, and the program a worker's search path must
+/// not offer: the `orbyn` command line.
+const DATA_DIR_VAR: &str = "ORBYN_DATA_DIR";
+const CLI_NAMES: &[&str] = &["orbyn", "orbyn.exe"];
 
 /// What one worker process may reach. Every path is canonical, so a link such as macOS's
 /// `/var` cannot make a rule miss the folder it names.
@@ -264,10 +275,108 @@ impl Confinement {
         platform::wrap_proof(self, command)
     }
 
-    /// What a restricted child must not inherit: the service's data folder variable would
-    /// point its `orbyn` command at the folder it cannot read.
+    /// What a restricted child must not inherit, and what its search path may not offer.
+    ///
+    /// The service's own data-folder variable would point the worker's `orbyn` command at the
+    /// folder it cannot read, and any other name whose value is that path hands the worker the
+    /// same route, so the value decides and not the name. The search path keeps only absolute
+    /// folders outside the data folder that offer no `orbyn` program, so a worker's shell finds
+    /// neither the app's folder nor the command line by name. It is not a boundary against a
+    /// worker that already knows an absolute path to the binary: the macOS profile and the data
+    /// folder's denial are what stop that (`docs/crew.md`). Run it after the run's own variables
+    /// are set, so one of those cannot put a route back.
     pub fn scrub_env(&self, command: &mut Command) {
-        command.env_remove("ORBYN_DATA_DIR");
+        // The folder as the rules compare it, resolved once for every name and search entry.
+        let folder = comparable(&self.data);
+        command.env_remove(DATA_DIR_VAR);
+        let mut named: Vec<OsString> = Vec::new();
+        for (name, value) in std::env::vars_os() {
+            if names_data(&name, &value, &folder) {
+                named.push(name);
+            }
+        }
+        for (name, value) in command.get_envs() {
+            if let Some(value) = value
+                && names_data(name, value, &folder)
+            {
+                named.push(name.to_os_string());
+            }
+        }
+        for name in named {
+            command.env_remove(name);
+        }
+        let inherited = command
+            .get_envs()
+            .filter_map(|(name, value)| value.map(|value| (name, value)))
+            .find(|(name, _)| name.eq_ignore_ascii_case("PATH"))
+            .map(|(_, value)| value.to_os_string())
+            .or_else(|| std::env::var_os("PATH"));
+        let kept = worker_path(inherited.as_deref(), &folder);
+        match std::env::join_paths(&kept)
+            .ok()
+            .filter(|path| !path.is_empty())
+        {
+            Some(path) => command.env("PATH", path),
+            // No folder is left to search, which is what the rules say; a child with no search
+            // path has nothing to find rather than a system default that may hold the command.
+            None => command.env_remove("PATH"),
+        };
+    }
+}
+
+/// Whether an inherited `name` and `value` hand the worker the data folder. `PATH` is not decided
+/// here: it is a list of folders, and one entry naming the folder does not spoil the others.
+fn names_data(name: &OsStr, value: &OsStr, folder: &str) -> bool {
+    !name.eq_ignore_ascii_case("PATH") && mentions(value, folder)
+}
+
+/// The worker's search path: the absolute folders that are outside the data folder (`folder`) and
+/// offer no `orbyn` program. A relative or empty entry means the child's own start folder, which
+/// these rules cannot name, so it goes too.
+fn worker_path(path: Option<&OsStr>, folder: &str) -> Vec<PathBuf> {
+    let Some(path) = path else {
+        return Vec::new();
+    };
+    std::env::split_paths(path)
+        .filter(|entry| entry.is_absolute())
+        .filter(|entry| !mentions(entry.as_os_str(), folder))
+        .filter(|entry| !offers_cli(entry))
+        .collect()
+}
+
+/// Whether `value` hands over `data`: the folder itself, or a file or folder inside it. The value
+/// is compared as text after resolving the spellings that name the same folder (a link above it,
+/// the Windows verbatim prefix, case), because a variable can name it in any shape.
+fn mentions(value: &OsStr, folder: &str) -> bool {
+    if comparable_text(&value.to_string_lossy()).contains(folder) {
+        return true;
+    }
+    std::env::split_paths(value)
+        .filter(|entry| entry.is_absolute())
+        .any(|entry| comparable(&entry).contains(folder))
+}
+
+/// Whether `folder` offers the `orbyn` command line. A folder that does loses its other programs
+/// for the worker too: the rules cannot take one name out of a search folder, and the documented
+/// install folder (`~/.local/bin`) holds launchers.
+fn offers_cli(folder: &Path) -> bool {
+    CLI_NAMES.iter().any(|name| folder.join(name).is_file())
+}
+
+/// A path written so that two spellings of the same folder compare equal: resolved when it
+/// exists, `/` separators, no Windows verbatim prefix, and lowercase on Windows.
+fn comparable(path: &Path) -> String {
+    let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    comparable_text(&real.to_string_lossy())
+}
+
+fn comparable_text(text: &str) -> String {
+    let text = text.replace('\\', "/");
+    let text = text.strip_prefix("//?/").unwrap_or(&text).to_owned();
+    if cfg!(windows) {
+        text.to_ascii_lowercase()
+    } else {
+        text
     }
 }
 
@@ -534,5 +643,7 @@ pub fn worker_refusal(tier: EngineTier, family: &str) -> Option<WorkerRefusal> {
 
 #[cfg(test)]
 mod codex_tests;
+#[cfg(test)]
+mod env_tests;
 #[cfg(test)]
 mod tests;

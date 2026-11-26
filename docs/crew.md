@@ -2047,6 +2047,14 @@ reading other processes' command lines and environment, so nothing secret is pas
 token is read from an owner-only file in the lead's run folder, never from arguments or environment. Where that is not possible the worker is refused with a plain line. See
 [the architecture](architecture.md#crew-worker-confinement) and SPEC section 11.
 
+A worker's environment carries no route to that folder either, whatever the platform: the core removes every
+inherited name whose value is the data folder (`ORBYN_DATA_DIR` and any other), and the search path it is given
+keeps only absolute folders outside the data folder that offer no `orbyn` program, so a worker's shell finds
+neither the folder nor the CLI by name. A folder that offers `orbyn` loses its other programs for the worker too,
+which includes the documented install folder `~/.local/bin`. This is what a worker's shell is handed, not a
+boundary: a worker that already knows an absolute path to a binary still starts it, and the profile above is what
+stops it reading the store. Codex and ACP workers get the same environment.
+
 A Claude worker also cannot read or write another session's saved Claude conversation (the lead's transcript
 under `~/.claude/projects`), nor Claude's prompt history; it keeps its own session, which a first turn names with
 `--session-id`. It starts without Claude's auto memory for the project (`memory/` is closed with the rest). A worker on
@@ -2076,7 +2084,7 @@ other engines' saved conversations are not covered. A confined Claude worker can
 lead's transcript is denied to confined Claude workers, and nothing is said about other leads.
 
 Built: the macOS profile, the refusals (other platforms, missing tool, nested restriction, Codex while
-`CODEX_WORKERS_ALLOWED` is false, terminal engines), the Claude transcript denial, and the Codex design behind
+`CODEX_WORKERS_ALLOWED` is false, terminal engines), the worker's environment scrub, the Claude transcript denial, and the Codex design behind
 that one constant: nested sandbox off, a private API-key home per task, the real home closed, and tests that run
 the real tool. Not built: a Windows or Linux restriction, and a denial of other engines' saved conversations. Not
 covered: an ACP agent's saved conversations, Claude's other per-session files (`plans/`, which can hold the lead's plan text, `paste-cache/`, `session-env/`, to-do
