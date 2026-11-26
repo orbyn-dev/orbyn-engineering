@@ -166,14 +166,14 @@ still read, run threads and use every `Local` route. Each later group moved to `
 
 Step 2 closed the routes above only; the list it left, `POST /api/policy/rules`, `PATCH /api/threads/{id}`,
 `POST /api/threads/{id}/runs` (`permission_mode`), project trust, workflow approve, questions answer and dismiss, Crew's
-approve-once, deny and dismiss, and the console, terminals, scripts, file writes, pull merges and reviews, updates,
+approve-once, deny and dismiss, and the console, terminals, scripts, file writes, pull merges, reviews and viewed marks, updates,
 workspace and account routes, is closed by step 3.
 
 ## Step 3: what is built
 
-- **Every `Person` route needs the key.** `ENFORCED` in `routes/classes.rs` now lists all of the `Person` table (96 routes):
+- **Every `Person` route needs the key.** `ENFORCED` in `routes/classes.rs` now lists all of the `Person` table (210 routes):
   Account, Crew's person writes, engines, updates, workspace, shell actions, scheduled tasks, preferences, policy rules,
-  redaction settings, questions, project trust and publish, workflow approve, pull merges and reviews, the explorer, the
+  redaction settings, questions, project trust and publish, workflow approve, pull merges, reviews and viewed marks, the explorer, the
   console, terminals, scripts, file writes, computer use and the routes that move a checkout (`POST /api/projects/{id}/git/init`,
   `POST /api/threads/{id}/branches` and `/branches/switch`, `POST /api/threads/{id}/vcs/refs` and `/vcs/refs/switch`; ruling F3:
   a service-token agent cannot move the checkout under the person; `GET .../branches` stays `Local`). A test (`routes/tests.rs`) fails for a `Person` route that is
@@ -238,10 +238,12 @@ The `Person` routes are closed to a token-only worker. This is what #441 still h
 - [ ] **`POST /api/diagnostics/processes/{pid}/stop`** is `Local`. It can stop any process in the service's own tree, so a
   token holder can cause a denial of service; it cannot act as the person, so it is not an impersonation route.
 - [ ] **Thread-level pull request bookkeeping** (`POST /api/threads/{id}/pulls`, `.../refresh`, `.../watch`, `DELETE
-  .../pulls/{number}`, and a pull's `work`, `guide` and `viewed`, and `checkout` with `worktree: true`) stays `Local`: none
+  .../pulls/{number}`, and a pull's `work` and `guide`, and `checkout` with `worktree: true`) stays `Local`: none
   of it writes to the forge. Be exact about what it does do: `checkout` runs local `git fetch` and `worktree add` (with
   `worktree: false` it also runs `switch`, which is why that mode needs the key, see "Field-level"), and `work` and `guide`
   create a worktree or start an engine thread at the default permission mode. That grants nothing beyond what the open
-  `Local` runs route already does.
+  `Local` runs route already does. A pull's `POST /api/projects/{id}/pulls/{number}/viewed` is not in that list: it runs the
+  person's own GitHub `markFileAsViewed`/`unmarkFileAsViewed` mutation through the person's `gh` login, so it is `Person`
+  like every other forge write.
 - [ ] **A same-user process that reads the shell's memory or drives its devtools** still gets the key (platform notes above).
 - [ ] **Remote sessions** have no key, so they are read and `Local` only. A remote approve flow needs its own design.
