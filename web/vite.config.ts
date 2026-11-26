@@ -1,4 +1,5 @@
 import type { ClientRequest } from "node:http";
+import { availableParallelism } from "node:os";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 import { mockApi } from "./mock/plugin.ts";
@@ -93,5 +94,9 @@ export default defineConfig(({ mode }) => ({
     setupFiles: ["./src/test-setup.ts"],
     include: ["src/**/*.test.{ts,tsx}", "mock/**/*.test.ts", "scripts/**/*.test.mjs", "tools/**/*.test.ts"],
     css: false,
+    // A 592-file suite on a 32-core box defaulted to enough jsdom workers that heavy files timed out
+    // (12 failures at 5 s in a full run while the same files pass alone; 7029/7029 with 8 workers).
+    // Cap the pool so `npm test` is deterministic on big machines; CI's runner already has fewer cores.
+    maxWorkers: Math.max(2, Math.min(8, availableParallelism() - 1)),
   },
 }));
