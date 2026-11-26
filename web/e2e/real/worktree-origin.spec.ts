@@ -22,10 +22,13 @@ interface Thread {
   worktree?: { path?: string; branch?: string } | null;
 }
 
+/** The same path, whichever separator wrote it: the API reports native `\` on Windows while git writes `/`. */
+const samePath = (left: string, right: string) => left.replace(/\\/g, "/") === right.replace(/\\/g, "/");
+
 /** The worktree a thread runs in, from the project's own worktree list. */
 function worktreeOf(path: string | undefined): string {
   const listed = git(service.repo, "worktree", "list", "--porcelain").split("\n\n").map((block) => block.split("\n")[0] ?? "").map((line) => line.replace(/^worktree /, ""));
-  const found = path ? listed.find((entry) => entry === path) : undefined;
+  const found = path ? listed.find((entry) => samePath(entry, path)) : undefined;
   if (!found) throw new Error(`no worktree for the thread in ${listed.join(", ")}`);
   return found;
 }

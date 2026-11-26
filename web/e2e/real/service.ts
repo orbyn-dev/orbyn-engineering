@@ -1,6 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
@@ -122,6 +122,23 @@ const STAND_IN_ISSUES: IssueFixture[] = [
 ];
 
 const STAND_IN_GH = resolve(WEB, "e2e/real/stand-in-gh.mjs");
+/** The stand-in imports this beside itself; a copy on Windows needs it copied too. */
+const STAND_IN_GH_LOCK = resolve(WEB, "e2e/real/forge-lock.mjs");
+
+/**
+ * A program named `gh` on the fixture PATH. Linux runs the linked script itself; Windows cannot run a shebang and, on a
+ * stock box without Developer Mode, refuses a file symlink (EPERM). An npm-style `.cmd` shim beside a copy of the script
+ * is what the service resolves and follows to Node without a shell, so the forge probe really runs the stand-in.
+ */
+function standInGhProgram(bin: string): void {
+  if (process.platform !== "win32") {
+    symlinkSync(STAND_IN_GH, join(bin, "gh"));
+    return;
+  }
+  copyFileSync(STAND_IN_GH, join(bin, "gh.mjs"));
+  copyFileSync(STAND_IN_GH_LOCK, join(bin, "forge-lock.mjs"));
+  writeFileSync(join(bin, "gh.cmd"), '@echo off\r\nnode "%~dp0\\gh.mjs" %*\r\n');
+}
 
 /** A GitHub-only fixture: `gh` keeps state, and discovery of other forges fails locally. */
 function standInGh(dir: string, pulls: PullFixture[], starred = false): { bin: string; state: string; log: string } {
@@ -131,12 +148,7 @@ function standInGh(dir: string, pulls: PullFixture[], starred = false): { bin: s
   const log = join(dir, "gh-calls.log");
   writeFileSync(log, "");
   writeFileSync(state, JSON.stringify({ starred, pulls: pulls.map(pullRow), repos: [], next: 100, people: ["ada", "grace"], labels: [{ name: "bug", color: "d73a4a", description: "About bug" }, { name: "docs", color: "0075ca", description: "About docs" }], template: pullRow({ number: 0, title: "" }), issues: STAND_IN_ISSUES }));
-  if (process.platform === "win32") {
-    symlinkSync(STAND_IN_GH, join(bin, "gh.mjs"));
-    writeFileSync(join(bin, "gh.cmd"), '@echo off\r\nnode "%~dp0gh.mjs" %*\r\n');
-  } else {
-    symlinkSync(STAND_IN_GH, join(bin, "gh"));
-  }
+  standInGhProgram(bin);
   // /api/forges probes every forge. Never let this GitHub fixture reach an installed non-GitHub CLI.
   for (const program of ["glab", "az", "tea"]) {
     if (process.platform === "win32") {

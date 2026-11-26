@@ -39,7 +39,11 @@ test("a published render produces a nonblank screenshot without browser errors",
   await page.goto(service.page);
   const errors: string[] = [];
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
+    if (message.type() !== "error") return;
+    // With Issues off the app still asks GET /api/issues/trackers once, and the service answers its designed 404
+    // (web/src/features/issues/http.ts); the browser's failed-resource line is that probe, not an app error.
+    const probe = message.text().startsWith("Failed to load resource") && message.location().url.includes("/api/issues/trackers");
+    if (!probe) errors.push(message.text());
   });
   page.on("pageerror", (error) => errors.push(error.message));
   await page.evaluate(({ url, token }) => {
