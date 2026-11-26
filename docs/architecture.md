@@ -3998,7 +3998,7 @@ every method, path and which routes need a credential.
 | `GET /api/threads/:id/files?path=&repo_id=` | `FileEntry[]`, one folder; `repo_id` names one repository of a multi-repository thread, absent is its primary |
 | `GET /api/threads/:id/files/metadata?path=` | `FileMetadata`: one entry's own kind, size, mode, modified time and whether a final link stays inside; no bytes read; `exists: false` for a missing path |
 | `GET /api/threads/:id/files/ignored` | Ignored paths |
-| `GET /api/threads/:id/files/search?q=&content=` | `SearchHit[]` by name or by line |
+| `GET /api/threads/:id/files/search?q=&content=&repo_id=` | `SearchHit[]` by name or by line; `repo_id` names one repository of a multi-repository thread, absent is its primary |
 | `GET, PUT /api/threads/:id/files/content` | `FileContent`; a stale `base_revision` is `409 file_conflict` |
 | `POST /api/threads/:id/files/mutate` | `ExplorerFileAction`: create, move (rename) or nonrecursive delete in the thread's checkout; `204`, `403` active session/untrusted, `404` unknown thread, `400` invalid path or destination |
 | `GET /api/threads/:id/files/raw?path=&download=` | Bytes with `Range`, `If-Range` and `If-None-Match`; `206`, `304`, `413 file_too_large`, `416`; `download` forces an attachment |

@@ -8,6 +8,7 @@ import { useUi, type PaletteStart } from "../../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
 import { ProjectBadge } from "../../../product/ui/badges";
 import { useAccountAvailable } from "../../account";
+import { usePickedRepo, useThreadRepos } from "../../repos";
 import { Button } from "../../../ui/controls";
 import { AddProjectPalette } from "./AddProjectPalette";
 import { loadFrecency, rankEntries, recordUse, saveFrecency } from "./paletteRanking";
@@ -28,7 +29,7 @@ interface Entry {
     | "new-in"
     | "toggle-theme"
     | "restart-session"
-    | { file: string; line: number | null }
+    | { file: string; line: number | null; repoId?: string }
     | { message: string; thread: string };
 }
 
@@ -40,17 +41,21 @@ const searchTitle: Partial<Record<PaletteStart, string>> = {
   search: "Search in project",
 };
 
-/** Files or text in the open thread's checkout. */
+/** Files or text in the open thread's checkout, read in the repository the explorer's chip names. */
 function useCheckoutSearch(start: PaletteStart, query: string) {
   const route = parseRoute(window.location.hash);
   const threadId = route.name === "thread" ? route.id : null;
   const content = start === "search";
-  const key = `palette:${start}:${threadId ?? ""}:${query}`;
+  // A multi-repository thread searches the repository its chip names, the primary until the person picks
+  // another: the read carries that `repo_id`, and absent (an ordinary thread, or the primary) is unchanged.
+  const { repos } = useThreadRepos(threadId ?? "", 0, threadId !== null && searchTitle[start] !== undefined);
+  const repoId = usePickedRepo(threadId ?? "", repos).repoId;
+  const key = `palette:${start}:${threadId ?? ""}:${repoId ?? ""}:${query}`;
   const hits = useAsync(key, async (signal) => {
     if (!threadId || !query.trim() || !searchTitle[start]) return [];
-    return api.searchFiles(threadId, query.trim(), content, signal);
+    return api.searchFiles(threadId, query.trim(), content, signal, repoId);
   });
-  return hits.data ?? [];
+  return { hits: hits.data ?? [], repoId };
 }
 
 const MESSAGE_SEARCH_MIN = 2;
@@ -115,7 +120,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
     };
   }, []);
 
-  const hits = useCheckoutSearch(start, query);
+  const { hits, repoId: searchedRepoId } = useCheckoutSearch(start, query);
   const messages = useMessageSearch(query, !searchTitle[start] && !newIn);
   const accountOn = useAccountAvailable();
   const { pulls, status: pullStatus, retry: retryPulls } = usePullSearch(query, !searchTitle[start] && !newIn);
@@ -128,7 +133,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
         label: hit.text && start === "search" ? hit.text.trim() : hit.path,
         meta: start === "search" ? `${hit.path}:${hit.line}` : undefined,
         icon: <File size={16} aria-hidden />,
-        route: { file: hit.path, line: hit.line || null },
+        route: { file: hit.path, line: hit.line || null, ...(searchedRepoId === undefined ? {} : { repoId: searchedRepoId }) },
       }));
     }
     const actions: Entry[] = [
@@ -201,7 +206,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
         }));
     const matching = needle ? [...all, ...inPulls].filter(found) : all;
     return [...rankEntries(matching, query, book, Date.now()).slice(0, 50), ...inMessages];
-  }, [threads, query, newIn, projects, allProjects, hits, start, messages, accountOn, pulls, book]);
+  }, [threads, query, newIn, projects, allProjects, hits, searchedRepoId, start, messages, accountOn, pulls, book]);
 
   const choose = (entry: Entry | undefined) => {
     if (!entry) return;
@@ -235,7 +240,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
     if (typeof entry.route === "object" && "file" in entry.route) {
       const route = parseRoute(window.location.hash);
       const thread = route.name === "thread" ? useWorkspace.getState().threads[route.id] : null;
-      if (thread) useUi.getState().revealFile(entry.route.file, entry.route.line, { threadId: thread.id, cwd: thread.cwd });
+      if (thread) useUi.getState().revealFile(entry.route.file, entry.route.line, { threadId: thread.id, cwd: thread.cwd }, entry.route.repoId);
       onClose();
       return;
     }
