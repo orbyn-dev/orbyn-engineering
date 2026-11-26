@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { startProject, type Service } from "./service";
+import { openPanelTab, startProject, type Service } from "./service";
 
 /**
  * F70 / #1001: a multi-repository thread's whole-file editor reads ANOTHER repository's file through the real service.
@@ -139,10 +139,9 @@ test("the file tree and the content read take repo_id and answer that repository
 
 test("the whole-file editor of another repository shows that repository's file", async ({ page }) => {
   const tab = repoFileTabId("notes.txt", secondRepoId);
-  // Changes -> a repository's changed file -> "Open in editor" is the direct way in, but it is blocked by #1562: the thread's diff
-  // ignores repo_id and reads the task folder, which is not a Git repository. So seed the panel tab the app remembers for a thread:
-  // it reopens the whole-file editor on the second repository's file and reads it afresh, as a file tab opened earlier restores.
-  // When #1562 is fixed this test can open the file from Changes instead.
+  // This test restores the panel tab the app remembers for a thread: it reopens the whole-file editor on the second
+  // repository's file and reads it afresh, as a file tab opened earlier restores. The direct Changes -> "Open in editor"
+  // path is driven by the test after this one.
   await page.addInitScript(
     (prefs: { layoutKey: string; tab: string }) => {
       localStorage.setItem(
@@ -170,5 +169,52 @@ test("the whole-file editor of another repository shows that repository's file",
 
   // The tab says which repository it belongs to, and the editor holds that repository's text, not the primary's.
   await expect(page.getByRole("tab", { name: `notes.txt (${secondName})`, exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Edit notes.txt" })).toHaveValue(SECOND_TEXT);
+});
+
+test("the Changes list opens another repository's changed file as that repository's tab", async ({ page }) => {
+  await page.setViewportSize({ width: 1500, height: 900 });
+  await page.goto(`${service.page}#/threads/${threadId}`);
+  const panel = await openPanelTab(page, "Diff");
+
+  // The second repository's group in the Changes list, and its row for the same-named file both repositories changed.
+  const list = panel.getByRole("group", { name: "Changed files" });
+  const secondGroup = list.getByRole("group", { name: `${secondName} changes` });
+  await expect(secondGroup).toBeVisible();
+  const row = secondGroup.getByRole("button", { name: /^Modified notes\.txt/ });
+  await expect(row).toHaveCount(1);
+  await row.click();
+
+  // The file on show is that repository's, so the header's own way in is what this test clicks.
+  const view = page.locator("[data-diff-file='notes.txt']");
+  await expect(view.locator(".repo-pill")).toHaveText(secondName);
+  await expect(view.getByText("Only the second repository says this.")).toBeVisible();
+
+  // Open in editor resolves the path in the file's own repository: the route names that repository and answers its
+  // worktree, and the tab the click opens reads the file of the repository the tab names, not the primary's same-named file.
+  const resolved = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/threads/${threadId}/paths/resolve`);
+  const read = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/threads/${threadId}/files/content`);
+  await view.getByRole("button", { name: "Open in editor" }).click();
+
+  const coordinates = await resolved;
+  expect(coordinates.status()).toBe(200);
+  expect(coordinates.request().postDataJSON()).toMatchObject({ path: "notes.txt", basis: "repository", repo_id: secondRepoId });
+  // A 200 from this route means the path resolved inside a Git checkout (a task folder is not one), and the answer keeps the
+  // repository's own repo-relative path rather than the primary checkout's or the task folder's.
+  const path = (await coordinates.json()) as { checkout_path: string | null; repository_path: string | null };
+  expect(path).toMatchObject({ checkout_path: "notes.txt", repository_path: "notes.txt" });
+
+  const answer = await read;
+  const url = new URL(answer.url());
+  expect(url.searchParams.get("path")).toBe("notes.txt");
+  expect(url.searchParams.get("repo_id")).toBe(secondRepoId);
+  expect(answer.status()).toBe(200);
+
+  // The tab names the repository and is the open one, and the editor holds that repository's text.
+  const tab = page.getByRole("tab", { name: `notes.txt (${secondName})`, exact: true });
+  await expect(tab).toBeVisible();
+  await expect(tab).toHaveAttribute("data-tab", repoFileTabId("notes.txt", secondRepoId));
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  await expect(panel.locator(".ctx-title b")).toHaveText(`notes.txt (${secondName})`);
   await expect(page.getByRole("textbox", { name: "Edit notes.txt" })).toHaveValue(SECOND_TEXT);
 });
