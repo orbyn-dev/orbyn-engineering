@@ -13,7 +13,7 @@ import { useEditorSessions, type EditorSession } from "./editor/editorSessions";
 
 vi.mock("./browser/BrowserPanel", () => ({ BrowserPanel: () => <div>Browser content</div> }));
 vi.mock("./diff/DiffPanel", () => ({ DiffPanel: () => <div>Diff content</div> }));
-vi.mock("./files/FileTab", () => ({ FileTab: () => <div>Files content</div> }));
+vi.mock("./files/FileTab", () => ({ FileTab: ({ repoName }: { repoName?: string }) => <div data-repo-name={repoName}>Files content</div> }));
 vi.mock("./activity/ActivityPanel", () => ({ ActivityPanel: () => null }));
 
 const thread = { id: "thread-1" } as Thread;
@@ -55,6 +55,19 @@ function panel(props: { mode?: PanelMode; onReturn?: () => void; onToggleMaximiz
 }
 
 describe("surface tabs", () => {
+  it("passes the full repository folder to file actions even when its display label is shortened", async () => {
+    const fullName = `repo-${"x".repeat(59)}`;
+    setReposApi(createReposMock({ threads: { "thread-1": [{ repo_id: "long-repo", name: fullName, branch: "main", added: 0, deleted: 0, trusted: true }] } }));
+    const file = fileTabId({ kind: "thread", path: "notes.txt", repoId: "long-repo" });
+    useUi.setState({ panelTab: file, panelTabOrder: [file] });
+    try {
+      panel();
+      await waitFor(() => expect(screen.getByText("Files content")).toHaveAttribute("data-repo-name", fullName));
+    } finally {
+      setReposApi(null);
+    }
+  });
+
   it("opens the file picker from the launcher and shows its configured shortcut", async () => {
     const user = userEvent.setup();
     vi.mocked(api.keybindings).mockResolvedValue({ rules: [{ key: "ctrl+shift+o", command: "filePicker.toggle", when: "!terminalFocus" }], issues: [] } as never);
