@@ -87,10 +87,7 @@ impl Core {
             },
         )?;
         if !news.is_empty() {
-            let prompt = format!(
-                "Pull request #{number} changed while you were watching it:\n{}",
-                news.join("\n")
-            );
+            let prompt = wake_prompt(number, &repo_id, &thread.cwd, &news);
             self.runs.enqueue(&watch.thread_id, &prompt, &[])?;
         }
         if wakes >= MAX_COMMENT_WAKES {
@@ -145,6 +142,16 @@ impl Core {
             })
             .collect())
     }
+}
+
+pub(super) fn wake_prompt(number: u64, repo_id: &str, cwd: &str, news: &[String]) -> String {
+    // A queued turn does not inherit the temporary repository scope. Keep its exact target here;
+    // JSON quotes arbitrary paths/IDs as data, including embedded newlines and quote characters.
+    let context = serde_json::json!({ "id": repo_id, "worktree": cwd });
+    format!(
+        "Pull request #{number} changed while you were watching it:\nRepository: {context}\n{}",
+        news.join("\n")
+    )
 }
 
 /// Watching ends after this many wakes in a row that bring only comments.
