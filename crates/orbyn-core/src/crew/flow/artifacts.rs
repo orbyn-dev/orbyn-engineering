@@ -1,9 +1,11 @@
 //! One Flow task's artifacts, check results and diff (Crew Preview): the evidence rows of the build under way, the
-//! artifacts those rows name, and the change the checks read, as a summary of files and counts.
+//! artifacts those rows name, the change the checks read, as a summary of files and counts, and the commit the checkout is
+//! on now.
 //!
 //! **What it reads.** The store's read connection for the rows, and read-only git on the task's own checkout for the change
-//! (see [`changed_since`]): two `git diff` calls, no patch, no write to the repository, no lock beyond the read. It is the
-//! one Flow read that runs a program, because a diff is not stored.
+//! (see [`changed_since`]) and for the commit it is on now (see [`checkout_head`]): three read-only git calls, no patch, no
+//! write to the repository, no lock beyond the read. It is the one Flow read that runs a program, because a diff and a
+//! checkout's head are not stored.
 //!
 //! **What it never returns.** The answer key or any part of a check beyond its id and kind: not its command, its output, what
 //! it proves, and not an Evidence id. The task's key is read for its checks' ids and kinds only, to label a row, which is the
@@ -47,7 +49,7 @@ struct Change {
 }
 
 impl Core {
-    /// One task's checks, the artifacts they named and the change they read.
+    /// One task's checks, the artifacts they named, the change they read and the commit the checkout is on now.
     pub async fn crew_flow_task_artifacts(&self, id: &str) -> Result<wire::FlowTaskArtifacts> {
         self.crew_preview_only()?;
         valid_id(id)?;
@@ -74,12 +76,15 @@ impl Core {
         let truncated = checks.len() > CHECKS_MAX;
         checks.truncate(CHECKS_MAX);
         let (diff, diff_absent) = diff_of(&facts, &scrub).await;
+        let (head, head_absent) = head_of(&facts).await;
         Ok(wire::FlowTaskArtifacts {
             crew: facts.task.crew_id.clone(),
             task: facts.task.id.clone(),
             checks,
             diff,
             diff_absent,
+            head,
+            head_absent,
             truncated,
         })
     }
@@ -129,22 +134,23 @@ fn flow_check(
     }
 }
 
+/// The task's checkout on this machine, when it has one: the run's worktree, which is a directory now. No run, no worktree or
+/// a worktree that is gone is no checkout.
+fn checkout_root(facts: &Facts) -> Option<&Path> {
+    let checkout = facts.run.as_ref()?.worktree.as_deref()?;
+    let root = Path::new(checkout);
+    root.is_dir().then_some(root)
+}
+
 /// The change the checks read, or the reason there is none. A task with no checkout, no base commit or a checkout git cannot
 /// read still answers: its rows are there, and this names what is missing.
 async fn diff_of(facts: &Facts, scrub: &Scrub) -> (Option<wire::FlowTaskDiff>, Option<String>) {
-    let Some(run) = facts.run.as_ref() else {
+    let Some(root) = checkout_root(facts) else {
         return (None, Some("no_checkout".to_owned()));
     };
-    let Some(checkout) = run.worktree.as_deref() else {
-        return (None, Some("no_checkout".to_owned()));
-    };
-    let Some(base) = run.base_commit.as_deref() else {
+    let Some(base) = facts.run.as_ref().and_then(|run| run.base_commit.as_deref()) else {
         return (None, Some("no_base".to_owned()));
     };
-    let root = Path::new(checkout);
-    if !root.is_dir() {
-        return (None, Some("no_checkout".to_owned()));
-    }
     match changed_since(root, base, scrub).await {
         Ok(change) => (
             Some(wire::FlowTaskDiff {
@@ -159,6 +165,37 @@ async fn diff_of(facts: &Facts, scrub: &Scrub) -> (Option<wire::FlowTaskDiff>, O
         ),
         Err(_) => (None, Some("unreadable".to_owned())),
     }
+}
+
+/// The commit the checkout is on now, or the reason it is not known. An artifact and a diff are pinned to a commit; this is
+/// the commit that shows they are stale, because it is the one the checkout has moved on to.
+async fn head_of(facts: &Facts) -> (Option<String>, Option<String>) {
+    let Some(root) = checkout_root(facts) else {
+        return (None, Some("no_checkout".to_owned()));
+    };
+    match checkout_head(root).await {
+        Ok(head) => (Some(head), None),
+        Err(_) => (None, Some("unreadable".to_owned())),
+    }
+}
+
+/// `git rev-parse --verify --quiet HEAD`: read-only, byte exact, and bounded like the diff so a checkout another process holds
+/// cannot hold this GET open. A checkout whose head is not a commit reads as one git cannot give.
+async fn checkout_head(root: &Path) -> Result<String> {
+    use crate::source_control::git::git_byte_exact as git;
+    let head = timeout(
+        GIT_READ_MAX,
+        git(root, &["rev-parse", "--verify", "--quiet", "HEAD"]),
+    )
+    .await
+    .map_err(|_| CoreError::Git("The checkout's head took too long to read.".into()))??;
+    let head = String::from_utf8_lossy(&head).trim().to_owned();
+    if !crate::source_control::git::is_revision(&head) {
+        return Err(CoreError::Git(
+            "The checkout has no commit to be on.".into(),
+        ));
+    }
+    Ok(head)
 }
 
 /// The files the checkout changed since `base`, as counts: `git diff` by status and by number, both read-only and both
