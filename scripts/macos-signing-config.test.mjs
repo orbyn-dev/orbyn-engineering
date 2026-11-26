@@ -54,8 +54,10 @@ test("the release signer gives that plist to the host and to no other binary", (
   const signer = read("scripts", "sign-macos-release.sh");
   const entitled = signer.split("\n").filter((line) => line.includes("--entitlements"));
   assert.equal(entitled.length, 1, "exactly one binary is signed with an entitlements file");
-  assert.match(entitled[0], /"\$host"$/, "the entitlements file goes to the host, not to a sidecar");
-  const [, reference] = entitled[0].match(/--entitlements "\$\(dirname "\$0"\)\/([^"]+)"/) ?? [];
+  // The whole command, so a line that names the plist without signing with it does not pass.
+  const [, reference] =
+    entitled[0].match(/^\s*sign_file --entitlements "\$\(dirname "\$0"\)\/([^"]+)" "\$host"$/) ?? [];
+  assert.ok(reference, `the plist goes to the host in a sign_file call, not: ${entitled[0]}`);
   assert.equal(reference, "../engine-host/entitlements.plist", "the signer names the host's plist");
   assert.doesNotThrow(() => read("scripts", reference), "the plist the signer names exists");
   assert.match(
@@ -70,9 +72,10 @@ test("the release check allows the host exactly the keys its plist carries", () 
   const [, allowed] = check.match(/^host_allowed="([^"]*)"$/m) ?? [];
   assert.ok(allowed, "the check lists the host's allowed entitlements");
   assert.deepEqual(allowed.split(/\s+/).sort(), Object.keys(plistBooleans("engine-host", "entitlements.plist")).sort());
+  // The guarded assignment, so moving the allowed set to another binary's branch fails here.
   assert.equal(
-    (check.match(/allowed="\$host_allowed"/g) ?? []).length,
+    (check.match(/\[ "\$name" = "orbyn-engine-host" \] && allowed="\$host_allowed"/g) ?? []).length,
     1,
-    "only the host is allowed an entitlements set",
+    "only the host's branch is allowed an entitlements set",
   );
 });
