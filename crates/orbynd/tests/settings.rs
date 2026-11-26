@@ -434,10 +434,37 @@ async fn the_network_list_names_each_switch_and_reports_it() {
     assert_eq!(row(&rows, "auto_pull")["enabled"], false, "off by default");
     assert_eq!(row(&rows, "background_update_checks")["enabled"], true);
     assert_eq!(row(&rows, "auto_thread_titles")["enabled"], true);
+    assert_eq!(
+        row(&rows, "branch_naming_mode")["enabled"],
+        false,
+        "the custom branch-name call needs custom mode and instructions"
+    );
     let (code, _) = put_value(
         &service,
         "/api/preferences",
-        json!({ "values": { "poll_pull_requests": false, "auto_pull": true } }),
+        json!({ "values": { "branch_naming_mode": "custom", "branch_name_instructions": "Use release/." } }),
+    )
+    .await;
+    assert_eq!(code, 200);
+    let rows = service.json("/api/network").await;
+    assert_eq!(row(&rows, "branch_naming_mode")["enabled"], true);
+    let (code, _) = put_value(
+        &service,
+        "/api/preferences",
+        json!({ "values": { "branch_name_instructions": "" } }),
+    )
+    .await;
+    assert_eq!(code, 200);
+    let rows = service.json("/api/network").await;
+    assert_eq!(
+        row(&rows, "branch_naming_mode")["enabled"],
+        false,
+        "custom mode without instructions asks no engine"
+    );
+    let (code, _) = put_value(
+        &service,
+        "/api/preferences",
+        json!({ "values": { "branch_naming_mode": "static", "branch_name_instructions": null, "poll_pull_requests": false, "auto_pull": true } }),
     )
     .await;
     assert_eq!(code, 200);
