@@ -1726,7 +1726,9 @@ the resolver.
 `GET /api/network` and `crates/orbyn-core/src/governance/network.rs` list every outbound request
 Orbyn makes without being asked, with host, cadence, what turns it off, the key that does
 and whether it is on now. A new one is added there in the same change, with a switch.
-The two-minute pull request poll has its own, `poll_pull_requests`. Engines make their own requests under their own terms.
+The two-minute pull request poll has its own, `poll_pull_requests`. The custom
+branch-name one-shot is listed too, and is on only when custom naming has instructions
+to follow. Engines make their own requests under their own terms.
 
 A thread's first message also spends one short engine call on its title, in the
 background, unless `auto_thread_titles` is off. It sees only that message and goes through
