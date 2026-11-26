@@ -1667,9 +1667,15 @@ in it.
 
 ## Text generators
 
-Two one-shot calls spend engine usage for text a person did not ask a model for: a
-thread's first-message title and a confirmed Git action's commit or pull request text.
-Both go through one resolver: the model `text_generation_models` names for the thread's
+Three one-shot calls spend engine usage for text a person did not ask a model for: a
+thread's first-message title, a confirmed Git action's commit or pull request text, and a
+new worktree's custom branch name, which spends only once the custom naming mode has
+instructions to follow. The branch-name call is listed with the
+[automatic requests](#automatic-requests), on while `branch_naming_mode` is custom and
+`branch_name_instructions` is not empty; it waits at most 20 seconds and has no cancel
+or progress, so a slow reply can outlive the client's slow-service notice; its attempt is
+audited before the engine is asked, as the title call's is, so a refusing engine still
+leaves the row. All three go through one resolver: the model `text_generation_models` names for the thread's
 engine when that engine lists it, then the legacy `text_generation_model` when that
 engine lists it, then the engine's small model (a `haiku`, `luna`, `mini`, `flash` or
 `small` family name), then the thread's model. The reason travels with the choice
@@ -1698,22 +1704,31 @@ at either scope; at project scope the engine then inherits the global choice. A 
 (`PUT /api/preferences`, `PUT /api/projects/{id}/preferences` or the scoped settings
 route); there is no text-generator write route.
 
-A new worktree's branch name is chosen deterministically, without the resolver or an
-engine call: static mode keeps `<branch_name_prefix>/<purpose>`; semantic mode makes a
-lowercase slug from the thread's real title, or the purpose when it has none, capped at
-64 characters and suffixed `-2`, `-3` and so on until it is not one of the project's
-branches; custom mode uses the purpose as the complete branch name. An unusable seed
-falls back to the static name, and a name Git refuses is `invalid_input`, never
-replaced. The stored `branch_name_instructions` is not sent anywhere, so the
-model-written custom name its setting describes is not built, and cleanup has no
-generator either, so neither a branch nor a cleanup call reaches the resolver.
+A new worktree's branch name is chosen before `git worktree add -b` runs. Static mode
+keeps `<branch_name_prefix>/<purpose>`. Semantic mode makes a lowercase slug from the
+request's `branch_name_seed` (the Web draft's typed goal, whitespace normalized and cut
+to 53 characters), else the thread's real title, else the purpose, capped at 64
+characters and suffixed `-2`, `-3` and so on until it is not one of the project's
+branches, and an unusable seed falls back to the static name. The seed names only the
+branch: a thread created without a title keeps `New thread`, so its first-message title
+generation still runs. Custom mode asks the thread's engine, through the
+[Text generators](#text-generators) resolver, to write the complete branch name from the
+stored `branch_name_instructions` and the same seed, title or purpose; the reply's
+first line must be one valid branch name that no project branch has, and when no
+instruction is stored, the engine refuses or fails, the reply is not a ref, its name is
+already a branch, or the 20-second wait runs out, the purpose is the complete name. A
+model-written name Git would refuse is therefore never sent; a name Git still refuses is
+`invalid_input`, never replaced. Cleanup has no generator, so no cleanup call reaches
+the resolver.
 
 ## Automatic requests
 
 `GET /api/network` and `crates/orbyn-core/src/governance/network.rs` list every outbound request
 Orbyn makes without being asked, with host, cadence, what turns it off, the key that does
 and whether it is on now. A new one is added there in the same change, with a switch.
-The two-minute pull request poll has its own, `poll_pull_requests`. Engines make their own requests under their own terms.
+The two-minute pull request poll has its own, `poll_pull_requests`. The custom
+branch-name one-shot is listed too, and is on only when custom naming has instructions
+to follow. Engines make their own requests under their own terms.
 
 A thread's first message also spends one short engine call on its title, in the
 background, unless `auto_thread_titles` is off. It sees only that message and goes through
@@ -3259,7 +3274,7 @@ no raw comment or check blobs and dropping the forge's check `description`, so f
 is only ever a JSON string value. `orbyn_pull_request_ci_logs` reads one named check's
 failed-jobs log without an effect, redacted with Crew's fixed set and only then cut to the
 last 32 KiB, because a failure ends a log; GitHub only. `orbyn_pull_request_comment`,
-`orbyn_pull_request_update`, `orbyn_pull_request_review`,
+`orbyn_pull_request_respond`, `orbyn_pull_request_update`, `orbyn_pull_request_review`,
 `orbyn_pull_request_merge` and `orbyn_pull_request_ci_rerun` are the write tools: each
 carries an effect, so the gate asks as for every effect tool, and every approval prompt
 names the action and the pull request number. The update tool takes only title, body and
@@ -3270,8 +3285,19 @@ read with `orbyn_pull_request_read`, never auto-merges, and re-reads the pull re
 first: it refuses a closed, draft, conflicting, failing, pending or changes-requested
 pull request, or one whose head moved. The re-run tool re-runs only the failed jobs of
 the named check, and it too is GitHub only; on every other forge both CI tools answer that
-the forge cannot do it. A crew worker cannot call any of them. Creating a pull request
-and resolving review threads are still missing.
+the forge cannot do it. The respond tool is the toolkit's review-thread write: `thread`
+is the review thread id, `body` the reply and `resolved` the thread's state, and at least
+one of the reply or the state is required. GitHub names a thread only by its GraphQL node
+id, so there the reply is `addPullRequestReviewThreadReply` and the state is
+`resolveReviewThread` or `unresolveReviewThread`; GitLab replies with its discussion
+notes endpoint and sets the discussion's resolved flag. A resolution that fails after the
+reply was posted says so, so a caller that retries without the body does not post it
+twice. It writes one audit row, `git.pull_thread_respond`, before either call, and it
+answers what it did: whether it replied and the thread state it was asked to set, or
+`null` when it was not asked. A crew worker cannot call any of these write tools. Creating
+a pull request is still missing, deliberately: `git_action` requires an idle thread, so a
+tool called from inside a run could never succeed, and the shell route and the app's
+Create PR already exist.
 
 ## Computer gateway
 
