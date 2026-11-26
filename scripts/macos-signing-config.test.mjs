@@ -78,4 +78,10 @@ test("the release check allows the host exactly the keys its plist carries", () 
     1,
     "only the host's branch is allowed an entitlements set",
   );
+  // Every assignment to the host's set, so giving it to a second binary fails here as well.
+  assert.equal(
+    (check.match(/allowed="\$host_allowed"/g) ?? []).length,
+    1,
+    "no other branch is given the host's allowed set",
+  );
 });
