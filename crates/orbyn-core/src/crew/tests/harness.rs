@@ -54,9 +54,18 @@ pub enum Turn {
     Say(Value),
 }
 
-/// The worker's work: given the turn's number (from 0) and the checkout, do it and say what
-/// happens next.
+/// The worker's work: given the turn number its world hands it and the checkout, do it and say what
+/// happens next. The number is the worker's own turn (from 0) in a world made by [`world_own_turns`],
+/// and the world's start order in a world that still dispatches on it (see [`WorkerTurns`]).
 pub type Script = Arc<dyn Fn(usize, &std::path::Path) -> Turn + Send + Sync>;
+
+/// Each worker's own turns, counted from 0 and keyed by the worker's thread, so one worker's turns
+/// cannot shift another worker's (#1750). The fake updates it for every worker run; a world made by
+/// [`world_own_turns`] hands a worker this number instead of the shared start order.
+pub type WorkerTurns = Arc<Mutex<BTreeMap<String, usize>>>;
+
+/// Every worker run the fake started and the turn number its script was handed: `(thread, turn)`.
+pub type HandedTurns = Arc<Mutex<Vec<(String, usize)>>>;
 
 #[derive(Clone)]
 pub enum ApprovalTurn {
@@ -88,7 +97,15 @@ pub struct Fake {
     steered: Arc<Mutex<Vec<(String, String)>>>,
     core: Arc<OnceLock<Weak<Core>>>,
     script: Script,
-    turns: Arc<AtomicUsize>,
+    /// The world's start order: which worker the world started, counted across every worker. Kept as its
+    /// own item for the scripts that still dispatch on it; a new test should assert on a worker's own turns.
+    schedule: Arc<AtomicUsize>,
+    /// Each worker's own turn count, from 0, keyed by its thread.
+    turns: WorkerTurns,
+    /// Hand the script each worker's own turn instead of the world's start order.
+    own_turns: bool,
+    /// The number each worker run was handed, so a test can assert what a worker's script saw.
+    handed: HandedTurns,
     /// Every prompt any thread was sent: `(thread, text)`.
     pub prompts: Arc<Mutex<Vec<(String, String)>>>,
     /// What `crew_report` answered each time.
@@ -101,6 +118,31 @@ pub struct Fake {
 
 /// `(thread, task)` for each run the fake engine started: the task is none for a run that is not a worker's.
 pub type CrewTasks = Arc<Mutex<Vec<(String, Option<String>)>>>;
+
+impl Fake {
+    /// The number this worker run's script is handed. The worker's own count always moves, so every worker
+    /// has its own counter whatever the world hands its script; a world that keeps the shared schedule still
+    /// numbers a worker by the workers the world started before it.
+    fn next_turn(&self, thread: &str) -> usize {
+        let own = {
+            let mut turns = self.turns.lock().unwrap();
+            let count = turns.entry(thread.to_owned()).or_insert(0);
+            let own = *count;
+            *count += 1;
+            own
+        };
+        let handed = if self.own_turns {
+            own
+        } else {
+            self.schedule.fetch_add(1, Ordering::SeqCst)
+        };
+        self.handed
+            .lock()
+            .unwrap()
+            .push((thread.to_owned(), handed));
+        handed
+    }
+}
 
 #[async_trait]
 impl EngineDriver for Fake {
@@ -257,7 +299,7 @@ impl EngineDriver for Fake {
             .crew_task_for_worker(&spec.thread_id)
             .unwrap()
             .is_some();
-        let turn = worker.then(|| self.turns.fetch_add(1, Ordering::SeqCst));
+        let turn = worker.then(|| self.next_turn(&spec.thread_id));
         let script = self.script.clone();
         let answers = self.answers.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -385,6 +427,10 @@ pub struct World {
     /// The restriction each run was started under: `(thread, rules)`.
     pub confines: Arc<Mutex<Vec<Confined>>>,
     pub crew_tasks: CrewTasks,
+    /// Each worker's own turn count, from 0, keyed by its thread.
+    pub turns: WorkerTurns,
+    /// Every worker run and the turn number its script was handed: `(thread, turn)`.
+    pub handed: HandedTurns,
 }
 
 /// A core with the Crew Preview flag as asked, one git project with a first commit, a lead
@@ -520,6 +566,21 @@ pub async fn world_forge_review(script: Script) -> World {
     .await
 }
 
+/// `world`, where a worker's script is handed that worker's own turn number (from 0) instead of the
+/// world's start order, so one worker's turns cannot shift another worker's replies (#1750).
+pub async fn world_own_turns(preview: bool, script: Script) -> World {
+    world_full(
+        preview,
+        script,
+        &[("alpha", false)],
+        WorldKnobs {
+            own_turns: true,
+            ..WorldKnobs::default()
+        },
+    )
+    .await
+}
+
 /// The rarely changed parts of a test world, so a new one adds a field here and no argument to every call.
 #[derive(Default)]
 struct WorldKnobs {
@@ -528,6 +589,7 @@ struct WorldKnobs {
     merge_checks: Vec<String>,
     approval_timeout: Option<std::time::Duration>,
     refuses_after: Option<usize>,
+    own_turns: bool,
 }
 
 async fn world_full(
@@ -542,6 +604,7 @@ async fn world_full(
         merge_checks,
         approval_timeout,
         refuses_after,
+        own_turns,
     } = knobs;
     let dir = TempDir::new();
     let library = crate::testing::library(&dir.path().join("library"));
@@ -593,7 +656,9 @@ async fn world_full(
     let steered = Arc::new(Mutex::new(Vec::new()));
     let confines = Arc::new(Mutex::new(Vec::new()));
     let crew_tasks = Arc::new(Mutex::new(Vec::new()));
-    let turns: Arc<AtomicUsize> = Arc::default();
+    let turns: WorkerTurns = Arc::default();
+    let handed: HandedTurns = Arc::default();
+    let schedule: Arc<AtomicUsize> = Arc::default();
     let approval_turns = Arc::new(Mutex::new(BTreeMap::new()));
     let approval_specs = Arc::new(Mutex::new(Vec::new()));
     for (id, steerable) in engines {
@@ -609,7 +674,10 @@ async fn world_full(
             steered: steered.clone(),
             core: cell.clone(),
             script: script.clone(),
+            schedule: schedule.clone(),
             turns: turns.clone(),
+            own_turns,
+            handed: handed.clone(),
             prompts: prompts.clone(),
             answers: answers.clone(),
             confines: confines.clone(),
@@ -671,6 +739,8 @@ async fn world_full(
         steered,
         confines,
         crew_tasks,
+        turns,
+        handed,
     }
 }
 
@@ -787,6 +857,22 @@ impl World {
             .unwrap()
     }
 
+    /// The turn numbers this worker's script was handed, in the order it ran.
+    pub fn turns_of(&self, thread: &str) -> Vec<usize> {
+        self.handed
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(to, _)| to == thread)
+            .map(|(_, turn)| *turn)
+            .collect()
+    }
+
+    /// How many turns this worker has taken: its own count, whichever number its script saw.
+    pub fn own_turn_count(&self, thread: &str) -> usize {
+        self.turns.lock().unwrap().get(thread).copied().unwrap_or(0)
+    }
+
     /// A real restart: closes this core and opens a new one on the same data folder. Fake engines
     /// are not registered again, since a stored record and its replay only need the core.
     pub async fn restart(self) -> World {
@@ -800,6 +886,8 @@ impl World {
             steered,
             confines,
             crew_tasks,
+            turns,
+            handed,
             approval_turns,
             approval_specs,
             ..
@@ -833,6 +921,8 @@ impl World {
             steered,
             confines,
             crew_tasks,
+            turns,
+            handed,
         }
     }
 }
