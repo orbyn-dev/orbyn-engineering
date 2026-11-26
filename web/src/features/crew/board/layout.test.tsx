@@ -24,6 +24,19 @@ afterEach(() => vi.useRealTimers());
 const calls = (part: string) => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes(part));
 const writes = () => vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method && init.method !== "GET");
 const column = (name: RegExp) => screen.getByRole("region", { name });
+const cardOf = (name: RegExp, id: string) => column(name).querySelector<HTMLElement>(`[data-task="${id}"]`)!;
+
+/** Adds a field the mock scenario does not carry, by changing the board answer before the page reads it. */
+function patchBoard(patch: (card: { id: string; reason?: string | null }) => void) {
+  const real = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    const response = await real(input, init);
+    if ((init?.method ?? "GET") !== "GET" || !String(input).includes("/api/crew/flow/board")) return response;
+    const body = (await response.json()) as { columns?: Array<{ cards?: Array<{ id: string; reason?: string | null }> }> };
+    for (const held of body.columns ?? []) for (const card of held.cards ?? []) patch(card);
+    return new Response(JSON.stringify(body), { status: response.status });
+  });
+}
 
 /** A ResizeObserver that measures every element it watches at one width, as a panel that wide would report. */
 function panelWidth(width: number) {
@@ -40,8 +53,8 @@ function panelWidth(width: number) {
   );
 }
 
-it("opens Needs you and Running first in a narrow panel, and leaves the rest behind their counts", async () => {
-  panelWidth(600);
+it("measures the 320 px panel: Needs you and Running open first, and the rest behind their counts", async () => {
+  panelWidth(320);
   mock.reset("crew");
   render(<BoardView />);
   await screen.findByRole("region", { name: /^Queued/ });
@@ -52,6 +65,36 @@ it("opens Needs you and Running first in a narrow panel, and leaves the rest beh
   for (const name of [/^Queued/, /^Routed/, /^Verifying/, /^Passed/, /^Stopped/]) {
     expect(within(column(name)).getByRole("button", { name: /,?\s*\d+$/ })).toHaveAttribute("aria-expanded", "false");
   }
+  expect(writes()).toHaveLength(0);
+});
+
+/**
+ * The built 320 px panel over the mock's `crew-board-needs-kinds` scenario, not the Planned `needs-one-source-board-narrow-panel`
+ * frame: this proves the built state-group list is drawn at 320 px (a group open in the wide board is collapsed here, so the test
+ * fails wide) and keeps the Needs you cards' kind, title, engine and the card's own reason. The Planned frame draws differently
+ * (only Needs you open, and four cards including two the field has no kind for), so it is not claimed here.
+ */
+it("measures the 320 px panel: the Needs you group keeps the one field's words, kind, title and engine", async () => {
+  panelWidth(320);
+  mock.reset("crew-board-needs-kinds");
+  // A reason of its own, so the line proves the card's reason is drawn rather than the kind's fixed words.
+  patchBoard((card) => {
+    if (card.id === "b-manual") card.reason = "A distinct check only a person can make.";
+  });
+  render(<BoardView />);
+  await screen.findByRole("region", { name: /^Queued/ });
+  // Narrow, not wide: Queued is open in the wide board and collapsed in the panel.
+  expect(document.querySelector(".bd-body")).toHaveAttribute("data-narrow");
+  expect(within(column(/^Queued/)).getByRole("button", { name: /,?\s*\d+$/ })).toHaveAttribute("aria-expanded", "false");
+  const needs = within(column(/^Needs you/));
+  expect(needs.getByRole("button", { name: /Needs you/ })).toHaveAttribute("aria-expanded", "true");
+  const question = cardOf(/^Needs you/, "b-question");
+  expect(within(question).getByText("research")).toBeVisible();
+  expect(within(question).getByText("Which target wins when both next and returnTo are set?")).toBeVisible();
+  expect(within(question).getByText("opencode")).toBeVisible();
+  expect(question.querySelector(".bd-amber")).toHaveTextContent("Asked you a question · Which target wins when both next and returnTo are set?");
+  expect(cardOf(/^Needs you/, "b-merge").querySelector(".bd-amber")).toHaveTextContent("The merge waits for you");
+  expect(cardOf(/^Needs you/, "b-manual").querySelector(".bd-amber")).toHaveTextContent("A distinct check only a person can make.");
   expect(writes()).toHaveLength(0);
 });
 
