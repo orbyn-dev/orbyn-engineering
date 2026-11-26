@@ -59,7 +59,9 @@ async fn two_engines_exchange_a_board_fact_mid_turn() {
         )
         .await;
     assert!(!error, "{sent}");
-    assert_eq!(delivered_to(&sent, &d.mb)["mode"], "held");
+    let delivered = delivered_to(&sent, &d.mb);
+    assert_eq!(delivered["to"], json!(d.mb));
+    assert_eq!(delivered["mode"], "held");
     assert!(d.queued(&wb).is_empty() && d.steered_to(&wb).is_empty());
 
     // B reads what A wrote, with its author and revision, and builds on it.
