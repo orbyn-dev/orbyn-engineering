@@ -86,11 +86,13 @@ const commentById = (id) =>
 
 /** One connection page as GitHub answers it: the nodes after the cursor and the pageInfo beside them. */
 const connection = (name, nodes, body) => {
-  const call = new RegExp(`${name}\\(first:(\\d+)(?:,after:"([^"]*)")?\\)`).exec(body);
+  // A connection may name further arguments (`writersOnly:true`), so only `first` and `after` are read.
+  const call = new RegExp(`${name}\\(first:(\\d+)([^)]*)\\)`).exec(body);
   if (!call) return undefined;
   // The cursor is opaque to the service; this stand-in numbers its pages, so a fixture that
   // outgrows one page is read to the end instead of being reported as the whole list.
-  const start = call[2] === undefined ? 0 : Number(call[2]);
+  const after = /after:"([^"]*)"/.exec(call[2]);
+  const start = after ? Number(after[1]) : 0;
   const page = nodes.slice(start, start + Number(call[1]));
   const end = start + page.length;
   const more = end < nodes.length;
@@ -105,11 +107,10 @@ const reviewsOf = (entry) =>
     comments: { totalCount: thread.comments?.nodes?.length ?? 0 },
   }));
 
-/** The pull request details the batched GraphQL read answers, one alias per pull request. */
+/** The fields of one pull request's batched GraphQL answer, before its review connections are paged. */
 const detailsOf = (entry) => {
   const reviews = reviewsOf(entry);
   const latest = entry.latestReviews ?? reviews.filter((review) => review.author !== null).map(({ author, state }) => ({ author, state }));
-  const states = latest.map((review) => review.state);
   const requestedReviewers = (entry.reviewers ?? []).map((name) => ({
     requestedReviewer: name.startsWith("team/") ? { __typename: "Team", slug: name.slice(5) } : { __typename: "User", login: name },
   }));
@@ -117,17 +118,14 @@ const detailsOf = (entry) => {
     createdAt: entry.createdAt ?? "2026-09-01T00:00:00Z",
     // A draft has no merge state yet; every other fixture pull request merges cleanly.
     mergeable: entry.mergeable ?? (entry.isDraft ? "UNKNOWN" : "MERGEABLE"),
-    latestOpinionatedReviews: {
-      totalCount: states.length,
-      pageInfo: { hasNextPage: false },
-      nodes: states.map((state) => ({ state })),
-    },
     comments: { totalCount: (entry.issueComments ?? []).length },
     reviews: {
       totalCount: reviews.length,
       pageInfo: { hasNextPage: false },
       nodes: reviews.map((review) => ({ comments: review.comments })),
     },
+    // The opinionated reviews are paged at the asked limit, so a count above it is incomplete.
+    approvals: latest.map(({ state }) => ({ state })),
     latest,
     requestedReviewers,
   };
@@ -192,10 +190,11 @@ function apiCall() {
       save();
       return out({ data: { [query.includes("MarkFileAsViewed") ? "markFileAsViewed" : "unmarkFileAsViewed"]: { pullRequest: { id: `PR_${entry.number}` } } } });
     }
-    if (query.includes("reviewRequests")) {
+    if (query.includes("reviewRequests") || query.includes("latestReviews")) {
       // The batched details query and its review-connection follow-ups (#1544): one alias
       // `p<number>` per pull request, each connection carrying the pageInfo and counts GitHub
-      // sends. The service reads a connection without pageInfo as an unknown one, so an answer
+      // sends. A follow-up names only the connection it pages, reviewRequests or latestReviews.
+      // The service reads a connection without pageInfo as an unknown one, so an answer
       // missing them leaves the row without a comment count, reviewers or merge state.
       if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
       const aliases = [...query.matchAll(/p(\d+):pullRequest\(number:\d+\)\{/g)].map((match, at, all) => ({
@@ -206,11 +205,13 @@ function apiCall() {
       for (const { number, body } of aliases) {
         const entry = state.pulls.find((candidate) => candidate.number === number);
         if (!entry) continue;
-        const { latest, requestedReviewers, ...answer } = detailsOf(entry);
+        const { approvals, latest, requestedReviewers, ...answer } = detailsOf(entry);
         const requests = connection("reviewRequests", requestedReviewers, body);
         if (requests) answer.reviewRequests = requests;
         const reviews = connection("latestReviews", latest, body);
         if (reviews) answer.latestReviews = reviews;
+        const opinionated = connection("latestOpinionatedReviews", approvals, body);
+        if (opinionated) answer.latestOpinionatedReviews = { totalCount: approvals.length, ...opinionated };
         repository[`p${number}`] = answer;
       }
       return out({ data: { viewer: { login: state.viewer ?? "me" }, repository } });
