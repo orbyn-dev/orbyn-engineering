@@ -146,7 +146,16 @@ test("an unreadable forge is named by the service, and Retry reads the list agai
     expect(failing.failed).toEqual([{ project_id: projectId, message: refusal }]);
 
     await openThread(page);
+    // The palette's own read receives that 200 and its failed row, so the note below comes from the service's answer
+    // rather than from a request that errored.
+    const paletteRead = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === "/api/pulls" && !url.searchParams.has("refresh") && response.request().method() === "GET";
+    });
     const dialog = await search(page, "Fix the login");
+    const read = await paletteRead;
+    expect(read.status()).toBe(200);
+    expect(await read.json()).toEqual({ pulls: [], failed: [{ project_id: projectId, message: refusal }] });
     // The frame's one line under the Pull requests heading, with Retry, and no rows for the project it could not read.
     const note = dialog.getByRole("status").filter({ hasText: "Couldn’t read pull requests. Threads and commands still work." });
     await expect(note).toBeVisible({ timeout: 20_000 });
