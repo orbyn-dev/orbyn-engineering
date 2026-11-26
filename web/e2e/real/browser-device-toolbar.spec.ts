@@ -7,10 +7,22 @@ import { openPanelTab, startProject, type Service } from "./service";
 /** H36's typed size, aspect-ratio lock, handles after the toolbar is hidden and narrow two-row toolbar, against the real orbynd. */
 const SITE_PORT = 5295;
 
-let service: Service;
+let service: Service | undefined;
 let threadId = "";
-let site: Server;
+let site: Server | undefined;
 let site6: Server | undefined;
+
+/** The service the tests talk to; beforeAll starts it before any test runs. */
+function real(): Service {
+  if (!service) throw new Error("The real service did not start.");
+  return service;
+}
+
+/** Closes one of the fixture's loopback servers, when it was opened. */
+const close = (server: Server | undefined) =>
+  server?.listening
+    ? new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    : Promise.resolve();
 
 test.beforeAll(async () => {
   const handler = (request: IncomingMessage, response: ServerResponse) => {
@@ -23,13 +35,14 @@ test.beforeAll(async () => {
       server.once("error", reject);
       server.listen(SITE_PORT, host, () => resolve());
     });
-  site = createServer(handler);
-  await listen(site, "127.0.0.1");
-  site6 = createServer(handler);
-  await listen(site6, "::1").catch(() => {
-    site6?.close();
-    site6 = undefined;
+  const loopback = createServer(handler);
+  await listen(loopback, "127.0.0.1");
+  site = loopback;
+  const loopback6 = createServer(handler);
+  await listen(loopback6, "::1").catch(() => {
+    loopback6.close(() => {});
   });
+  site6 = loopback6.listening ? loopback6 : undefined;
   const started = await startProject({ fakeEngines: true });
   service = started.service;
   const thread = await service.api<{ id: string }>("POST", "/api/threads", {
@@ -44,20 +57,29 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  // End the browsers before the service exits, so Windows can release their profiles.
-  const base = `/api/threads/${threadId}/previews`;
-  for (const tab of await service.api<{ id: string }[]>("GET", base)) {
-    await service.api("DELETE", `${base}/${tab.id}`);
-    await expect.poll(() => existsSync(join(service.dataDir, "preview-profiles", tab.id))).toBe(false);
+  const failures: unknown[] = [];
+  // End the previews' browsers before the service exits, so Windows can release their profiles. Every owner is
+  // cleaned up even when another one fails, so a refused DELETE never leaves the service or a port behind.
+  try {
+    const current = service;
+    if (current && threadId) {
+      const base = `/api/threads/${threadId}/previews`;
+      for (const tab of await current.api<{ id: string }[]>("GET", base)) {
+        await current.api("DELETE", `${base}/${tab.id}`);
+        await expect.poll(() => existsSync(join(current.dataDir, "preview-profiles", tab.id))).toBe(false);
+      }
+    }
+  } catch (failure) {
+    failures.push(failure);
   }
-  await service.stop();
-  site.close();
-  site6?.close();
+  const settled = await Promise.allSettled([service?.stop(), close(site), close(site6)]);
+  for (const result of settled) if (result.status === "rejected") failures.push(result.reason as unknown);
+  if (failures.length > 0) throw new AggregateError(failures, "The device toolbar fixture did not tear down cleanly.");
 });
 
 /** The preview tab as the service keeps it, which is what a resize has to reach. */
 const tab = async () =>
-  (await service.api<{ width: number; height: number }[]>("GET", `/api/threads/${threadId}/previews`))[0];
+  (await real().api<{ width: number; height: number }[]>("GET", `/api/threads/${threadId}/previews`))[0];
 
 /** A resize the toolbar sends, awaited before the act that sends it. */
 const nextResize = (page: Page) =>
@@ -85,7 +107,7 @@ const deviceSelect = (page: Page) => page.getByRole("combobox", { name: "Device"
 /** Opens the Browser panel on the loopback page and puts the toolbar in the phone preset (393 by 852). */
 async function openPhoneToolbar(page: Page) {
   await page.setViewportSize({ width: 1500, height: 900 });
-  await page.goto(`${service.page}#/threads/${threadId}`);
+  await page.goto(`${real().page}#/threads/${threadId}`);
   await expect(page.getByRole("textbox", { name: /^Message/ })).toBeVisible();
   await openPanelTab(page, "Browser");
   const address = page.getByRole("combobox", { name: "Search or enter URL" });
