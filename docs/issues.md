@@ -584,7 +584,7 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   one "no connected issue tracker" refusal). They are acting tools, so a run's tool approval policy gates each call
   as it gates every other acting tool; a Crew worker cannot use them (its allow list refuses an unlisted tool by
   default). Engine tools never use the person key and add no Person-class authority; react is not an engine tool, and
-  set_state is not built because the service has no update/state route (a separate row).
+  set_state is not built although the service's GitHub-only state route now exists (R15 PR3, #1593): it is its own row.
 - **Tests when built.** Each write against the local fake server of each tracker that supports it: exact status and `code`,
   the exact field sent, no token in the answer or the audit row; `403 desktop_required` without the person key and
   nothing sent; a refusal changes nothing here; the route table and class tests pass without special cases.
@@ -761,9 +761,10 @@ them.
 - **Permission and approval.** Both are acting tools: each call goes through the run's own tool approval policy
   (`ActionKind::Tool`) exactly as the project and pull acting tools do, and no tool uses the person key. A Crew
   worker's allow list names no issue tool, so a worker is refused by default; the allow list was not widened.
-- **Not built.** `set_state` stays out: the service has no update/state route yet (its own parity row), and a tool
-  cannot be backed by a core function that does not exist. React is not in this row. No real tracker was contacted:
-  the tool tests use a local fake issue reader over a fake project remote.
+- **Not built.** `set_state` stays out although the service's GitHub-only state route now exists (R15 PR3, #1593:
+  `POST /api/issues/item/state`), and the core function it would wrap is built too; the tool itself is this row's
+  remaining work. React is not in this row. No real tracker was contacted: the tool tests use a local fake issue
+  reader over a fake project remote.
 
 ## Not done
 
@@ -786,7 +787,7 @@ reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR
 project binding in R15 PR3. The edits, state moves and the list's order are built for GitHub (R15 PR3) and Planned
 for the other four, whose sections say so; `candidates` is a GitLab, Forgejo, Azure DevOps and Linear gap too. The
 engine-facing issue tools (N24) list, read, create, comment, link, unlink and list a thread's linked issues; they do not
-change state (the service has no state route for them).
+change state although the service's GitHub-only state route now exists (R15 PR3, #1593).
 
 ## Differences from the web side's guessed contract
 
