@@ -87,16 +87,16 @@ export function PullDetail({
     if (tab === "run" && runTask === null) setTab("summary");
   }, [tab, runTask]);
   const [merging, setMerging] = useState(false);
-  // The dialog is built from this detail, so it opens on a read that has finished: a kept
-  // copy drawn while the read runs could be of a pull request that has moved on.
-  const openMerge = () => {
-    if (!detail.refreshing) setMerging(true);
-    else void detail.reload().then(() => setMerging(true));
-  };
-  // The project's merge method is the default; a choice in the merge menu wins over it for this visit.
+  // The project's merge method is the default; a choice in the merge menu wins for this visit.
   const mergeSetting = useMergeMethodSetting(projectId);
   const [mergeMethod, setMergeMethod] = useState<string | null>(null);
   const method = mergeMethod ?? startMergeMethod(mergeSetting.data);
+  // Opens on a finished read of the detail and of the project's method: the page's dialog hides its method select.
+  const openMerge = async () => {
+    if (mergeMethod === null && mergeSetting.status === "loading") await mergeSetting.reload();
+    if (detail.refreshing) await detail.reload();
+    setMerging(true);
+  };
   const [editing, setEditing] = useState<string | null>(null);
   const [changingBase, setChangingBase] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);

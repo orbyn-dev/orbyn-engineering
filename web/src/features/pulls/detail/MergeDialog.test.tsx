@@ -138,6 +138,13 @@ describe("the method the dialog starts on", () => {
     expect(vi.mocked(pullsApi.merge).mock.calls[0]?.[2]).toMatchObject({ method: "merge" });
   });
 
+  it("opens on Squash and merge when the project's method cannot be read", async () => {
+    vi.mocked(pullsApi.mergeMethodSetting).mockRejectedValue(new ApiFailure("bad_gateway", "no", 502));
+    await open();
+    expect(select().value).toBe("squash");
+    expect(screen.getByText("Squash and merge #7 into main.")).toBeInTheDocument();
+  });
+
   it("starts on the repository's own override, which the project-scoped read resolves over the global", async () => {
     vi.mocked(pullsApi.mergeMethodSetting).mockImplementation((projectId) => Promise.resolve(projectId === "repo-b" ? "rebase" : "merge"));
     await open({ projectId: "repo-b" });
