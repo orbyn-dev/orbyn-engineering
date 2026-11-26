@@ -25,6 +25,10 @@ echo "$@" >> "$GH_LOG"
 pull() {
   echo "{\"number\":$1,\"title\":\"$2\",\"url\":\"https://github.com/o/r/pull/$1\",\"state\":\"$(cat "$GH_STATE")\",\"headRefName\":\"$3\",\"baseRefName\":\"$4\",\"author\":{\"login\":\"me\"},\"isDraft\":false,\"labels\":[{\"name\":\"bug\"}],\"reviewDecision\":\"APPROVED\",\"statusCheckRollup\":[]$5}"
 }
+# GitHub's own viewed state: the file records each path the viewer marked viewed, one a line.
+viewed() { grep -qx "$1" "$GH_VIEWED" 2>/dev/null && echo VIEWED || echo UNVIEWED; }
+arg_path() { for arg in "$@"; do case "$arg" in path=*) echo "${arg#path=}";; esac; done; }
+refuse_write() { [ -f "$GH_FAIL" ] && { echo "HTTP 403: Resource not accessible by integration (https://api.github.com/graphql)" >&2; exit 1; }; }
 case "$1 $2" in
   "pr create") [ -f "$GH_FAIL" ] && { echo "no permission" >&2; exit 1; }
     echo "https://github.com/o/r/pull/12" ;;
@@ -40,6 +44,28 @@ case "$1 $2" in
   "label list") echo '[{"name":"bug","description":"Broken"}]' ;;
   "api user") echo '{"login":"me"}' ;;
   "api graphql") case "$*" in
+      *UnmarkFileAsViewed*) refuse_write
+        file=$(arg_path "$@")
+        { grep -vx "$file" "$GH_VIEWED" 2>/dev/null || true; } > "$GH_VIEWED.tmp"
+        mv "$GH_VIEWED.tmp" "$GH_VIEWED"
+        echo '{"data":{"unmarkFileAsViewed":{"pullRequest":{"id":"PR_12"}}}}' ;;
+      *MarkFileAsViewed*) refuse_write
+        file=$(arg_path "$@")
+        grep -qx "$file" "$GH_VIEWED" 2>/dev/null || echo "$file" >> "$GH_VIEWED"
+        echo '{"data":{"markFileAsViewed":{"pullRequest":{"id":"PR_12"}}}}' ;;
+      *ViewedFiles*) [ -f "$GH_RATE" ] && { echo "GraphQL: API rate limit already exceeded" >&2; exit 1; }
+        case "$*" in
+          *after=page2*) echo "{\"data\":{\"repository\":{\"pullRequest\":{\"id\":\"PR_12\",\"files\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"path\":\"b.rs\",\"viewerViewedState\":\"$(viewed b.rs)\"}]}}}}}" ;;
+          *) if [ -f "$GH_PAGED" ]; then
+               echo "{\"data\":{\"repository\":{\"pullRequest\":{\"id\":\"PR_12\",\"files\":{\"pageInfo\":{\"hasNextPage\":true,\"endCursor\":\"page2\"},\"nodes\":[{\"path\":\"a.rs\",\"viewerViewedState\":\"$(viewed a.rs)\"}]}}}}}"
+             elif [ -f "$GH_SHORT" ]; then
+               echo "{\"data\":{\"repository\":{\"pullRequest\":{\"id\":\"PR_12\",\"files\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"path\":\"a.rs\",\"viewerViewedState\":\"$(viewed a.rs)\"}]}}}}}"
+             else
+               echo "{\"data\":{\"repository\":{\"pullRequest\":{\"id\":\"PR_12\",\"files\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null},\"nodes\":[{\"path\":\"a.rs\",\"viewerViewedState\":\"$(viewed a.rs)\"},{\"path\":\"b.rs\",\"viewerViewedState\":\"$(viewed b.rs)\"}]}}}}}"
+             fi ;;
+        esac ;;
+      *ViewedId*) [ -f "$GH_RATE" ] && { echo "GraphQL: API rate limit already exceeded" >&2; exit 1; }
+        echo '{"data":{"repository":{"pullRequest":{"id":"PR_12"}}}}' ;;
       *reviewRequests*) [ -f "$GH_FAIL" ] && { echo "Something went wrong" >&2; exit 1; }
         [ -f "$GH_RATE" ] && { echo "GraphQL: API rate limit already exceeded" >&2; exit 1; }
         echo '{"data":{"viewer":{"login":"me"},"repository":{"p3":{"createdAt":"2026-01-02T03:04:05Z","reviewRequests":{"pageInfo":{"hasNextPage":false},"nodes":[{"requestedReviewer":{"__typename":"User","login":"sam"}},{"requestedReviewer":{"__typename":"Team","slug":"core"}}]},"latestReviews":{"pageInfo":{"hasNextPage":false},"nodes":[{"author":null,"state":"APPROVED"},{"author":{"login":"me"},"state":"CHANGES_REQUESTED"}]},"comments":{"totalCount":2},"reviews":{"totalCount":2,"pageInfo":{"hasNextPage":false},"nodes":[{"comments":{"totalCount":3}},{"comments":{"totalCount":0}}]}},"p4":{"createdAt":"2026-02-02T00:00:00Z","reviewRequests":{"pageInfo":{"hasNextPage":false},"nodes":[]},"latestReviews":{"pageInfo":{"hasNextPage":false},"nodes":[]},"comments":{"totalCount":1},"reviews":{"totalCount":0,"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}' ;;
@@ -67,6 +93,7 @@ async fn fixture() -> Fixture {
     let gh_log = dir.path().join("gh-log");
     let state_file = dir.path().join("gh-state");
     std::fs::write(&state_file, "OPEN").unwrap();
+    std::fs::write(dir.path().join("gh-viewed"), "").unwrap();
     let env = vec![
         (
             "GH_COMMENTS".to_owned(),
@@ -91,6 +118,18 @@ async fn fixture() -> Fixture {
         (
             "GH_FAIL".to_owned(),
             dir.path().join("gh-fail").to_string_lossy().into_owned(),
+        ),
+        (
+            "GH_VIEWED".to_owned(),
+            dir.path().join("gh-viewed").to_string_lossy().into_owned(),
+        ),
+        (
+            "GH_PAGED".to_owned(),
+            dir.path().join("gh-paged").to_string_lossy().into_owned(),
+        ),
+        (
+            "GH_SHORT".to_owned(),
+            dir.path().join("gh-short").to_string_lossy().into_owned(),
         ),
     ];
     let (service, thread) = setup(
@@ -541,6 +580,169 @@ async fn detail_checks_conversation_timeline_and_files_are_normalized() {
     assert_eq!(files[0]["viewed"], true);
     assert_eq!(files[1]["status"], "deleted");
     assert_eq!(files[1]["viewed"], false);
+}
+
+#[tokio::test]
+async fn github_viewed_state_is_read_and_marks_sync_through_gh() {
+    let f = fixture().await;
+    f.hosted();
+    let project = f.project().await;
+    let base = format!("/api/projects/{project}/pulls/12");
+    // GitHub's own state is what the files read shows, with no mark made here: a.rs was marked
+    // viewed in GitHub's own UI.
+    std::fs::write(f._dir.path().join("gh-viewed"), "a.rs\n").unwrap();
+    let files = f.service.json(&format!("{base}/files")).await;
+    assert_eq!(files[0]["path"], "a.rs");
+    assert_eq!(files[0]["viewed"], true);
+    assert_eq!(files[0]["viewed_synced"], true);
+    assert_eq!(files[1]["viewed"], false);
+    assert_eq!(files[1]["viewed_synced"], false);
+    let log = f.log();
+    assert!(log.contains("viewerViewedState"), "{log}");
+
+    // A mark made here is GitHub's own mutation, and the next read shows it as GitHub's.
+    let (code, reply) = f
+        .service
+        .send(
+            &format!("{base}/viewed"),
+            json!({ "paths": ["b.rs"], "viewed": true }),
+        )
+        .await;
+    assert_eq!(code, 204, "{reply}");
+    let log = f.log();
+    assert!(log.contains("markFileAsViewed"), "{log}");
+    assert!(log.contains("path=b.rs"), "{log}");
+    let files = f.service.json(&format!("{base}/files")).await;
+    assert_eq!(files[1]["viewed"], true);
+    assert_eq!(files[1]["viewed_synced"], true);
+
+    // Unmarking clears GitHub's own state.
+    let (code, _) = f
+        .service
+        .send(
+            &format!("{base}/viewed"),
+            json!({ "paths": ["b.rs"], "viewed": false }),
+        )
+        .await;
+    assert_eq!(code, 204);
+    assert!(f.log().contains("unmarkFileAsViewed"), "{}", f.log());
+    let files = f.service.json(&format!("{base}/files")).await;
+    assert_eq!(files[1]["viewed"], false);
+
+    let audit = f.service.json("/api/audit?limit=100").await;
+    assert!(
+        audit
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["action"] == "git.pull_viewed"),
+        "{audit}"
+    );
+}
+
+#[tokio::test]
+async fn a_viewed_mark_github_did_not_save_is_kept_here_and_named() {
+    let f = fixture().await;
+    f.hosted();
+    let project = f.project().await;
+    let base = format!("/api/projects/{project}/pulls/12");
+    // The page reads the files before a mark; then GitHub refuses the write, as it does for a
+    // viewer without write access. The mutation itself is attempted and refused, and the
+    // person's mark is kept here and the route says GitHub did not save it.
+    let files = f.service.json(&format!("{base}/files")).await;
+    assert_eq!(files[0]["viewed"], false);
+    std::fs::write(f._dir.path().join("gh-fail"), "").unwrap();
+    let (code, reply) = f
+        .service
+        .send(
+            &format!("{base}/viewed"),
+            json!({ "paths": ["b.rs"], "viewed": true }),
+        )
+        .await;
+    assert_eq!(code, 502, "{reply}");
+    assert_eq!(reply["code"], "viewed_unsynced");
+    assert!(
+        reply["message"].as_str().unwrap().contains("kept in Orbyn"),
+        "{reply}"
+    );
+    let log = f.log();
+    assert!(log.contains("markFileAsViewed"), "{log}");
+    assert!(log.contains("path=b.rs"), "{log}");
+    let files = f.service.json(&format!("{base}/files")).await;
+    assert_eq!(files[1]["viewed"], true);
+    assert_eq!(files[1]["viewed_synced"], false);
+
+    // An unmark GitHub refuses keeps showing the mark it had, and says so.
+    let (code, reply) = f
+        .service
+        .send(
+            &format!("{base}/viewed"),
+            json!({ "paths": ["b.rs"], "viewed": false }),
+        )
+        .await;
+    assert_eq!(code, 502, "{reply}");
+    assert!(
+        reply["message"]
+            .as_str()
+            .unwrap()
+            .contains("Orbyn keeps showing the mark it had"),
+        "{reply}"
+    );
+    let files = f.service.json(&format!("{base}/files")).await;
+    assert_eq!(files[1]["viewed"], true);
+
+    // GitHub's GraphQL limit is spent, so its own state cannot be read either; the service's
+    // kept marks stand in.
+    std::fs::write(f._dir.path().join("gh-rate"), "").unwrap();
+    let files = f.service.json(&format!("{base}/files?refresh=1")).await;
+    assert_eq!(files[1]["viewed"], true);
+    assert_eq!(files[1]["viewed_synced"], false);
+    std::fs::remove_file(f._dir.path().join("gh-rate")).unwrap();
+    std::fs::remove_file(f._dir.path().join("gh-fail")).unwrap();
+
+    // GitHub is back but has no such mark: the kept mark is still shown, still not GitHub's.
+    let files = f.service.json(&format!("{base}/files?refresh=1")).await;
+    assert_eq!(files[1]["viewed"], true);
+    assert_eq!(files[1]["viewed_synced"], false);
+
+    // Marking it again now reaches GitHub, and the mark becomes GitHub's own.
+    let (code, _) = f
+        .service
+        .send(
+            &format!("{base}/viewed"),
+            json!({ "paths": ["b.rs"], "viewed": true }),
+        )
+        .await;
+    assert_eq!(code, 204);
+    let files = f.service.json(&format!("{base}/files")).await;
+    assert_eq!(files[1]["viewed"], true);
+    assert_eq!(files[1]["viewed_synced"], true);
+}
+
+#[tokio::test]
+async fn github_viewed_state_is_read_across_pages_and_a_short_answer_is_refused() {
+    let f = fixture().await;
+    f.hosted();
+    let project = f.project().await;
+    let base = format!("/api/projects/{project}/pulls/12");
+    // GitHub holds b.rs viewed and answers in two pages; the cursor is followed and both files
+    // get their own state.
+    std::fs::write(f._dir.path().join("gh-viewed"), "b.rs\n").unwrap();
+    std::fs::write(f._dir.path().join("gh-paged"), "").unwrap();
+    let files = f.service.json(&format!("{base}/files")).await;
+    assert_eq!(files[0]["viewed"], false);
+    assert_eq!(files[1]["viewed"], true);
+    assert_eq!(files[1]["viewed_synced"], true);
+    let log = f.log();
+    assert!(log.contains("after=page2"), "{log}");
+    // An answer that does not name every changed file is not used at all: the service's marks
+    // stand in instead of GitHub's partial answer.
+    std::fs::remove_file(f._dir.path().join("gh-paged")).unwrap();
+    std::fs::write(f._dir.path().join("gh-short"), "").unwrap();
+    let files = f.service.json(&format!("{base}/files?refresh=1")).await;
+    assert_eq!(files[0]["viewed"], false);
+    assert_eq!(files[1]["viewed"], false);
+    assert_eq!(files[0]["viewed_synced"], false);
 }
 
 #[tokio::test]
