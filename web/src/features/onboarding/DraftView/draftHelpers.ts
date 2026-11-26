@@ -21,11 +21,12 @@ export const useThreadList = () => {
 export const uniquePurpose = (base: string) => [slugify(base) || "thread", crypto.randomUUID().slice(0, 6)].join("-");
 
 /**
- * The title a draft hands the service for the thread it is about to make: the typed goal
- * with its whitespace normalized, cut at 50 characters. The service names a new worktree
- * from this title in semantic mode before the first message's generated title arrives.
+ * The seed a draft hands the service for the new worktree's branch name: the typed goal
+ * with its whitespace normalized, cut to 50 characters plus `...` when longer, so 53
+ * characters at most. It names the branch only and never becomes the thread title, which
+ * stays "New thread" so the first message still generates it.
  */
-export const draftTitle = (text: string): string => {
+export const branchNameSeed = (text: string): string => {
   const normalized = text.trim().replace(/\s+/gu, " ");
   const characters = Array.from(normalized);
   return characters.length <= 50 ? normalized : `${characters.slice(0, 50).join("")}...`;

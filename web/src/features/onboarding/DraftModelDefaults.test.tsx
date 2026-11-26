@@ -39,7 +39,7 @@ it("sends the project default from the real draft handler instead of the remembe
   await waitFor(() => expect(send).toBeEnabled());
   await userEvent.setup().click(send);
   await waitFor(() => expect(created()).toHaveLength(1));
-  expect(created()[0]?.body).toMatchObject({ project_id: "p-app", engine: "codex", model: "project-model", title: "Fixture prompt" });
+  expect(created()[0]?.body).toEqual({ project_id: "p-app", engine: "codex", model: "project-model", title: null, worktree: null, skill_profile: null });
   await waitFor(() => expect(runs()).toHaveLength(1));
   expect(runs()[0]?.body).toEqual({ prompt: "Fixture prompt" });
 });

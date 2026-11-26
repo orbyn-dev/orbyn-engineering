@@ -68,12 +68,20 @@ test("semantic naming slugs the draft's title and numbers a collision", async ({
   expect(localBranch("feat/ship-the-login-flow-2")).not.toBe("");
 });
 
-test("custom naming uses the name the engine writes from the instructions", async ({ page }) => {
+test("custom naming uses the engine's name and its collision keeps the purpose", async ({ page }) => {
   await preferences({
     branch_naming_mode: "custom",
     branch_name_instructions: "Use release/ and the issue number 42.",
   });
-  const thread = await newWorktreeThread(page, newPurpose("custom-one"), "Rewrite the login");
-  expect(thread.worktree?.branch).toBe("release/rewrite-login");
+  // The protocol double answers every branch-name prompt with this name unless
+  // ORBYN_FAKE_BRANCH_NAME overrides it (crates/orbynd/src/bin/orbyn_fake_engine/one_shot.rs).
+  const first = await newWorktreeThread(page, newPurpose("custom-one"), "Rewrite the login");
+  expect(first.worktree?.branch).toBe("release/rewrite-login");
   expect(localBranch("release/rewrite-login")).not.toBe("");
+
+  // The same complete name is already a branch, so the second worktree keeps its purpose.
+  const secondPurpose = newPurpose("custom-two");
+  const second = await newWorktreeThread(page, secondPurpose, "Rewrite the login");
+  expect(second.worktree?.branch).toBe(secondPurpose);
+  expect(localBranch(secondPurpose)).not.toBe("");
 });

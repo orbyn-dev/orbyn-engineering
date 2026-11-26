@@ -26,7 +26,7 @@ pub enum NamingMode {
     Static,
     /// A bounded slug of the thread's real title, or of the purpose when it has none.
     Semantic,
-    /// The purpose as the complete branch name.
+    /// The complete name an engine writes from the instructions, else the purpose.
     Custom,
 }
 
@@ -48,7 +48,8 @@ pub struct Naming {
     /// The prefix static and semantic names start with.
     pub prefix: String,
     /// The complete name an engine wrote for custom mode, already read from its reply.
-    /// `None` names the worktree from its purpose, as custom mode did before it asked.
+    /// It is used only when it is one valid ref no project branch has; `None` names the
+    /// worktree from its purpose, as custom mode did before it asked.
     pub custom: Option<String>,
 }
 
@@ -77,18 +78,25 @@ pub(crate) fn branch_name(
             semantic_name(&naming.prefix, seed, purpose, existing).unwrap_or(fallback)
         }
         NamingMode::Custom => {
-            // The engine's name when the instructions produced one; the purpose stays the
-            // complete name otherwise, which is what custom naming did before it asked.
-            let custom = naming
+            // The engine's name when the instructions produced one and no project branch
+            // has it. A written name Git would refuse to create is unusable, and the
+            // purpose stays the complete name, as for a reply that is not a ref; the
+            // purpose itself is never replaced this way.
+            let written = naming
                 .custom
                 .as_deref()
                 .map(str::trim)
                 .filter(|name| is_valid_branch_name(name))
-                .unwrap_or_else(|| purpose.trim());
-            if is_valid_branch_name(custom) {
-                custom.to_owned()
+                .filter(|name| !is_taken(name, existing));
+            if let Some(written) = written {
+                written.to_owned()
             } else {
-                fallback
+                let purpose = purpose.trim();
+                if is_valid_branch_name(purpose) {
+                    purpose.to_owned()
+                } else {
+                    fallback
+                }
             }
         }
     }
@@ -245,10 +253,13 @@ pub(crate) fn generated_name(reply: &str) -> Option<String> {
 }
 
 /// Git's own rules for a branch name, as far as a name this service makes can break them.
-fn is_valid_branch_name(name: &str) -> bool {
+pub(crate) fn is_valid_branch_name(name: &str) -> bool {
     !name.is_empty()
         && name.chars().count() <= MAX_BRANCH_CHARS
         && !name.starts_with('-')
+        // Git reserves exactly this spelling for the symbolic HEAD; the other cases are
+        // ordinary refs, and 'HEAD/...' is allowed.
+        && name != "HEAD"
         && name != "@"
         && !name.ends_with('.')
         && !name.ends_with('/')
@@ -485,6 +496,11 @@ mod tests {
             generated_name("release/v1.2").as_deref(),
             Some("release/v1.2")
         );
+        // Git reserves exactly this spelling for the symbolic HEAD; the other cases and
+        // a folder under it are ordinary refs.
+        assert_eq!(generated_name("HEAD"), None);
+        assert_eq!(generated_name("head").as_deref(), Some("head"));
+        assert_eq!(generated_name("head/next").as_deref(), Some("head/next"));
         // A line that is not one valid ref names nothing.
         assert_eq!(generated_name("not a branch name"), None);
         assert_eq!(generated_name("-leading-dash"), None);
@@ -525,6 +541,24 @@ mod tests {
         );
         // An unusable writer's name falls back to the purpose, never to an invented name.
         custom.custom = Some("not a branch name".to_owned());
+        assert_eq!(
+            branch_name(&custom, Some("Add login"), "fix-login", &[]),
+            "fix-login"
+        );
+        // A name a project branch already has is unusable too: Git would refuse to make
+        // it, so the purpose is the complete name rather than a numbered one.
+        custom.custom = Some("release/login-42".to_owned());
+        assert_eq!(
+            branch_name(
+                &custom,
+                Some("Add login"),
+                "fix-login",
+                &["release/login-42".to_owned()]
+            ),
+            "fix-login"
+        );
+        // HEAD is reserved, so a writer that says it names nothing.
+        custom.custom = Some("HEAD".to_owned());
         assert_eq!(
             branch_name(&custom, Some("Add login"), "fix-login", &[]),
             "fix-login"
