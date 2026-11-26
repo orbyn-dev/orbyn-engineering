@@ -212,6 +212,9 @@ export const FALLBACK_RULES: KeybindingRule[] = (
     ["mod+b", "sidebar.toggle", null],
     ["mod+j", "terminal.toggle", null],
     ["mod+alt+b", "rightPanel.toggle", null],
+    ["mod+t", "rightPanel.new", "rightPanelOpen && !terminalFocus"],
+    // Maximise is the shift variant of the panel toggle, as appearance.cycle is of theme.select.
+    ["mod+alt+shift+b", "rightPanel.maximize", "rightPanelOpen && !terminalFocus"],
     ["mod+shift+b", "threadPanel.toggle", "!terminalFocus"],
     ["mod+d", "diff.toggle", "!terminalFocus"],
     ["mod+k", "commandPalette.toggle", "!terminalFocus"],

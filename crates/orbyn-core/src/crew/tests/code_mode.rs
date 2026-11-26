@@ -986,13 +986,19 @@ async fn real_javascript_replay_reaches_the_in_flight_call_without_repeating_the
         .gate
         .decide_with(&first.id, true, false, None, "test-person")
         .expect("the person allows the first call");
-    // The second call now waits for the person: the run is live, with one finished call.
-    let second = loop {
-        let next = next_pending_for(&w, &w.lead, &run_id).await;
-        if next.id != first.id {
-            break next;
+    // The second call now waits for the person: the run is live, with one finished call. Bounded on
+    // the harness clock so a second call that never pends fails by name instead of spinning the
+    // test binary.
+    let second = tokio::time::timeout(super::harness::WAIT_LIMIT, async {
+        loop {
+            let next = next_pending_for(&w, &w.lead, &run_id).await;
+            if next.id != first.id {
+                break next;
+            }
         }
-    };
+    })
+    .await
+    .expect("the second call became pending for the person");
     assert_eq!(second.via.as_ref().map(|via| via.call), Some(2));
     assert_eq!(attachments(&w).len(), 1, "the first effect ran once");
     let recorded = stored_call(&w, &run_id, 1);
@@ -1174,10 +1180,27 @@ impl CodeExecutor for GatePrepare {
     }
 }
 
+/// Polls `done` on the harness clock: a row another task writes must appear, and a loaded machine
+/// must not decide whether it appears in time. A test's wait is not a product budget (#1063, tdd 3.7);
+/// the panic still names the wait, so a real hang fails by name.
+async fn until<T>(what: &str, mut done: impl FnMut() -> Option<T>) -> T {
+    let give_up = std::time::Instant::now() + super::harness::WAIT_LIMIT;
+    loop {
+        if let Some(value) = done() {
+            return value;
+        }
+        assert!(
+            std::time::Instant::now() < give_up,
+            "never happened in {:?}: {what}",
+            super::harness::WAIT_LIMIT
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
 async fn next_pending_for(w: &World, thread: &str, run_id: &str) -> orbyn_contracts::Approval {
-    for _ in 0..200 {
-        if let Some(approval) = w
-            .core
+    until(&format!("an approval became pending for {run_id}"), || {
+        w.core
             .store
             .pending_for_thread(thread)
             .unwrap()
@@ -1188,22 +1211,15 @@ async fn next_pending_for(w: &World, thread: &str, run_id: &str) -> orbyn_contra
                     .as_ref()
                     .is_some_and(|via| via.code_run == run_id)
             })
-        {
-            return approval;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    panic!("no approval became pending for {run_id}");
+    })
+    .await
 }
 
 async fn next_pending(w: &World, thread: &str) -> orbyn_contracts::Approval {
-    for _ in 0..200 {
-        if let Some(approval) = w.core.store.pending_for_thread(thread).unwrap().pop() {
-            return approval;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    panic!("no approval became pending for {thread}");
+    until(&format!("an approval became pending for {thread}"), || {
+        w.core.store.pending_for_thread(thread).unwrap().pop()
+    })
+    .await
 }
 
 fn cancelled_error(record: &CodeRunRecord) {
@@ -1287,22 +1303,16 @@ async fn a_running_run_is_cancelled_while_its_outer_call_is_still_waiting() {
         core.code_tool_text(&binding, RUN_TOOL, &json!({ "code": "sleep 60000" }))
             .await
     });
-    let mut run_id = None;
-    for _ in 0..200 {
-        if let Some(row) = w
-            .core
+    let run_id = until("the run is still running inside its outer call", || {
+        w.core
             .code_runs_list(&w.lead)
             .unwrap()
             .runs
             .iter()
             .find(|row| row.status == CodeRunStatus::Running)
-        {
-            run_id = Some(row.run_id.clone());
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    let run_id = run_id.expect("the run is still running inside its outer call");
+            .map(|row| row.run_id.clone())
+    })
+    .await;
     let record = w.core.code_run_cancel(&run_id).await.unwrap();
     cancelled_error(&record);
     // The outer call returns promptly with the same cancelled reply a resume gives; a run that was
@@ -1332,22 +1342,16 @@ async fn a_cancel_during_prepare_never_spawns_the_script_and_releases_the_slot()
         core.code_tool_text(&binding, RUN_TOOL, &json!({ "code": "return 1" }))
             .await
     });
-    let mut run_id = None;
-    for _ in 0..200 {
-        if let Some(row) = w
-            .core
+    let run_id = until("the row is written before prepare", || {
+        w.core
             .code_runs_list(&w.lead)
             .unwrap()
             .runs
             .iter()
             .find(|row| row.status == CodeRunStatus::Running)
-        {
-            run_id = Some(row.run_id.clone());
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    let run_id = run_id.expect("the row is written before prepare");
+            .map(|row| row.run_id.clone())
+    })
+    .await;
 
     let record = w.core.code_run_cancel(&run_id).await.unwrap();
     cancelled_error(&record);
@@ -1861,12 +1865,10 @@ async fn waited_ms_survives_a_replay() {
         .unwrap();
     // The call's own answer must be recorded before the restart, or the replay would see an
     // effect in flight and end as lost instead of answering from the record.
-    for _ in 0..200 {
-        if stored_call(&w, &run_id, 1).status == "ok" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    until("the call's answer is stored before the restart", || {
+        (stored_call(&w, &run_id, 1).status == "ok").then_some(())
+    })
+    .await;
     w.core.code_runs.forget_all();
     w.core.code_runs_recover();
     let lost = w.core.code_run_record(&run_id).unwrap();
