@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { issueFixtures } from "../../../mock/issues";
-import type { IssueRef } from "./contract";
-import { activeChips, applyQuery, choiceLabel, hostFor, knownTrackers, trackerDetail, sameState, trackerLine, trackerStatus, labelCounts, noQuery, numberOf, parseSearch, shownLine, sortWord, stateWord, threadMarker } from "./model";
+import type { IssueRef, LinkedPullRequest } from "./contract";
+import { activeChips, applyQuery, choiceLabel, hostFor, knownTrackers, linkedChecksWord, trackerDetail, sameState, trackerLine, trackerStatus, labelCounts, noQuery, numberOf, parseSearch, shownLine, sortWord, stateWord, threadMarker } from "./model";
 
 const ref = (state: IssueRef["state"], key = "1"): IssueRef => ({ tracker: "github", scope: "o/r", key, display_key: `#${key}`, title: "t", state, labels: [] });
 
@@ -83,6 +83,31 @@ describe("state choices and tracker lines", () => {
   it("keeps the five known trackers in the design's order and drops one the service invents", () => {
     const rows = knownTrackers([{ tracker: "linear", connected: false }, { tracker: "__proto__" as never, connected: true }, { tracker: "github", connected: true }]);
     expect(rows.map((row) => row.tracker)).toEqual(["github", "linear"]);
+  });
+});
+
+describe("a linked pull request's checks", () => {
+  const checks = (over: Partial<NonNullable<LinkedPullRequest["checks"]>> = {}): NonNullable<LinkedPullRequest["checks"]> => ({ total: 4, passing: 4, failing: 0, running: 0, failing_names: [], ...over });
+
+  it("says nothing when the tracker reported none: absent is unknown, never no checks", () => {
+    expect(linkedChecksWord(undefined)).toBeNull();
+    expect(linkedChecksWord(null)).toBeNull();
+  });
+
+  it("reads the counts in the Pull requests list's words", () => {
+    expect(linkedChecksWord(checks())).toEqual({ tone: "pass", label: "Passing" });
+    expect(linkedChecksWord(checks({ total: 4, passing: 3, failing: 1, failing_names: ["e2e (macOS)"] }))).toEqual({ tone: "fail", label: "Failing · e2e (macOS)" });
+    expect(linkedChecksWord(checks({ total: 4, passing: 1, running: 2 }))).toEqual({ tone: "running", label: "Running · 2 of 4" });
+    expect(linkedChecksWord(checks({ total: 0, passing: 0 }))).toEqual({ tone: "none", label: "No checks" });
+    expect(linkedChecksWord(checks({ total: 3, passing: 0 }))).toEqual({ tone: "neutral", label: "No checks ran" });
+    expect(linkedChecksWord(checks({ total: 5, passing: 4 }))).toEqual({ tone: "pass", label: "Passing · 1 skipped" });
+  });
+
+  it("counts every failure, names only the first and caps its untrusted text", () => {
+    // The tracker's check names are text: the first is capped, the rest are counted, and no name is invented.
+    expect(linkedChecksWord(checks({ total: 5, passing: 1, failing: 4, failing_names: ["<b>x</b>", "e2e"] }))).toEqual({ tone: "fail", label: "Failing · <b>x</b> +3" });
+    expect(linkedChecksWord(checks({ total: 2, passing: 1, failing: 1, failing_names: ["n".repeat(500)] }))!.label.length).toBeLessThan(90);
+    expect(linkedChecksWord(checks({ total: 3, passing: 0, failing: 3, failing_names: [] }))).toEqual({ tone: "fail", label: "Failing" });
   });
 });
 

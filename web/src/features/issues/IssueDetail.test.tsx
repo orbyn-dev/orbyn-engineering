@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createIssuesMock, draftOf, issueFixtures } from "../../../mock/issues";
 import type { Project, Thread } from "../../api/types";
-import type { IssueRef } from "./contract";
+import type { IssueRef, LinkedPullRequest } from "./contract";
 import { MOTION } from "../../lib/motion";
 import { useWorkspace } from "../../product/state/workspace";
 import { IssuesPage } from "./IssuesPage";
@@ -399,6 +399,8 @@ it("writes nothing on its own: opening the page and the dialog makes no write", 
 // ---- closed date, linked pull requests and the Planned controls ----
 const PR = { repository: "orbyn-engineering", number: 142, title: "Return to the page people came from", url: "https://github.com/orbyn-dev/orbyn-engineering/pull/142", state: "open", is_draft: false, closes_issue: true } as const;
 const ISSUE = "#/issues/github/orbyn-dev%2Forbyn-engineering/412";
+/** The counts the service puts on a linked pull request: the pull request list's own `PullChecks`. */
+const checks = (over: Partial<NonNullable<LinkedPullRequest["checks"]>> = {}): NonNullable<LinkedPullRequest["checks"]> => ({ total: 4, passing: 4, failing: 0, running: 0, failing_names: [], ...over });
 
 it("shows Opened under the facts, and a Closed row with its date only for a closed issue that has one", async () => {
   setIssuesApi(createIssuesMock());
@@ -475,7 +477,7 @@ it("lists the linked pull requests the tracker reports: state, title, number, re
   expect(items[2]).toHaveTextContent("Draft");
   expect(items[2]).toHaveTextContent("orbyn-planner");
   expect(items[3]).toHaveTextContent("Closed");
-  // Each row opens the pull request on the host, in its own tab; there is no CI or checks status.
+  // Each row opens the pull request on the host, in its own tab; the tracker reported no checks for it, so the row says nothing.
   const link = within(items[0]!).getByRole("link", { name: /Return to the page people came from/ });
   expect(link).toHaveAttribute("href", PR.url);
   expect(link).toHaveAttribute("target", "_blank");
@@ -517,6 +519,46 @@ it("caps a pull request's title and repository so one long word cannot take the 
   setIssuesApi(createIssuesMock({ pullRequests: { "412": [{ ...PR, title: "t".repeat(5000), repository: "r".repeat(5000) }] } }));
   at(ISSUE);
   const card = await screen.findByRole("group", { name: "Linked pull requests" });
+  expect(card.textContent!.length).toBeLessThan(1000);
+});
+
+it("draws each linked pull request's checks in the Pull requests list's words, coloured by state", async () => {
+  const pullWith = (number: number, title: string, over: Partial<NonNullable<LinkedPullRequest["checks"]>> = {}) => ({ ...PR, number, title, checks: checks(over) });
+  setIssuesApi(createIssuesMock({ pullRequests: { "412": [
+    pullWith(1, "All green"),
+    pullWith(2, "One red", { passing: 3, failing: 1, failing_names: ["e2e (macOS)"] }),
+    pullWith(3, "Still running", { passing: 1, running: 2 }),
+    pullWith(4, "Empty rollup", { total: 0, passing: 0 }),
+  ] } }));
+  at(ISSUE);
+  const card = await screen.findByRole("group", { name: "Linked pull requests" });
+  const items = within(card).getAllByRole("listitem");
+  expect(items).toHaveLength(4);
+  const words = items.map((item) => item.querySelector(".iss-pr-checks"));
+  expect(words.map((word) => word?.getAttribute("data-tone"))).toEqual(["pass", "fail", "running", "none"]);
+  // The count and state are read out as words, not by colour.
+  expect(words[0]).toHaveTextContent("Checks Passing");
+  expect(words[1]).toHaveTextContent("Checks Failing · e2e (macOS)");
+  expect(words[2]).toHaveTextContent("Checks Running · 2 of 4");
+  expect(words[3]).toHaveTextContent("Checks No checks");
+});
+
+it("says nothing about checks when the tracker reported none: absent is unknown, never no checks", async () => {
+  // One link with no checks field and one with a null: both are unknown, and neither claims "No checks".
+  setIssuesApi(createIssuesMock({ pullRequests: { "412": [{ ...PR, checks: null }, { ...PR, number: 1, title: "A second try" }] } }));
+  at(ISSUE);
+  const card = await screen.findByRole("group", { name: "Linked pull requests" });
+  expect(within(card).getAllByRole("listitem")).toHaveLength(2);
+  expect(card.querySelector(".iss-pr-checks")).toBeNull();
+  expect(within(card).queryByText(/Passing|Failing|Running|No checks/)).toBeNull();
+});
+
+it("draws a failing check's name as capped text, never markup", async () => {
+  setIssuesApi(createIssuesMock({ pullRequests: { "412": [{ ...PR, checks: checks({ passing: 3, failing: 1, failing_names: ["<img src=x onerror=alert(1)>"] }) }] } }));
+  at(ISSUE);
+  const card = await screen.findByRole("group", { name: "Linked pull requests" });
+  expect(within(card).getByText(/<img src=x onerror=alert\(1\)>/)).toBeVisible();
+  expect(card.querySelector("img, script")).toBeNull();
   expect(card.textContent!.length).toBeLessThan(1000);
 });
 
