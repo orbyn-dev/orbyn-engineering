@@ -16,6 +16,8 @@ const KEYBINDING_COMMANDS: &[&str] = &[
     "navigation.forward",
     "terminal.toggle",
     "rightPanel.toggle",
+    "rightPanel.new",
+    "rightPanel.maximize",
     "rightPanel.close",
     "threadPanel.toggle",
     "view.reopenClosed",
@@ -113,6 +115,18 @@ mod tests {
     fn a_navigation_command_on_an_ordinary_key_is_allowed() {
         assert!(keybinding_allowed(&rule("mod+y", "sidebar.toggle")));
         assert!(keybinding_allowed(&rule("alt+3", "thread.jump.3")));
+    }
+
+    #[test]
+    fn the_right_panel_view_commands_are_allowed() {
+        for command in [
+            "rightPanel.toggle",
+            "rightPanel.new",
+            "rightPanel.maximize",
+            "rightPanel.close",
+        ] {
+            assert!(keybinding_allowed(&rule("mod+y", command)), "{command}");
+        }
     }
 
     #[test]

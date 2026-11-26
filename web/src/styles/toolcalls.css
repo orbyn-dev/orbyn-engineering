@@ -130,6 +130,11 @@
 .cf .er {
   color: var(--color-danger);
 }
+/* The outcome word takes danger while the exit code after it stays quiet, as the frame draws it. */
+.tcr .du .fail {
+  color: var(--color-danger);
+  font-weight: 400;
+}
 .tcr.s-stop .tic,
 .tcr.s-stop .tlb {
   color: var(--color-muted);
