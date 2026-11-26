@@ -225,6 +225,7 @@ impl Core {
                 base_branch: string("base_branch"),
                 effort: None,
                 options: std::collections::BTreeMap::new(),
+                branch_name_seed: None,
             })
             .await?;
         self.runs.enqueue(&thread.id, text(spec, "prompt")?, &[])?;
