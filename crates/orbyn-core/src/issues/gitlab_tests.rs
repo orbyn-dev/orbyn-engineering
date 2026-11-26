@@ -1058,9 +1058,9 @@ mod writes {
     //! send, the issue they answer, and the award lookup an idempotent reaction needs.
 
     use super::*;
-    use crate::issues::NewIssue;
     use crate::issues::fake_http::Seen;
-    use orbyn_contracts::{IssueReaction, IssueReactionCount};
+    use crate::issues::{IssueEdit, NewIssue};
+    use orbyn_contracts::{IssueCloseReason, IssueReaction, IssueReactionCount};
     use std::sync::{Arc, Mutex};
 
     /// The method and address of every write the server saw, without the HTTP version.
@@ -1135,6 +1135,10 @@ mod writes {
         assert_eq!(detail.body, "It breaks.");
         assert!(detail.comments.is_empty(), "a new issue has no comments");
         assert_eq!(detail.reactions, None);
+        assert!(
+            detail.states.is_some(),
+            "a new issue's answer offers the states a detail read does"
+        );
     }
 
     #[tokio::test]
@@ -1470,6 +1474,350 @@ mod writes {
             matches!(&error, CoreError::TrackerUnavailable(m) if m.contains("possibly created") && !m.contains("secret")),
             "{error:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_detail_offers_both_states_and_a_closed_issue_names_the_one_it_is_in() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            let mut one = issue(&base, 5);
+            one["state"] = json!("closed");
+            one["closed_at"] = json!("2026-11-06T00:00:00Z");
+            Reply::json(&one)
+        })
+        .await;
+        let gitlab = reader(&server);
+        assert!(gitlab.can_edit(), "GitLab edits in this build");
+        let detail = gitlab.get("grp/proj", "5").await.unwrap();
+        let states = detail.states.expect("a GitLab detail offers its states");
+        assert_eq!(
+            states.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            ["Open", "Closed"],
+            "GitLab has one closed state and stores no reason, so it offers two names"
+        );
+        assert_eq!(states[0].category, IssueStateCategory::Open);
+        assert_eq!(states[1].category, IssueStateCategory::Closed);
+        assert_eq!(
+            states[1].close_reason, None,
+            "GitLab keeps no close reason, so it offers none"
+        );
+        // A closed issue reports the closed state the detail offers, so a menu marks the row it is in.
+        assert_eq!(detail.summary.state.name, states[1].name);
+        assert_eq!(detail.summary.state.category, states[1].category);
+    }
+
+    #[tokio::test]
+    async fn an_edit_writes_only_the_fields_present_and_answers_the_issue_read_back() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                assert_eq!(req.path(), "/api/v4/projects/grp%2Fproj/issues/21");
+                assert_eq!(req.header("private-token"), Some(TOKEN));
+                assert_eq!(
+                    req.json(),
+                    Some(json!({ "title": "Crash on start", "description": "It breaks." })),
+                    "only the fields present travel, and the body is GitLab's description"
+                );
+                let mut row = issue(&base, 21);
+                row["title"] = json!("Crash on start");
+                row["description"] = json!("It breaks.");
+                return Reply::json(&row);
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            let mut row = issue(&base, 21);
+            row["title"] = json!("Crash on start");
+            row["description"] = json!("It breaks.");
+            Reply::json(&row)
+        })
+        .await;
+        let detail = reader(&server)
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: Some("Crash on start"),
+                    body: Some("It breaks."),
+                    labels: None,
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(detail.summary.title, "Crash on start");
+        assert_eq!(detail.body, "It breaks.");
+        assert!(detail.comments.is_empty());
+        assert!(
+            detail.states.is_some(),
+            "the answer is the issue read back, with the states a detail read has"
+        );
+        assert_eq!(
+            server
+                .seen()
+                .into_iter()
+                .filter(|r| r.line.starts_with("PUT"))
+                .count(),
+            1,
+            "one write, nothing repeated"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_edit_writes_labels_and_assignees_as_the_whole_new_set() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                let body = req.json().unwrap_or_default();
+                // The page sends the full set, so a set with nothing in it clears both.
+                let clearing = body
+                    .get("assignee_ids")
+                    .and_then(Value::as_array)
+                    .map(|ids| ids.is_empty())
+                    .unwrap_or(true);
+                let wanted = if clearing {
+                    json!({ "labels": "", "assignee_ids": [] })
+                } else {
+                    json!({ "labels": "bug,ui", "assignee_ids": [12, 13] })
+                };
+                assert_eq!(body, wanted, "labels travel by name, people by id");
+                return Reply::json(&issue(&base, 21));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let gitlab = reader(&server);
+        let labels = vec!["bug".to_owned(), "ui".to_owned()];
+        let assignees = vec!["12".to_owned(), "13".to_owned()];
+        gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&labels),
+                    assignees: Some(&assignees),
+                },
+            )
+            .await
+            .unwrap();
+        let cleared: Vec<String> = Vec::new();
+        gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&cleared),
+                    assignees: Some(&cleared),
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_edit_refuses_a_comma_in_a_label_and_an_assignee_that_is_not_a_number() {
+        let server = Server::start(|_| Reply::json(&json!({}))).await;
+        let gitlab = reader(&server);
+        let comma = vec!["bug, ui".to_owned()];
+        let not_a_number = vec!["bo".to_owned()];
+        for (what, edit) in [
+            (
+                "a label with a comma",
+                IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&comma),
+                    assignees: None,
+                },
+            ),
+            (
+                "an assignee that is not a numeric id",
+                IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: None,
+                    assignees: Some(&not_a_number),
+                },
+            ),
+        ] {
+            let error = gitlab
+                .update("grp/proj", "21", &edit)
+                .await
+                .map(|_| ())
+                .unwrap_err();
+            assert_eq!(
+                (error.status(), error.code()),
+                (400, "invalid_input"),
+                "{what}: {error:?}"
+            );
+        }
+        assert!(
+            server.seen().is_empty(),
+            "a refused edit sends nothing: {:?}",
+            server.seen()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_state_write_closes_and_reopens_and_answers_the_issue_read_back() {
+        let closed = Arc::new(Mutex::new(false));
+        let state = closed.clone();
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                assert_eq!(req.path(), "/api/v4/projects/grp%2Fproj/issues/21");
+                let event = req
+                    .json()
+                    .and_then(|body| body.get("state_event").cloned())
+                    .unwrap_or_default();
+                assert!(
+                    event == json!("close") || event == json!("reopen"),
+                    "GitLab takes state_event, got {event}"
+                );
+                *state.lock().unwrap_or_else(|error| error.into_inner()) = event == json!("close");
+                return Reply::json(&json!({}));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            let mut row = issue(&base, 21);
+            if *state.lock().unwrap_or_else(|error| error.into_inner()) {
+                row["state"] = json!("closed");
+                row["closed_at"] = json!("2026-11-06T00:00:00Z");
+            }
+            Reply::json(&row)
+        })
+        .await;
+        let gitlab = reader(&server);
+        let shut = gitlab
+            .set_state(
+                "grp/proj",
+                "21",
+                "Closed",
+                Some(IssueCloseReason::Completed),
+            )
+            .await
+            .unwrap();
+        assert_eq!(shut.summary.state.category, IssueStateCategory::Closed);
+        assert_eq!(
+            shut.summary.state.close_reason, None,
+            "GitLab stores no close reason, and the answer says what it stored"
+        );
+        let open = gitlab
+            .set_state("grp/proj", "21", "Open", None)
+            .await
+            .unwrap();
+        assert_eq!(open.summary.state.name, "Open");
+        assert_eq!(open.summary.state.category, IssueStateCategory::Open);
+    }
+
+    #[tokio::test]
+    async fn a_state_name_gitlab_does_not_offer_is_refused_before_a_request() {
+        let server = Server::start(|_| Reply::json(&json!({}))).await;
+        let error = reader(&server)
+            .set_state(
+                "grp/proj",
+                "21",
+                "Closed as not planned",
+                Some(IssueCloseReason::NotPlanned),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!((error.status(), error.code()), (400, "invalid_input"));
+        assert!(
+            server.seen().is_empty(),
+            "a state GitLab does not offer sends nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn candidates_are_the_projects_labels_and_members_with_the_ids_a_write_takes() {
+        let server = Server::start(|req| match req.path() {
+            "/api/v4/projects/grp%2Fproj/labels" => {
+                assert_eq!(req.param("per_page").as_deref(), Some("100"));
+                Reply::json(&json!([
+                    { "id": 1, "name": "bug", "color": "#d9534f" },
+                    { "id": 2, "name": "ui", "color": "#5bc0de" },
+                ]))
+            }
+            "/api/v4/projects/grp%2Fproj/members/all" => {
+                assert_eq!(req.param("per_page").as_deref(), Some("100"));
+                Reply::json(&json!([
+                    { "id": 12, "username": "bo", "name": "Bo D" },
+                    { "id": 13, "username": "cy" },
+                ]))
+            }
+            other => panic!("a candidates read asked for {other}"),
+        })
+        .await;
+        let candidates = reader(&server).candidates("grp/proj").await.unwrap();
+        assert_eq!(
+            candidates
+                .labels
+                .iter()
+                .map(|label| label.name.as_str())
+                .collect::<Vec<_>>(),
+            ["bug", "ui"]
+        );
+        assert_eq!(candidates.labels[0].color.as_deref(), Some("#d9534f"));
+        assert_eq!(candidates.assignees[0].login, "bo");
+        assert_eq!(candidates.assignees[0].name.as_deref(), Some("Bo D"));
+        assert_eq!(
+            candidates.assignees[0].id, "12",
+            "a write takes the member id, not the login"
+        );
+        assert_eq!(
+            candidates.assignees[1].name, None,
+            "a name it lacks is absent"
+        );
+        assert!(!candidates.truncated, "two of each is the whole answer");
+    }
+
+    #[tokio::test]
+    async fn more_than_two_hundred_candidates_are_cut_and_said_to_be_truncated() {
+        let server = Server::start(|req| {
+            let page = req
+                .param("page")
+                .and_then(|page| page.parse::<u32>().ok())
+                .unwrap_or(1);
+            let labels = req.path().ends_with("/labels");
+            let rows: Vec<Value> = (0..100u32)
+                .map(|n| {
+                    if labels {
+                        json!({ "name": format!("label-{page}-{n}") })
+                    } else {
+                        json!({ "id": n + 1, "username": format!("user-{page}-{n}") })
+                    }
+                })
+                .collect();
+            Reply::json(&Value::Array(rows))
+        })
+        .await;
+        let candidates = reader(&server).candidates("grp/proj").await.unwrap();
+        assert_eq!(candidates.labels.len(), 200);
+        assert_eq!(candidates.assignees.len(), 200);
+        assert!(
+            candidates.truncated,
+            "a full second page may have more behind it"
+        );
+        let pages: Vec<String> = server
+            .seen()
+            .into_iter()
+            .filter(|r| r.path().ends_with("/labels"))
+            .filter_map(|r| r.param("page"))
+            .collect();
+        assert_eq!(pages, ["1", "2"], "two pages, then the 200 cap");
     }
 }
 

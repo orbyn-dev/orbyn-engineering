@@ -7,13 +7,15 @@ use super::frame::cut;
 use super::host::validate_host;
 use super::query::{AssigneeFilter, IssueQuery, MAX_LIMIT, StateFilter};
 use super::{
-    IssueSource, MAX_SCOPE_BYTES, MAX_TEMPLATE_BODY_BYTES, MAX_TEMPLATES, NewIssue, ScopeList,
+    IssueEdit, IssueSource, MAX_SCOPE_BYTES, MAX_TEMPLATE_BODY_BYTES, MAX_TEMPLATES, NewIssue,
+    ScopeList,
 };
 use crate::error::{CoreError, Result};
 use async_trait::async_trait;
 use orbyn_contracts::{
-    IssueActor, IssueComment, IssueCounts, IssueDetail, IssueLabel, IssueReaction,
-    IssueReactionCount, IssueState, IssueStateCategory, IssueSummary, IssueTemplate, TrackerKind,
+    IssueActor, IssueAssigneeCandidate, IssueCandidateLabel, IssueCandidates, IssueCloseReason,
+    IssueComment, IssueCounts, IssueDetail, IssueLabel, IssueReaction, IssueReactionCount,
+    IssueState, IssueStateCategory, IssueSummary, IssueTemplate, TrackerKind,
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method, StatusCode, Url, redirect};
@@ -42,6 +44,14 @@ const MAX_SEGMENTS: usize = 20;
 /// One issue's reactions are read back at most this deep: a removal needs the reader's own award id.
 const MAX_AWARD_PAGES: u32 = 5;
 const MAX_AWARDS_PER_PAGE: usize = 100;
+/// The most labels and the most people one candidates read answers (docs/issues.md, "Issue writes and list
+/// controls"); the route caps the answer again, so a reader cannot exceed it.
+const MAX_CANDIDATES: usize = 200;
+/// GitLab's own page size for labels and members, and the pages one candidates read takes (two cover the 200).
+const CANDIDATE_PAGE: usize = 100;
+const CANDIDATE_PAGES: u32 = 2;
+/// A label colour is a short hex word; anything longer is the tracker's text and is cut like the rest.
+const MAX_COLOR: usize = 32;
 
 pub(crate) struct GitLab {
     /// `https://host[/prefix]`, validated, no trailing slash.
@@ -187,6 +197,15 @@ impl GitLab {
             body.extend_from_slice(&chunk);
         }
         Ok(Fetched { headers, body })
+    }
+
+    /// One `PUT` of the issue's own fields, the person's text in the body's field values and never in the address.
+    /// The answer is not read here: the caller reads the issue back for the shape a detail read has.
+    async fn put_issue(&self, project: &str, key: &str, payload: &Value) -> Result<()> {
+        let path = format!("/api/v4/projects/{project}/issues/{key}");
+        self.send(Method::PUT, &path, &[], Some(payload), "issue")
+            .await?;
+        Ok(())
     }
 
     /// The tracker's totals, before any filter. Best effort: no answer means no totals, never a failed list.
@@ -474,6 +493,45 @@ fn actor(value: &Value) -> Option<IssueActor> {
         })
 }
 
+/// The state a GitLab issue is in, in GitLab's own words. GitLab has one closed state and keeps no reason for it,
+/// so a closed issue and the closed state its detail offers are the same name.
+fn named_state(closed: bool) -> IssueState {
+    IssueState {
+        category: if closed {
+            IssueStateCategory::Closed
+        } else {
+            IssueStateCategory::Open
+        },
+        name: if closed { "Closed" } else { "Open" }.to_owned(),
+        close_reason: None,
+    }
+}
+
+/// The states a GitLab issue can move to (docs/issues.md, "Issue writes and list controls"): the two names a read
+/// reports, so the state a closed issue shows is the one the detail offered.
+fn gitlab_states() -> Vec<IssueState> {
+    vec![named_state(false), named_state(true)]
+}
+
+/// Whether this state name closes the issue. A name GitLab does not offer is refused rather than guessed at.
+fn closing(state: &str) -> Result<bool> {
+    match state {
+        "Open" => Ok(false),
+        "Closed" => Ok(true),
+        _ => Err(CoreError::Invalid(
+            "That state is not one GitLab offers.".into(),
+        )),
+    }
+}
+
+/// One page of a candidates read, at GitLab's own page size.
+fn candidate_page(page: u32) -> [(&'static str, String); 2] {
+    [
+        ("per_page", CANDIDATE_PAGE.to_string()),
+        ("page", page.to_string()),
+    ]
+}
+
 fn summary(host: &str, scope: &str, value: &Value) -> Option<IssueSummary> {
     let iid = value.get("iid").and_then(Value::as_u64)?;
     let closed = text(value, "state").eq_ignore_ascii_case("closed");
@@ -493,15 +551,7 @@ fn summary(host: &str, scope: &str, value: &Value) -> Option<IssueSummary> {
         title: clip(&text(value, "title"), MAX_TITLE),
         url,
         author: value.get("author").and_then(actor),
-        state: IssueState {
-            category: if closed {
-                IssueStateCategory::Closed
-            } else {
-                IssueStateCategory::Open
-            },
-            name: if closed { "Closed" } else { "Open" }.to_owned(),
-            close_reason: None,
-        },
+        state: named_state(closed),
         created_at: text(value, "created_at"),
         updated_at: text(value, "updated_at"),
         closed_at: Some(text(value, "closed_at")).filter(|t| !t.is_empty()),
@@ -636,6 +686,10 @@ impl IssueSource for GitLab {
         true
     }
 
+    fn can_edit(&self) -> bool {
+        true
+    }
+
     async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
         let project = project_segment(scope)?;
         // GitLab takes labels as one comma-separated value, so a name with a comma in it would silently become two.
@@ -666,7 +720,7 @@ impl IssueSource for GitLab {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
-            states: None,
+            states: Some(gitlab_states()),
         })
     }
 
@@ -747,6 +801,142 @@ impl IssueSource for GitLab {
         let mut detail = self.get(scope, key).await?;
         detail.reactions = self.issue_reactions(&project, key).await;
         Ok(detail)
+    }
+
+    /// Writes the present fields in one `PUT` and answers the issue as a detail read has it, so the reply carries the
+    /// comments and the states a read does (docs/issues.md, "Issue writes and list controls"). GitLab takes `labels`
+    /// as one comma-separated value and `assignees` by numeric user id.
+    async fn update(&self, scope: &str, key: &str, edit: &IssueEdit<'_>) -> Result<IssueDetail> {
+        let project = project_segment(scope)?;
+        key_ok(key)?;
+        let mut payload = serde_json::Map::new();
+        if let Some(title) = edit.title {
+            payload.insert("title".into(), json!(title));
+        }
+        if let Some(body) = edit.body {
+            payload.insert("description".into(), json!(body));
+        }
+        if let Some(labels) = edit.labels {
+            // GitLab takes labels as one comma-separated value, so a name with a comma would silently become two.
+            if labels.iter().any(|label| label.contains(',')) {
+                return Err(CoreError::Invalid(
+                    "A GitLab label cannot contain a comma.".into(),
+                ));
+            }
+            payload.insert("labels".into(), json!(labels.join(",")));
+        }
+        if let Some(assignees) = edit.assignees {
+            payload.insert("assignee_ids".into(), json!(assignee_ids(assignees)?));
+        }
+        self.put_issue(&project, key, &Value::Object(payload))
+            .await?;
+        self.get(scope, key).await
+    }
+
+    /// Closes or reopens the issue and answers it as it is now stored. GitLab keeps no close reason, so the reason
+    /// a person chose is not stored and the answer's `IssueState.close_reason` says what it stored with `null`.
+    async fn set_state(
+        &self,
+        scope: &str,
+        key: &str,
+        state: &str,
+        _close_reason: Option<IssueCloseReason>,
+    ) -> Result<IssueDetail> {
+        let project = project_segment(scope)?;
+        key_ok(key)?;
+        let event = if closing(state)? { "close" } else { "reopen" };
+        self.put_issue(&project, key, &json!({ "state_event": event }))
+            .await?;
+        self.get(scope, key).await
+    }
+
+    /// The project's labels and its members, inherited ones included, at most 200 of each (docs/issues.md, "Issue
+    /// writes and list controls"). GitLab addresses a person by numeric user id, so an assignee candidate's `id` is
+    /// that id, which is what a write sends.
+    async fn candidates(&self, scope: &str) -> Result<IssueCandidates> {
+        let project = project_segment(scope)?;
+        let mut truncated = false;
+        let mut labels: Vec<IssueCandidateLabel> = Vec::new();
+        let labels_path = format!("/api/v4/projects/{project}/labels");
+        for page in 1..=CANDIDATE_PAGES {
+            let got = self
+                .fetch(&labels_path, &candidate_page(page), "project")
+                .await?;
+            let value = parse(&got.body)?;
+            let rows = value.as_array().ok_or_else(unreadable)?;
+            for row in rows {
+                let Some(name) = row
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.is_empty())
+                else {
+                    continue;
+                };
+                if labels.len() >= MAX_CANDIDATES {
+                    truncated = true;
+                    break;
+                }
+                labels.push(IssueCandidateLabel {
+                    name: clip(name, MAX_LABEL),
+                    color: row
+                        .get("color")
+                        .and_then(Value::as_str)
+                        .filter(|color| !color.is_empty())
+                        .map(|color| clip(color, MAX_COLOR)),
+                });
+            }
+            if rows.len() < CANDIDATE_PAGE {
+                break;
+            }
+            if page == CANDIDATE_PAGES {
+                truncated = true;
+            }
+        }
+        let mut assignees: Vec<IssueAssigneeCandidate> = Vec::new();
+        let members_path = format!("/api/v4/projects/{project}/members/all");
+        for page in 1..=CANDIDATE_PAGES {
+            let got = self
+                .fetch(&members_path, &candidate_page(page), "project")
+                .await?;
+            let value = parse(&got.body)?;
+            let rows = value.as_array().ok_or_else(unreadable)?;
+            for row in rows {
+                let Some(login) = row
+                    .get("username")
+                    .and_then(Value::as_str)
+                    .filter(|login| !login.is_empty())
+                else {
+                    continue;
+                };
+                let Some(id) = row.get("id").and_then(Value::as_u64) else {
+                    continue;
+                };
+                if assignees.len() >= MAX_CANDIDATES {
+                    truncated = true;
+                    break;
+                }
+                assignees.push(IssueAssigneeCandidate {
+                    login: clip(login, MAX_LOGIN),
+                    name: row
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .filter(|name| !name.is_empty())
+                        .map(|name| clip(name, MAX_LOGIN)),
+                    id: id.to_string(),
+                });
+            }
+            if rows.len() < CANDIDATE_PAGE {
+                break;
+            }
+            if page == CANDIDATE_PAGES {
+                truncated = true;
+            }
+        }
+        Ok(IssueCandidates {
+            labels,
+            assignees,
+            truncated,
+        })
     }
 
     async fn templates(&self, scope: &str) -> Result<Vec<IssueTemplate>> {
@@ -913,7 +1103,7 @@ impl IssueSource for GitLab {
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
             reactions: None,
-            states: None,
+            states: Some(gitlab_states()),
         })
     }
 }

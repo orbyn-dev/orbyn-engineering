@@ -1,8 +1,8 @@
 //! Issue trackers beside the code (docs/issues.md): the list a tracker reports, the connections that read it,
 //! a thread's links to issues, a thread started from one, and the person's own issue writes (create, comment and
-//! react) through the tracker's own credential, GitHub only so far. Everything a tracker returns is untrusted
-//! text and is never fed to an engine except in the framed first message; issue text going in travels as a field
-//! value, never as an argument.
+//! react) through the tracker's own credential, with the edits and state moves built for GitHub and GitLab.
+//! Everything a tracker returns is untrusted text and is never fed to an engine except in the framed first message;
+//! issue text going in travels as a field value, never as an argument.
 
 mod azure;
 #[cfg(test)]

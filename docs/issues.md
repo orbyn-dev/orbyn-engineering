@@ -128,8 +128,8 @@ A message never contains a token or a raw tracker body.
 ## GitLab as built
 
 `gitlab` reads issues in `crates/orbyn-core/src/issues/gitlab.rs`, behind the same `ORBYN_ISSUES` flag. List and
-detail are built, and the thread link, start-thread, draft and find paths use them; of the T3 issue work the
-`update` and `state` writes, the `candidates` read and the list's `sort` option are missing for GitLab (Planned).
+detail are built, and the thread link, start-thread, draft and find paths use them; the `update` and `state` writes
+and the `candidates` read are built (R15 PR4), and the list's `sort` option is accepted but not ordered by.
 
 - **Requests.** `GET {host}/api/v4/projects/{path}/issues` (`state` `opened|closed|all`, `labels`, `search`,
   `assignee_username`, `assignee_id=None`, `scope=assigned_to_me`, `order_by=updated_at`, `per_page` up to 100,
@@ -172,8 +172,8 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   and at most 50 assignees, an issue body to 64 KiB and a comment to 16 KiB. Text is never read for instructions
   and the draft framing above is unchanged.
 - **Planned, not built.** Linked merge requests (`linked_pull_requests` stays empty), "won't fix" and other close
-  reasons (`close_reason` stays `null`), a tracker state name other than Open and Closed, the T3 writes `update` and
-  `state`, and the `candidates` read. Thread link, start-thread, draft and find already work through list and detail.
+  reasons (`close_reason` stays `null`), a tracker state name other than Open and Closed, and the list's `sort`
+  order (accepted and not ordered by). Thread link, start-thread, draft and find already work through list and detail.
   `find` parses only `https://github.com/.../issues/<n>` links: a pasted GitLab link is not parsed as one and goes
   to the tracker as search text. A bare number is looked up as the `iid` in every connected scope.
 - **Not verified.** No real GitLab (gitlab.com or self-managed) was contacted. The reader is tested against a
@@ -472,8 +472,8 @@ into them, so they are **data**, never instructions to an engine, and never reac
 
 T3 Code at `9168ca73d` (`issue.ts`: `IssueListSort`, `IssueUpdateInput`, `IssueSetStateInput`,
 `IssueCandidates`) has all of these, so they are in the beta, built after the read routes above. `update`,
-`state`, `candidates` and the list's `sort` are built for GitHub (R15 PR3); the other four trackers keep them
-Planned, answer `422 unsupported` and say so in their own section below. Each write is
+`state`, `candidates` and the list's `sort` are built for GitHub (R15 PR3) and GitLab (R15 PR4); the other three
+trackers keep them Planned, answer `422 unsupported` and say so in their own section below. Each write is
 Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the updated `IssueDetail`.
 
 | Route | Person | Answers |
@@ -493,7 +493,8 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   description pencil and the label and assignee "+" controls: the page sends the full new set.
 - `state`: a name taken from `IssueDetail.states`, a list the detail then carries (name, category). A closed
   state takes an optional `close_reason`, `completed` (the default) or `not_planned`; a tracker that cannot say
-  `not_planned` closes as completed and the answer's `IssueState.close_reason` says what it stored. A
+  `not_planned` closes the issue with what it does store — `completed` where it stores a reason, `null` where it
+  stores none — and the answer's `IssueState.close_reason` says which. A
   `close_reason` on an open state, or a name the issue does not declare, is `400 invalid_input`.
 - `sort` defaults to `updated`; an unknown value is `400 invalid_input`. Only GitHub orders by it: the other trackers accept
   `sort=created` but still fetch by updated date, and the cut at 100 issues is made in that order. Every GitHub list is now a
@@ -528,7 +529,26 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   `gh` has no order flag. The order is part of the paging cursor's tag, so a cursor issued for one order is refused
   for the other.
 - **`states`** is `Some` for every GitHub detail and answers `[]` never: the three states above are always offered.
-  The other four trackers answer `None`, so the web app keeps their State row as Planned.
+  The other three trackers answer `None`, so the web app keeps their State row as Planned.
+
+### As built, GitLab (R15 PR4)
+
+- **`update`** is one `PUT /api/v4/projects/{path}/issues/{iid}` through the connection's own token, carrying only
+  the fields that are present: `title`, `description` (the body), `labels` as one comma-separated value and
+  `assignee_ids` as the whole new set (an empty list clears them). Core checks the title, the body, the labels and
+  the assignees before anything is sent. A GitLab label cannot be told apart inside that comma-separated value, so a
+  name with a comma is `400 invalid` with nothing sent. The answer is the issue read back, so it carries the
+  comments and the states a detail read does.
+- **`state`** is one `PUT` of `state_event` (`close` or `reopen`). GitLab has one closed state and stores no reason
+  for it, so the detail offers `Open` and `Closed`; a close reason the person sends is not stored, and the answer's
+  `IssueState.close_reason` is `null`, which is what GitLab has. The detail is read before the write, so a name the
+  issue does not offer is `400 invalid` with nothing sent.
+- **`candidates`** answers the project's labels (`GET /projects/{path}/labels`, 100 a page) and its members, inherited
+  ones included (`GET /projects/{path}/members/all`, 100 a page): at most 200 of each, `truncated` when a full second
+  page may have more. A label carries its colour. An assignee's `id` is the numeric member id, which is what the write
+  sends, and its `name` is the person's own when GitLab reports one.
+- **`states`** is `Some` for every GitLab detail, its create answer and both write answers: `Open` and `Closed`. The
+  other three trackers answer `None` and keep their State row as Planned.
 
 ## Create, comment, react, templates and project binding (contract)
 
@@ -783,16 +803,17 @@ Found in the post-merge review of the create, comment, react, template and bindi
 The event timeline, "involved/mentioned"
 filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting and
 reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b), templates in R15 PR2 and
-project binding in R15 PR3. The edits, state moves and the list's order are built for GitHub (R15 PR3) and Planned
-for the other four, whose sections say so; `candidates` is a GitLab, Forgejo, Azure DevOps and Linear gap too. The
-engine-facing issue tools (N24) list, read, create, comment, link, unlink and list a thread's linked issues; they do not
-change state (the service has no state route for them).
+project binding in R15 PR3. The edits, state moves and the list's order are built for GitHub (R15 PR3) and GitLab
+(R15 PR4) and Planned for the other three, whose sections say so; `candidates` is a Forgejo, Azure DevOps and Linear
+gap too. The engine-facing issue tools (N24) list, read, create, comment, link, unlink and list a thread's linked
+issues; they do not change state (the service has no state route for them).
 
 ## Differences from the web side's guessed contract
 
-- **State changes** are specified above ("Issue writes and list controls") and built for GitHub: the detail carries
-  `states` (its own names and categories, `None` when the tracker offers none) and a closed issue's name tells a
-  completed close from a not-planned one. A tracker whose `states` is absent keeps the State row as Planned.
+- **State changes** are specified above ("Issue writes and list controls") and built for GitHub and GitLab: the
+  detail carries `states` (its own names and categories, `None` when the tracker offers none) and a closed issue's
+  name tells a completed close from a not-planned one where the tracker names them apart. A tracker whose `states`
+  is absent keeps the State row as Planned.
 - `IssueDetail` adds `states`; `IssueCandidates` (`labels`, `assignees`, `truncated`) is a new read, and `sort` a new
   list query value.
 
