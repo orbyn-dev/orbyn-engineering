@@ -376,7 +376,9 @@ under W7a.
   than one test sets that module's time.
   `crew::tests::flow_board::the_board_names_every_wait_of_its_crew_past_the_inboxs_two_hundred` stays the
   named straggler (about 80 s alone, starved to a timeout when run with other modules); run it by name on a
-  busy machine instead of re-running a whole module. The `autopilot_engines` approval flake is fixed: the test
+  busy machine instead of re-running a whole module. For the full core suite on a shared machine, stop concurrent
+  heavy jobs first (a sibling web suite can hold several cores by itself) and keep the thread count bounded: the
+  recorded run used `--test-threads=32` on a 32-core box and still fell behind at 600 s. The `autopilot_engines` approval flake is fixed: the test
   build uses a 10 min approval clock pinned against production's 30 s (tdd 3.7). The deferred per-World Fake
   turn counter is #1750.
 - Disk: each Rust worktree builds its own `target/` (several GB each) and the cleanup tool only moves
