@@ -221,9 +221,9 @@ binary. This replaces static SQL fixtures that would go stale: the source of tru
 
 ## Order
 
-Cheapest first, each independent, none of them a change to product behaviour: step 1 is delivered;
-the rest are test code, fake-engine tags (the test double under `crates/orbynd/src/bin/`), or the H4
-visibility change. The missing-tool case needs no harness: a `PATH` without one shim is enough.
+Cheapest first, each independent, none of them a change to product behaviour: order steps 1, 3 and 4 are
+delivered; the remaining steps are test code, fake-engine tags (the test double under `crates/orbynd/src/bin/`), or
+the H4 visibility change. The missing-tool case needs no harness: a `PATH` without one shim is enough.
 
 1. **Claude command line at the edge** (Claude table, delivered):
    `drivers.rs::a_claude_run_launches_with_the_documented_flags_and_never_bare` reads the recorded
