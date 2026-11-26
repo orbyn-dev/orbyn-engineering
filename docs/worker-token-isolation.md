@@ -171,7 +171,7 @@ workspace and account routes, is closed by step 3.
 
 ## Step 3: what is built
 
-- **Every `Person` route needs the key.** `ENFORCED` in `routes/classes.rs` now lists all of the `Person` table (97 routes):
+- **Every `Person` route needs the key.** `ENFORCED` in `routes/classes.rs` now lists all of the `Person` table (210 routes):
   Account, Crew's person writes, engines, updates, workspace, shell actions, scheduled tasks, preferences, policy rules,
   redaction settings, questions, project trust and publish, workflow approve, pull merges, reviews and viewed marks, the explorer, the
   console, terminals, scripts, file writes, computer use and the routes that move a checkout (`POST /api/projects/{id}/git/init`,
