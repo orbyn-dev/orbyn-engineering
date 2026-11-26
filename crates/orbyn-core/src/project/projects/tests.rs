@@ -1158,6 +1158,7 @@ async fn a_thread_cannot_start_in_a_removed_project() {
             base_branch: None,
             effort: None,
             options: BTreeMap::new(),
+            branch_name_seed: None,
         })
         .await,
     );
