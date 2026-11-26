@@ -239,3 +239,40 @@ it("says an untrusted repository in words rather than only failing to load the m
   expect(await screen.findByText(/orbyn-planner is not trusted\./)).toBeInTheDocument();
   expect(screen.queryByRole("img")).toBeNull();
 });
+
+it("draws an image another repository's rendered Markdown names from that repository", async () => {
+  serve({ content: "![plan](art/plan.png)\n" });
+  window.location.hash = "#/threads/t";
+  render(<Viewer threadId="t" tabId="tab" path="README.md" repoId={REPO} line={null} />);
+
+  const image = await screen.findByRole("img", { name: /plan/i });
+  const src = query(image.getAttribute("src")!);
+  expect(src.get("path")).toBe("art/plan.png");
+  // The thread's task folder holds every worktree, so asking it without the repo_id would read the wrong file.
+  expect(src.get("repo_id")).toBe(REPO);
+  window.location.hash = "#/";
+});
+
+it("opens another repository's tab for a file its rendered Markdown links to", async () => {
+  serve({ content: "See [the plan](docs/plan.md).\n" });
+  window.location.hash = "#/threads/t";
+  render(<Viewer threadId="t" tabId="tab" path="README.md" repoId={REPO} line={null} />);
+
+  await userEvent.click(await screen.findByRole("button", { name: "the plan" }));
+  expect(useUi.getState().fileReveal).toMatchObject({ path: "docs/plan.md", repoId: REPO, threadId: "t" });
+  expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "docs/plan.md", repoId: REPO }));
+  window.location.hash = "#/";
+});
+
+it("keeps the thread's own rendered Markdown media and links in its own checkout", async () => {
+  serve({ content: "![plan](art/plan.png)\n\nSee [the plan](docs/plan.md).\n" });
+  window.location.hash = "#/threads/t";
+  render(<Viewer threadId="t" tabId="tab" path="README.md" line={null} />);
+
+  const image = await screen.findByRole("img", { name: /plan/i });
+  expect(query(image.getAttribute("src")!).has("repo_id")).toBe(false);
+  await userEvent.click(screen.getByRole("button", { name: "the plan" }));
+  expect(useUi.getState().fileReveal).toMatchObject({ path: "docs/plan.md", threadId: "t" });
+  expect(useUi.getState().fileReveal).not.toHaveProperty("repoId");
+  window.location.hash = "#/";
+});
