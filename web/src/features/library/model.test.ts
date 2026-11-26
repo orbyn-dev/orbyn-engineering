@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { Param } from "./contract";
-import { capped, checkItem, checkKeyName, importNotice, isOneLine, keychainNote, confirmFromFailure, placeholdersOf, plain, runGrantText, sourceLabel, scrubValue, startValues, valueProblems, valuesBody } from "./model";
+import { capped, checkItem, checkKeyName, confirmFromFailure, exportFileName, importNotice, isOneLine, keychainNote, placeholdersOf, plain, runGrantText, sourceLabel, scrubValue, startValues, valueProblems, valuesBody } from "./model";
 
 const choice: Param = { name: "package", label: "Package", kind: "choice", default: "auth", required: true, choices: ["auth", "web"] };
 
@@ -78,6 +78,14 @@ it("cuts text for display", () => {
   expect(capped("x".repeat(10), 4)).toEqual({ text: "xxxx", cut: true });
   expect(capped(5, 4)).toEqual({ text: "", cut: false });
   expect(plain("y".repeat(10), 3)).toBe("yyy…");
+});
+
+it("names an export by the day the service stamped it, with today as the fallback and no path from its text", () => {
+  expect(exportFileName("2026-11-22T10:00:00Z")).toBe("orbyn-library-2026-11-22.json");
+  expect(exportFileName(undefined, new Date("2027-01-02T00:00:00Z"))).toBe("orbyn-library-2027-01-02.json");
+  expect(exportFileName("not-a-date", new Date("2027-01-02T00:00:00Z"))).toBe("orbyn-library-2027-01-02.json");
+  expect(exportFileName("../../etc/passwd", new Date("2027-01-02T00:00:00Z"))).toBe("orbyn-library-2027-01-02.json");
+  expect(exportFileName(7, new Date("2027-01-02T00:00:00Z"))).toBe("orbyn-library-2027-01-02.json");
 });
 
 it("reads a confirm_required detail: the grants exactly as listed, and each set's name with its key names, never a value", () => {
