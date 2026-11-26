@@ -344,13 +344,19 @@ async fn an_ask_goes_pending_or_returns_the_answer() {
         json!({ "to": d.mb, "body": "Second try?", "wait_seconds": 10 }),
     );
     let answerer = async {
-        let id = loop {
-            let log = d.w.core.store.crew_messages_in_crew(&crew).unwrap();
-            if let Some((_, q)) = log.iter().find(|(_, m)| m.body.as_str() == "Second try?") {
-                break q.id.clone();
+        // Bounded on the test's own clock: a question that never reaches the crew would otherwise
+        // spin here forever and hang the whole test binary under load instead of failing by name.
+        let id = tokio::time::timeout(super::harness::WAIT_LIMIT, async {
+            loop {
+                let log = d.w.core.store.crew_messages_in_crew(&crew).unwrap();
+                if let Some((_, q)) = log.iter().find(|(_, m)| m.body.as_str() == "Second try?") {
+                    break q.id.clone();
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        };
+        })
+        .await
+        .expect("the ask's question reached its crew");
         d.call(
             &d.tb,
             "crew_post",

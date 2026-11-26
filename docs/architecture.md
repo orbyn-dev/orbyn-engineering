@@ -3106,7 +3106,9 @@ re-fetches the selected project's validation view; no file write or permission c
 With Preview enabled the service registers request-scoped engine approvers. The lead's engine, family, model, effort and options
 are captured for a separate short delegated turn; a busy lead receives no injected work. A second key must pass the registry, quota,
 data-class and lead-tier filters on a different vendor. The shared deadline is 30 seconds or the task's remaining minute budget,
-whichever is shorter. Each approval atomically reserves one existing brief turn, counting prior approval reservations and known
+whichever is shorter; a test build gives it ten minutes instead, because a test calls the core directly and shares the machine
+with other work, and the production 30 seconds is pinned at compile time.
+Each approval atomically reserves one existing brief turn, counting prior approval reservations and known
 worker admissions; a task whose turns are spent stops on its next failed attempt, and a crew that has spent its Settings turn
 budget starts no new task (see above). Reported usage is recorded even when the answer is rejected, and
 missing usage is unknown. The Claude adapter requires version 2.1.295+, no builtin tools, strict empty MCP, hooks/customizations off,
