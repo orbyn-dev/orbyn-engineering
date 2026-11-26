@@ -296,12 +296,14 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   comments name the repository too. Changed files of the primary repository and files of the explorer's primary repository tree open
   that tab when a tab is what is wanted (a binary file's Open; Open in editor still opens the outside editor, as before); an
   ordinary thread and a thread in one repository still open `["t", path]` and are unchanged. A file link inside
-  its rendered Markdown still resolves against the thread's folder (the Changes panel's rendered Markdown has the same limit). Its
+  its rendered Markdown still resolves against the thread's folder (the Changes panel's rendered Markdown has the same limit). A foreign tab's
   image, PDF, video, audio, font, archive, document, binary and truncated files load from their own repository's
   worktree: the client sends `repo_id` on `GET .../files/raw`, whose bytes, `Range` answers, inline-or-attachment decision and
-  `download` are that repository's file (see "As built: repo_id on Git and file calls"). The service's `previews/file` and
+  `download` are that repository's file (see "As built: repo_id on Git and file calls"). A primary tab's media requests send no
+  `repo_id`. The service's `previews/file` and
   `files/open` take one now too: the file-tab menu's outside editor, the binary view's Reveal/Open in editor and the viewer's Open in
-  browser and Open in editor buttons send it for a foreign tab.
+  browser and Open in editor buttons send it for a foreign tab. A primary tab also names its repository for `previews/file`,
+  whose default path is relative to the thread's task folder. Its outside editor uses the service's default primary worktree.
 - **Turn totals.** The turn picker's per-turn figures were the primary repository's alone. In a multi-repository thread each turn's
   totals sum `GET .../diff?scope=turn&run=` over the thread's trusted repositories, one read per repository with its own `repo_id`.
   An untrusted repository is not read and a repository whose read fails is left out, and the row says "N repo not counted" instead of
