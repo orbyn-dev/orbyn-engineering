@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HOSTILE } from "../../runpage/fixture";
 import { taskGates, unfinishedTaskGates } from "./fixture";
 import { TaskGates } from "./TaskGates";
+import { FLOW_REFRESH_MS } from "./useFlow";
 
 const answer = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 const read = () => Promise.resolve(answer(taskGates()));
@@ -72,11 +73,51 @@ describe("the gates view", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("refreshes an open gate view through a transient failure until the task is final", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    try {
+      const initial = unfinishedTaskGates({ gates: [] });
+      const running = unfinishedTaskGates();
+      const finished = taskGates();
+      const fetch = vi.fn()
+        .mockResolvedValueOnce(answer(initial))
+        .mockResolvedValueOnce(answer(running))
+        .mockResolvedValueOnce(answer({ code: "unavailable", message: "The Flow service is busy." }, 503))
+        .mockResolvedValueOnce(answer(finished));
+      vi.stubGlobal("fetch", fetch);
+      const { unmount } = render(<TaskGates id="task-redirect" onBack={() => undefined} />);
+      expect(await screen.findByText("No gate decisions yet.")).toBeVisible();
+      await waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(0));
+      await act(async () => { vi.advanceTimersByTime(FLOW_REFRESH_MS); });
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+      expect((await screen.findAllByText("Checks → passed"))).toHaveLength(2);
+      expect(screen.queryByText("A reason for a task that is not over")).toBeNull();
+      await act(async () => { vi.advanceTimersByTime(FLOW_REFRESH_MS); });
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.getAllByText("Checks → passed")).toHaveLength(2);
+      visibility.mockReturnValue("hidden");
+      await act(async () => { vi.advanceTimersByTime(FLOW_REFRESH_MS); });
+      expect(fetch).toHaveBeenCalledTimes(3);
+      visibility.mockReturnValue("visible");
+      await act(async () => { vi.advanceTimersByTime(FLOW_REFRESH_MS); });
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+      expect(await screen.findByText("3 of 3 checks ran on the commit and passed")).toBeVisible();
+      unmount();
+      await act(async () => { vi.advanceTimersByTime(FLOW_REFRESH_MS); });
+      expect(fetch).toHaveBeenCalledTimes(4);
+    } finally {
+      visibility.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("says there are no gate decisions yet, and draws no card", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(answer(taskGates({ gates: [] })))));
     render(<TaskGates id="task-redirect" onBack={() => undefined} />);
-    const view = await screen.findByRole("region", { name: "Gates" });
-    expect(view).toHaveTextContent("No gate decisions yet.");
+    expect(await screen.findByText("No gate decisions yet.")).toBeVisible();
+    const view = screen.getByRole("region", { name: "Gates" });
     expect(view.querySelectorAll(".cx-fbx")).toHaveLength(0);
     expect(screen.queryByRole("alert")).toBeNull();
   });
