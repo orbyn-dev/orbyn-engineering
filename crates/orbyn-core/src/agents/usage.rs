@@ -695,12 +695,15 @@ impl UsageCenter {
             .into_iter()
             .map(|(name, scan)| summarize(name, scan, settings, since.as_deref()))
             .collect();
-        // Cursor's account reports its own billed events, which the store keeps. No store, or a
-        // store that never recorded an event, is no history at all and no row: another engine's
-        // empty row would show spend that does not exist. A store with events but none in this
-        // period is a scanned engine of nothing, which is a different state from no history.
+        // Cursor's account reports its own billed events, which the store keeps, and the window of
+        // its history the core has read, which the events alone cannot prove: a read that found no
+        // spend writes no event. No store, and a store never read that holds no event, is no
+        // history at all and no row: another engine's empty row would show spend that does not
+        // exist. A store that was read is a scanned engine even with no spend on it, and a store
+        // with events but none in this period is a scanned engine of nothing: both are a different
+        // state from no history.
         if let Some(store) = store
-            && store.billed_event_count(CURSOR)? > 0
+            && (store.account_read(CURSOR)?.is_some() || store.billed_event_count(CURSOR)? > 0)
         {
             let billed = store.billed_totals(CURSOR, since.as_deref())?;
             engines.push(summarize_billed(CURSOR, billed, settings, since.as_deref()));
@@ -1414,6 +1417,37 @@ mod tests {
         assert_eq!(row.days.len(), 1);
         assert_eq!(row.days[0].tokens, 1040);
         assert_eq!(row.days[0].estimated_cost, None);
+    }
+
+    /// An account the core has read is a history even when the read found no spend: the row is a
+    /// scanned engine of nothing, which is a different state from an account never read at all.
+    #[tokio::test]
+    async fn an_account_that_was_read_and_reported_no_spend_is_a_scanned_engine_of_nothing() {
+        let dir = crate::testing::TempDir::new();
+        let center = UsageCenter::new(dir.path()).unwrap();
+        let settings = crate::store::default_settings();
+        let store = crate::store::Store::open(&dir.path().join("orbyn.db"), "epoch-a").unwrap();
+        let cursor_row = |report: &UsageReport| {
+            report
+                .engines
+                .iter()
+                .find(|row| row.engine == CURSOR)
+                .cloned()
+        };
+
+        assert!(cursor_row(&center.report(Some(&store), &settings, None).await.unwrap()).is_none());
+
+        // One whole day of the account's history was read and the account billed nothing on it.
+        let day = 1_791_676_800_000;
+        store
+            .record_account_report(CURSOR, day, day + 86_400_000 - 1, &[], day)
+            .unwrap();
+
+        let report = center.report(Some(&store), &settings, None).await.unwrap();
+        let row = cursor_row(&report).expect("an account that was read is reported");
+        assert_eq!(row.status, "scanned");
+        assert!(row.models.is_empty(), "no spend on it");
+        assert!(row.days.is_empty(), "and no day holds any");
     }
 
     #[tokio::test]

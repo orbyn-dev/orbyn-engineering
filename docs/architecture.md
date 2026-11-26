@@ -538,13 +538,24 @@ after 150 ms while the scan is pending. A failed refresh keeps those figures and
 offers Retry. Changing the period clears them, and an earlier response cannot
 replace the new period or clear its pending state. Cursor keeps no local history of its own: its spend is billed to the account, so the core keeps
 the account's billed events in `billed_events`, one row per event, keyed by a digest of the
-conversation, timestamp, model and counters because Cursor sends no event id. The usage reader (`agents/cursor_usage.rs`) is built against a fake server, takes the account's
-access token as an argument and has no caller yet, so the table stays empty and no `cursor` row
-appears in `/api/usage` — the row is drawn only when the store holds events, never as an
-always-empty engine; the credential read, its caller and a real account run remain owner-approved
-work.
-Three states stay apart: no store and no rows are no row at all, and a period that holds none of
-the stored events is a scanned engine of nothing. When the host read lands it must hand over one
+conversation, timestamp, model and counters because Cursor sends no event id, and the window of
+that history it has read, with the time it read it, in `billed_reads`. The window is a fact of its
+own because a read that found no spend writes no event: the events alone cannot say whether a day
+was looked at and came back empty. A window read less than a minute ago that still reaches back to
+the period's own start answers the read. Otherwise the next read starts at the newest end, because
+that is where the spend a person opens the screen to see is; then it covers the last covered hour
+again, because Cursor finalizes an amount after it first reported it; then it walks older history
+backwards, one span at a time and never past the period's start. A span bounds one read, not the
+history. Two windows that meet or overlap are one window, because nothing between them was left
+unread; a window with a gap between it and the stored one claims only itself, since the gap was
+never read. A day the read covers whole is what that day held, and the read replaces it, including
+with nothing; a day it covers in part keeps its other rows, because a part says nothing about the
+rest of that day. The usage reader (`agents/cursor_usage.rs`) is built against a fake server, takes the account's
+access token as an argument and has no caller yet, so both tables stay empty and no `cursor` row
+appears in `/api/usage` — the row is drawn for an engine whose window the core has read or whose
+store holds events, never as an always-empty engine; the credential read, its caller and a real
+account run remain owner-approved work.
+Three states stay apart: no store, and a store whose account was never read and which holds no event, are no row at all; a store whose account was read is a scanned engine even with no spend on it; and a period that holds none of the stored events is a scanned engine of nothing. When the host read lands it must hand over one
 complete window, as T3 reconciles against `totalUsageEventsCount`: a report replaces the rows of
 the days it names, so reading a window twice writes the same rows and a window of two events is
 stored as two, while an amount that settles later updates its row instead of adding one. A record

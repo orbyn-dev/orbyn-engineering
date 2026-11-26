@@ -16,6 +16,8 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use zeroize::Zeroizing;
 
+use crate::store::AccountRead;
+
 /// Cursor's dashboard endpoint unless a caller passes another one.
 pub(crate) const DEFAULT_CURSOR_API_ENDPOINT: &str = "https://api2.cursor.sh";
 
@@ -58,6 +60,76 @@ impl std::fmt::Debug for AccessToken {
 impl AccessToken {
     fn expose(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+/// A window of the account's billed history, both bounds inclusive milliseconds of its own clock.
+#[allow(dead_code)] // no caller until the owner approves the credential read
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Window {
+    pub(crate) since_ms: u64,
+    pub(crate) until_ms: u64,
+}
+
+/// How long a window the store holds answers a read (T3's `CURSOR_ACCOUNT_TTL_MS`).
+#[allow(dead_code)] // no caller until the owner approves the credential read
+pub(crate) const FRESH_FOR_MS: u64 = 60_000;
+/// Dashboard events finalize after they were first read, so a re-read covers this much again
+/// (T3's `REFETCH_OVERLAP_MS`).
+#[allow(dead_code)] // no caller until the owner approves the credential read
+pub(crate) const REFETCH_OVERLAP_MS: u64 = 3_600_000;
+
+/// The window to read next, or nothing when the store already answers the period asked for.
+///
+/// A window read less than a minute ago answers the period when it reaches back to the period's
+/// own start. Otherwise the read starts at the newest end, because that is where the spend a
+/// person opens the screen to see is; then it covers the last covered hour again, because Cursor
+/// finalizes an amount after it first reported it; then it walks older history backwards, one span
+/// at a time, and never past the period's start. A span bounds one read, not the history: a caller
+/// with no limit passes `u64::MAX`.
+///
+/// The order, the one-hour overlap and the one-minute freshness are T3's `cursorFetchRange` and
+/// `CURSOR_ACCOUNT_TTL_MS` (`accountCache.ts`, MIT, commit 9168ca73d).
+#[allow(dead_code)] // no caller until the owner approves the credential read
+pub(crate) fn next_window(
+    read: Option<AccountRead>,
+    retention_start_ms: u64,
+    now_ms: u64,
+    max_span_ms: u64,
+) -> Option<Window> {
+    if let Some(read) = read
+        && read.since_ms <= retention_start_ms
+        && now_ms.saturating_sub(read.fetched_at_ms) < FRESH_FOR_MS
+    {
+        return None;
+    }
+    // The newest window a span allows, from as far back as the period reaches.
+    let newest = Window {
+        since_ms: retention_start_ms.max(now_ms.saturating_sub(max_span_ms)),
+        until_ms: now_ms,
+    };
+    match read {
+        // Nothing read, or nothing reaching back as far as the period begins.
+        None => Some(newest),
+        Some(read) if read.until_ms.saturating_sub(REFETCH_OVERLAP_MS) < retention_start_ms => {
+            Some(newest)
+        }
+        // The window ends behind the clock, or begins before the period's start: top it up.
+        Some(read) if read.until_ms < now_ms || read.since_ms <= retention_start_ms => {
+            // Overlap at most half the span, so a narrow read still moves forward.
+            let since_ms = read
+                .until_ms
+                .saturating_sub(REFETCH_OVERLAP_MS.min(max_span_ms / 2));
+            Some(Window {
+                since_ms,
+                until_ms: now_ms.min(since_ms.saturating_add(max_span_ms)),
+            })
+        }
+        // Older history, at the end the store does not hold yet.
+        Some(read) => Some(Window {
+            since_ms: retention_start_ms.max(read.since_ms.saturating_sub(max_span_ms)),
+            until_ms: read.since_ms,
+        }),
     }
 }
 
