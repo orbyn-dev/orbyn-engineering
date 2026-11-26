@@ -277,6 +277,10 @@ pub(crate) async fn primary_checkout(cwd: &Path) -> Result<PathBuf> {
     crate::util::canonicalize(Path::new(path)).map_err(Into::into)
 }
 
+/// The refusal for a purpose that cannot be a worktree folder name.
+pub(crate) const PURPOSE_RULE: &str =
+    "Use lowercase letters, digits and hyphens for the worktree name.";
+
 pub(crate) fn valid_purpose(purpose: &str) -> bool {
     !purpose.is_empty()
         && purpose.len() <= 64
@@ -385,6 +389,15 @@ pub(crate) async fn linked_worktrees(repo: &Path) -> Result<Vec<RegisteredWorktr
         .collect())
 }
 
+/// Whether `purpose` already names a registered worktree beside `repo`. Creation finds
+/// and reuses it, so a naming option that spends an engine call must not run for it.
+pub(crate) async fn reuses_worktree(repo: &Path, purpose: &str) -> Result<bool> {
+    Ok(linked_worktrees(repo).await?.iter().any(|registered| {
+        registered.path.exists()
+            && registered.path.file_name() == Some(std::ffi::OsStr::new(purpose))
+    }))
+}
+
 /// How a new worktree starts, from the settings and the project file.
 #[derive(Clone, Debug)]
 pub struct WorktreeOptions {
@@ -419,9 +432,7 @@ pub(crate) async fn create_worktree(
     options: &WorktreeOptions,
 ) -> Result<Worktree> {
     if !valid_purpose(purpose) {
-        return Err(CoreError::Invalid(
-            "Use lowercase letters, digits and hyphens for the worktree name.".into(),
-        ));
+        return Err(CoreError::Invalid(PURPOSE_RULE.into()));
     }
     let path = worktree_path(&primary_checkout(repo).await?, purpose)?;
     let path_text = path.to_string_lossy().into_owned();
@@ -456,9 +467,11 @@ pub(crate) async fn create_worktree(
         std::fs::create_dir_all(parent)?;
     }
     // The branch name is chosen from the thread and the naming mode, never taken from
-    // the request as a ref: semantic naming reads the project's local branches first, so
-    // the same title twice makes two branches, and custom naming uses the purpose itself.
-    let existing = if options.naming.mode == NamingMode::Semantic {
+    // the request as a ref. Semantic naming and a written custom name read the project's
+    // local branches first: semantic naming numbers a taken slug, and a custom name that
+    // is already a branch is unusable, so the purpose stays its complete name.
+    let existing = if options.naming.mode == NamingMode::Semantic || options.naming.custom.is_some()
+    {
         local_branch_names(repo).await?
     } else {
         Vec::new()
@@ -1231,6 +1244,50 @@ mod tests {
         })
         .await;
         assert!(escaped.is_err(), "Git's descendant survived cancellation");
+    }
+
+    /// The name rule must never accept a name real Git refuses to create: a written
+    /// custom name that passes it would become `invalid_input` instead of falling back.
+    #[tokio::test]
+    async fn the_branch_name_rule_never_accepts_a_name_git_refuses() {
+        let dir = TempDir::new();
+        let repo = repo(dir.path()).await;
+        let long = "x".repeat(65);
+        let names = [
+            "HEAD",
+            "head",
+            "Head",
+            "HEAD/next",
+            "main",
+            "release/login-42",
+            "v1.2",
+            "-leading",
+            "foo.",
+            "foo..bar",
+            "foo//bar",
+            "foo.lock",
+            "a b",
+            "a~b",
+            "a^b",
+            "a:b",
+            "a?b",
+            "a*b",
+            "a[b",
+            "a\\b",
+            long.as_str(),
+        ];
+        for name in names {
+            if branch_names::is_valid_branch_name(name) {
+                assert!(
+                    git(&repo, &["check-ref-format", "--branch", name])
+                        .await
+                        .is_ok(),
+                    "the rule accepted {name:?}, which Git refuses"
+                );
+            }
+        }
+        // The reported gap: HEAD passes Git's general ref rules, but no branch may be HEAD.
+        assert!(!branch_names::is_valid_branch_name("HEAD"));
     }
 
     async fn repo(dir: &Path) -> PathBuf {
