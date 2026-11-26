@@ -35,6 +35,7 @@ mod lessons_person;
 pub mod lessons_view;
 pub(crate) mod lifecycle;
 mod needs_you;
+pub mod oracle;
 mod persist;
 mod person_check;
 pub mod proposals;
